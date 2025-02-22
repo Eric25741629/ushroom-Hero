@@ -328,7 +328,6 @@ def is_expired(last_park_time, expired_time=60 * 60 * 3 +  55*60 ):
     now = time.time()
 
     # 計算是否超過 3 小時 30 分鐘
-    expired_time = 60 * 60 * 3 + 30*60  # 3 小時 30 分鐘
     time_exceeded = (now - last_park_time) > expired_time
 
     # 取得台灣當前日期
