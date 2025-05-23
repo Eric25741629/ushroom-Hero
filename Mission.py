@@ -43,6 +43,10 @@ class device:
         if attempts == max_attempts:
             raise RuntimeError(
                 "Maximum attempts reached without capturing valid screenshot")
+        if not os.path.exists("mission"):
+            os.mkdir("mission")
+        # 儲存截圖
+        cv2.imwrite(f"mission/mission_{time.time()}.png", img)
         return img
 
 
@@ -51,6 +55,8 @@ class mission(device):
         super().__init__(device)
         self.device_ip = ip
         self.data_file=self.device_ip + '.json'
+
+
     def load_data(self):
         """
         加载数据文件，如果文件不存在则返回默认数据。
@@ -172,6 +178,16 @@ class mission(device):
         """
         self.device.click(46, 140)
         time.sleep(2)
+        current_time = datetime.datetime.now()
+        if current_time.weekday() == 0:
+            self.device.click(420,83)
+            time.sleep(2)
+            self.device.click(270,300)
+            time.sleep(2)
+            self.device.click(465,216)
+            time.sleep(2)
+            self.device.click(18, 337)
+            time.sleep(1)
         start = time.time()
         print(self.done_mission())
         while (self.done_mission() and time.time() - start < 60):

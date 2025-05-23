@@ -3,10 +3,14 @@ import uiautomator2 as u2
 import easyocr
 import numpy as np
 from tools import click_white
+import mask
+import cv2
+import random
+import os
 
 
 class BattleManager:
-    def __init__(self, device: u2.Device, reader: easyocr.Reader):
+    def __init__(self, device: u2.Device, reader: easyocr.Reader,cnn_model=None):
         self.device = device
         self.reader = reader
 
@@ -101,7 +105,7 @@ class BattleManager:
         start_time = time.time()
         if battle_name == "突襲神燈小偷" or battle_name == "挑戰冰巢龍穴":
             while time.time() - start_time < 5:
-                self.device.click(221,  702)
+                self.device.click(221+random.randint(0, 5),  702+random.randint(0, 5))
             time.sleep(1)
             self.device.click(267, 812)
         if battle_name == "守衛":
@@ -116,6 +120,7 @@ class BattleManager:
             if any(conditions):
                 while time.time() - start_time < 5:
                     self.device.click(221,  772)
+                time.sleep(1)
                 self.click_text("確定")
                 time.sleep(1)
                 self.device.click(267, 903)
@@ -142,11 +147,27 @@ class BattleManager:
                     break
             self.device.click(272, 878)
             time.sleep(2)
+            self.swipe_screen((0.5, 0.8), (0.5, 0.65), delay=0.5)
+            time.sleep(2)
         elif battle_name == "探秘焚焰神殿":
             while time.time() - start_time < 5:
                 self.device.click(235, 739)
             time.sleep(1)
             self.device.click(267, 812)
+        elif battle_name =="神樹試煉":
+            img = self.capture_screenshot()[160:254 ,9:99]
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            mask_img = cv2.inRange(hsv, mask.red_mask_lower, mask.red_mask_upper)
+            if np.sum(mask_img) > 30000 and np.sum(mask_img) < 35000:
+                self.device.click(47+random.randint(0, 5), 211+random.randint(0, 5))
+                time.sleep(2)
+                self.device.click(302+random.randint(0, 5), 583+random.randint(0, 5))
+                time.sleep(2)
+                self.device.click(509, 56) #空白處
+                time.sleep(1)
+                self.device.click(509, 56) #空白處
+                time.sleep(1)
+                self.device.click(487,922)
         else:
 
             while time.time() - start_time < 5:
@@ -158,8 +179,8 @@ class BattleManager:
         """
         執行所有戰鬥實例。
         """
-        battle_names = ["突襲神燈小偷", "挑戰冰巢龍穴", "守衛", "顛倒時序塔", "探秘焚焰神殿", "暗黑試煉"]
-        check_list = [True, True, False, True, True, False]
+        battle_names = ["突襲神燈小偷", "挑戰冰巢龍穴", "守衛", "顛倒時序塔", "探秘焚焰神殿", "暗黑試煉","神樹試煉"]
+        check_list = [True, True, False, True, True, False, False]
         self.device.swipe(0.5, 0.2, 0.5, 0.8)
         time.sleep(3)
         for name, check in zip(battle_names, check_list):
@@ -169,7 +190,27 @@ class BattleManager:
             time.sleep(2)
             self.swipe_screen((0.5, 0.8), (0.5, 0.65), delay=0.5)
             time.sleep(2)
-
         # 返回主頁
         self.device.click(227, 915)
         time.sleep(1)
+
+if __name__ == "__main__":
+    # 初始化設備和OCR讀取器
+    device = u2.connect('emulator-5554')  # 替換為你的設備ID
+    img = device.screenshot(format='opencv')
+    # img = img [160:254, 9:99]
+    # hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    # mask_img = cv2.inRange(hsv, mask.red_mask_lower, mask.red_mask_upper)
+    # print(np.sum(mask_img))
+    # if np.sum(mask_img) > 30000 and np.sum(mask_img) < 35000:
+    #     print("紅色區域存在")
+    # cv2.imshow("img", mask_img)
+    # cv2.waitKey(0)
+    reader = easyocr.Reader(['ch_tra', 'en'])
+    battle_manager = BattleManager(device, reader)
+    # img = battle_manager.capture_screenshot()
+    # result = reader.readtext(img)
+    # print(f"OCR結果：{result}")
+    # battle_manager.handle_battle("神樹試煉")
+    # # 執行所有戰鬥實例
+    battle_manager.execute_all_battles()

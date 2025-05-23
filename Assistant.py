@@ -8,8 +8,9 @@ import mask
 
 
 class assistant(device):
-    def __init__(self, d: device):
+    def __init__(self, d: device, cnn_model):
         super().__init__(d)
+        self.cnn_model = cnn_model
 
     def go_to_get_assistant(self):
         self.device.click(311, 915)

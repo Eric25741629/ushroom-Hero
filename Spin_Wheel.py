@@ -7,7 +7,7 @@ import uiautomator2 as u2
 
 
 class spin_wheel(device):
-    def __init__(self, device: u2.Device):
+    def __init__(self, device: u2.Device,cnn_model=None):
         self.device = device
 
     def spin(self):

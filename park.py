@@ -87,7 +87,7 @@ class ParkMarket(device):
             with open(self.data_file, 'r') as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
-            print(f"Error decoding JSON data: {e}")
+            #print(f"Error decoding JSON data: {e}")
             # 文件格式错误，返回默认值
             return {'car_market_timestamp': 0, 'car_market_buy_num': 0}
 
@@ -99,8 +99,8 @@ class ParkMarket(device):
         start_time = time.time()
         for img_name in img_list:
             error = 0
+            want_to_buy = cv2.imread(img_name)
             while (time.time() - start_time < 300):  # 限時 5 分鐘
-                want_to_buy = cv2.imread(img_name)
                 img = self.capture_screenshot()
                 res = cv2.matchTemplate(img, want_to_buy, cv2.TM_CCOEFF_NORMED)
                 min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
@@ -141,10 +141,12 @@ class ParkMarket(device):
 
 
 class ParkingManager:
-    def __init__(self, device: u2.Device, reader, ip):
+    def __init__(self, device: u2.Device, reader, ip,cnn_model):
         self.device = device
         self.reader = reader
+        self.device_ip = ip
         self.market = ParkMarket(device,  ip)
+        self.cnn_model = cnn_model
 
     def capture_screenshot(self):
         """取得當前螢幕截圖"""
@@ -156,6 +158,9 @@ class ParkingManager:
                 continue
             if img is not None:
                 break
+        if not os.path.exists("park_manager"):
+            os.mkdir("park_manager")
+        # cv2.imwrite(f"park_manager/{self.device_ip}_{time.time()}.jpg", img)
         return img
 
     def process_hsv(self, img, lower, upper, roi=None):
@@ -170,7 +175,7 @@ class ParkingManager:
         """檢測輪廓，根據最小面積過濾"""
         contours, _ = cv2.findContours(
             mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        # print([cv2.contourArea(contour) for contour in contours])
+        # #print([cv2.contourArea(contour) for contour in contours])
         return [contour for contour in contours if cv2.contourArea(contour) > min_area]
 
     def swipe_screen(self, start, end, steps=40, delay=0.01):
@@ -195,7 +200,7 @@ class ParkingManager:
             self.device.touch.up(*end)
             return True
         except Exception as e:
-            print(f"滑動螢幕失敗: {e}")
+            #print(f"滑動螢幕失敗: {e}")
             return False
 
     def count_cars(self, img):
@@ -242,7 +247,7 @@ class ParkingManager:
             mask = self.process_hsv(roi, np.array(
                 [16, 106, 222]), np.array([23, 167, 255]))
             if self.detect_contours(mask, min_area=10):
-                print("冷卻中，跳過該區域")
+                # #print("冷卻中，跳過該區域")
                 continue
             # 檢測是否「滿了」
             img2 = img[y - 10:y + park_template.shape[0], :119]  # 全區域 ROI
@@ -250,7 +255,7 @@ class ParkingManager:
             res = cv2.matchTemplate(img2, full_template, cv2.TM_CCOEFF_NORMED)
             full_loc = np.where(res >= 0.8)  # 判斷是否顯示「滿了」
             if len(full_loc[0]) > 0:
-                print("滿了車位，跳過該區域")
+                # #print("滿了車位，跳過該區域")
                 continue
 
             # 如果車位可用，加入列表
@@ -295,12 +300,12 @@ class ParkingManager:
                 np.abs(np.sum(img[199, 6]) - np.sum([58, 69, 107])) <= 10)
 
     def check_if_in_friend(self, img):
-        print(np.abs(np.sum(img[99, 425]) - np.sum([46, 50, 175])) <= 10 ,
-                np.abs(np.sum(img[90, 175]) - np.sum([52, 63, 191])) <= 10 ,
-                np.abs(np.sum(img[175, 87]) - np.sum([196, 226, 237])) <= 10 ,
-                np.abs(np.sum(img[177, 127]) - np.sum([197, 227, 238])) <= 10 ,
-                np.abs(np.sum(img[195, 22]) - np.sum([41, 66, 100])) <= 10 ,
-                np.abs(np.sum(img[329, 527]) - np.sum([40, 65, 99])) <= 10)
+        #print(np.abs(np.sum(img[99, 425]) - np.sum([46, 50, 175])) <= 10,
+            #   np.abs(np.sum(img[90, 175]) - np.sum([52, 63, 191])) <= 10,
+            #   np.abs(np.sum(img[175, 87]) - np.sum([196, 226, 237])) <= 10,
+            #   np.abs(np.sum(img[177, 127]) - np.sum([197, 227, 238])) <= 10,
+            #   np.abs(np.sum(img[195, 22]) - np.sum([41, 66, 100])) <= 10,
+            #   np.abs(np.sum(img[329, 527]) - np.sum([40, 65, 99])) <= 10)
 
         return (np.abs(np.sum(img[99, 425]) - np.sum([46, 50, 175])) <= 10 and
                 np.abs(np.sum(img[90, 175]) - np.sum([52, 63, 191])) <= 10 and
@@ -312,6 +317,8 @@ class ParkingManager:
     def park_car(self):
         """停車選車流程"""
         error = 0
+        # 載入所有 unpark 模板
+        unpark_templates = [cv2.imread(f'unpark{i}.jpg') for i in range(1, 5)]
         while error < 10:
             parked = False
             img = self.capture_screenshot()
@@ -325,25 +332,44 @@ class ParkingManager:
                 x, y, w, h = point
                 img1 = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)[
                     y+625:y+65+625, x:x+65]
-                # 讀取unpark 和unpark2 的圖片逕行相似度比
-                print(img1.shape)
-                print(cv2.imread('unpark1.jpg').shape)
-                print(cv2.imread('unpark2.jpg').shape)
+                img2 = img[y+625:y+65+625, x:x+65]
+                # 讀取unpark 和unpark2 的圖片進行相似度比
                 try:
                     unpark_template = cv2.imread('unpark1.jpg')
                     res = cv2.matchTemplate(
-                        img1, unpark_template, cv2.TM_CCOEFF_NORMED)
+                        img2, unpark_template, cv2.TM_CCOEFF_NORMED)
                     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-                    print("相似度", max_val)
-                    if max_val > 0.8:
+                    # #print("相似度", max_val)
+                    if max_val > 0.65:
+                        # # cv2.imwrite('{}.jpg'.format(time.time()), img2)
                         continue
                     unpark_template = cv2.imread('unpark2.jpg')
                     res = cv2.matchTemplate(
-                        img1, unpark_template, cv2.TM_CCOEFF_NORMED)
+                        img2, unpark_template, cv2.TM_CCOEFF_NORMED)
                     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-                    print("相似度", max_val)
-                    if max_val > 0.8:
+                    # #print("相似度", max_val)
+                    if max_val > 0.65:
+                        # # cv2.imwrite('{}.jpg'.format(time.time()), img2)
                         continue
+
+                    unpark_template = cv2.imread('unpark3.jpg')
+                    res = cv2.matchTemplate(
+                        img2, unpark_template, cv2.TM_CCOEFF_NORMED)
+                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                    #print("相似度", max_val)
+                    if max_val > 0.65:
+                        # # cv2.imwrite('{}.jpg'.format(time.time()), img2)
+                        continue
+
+                    unpark_template = cv2.imread('unpark4.jpg')
+                    res = cv2.matchTemplate(
+                        img2, unpark_template, cv2.TM_CCOEFF_NORMED)
+                    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+                    #print("相似度", max_val)
+                    if max_val > 0.65:
+                        # # cv2.imwrite('{}.jpg'.format(time.time()), img2)
+                        continue
+
                 except Exception as e:
                     print(f"Error: {e}")
                 mask = cv2.inRange(img1, (56, 42, 139), (71, 147, 255))
@@ -361,7 +387,13 @@ class ParkingManager:
                     self.device.click(272, 792)
                     time.sleep(1)
                     img = self.capture_screenshot()
-                    if self.check_cost(img):
+                    if self.check_cost(img) and self.device_ip == "emulator-5554":
+                        self.device.click(402, 501)
+                        time.sleep(0.5)
+                        self.device.click(402, 549)
+                        time.sleep(0.5)
+                        self.device.click(277, 616)
+                    elif self.check_cost(img):
                         self.device.click(277, 616)
                     else:
                         self.device.click(375, 554)
@@ -369,13 +401,13 @@ class ParkingManager:
                     parked = True
                     break
                 else:
-                    print("繼續尋找可用車")
+                    #print("繼續尋找可用車")
                     error += 1
                     time.sleep(1)
             if parked:
                 break
             self.swipe_screen(
-                (483, 705), (186 - 78-78, 705), delay=0.5)
+                (383, 705), (186 - 78-78, 705), delay=0.5)
             time.sleep(1.5)
 
     def check_and_park(self):
@@ -404,10 +436,10 @@ class ParkingManager:
         img = self.capture_screenshot()
         car_count = len(self.count_cars(img))
 
-        print(f"目前停車數量: {car_count}")
+        #print(f"目前停車數量: {car_count}")
 
         if car_count >= 5:
-            print("停車位已滿")
+            #print("停車位已滿")
             self.device.click(475, 919)  # 返回按鈕
             time.sleep(2)
             self.device.click(321, 913)  # 返回主畫面
@@ -426,15 +458,15 @@ class ParkingManager:
                 continue
 
             available_spots = self.find_parking_spots(img)
-            print(f"找到 {len(available_spots)} 個可用車位")
+            # #print(f"找到 {len(available_spots)} 個可用車位")
             if not available_spots:
-                print("沒有找到車位，滑動重新搜尋")
+                # #print("沒有找到車位，滑動重新搜尋")
                 self.swipe_screen((0.5, 0.75), (0.5, 0.22),
                                   delay=0.4)  # 執行停車主流程
                 time.sleep(1)
                 continue
             for spot in available_spots:
-                print(f"嘗試停車位置: {spot}")
+                # #print(f"嘗試停車位置: {spot}")
                 self.device.click(int(spot[0])+30, int(spot[1])+10)
                 time.sleep(2)
                 self.device.click(528, 200)  # 點擊「收起已停車」
@@ -459,7 +491,7 @@ class ParkingManager:
                     time.sleep(2)
                     img = self.capture_screenshot()
                     car_count = len(self.count_cars(img))
-                    print(f"目前停車數量: {car_count}")
+                    #print(f"目前停車數量: {car_count}")
                     if car_count >= 5:
                         break
                 else:
@@ -483,7 +515,7 @@ class ParkingManager:
         return True
 
     def check_if_12hour(self):
-        if datetime.datetime.now().hour <12:
+        if datetime.datetime.now().hour < 12:
             return
         img = self.capture_screenshot()
         for car in self.count_cars(img):
@@ -495,14 +527,13 @@ class ParkingManager:
             img = self.capture_screenshot()
             result = self.reader.readtext(img[413:442, 359:422], detail=0)
             if 'O/m' in result or '0/m' in result:
-                print("full")
+                #print("full")
                 self.device.click(375, 744)
                 time.sleep(2)
                 self.device.click(379, 552)
                 time.sleep(2)
             self.device.click(509, 56)
             time.sleep(2)
-
 
     def check_collapse(self, img):
         """檢查是否有障礙物或車位問題"""

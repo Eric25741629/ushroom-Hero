@@ -1,6 +1,7 @@
 import numpy as np
 import uiautomator2 as u2
 import time
+import subprocess
 
 
 class device:
@@ -39,3 +40,28 @@ class device:
             raise RuntimeError(
                 "Maximum attempts reached without capturing valid screenshot")
         return img
+def get_adb_devices():
+    """
+    Retrieves a list of connected Android devices using ADB.
+
+    Returns:
+        A list of device serial numbers (strings).  Returns an empty list
+        if ADB is not found or no devices are connected.
+    """
+    try:
+        # Run the adb devices command and capture the output
+        result = subprocess.check_output(['adb', 'devices'], universal_newlines=True)
+
+        # Parse the output to extract device serial numbers
+        devices = []
+        for line in result.splitlines():
+            parts = line.split('\t')
+            if len(parts) == 2 and parts[1] == 'device':
+                devices.append(parts[0])
+        return devices
+    except FileNotFoundError:
+        print("ADB not found. Please ensure ADB is installed and in your system's PATH.")
+        return []
+    except subprocess.CalledProcessError as e:
+        print(f"ADB command failed with error: {e}")
+        return []
