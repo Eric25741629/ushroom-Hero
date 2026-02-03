@@ -1,0 +1,28 @@
+{
+  "classes": [
+    "dirt",
+    "dug_pit",
+    "empty",
+    "one_hit_rock",
+    "reachable_pit",
+    "rock",
+    "unreachable_dirt",
+    "unreachable_empty",
+    "unreachable_pit",
+    "unreachable_rock"
+  ],
+  "num_classes": 10,
+  "args": {
+    "data_dir": "A:\\菇勇者全自動掛機\\miner\\dataset\\mines",
+    "epochs": 10,
+    "batch_size": 32,
+    "lr": 0.001,
+    "val_split": 0.3,
+    "save_dir": "checkpoints",
+    "num_workers": 3,
+    "device": "cuda",
+    "seed": 42,
+    "use_weighted_loss": false,
+    "use_weighted_sampler": false
+  }
+}

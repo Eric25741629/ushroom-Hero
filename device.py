@@ -41,6 +41,7 @@ class device:
                 "Maximum attempts reached without capturing valid screenshot")
         return img
 def get_adb_devices():
+
     """
     Retrieves a list of connected Android devices using ADB.
 
@@ -65,3 +66,35 @@ def get_adb_devices():
     except subprocess.CalledProcessError as e:
         print(f"ADB command failed with error: {e}")
         return []
+    
+def close_nofication(d):
+    try:
+        d.open_quick_settings()
+        if not d.xpath('//*[@content-desc="方向鎖定"]').info.get("checked"):
+            d.xpath('//*[@content-desc="方向鎖定"]').click()   
+        if not d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
+            d.xpath('//*[@content-desc="勿擾模式"]').click()  
+        d.click(0.71, 0.016)
+        if d(className="android.widget.FrameLayout", packageName="mrv.masked.com.facebook.orca").exists:
+            print("有FB")
+            point = d(className="android.widget.FrameLayout", packageName="mrv.masked.com.facebook.orca").info.get("bounds")
+            x1,y1,x2,y2 = point.get("left"),point.get("top"),point.get("right"),point.get("bottom")
+            print(x1,y1,x2,y2)
+            print(point)
+            middle_x = (x1 + x2) / 2
+            middle_y = (y1 + y2) / 2
+            print(middle_x, middle_y)
+            d.swipe(middle_x, middle_y,500, 2141,duration=0.2)
+    except Exception as e:
+        print(f"An error occurred: {e}")  
+def open_nofication(d):
+    try:
+        d.open_quick_settings()
+        if not d.xpath('//*[@content-desc="方向鎖定"]').info.get("checked"):
+            d.xpath('//*[@content-desc="方向鎖定"]').click()   
+        if d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
+            d.xpath('//*[@content-desc="勿擾模式"]').click()  
+        d.click(0.71, 0.016)
+        time.sleep(1)
+    except Exception as e:
+        print(f"An error occurred: {e}")

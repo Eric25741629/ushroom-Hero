@@ -46,7 +46,7 @@ class device:
         if not os.path.exists("mission"):
             os.mkdir("mission")
         # 儲存截圖
-        cv2.imwrite(f"mission/mission_{time.time()}.png", img)
+        # cv2.imwrite(f"mission/mission_{time.time()}.png", img)
         return img
 
 
@@ -63,13 +63,13 @@ class mission(device):
         """
         if not os.path.exists(self.data_file):
             # 新增文件
-            with open(self.data_file, 'w') as f:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
                 json.dump({'mission_timestamp': 0,
                           'mission_num': 0}, f)
             return {'mission_timestamp': 0, 'mission_num': 0}  # 返回默认值
 
         try:
-            with open(self.data_file, 'r') as f:
+            with open(self.data_file, 'r', encoding='utf-8') as f:
                 return json.load(f)
         except json.JSONDecodeError as e:
             print(f"Error decoding JSON data: {e}")
@@ -91,7 +91,7 @@ class mission(device):
             data['mission_num'] = buy_num
 
             # 寫入 JSON 文件
-            with open(self.data_file, 'w') as f:
+            with open(self.data_file, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=4)
 
             print(
@@ -147,17 +147,14 @@ class mission(device):
 
         # 定義條件
         mission_conditions = [
-            ((347, 434), [168, 111, 72]),
             ((353, 372), [173, 113, 67]),
             ((352, 366), [166, 117, 61]),
             ((360, 375), [172, 109, 75]),
             ((359, 428), [176, 114, 73]),
-            ((347, 425), [175, 114, 64]),
             ((342, 436), [179, 115, 74]),
             ((356, 437), [172, 114, 65]),
             ((354, 290), [105, 122, 148]),
             ((352, 269), [105, 124, 145]),
-            ((362, 416), [213, 243, 254]),
             ((362, 438), [213, 243, 254])
         ]
 
@@ -176,7 +173,10 @@ class mission(device):
         """
         執行任務。
         """
-        self.device.click(46, 140)
+        if "fc65396d" in self.device_ip:
+            self.device.click(46, 178)
+        else:
+            self.device.click(46, 140)
         time.sleep(2)
         current_time = datetime.datetime.now()
         if current_time.weekday() == 0:
@@ -189,7 +189,7 @@ class mission(device):
             self.device.click(18, 337)
             time.sleep(1)
         start = time.time()
-        print(self.done_mission())
+
         while (self.done_mission() and time.time() - start < 60):
             self.device.click(420,  352)
             time.sleep(0.3)
@@ -206,7 +206,10 @@ class mission(device):
         """
         執行任務。
         """
-        self.device.click(500, 142)
+        if "fc65396d" in self.device_ip:
+            self.device.click(500, 182)
+        else:
+            self.device.click(500, 142)
         time.sleep(2)
         self.do_mission2_1()
 
@@ -218,7 +221,9 @@ class mission(device):
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         # 進行 HSV 篩選紅色
         mask = cv2.inRange(hsv, red_mask_lower, red_mask_upper)
-        if np.sum(mask) > 0 and abs(np.sum(mask)-12240) < 100:
+        # 使用 Python int 避免 numpy 無號類型在算術運算時溢位
+        mask_sum = int(np.sum(mask))
+        if mask_sum > 0 and abs(mask_sum - 12240) < 100:
             self.device.click(425, 289)
             time.sleep(2)
         self.device.click(118, 798)
@@ -229,6 +234,7 @@ class mission(device):
         time.sleep(0.5)
         self.device.click(276, 64)
         time.sleep(1)
+
     def do_mission2_1(self):
         img = self.device.screenshot(format='opencv')
         conditions =[abs(np.sum(img[231,126]) - np.sum([137, 207, 220])) < 10, abs(np.sum(img[245,258]) - np.sum([76, 99, 191])) < 10, abs(np.sum(img[276,385]) - np.sum([23, 41, 112])) < 10, abs(np.sum(img[316,469]) - np.sum([47, 102, 163])) < 10, abs(np.sum(img[229,422]) - np.sum([95, 122, 203])) < 10, abs(np.sum(img[321,168]) - np.sum([215, 234, 255])) < 10, abs(np.sum(img[285,140]) - np.sum([192, 241, 255])) < 10, abs(np.sum(img[297,269]) - np.sum([108, 152, 241])) < 10, abs(np.sum(img[312,269]) - np.sum([109, 165, 236])) < 10, abs(np.sum(img[346,289]) - np.sum([175, 213, 225])) < 10, abs(np.sum(img[327,304]) - np.sum([111, 176, 221])) < 10, abs(np.sum(img[213,474]) - np.sum([3, 24, 216])) < 10]
@@ -260,6 +266,6 @@ class mission(device):
                 buy_num = self.get_buy_data()[1]
                 self.record(buy_num+1)
 if __name__ == '__main__':
-    d = u2.connect('emulator-5560')
-    m = mission(d, 'emulator-5560')
+    d = u2.connect('fc65396d')
+    m = mission(d, 'fc65396d')
     m.do_allmission()
