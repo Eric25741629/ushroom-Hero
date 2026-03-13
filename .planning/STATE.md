@@ -1,3 +1,16 @@
+---
+gsd_state_version: 1.0
+milestone: v1.0
+milestone_name: milestone
+status: unknown
+last_updated: "2026-03-13T14:07:03.112Z"
+progress:
+  total_phases: 8
+  completed_phases: 1
+  total_plans: 2
+  completed_plans: 2
+---
+
 ﻿# STATE
 
 ## Project Reference
@@ -25,3 +38,9 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 - 打車流程尚未開發，已列為 v2 deferred。
 - 已確認 STAB-03 與 WEB-01 為 existing validated。
 - 新增 OCR 智慧運維與網頁營運指標需求。
+
+## Accumulated Context
+
+### Roadmap Evolution
+- Phase 01.1 inserted after Phase 1: MuMu 模擬器管理與卡死自動重啟（control.exe: launch/shutdown/restart/show_window/hide_window + emulator* 卡死偵測） (URGENT)
+

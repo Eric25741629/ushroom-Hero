@@ -28,14 +28,22 @@ Success criteria:
 
 ### Phase 01.1: MuMu 模擬器管理與卡死自動重啟（control.exe: launch/shutdown/restart/show_window/hide_window + emulator* 卡死偵測） (INSERTED)
 
-**Goal:** 建立 MuMu 12 模擬器控制與卡死自動重啟閉環，確保 `emulator-*` 在卡死後可自動恢復。
+**Goal:** 建立 MuMu 12 模擬器控制與低成本卡死偵測/自動重啟閉環，確保 `emulator-*` 在卡死或斷線後可自動恢復。
 **Requirements**: PHASE-01.1
 **Depends on:** Phase 1
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 - [ ] 01.1-01-PLAN.md - MuMu Control + Watchdog Core
 - [ ] 01.1-02-PLAN.md - Recovery Orchestration + Observability
+
+Success criteria:
+1. 已封裝 `control -v <index> launch/shutdown/restart/show_window/hide_window`，並支援 `emulator-5554=0`、`emulator-5556=1`、其餘依序遞增。
+2. 卡死偵測採分層策略：L0（心跳+輕量 adb ping）、L1（可疑時才做截圖 hash）、L2（stale + (畫面凍結或 adb 連續失敗) 才判定）。
+3. 若裝置已離線，流程不依賴截圖，直接走連線恢復/重啟路徑。
+4. 高風險操作具操作級 timeout（如 8-12 秒），逾時先局部恢復，連續失敗才升級重啟。
+5. 重啟保護已落地：cooldown + 每小時最大重啟次數，避免重啟風暴。
+6. 單一裝置卡死與重啟不影響其他裝置循環，且重啟結果可在狀態與日誌中追蹤。
 
 ### Phase 2: OCR 智慧運維
 Goal: 建立 OCR 失敗資料閉環，讓辨識品質可持續進化。
@@ -85,4 +93,5 @@ Success criteria:
 
 ---
 *Roadmap revised: 2026-03-13*
+
 
