@@ -139,3 +139,38 @@ def get_all_states() -> Dict[str, Dict[str, Any]]:
         # 簡單的淺拷貝通常就夠了，因為我們只讀取第一層 key
         # 但為了保險起見，這裡做一個快照
         return copy.deepcopy(_states)
+
+
+def record_emulator_restart(ip: str, reason: str, when_ts: Optional[float] = None):
+    """Record emulator restart metrics for dashboard visibility."""
+    ts = when_ts if when_ts is not None else time.time()
+    with get_device_lock(ip):
+        if ip not in _states:
+            init_device(ip)
+        st = _states[ip]
+        st["restart_count"] = int(st.get("restart_count", 0)) + 1
+        st["last_restart_at"] = ts
+        st["last_restart_reason"] = reason
+        st["last_update"] = ts
+
+
+def update_watchdog_probe(ip: str, level: str = "L0", adb_failures: Optional[int] = None):
+    """Update watchdog probe state (L0/L1/L2) for dashboard visibility."""
+    with get_device_lock(ip):
+        if ip not in _states:
+            init_device(ip)
+        st = _states[ip]
+        st["watchdog_level"] = level
+        if adb_failures is not None:
+            st["adb_consecutive_failures"] = int(adb_failures)
+        st["last_update"] = time.time()
+
+
+def get_heartbeat_age_sec(ip: str, now_ts: Optional[float] = None) -> float:
+    """Return elapsed seconds since last heartbeat update."""
+    now = now_ts if now_ts is not None else time.time()
+    with get_device_lock(ip):
+        if ip not in _states:
+            return float("inf")
+        last = float(_states[ip].get("last_update", 0) or 0)
+    return max(0.0, now - last)
