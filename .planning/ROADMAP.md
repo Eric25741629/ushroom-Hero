@@ -26,6 +26,17 @@ Success criteria:
 3. 非法轉移會被阻擋並落日誌。
 4. 逾時狀態可自動轉移到 Recovering 或 Error。
 
+### Phase 01.1: MuMu 模擬器管理與卡死自動重啟（control.exe: launch/shutdown/restart/show_window/hide_window + emulator* 卡死偵測） (INSERTED)
+
+**Goal:** 建立 MuMu 12 模擬器控制與卡死自動重啟閉環，確保 `emulator-*` 在卡死後可自動恢復。
+**Requirements**: PHASE-01.1
+**Depends on:** Phase 1
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01.1-01-PLAN.md - MuMu Control + Watchdog Core
+- [ ] 01.1-02-PLAN.md - Recovery Orchestration + Observability
+
 ### Phase 2: OCR 智慧運維
 Goal: 建立 OCR 失敗資料閉環，讓辨識品質可持續進化。
 Requirements: OCR-01, OCR-02, OCR-03
@@ -74,3 +85,4 @@ Success criteria:
 
 ---
 *Roadmap revised: 2026-03-13*
+
