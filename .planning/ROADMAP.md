@@ -31,11 +31,12 @@ Success criteria:
 **Goal:** 建立 MuMu 12 模擬器控制與低成本卡死偵測/自動重啟閉環，確保 `emulator-*` 在卡死或斷線後可自動恢復。
 **Requirements**: PHASE-01.1
 **Depends on:** Phase 1
-**Plans:** 2/2 plans complete
+**Plans:** 3/3 plans complete
 
 Plans:
 - [ ] 01.1-01-PLAN.md - MuMu Control + Watchdog Core
 - [ ] 01.1-02-PLAN.md - Recovery Orchestration + Observability
+- [x] 01.1-03-PLAN.md - MuMuManager path compatibility gap closure (completed 2026-03-15)
 
 Success criteria:
 1. 已封裝 `control -v <index> launch/shutdown/restart/show_window/hide_window`，並支援 `emulator-5554=0`、`emulator-5556=1`、其餘依序遞增。
@@ -124,6 +125,8 @@ Plans:
 
 ---
 *Roadmap revised: 2026-03-13*
+
+
 
 
 

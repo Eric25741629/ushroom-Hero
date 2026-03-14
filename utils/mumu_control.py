@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import subprocess
 import time
@@ -33,20 +33,21 @@ def resolve_emulator_index(serial: str, overrides: Optional[Dict[str, int]] = No
 
 
 def build_control_args(index: int, action: str) -> list[str]:
-    """Build control.exe args."""
+    """Build MuMu control args."""
     valid_actions = {"launch", "shutdown", "restart", "show_window", "hide_window"}
     if action not in valid_actions:
         raise ValueError(f"Unsupported action: {action}")
-    return ["-v", str(int(index)), action]
+    return ["control", "-v", str(int(index)), action]
 
 
 def discover_control_exe(candidates: Optional[Iterable[str]] = None) -> Optional[str]:
-    """Find MuMu control.exe from common install paths."""
+    """Find MuMu control executable.
+
+    UAT confirmed this environment uses MuMuManager.exe as the only valid control entry.
+    """
     if candidates is None:
         candidates = [
-            r"C:\Program Files\Netease\MuMuPlayer-12.0\shell\Hypervisor\control.exe",
-            r"C:\Program Files\Netease\MuMuPlayerGlobal-12.0\shell\Hypervisor\control.exe",
-            r"C:\Program Files\MuMuPlayer-12.0\shell\Hypervisor\control.exe",
+            r"C:\Program Files\Netease\MuMuPlayer\nx_main\MuMuManager.exe",
         ]
     for p in candidates:
         if p and os.path.exists(p):
@@ -65,7 +66,7 @@ class ControlResult:
 
 
 class MuMuController:
-    """Wrapper for MuMu control.exe operations."""
+    """Wrapper for MuMu executable operations."""
 
     def __init__(
         self,
@@ -77,6 +78,7 @@ class MuMuController:
         self.control_exe_path = control_exe_path
         self.serial_to_index_overrides = serial_to_index_overrides or {}
         self._runner = runner or subprocess.run
+        self.logger.info("MuMu executable selected: %s", self.control_exe_path)
 
     def resolve_index(self, serial: str) -> int:
         return resolve_emulator_index(serial, self.serial_to_index_overrides)
@@ -140,3 +142,4 @@ class MuMuController:
 
     def hide_window(self, serial: str, timeout_sec: int = 20) -> ControlResult:
         return self.run_action(serial, "hide_window", timeout_sec=timeout_sec)
+

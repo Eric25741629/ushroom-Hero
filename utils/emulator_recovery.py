@@ -1,9 +1,13 @@
 ﻿import time
+import logging
 from dataclasses import dataclass
 from typing import Callable
 
 from utils.emulator_watchdog import HangDetector, WatchdogSample
 from utils.mumu_control import MuMuController
+
+
+_logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,13 +23,7 @@ class RecoveryResult:
 
 
 class EmulatorRecoveryOrchestrator:
-    """模擬器自動恢復協調器。
-
-    設計重點：
-    - 只在偵測卡死時才重啟
-    - 使用 cooldown + hourly cap 防止重啟風暴
-    - restart 後要做健康檢查（可注入不同實作）
-    """
+    """模擬器自動恢復協調器。"""
 
     def __init__(
         self,
@@ -42,35 +40,33 @@ class EmulatorRecoveryOrchestrator:
         self.cooldown_sec = cooldown_sec
         self._restart_timestamps: dict[str, list[float]] = {}
 
+        _logger.info(
+            "MuMu recovery uses executable: %s",
+            getattr(self.controller, "control_exe_path", "<unknown>"),
+        )
+
     def _can_restart(self, serial: str, now: float) -> bool:
         arr = self._restart_timestamps.setdefault(serial, [])
-        # 僅保留近一小時重啟紀錄
         arr[:] = [t for t in arr if now - t <= 3600]
 
-        # 冷卻保護：避免短時間內連續重啟
         if arr and (now - arr[-1]) < self.cooldown_sec:
             return False
 
-        # 每小時重啟上限
         return len(arr) < self.max_restarts_per_hour
 
     def check_and_recover(self, serial: str, sample: WatchdogSample) -> RecoveryResult:
         started = time.time()
 
-        # 健康就直接返回，不做昂貴操作
         if not self.detector.is_hung(sample):
             return RecoveryResult(False, "healthy", True, time.time() - started)
 
-        # 卡死但被節流策略擋下
         if not self._can_restart(serial, sample.timestamp):
             return RecoveryResult(False, "restart_throttled", False, time.time() - started)
 
-        # 執行 restart
         action = self.controller.restart(serial)
         if action.ok:
             self._restart_timestamps[serial].append(sample.timestamp)
 
-        # restart 成功後才做健康檢查
         healthy_after = self.health_check(serial) if action.ok else False
         return RecoveryResult(
             restarted=bool(action.ok),
