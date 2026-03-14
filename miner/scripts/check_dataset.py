@@ -17,12 +17,13 @@ import numpy as np
 from tqdm import tqdm
 
 from simplecnn import SimpleCNN, resize_size
+from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR, DATASET_ERROR_DIR_STR
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description='使用 CNN 模型檢查資料集中信心度低的樣本')
     parser.add_argument('--dataset-dir', type=str, 
-                       default=r'A:\菇勇者全自動掛機\dataset\low_confidence',
+                       default=DATASET_LOW_CONFIDENCE_DIR_STR,
                        help='資料集根目錄(包含類別子資料夾)或單一類別資料夾')
     parser.add_argument('--model-path', type=str,
                        default='checkpoints/best.pth',
@@ -32,10 +33,10 @@ def parse_args():
     parser.add_argument('--move-threshold', type=float, default=0.8,
                        help='移動閾值,只有信心度高於此值的樣本才會被移動')
     parser.add_argument('--output-dir', type=str,
-                       default=r'A:\菇勇者全自動掛機\dataset\low_confidence',
+                       default=DATASET_LOW_CONFIDENCE_DIR_STR,
                        help='輸出高信心度樣本的目錄(按預測類別分類)')
     parser.add_argument('--error-dir', type=str,
-                       default='dataset/error',
+                       default=DATASET_ERROR_DIR_STR,
                        help='輸出預測錯誤樣本的目錄')
     parser.add_argument('--move-files', action='store_true',
                        help='是否移動(而非複製)低信心度和錯誤檔案')

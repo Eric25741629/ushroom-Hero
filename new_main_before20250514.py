@@ -65,6 +65,7 @@ from miner.rl.rl_recorder import RLRecorder
 import shlex
 import BUY
 from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
+from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 
 def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
     # 為該設備設定獨立的 logger（按 IP 分檔），先建立 logger 以便連線階段可記錄
@@ -94,7 +95,7 @@ def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce
     family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
     state_manager = state(device=d, cnn_model=Cnn_model)
     # assistant_manager = assistant(d=d, cnn_model=Cnn_model)
-    clf = ClassifierCNN(model=oralce_cnn_model, classes=oralce_classes, dataset_root="dataset/low_confidence")
+    clf = ClassifierCNN(model=oralce_cnn_model, classes=oralce_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
 
     # 建立 RL 記錄器（記錄但不自動訓練）
     rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))

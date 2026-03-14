@@ -7,7 +7,7 @@ from tools import click_white
 
 # 週期常數
 SEA_CYCLE_WEEKS = 4
-MUSHROOM_ARENA_CYCLE_WEEKS = 4
+MUSHROOM_ARENA_CYCLE_WEEKS = 3
 
 
 def should_execute_sea(ip: str) -> tuple:

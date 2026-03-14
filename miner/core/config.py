@@ -52,8 +52,10 @@ COST_TABLE: Dict[str, Optional[int]] = {
     "dug_pit": 0,    # 已挖過
     # 可直接鏟：
     "dirt": 1,
+    "unreachable_dirt": 1,
     "one_hit_rock": 1,
     "rock": 2,
+    "unreachable_rock": 2,
     # 礦：reachable_pit 目前仍需 1 次鏟子，unreachable_pit 不能直接進入（由工具或打通後再算）
     "reachable_pit": 1,
     # unreachable_pit 不可直接鏟，用工具才有意義；讓 enter_cost 回傳 None（透過特別處理）
@@ -91,10 +93,13 @@ DEFAULT_CLASSES: Sequence[str] = (
 HIT_TABLE = {
     "empty": 0,
     "dirt": 1,
+    "unreachable_dirt": 1,
     "rock": 2,
+    "unreachable_rock": 2,
     "one_hit_rock": 1,
     "pit": 1,
     "reachable_pit": 1,
+    "unreachable_pit": 1,
     "dug_pit": 0,
     "unreachable_empty": 0, # 本身是空地，不需要點擊
 }

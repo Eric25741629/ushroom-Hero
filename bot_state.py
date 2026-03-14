@@ -23,6 +23,10 @@ _pause_events: Dict[str, threading.Event] = {}
 # 全域鎖，用於操作 _states 字典本身 (例如新增/刪除 key)
 _global_lock = threading.Lock()
 
+# refresh flag for prompting immediate ADB rescan
+_refresh_needed = False
+
+
 def get_device_lock(ip: str) -> threading.Lock:
     """獲取指定設備的鎖，如果不存在則創建"""
     with _global_lock:
@@ -174,3 +178,67 @@ def get_heartbeat_age_sec(ip: str, now_ts: Optional[float] = None) -> float:
             return float("inf")
         last = float(_states[ip].get("last_update", 0) or 0)
     return max(0.0, now - last)
+
+
+def set_refresh_needed():
+    """Set a global one-shot flag indicating workers should refresh device list.
+
+    This is intended to be called by the master (e.g. via web UI) to notify
+    the main loop to perform an immediate scan. The flag is cleared when a
+    worker calls `check_refresh_needed()`.
+    """
+    global _refresh_needed
+    with _global_lock:
+        _refresh_needed = True
+
+
+def clear_refresh_needed():
+    """Clear the refresh flag without consuming it."""
+    global _refresh_needed
+    with _global_lock:
+        _refresh_needed = False
+
+
+def check_refresh_needed() -> bool:
+    """Atomically check and consume the refresh flag.
+
+    Returns True if a refresh was requested (and clears the flag), otherwise False.
+    """
+    global _refresh_needed
+    with _global_lock:
+        if _refresh_needed:
+            _refresh_needed = False
+            return True
+        return False
+
+
+# skip_sleep one-shot flags
+_skip_sleep_flags: Dict[str, bool] = {}
+
+
+def set_skip_sleep(ip: str):
+    """Mark that the given device should skip its next sleep cycle (one-shot).
+
+    Called by the control panel or remote command. Workers should call
+    `check_skip_sleep(ip)` to consume the flag.
+    """
+    with _global_lock:
+        _skip_sleep_flags[ip] = True
+
+
+def clear_skip_sleep(ip: str):
+    """Clear skip_sleep flag for device without consuming it."""
+    with _global_lock:
+        if ip in _skip_sleep_flags:
+            del _skip_sleep_flags[ip]
+
+
+def check_skip_sleep(ip: str) -> bool:
+    """Atomically check and consume the skip_sleep flag for `ip`.
+
+    Returns True if a skip was requested, otherwise False.
+    """
+    with _global_lock:
+        if _skip_sleep_flags.pop(ip, False):
+            return True
+        return False

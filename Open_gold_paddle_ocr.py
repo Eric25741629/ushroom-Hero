@@ -12,6 +12,7 @@ import argparse
 import re
 from typing import Optional, List, Dict, Tuple
 from img_tools import click_str_by_server
+from config.paths import OCR_FAILS_DIR_STR
 current_index = 0
 OCR_SERVER_URL = "http://100.64.0.7:5001"  # OCR 服務器地址
 # 全域預設：是否比對機率
@@ -766,8 +767,8 @@ def save_low_confidence_screenshot(img, poly, text, score, stage_type):
     """保存低信心度截圖"""
     try:
         import os
-        if not os.path.exists("ocr_fails"):
-            os.makedirs("ocr_fails")
+        if not os.path.exists(OCR_FAILS_DIR_STR):
+            os.makedirs(OCR_FAILS_DIR_STR)
         
         timestamp = int(time.time() * 1000)
         pts = np.asarray(poly, dtype=int)
@@ -780,7 +781,7 @@ def save_low_confidence_screenshot(img, poly, text, score, stage_type):
             return
             
         crop = img[y1:y2, x1:x2]
-        filename = f"ocr_fails/{stage_type}_low_confidence_{score:.3f}_{timestamp}.jpg"
+        filename = os.path.join(OCR_FAILS_DIR_STR, f"{stage_type}_low_confidence_{score:.3f}_{timestamp}.jpg")
         cv2.imwrite(filename, crop)
         print(f"低信心截圖: {filename} ('{text}', 信心: {score:.3f})")
     except Exception as e:

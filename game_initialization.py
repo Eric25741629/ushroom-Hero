@@ -18,6 +18,7 @@ from game_state.detector import get_stage
 from game_actions.reward_manager import reward
 from utils.logging_utils import logger, default_logger
 import new_cnn.cnn_model as cnn_model_module
+import bot_state
 
 def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn, 
                                reward_fn, logger: logging.Logger = None) -> bool:
@@ -85,6 +86,12 @@ def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn,
                 time.sleep(1)
                 unknown_count = 0
                 
+            elif current_stage == "前往活動":
+                logger.info(f"[{ip}] 檢測到前往活動頁面，點擊空白關閉")
+                click_white(d)
+                time.sleep(1)
+                unknown_count = 0
+
             elif current_stage == "購物管家":
                 logger.info(f"[{ip}] 檢測到購物管家頁面，返回主頁面")
                 img_tools.click_str_by_server(d, '採購', y_range=(690, 740))
@@ -98,8 +105,7 @@ def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn,
                     click_white(d)
                 time.sleep(2)
                 unknown_count = 0
-                logger.info(f"[{ip}] 已返回主頁面（購物管家分支）")
-                return True
+                # 不再直接 return，繼續循環直到確認進入主頁面
                 
             elif current_stage == "主頁面":
                 logger.info(f"[{ip}] 已到達主頁面")
@@ -113,15 +119,24 @@ def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn,
                 click_white(d)
                 time.sleep(1)
                 unknown_count = 0
+                # 處理完繼續下一輪檢查
                 
             elif current_stage == "異地登錄":
-                logger.warning(f"[{ip}] 偵測到異地登錄，重新啟動遊戲")
+                logger.warning(f"[{ip}] 偵測到異地登錄，停止遊戲")
                 d.app_stop("com.mxdzz.tw.and")
-                time.sleep(1)
-                start_game_fn(d, ip)
-                time.sleep(30 + random.randint(0, 5))
-                wait_time = time.time()
-                unknown_count = 0
+                
+                # 從 new_main_before20250514 匯入 Error（動態匯入避免循環參考）
+                try:
+                    from new_main_before20250514 import LoginConflictError
+                except ImportError:
+                    class LoginConflictError(Exception): pass
+                
+                # 更新狀態
+                wake_ts = time.time() + 3600
+                wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+                bot_state.update_state(ip, task="休眠中", step=f"偵測到異地登錄 (預計 {wake_time_str} 喚醒)", next_wake_at=wake_ts)
+                
+                raise LoginConflictError("啟動時偵測到異地登錄")
                 
             elif current_stage == "未知":
                 # 只在啟動後30秒才開始檢測未知頁面
@@ -150,13 +165,10 @@ def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn,
                     
             # ===== 超時檢查 =====
             if time.time() - wait_time > wait_timeout:
-                logger.warning(f"[{ip}] 等待超時 ({wait_timeout}秒)，重新啟動遊戲")
+                logger.warning(f"[{ip}] 遊戲啟動等待超時 ({wait_timeout}秒)")
                 d.app_stop("com.mxdzz.tw.and")
-                time.sleep(1)
-                start_game_fn(d, ip)
-                time.sleep(30 + random.randint(0, 5))
-                wait_time = time.time()
-                unknown_count = 0
+                # 返回 False，讓外層主迴圈決定休眠時間
+                return False
                 
         except Exception as e:
             logger.error(f"[{ip}] handle_game_startup_pages 發生異常: {e}", exc_info=True)
@@ -217,16 +229,29 @@ def check_on_line(Cnn_model, easyocr_reader):
         time.sleep(1)
         d.click(54, 364)
         time.sleep(3)
-        while (1):
-            img = d.screenshot(format='opencv')[181:260, 60:366]
-            result = str(easyocr_reader.readtext(img, detail=0))
-            if "上" in result:
-                logger.info("pass")
-                d.app_stop("com.mxdzz.tw.and")
-                return False
-            else:
-                d.app_stop("com.mxdzz.tw.and")
-                return True
+        
+        # 使用 PaddleOCR 進行判定
+        # 區域調整為包含文字可能出現的範圍
+        img = d.screenshot(format='opencv')[220:270, 180:380]
+        results = img_tools.get_all_text(img)
+        logger.info(f"線上狀態辨識結果: {results}")
+        
+        full_text = "".join(results)
+        # 只要出現代表時間的關鍵字，就判定為不在線上
+        if any(k in full_text for k in ["前", "離線", "小時", "分鐘", "天", "剛剛"]):
+            logger.info("確認帳號目前不在線上 (pass)")
+            d.app_stop("com.mxdzz.tw.and")
+            return False
+        # 如果明確偵測到「在線」，則判定為忙碌
+        elif "線上" in full_text:
+            logger.info("偵測到帳號正在線上 (busy)")
+            d.app_stop("com.mxdzz.tw.and")
+            return True
+        else:
+            # 其他情況 (如辨識不清) 預設判定為在線 (busy)
+            logger.info("未偵測到明確狀態，預設判定為在線 (busy)")
+            d.app_stop("com.mxdzz.tw.and")
+            return True
     elif get_stage(d, Cnn_model, easyocr_reader) == "異地登錄":
         d.app_stop("com.mxdzz.tw.and")
         time.sleep(5*60)

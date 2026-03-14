@@ -52,9 +52,67 @@ def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
     return result.stdout.strip()
 
 
+def safe_log(logger: logging.Logger, level: str, msg: str, *args, **kwargs):
+    """Call logger methods but swallow exceptions raised by handler emit (e.g., OSError on flush).
+
+    This prevents a logging handler failure from crashing the worker thread.
+    """
+    try:
+        if level == 'info':
+            logger.info(msg, *args, **kwargs)
+        elif level == 'warning':
+            logger.warning(msg, *args, **kwargs)
+        elif level == 'error':
+            logger.error(msg, *args, **kwargs)
+        elif level == 'debug':
+            logger.debug(msg, *args, **kwargs)
+        else:
+            logger.log(logging.INFO, msg, *args, **kwargs)
+    except Exception:
+        try:
+            # Fallback to printing minimal message to stderr
+            print(f"[LOG-{level.upper()}] {msg}", file=sys.stderr)
+        except Exception:
+            pass
+
+
+def wait_for_device_ready(serial: str, timeout: int = 60, logger: logging.Logger = None) -> bool:
+    """
+    等待設備完全啟動 (檢查 sys.boot_completed)
+    
+    Args:
+        serial: 設備序號
+        timeout: 最大等待秒數
+        logger: 日誌記錄器
+        
+    Returns:
+        bool: 設備是否就緒
+    """
+    if logger is None:
+        logger = default_logger
+        
+    start_time = time.time()
+    logger.info(f"[{serial}] 等待系統啟動 (sys.boot_completed)...")
+    
+    while time.time() - start_time < timeout:
+        try:
+            # 檢查 boot_completed 屬性
+            output = run_adb('shell getprop sys.boot_completed', device_serial=serial)
+            if output == '1':
+                logger.info(f"[{serial}] 系統已完全啟動")
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+        
+    logger.warning(f"[{serial}] 等待系統啟動超時 ({timeout}s)")
+    return False
+
+
 def connect_u2_with_retries(serial: str, max_retries: int = 5, initial_delay: int = 5, logger: logging.Logger = None) -> u2.Device:
     """
     嘗試用 uiautomator2 連線，多次重試並採用指數退避。
+    連線前會先確認設備系統已完全啟動。
     
     Args:
         serial: 設備序號或 IP 地址
@@ -71,23 +129,27 @@ def connect_u2_with_retries(serial: str, max_retries: int = 5, initial_delay: in
     if logger is None:
         logger = default_logger
 
+    # 先等待系統啟動 (僅針對 emulator 類型設備加強檢查)
+    if 'emulator' in serial or '127.0.0.1' in serial:
+        wait_for_device_ready(serial, timeout=30, logger=logger)
+
     last_exc = None
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"[{serial}] 嘗試連線 (attempt {attempt}/{max_retries})")
+            safe_log(logger, 'info', f"[{serial}] 嘗試連線 (attempt {attempt}/{max_retries})")
             d = u2.connect(serial)
             # 確認基本資訊可取得，避免回傳半連線物件
             _ = d.info
-            logger.info(f"[{serial}] 連線成功")
+            safe_log(logger, 'info', f"[{serial}] 連線成功")
             return d
         except Exception as e:
             last_exc = e
-            logger.warning(f"[{serial}] 連線失敗: {e}")
+            safe_log(logger, 'warning', f"[{serial}] 連線失敗: {e}")
             if attempt == max_retries:
-                logger.error(f"[{serial}] 已達最大重試次數 {max_retries}")
+                safe_log(logger, 'error', f"[{serial}] 已達最大重試次數 {max_retries}")
                 break
             sleep_time = initial_delay * (2 ** (attempt - 1))
-            logger.info(f"[{serial}] {sleep_time}s 後重試...")
+            safe_log(logger, 'info', f"[{serial}] {sleep_time}s 後重試...")
             time.sleep(sleep_time)
 
     # 最後再拋出最後一次的例外，讓呼叫端決定如何處理

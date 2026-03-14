@@ -9,6 +9,7 @@ from typing import Optional
 
 import cv2
 import requests
+from config.paths import OCR_ERRORS_DIR_STR
 try:
     # 先嘗試直接匯入（作為 package 時通常可行）
     import img_tools
@@ -125,9 +126,9 @@ def check_boom_num(d) -> int:
 
 def save_ocr_error_image(img) -> None:
     """若 OCR 結果異常，將截圖存檔以供手動檢查。"""
-    os.makedirs("ocr_errors", exist_ok=True)
+    os.makedirs(OCR_ERRORS_DIR_STR, exist_ok=True)
     timestamp = int(time.time())
-    cv2.imwrite(os.path.join("ocr_errors", f"ocr_error_{timestamp}.png"), img)
+    cv2.imwrite(os.path.join(OCR_ERRORS_DIR_STR, f"ocr_error_{timestamp}.png"), img)
 
 
 __all__ = [

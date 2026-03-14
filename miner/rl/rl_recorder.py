@@ -25,6 +25,8 @@ class RLRecorder:
         self.train_command = train_command
         self.train_interval = train_interval
         self.flush_interval = max(1, flush_interval)
+        self.rotate_max_bytes = int(os.environ.get("RL_LOG_ROTATE_MAX_BYTES", str(10 * 1024 * 1024)))
+        self.rotate_keep = int(os.environ.get("RL_LOG_ROTATE_KEEP", "5"))
 
         self._lock = threading.Lock()
         self._buffer: List[Dict[str, Any]] = []
@@ -63,11 +65,49 @@ class RLRecorder:
     def _flush_locked(self) -> None:
         if not self._buffer:
             return
+        self._rotate_if_needed_locked()
         with open(self.log_path, "a", encoding="utf-8") as f:
             for evt in self._buffer:
                 json.dump(evt, f, ensure_ascii=False)
                 f.write("\n")
         self._buffer.clear()
+
+    # ------------------------------------------------------------------
+    def _rotate_if_needed_locked(self) -> None:
+        if self.rotate_max_bytes <= 0:
+            return
+        if not os.path.exists(self.log_path):
+            return
+        try:
+            size = os.path.getsize(self.log_path)
+        except OSError:
+            return
+        if size < self.rotate_max_bytes:
+            return
+
+        ts = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+        rotated = os.path.join(self.log_dir, f"events.{ts}.jsonl")
+        try:
+            os.replace(self.log_path, rotated)
+        except OSError:
+            return
+
+        # Keep only newest N rotated files.
+        try:
+            rotated_files = sorted(
+                [
+                    os.path.join(self.log_dir, n)
+                    for n in os.listdir(self.log_dir)
+                    if n.startswith("events.") and n.endswith(".jsonl")
+                ],
+                key=lambda p: os.path.getmtime(p),
+                reverse=True,
+            )
+            for old in rotated_files[self.rotate_keep :]:
+                with contextlib.suppress(OSError):
+                    os.remove(old)
+        except OSError:
+            pass
 
     # ------------------------------------------------------------------
     def _maybe_trigger_training_locked(self) -> None:

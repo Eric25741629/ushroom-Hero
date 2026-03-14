@@ -1,0 +1,73 @@
+{
+    "devices": {
+        "emulator-5560": {
+            "name": "emulator-5560",
+            "enable_farm": true,
+            "enable_arena": true,
+            "enable_mining": true,
+            "enable_dungeon": true,
+            "is_real_phone": false,
+            "keep_screen_on": false,
+            "screenshot_debug": false,
+            "online_check_interval": 5,
+            "lamp_check_interval": 2,
+            "lamp_duration_sec": 300,
+            "skip_wake": true,
+            "wake_blackout_hours": "7"
+        },
+        "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
+            "name": "我的手機",
+            "enable_farm": true,
+            "enable_arena": true,
+            "enable_mining": true,
+            "enable_dungeon": true,
+            "is_real_phone": false,
+            "keep_screen_on": false,
+            "screenshot_debug": false,
+            "online_check_interval": 5,
+            "lamp_check_interval": 0,
+            "lamp_duration_sec": 600
+        }
+    },
+    "global": {
+        "mode": "master",
+        "master_url": "http://127.0.0.1:5002",
+        "worker_id": "unknown_worker",
+        "host_settings": {
+            "YOUR-DORM-PC-NAME": {
+                "mode": "master"
+            },
+            "YOUR-LAPTOP-NAME": {
+                "mode": "worker",
+                "master_url": "http://127.0.0.1:5002",
+                "worker_id": "laptop_worker"
+            },
+            "DESKTOP-OV0ASQ4": {
+                "mode": "worker",
+                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
+                "worker_id": "desktop_ov0asq4"
+            }
+        },
+        "ocr": {
+            "servers": [
+                "http://100.64.0.5:5001",
+                "http://100.64.0.7:5001",
+                "http://localhost:5001"
+            ],
+            "server_mode": "auto",
+            "timeout_sec": 20,
+            "img_decode_retries": 3,
+            "ocr_empty_retries": 2,
+            "retry_delay_sec": 0.6,
+            "default_region_enabled": false,
+            "default_x_range": [
+                0,
+                0
+            ],
+            "default_y_range": [
+                0,
+                0
+            ]
+        }
+    }
+}

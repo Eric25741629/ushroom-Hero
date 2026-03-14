@@ -22,6 +22,7 @@ from miner.planning.smart_planner import plan_smart
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
+from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 
 # 若為 False，整個程式會忽略道具（炸彈/鑽頭）相關的規劃與使用，僅使用鏟子
 USE_ITEMS: bool = True  # 改為 True 以啟用新演算法的道具功能
@@ -195,7 +196,7 @@ if __name__ == "__main__":  # pragma: no cover - 手動觸發用
         classes=classes,
 
         device=device_obj,
-        dataset_root="dataset/low_confidence",
+        dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR,
     )
     run(device, ip, classifier)
     #python -m miner.mining_service
