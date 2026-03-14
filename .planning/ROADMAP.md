@@ -91,7 +91,40 @@ Success criteria:
 1. 裝置識別在多主機場景唯一且可追蹤。
 2. 手機移動後可重新註冊並恢復可控狀態。
 
+### Phase 8: 2
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 7
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 8 to break down)
+
+### Phase 9: 讓 OCR 併發執行與節流控制
+
+**Goal:** [To be planned]
+**Requirements**: TBD
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9 to break down)
+
+### Phase 10: 雙週副本（週六/週日 20:00）自動開啟與戰鬥補給穩定化
+
+**Goal:** 建立雙週副本最小可行自動化，確保排程正確觸發、關鍵步驟具重試/逾時保護、戰鬥迴圈可安全退出，且失敗可回主畫面並有可追溯日誌。
+**Requirements**: SCH-01, STAB-02, STAB-04
+**Depends on:** Phase 9
+**Plans:** 2/2 plans complete
+
+Plans:
+- [x] 10-01-PLAN.md - Scheduler + Step Guardrails (completed 2026-03-15)
+- [x] 10-02-PLAN.md - Safe Combat Loop + Recovery Logging (completed 2026-03-15)
+
 ---
 *Roadmap revised: 2026-03-13*
+
+
 
 

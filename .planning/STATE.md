@@ -11,13 +11,12 @@ progress:
   completed_plans: 2
 ---
 
-﻿# STATE
+�? STATE
 
 ## Project Reference
 See: .planning/PROJECT.md (updated 2026-03-13)
 
-**Core value:** 在多電腦多實例與可移動手機接入場景下，維持穩定、可恢復、可即時操控的自動掛機能力。
-**Current focus:** Phase 1 - 狀態機核心落地
+**Core value:** ?��??�腦多實例�??�移?��?機接?�場?��?，維?�穩定、可?�復?�可?��??�控?�自?��?機能?��?**Current focus:** Phase 1 - ?�?��??��??�地
 
 ## Current Status
 - Project initialized: yes
@@ -35,12 +34,8 @@ See: .planning/PROJECT.md (updated 2026-03-13)
 - Phase 7: pending
 
 ## Notes
-- 打車流程尚未開發，已列為 v2 deferred。
-- 已確認 STAB-03 與 WEB-01 為 existing validated。
-- 新增 OCR 智慧運維與網頁營運指標需求。
+- ?��?流�?尚未?�發，已?�為 v2 deferred??- 已確�?STAB-03 ??WEB-01 ??existing validated??- ?��? OCR ?�慧?�維?�網?��??��?標�?求�?
 
 ## Accumulated Context
 
-### Roadmap Evolution
-- Phase 01.1 inserted after Phase 1: MuMu 模擬器管理與卡死自動重啟（control.exe: launch/shutdown/restart/show_window/hide_window + emulator* 卡死偵測） (URGENT)
-
+- Phase 10 added: ���g�ƥ��]�g��/�g�� 20:00�^�۰ʶ}�һP�԰��ɵ�í�w��
