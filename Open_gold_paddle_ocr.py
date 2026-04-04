@@ -11,7 +11,11 @@ import json
 import argparse
 import re
 from typing import Optional, List, Dict, Tuple
-from img_tools import click_str_by_server
+from img_tools import (
+    click_str_by_server,
+    analyze_skill_via_http as shared_analyze_skill_via_http,
+    analyze_stage_via_server as shared_analyze_stage_via_server,
+)
 from config.paths import OCR_FAILS_DIR_STR
 current_index = 0
 OCR_SERVER_URL = "http://100.64.0.7:5001"  # OCR 服務器地址
@@ -21,6 +25,60 @@ IS_COMPARE_DEFAULT = True
 SAVE_INCOMPLETE = True
 # 遇到 OCR 不完整時，最多跳過次數 (達上限則停止整個開裝流程)
 SKIP_INCOMPLETE_LIMIT = 3
+
+LAMP_SELL_PAGE_PIXEL_PROFILES = (
+    (
+        ((332, 564), (58, 65, 198)),
+        ((212, 564), (58, 65, 198)),
+    ),
+    (
+        ((332, 564), (58, 65, 197)),
+        ((212, 564), (58, 65, 197)),
+    ),
+)
+
+LAMP_READY_PIXEL_PROFILES = (
+    (
+        ((375, 576), (180, 208, 219)),
+        ((121, 700), (178, 209, 218)),
+        ((408, 795), (42, 155, 111)),
+        ((217, 790), (58, 65, 198)),
+    ),
+    (
+        ((375, 576), (163, 198, 216)),
+        ((121, 700), (90, 111, 132)),
+        ((408, 795), (32, 32, 43)),
+        ((217, 790), (132, 104, 99)),
+    ),
+)
+
+LAMP_PIXEL_SUM_TOLERANCE = 12
+
+
+def _pixel_sum_close(img, x, y, expected_bgr, tolerance=LAMP_PIXEL_SUM_TOLERANCE):
+    actual = img[y, x]
+    return abs(int(np.sum(actual)) - int(np.sum(expected_bgr))) <= tolerance
+
+
+def _match_pixel_profile(img, pixel_profile, tolerance=LAMP_PIXEL_SUM_TOLERANCE):
+    return all(
+        _pixel_sum_close(img, x, y, expected_bgr, tolerance=tolerance)
+        for (x, y), expected_bgr in pixel_profile
+    )
+
+
+def is_lamp_sell_page(img, tolerance=LAMP_PIXEL_SUM_TOLERANCE):
+    return any(
+        _match_pixel_profile(img, profile, tolerance=tolerance)
+        for profile in LAMP_SELL_PAGE_PIXEL_PROFILES
+    )
+
+
+def is_lamp_ready_page(img, tolerance=LAMP_PIXEL_SUM_TOLERANCE):
+    return any(
+        _match_pixel_profile(img, profile, tolerance=tolerance)
+        for profile in LAMP_READY_PIXEL_PROFILES
+    )
 
 # 不要的技能組合（使用 frozenset 做「無順序」判斷）
 UNWANTED_COMBOS = {
@@ -98,22 +156,11 @@ def encode_image(img):
     return img_base64
 
 def analyze_skill_via_http(img_roi):
-    """透過 HTTP 分析技能"""
+    """Use shared OCR routing with fallback across configured servers."""
     try:
-        img_base64 = encode_image(img_roi)
-        response = requests.post(
-            f"{OCR_SERVER_URL}/ocr",
-            json={'image': img_base64},
-            timeout=15
-        )
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"HTTP 錯誤: {response.status_code}")
-            return None
+        return shared_analyze_skill_via_http(img_roi, OCR_SERVER_URL=None)
     except Exception as e:
-        print(f"HTTP 請求失敗: {e}")
+        print(f"HTTP 隢?憭望?: {e}")
         return None
 
 
@@ -152,31 +199,30 @@ def normalize_server_ocr_results(raw_ocr_results, img_shape=None):
     return normalized
 
 def analyze_stage_via_http(img):
-    """透過 HTTP 分析階段"""
+    """Use shared OCR stage routing with fallback across configured servers."""
     try:
-        img_base64 = encode_image(img)
-        response = requests.post(
-            f"{OCR_SERVER_URL}/analyze_stage",
-            json={'image': img_base64},
-            timeout=15
-        )
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            print(f"HTTP 錯誤: {response.status_code}")
-            return None
+        return shared_analyze_stage_via_server(img, OCR_SERVER_URL=None)
     except Exception as e:
-        print(f"HTTP 請求失敗: {e}")
+        print(f"HTTP 隢?憭望?: {e}")
         return None
 
+
 def check_server_health():
-    """檢查服務器健康狀態"""
+    """Check whether any configured OCR server is reachable."""
     try:
-        response = requests.get(f"{OCR_SERVER_URL}/health", timeout=5)
-        return response.status_code == 200
-    except:
-        return False
+        import config_manager
+
+        servers = config_manager.get_ocr_config().get("servers", [])
+        for srv in servers:
+            try:
+                response = requests.get(f"{str(srv).rstrip('/')}/health", timeout=5)
+                if response.status_code == 200:
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
 
 def normalize_text(text: str) -> str:
     """統一處理 OCR 誤辨（使用 REPLACEMENTS 表做片語替換）。"""
@@ -889,19 +935,12 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
 
         device = D.device(d)
         img = device.capture_screenshot()
-        if img[564,332].tolist() == [58, 65, 198] and img[564,212].tolist() == [58, 65, 198]:
+        if is_lamp_sell_page(img):
             print("當前在全部出售頁面")
             if click_str_by_server(d,"全部出售",y_range=(535,600)):
                 return 
         # 檢查是否在正確畫面
-        color_checks = [
-            abs(np.sum(img[576, 375]) - np.sum([180, 208, 219])) <= 10,
-            abs(np.sum(img[700, 121]) - np.sum([178, 209, 218])) <= 10,
-            abs(np.sum(img[795, 408]) - np.sum([42, 155, 111])) <= 10,
-            abs(np.sum(img[790, 217]) - np.sum([58, 65, 198])) <= 10
-        ]
-        
-        if not all(color_checks):
+        if not is_lamp_ready_page(img):
             continue
             
         time.sleep(1)
@@ -1220,7 +1259,7 @@ if __name__ == "__main__":
     print(f"設定: is_compare={is_compare}, has_lian_shan_equip={has_lian_shan_equip}")
     d = u2.connect(current_device_ip)
     img = d.screenshot(format='opencv') 
-    if img[564,332].tolist() == [58, 65, 198] and img[564,212].tolist() == [58, 65, 198]:
+    if is_lamp_sell_page(img):
         print("當前在全部出售頁面")
         click_str_by_server(d,"全部出售",y_range=(535,600))
          

@@ -1,5 +1,6 @@
-import threading
+﻿import threading
 import time
+import uuid
 from typing import Dict, Optional, Any
 
 # 存放所有設備狀態的字典
@@ -53,6 +54,27 @@ def init_device(ip: str):
         }
     print(f"[BotState] 設備 {ip} 已上線並註冊狀態監控。")
 
+
+def ensure_device_visible(ip: str, status: str = "OFFLINE", step: str = "等待啟動..."):
+    """
+    Ensure a device appears in dashboard state even before its worker thread starts.
+    Does not overwrite existing state.
+    """
+    with get_device_lock(ip):
+        if ip in _states:
+            return
+        if ip not in _pause_events:
+            _pause_events[ip] = threading.Event()
+            _pause_events[ip].set()
+        _states[ip] = {
+            "status": str(status or "OFFLINE").upper(),
+            "task": "待命",
+            "step": step or "等待啟動...",
+            "last_update": time.time(),
+            "paused": False,
+            "logs": []
+        }
+
 def set_offline(ip: str, reason: str = "正常結束"):
     """
     標記設備為離線。
@@ -65,32 +87,56 @@ def set_offline(ip: str, reason: str = "正常結束"):
             _states[ip]["last_update"] = time.time()
     print(f"[BotState] 設備 {ip} 已離線: {reason}")
 
-def update_state(ip: str, task: Optional[str] = None, step: Optional[str] = None, log: Optional[str] = None):
+def update_state(
+    ip: str,
+    task: Optional[str] = None,
+    step: Optional[str] = None,
+    log: Optional[str] = None,
+    next_wake_at: Optional[float] = None,
+    paused: Optional[bool] = None,
+):
     """
     更新設備的當前狀態。
     """
-    # 如果還沒初始化，先忽略或自動初始化 (這裡選擇安全忽略)
-    if ip not in _locks: 
-        return
-
     with get_device_lock(ip):
+        # 允許遠端 worker 首次回報時自動建立狀態
         if ip not in _states:
-            return # 可能已經離線被清除了
+            if ip not in _pause_events:
+                _pause_events[ip] = threading.Event()
+                _pause_events[ip].set()
+            _states[ip] = {
+                "status": "ONLINE",
+                "task": "初始化",
+                "step": "等待同步...",
+                "last_update": time.time(),
+                "paused": False,
+                "logs": []
+            }
 
         state = _states[ip]
         state["last_update"] = time.time()
         
         if task is not None:
             state["task"] = task
+            # Once a device resumes active work, any previously scheduled wake time
+            # is stale and should not keep showing in the dashboard countdown.
+            if task != "休眠中":
+                state.pop("next_wake_at", None)
         
         if step is not None:
             state["step"] = step
             
         if log is not None:
-            # 只保留最後 10 條 logs
+            # ?芯???敺?10 璇?logs
             state["logs"].append(f"{time.strftime('%H:%M:%S')} - {log}")
             if len(state["logs"]) > 10:
                 state["logs"].pop(0)
+
+        if next_wake_at is not None:
+            state["next_wake_at"] = float(next_wake_at)
+
+        if paused is not None:
+            state["paused"] = bool(paused)
 
 def check_pause(ip: str):
     """
@@ -214,6 +260,17 @@ def check_refresh_needed() -> bool:
 
 # skip_sleep one-shot flags
 _skip_sleep_flags: Dict[str, bool] = {}
+# manual-hold one-shot release flags
+_manual_release_flags: Dict[str, bool] = {}
+
+# Web login / launch request mailbox.
+_web_launch_requests: Dict[str, Dict[str, Any]] = {}
+
+# Cross-thread online-check request/response mailbox.
+_online_check_queue_by_checker: Dict[str, list[str]] = {}
+_online_check_requests: Dict[str, Dict[str, Any]] = {}
+# Cooperative priority lock for checker thread (e.g., 5558 asks 5554 to yield).
+_online_check_priority_by_checker: Dict[str, Dict[str, Any]] = {}
 
 
 def set_skip_sleep(ip: str):
@@ -242,3 +299,275 @@ def check_skip_sleep(ip: str) -> bool:
         if _skip_sleep_flags.pop(ip, False):
             return True
         return False
+
+
+def set_manual_release(ip: str):
+    """Request manual-hold mode to end on next poll."""
+    with _global_lock:
+        _manual_release_flags[ip] = True
+
+
+def check_manual_release(ip: str) -> bool:
+    """Atomically check and consume the manual-hold release flag."""
+    with _global_lock:
+        if _manual_release_flags.pop(ip, False):
+            return True
+        return False
+
+
+def request_web_launch(ip: str, payload: Optional[Dict[str, Any]] = None) -> None:
+    """Request the device thread to open/refresh its web page on next cycle."""
+    with _global_lock:
+        req_payload = dict(payload or {})
+        _web_launch_requests[ip] = {
+            "requested_at": time.time(),
+            "consumed_at": None,
+            "completed_at": None,
+            "status": "pending",
+            "last_message": str(req_payload.get("message", "")),
+            "last_error": "",
+            "payload": req_payload,
+        }
+        global _refresh_needed
+        _refresh_needed = True
+
+
+def consume_web_launch_request(ip: str) -> Optional[Dict[str, Any]]:
+    """Consume one pending web-launch request for the given device."""
+    with _global_lock:
+        req = _web_launch_requests.get(ip)
+        if not req or req.get("status") != "pending":
+            return None
+        req["status"] = "processing"
+        req["consumed_at"] = time.time()
+        return dict(req)
+
+
+def has_pending_web_launch_request(ip: str) -> bool:
+    """Return True when ip has an unconsumed web launch request."""
+    with _global_lock:
+        req = _web_launch_requests.get(ip)
+        return bool(req and req.get("status") == "pending")
+
+
+def complete_web_launch_request(ip: str, ok: bool, message: str = "", error: str = "") -> None:
+    """Mark web-launch request as completed."""
+    with _global_lock:
+        req = _web_launch_requests.setdefault(ip, {})
+        req["status"] = "done" if ok else "failed"
+        req["completed_at"] = time.time()
+        req["last_message"] = str(message or req.get("last_message", ""))
+        req["last_error"] = str(error or "")
+
+
+def get_web_launch_status(ip: str) -> Dict[str, Any]:
+    with _global_lock:
+        req = _web_launch_requests.get(ip, {})
+        return {
+            "running": req.get("status") in {"pending", "processing"},
+            "status": req.get("status", "idle"),
+            "requested_at": req.get("requested_at"),
+            "consumed_at": req.get("consumed_at"),
+            "completed_at": req.get("completed_at"),
+            "last_message": req.get("last_message", ""),
+            "last_error": req.get("last_error", ""),
+        }
+
+
+def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
+    """Submit a cross-thread online-check request and return request id."""
+    req_id = str(uuid.uuid4())
+    ev = threading.Event()
+    now = time.time()
+    payload = {
+        "id": req_id,
+        "requester_ip": requester_ip,
+        "checker_ip": checker_ip,
+        "status": "pending",
+        "created_at": now,
+        "updated_at": now,
+        "result_busy": None,
+        "detail": "",
+        "error": "",
+        "_event": ev,
+    }
+    with _global_lock:
+        _online_check_requests[req_id] = payload
+        q = _online_check_queue_by_checker.setdefault(checker_ip, [])
+        q.append(req_id)
+        # Hint checker thread to break long sleep and process mailbox ASAP.
+        _skip_sleep_flags[checker_ip] = True
+        # Also request an immediate device rescan so a cold-start-delayed checker
+        # thread can be started right away instead of waiting for the next 30s loop.
+        global _refresh_needed
+        _refresh_needed = True
+    return req_id
+
+
+def pop_online_check_request(checker_ip: str) -> Optional[Dict[str, Any]]:
+    """Pop one pending request for checker thread; mark as processing."""
+    with _global_lock:
+        q = _online_check_queue_by_checker.get(checker_ip, [])
+        if not q:
+            return None
+        req_id = q.pop(0)
+        req = _online_check_requests.get(req_id)
+        if not req:
+            return None
+        req["status"] = "processing"
+        req["updated_at"] = time.time()
+        return {
+            "id": req_id,
+            "requester_ip": req.get("requester_ip"),
+            "checker_ip": req.get("checker_ip"),
+            "created_at": req.get("created_at"),
+        }
+
+
+def has_pending_online_check_request(checker_ip: str) -> bool:
+    """Check whether checker has pending mailbox items."""
+    with _global_lock:
+        q = _online_check_queue_by_checker.get(checker_ip, [])
+        return bool(q)
+
+
+def activate_online_check_priority(requester_ip: str, checker_ip: str, ttl_sec: float = 180.0):
+    """Ask checker thread to prioritize online-check mailbox for a short TTL window."""
+    now = time.time()
+    ttl = max(10.0, float(ttl_sec))
+    with _global_lock:
+        _online_check_priority_by_checker[checker_ip] = {
+            "requester_ip": requester_ip,
+            "checker_ip": checker_ip,
+            "expires_at": now + ttl,
+            "updated_at": now,
+        }
+        # Nudge checker loop to wake up and honor priority window quickly.
+        _skip_sleep_flags[checker_ip] = True
+
+
+def release_online_check_priority(requester_ip: str, checker_ip: str):
+    """Release checker priority lock if held by requester."""
+    with _global_lock:
+        cur = _online_check_priority_by_checker.get(checker_ip)
+        if not cur:
+            return
+        if str(cur.get("requester_ip")) != str(requester_ip):
+            return
+        _online_check_priority_by_checker.pop(checker_ip, None)
+
+
+def is_online_check_priority_active(checker_ip: str) -> bool:
+    """Whether checker should yield normal flow to mailbox work."""
+    now = time.time()
+    with _global_lock:
+        cur = _online_check_priority_by_checker.get(checker_ip)
+        if not cur:
+            return False
+        exp = float(cur.get("expires_at", 0) or 0)
+        if exp > 0 and now <= exp:
+            return True
+        _online_check_priority_by_checker.pop(checker_ip, None)
+        return False
+
+
+def complete_online_check_request(req_id: str, is_busy: bool, detail: str = ""):
+    with _global_lock:
+        req = _online_check_requests.get(req_id)
+        if not req:
+            return
+        req["status"] = "done"
+        req["updated_at"] = time.time()
+        req["result_busy"] = bool(is_busy)
+        req["detail"] = str(detail or "")
+        ev = req.get("_event")
+    if isinstance(ev, threading.Event):
+        ev.set()
+
+
+def fail_online_check_request(req_id: str, error: str):
+    with _global_lock:
+        req = _online_check_requests.get(req_id)
+        if not req:
+            return
+        req["status"] = "failed"
+        req["updated_at"] = time.time()
+        req["error"] = str(error or "")
+        ev = req.get("_event")
+    if isinstance(ev, threading.Event):
+        ev.set()
+
+
+def wait_online_check_result(req_id: str, timeout_sec: float = 120.0) -> Dict[str, Any]:
+    """Wait for checker result and return snapshot."""
+    with _global_lock:
+        req = _online_check_requests.get(req_id)
+        if not req:
+            return {"status": "missing", "result_busy": None, "detail": "", "error": "request not found"}
+        ev = req.get("_event")
+
+    if isinstance(ev, threading.Event):
+        ev.wait(timeout=max(0.1, float(timeout_sec)))
+
+    with _global_lock:
+        req = _online_check_requests.get(req_id)
+        if not req:
+            return {"status": "missing", "result_busy": None, "detail": "", "error": "request not found"}
+        return {
+            "id": req_id,
+            "status": req.get("status", "pending"),
+            "result_busy": req.get("result_busy"),
+            "detail": req.get("detail", ""),
+            "error": req.get("error", ""),
+            "requester_ip": req.get("requester_ip"),
+            "checker_ip": req.get("checker_ip"),
+            "created_at": req.get("created_at"),
+            "updated_at": req.get("updated_at"),
+        }
+
+
+def clear_offline_devices():
+    """Remove devices whose status is OFFLINE."""
+    with _global_lock:
+        to_remove = [ip for ip, st in _states.items() if str(st.get("status")) == "OFFLINE"]
+
+    for ip in to_remove:
+        with get_device_lock(ip):
+            _states.pop(ip, None)
+            _pause_events.pop(ip, None)
+            _skip_sleep_flags.pop(ip, None)
+        with _global_lock:
+            _locks.pop(ip, None)
+
+
+def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after_sec: float = 120.0):
+    """Mark stale devices offline and purge stale remote devices.
+
+    - Any device with stale heartbeat will be marked OFFLINE.
+    - Remote devices (worker_id:ip) are removed after longer stale timeout.
+    """
+    now = time.time()
+    with _global_lock:
+        ips = list(_states.keys())
+
+    for ip in ips:
+        with get_device_lock(ip):
+            st = _states.get(ip)
+            if not st:
+                continue
+
+            last = float(st.get("last_update", 0) or 0)
+            age = max(0.0, now - last)
+
+            if age >= mark_offline_after_sec and st.get("status") != "OFFLINE":
+                st["status"] = "OFFLINE"
+                st["step"] = f"心跳逾時 {int(age)} 秒"
+
+            # 僅自動清理遠端裝置，避免誤刪本地機台
+            if ":" in ip and age >= remove_remote_after_sec:
+                _states.pop(ip, None)
+                _pause_events.pop(ip, None)
+                _skip_sleep_flags.pop(ip, None)
+                with _global_lock:
+                    _locks.pop(ip, None)
+

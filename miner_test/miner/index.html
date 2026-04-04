@@ -1,0 +1,1569 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+  <title>菇勇者挖礦 - 大寶箱版</title>
+  <style>
+    :root {
+      --tile-base: 50px;
+      --gap: 2px;
+      --bg-color: #1a120e;
+      --soil-color: #6d4c41;
+      --soil-dark: #3e2723;
+    }
+
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: sans-serif;
+      overflow: hidden; /* 禁止瀏覽器預設捲動 */
+      display: flex;
+      justify-content: center;
+    }
+
+    #game-container {
+      width: 100%;
+      max-width: 600px;
+      height: 100vh; /* fallback */
+      background: var(--bg-color);
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* 上方資訊列 */
+    header {
+      width: 100%;
+      height: 50px;
+      background: rgba(0,0,0,0.5);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      z-index: 20;
+      position: absolute;
+      top: 0;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    /* 遊戲主視圖區域 */
+    #viewport {
+      /* 這裡寬高由 JS 動態設定，保持 7x6 比例 */
+      position: relative;
+      overflow: hidden;
+      touch-action: none;
+      background: #111;
+      box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    }
+
+    /* 遊戲世界層 (負責捲動) */
+    #world {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      will-change: transform;
+    }
+
+    /* 方塊樣式 */
+    .tile {
+      position: absolute;
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      border-radius: 4px;
+      transition: transform 0.1s;
+      /* 預設是不可見的，因為有迷霧或未生成，這裡由 JS 控制 */
+    }
+
+    .tile.soil {
+      background-color: var(--soil-color);
+      border: 2px solid rgba(255,255,255,0.1);
+      box-shadow: inset 0 -3px 0 rgba(0,0,0,0.3);
+    }
+    .tile.rock {
+      background-color: #78909c;
+      border: 2px solid #546e7a;
+    }
+    /* 寶箱樣式 (部分) */
+    .tile.chest-part {
+      background-color: #d84315;
+      border: 1px solid #ffab91;
+      /* box-shadow: 0 4px 0 #bf360c; */ /* 分開後陰影不好看 */
+      z-index: 5;
+    }
+    /* 這裡使用偽元素或背景圖來模擬連接感 */
+    .tile.chest-part.chest-2 { background-color: #00897b; border-color: #4db6ac; }
+    .tile.chest-part.chest-3 { background-color: #fbc02d; border-color: #fff176; }
+    
+    .tile.chest-part::after {
+      content: ''; /* 暫時不放icon，純色塊 */
+    }
+
+    /* 道具物品 */
+    .tile.item-bomb {
+      background: none;
+      border: none;
+      z-index: 15;
+    }
+    .tile.item-bomb::after {
+      content: '🧨';
+      font-size: 32px;
+      animation: floatItem 2s ease-in-out infinite;
+    }
+
+    .tile.item-drill {
+      background: none;
+      border: none;
+      z-index: 15;
+    }
+    .tile.item-drill::after {
+      content: '🔩';
+      font-size: 32px;
+      animation: floatItem 2s ease-in-out infinite;
+    }
+    
+    @keyframes floatItem {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+
+    /* 遮罩效果 (未接觸空氣的方塊變暗) */
+    .tile.buried {
+      filter: brightness(0.6);
+      cursor: not-allowed;
+    }
+    .tile.exposed {
+      filter: brightness(1.1);
+      cursor: pointer;
+    }
+    .tile.exposed:active {
+      transform: scale(0.95);
+    }
+    
+    /* 迷霧樣式 (未探索區域) */
+    .tile.fog {
+      background-color: #111; /* 改為近乎全黑 */
+      border: 1px solid #222;
+      /* 加上斜線紋理以示區別 */
+      background-image: repeating-linear-gradient(
+        45deg,
+        #111,
+        #111 10px,
+        #1a1a1a 10px,
+        #1a1a1a 20px
+      );
+      opacity: 1;
+      cursor: default;
+      z-index: 10;
+      transition: opacity 0.5s ease; /* 增加淡出動畫 */
+    }
+    .tile.fog::after {
+      content: ''; /* 移除問號，保持神祕感或單純黑暗 */
+    }
+    .tile.fog * {
+      display: none !important;
+    }
+
+    /* 粒子 */
+    .particle {
+      position: absolute;
+      pointer-events: none;
+      animation: pop 0.5s ease-out forwards;
+      background: #fff;
+      border-radius: 50%;
+    }
+    @keyframes pop {
+      0% { transform: scale(1); opacity: 1; }
+      100% { transform: translate(var(--dx), var(--dy)) scale(0); opacity: 0; }
+    }
+
+    /* 底部 UI */
+    footer {
+      width: 100%;
+      height: 90px;
+      background: #2d2d2d;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      z-index: 20;
+      border-top: 3px solid #444;
+      flex-shrink: 0;
+    }
+    .tool {
+      width: 60px;
+      height: 60px;
+      background: #444;
+      border-radius: 8px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: 2px solid #666;
+      position: relative;
+    }
+    .tool.active {
+      border-color: #ffb74d;
+      background: #5d4037;
+    }
+    .tool-icon { font-size: 24px; }
+    .tool-count { font-size: 12px; margin-top: 2px; color: #ccc; }
+
+    /* 放置道具動畫 */
+    .temp-tool {
+      pointer-events: none;
+    }
+    @keyframes placeBomb {
+      0% { transform: scale(0); opacity: 0; }
+      50% { transform: scale(1.2); opacity: 1; }
+      80% { transform: scale(0.9); }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+    @keyframes placeDrill {
+      0% { transform: translateY(-30px) scale(0.5); opacity: 0; }
+      60% { transform: translateY(0) scale(1.2); opacity: 1; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <header>
+    <div>深度: <span id="depth-disp">0</span>m</div>
+    <div>金幣: <span id="gold-disp">0</span></div>
+  </header>
+  
+  <div id="viewport">
+    <div id="world">
+      <!-- 格子會被動態加入這裡 -->
+    </div>
+  </div>
+
+  <footer>
+    <div class="tool" onclick="setTool('drill')" id="btn-drill">
+      <span class="tool-icon">🔩</span>
+      <span class="tool-count" id="drill-count">3</span>
+    </div>
+    <div class="tool active" onclick="setTool('pickaxe')" id="btn-pickaxe">
+      <span class="tool-icon">⛏️</span>
+      <span class="tool-count">∞</span>
+    </div>
+    <div class="tool" onclick="setTool('bomb')" id="btn-bomb">
+      <span class="tool-icon">🧨</span>
+      <span class="tool-count" id="bomb-count">3</span>
+    </div>
+    <div class="tool" style="width: 80px; border-color: #00bcd4;" onclick="toggleAI()">
+      <span class="tool-icon" style="font-size: 16px;">🤖</span>
+      <span class="tool-count" id="btn-ai" style="font-size: 10px;">Python AI</span>
+    </div>
+  </footer>
+</div>
+
+<script>
+// --- 設定 ---
+let gameConfig = {
+  probabilities: {
+    air_or_item: 0.15,
+    item_bomb_in_air: 0.05,
+    item_drill_in_air: 0.1,
+    chest: 0.05,
+    rock: 0.2
+  },
+  chest_distribution: {
+    size_3: 0.25,
+    size_2: 0.25,
+    size_1: 0.50
+  },
+  chest_reward_mix: {
+    gold_base: 500
+  },
+  tile_rewards: {
+    soil: 0,
+    rock: 0,
+    chest_base: 50
+  },
+  initial_resources: {
+    pickaxe: 100,
+    bomb: 10,
+    drill: 10
+  }
+};
+
+// 修正版面比例：寬 6 x 高 7
+const COLS = 6;
+const VISIBLE_ROWS = 7;
+let TILE_SIZE = 60; // 將由 init 動態計算
+
+// --- 狀態 ---
+let depth = 0; // 畫面捲動到的深度 (像素 / TILE_SIZE)
+let maxGeneratedRow = -1; // 目前已生成到的行數
+let gold = 0;
+let tools = { drill: 10, bomb: 10 };
+let currentTool = 'pickaxe';
+let isActionLocked = false; // 全局動作鎖
+
+// 網格資料結構: Map<"row,col", TileObject>
+// 這樣我們可以支援無限深度的稀疏矩陣
+const grid = new Map();
+
+// 寶箱整體狀態管理 (用於判斷是否全部解鎖)
+const chests = new Map(); // key: chestId, value: { size, partsLeft, originR, originC }
+
+const worldEl = document.getElementById('world');
+const depthDisp = document.getElementById('depth-disp');
+const goldDisp = document.getElementById('gold-disp');
+
+// 初始化
+async function init() {
+  // 嘗試讀取 config.json
+  try {
+    const res = await fetch('config.json');
+    if(res.ok) {
+        gameConfig = await res.json();
+    }
+  } catch(e) {
+    console.log("Using default config (Local file mode)");
+  }
+  
+  // 應用 Config 中的資源設定
+  tools.drill = gameConfig.initial_resources.drill;
+  tools.bomb = gameConfig.initial_resources.bomb;
+  updateTools();
+
+  resizeLayout();
+  window.addEventListener('resize', resizeLayout);
+
+  // 初始生成
+  generateRows(0, 15);
+  
+  // 讓第一排暴露
+  updateExposure();
+  
+  // 開始渲染迴圈
+  requestAnimationFrame(loop);
+}
+
+function resizeLayout() {
+  const container = document.getElementById('game-container');
+  const viewport = document.getElementById('viewport');
+  
+  // 計算可用空間
+  const availW = container.clientWidth;
+  // 扣除 header(50) + footer(90) 的可用高度
+  const availH = window.innerHeight - 140;
+
+  // 計算 TILE_SIZE：取寬度或高度限制的最小值，確保 7x6 完整顯示
+  const sizeByW = Math.floor(availW / COLS);
+  const sizeByH = Math.floor(availH / VISIBLE_ROWS);
+  
+  TILE_SIZE = Math.min(sizeByW, sizeByH);
+  
+  // 設定 Viewport 尺寸
+  viewport.style.width = (COLS * TILE_SIZE) + 'px';
+  viewport.style.height = (VISIBLE_ROWS * TILE_SIZE) + 'px';
+  
+  // 重繪現有方塊
+  redrawAllTiles();
+}
+
+function redrawAllTiles() {
+  worldEl.innerHTML = '';
+  grid.forEach((tile, k) => {
+    // 重新建立 DOM
+    const parts = k.split(',');
+    const r = parseInt(parts[0]);
+    const c = parseInt(parts[1]);
+    
+    // 如果之前有 DOM，先清理
+    if(tile.el) tile.el = null;
+
+    const el = document.createElement('div');
+    el.className = `tile ${tile.type}`;
+    // 寶箱特殊處理
+    if (tile.type === 'chest-part') {
+      const chestInfo = chests.get(tile.chestId);
+      if(chestInfo) el.classList.add(`chest-${chestInfo.size}`);
+    }
+
+    el.style.width = TILE_SIZE + 'px';
+    el.style.height = TILE_SIZE + 'px';
+    el.style.left = (c * TILE_SIZE) + 'px';
+    el.style.top = (r * TILE_SIZE) + 'px';
+    
+    // 重新設為 Fog，等待 updateExposure
+    el.classList.add('fog');
+
+    el.onpointerdown = (e) => handleTap(r, c, tile, e);
+    worldEl.appendChild(el);
+    tile.el = el;
+  });
+  
+  updateExposure();
+}
+
+// 遊戲迴圈 (處理捲動)
+function loop() {
+  // 更新 UI 顯示深度
+  const currentDepthM = Math.floor(depth);
+  depthDisp.innerText = currentDepthM;
+
+  // 渲染位置
+  worldEl.style.transform = `translateY(${-depth * TILE_SIZE}px)`;
+
+  // 檢查是否需要生成新行
+  if (maxGeneratedRow < depth + VISIBLE_ROWS + 5) {
+    generateRows(maxGeneratedRow + 1, 5);
+  }
+
+  requestAnimationFrame(loop);
+}
+
+// 生成地圖邏輯
+function generateRows(startRow, count) {
+  for (let r = startRow; r < startRow + count; r++) {
+    // 每一行生成邏輯
+    for (let c = 0; c < COLS; c++) {
+      // 檢查是否已經被佔據
+      if (grid.has(key(r,c))) continue;
+
+      // 決定這格是什麼
+      // 1. 空洞 (Air)
+      if (Math.random() < gameConfig.probabilities.air_or_item) {
+        // 空地不生成任何道具
+        setTile(r, c, { type: 'air' });
+        continue;
+      }
+
+      // 2. 嘗試生成寶箱
+      if (Math.random() < gameConfig.probabilities.chest) {
+        const sizeRand = Math.random();
+        let size = 1;
+        
+        const p3 = gameConfig.chest_distribution.size_3;
+        const p2 = gameConfig.chest_distribution.size_2;
+        
+        if (sizeRand < p3) size = 3;
+        else if (sizeRand < p3 + p2) size = 2;
+        else size = 1;
+        
+        if (canPlaceChest(r, c, size)) {
+          placeChest(r, c, size);
+          continue;
+        }
+      }
+
+      // 3. 一般方塊
+      const rand = Math.random();
+      if (rand < gameConfig.probabilities.rock) {
+        setTile(r, c, { type: 'rock', hp: 2 });
+      } else {
+        setTile(r, c, { type: 'soil', hp: 1 });
+      }
+    }
+  }
+  maxGeneratedRow = startRow + count - 1;
+}
+
+function canPlaceChest(r, c, size) {
+  if (c + size > COLS) return false;
+  // 檢查覆蓋區域是否已被佔用
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      if (grid.has(key(r+dr, c+dc))) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function placeChest(r, c, size) {
+  const chestId = `chest_${r}_${c}`;
+  chests.set(chestId, {
+    size: size,
+    partsLeft: size * size,
+    originR: r,
+    originC: c
+  });
+  
+  // 建立每個小格子
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      setTile(r+dr, c+dc, {
+        type: 'chest-part',
+        hp: 1,
+        chestId: chestId,
+        size: size // 加入 size 資訊供 destroyTile 判斷
+      });
+    }
+  }
+}
+
+function setTile(r, c, data) {
+  grid.set(key(r,c), data);
+  data.origin = {r, c};
+
+  // 建立 DOM
+  const el = document.createElement('div');
+  el.className = `tile ${data.type}`;
+  
+  if (data.type === 'chest-part') {
+      const chestInfo = chests.get(data.chestId);
+      if(chestInfo) el.classList.add(`chest-${chestInfo.size}`);
+  }
+
+  el.style.width = TILE_SIZE + 'px';
+  el.style.height = TILE_SIZE + 'px';
+  el.style.left = (c * TILE_SIZE) + 'px';
+  el.style.top = (r * TILE_SIZE) + 'px';
+  
+  // 預設狀態：如果是 Air，設為 Fog (偽裝)；如果是實體，設為 Buried (可見但暗)
+  if (data.type === 'air') {
+    el.classList.add('fog');
+  } else {
+    el.classList.add('buried');
+  }
+
+  // 點擊事件
+  el.onpointerdown = (e) => handleTap(r, c, data, e);
+
+  worldEl.appendChild(el);
+  data.el = el;
+}
+
+// 點擊處理
+function handleTap(r, c, tileData, e) {
+  if (isActionLocked) return; // 鎖定中
+  // 防止捲動時誤觸下層方塊
+  if (isAutoScrolling) return;
+
+  // 1. 檢查是否可觸及 (Exposed)
+  if (!isInteractable(r, c, tileData)) {
+    // 震動提示不可挖
+    if (tileData.el) {
+      tileData.el.style.transform = 'translateX(2px)';
+      setTimeout(()=>tileData.el.style.transform = 'translateX(0)', 50);
+    }
+    return;
+  }
+  
+  // 2. 點擊道具直接收集
+  if (tileData.type === 'item-bomb') {
+    tools.bomb++;
+    popText(r, c, '+1 🧨');
+    destroyTile(tileData, r, c);
+    updateTools();
+    return;
+  }
+  if (tileData.type === 'item-drill') {
+    tools.drill++;
+    popText(r, c, '+1 🔩');
+    destroyTile(tileData, r, c);
+    updateTools();
+    return;
+  }
+
+  if (currentTool === 'pickaxe') {
+    if (tileData.type !== 'air') {
+      damageTile(r, c, tileData, 1);
+    }
+  } else if (currentTool === 'drill') {
+    if (tileData.type === 'air') {
+      if (tools.drill > 0) {
+        tools.drill--;
+        updateTools();
+        isActionLocked = true; // 鎖定
+        playToolAnimation(r, c, 'drill', () => drillAction(r, c));
+      }
+    } else {
+      if (tileData.el) {
+        tileData.el.style.transform = 'translateX(2px)';
+        setTimeout(()=>tileData.el.style.transform = 'translateX(0)', 50);
+      }
+    }
+  } else if (currentTool === 'bomb') {
+    if (tileData.type === 'air') {
+      if (tools.bomb > 0) {
+        tools.bomb--;
+        updateTools();
+        isActionLocked = true; // 鎖定
+        playToolAnimation(r, c, 'bomb', () => bombAction(r, c));
+      }
+    } else {
+      if (tileData.el) {
+        tileData.el.style.transform = 'translateX(2px)';
+        setTimeout(()=>tileData.el.style.transform = 'translateX(0)', 50);
+      }
+    }
+  }
+}
+
+function playToolAnimation(r, c, type, callback) {
+  const el = document.createElement('div');
+  el.className = 'temp-tool';
+  el.textContent = type === 'drill' ? '🔩' : '🧨';
+  el.style.position = 'absolute';
+  el.style.left = (c * TILE_SIZE) + 'px';
+  el.style.top = (r * TILE_SIZE) + 'px';
+  el.style.width = TILE_SIZE + 'px';
+  el.style.height = TILE_SIZE + 'px';
+  el.style.display = 'flex';
+  el.style.alignItems = 'center';
+  el.style.justifyContent = 'center';
+  el.style.fontSize = '40px';
+  el.style.zIndex = 100;
+  
+  const duration = 500;
+  
+  if (type === 'bomb') {
+    el.style.animation = `placeBomb ${duration}ms ease-out forwards`;
+  } else {
+    el.style.animation = `placeDrill ${duration}ms ease-out forwards`;
+  }
+
+  worldEl.appendChild(el);
+
+  setTimeout(() => {
+    el.remove();
+    if (callback) callback();
+  }, duration);
+}
+
+// 鑽頭：垂直整列破壞 (視窗範圍)
+function drillAction(clickedR, c) {
+  // 從當前視窗頂部開始
+  let r = Math.floor(depth);
+  const maxDepth = r + VISIBLE_ROWS; // 7格
+
+  const timer = setInterval(() => {
+    // 檢查目標
+    let target = getLogicalTile(r, c);
+    
+    // 若該位置未生成，生成之
+    if (!target) {
+       if(r > maxGeneratedRow) generateRows(maxGeneratedRow+1, 5);
+       target = getLogicalTile(r, c);
+       if(!target) { r++; return; }
+    }
+    
+    if (target.type !== 'air' && !target.type.startsWith('item-')) {
+        destroyTile(target, r, c);
+    }
+    
+    r++;
+    
+    if (r >= maxDepth) {
+      clearInterval(timer);
+      // 底部產生 1x3 破壞 (保留此特性)
+      const finalR = r - 1;
+      [-1, 1].forEach(dc => {
+        let sideTarget = getLogicalTile(finalR, c + dc);
+        if (sideTarget && sideTarget.type !== 'air') {
+            destroyTile(sideTarget, finalR, c + dc);
+        }
+      });
+      createParticles(c * TILE_SIZE + TILE_SIZE/2, finalR * TILE_SIZE + TILE_SIZE/2, 15, '#ffeb3b');
+      isActionLocked = false; // 解鎖
+    }
+    
+    // 檢查捲動
+    checkAutoScroll();
+  }, 50);
+}
+
+// 炸藥：3x3 + 十字延伸
+function bombAction(centerR, centerC) {
+  createParticles(centerC * TILE_SIZE, centerR * TILE_SIZE, 20, '#f00');
+  
+  // 1. 基礎 3x3
+  for (let r = centerR - 1; r <= centerR + 1; r++) {
+    for (let c = centerC - 1; c <= centerC + 1; c++) {
+      let target = getLogicalTile(r, c);
+      if (target && target.type !== 'air') {
+        destroyTile(target, r, c);
+      }
+    }
+  }
+
+  // 2. 額外延伸：上下左右各往外一格 (即距離中心 2 格的位置)
+  const extras = [
+    {r: centerR - 2, c: centerC},
+    {r: centerR + 2, c: centerC},
+    {r: centerR, c: centerC - 2},
+    {r: centerR, c: centerC + 2}
+  ];
+
+  for (let p of extras) {
+      let target = getLogicalTile(p.r, p.c);
+      if (target && target.type !== 'air') {
+        destroyTile(target, p.r, p.c);
+        createParticles(p.c * TILE_SIZE + TILE_SIZE/2, p.r * TILE_SIZE + TILE_SIZE/2, 10, '#fa0');
+      }
+  }
+
+  updateExposure();
+  isActionLocked = false; // 解鎖
+}
+
+function damageTile(r, c, tile, dmg) {
+  // 移除 hard 不可破壞的限制
+  tile.hp -= dmg;
+  createParticles(c * TILE_SIZE + TILE_SIZE/2, r * TILE_SIZE + TILE_SIZE/2, 5, '#fff');
+
+  if (tile.hp <= 0) {
+    destroyTile(tile, r, c);
+    // 移除這裡的硬寫捲動，改由 destroyTile 內的 checkAutoScroll 統一處理
+  } else {
+    tile.el.style.transform = 'scale(0.9)';
+    setTimeout(()=>tile.el.style.transform = 'scale(1)', 100);
+  }
+}
+
+function destroyTile(tile, r, c) {
+  if (!tile.el) return;
+  
+  // 防止連鎖觸發：如果已經是 air，不處理
+  if (tile.type === 'air') return;
+
+  // 獎勵邏輯
+  if (tile.type === 'item-bomb' || tile.type === 'item-drill') {
+    // 道具被破壞/收集時已經在 handleTap 處理，這裡主要是清除 DOM 和狀態
+    // 或者是被炸彈/鑽頭波及時消失(不給獎勵? 或者自動收集?)
+    // 簡單起見：被波及時消失不給獎勵，鼓勵玩家手動點擊
+  } else
+  if (tile.type === 'chest-part') {
+    const chest = chests.get(tile.chestId);
+    if (chest) {
+      chest.partsLeft--;
+      // 只有當全部挖完時，才給大獎勵
+      if (chest.partsLeft <= 0) {
+        giveChestReward(chest.size, chest.originR, chest.originC);
+      }
+    }
+  } else if (tile.type === 'soil') {
+     gold += gameConfig.tile_rewards.soil;
+  } else if (tile.type === 'rock') {
+     gold += gameConfig.tile_rewards.rock;
+  }
+  
+  goldDisp.innerText = gold;
+
+  // 移除 DOM
+  tile.el.innerHTML = '';
+  tile.el.className = 'tile'; // Reset
+  tile.el.style.opacity = '0'; // 隱藏 (Air預設)
+  
+  // 更新資料
+  tile.type = 'air';
+  tile.hp = 0;
+  
+  // 重要：更新周圍的可視狀態
+  updateExposure();
+  
+  // 檢查是否需要自動捲動
+  checkAutoScroll();
+}
+
+function checkAutoScroll() {
+  // 1. 找出最深的"連通空氣" (Active Air) 所在的層數
+  // 這是我們能看到的極限，視窗底部不應該超過這個極限太多
+  let maxActiveAirRow = 0;
+  
+  // 2. 同時找出最深的 Exposed 實體，這代表玩家的工作面
+  let maxExposedRow = 0;
+
+  grid.forEach((tile, k) => {
+    if (!tile.el) return;
+    const r = parseInt(k.split(',')[0]);
+    if (r < Math.floor(depth)) return; // 優化：不檢查已經捲過去的
+
+    // 檢查 Active Air (透明的空氣)
+    if (tile.type === 'air' && tile.el.style.opacity === '0') {
+      if (r > maxActiveAirRow) maxActiveAirRow = r;
+    }
+    
+    // 檢查 Exposed 實體
+    if (tile.el.classList.contains('exposed')) {
+      if (r > maxExposedRow) maxExposedRow = r;
+    }
+  });
+
+  // 決定捲動目標：
+  // 我們希望玩家能看到工作面 (maxExposedRow)
+  // 理想視窗底部 = maxExposedRow + 2 (預留空間)
+  // 理想視窗頂部 (depth) = (maxExposedRow + 2) - VISIBLE_ROWS
+  
+  // 但有一個硬限制：視窗底部絕對不能超過 (maxActiveAirRow + 1)
+  // 也就是說，如果第 10 層全是土(無ActiveAir)，視窗底部最多只能看到第 10 層，不能看到第 11 層
+  
+  // 計算視窗底部的限制行
+  // maxActiveAirRow 是最後一層有空氣的層數。
+  // 視窗底部最深可以到達 maxActiveAirRow + 1 (看到空氣層的下一層土)
+  const absoluteBottomLimit = maxActiveAirRow + 1;
+  
+  // 根據工作面計算目標 depth
+  // 讓工作面維持在視窗中間偏下 (例如倒數第3行)
+  let targetDepth = maxExposedRow - (VISIBLE_ROWS - 3);
+  
+  // 應用限制：targetDepth + VISIBLE_ROWS <= absoluteBottomLimit + (彈性)
+  // 嚴格限制：不要讓視窗底部露出完全未探索的區域
+  // 視窗底部深度 = targetDepth + VISIBLE_ROWS
+  if (targetDepth + VISIBLE_ROWS > absoluteBottomLimit + 1) {
+     targetDepth = (absoluteBottomLimit + 1) - VISIBLE_ROWS;
+  }
+  
+  if (targetDepth < 0) targetDepth = 0;
+
+  // 執行捲動 (單向)
+  if (targetDepth > depth + 0.1) { // 加一點緩衝防止抖動
+    scrollToDepth(targetDepth);
+  }
+}
+
+function giveChestReward(size, r, c) {
+  const area = size * size;
+  const base = gameConfig.chest_reward_mix.gold_base;
+  
+  // 1. Gold: base ~ base * area
+  const minGold = base;
+  const maxGold = base * area;
+  const goldAmount = Math.floor(Math.random() * (maxGold - minGold + 1)) + minGold;
+  gold += goldAmount;
+  popText(r, c, `+${goldAmount}$`);
+  
+  // 2. Bomb: 0 ~ size
+  const bombAmount = Math.floor(Math.random() * (size + 1));
+  if (bombAmount > 0) {
+      tools.bomb += bombAmount;
+      setTimeout(() => popText(r, c, `+${bombAmount}🧨`), 200);
+  }
+  
+  // 3. Drill: 0 ~ size
+  const drillAmount = Math.floor(Math.random() * (size + 1));
+  if (drillAmount > 0) {
+      tools.drill += drillAmount;
+      setTimeout(() => popText(r, c, `+${drillAmount}🔩`), 400);
+  }
+  
+  updateTools();
+}
+
+function isInteractable(r, c, tile) {
+  return tile.el && (tile.el.classList.contains('exposed') || tile.el.classList.contains('visited-air'));
+}
+
+// 使用 BFS 計算連通性
+function updateExposure() {
+  const visitedAir = new Set();
+  const queue = [];
+  
+  // BFS 起點：第一排的所有空氣
+  for (let c = 0; c < COLS; c++) {
+    const k = key(0, c);
+    const tile = getLogicalTile(0, c);
+    
+    // 如果第一排是 Air (或已經被挖成 Air 或 道具)
+    if (tile && (tile.type === 'air' || tile.type.startsWith('item-'))) {
+      if(!visitedAir.has(k)) {
+        visitedAir.add(k);
+        queue.push({r:0, c:c});
+      }
+    }
+  }
+
+  // BFS 擴散 (只走 Air)
+  const dirs = [[-1,0], [1,0], [0,-1], [0,1]];
+  const searchLimitRow = maxGeneratedRow;
+
+  while(queue.length > 0) {
+    const {r, c} = queue.shift();
+    
+    for (let d of dirs) {
+      const nr = r + d[0];
+      const nc = c + d[1];
+      
+      if (nc < 0 || nc >= COLS) continue;
+      if (nr > searchLimitRow) continue;
+      if (nr < 0) continue; // 地表以上
+
+      const nk = key(nr, nc);
+      if (visitedAir.has(nk)) continue;
+
+      const nTile = getLogicalTile(nr, nc);
+      if (nTile && (nTile.type === 'air' || nTile.type.startsWith('item-'))) {
+        visitedAir.add(nk);
+        queue.push({r:nr, c:nc});
+      }
+    }
+  }
+
+  // 2. 更新狀態
+  grid.forEach((tile, k) => {
+    if (!tile.el) return;
+
+    const parts = k.split(',');
+    const r = parseInt(parts[0]);
+    const c = parseInt(parts[1]);
+    
+    // 移除過度優化，避免 resize 時上方方塊變成黑色迷霧
+    // if (r < depth - 2 || r > maxGeneratedRow) return;
+
+    // Air 或 道具
+    if (tile.type === 'air' || tile.type.startsWith('item-')) {
+      if (visitedAir.has(k)) {
+        if (tile.type === 'air') {
+             tile.el.style.opacity = '0'; // 已探索空氣 = 透明
+             tile.el.classList.add('visited-air'); // 標記為可放置道具的區域
+        } else {
+             // 道具顯示
+             tile.el.style.opacity = '1';
+             tile.el.classList.remove('fog');
+             tile.el.classList.add('visited-air'); // 道具格也視為空氣連通
+        }
+        tile.el.classList.remove('fog');
+      } else {
+        tile.el.style.opacity = '1'; // 未探索 = 迷霧
+        tile.el.className = 'tile fog';
+      }
+      return;
+    }
+
+    // 一般方塊 (實體)
+    let exposed = false;
+    
+    if (r === 0) exposed = true;
+    else {
+      // 只要周圍有地表或 Visited Air，就暴露
+      for (let d of dirs) {
+        const nr = r + d[0];
+        const nc = c + d[1];
+        if (nc < 0 || nc >= COLS) continue;
+        if (nr < 0) { exposed = true; break; }
+        if (visitedAir.has(key(nr, nc))) { exposed = true; break; }
+      }
+    }
+
+    if (exposed) {
+      tile.el.classList.remove('buried', 'fog');
+      tile.el.classList.add('exposed');
+    } else {
+      // 未暴露 = Buried (變暗，但看得到是什麼)
+      tile.el.classList.remove('exposed', 'fog');
+      tile.el.classList.add('buried');
+    }
+  });
+}
+
+function key(r, c) { return `${r},${c}`; }
+function getKeyR(tile) { return parseInt(tile.el.style.top) / TILE_SIZE; }
+function getKeyC(tile) { return parseInt(tile.el.style.left) / TILE_SIZE; }
+
+function getLogicalTile(r, c) {
+  const k = key(r, c);
+  return grid.get(k);
+}
+
+// 增加一個全局的捲動目標，避免多重動畫衝突
+let scrollTarget = null;
+let isAutoScrolling = false; // 捲動鎖
+
+function scrollToDepth(d) {
+  // 如果已經在捲動到更深的地方，不要打斷
+  if (scrollTarget !== null && d < scrollTarget) return;
+  
+  scrollTarget = d;
+  isAutoScrolling = true;
+  
+  // 簡單的緩動迴圈
+  function step() {
+    if (scrollTarget === null) {
+        isAutoScrolling = false;
+        return;
+    }
+    
+    const diff = scrollTarget - depth;
+    if (Math.abs(diff) < 0.05) {
+      depth = scrollTarget;
+      scrollTarget = null;
+      isAutoScrolling = false;
+      return;
+    }
+    
+    // 速度與距離成正比，但有最小值與最大值
+    let speed = diff * 0.1;
+    if (speed > 0 && speed < 0.05) speed = 0.05;
+    if (speed < 0 && speed > -0.05) speed = -0.05;
+    
+    depth += speed;
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+function createParticles(x, y, count, color) {
+  for(let i=0; i<count; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.left = x + 'px';
+    p.style.top = y + 'px';
+    p.style.width = '6px';
+    p.style.height = '6px';
+    p.style.backgroundColor = color;
+    const angle = Math.random() * Math.PI * 2;
+    const dist = 30 + Math.random() * 30;
+    p.style.setProperty('--dx', Math.cos(angle) * dist + 'px');
+    p.style.setProperty('--dy', Math.sin(angle) * dist + 'px');
+    worldEl.appendChild(p);
+    setTimeout(() => p.remove(), 500);
+  }
+}
+
+function popText(r, c, text) {
+  const el = document.createElement('div');
+  el.textContent = text;
+  el.style.position = 'absolute';
+  el.style.left = (c * TILE_SIZE) + 'px';
+  el.style.top = (r * TILE_SIZE) + 'px';
+  el.style.color = '#fff';
+  el.style.fontWeight = 'bold';
+  el.style.zIndex = 100;
+  el.style.animation = 'pop 1s forwards';
+  worldEl.appendChild(el);
+  setTimeout(() => el.remove(), 1000);
+}
+
+function updateTools() {
+  document.getElementById('drill-count').innerText = tools.drill;
+  document.getElementById('bomb-count').innerText = tools.bomb;
+}
+
+window.setTool = function(t) {
+  currentTool = t;
+  document.querySelectorAll('.tool').forEach(el => el.classList.remove('active'));
+  const btn = document.getElementById('btn-' + t);
+  if (btn) btn.classList.add('active');
+}
+
+// --- 貪婪 AI 邏輯 ---
+let aiRunning = false;
+const SHOVEL_COST = 1.0;
+const BOMB_COST = 2.5;
+
+async function runGreedyAI() {
+    if (aiRunning) {
+        aiRunning = false;
+        document.getElementById('btn-ai').innerText = "貪婪 AI";
+        return;
+    }
+    aiRunning = true;
+    document.getElementById('btn-ai').innerText = "思考中...";
+    
+    let noActionCount = 0;
+
+    while(aiRunning) {
+        if(isActionLocked || isAutoScrolling) {
+            await new Promise(r=>setTimeout(r, 100));
+            continue;
+        }
+
+        const state = captureState();
+        // Debug: console.log("State:", state);
+
+        const plan = planNextMove(state);
+        
+        if(!plan) {
+            console.log("No chest plan found, looking for path to bottom...");
+            // 無事可做，嘗試尋找下樓路徑
+            const path = findPathToBottom(state);
+            if(path && path.length > 0) {
+                 // 找到路徑，執行第一步 (需挖掘的)
+                 // findPathToBottom 回傳的是座標點陣列，包含起點
+                 // 我們需要找出第一個需要挖掘的點
+                 let actionTaken = false;
+                 // path[0] 是起點，所以從 path[1] 開始看? 
+                 // 不，path 可能只包含 [start, next, ...]，如果 start 就在底層附近?
+                 // reconstructPath 會包含起點。
+                 
+                 for(let i=1; i<path.length; i++) {
+                     const p = path[i];
+                     // 檢查這點是否需要挖掘 (不是空氣且不是道具)
+                     // 這裡要對應到 mapGrid 的字元，或者直接用 getLogicalTile
+                     // state.grid 用的是簡化字元，我們用 getLogicalTile 比較準
+                     const rAbs = state.startAbsR + p[1];
+                     const c = p[0];
+                     const tile = getLogicalTile(rAbs, c);
+                     
+                     if(tile && tile.type !== 'air' && !tile.type.startsWith('item-')) {
+                         await executePathStep(p);
+                         actionTaken = true;
+                         break; // 只做一步
+                     }
+                 }
+                 
+                 if(!actionTaken) {
+                     // 路徑上全是空氣? 代表已經到底了，或者路徑計算有問題
+                     // 如果已經到底，應該捲動? 
+                     // 強制捲動
+                     console.log("Path is clear, scrolling down...");
+                     scrollToDepth(depth + 1);
+                     await new Promise(r=>setTimeout(r, 500));
+                 }
+            } else {
+                 console.log("No path to bottom found!");
+                 noActionCount++;
+                 if(noActionCount > 5) {
+                     aiRunning = false;
+                     document.getElementById('btn-ai').innerText = "AI 放棄";
+                     break;
+                 }
+            }
+        } else {
+            noActionCount = 0;
+            // 執行計畫的第一步
+            await executePlanStep(plan);
+        }
+        
+        await new Promise(r=>setTimeout(r, 800)); // 思考間隔
+    }
+}
+
+function getGameState() {
+    const currentDepth = Math.floor(depth);
+    const rowsToSend = VISIBLE_ROWS + 3;
+    const cols = COLS;
+
+    const gridArr = new Array(rowsToSend * cols).fill(0);
+    const exposureArr = new Array(rowsToSend * cols).fill(0);
+    const hps = new Array(rowsToSend * cols).fill(0);
+
+    for (let r = 0; r < rowsToSend; r++) {
+        for (let c = 0; c < cols; c++) {
+            const absR = currentDepth + r;
+            const tile = getLogicalTile(absR, c);
+            const idx = r * cols + c;
+
+            if (!tile) {
+                // 未生成視為 soil（較保守）
+                gridArr[idx] = 1;
+                exposureArr[idx] = 0;
+                hps[idx] = 0;
+            } else {
+                if (tile.type === 'air' || tile.type.startsWith('item-')) gridArr[idx] = 0;
+                else if (tile.type === 'soil') gridArr[idx] = 1;
+                else if (tile.type === 'rock') gridArr[idx] = 2;
+                else if (tile.type === 'chest-part') gridArr[idx] = 3;
+
+                hps[idx] = tile.hp || 0;
+                exposureArr[idx] = (tile.el && (tile.el.classList.contains('exposed') || tile.el.classList.contains('visited-air'))) ? 1 : 0;
+            }
+        }
+    }
+
+    const resources = [999, tools.drill || 0, tools.bomb || 0];
+
+    return {
+        grid: gridArr,
+        exposure: exposureArr,
+        hps: hps,
+        rows: rowsToSend,
+        cols: cols,
+        startRow: currentDepth,
+        resources: resources
+    };
+}
+
+function captureState() {
+    // 捕捉目前 grid 狀態轉為演算法可用的格式
+    const startR = Math.floor(depth);
+    const h = VISIBLE_ROWS + 2;
+    const w = COLS;
+    const mapGrid = []; // [y][x]
+    const chests = [];
+    
+    for(let y=0; y<h; y++) {
+        const row = [];
+        for(let x=0; x<w; x++) {
+            const rAbs = startR + y;
+            const tile = getLogicalTile(rAbs, x);
+            let char = '.';
+            if(!tile) {
+                // 未生成視為牆或土? 視為土比較保險
+                char = 'R';
+            } else {
+                if(tile.type === 'air' || tile.type.startsWith('item-')) char = '.'; // 空氣或道具視為可通行
+                else if(tile.type === 'soil') char = 'R'; // 土壤視為岩石(需消耗)
+                else if(tile.type === 'rock') char = 'R'; // 岩石
+                else if(tile.type === 'chest-part') {
+                    char = 'C';
+                    // 只有當這格還沒完全挖開(hp>0)才算目標?
+                    // 遊戲邏輯是 hp=1，挖一下就沒了。但寶箱有多部分。
+                    // 只要還存在就是目標
+                    chests.push([x, y, tile.chestId]);
+                }
+            }
+            // 牆壁邊界?
+            row.push(char);
+        }
+        mapGrid.push(row);
+    }
+    
+    // 找出目前所有 exposed 的點作為潛在起點
+    const starts = [];
+    for(let x=0; x<w; x++) {
+        for(let y=0; y<h; y++) {
+             const rAbs = startR + y;
+             const tile = getLogicalTile(rAbs, x);
+             // 必須是 "exposed" 的空氣或道具，或者是第一排的任何空氣
+             // 其實只要是我們能走到的地方(空氣)都算起點
+             // 遊戲中：只有相鄰於 exposed 空氣的方塊才能被點擊
+             // 我們的 Dijkstra 是計算「移動成本」，從空氣移到空氣成本0
+             // 所以起點可以是所有「目前玩家能到達的空氣格」
+             // 簡化：所有 exposed 的空氣格 + 第0列的所有空氣格
+             
+             // 修正：Dijkstra 需要從「當前位置」算起。玩家沒有固定位置。
+             // 玩家可以點擊任何 exposed 的方塊。
+             // 所以成本是：從「已知空間」延伸出去的代價。
+             // 我們可以把所有「已知空間(空氣)」設為 Dijkstra 的起始集合，距離為 0。
+             
+             if (tile && (tile.type === 'air' || tile.type.startsWith('item-'))) {
+                 // 檢查是否 exposed 或者是第一排 (第一排預設 exposed)
+                 // getLogicalTile 會回傳 tile 物件，檢查它的 el class
+                 if (tile.el && (tile.el.classList.contains('exposed') || tile.el.classList.contains('visited-air') || rAbs===0)) {
+                      starts.push([x,y]);
+                 }
+             }
+        }
+    }
+    
+    // Fallback: 如果沒有任何可達空氣 (例如剛開始全黑，或是都在土裡?)
+    // 遊戲開始時第0排是 exposed air 或 soil。
+    if(starts.length === 0) {
+        // 找第一排任何 exposed 的東西 (即使是土) 作為起點? 不，起點應該是空氣(無成本)。
+        // 如果第一排是土，那挖掘成本是1。
+        // 我們假設外部空間是無限空氣。所以第一排所有點如果暴露，都可以是「接觸面」。
+        // 為了演算法方便，若真的沒空氣，就選第一排所有位置當起點，但要小心 distance
+        for(let x=0; x<w; x++) starts.push([x,0]);
+    }
+
+    return { grid: mapGrid, w, h, starts, chests, startAbsR: startR };
+}
+
+function planNextMove(state) {
+    const { grid, w, h, starts, chests } = state;
+    
+    if (chests.length === 0) return null;
+
+    let bestPlan = null;
+    let minCost = Infinity;
+
+    // 對每個寶箱計算成本
+    // 這裡簡化：只計算到「寶箱的某一部分」的成本
+    // 由於寶箱佔多格，我們只要接觸到其中一格即可開始挖掘，但若要挖開整個寶箱，需要把所有部分都挖開
+    // 貪婪算法：先找「最近的一個寶箱部分」去挖
+    
+    // 1. 計算從所有起點到地圖各點的開銷 (只用稿子)
+    const d = dijkstraMultiStart(grid, w, h, starts);
+    
+    // 2. 評估每個寶箱目標
+    for(const chest of chests) {
+        const cx = chest[0];
+        const cy = chest[1];
+        
+        // 方案 A: 純稿子
+        const costA = d.dist[cy][cx] * SHOVEL_COST;
+        if(costA < minCost) {
+            minCost = costA;
+            bestPlan = { type: 'shovel', target: [cx, cy], path: reconstructPath(d.prev, cx, cy, starts) };
+        }
+        
+        // 方案 B: 炸彈 (嘗試在寶箱附近的點放炸彈)
+        // 炸彈邏輯：在 (bx, by) 放炸彈，成本 = 到達 (bx, by) 的成本 + 2.5
+        // 效益：移除範圍內的 R。
+        // 但我們的目標是「到達寶箱」。如果炸彈能幫我們更快到達寶箱?
+        // 或是炸彈本身就是為了開寶箱 (炸開寶箱周圍的土)
+        
+        // 簡化版貪婪：若炸彈能一次消除 >= 3 個 R，且這些 R 擋在路徑上或是寶箱本身? 
+        // 題目要求：評估道具組合 哪個成本最低
+        // 假設我們要到達 cx, cy。
+        // 窮舉所有可能的炸彈位置 (bx, by)
+        // 如果炸彈位置可達 (成本 d.dist[by][bx])
+        // 炸完後，計算從 (bx, by) 到 (cx, cy) 的成本? 不對，炸完後路徑改變
+        
+        // 正確評估：
+        // 窮舉炸彈位置 B (bx, by)。必須是當前可達或接近可達的點。
+        // 模擬炸掉 B 周圍的土。
+        // 重新計算 Dijkstra 到 C 的成本。
+        // 總成本 = (到達B的成本) + 2.5 + (炸完後從B到C的成本)
+        
+        // 為了效能，我們只在「當前純稿子路徑」周圍嘗試放炸彈? 
+        // 或者全圖掃描 (地圖小，7x6，全掃描可行)
+        
+        // 限制：炸彈不能放在牆上(這裡沒有牆)，也不能放在不可達的地方太遠?
+        // 其實可以放在任何位置，只要我們算得出「到達炸彈位置的成本」
+        
+        // 優化：只評估「比目前 minCost 還有潛力」的炸彈位置
+        // 也就是 d.dist[by][bx] * 1 + 2.5 < minCost
+        
+        for(let by=0; by<h; by++) {
+            for(let bx=0; bx<w; bx++) {
+                // 如果到達炸彈點的成本已經太高，跳過
+                const distToBomb = d.dist[by][bx];
+                if(distToBomb * SHOVEL_COST + BOMB_COST >= minCost) continue;
+                
+                // 模擬炸彈
+                // 備份 grid
+                const g2 = grid.map(row => row.slice());
+                // 炸開 3x3 + 十字 (參考 bombAction)
+                applyBombSim(g2, bx, by, w, h);
+                
+                // 重新計算從 (bx, by) 到目標的距離? 
+                // 不，應該是從「原起點」到目標的距離，但在新地圖上
+                // 因為炸彈炸開後，可能打通了另一條更近的路
+                const d2 = dijkstraMultiStart(g2, w, h, starts);
+                const newPathCost = d2.dist[cy][cx] * SHOVEL_COST;
+                const totalCost = BOMB_COST + newPathCost; // 這裡假設炸彈位置本身就在最佳路徑上?
+                // 修正：總成本應該是「炸彈消耗」+「新地圖下的最短路徑成本」
+                // 但要注意，如果我們為了放炸彈而特地繞路去放，那「到達炸彈點」的成本也該算?
+                // 其實 d2 (從起點出發) 已經包含了「走到炸彈影響區並通過」的路徑? 
+                // 不完全是。炸彈是「放下去」這個動作。
+                // 我們必須先「走到放炸彈的位置」。
+                // 所以總成本 = (走到 bx,by 的成本) + 2.5 + (炸完後從 bx,by 走到 cx,cy 的成本)?
+                // 或者，我們炸完後，其實可以從任意已連通點出發?
+                // 簡單模型：先走到 B，放炸彈，然後從 B 走到 C。
+                // Total = d.dist[by][bx] * 1 + 2.5 + dist(B, C in g2)
+                
+                // 計算 B 到 C 在 g2 的距離
+                const dFromB = dijkstra(g2, w, h, bx, by);
+                const costAfterBomb = dFromB.dist[cy][cx];
+                
+                const totalB = distToBomb * SHOVEL_COST + BOMB_COST + costAfterBomb * SHOVEL_COST;
+                
+                if(totalB < minCost) {
+                    minCost = totalB;
+                    bestPlan = { type: 'bomb', target: [bx, by], path: reconstructPath(d.prev, bx, by, starts), finalTarget: [cx, cy] };
+                }
+            }
+        }
+    }
+    
+    return bestPlan;
+}
+
+function dijkstraMultiStart(grid, w, h, starts) {
+  const INF=1e9; 
+  const dist = Array.from({length:h},()=>Array(w).fill(INF));
+  const prev = Array.from({length:h},()=>Array(w).fill(null));
+  const pq = [];
+  
+  // Init
+  for(const s of starts) {
+      dist[s[1]][s[0]] = 0;
+      pq.push({x:s[0], y:s[1], c:0});
+  }
+  pq.sort((a,b)=>a.c-b.c);
+  
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  
+  while(pq.length){
+      const cur=pq.shift(); // 簡單實作沒用 PriorityQueue，但地圖小沒差
+      // 這裡每次 shift 都要 sort 或是用 min 搜尋，否則效率差。
+      // 鑑於 N 小，直接 sort 剩餘陣列
+      
+      const x=cur.x, y=cur.y, c=cur.c; 
+      if(c > dist[y][x]) continue;
+
+      for(const d of dirs){
+          const nx=x+d[0], ny=y+d[1]; 
+          if(nx<0||ny<0||nx>=w||ny>=h) continue;
+          
+          const ch=grid[ny][nx]; 
+          // R or C costs 1 to move into (dig), . costs 0
+          const add = (ch==='R' || ch==='C') ? 1 : 0; 
+          
+          if(dist[ny][nx] > c+add){
+              dist[ny][nx] = c+add; 
+              prev[ny][nx] = [x,y]; 
+              pq.push({x:nx, y:ny, c:dist[ny][nx]});
+              pq.sort((a,b)=>a.c-b.c);
+          }
+      }
+  }
+  return {dist,prev};
+}
+
+function dijkstra(grid, w, h, sx, sy) {
+    return dijkstraMultiStart(grid, w, h, [[sx, sy]]);
+}
+
+function reconstructPath(prev, tx, ty, starts) {
+    const path=[]; 
+    let cur=[tx,ty]; 
+    while(cur){
+        path.push(cur); 
+        // 檢查是否回到起點集合之一
+        if(starts.some(s => s[0]===cur[0] && s[1]===cur[1])) break;
+        cur = prev[cur[1]][cur[0]]; 
+    }
+    return path.reverse();
+}
+
+function applyBombSim(grid, bx, by, w, h) {
+    // 3x3
+    for(let dy=-1;dy<=1;dy++){
+        for(let dx=-1;dx<=1;dx++){
+            const x=bx+dx,y=by+dy; 
+            if(x>=0&&y>=0&&x<w&&y<h) grid[y][x]='.';
+        }
+    }
+    // 十字延伸
+    const extras = [
+        {r: by - 2, c: bx}, {r: by + 2, c: bx},
+        {r: by, c: bx - 2}, {r: by, c: bx + 2}
+    ];
+    for(let p of extras) {
+        if(p.c>=0&&p.r>=0&&p.c<w&&p.r<h) grid[p.r][p.c]='.';
+    }
+}
+
+function findPathToBottom(state) {
+    const { grid, w, h, starts } = state;
+    // 目標：最底層任一點
+    const targetRow = h - 1;
+    
+    // Dijkstra 找最便宜路徑到最底層
+    const d = dijkstraMultiStart(grid, w, h, starts);
+    
+    let minCost = Infinity;
+    let bestEnd = null;
+    
+    for(let x=0; x<w; x++) {
+        if(d.dist[targetRow][x] < minCost) {
+            minCost = d.dist[targetRow][x];
+            bestEnd = [x, targetRow];
+        }
+    }
+    
+    if(bestEnd) {
+        return reconstructPath(d.prev, bestEnd[0], bestEnd[1], starts);
+    }
+    return null;
+}
+
+async function executePlanStep(plan) {
+    // 執行計畫中的第一步 (path 的第一個需要挖掘的點)
+    // path 包含了起點(不需要挖) 到 終點
+    // 我們只執行 path 中第一個不是「空氣」的點
+    
+    const { path, type, target } = plan;
+    const startR = Math.floor(depth);
+    
+    // 如果是炸彈方案，且我們已經到達炸彈點 (path 只有炸彈點本身?)
+    // 若 path 長度 > 1 (起點 -> ... -> 炸彈點)，我們先移動到炸彈點
+    // 這裡簡化：一步一步執行 path
+    
+    for(let i=0; i<path.length; i++) {
+        const p = path[i];
+        const rAbs = startR + p[1];
+        const c = p[0];
+        
+        // 檢查該點狀態
+        const tile = getLogicalTile(rAbs, c);
+        
+        // 如果是炸彈方案的目標點，且我們已經走到這了 (i == path.length - 1)
+        if(type === 'bomb' && i === path.length - 1) {
+            // 放炸彈
+            setTool('bomb');
+            if(tile && tile.el) handleTap(rAbs, c, tile, {});
+            return;
+        }
+        
+        // 否則，如果是障礙物 (Soil/Rock/Chest)，切換稿子挖掘
+        if(tile && tile.type !== 'air' && !tile.type.startsWith('item-')) {
+            setTool('pickaxe');
+            if(tile.el) handleTap(rAbs, c, tile, {});
+            return; // 只執行一步，然後重新評估
+        }
+    }
+}
+
+async function executePathStep(p) {
+     const startR = Math.floor(depth);
+     const rAbs = startR + p[1];
+     const c = p[0];
+     const tile = getLogicalTile(rAbs, c);
+     if(tile && tile.type !== 'air' && !tile.type.startsWith('item-')) {
+         setTool('pickaxe');
+         if(tile.el) handleTap(rAbs, c, tile, {});
+     }
+}
+
+// Toggle AI: 優先連到 Python WebSocket server，若失敗或無 server 則 fallback 到前端貪婪 AI
+let wsAIClient = null;
+function toggleAI() {
+  const btn = document.getElementById('btn-ai');
+  // 若已在運行，關閉
+  if (wsAIClient || aiRunning) {
+    if (wsAIClient) { wsAIClient.close(); wsAIClient = null; }
+    if (aiRunning) { aiRunning = false; btn.innerText = 'Python AI'; }
+    return;
+  }
+
+  // 嘗試連線到 Python WS server
+  try {
+    wsAIClient = new WebSocket('ws://localhost:8765');
+    wsAIClient.onopen = () => {
+      console.log('Connected to Python AI server');
+      btn.innerText = 'Python AI: 連線中';
+
+      const sendObs = () => {
+        if (!wsAIClient || wsAIClient.readyState !== 1) return;
+        try { wsAIClient.send(JSON.stringify(getGameState())); } catch(e) { console.warn(e); }
+      };
+
+      wsAIClient.onmessage = (ev) => {
+        try {
+          const action = JSON.parse(ev.data);
+          // 伺服器回傳相對於視窗的 r (0..rows-1)
+          const rAbs = action.r + Math.floor(depth);
+          const c = action.c;
+          const toolIdx = action.tool;
+          let toolName = 'pickaxe';
+          if (toolIdx === 1) toolName = 'drill';
+          if (toolIdx === 2) toolName = 'bomb';
+          if (currentTool !== toolName) setTool(toolName);
+          const tile = getLogicalTile(rAbs, c);
+          if (tile && tile.el) {
+            handleTap(rAbs, c, tile, {});
+          }
+        } catch(e) { console.warn('invalid action', e); }
+        // 請伺服器下一步
+        setTimeout(sendObs, 200);
+      };
+
+      // 先發一筆觀測
+      sendObs();
+    };
+
+    wsAIClient.onclose = () => { console.log('Python AI disconnected'); btn.innerText = 'Python AI'; wsAIClient = null; };
+    wsAIClient.onerror = (e) => { console.warn('ws error', e); if(wsAIClient) wsAIClient.close(); wsAIClient = null; btn.innerText='Python AI'; };
+  } catch(e) {
+    console.warn('WS connect failed, fallback to frontend greedy AI', e);
+    runGreedyAI();
+  }
+}
+
+// Start
+init();
+
+</script>
+</body>
+</html>

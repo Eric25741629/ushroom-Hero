@@ -19,6 +19,42 @@ logger = logging.getLogger(__name__)
 _TPE = datetime.timezone(datetime.timedelta(hours=8))
 
 
+def _resolve_device_id(d: Any) -> str:
+    """Resolve device id across ADB and Playwright backends."""
+    try:
+        adb_dev = getattr(d, "adb_device", None)
+        if adb_dev is not None:
+            info = getattr(adb_dev, "info", {}) or {}
+            serial = info.get("serialno") or info.get("serial")
+            if serial:
+                return str(serial)
+    except Exception:
+        pass
+
+    for attr in ("device_id", "serial", "device_serial"):
+        value = getattr(d, attr, None)
+        if value:
+            return str(value)
+
+    try:
+        info = getattr(d, "device_info", {}) or {}
+        serial = info.get("serial") or info.get("serialno")
+        if serial:
+            return str(serial)
+    except Exception:
+        pass
+
+    try:
+        info = getattr(d, "info", {}) or {}
+        serial = info.get("serial") or info.get("serialno")
+        if serial:
+            return str(serial)
+    except Exception:
+        pass
+
+    return "unknown"
+
+
 def _compute_biweekly_slot_key(now: Optional[datetime.datetime] = None) -> Optional[str]:
     """Return a slot key for Sat/Sun 20:00~20:04 (Asia/Taipei), else None."""
     if now is None:
@@ -806,7 +842,7 @@ def _update_store_record_extra(manager, title, extra_fields):
     data[title] = record
     manager.save_data(data)
 def buy_god_everyweek(d):
-    ip = d.adb_device.info.get('serialno')
+    ip = _resolve_device_id(d)
     """每週購買：萬神_秘寶閣（以 ISO 週判斷，使用 StoreDataManager 的 week 判斷）"""
     store_manager = create_store_manager(ip)
     # 現行 ISO 週字串，用於檢查次數記錄（避免跨週累加）
@@ -919,7 +955,7 @@ def hell_door(d, ip):
 
 def fight_snow_country(d:u2.Device,device_id=None, max_success_per_week=2, max_checks_per_week=6):
     if device_id is None:
-        device_id = d.device_info.get('serial')
+        device_id = _resolve_device_id(d)
     """執行 '雪國危機'，每週最多記錄 `max_success_per_week` 次成功；同時限制每週檢查次數 `max_checks_per_week`。
     本函式行為：
     - 以 ISO 年-週 作為週鍵，週換時自動重置計數。

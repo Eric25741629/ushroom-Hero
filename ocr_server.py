@@ -9,10 +9,11 @@ import os
 import ipaddress
 import traceback
 import threading
+import queue
+import itertools
 
 app = Flask(__name__)
 ocr_lock = threading.Lock()  # 初始化鎖
-app = Flask(__name__)
 
 OCR_FAILS_DIR = "ocr_fails_new"
 OCR_FAILS_COUNT_FILE = os.path.join(OCR_FAILS_DIR, "count.txt")
@@ -129,24 +130,93 @@ def before_request():
     check_ip_allowed()
 
 # 全局 OCR 實例
-#ocr = PaddleOCR(
-#    lang='chinese_cht',
-#    use_doc_orientation_classify=False,
-#    use_doc_unwarping=False,
-#    use_textline_orientation=False,
-#    ocr_version='PP-OCRv5'
-#    
-#)
-ocr = PaddleOCR(
-    # ocr_version="PP-OCRv5",
+OCR_WORKERS = max(1, int(os.environ.get("OCR_WORKERS", "1")))
+OCR_INFER_TIMEOUT = float(os.environ.get("OCR_INFER_TIMEOUT", "30"))
 
-    # ✅ 指到你導出的資料夾（裡面有 inference.pdiparams/inference.yml/json）
-    text_recognition_model_dir=r"A:\OCR_model\v2",
-    text_detection_model_dir=r"A:\OCR_model\det_v2",
-    use_doc_orientation_classify=False,
-    use_doc_unwarping=False,
-    use_textline_orientation=False,
-)
+OCR_ENGINE_CONFIG = {
+    "text_recognition_model_dir": r"A:\OCR_model\v2",
+    "text_detection_model_dir": r"A:\OCR_model\det_v2",
+    "use_doc_orientation_classify": False,
+    "use_doc_unwarping": False,
+    "use_textline_orientation": False,
+}
+
+
+class OCRWorkerPool:
+    """Each worker owns one PaddleOCR instance for concurrent inference."""
+
+    def __init__(self, worker_count: int):
+        self.worker_count = max(1, int(worker_count))
+        self._rr = itertools.count()
+        self._queues = [queue.Queue(maxsize=32) for _ in range(self.worker_count)]
+        self._threads = []
+        self._ready_events = []
+        self._init_errors = {}
+        self._single_engine = None
+
+        if self.worker_count == 1:
+            self._single_engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+            return
+
+        for idx in range(self.worker_count):
+            ready_event = threading.Event()
+            self._ready_events.append(ready_event)
+            t = threading.Thread(
+                target=self._worker_loop,
+                args=(idx, ready_event),
+                daemon=True,
+                name=f"ocr-worker-{idx}",
+            )
+            t.start()
+            self._threads.append(t)
+
+        for ev in self._ready_events:
+            ev.wait()
+
+        if self._init_errors:
+            details = "; ".join(
+                f"worker {idx}: {err}" for idx, err in sorted(self._init_errors.items())
+            )
+            raise RuntimeError(f"OCR worker init failed: {details}")
+
+    def _worker_loop(self, worker_idx: int, ready_event: threading.Event):
+        try:
+            engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+        except Exception as e:
+            self._init_errors[worker_idx] = str(e)
+            ready_event.set()
+            return
+
+        ready_event.set()
+        q = self._queues[worker_idx]
+        while True:
+            img_roi, result_q = q.get()
+            if img_roi is None:
+                result_q.put((False, RuntimeError("OCR worker stopped")))
+                q.task_done()
+                return
+            try:
+                result_q.put((True, engine.predict(input=img_roi)))
+            except Exception as ex:
+                result_q.put((False, ex))
+            finally:
+                q.task_done()
+
+    def predict(self, img_roi):
+        if self.worker_count == 1:
+            with ocr_lock:
+                return self._single_engine.predict(input=img_roi)
+
+        result_q = queue.Queue(maxsize=1)
+        idx = next(self._rr) % self.worker_count
+        self._queues[idx].put((img_roi, result_q))
+        ok, payload = result_q.get(timeout=OCR_INFER_TIMEOUT)
+        if ok:
+            return payload
+        raise payload
+
+
+ocr_pool = OCRWorkerPool(OCR_WORKERS)
 
 
 # 詞條映射表
@@ -298,9 +368,8 @@ def extract_ocr_results(img_roi):
             return []
         if H < 2 or W < 2:
             return []
-        with ocr_lock:
-            # 呼叫 OCR 引擎，任何例外由上層 endpoint 處理
-            res_list = ocr.predict(input=img_roi)
+        # Run inference through worker pool (or single-engine fallback).
+        res_list = ocr_pool.predict(img_roi)
         if not res_list:
             return []
 
@@ -585,7 +654,7 @@ def ocr_general():
 @app.route('/health', methods=['GET'])
 def health_check():
     """健康檢查"""
-    return jsonify({'status': 'ok'})
+    return jsonify({'status': 'ok', 'ocr_workers': OCR_WORKERS})
 
 @app.route('/', methods=['GET'])
 def index():
@@ -654,4 +723,5 @@ if __name__ == '__main__':
 
     print(f"啟動綁定: http://{bind_host}:{bind_port} (預設對外可用，保留白名單檢查)")
     # 若希望僅限本機，啟動時可設定環境變數 OCR_BIND_HOST=127.0.0.1
-    app.run(host=bind_host, port=bind_port, debug=False)
+    print(f"OCR workers: {OCR_WORKERS}")
+    app.run(host=bind_host, port=bind_port, debug=False, threaded=True)

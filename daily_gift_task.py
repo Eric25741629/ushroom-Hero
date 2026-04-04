@@ -21,9 +21,7 @@ def buy_gift_for_friend_once(d, ip_str='emulator-5554'):
     Returns:
         bool: 是否執行成功
     """
-    if ip_str == 'emulator-5556':
-        print("設備 emulator-5556 跳過此任務")
-        return False
+
     
     try:
         click_str_by_server(d, '家園', shift_y=-20, y_range=(934, 959))

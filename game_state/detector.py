@@ -11,9 +11,17 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
     Determines the current game stage based on OCR text.
     """
     full_text = "".join(ocr_str)
-    
-    # 1. 優先判定「主頁面」，因為主頁面可能包含其他關鍵字(如公告按鈕)
-    # 增加更多主頁面特徵字，減少誤判
+
+    # 0. 優先判定「車位倉庫」：此頁常疊在主頁元素上，若先判主頁面容易誤判
+    if ("車位倉庫" in full_text and
+            ("自動收車" in full_text or "自動收車記" in full_text or "已自動收車" in full_text)):
+        return "車位倉庫"
+    if "離線獎勵" in full_text:
+        return "放置獎勵"
+    if '本場個人擊敗' in full_text:
+            return "家族戰"
+    # 1. 主頁面判定
+    # 保留較保守的條件，避免把彈窗/覆蓋頁誤判成主頁面
     main_page_features = ["方案", "副本", "家園", "試煉", "戰鬥"]
     main_count = sum(1 for feature in main_page_features if feature in full_text)
     if main_count >= 2 or ("方案" in full_text and "戰鬥" in full_text):
@@ -35,12 +43,48 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
     }
 
     # 3. 公告判定 (通常是彈窗)
-    # 為了避免把主頁面的公告按鈕當成公告頁面，我們可以檢查文字出現的次數或特定特徵
+    # 使用遠端 OCR 的 bbox 資訊來決定是否為可操作的公告彈窗
     if "公告" in full_text:
-        # 如果畫面上出現「同意」或「進入遊戲」通常是啟動時的公告彈窗
+        has_valid_announcement = False
+        try:
+            ocr_full = img_tools.analyze_skill_via_http(img)
+            if ocr_full.get('success') and ocr_full.get('ocr_results'):
+                for item in ocr_full.get('ocr_results', []):
+                    text = item.get('text', '')
+                    if '公告' not in text:
+                        continue
+                    bbox = item.get('bbox')
+                    x_coord = None
+                    # 常見格式：[[x0,y0], [x1,y1], ...] 或 [x, y, w, h] 或 直接 x
+                    if isinstance(bbox, (list, tuple)) and len(bbox) > 0:
+                        first = bbox[0]
+                        if isinstance(first, (list, tuple)) and len(first) > 0:
+                            x_coord = int(first[0])
+                        elif isinstance(first, (int, float)):
+                            x_coord = int(first)
+                    elif isinstance(bbox, (int, float)):
+                        x_coord = int(bbox)
+
+                    if x_coord is None:
+                        logger.debug(f"無法解析公告座標格式: {bbox}")
+                        continue
+
+                    if x_coord > 155:
+                        has_valid_announcement = True
+                        logger.info(f"偵測到公告（X={x_coord} > 155），視為可關閉公告")
+                        break
+                    else:
+                        logger.debug(f"公告座標 X={x_coord} ≤ 155，視為不可操作公告，忽略")
+        except Exception as e:
+            logger.debug(f"遠端公告 bbox 判定失敗: {e}")
+
+        # 若遠端有回傳可操作的公告，回傳 '公告'
+        if has_valid_announcement:
+            return "公告"
+
+        # 若遠端未能判定為可操作公告，保留原始文字回退邏輯
         if any(k in full_text for k in ["同意", "點擊繼續", "跳過"]):
             return "公告"
-        # 或者單獨出現公告且沒有主頁面特徵時
         if main_count == 0:
             return "公告"
 

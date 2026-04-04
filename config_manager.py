@@ -4,17 +4,32 @@ import threading
 import socket
 import copy
 from typing import Dict, Any
+from pathlib import Path
 
-CONFIG_FILE = "bot_config.json"
+CONFIG_FILE = str(Path(__file__).resolve().parent / "bot_config.json")
 _config_lock = threading.Lock()
 
 # 預設的設備設定模板
 DEFAULT_DEVICE_CONFIG = {
     "name": "",              # 自定義別名 (例如: 主力機)
+    "backend": "adb",        # adb / web_h5
+    "backend_display_id": "",# display/config binding id (empty => use device key)
+    "web_url": "",
+    "web_canvas_selector": "canvas",
+    "web_profile_dir": "playwright_profile/{device_id}",
+    "web_state_file": "auth_state/{device_id}.json",
+    "web_channel": "chrome",
+    "web_headless": False,
+    "web_clear_cookies_on_start": False,
+    "web_viewport_width": 540,
+    "web_viewport_height": 960,
+    "web_stop_mode": "keep_page", # keep_page / blank / close_browser
     "enable_farm": True,     # 啟用農場
     "enable_arena": True,    # 啟用競技場
     "enable_mining": True,   # 啟用挖礦
     "enable_dungeon": True,  # 啟用副本(地獄/萬神)
+    "enable_shop_manager": True,    # 啟用購物管家
+    "enable_dungeon_manager": True, # 啟用副本管家
     "is_real_phone": False,  # 是否為實體機/特殊機型 (原本的 fc65396d 邏輯)
     "keep_screen_on": False, # 是否保持螢幕開啟 (不鎖屏)
     "screenshot_debug": False, # 是否開啟截圖除錯
@@ -86,7 +101,8 @@ def load_config() -> Dict[str, Any]:
             return default
             
         try:
-            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+            # Accept UTF-8 with or without BOM to avoid parser failures after external edits.
+            with open(CONFIG_FILE, 'r', encoding='utf-8-sig') as f:
                 data = json.load(f)
                 
             # --- 自動補全邏輯 ---
@@ -166,10 +182,7 @@ def get_global_config() -> Dict[str, Any]:
 
     if matched_key is not None:
         final_cfg.update(host_settings[matched_key])
-        print(f"[Config] 套用主機 {matched_key} 的專屬設定")
-    else:
-        print(f"[Config] 未找到主機 {hostname} 的專屬設定，使用預設值")
-        
+
     return final_cfg
 
 def get_ocr_config() -> Dict[str, Any]:
@@ -288,12 +301,55 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         except Exception:
             return d
 
+    def _to_bool(v, d=False):
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, (int, float)):
+            return bool(v)
+        if isinstance(v, str):
+            text = v.strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+        return d
+
+    backend = str(current.get("backend", "adb")).strip().lower()
+    current["backend"] = backend if backend in {"adb", "web_h5"} else "adb"
+    current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
+    current["web_url"] = str(current.get("web_url", "")).strip()
+    current["web_canvas_selector"] = str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
+    current["web_profile_dir"] = str(current.get("web_profile_dir", "playwright_profile/{device_id}")).strip() or "playwright_profile/{device_id}"
+    current["web_state_file"] = str(current.get("web_state_file", "auth_state/{device_id}.json")).strip() or "auth_state/{device_id}.json"
+    current["web_channel"] = str(current.get("web_channel", "chrome")).strip() or "chrome"
+    current["web_headless"] = _to_bool(current.get("web_headless", False), False)
+    current["web_clear_cookies_on_start"] = _to_bool(current.get("web_clear_cookies_on_start", False), False)
+    current["web_viewport_width"] = max(200, min(4096, _to_int(current.get("web_viewport_width"), 540)))
+    current["web_viewport_height"] = max(200, min(4096, _to_int(current.get("web_viewport_height"), 960)))
+    stop_mode = str(current.get("web_stop_mode", "keep_page")).strip().lower()
+    # Supported aliases:
+    # - keep_page: keep browser/page open after app_stop
+    # - blank: navigate to about:blank on app_stop
+    # - close / close_page / close_browser: close browser context on app_stop
+    allowed_stop_modes = {"keep_page", "blank", "close", "close_page", "close_browser"}
+    current["web_stop_mode"] = stop_mode if stop_mode in allowed_stop_modes else "keep_page"
+
     current["online_check_interval"] = max(1, min(60, _to_int(current.get("online_check_interval"), DEFAULT_DEVICE_CONFIG["online_check_interval"])))
     current["lamp_check_interval"] = max(1, min(24, _to_int(current.get("lamp_check_interval"), DEFAULT_DEVICE_CONFIG["lamp_check_interval"])))
     current["lamp_duration_sec"] = max(30, min(3600, _to_int(current.get("lamp_duration_sec"), DEFAULT_DEVICE_CONFIG["lamp_duration_sec"])))
     current["mining_duration_min"] = max(1, min(60, _to_int(current.get("mining_duration_min"), DEFAULT_DEVICE_CONFIG["mining_duration_min"])))
 
-    for k in ["enable_farm", "enable_arena", "enable_mining", "enable_dungeon", "is_real_phone", "keep_screen_on", "screenshot_debug"]:
+    for k in [
+        "enable_farm",
+        "enable_arena",
+        "enable_mining",
+        "enable_dungeon",
+        "enable_shop_manager",
+        "enable_dungeon_manager",
+        "is_real_phone",
+        "keep_screen_on",
+        "screenshot_debug",
+    ]:
         if k in current:
             current[k] = bool(current[k])
 

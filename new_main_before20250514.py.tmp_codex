@@ -1,0 +1,637 @@
+﻿import sys
+import os
+
+# ?寞????芸? SMB/NAS ?瑁???
+# ?? .pyc 瑼?撖怠嚗?蝬脰楝頝臬??Ｙ?憭折? I/O 撠?⊿?
+sys.dont_write_bytecode = True
+
+import subprocess
+from Sea import sea
+import torch
+import os
+import datetime
+import json
+from adb_operations import (
+    run_adb, connect_u2_with_retries, unlock_screen,
+    start_game_by_icon, check_in_game, click_random,
+    safe_click, ensure_screen_on, stop_app,
+    screenshot_opencv, screenshot_pillow,
+    set_screen_for_game, reset_screen_settings
+)
+import daily_gift_task
+import easyocr
+import point
+import uiautomator2 as u2
+from everyday_mission.Guardian_Spirit_manger import get_Guardian_Spirit
+import time
+import numpy as np
+from device import get_adb_devices,close_nofication,open_nofication
+from adb_devices import launch_clone
+import cv2
+import mask
+import img_tools
+from Skill import *
+from park import *
+from family import Family_manager
+from farm import farm_manager
+import new_battle
+import random
+from tools import click_white
+from Spin_Wheel import spin_wheel
+from Mission import mission
+from State import state
+from Assistant import assistant
+import logging
+import atexit
+import pytz
+import Store
+import rank_events
+#撘log ? 銝蝙?私rint
+import Open_gold_paddle_ocr
+import threading
+from fight_car import flush_logs
+
+from utils.logging_utils import setup_logger_for_device, set_thread_logger, logger, default_logger
+from game_actions.skill_manager import switch_skill
+from game_actions.reward_manager import reward
+from utils.ocr_clicker import click_str
+from game_state.detector import get_stage
+from game_actions.miner_action import oracle, _should_perform_oracle_action
+from game_actions.periodic_tasks import _run_periodic_cycle, should_execute_mushroom_arena, mushroom_arena
+from game_initialization import check_on_line, handle_game_startup_pages
+from utils.model_loader import load_oracle_cnn_model
+from game_actions.daily_tasks import daily_acceleration, click_arena_challenges
+import new_cnn.cnn_model as cnn_model
+# 撠?啁?JSON蝞∠??剁?靽????澆捆
+from json_manager import (
+    time_recording, return_time, create_store_manager,
+    is_expired, _should_execute_cycle, should_execute_sea_with_cooldown,
+    is_record_expired
+)
+from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_cnn_model
+from miner.mining_service import run as run_mining
+from miner.rl.rl_recorder import RLRecorder
+import shlex
+import BUY
+from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
+from utils.car_fight_utils import adjust_wake_time_for_cars
+
+import bot_state
+from device_wrapper import MonitoredDevice
+
+class LoginConflictError(Exception):
+    """?芸?蝢拍撣賂??冽???啣?駁?銝衣?甇Ｙ????session"""
+    pass
+
+def get_stage_with_check(d, ip, Cnn_model, easyocr_reader):
+    """
+    ?? get_stage嚗????啁?炎?乓?    憒??潛?啣?駁?嚗?? LoginConflictError??    """
+    stage = get_stage(d, Cnn_model, easyocr_reader)
+    if stage == "?啣?駁?":
+        logger.warning(f"[{ip}] ?典??菜葫?啁?啁??撘瑕?迫?")
+        d.app_stop("com.mxdzz.tw.and")
+        
+        # 閮剖?銝活??????1 撠?敺?        wake_ts = time.time() + 3600
+        wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+        bot_state.update_state(ip, task="隡?銝?, step=f"?菜葫?啁?啁??(?? {wake_time_str} ??)", next_wake_at=wake_ts)
+        
+        # ??啣虜嚗?銝餉艘???脖蒂頝喳隡??挾
+        raise LoginConflictError("?菜葫?啁?啁??)
+
+    if stage == "??瘣餃?":
+        logger.info(f"[{ip}] ?菜葫?啜?敺瘣餃???蝒?暺?蝛箇雿蔭??")
+        click_white(d)
+        time.sleep(1)
+        
+    return stage
+
+def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
+    # ???????    bot_state.init_device(ip)
+    
+    try:
+        # ?箄府閮剖?閮剖??函???logger嚗? IP ??嚗??遣蝡?logger 隞乩噶????挾?航???        device_logger = setup_logger_for_device(ip)
+        # 閮剖??嗅?蝺???logger
+        set_thread_logger(device_logger)
+
+        try:
+            d_orig = connect_u2_with_retries(ip, logger=device_logger)
+            # ?瑕予?嚗?鋆身?隞塚?銋????璅∠?隤輻??d ?賣鋡怎?抒?
+            d = MonitoredDevice(d_orig, ip)
+        except Exception as e:
+            device_logger.error(f"[{ip}] ?⊥?????啗身?? {e}")
+            bot_state.set_offline(ip, reason=f"???憭望?: {e}")
+            return
+        
+        wake_up_time = time.time()
+        
+        # ?箸??身???璈??????宏 (0 ??2 ??)
+        wake_random_offset = random.randint(0, 2)
+        logger.info(f"[{ip}] 閮剖??冽????宏: {wake_random_offset} ??")
+        protect = False if ('emulator-5558' in ip or 'emulator-5562' in ip or '7fe98fc6' in ip or 'fc65396d' in ip) else True
+
+        # manager = ParkingManager(
+        #     device=d, reader=easyocr_reader, ip=ip, cnn_model=Cnn_model,protect=protect)
+        # battle_manager = new_battle.BattleManager(
+        #     device=d, reader=easyocr_reader, cnn_model=Cnn_model)
+        wheel_manager = spin_wheel(device=d, cnn_model=Cnn_model,devices_serial=ip)
+        mission_manager = mission(device=d, ip=ip)
+        family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
+        state_manager = state(device=d, cnn_model=Cnn_model)
+        # assistant_manager = assistant(d=d, cnn_model=Cnn_model)
+        clf = ClassifierCNN(model=oralce_cnn_model, classes=oralce_classes, dataset_root="dataset/low_confidence")
+
+        # 撱箇? RL 閮??剁?閮?雿??芸?閮毀嚗?        rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))
+        os.makedirs(rl_logs_dir, exist_ok=True)
+        rl_recorder = RLRecorder(
+            log_dir=rl_logs_dir,
+            auto_train=False,  # 銝??蝺?            flush_interval=1,
+        )
+
+        while (1):
+            try:
+                # --- ???圾??璈?---
+                bot_state.update_state(ip, task="??瑼Ｘ", step="甇?瑼Ｘ?Ｗ????)
+                d = handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader)
+
+                start = time.time()
+                img = d.screenshot(format='opencv')
+                # ?脰?ocr
+                if state_manager.get_state() == "皛?閫?蝭?餅芋撘?":
+                    unlock_screen(d)
+                if check_in_game(d) :
+                    print("in game")
+                    # ?喃蝙?券??脖葉嚗?閬炎?交?行??蝵桃??萸?????蝒??                    stage_check = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                    if stage_check in ["?曄蔭?", "?Ｙ??", "??"]:
+                        logger.info(f"[{ip}] ?菜葫??{stage_check} 敶?嚗銵????..")
+                        reward(d, easyocr_reader)
+                        time.sleep(2)
+                else:
+                    print("not in game")
+                    bot_state.update_state(ip, task="???", step="甇??? APP")
+                    if 'fc65396d' in ip or '192.168' in ip:
+                        
+                        time.sleep(1)
+                        try:
+                            if (d.xpath('//*[@text="???隤?]').click()):
+                                logger.info(f"[{ip}] ?曉??內,暺???")
+                                time.sleep(2 + random.random())
+                                set_screen_for_game(ip, logger=logger)
+                            else:
+                                raise Exception("?芣?圈??脣?蝷?)
+                        except:                    
+                            output = launch_clone("com.mxdzz.tw.and", 2,device_serial=ip)
+                            set_screen_for_game(ip, logger=logger)
+                        time.sleep(1)
+                        
+                    else:
+                        # 雿輻?內??? (璅⊥?犖??)
+                        logger.info(f"[{ip}] ??獢?內???")
+                        start_game_by_icon(d, ip)
+
+                    result = handle_game_startup_pages(
+                        d=d,
+                        ip=ip,
+                        easyocr_reader=easyocr_reader,
+                        start_game_fn=start_game_by_icon,
+                        reward_fn=reward,
+                        logger=device_logger
+                    )
+                    if result:
+                        logger.info(f"[{ip}] ?撌脤脣?舀?雿???)
+                    else:
+                        logger.warning(f"[{ip}] ???憭望?嚗霈???30 ??...")
+                        # 閮? 30 ??敺?????
+                        wake_ts = time.time() + 1800
+                        wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+                        bot_state.update_state(ip, task="隡?銝?, step=f"??憭望??輯? (?? {wake_time_str} ??)", next_wake_at=wake_ts)
+                        
+                        # ? LoginConflictError 頝喳隡??挾
+                        raise LoginConflictError("??憭望??輯?")
+                                    # img = d.screenshot(format='opencv')
+                # if red_envelope.check_red_in_pic(img):
+                # red_envelope.open_red_envelope(d)
+                if ip == "emulator-5558":
+                    switch_skill(d)
+
+                current_time = time.localtime()
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                record_time = return_time(ip, name="?啁?銋?")
+                logging.info("?桀??: {}, ?嗅???: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
+                logging.info("?啁?銋?蝝?? {}".format(record_time))
+                hell_gate_time = 1
+                if record_time is None :
+                    #  "?祉?閰衣?" ????摮  
+                    hell_gate_time = 0
+                    should_execute = True
+                else:
+                    should_execute = record_time.get("is_next_day", False) or hell_gate_time == 0
+                    logging.info("hell_gate_time: {}, should_execute: {}, record_time: {}".format(hell_gate_time, should_execute, record_time))
+                if should_execute and current_time.tm_min < 20 and stage == "銝駁???:
+                    bot_state.update_state(ip, task="?啁?銋?", step="?圈洛?瑁?銝?)
+                    # goto_hell_gate(d, easyocr_reader)
+                    new_battle.hell_door(d, ip)
+                    time_recording(ip, name="?啁?銋?")
+                elif should_execute and current_time.tm_min < 20:
+                    logger.info("?啁?銋?: ?圈??瑁???雿??其蜓?嚗歲?甈∪儐??)
+                else:
+                    logger.info("?啁?銋?: 撠?圈??瑁????歇?瑁???)
+                if '7fe98fc6' in ip and get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁???:
+                    flush_logs(d)
+
+                # stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁???:
+                    bot_state.update_state(ip, task="颲脣隞餃?", step="皞??脣")
+                    save_time = farm_manager.farm(d, ip, Cnn_model)
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="暺?撖嗥拳", step="???")
+                    d.click(random.randint(261, 271), 369)  # 暺?撖嗥拳
+                    time.sleep(1)
+                    reward(d, easyocr_reader)
+                    time.sleep(3)
+                # stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                # logger.info(f"?桀??: {stage}, ??瑼Ｘ?????)
+                # if stage == "銝駁???:
+                #     status = manager.check_and_park(protect=True)
+
+                print("蝣箄?鞈: {}".format(get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁??? or current_time.tm_hour == 23))
+                if get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁??? :
+                    bot_state.update_state(ip, task="摰嗆?隞餃?", step="?瑁?銝?)
+                    family_manager.go_to_family()
+
+                # stage=get_stage(d,Cnn_model, easyocr_reader)
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁??? and ip != "emulator-5558":
+                    guardian_record = return_time(ip, name="guardian_spirit")
+                    should_get_guardian = True
+                    if guardian_record is not None:
+                        should_get_guardian = guardian_record.get("is_next_day", False)
+                    if should_get_guardian:
+                        bot_state.update_state(ip, task="??摰風??, step="??銝?)
+                        get_Guardian_Spirit(d)
+                        time_recording(ip, name="guardian_spirit")
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁??? and ip != "emulator-5558":
+                    bot_state.update_state(ip, task="?賣??賢丰隡?, step="??銝?)
+                    get_skill_and_partner(d)
+                    time.sleep(3)
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    store_record = return_time(ip, name="Store")
+                    # 瘥?3 撠?瑼Ｘ銝甈?(10800蝘? ??23暺撥?嗆炎??                    should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
+                    
+                    if should_check_store:
+                        bot_state.update_state(ip, task="??鞈潸眺", step="?瑁?銝?)
+                        Store.buy_store(d, Cnn_model)
+                        time_recording(ip, name="Store")
+                    else:
+                        logger.info("??鞈潸眺: 撠??銝?23暺?頝喲?")
+
+                # --- ?啣?嚗望暑??- ??撘瑕? (銵-?潭?) ---
+                if get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁???:
+                    rank_events.park_spring(d, ip)
+                
+                bot_state.update_state(ip, task="瘥??, step="??銝?)
+                daily_acceleration(d, ip, Cnn_model)
+                
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="蝡嗆??湔???, step="??銝?)
+                    click_arena_challenges(d, ip)
+                
+                stage=get_stage(d,Cnn_model, easyocr_reader)
+                print("stage:", stage)
+                if get_stage_with_check(d, ip, Cnn_model, easyocr_reader) == "銝駁??? :
+                    bot_state.update_state(ip, task="?丹/Oracle", step="?瑁?銝?, log="???瑁??丹隞餃?")
+                    oracle(d, easyocr_reader, ip=ip, clf=clf, rl_recorder=rl_recorder, Cnn_model=Cnn_model)
+
+                    # if _should_perform_oracle_action(ip):
+                    #     oracle(d, easyocr_reader, ip=ip, clf=clf, rl_recorder=rl_recorder, Cnn_model=Cnn_model)
+                    #     time.sleep(3)
+                    #     # 雿輻?啁?JSON蝞∠??刻???                    #     store_manager = create_store_manager(ip)
+                        
+                        # store_manager.record_purchase("?丹", {"last_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁??? and (20 <= current_time.tm_hour < 23):
+                    # ?湔?澆 do_allmission嚗??折?? check() 瑼Ｘ mission_timestamp
+                    bot_state.update_state(ip, task="??撣訾遙??, step="瑼Ｘ/?瑁?銝?)
+                    mission_manager.do_allmission()
+                    
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="??甇阡???, step="?望?瑼Ｘ/?瑁?")
+                    _run_periodic_cycle(
+                        ip,
+                        record_name="mushroom_arena_cycle_start",
+                        should_execute_fn=should_execute_mushroom_arena,
+                        action_fn=mushroom_arena,
+                        display_name="??甇阡???,
+                        d=d,
+                        daily_limit_name="mushroom_arena_daily",
+                            )
+                
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="?芣絲隞餃? (Sea)", step="?望?瑼Ｘ/?瑁?")
+                    _run_periodic_cycle(
+                        ip,
+                        record_name="sea_last_execution",
+                        should_execute_fn=should_execute_sea_with_cooldown,
+                        action_fn=sea,
+                        display_name="sea",
+                        d=d,
+                        cycle_record_name="sea_cycle_start",
+                    )
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                record_time = return_time(ip, name="?祉?閰衣?")
+                is_not_sunday = False
+                is_monday_afternoon = False
+                is_after_monday = False
+                logging.info("?桀??: {}, ?嗅???: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
+                logging.info("?祉?閰衣?蝝?? {}".format(record_time))
+                fight_trial_time = 1
+                if record_time is None :
+                    #  "?祉?閰衣?" ????摮  
+                     
+                    fight_trial_time = 0
+                    should_execute = True
+                else:
+                    # is_same_week=True 隞?”?祇勗歇?瑁?嚗?頝喲?嚗alse ??勗??芸銵?                    should_execute = record_time.get("is_next_week", False) or fight_trial_time == 0
+                    logging.info("fight_trial_time: {}, should_execute: {}, record_time: {}".format(fight_trial_time, should_execute, record_time))
+                # ???銝銝?嚗之??2暺??????啣?遙雿??銵????交偶銝銵?                if should_execute and (
+                    (current_time.tm_wday == 0 and current_time.tm_hour > 12) or
+                    (1 <= current_time.tm_wday <= 5)
+                ):
+                    is_not_sunday = current_time.tm_wday != 6  # 銝????                    is_monday_afternoon = current_time.tm_wday == 0 and current_time.tm_hour > 12  # ??銝銝?
+                    is_after_monday = current_time.tm_wday > 0  # ??鈭????                    should_run_fight_test = should_execute and is_not_sunday and (is_monday_afternoon or is_after_monday)
+                    if should_run_fight_test and stage == "銝駁???:
+                        bot_state.update_state(ip, task="?祉?閰衣?", step="?瑁?銝?)
+                        new_battle.fight_test(d)
+                        time_recording(ip, name="?祉?閰衣?")
+                    elif should_run_fight_test:
+                        logger.info("?祉?閰衣?: ?圈??瑁???雿??其蜓?嚗歲?甈∪儐??)
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="?脩垢?圈洛", step="??銝?)
+                    new_battle.run_weekly_cloud_fighting_single(d,ip)      
+                else:
+                    logger.info("瘝??其蜓?嚗歲?蝡舀擛?)  
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                if stage == "銝駁??? and ip != "emulator-5556":
+                    bot_state.update_state(ip, task="憟賢?瘥蝳桃", step="??銝?)
+                    daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1)
+                    stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+                    if stage == "銝駁??? and 'fc65396d' in ip :
+                        lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
+                        bot_state.update_state(ip, task="暺? (OCR)", step=f"?瑁?銝?({lamp_dur}s)")
+                        Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10),is_compare=True,device_ip=ip)
+                    
+                    # --- ??????暺??摩 ---
+                    elif stage == "銝駁??? and ip != "emulator-5558":
+                        device_cfg = config_manager.get_device_config(ip)
+                        lamp_interval = device_cfg.get("lamp_check_interval", 2)
+                        lamp_dur = device_cfg.get("lamp_duration_sec", 300)
+                        
+                        if current_time.tm_hour % lamp_interval == 0:
+                            bot_state.update_state(ip, task="暺?", step=f"?瑁?銝?({lamp_dur}s)")
+                            Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
+                        
+                    elif stage == "銝駁??? and current_time.tm_hour % 2 == 0 and  ip == "emulator-5562" :
+                        lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
+                        bot_state.update_state(ip, task="暺?", step=f"?瑁?銝?({lamp_dur}s)")
+                        Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
+                            
+
+                stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
+
+                if stage == "銝駁???:
+                    bot_state.update_state(ip, task="頧?馳", step="?瑁?銝?)
+                    wheel_manager.spin_and_send_gold()
+
+                if ip == "emulator-5558":
+                    switch_skill(d,'擉犖??)
+                if "fc65396d" in ip:
+                    #??chrome 
+                    d.app_start("com.android.chrome")
+                    time.sleep(2)
+                    d.app_stop("com.mxdzz.tw.and")
+                    time.sleep(1)
+                else:
+                    d.app_stop("com.mxdzz.tw.and")
+                
+            except LoginConflictError as e:
+                logger.warning(f"[{ip}] ?啣?駁?銝剜?祆活?瑁?: {e}")
+                # 銝?閬?憭???敺?隞?Ⅳ?????暸?????
+            end = time.time()
+            if 'fc65396d' in ip or '192.168' in ip:
+                reset_screen_settings(ip, logger=logger)
+                time.sleep(1)
+                try:
+                    d.info
+                except Exception as e:
+                    logger.error(f"????: {e}")
+                    try:
+                        d_orig = connect_u2_with_retries(ip, logger=device_logger)
+                        d = MonitoredDevice(d_orig, ip)
+                    except Exception as e2:
+                        logger.error(f"[{ip}] ??仃?? {e2}")
+                open_nofication(d)
+                d.screen_off()
+            release_wakeup_lock(ip)
+            last_wake_time = time.time()
+            cur_ts = last_wake_time
+
+            def calc_aligned_wake_ts(cur_ts: float, min_sleep_sec: int, win_min: int = 20) -> float:
+                """
+                ?喳???min_sleep_sec 蝘?嚗?????撠??唳?撠? 00~win_min ??                """
+                earliest = cur_ts + min_sleep_sec
+                hour_floor = earliest - (earliest % 3600)
+                win_end = hour_floor + win_min * 60
+
+                if earliest <= win_end:
+                    return float(random.randint(int(earliest), int(win_end)))
+                else:
+                    next_hour = hour_floor + 3600
+                    return float(next_hour + random.randint(0, win_min * 60))
+
+            # ??閮剖??拍車閮剖???撠???            if 'emulator-5558' in ip:
+                min_sleep_sec = int(random.uniform(1, 3) * 3600)  # emulator-5558嚗?~3 撠?
+            else:
+                min_sleep_sec = (60 + random.randint(-5, 5)) * 60  # 銝?祈身??60簣5 ??
+            # ?啣?閬?嚗??7fe98fc6嚗撥?嗆?撠???銝甈?            if '7fe98fc6' in ip:
+                # 瘥?????甈∴??撠迂??嚗?~30蝘?隞仿???嗡?鋆蔭摰?郊
+                wake_ts = cur_ts + 3600 + random.randint(0, 30)
+            else:
+                wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
+
+            # --- ?啣?嚗??雿擛亥矽?湔???---
+            wake_ts = adjust_wake_time_for_cars(wake_ts)
+
+            sleep_duration = max(0, int(wake_ts - cur_ts))
+            wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+            bot_state.update_state(ip, task="隡?銝?, step=f"??隡? {sleep_duration/60:.1f} ?? (?? {wake_time_str} ??)", next_wake_at=wake_ts)
+
+            if '7fe98fc6' in ip:
+                logger.info(f"[{ip}] 鋆蔭??7fe98fc6嚗身摰瘥?????甈∴???隡? {sleep_duration/60:.1f} ??")
+            else:
+                logger.info(f"[{ip}] ?祆活??撠?冽?撠? 00~20 ????隡? {sleep_duration/60:.1f} ??")
+
+            while True:
+                protect = False
+                current_time = time.localtime()
+                if current_time.tm_hour <= 1 or current_time.tm_hour >= 6:
+                    protect = True
+                if ('emulator-5558' in ip or 'emulator-5562' in ip or '7fe98fc6' in ip or 'fc65396d' in ip):
+                    protect = False
+
+                time.sleep(30)
+                # ?ㄐ銋?瑼Ｘ?怠?嚗??嗅隡?嚗??航 UI ??典?????暺?
+                if bot_state.check_pause(ip):
+                    logger.info(f"[{ip}] ?菜葫?啣??怠?銝剜敺抬?蝡??????蝔?)
+                    break # 頝喳隡?餈游?嚗???while(1) ?銝?瑁? handle_device_wakeup
+                
+                # 瑼Ｘ頝喲?隡?
+                if bot_state.check_skip_sleep(ip):
+                    logger.info(f"[{ip}] ?嗅頝喲?隡??誘嚗??喳???)
+                    break
+
+                # 撠?敺????鈭停??銝?祈身??& emulator-5558 ?賢??wake_ts嚗?                if time.time() >= wake_ts:
+                    logger.info(f"[{ip}] 撌脤?撠?敺??????瑁???")
+                    break
+
+            wake_up_time = time.time()
+
+    except Exception as e:
+        logger.error(f"[{ip}] main ?瑁??潛??芷??隤? {e}", exc_info=True)
+        bot_state.update_state(ip, log=f"?啣虜銝剜: {e}")
+    finally:
+        # 蝣箔?銝恣?潛?隞暻潔?嚗銵?蝯????閮蝺?        bot_state.set_offline(ip, reason="蝔??瑁?蝯? (Thread Exit)")
+
+
+
+easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+
+# ?典?霈嚗靘恣??銵葉?銵?
+_running_threads = {} # {ip: Thread}
+
+def scan_and_start_devices(Cnn_model, oralce_cnn_model, oralce_classes, ocr):
+    """?? ADB 閮剖?銝血???瑁?蝺?""
+    global _running_threads
+    
+    # 1. ?脣??嗅? ADB ?”
+    try:
+        current_devices = get_adb_devices()
+        # ?蕪???閬?閮剖? (靘? 5562)
+        current_devices = [d for d in current_devices if d != 'emulator-5562']
+    except Exception as e:
+        print(f"[System] ?? ADB 憭望?: {e}")
+        return
+
+    # 2. 皜?撌脩????瑁?蝺?    stopped_ips = []
+    for ip, thread in _running_threads.items():
+        if not thread.is_alive():
+            print(f"[System] 閮剖? {ip} ?銵?撌脩???)
+            stopped_ips.append(ip)
+    
+    for ip in stopped_ips:
+        del _running_threads[ip]
+
+    # 3. ???啗身??    for ip in current_devices:
+        # 憒?閮剖?銝??銝哨????嗅摮鋆∩??瑁?蝺歇甇?        should_start = False
+        if ip not in _running_threads:
+            should_start = True
+        elif not _running_threads[ip].is_alive():
+            should_start = True
+            
+        if should_start:
+            print(f"[System] ?潛?啗身????身?? {ip}嚗迤?典???璈銵?...")
+            t = threading.Thread(target=main, args=(
+                ip, easyocr_reader, Cnn_model, oralce_cnn_model, oralce_classes, ocr
+            ), name=f"Bot-{ip}", daemon=True)
+            t.start()
+            _running_threads[ip] = t
+
+def temporary_reset_cycles():
+    """?冽??蔭?賣嚗撥?嗅??祇梯身?箸暑?望???憪?""
+    import os
+    import json
+    from device import get_adb_devices
+    
+    print("[System] ?瑁??冽??望??蔭 (?蔭?勗???...")
+    try:
+        devices = get_adb_devices()
+        for ip in devices:
+            filename = f"{ip}.json"
+            if os.path.exists(filename):
+                with open(filename, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                # ???方??箇???霈?json_manager ?文??梁銵?瑁???                keys_to_reset = ["銵-?潭?"]
+                for key in keys_to_reset:
+                    if key in data:
+                        del data[key]
+                        print(f"  - [{ip}] 撌脫???{key}")
+                
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+        print("[System] ?望??蔭摰???)
+    except Exception as e:
+        print(f"[System] ?蔭憭望?: {e}")
+
+if __name__ == "__main__":
+    import config_manager
+    import control_panel_app
+    import threading
+
+    # ?瑁??冽??蔭 (憒??舫?蝵桅望???)
+    # temporary_reset_cycles()
+
+    # ?芣? Master 璅∪????雯?撩?
+    if config_manager.get_global_config().get("mode", "master") == "master":
+        server_thread = threading.Thread(target=control_panel_app.run_server, args=(5002,), daemon=True)
+        server_thread.start()
+    else:
+        print("[Info] Worker 璅∪?嚗????砍蝬脤?隡箸??剁?撠??梯 Master??)
+
+    # --- ?寞?銝?蝣箔?璅∪??冽璈?SSD (?芸? NAS ??) ---
+    from utils.model_sync import ensure_local_model
+    local_pth = ensure_local_model("cnn_model.pth")
+    Cnn_model = cnn_model.load_cnn_model(local_pth)
+    
+    oralce_cnn_model, oralce_classes, resolved_device = load_miner_cnn_model()
+    ocr = 1
+
+    print("[System] ?詨?撌脣停蝺???敺芰?? ADB 閮剖?... (??Ctrl+C ?舫??")
+    try:
+        while True:
+            # 蝡?瑁?銝甈⊥???            scan_and_start_devices(Cnn_model, oralce_cnn_model, oralce_classes, ocr)
+            
+            # 蝑? 30 蝘???瑼Ｘ?臬?撥?嗥??瑟隢?
+            for _ in range(300): # 0.1s * 300 = 30s
+                if bot_state.check_refresh_needed():
+                    print("[System] ?嗅蝡??隢?嚗?)
+                    break
+                time.sleep(0.1)
+    except KeyboardInterrupt:
+        print("\n[System] ?嗅??箔縑??甇?????銵?...")
+        # ?望摮銵?撌脰身??daemon嚗ㄐ?湔??箏??        print("[System] 蝔?撌脩???)
+    
+    print("[System] 蝟餌絞??嚗?憪???扯身??..")
+    
+    # 銝餌?扯艘??    try:
+        while True:
+            # 瑼Ｘ?臬???孛?澆?唳?瘥?60 蝘??唬?甈?            if bot_state.check_refresh_needed():
+                print("[System] ?嗅?瑟隢?嚗??餅??身??..")
+                scan_and_start_devices(Cnn_model, oralce_cnn_model, oralce_classes, ocr)
+            
+            # 摰??? (?臭誑???雿?蝭??CPU)
+            scan_and_start_devices(Cnn_model, oralce_cnn_model, oralce_classes, ocr)
+            time.sleep(30)
+    except KeyboardInterrupt:
+        print("[System] ?嗅銝剜靽∟?嚗迤?典?甇Ｘ??銵?...")
+        # ?ㄐ?臭誑? graceful shutdown ?摩

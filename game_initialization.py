@@ -19,190 +19,226 @@ from game_actions.reward_manager import reward
 from utils.logging_utils import logger, default_logger
 import new_cnn.cnn_model as cnn_model_module
 import bot_state
+import config_manager
+from device_wrapper import create_web_device_if_enabled
 
-def handle_game_startup_pages(d, ip: str, easyocr_reader, start_game_fn, 
+
+class StartupLoginConflictError(Exception):
+    """啟動流程中偵測到異地登錄。"""
+    pass
+
+
+def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: logging.Logger = None) -> bool:
+    """Shared popup cleaner used by startup and runtime state checks."""
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    if reward_fn is None:
+        reward_fn = reward
+
+    if stage == "前往活動":
+        logger.info(f"[{ip}] 偵測到前往活動彈窗，點擊空白關閉")
+        click_white(d)
+        time.sleep(1)
+        return True
+
+    if stage == "公告":
+        logger.info(f"[{ip}] 偵測到公告彈窗，嘗試自動關閉")
+        try:
+            d.tap(248, 812)
+        except Exception as e:
+            logger.debug(f"[{ip}] 公告關閉點擊失敗，改用空白點擊: {e}")
+        click_white(d)
+        time.sleep(1)
+        return True
+
+    if stage in ("離線獎勵", "放置獎勵", "獎勵"):
+        logger.info(f"[{ip}] 偵測到 {stage}，執行 reward()")
+        reward_fn(d)
+        time.sleep(1)
+        return True
+
+    if stage == "車位倉庫":
+        logger.info(f"[{ip}] 偵測到車位倉庫，嘗試領取後返回主頁")
+        img_tools.click_str_by_server(d, '領取', y_range=(697, 737))
+        time.sleep(2)
+        click_white(d)
+        time.sleep(1)
+        return True
+
+    if stage in ("購物管家", "神秘商人"):
+        logger.info(f"[{ip}] 偵測到 {stage}，點擊空白返回主頁")
+        click_white(d)
+        time.sleep(1)
+        return True
+
+    return False
+
+
+def resolve_stage_until_stable(d, ip: str, Cnn_model=None, reward_fn=None, logger: logging.Logger = None, max_chain: int = 6) -> str:
+    """Use one state-detection path for startup and normal loops."""
+    if logger is None:
+        logger = logging.getLogger(__name__)
+    if reward_fn is None:
+        reward_fn = reward
+
+    stage = "未知"
+    # Startup and normal loops both use the same resolver so popup combinations are handled consistently.
+    for _ in range(max_chain):
+        stage = get_stage(d, Cnn_model)
+        if _handle_known_stage_popup(d, ip, stage, reward_fn=reward_fn, logger=logger):
+            continue
+        return stage
+    return stage
+
+def handle_game_startup_pages(d, ip: str,  start_game_fn, 
                                reward_fn, logger: logging.Logger = None) -> bool:
     """
-    遊戲啟動後的頁面判斷與處理主函數。
-    
-    功能：
-    - 循環判斷當前頁面狀態
-    - 自動處理各種頁面（隱藏、獎勵、公告等）
-    - 超時或異常時重新啟動遊戲
-    - 達到主頁面或可操作頁面時結束
-    
-    參數：
-    - d: uiautomator2 device 物件
-    - ip: 設備 IP 或序列號
-    - easyocr_reader: EasyOCR 讀取器
-    - start_game_fn: 啟動遊戲的函數
-    - reward_fn: 領取獎勵的函數
-    - logger: logging.Logger 物件（若 None 則使用預設 logger）
-    
-    回傳：
-    - True: 成功到達可操作的頁面
-    - False: 遊戲啟動失敗或超時
+    啟動後統一以狀態判斷處理首頁彈窗。
+    只保留啟動專屬控制，例如主頁雙確認、未知頁重試、異地登入中止。
     """
     if logger is None:
         logger = logging.getLogger(__name__)
-    
-    # 從 new_main_before20250514 import 需要的函數
-    from game_state.detector import stage_by_str
-    
+
     wait_time = time.time()
     unknown_count = 0
-    max_unknown_attempts = 3
-    wait_timeout = 60  # 秒
-    unknown_detection_delay = 30  # 30秒後才開始檢測未知頁面
-    
+    max_unknown_attempts = 5
+    wait_timeout = 60
+    unknown_detection_delay = 30
+    startup_restart_count = 0
+    last_stage = "未知"
+    main_confirm_count = 0
+    required_main_confirm = 2
+
     while True:
         try:
-            img = d.screenshot(format='opencv')
-            ocr_result = easyocr_reader.readtext(img, detail=0)
-            current_stage = stage_by_str(d, ocr_result, img)
-            logger.info(f"[{ip}] 目前頁面: {current_stage}")
-            
-            # ===== 頁面處理分支 =====
-            
-            if current_stage == "隱藏":
-                logger.info(f"[{ip}] 檢測到隱藏頁面，點擊隱藏按鈕")
-                img_tools.click_str_by_server(d, '隱藏')
-                time.sleep(1)
-                img_tools.click_str_by_server(d, '隱藏', y_range=(593, 662))
-                time.sleep(1)
-                click_white(d)
-                unknown_count = 0
-                
-            elif current_stage == "離線獎勵" or current_stage == "放置獎勵":
-                logger.info(f"[{ip}] 檢測到獎勵頁面，領取獎勵")
-                reward_fn(d, easyocr_reader)
-                unknown_count = 0
-                
-            elif "公告" in ocr_result:
-                logger.info(f"[{ip}] 檢測到公告頁面，關閉公告")
-                d.click(248, 812)
-                time.sleep(1)
-                click_white(d)
-                time.sleep(1)
-                unknown_count = 0
-                
-            elif current_stage == "前往活動":
-                logger.info(f"[{ip}] 檢測到前往活動頁面，點擊空白關閉")
-                click_white(d)
-                time.sleep(1)
-                unknown_count = 0
+            # Startup loop only decides startup-specific things; popup cleanup is delegated to the shared resolver.
+            current_stage = resolve_stage_until_stable(
+                d,
+                ip,
+                Cnn_model=None,
+                reward_fn=reward_fn,
+                logger=logger,
+            )
+            last_stage = current_stage
+            logger.info(f"[{ip}] 啟動狀態判定: {current_stage}")
 
-            elif current_stage == "購物管家":
-                logger.info(f"[{ip}] 檢測到購物管家頁面，返回主頁面")
-                img_tools.click_str_by_server(d, '採購', y_range=(690, 740))
-                time.sleep(2)
-                click_white(d)
-                img_tools.click_str_by_server(d, '副本管家', y_range=(773, 839))
-                time.sleep(2)
-                img_tools.click_str_by_server(d, '掃蕩', y_range=(690, 740))
-                time.sleep(2)
-                for _ in range(6):
-                    click_white(d)
-                time.sleep(2)
-                unknown_count = 0
-                # 不再直接 return，繼續循環直到確認進入主頁面
-                
-            elif current_stage == "主頁面":
-                logger.info(f"[{ip}] 已到達主頁面")
-                unknown_count = 0
-                return True
-                
-            elif current_stage == "車位倉庫":
-                logger.info(f"[{ip}] 檢測到車位倉庫頁面，領取獎勵並返回")
-                img_tools.click_str_by_server(d, '領取', y_range=(697, 737))
-                time.sleep(2)
-                click_white(d)
+            if current_stage != "主頁面":
+                main_confirm_count = 0
+
+            if current_stage == "主頁面":
+                main_confirm_count += 1
+                logger.info(f"[{ip}] 主頁面確認 ({main_confirm_count}/{required_main_confirm})")
+                if main_confirm_count >= required_main_confirm:
+                    logger.info(f"[{ip}] 啟動完成，已穩定進入主頁面")
+                    return True
                 time.sleep(1)
-                unknown_count = 0
-                # 處理完繼續下一輪檢查
-                
-            elif current_stage == "異地登錄":
-                logger.warning(f"[{ip}] 偵測到異地登錄，停止遊戲")
+                continue
+
+            if current_stage == "異地登錄":
+                elapsed = time.time() - wait_time
+                logger.warning(
+                    f"[{ip}] 啟動時偵測到異地登錄，停止本次啟動 | elapsed={elapsed:.1f}s"
+                )
                 d.app_stop("com.mxdzz.tw.and")
-                
-                # 從 new_main_before20250514 匯入 Error（動態匯入避免循環參考）
-                try:
-                    from new_main_before20250514 import LoginConflictError
-                except ImportError:
-                    class LoginConflictError(Exception): pass
-                
-                # 更新狀態
-                wake_ts = time.time() + 3600
+                # 異地登入時直接結束本輪啟動，避讓 30 分鐘後再由外層喚醒。
+                wake_ts = time.time() + 1800
                 wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
                 bot_state.update_state(ip, task="休眠中", step=f"偵測到異地登錄 (預計 {wake_time_str} 喚醒)", next_wake_at=wake_ts)
-                
-                raise LoginConflictError("啟動時偵測到異地登錄")
-                
-            elif current_stage == "未知":
-                # 只在啟動後30秒才開始檢測未知頁面
+                raise StartupLoginConflictError("啟動時偵測到異地登錄")
+
+            if current_stage == "未知":
                 time_elapsed = time.time() - wait_time
                 if time_elapsed < unknown_detection_delay:
-                    logger.info(f"[{ip}] 遊戲剛啟動，檢測到未知頁面但暫不處理 (已耗時 {time_elapsed:.1f}秒，需要等待 {unknown_detection_delay}秒)")
-                    time.sleep(2)  # 等待2秒後重新檢測
+                    logger.info(f"[{ip}] 啟動初期仍為未知頁面，先等待穩定 ({time_elapsed:.1f}/{unknown_detection_delay}s)")
+                    time.sleep(2)
                 else:
                     unknown_count += 1
-                    logger.info(f"[{ip}] 未知頁面，等待中... (count={unknown_count}/{max_unknown_attempts})")
+                    logger.info(f"[{ip}] 未知頁面，嘗試返回與重判 ({unknown_count}/{max_unknown_attempts})")
                     d.press("back")
                     time.sleep(5)
-                    
-                    # 若連續多次都是未知，嘗試重啟應用以恢復
                     if unknown_count >= max_unknown_attempts:
-                        logger.warning(f"[{ip}] 已連續 {unknown_count} 次偵測到未知，嘗試重啟遊戲以回復")
+                        logger.warning(f"[{ip}] 未知頁面連續出現 {unknown_count} 次，重啟遊戲")
                         try:
                             d.app_stop("com.mxdzz.tw.and")
                         except Exception as e:
-                            logger.error(f"[{ip}] 停止應用失敗: {e}")
+                            logger.error(f"[{ip}] 停止遊戲失敗: {e}")
                         time.sleep(1)
                         start_game_fn(d, ip)
                         time.sleep(30 + random.randint(0, 5))
                         wait_time = time.time()
                         unknown_count = 0
-                    
-            # ===== 超時檢查 =====
+                        startup_restart_count += 1
+                continue
+
+            unknown_count = 0
+            time.sleep(1)
+
             if time.time() - wait_time > wait_timeout:
-                logger.warning(f"[{ip}] 遊戲啟動等待超時 ({wait_timeout}秒)")
+                elapsed = time.time() - wait_time
+                logger.warning(
+                    f"[{ip}] 啟動等待超時 ({wait_timeout}s) | elapsed={elapsed:.1f}s, last_stage={last_stage}, "
+                    f"unknown_count={unknown_count}, restart_count={startup_restart_count}"
+                )
                 d.app_stop("com.mxdzz.tw.and")
-                # 返回 False，讓外層主迴圈決定休眠時間
                 return False
-                
+
         except Exception as e:
-            logger.error(f"[{ip}] handle_game_startup_pages 發生異常: {e}", exc_info=True)
-            # 異常時嘗試重新連接或重啟
+            if isinstance(e, StartupLoginConflictError):
+                raise
+            logger.error(f"[{ip}] handle_game_startup_pages 執行失敗: {e}", exc_info=True)
             try:
                 d.app_stop("com.mxdzz.tw.and")
             except Exception as e2:
-                logger.error(f"[{ip}] 停止應用失敗: {e2}")
+                logger.error(f"[{ip}] 停止遊戲失敗: {e2}")
             time.sleep(1)
             start_game_fn(d, ip)
             time.sleep(30 + random.randint(0, 5))
             wait_time = time.time()
             unknown_count = 0
+            startup_restart_count += 1
+            logger.warning(
+                f"[{ip}] 啟動頁處理失敗後已重啟遊戲 | error={e}, restart_count={startup_restart_count}, last_stage={last_stage}"
+            )
 
-def check_on_line(Cnn_model, easyocr_reader):
-    # 檢查是否在線上
+def check_on_line(Cnn_model):
+    """
+    用 5554 設備去檢查 5558 帳號是否在線上。
+    透過 5554 登入，檢查 5558 的人物線上狀態。
+    """
+    ip = 'emulator-5554'
+    device_cfg = config_manager.get_device_config(ip)
+    backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+    d = None
+
+    is_web_backend = (backend_kind == "web_h5")
+
     try:
-        # 連接到設備
-        ip ='emulator-5554'
-        d = connect_u2_with_retries(ip, logger=default_logger)
-        if not d.info.get('screenOn'):
-            logger.info("螢幕未開啟，嘗試解鎖")
-            d.unlock()
-            time.sleep(1)
-        
+        if backend_kind == "web_h5":
+            # 5554 已是 web_h5 時，直接使用同一套網頁裝置，不走 ADB 重連/重啟。
+            d = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=default_logger)
+            if d is None:
+                raise RuntimeError(f"[{ip}] web_h5 backend is enabled but web device is unavailable")
+        else:
+            d = connect_u2_with_retries(ip, logger=default_logger)
+            if not d.info.get('screenOn'):
+                logger.info("螢幕未開啟，嘗試解鎖")
+                d.unlock()
+                time.sleep(1)
     except Exception as e:
         logger.error(f"連線失敗: {e}")
+        if backend_kind == "web_h5":
+            raise
         try:
             d = connect_u2_with_retries('3a8d31f2', logger=default_logger)
         except Exception:
             raise
     
-    # 使用圖示啟動遊戲
-    start_game_by_icon(d, ip)
+    # 啟動遊戲：web_h5 不使用桌面圖示流程，直接打開遊戲頁避免跳到 about:blank。
+    if is_web_backend:
+        d.app_start(package_name="com.mxdzz.tw.and", use_monkey=True)
+    else:
+        start_game_by_icon(d, ip)
+
     time.sleep(20+random.randint(0, 5))  # 增加隨機延遲
     start_time = time.time()
     while (time.time() - start_time) < 60:
@@ -215,14 +251,16 @@ def check_on_line(Cnn_model, easyocr_reader):
                 time.sleep(5)
                 break
             elif cnn_model_module.predict_image(Cnn_model, d.screenshot(format='pillow')) == "reward":
-                reward(d, easyocr_reader)
+                reward(d)
             else:
                 logger.info("not in game")
                 time.sleep(7)
                 d.click(0.99, 0.01)
         except Exception as e:
             logger.error(f"連線失敗: {e}")
-            d.app_stop("com.mxdzz.tw.and")
+            # web_h5 在線上檢查失敗時避免 app_stop 造成 about:blank/關頁副作用。
+            if not is_web_backend:
+                d.app_stop("com.mxdzz.tw.and")
             return True
     if cnn_model_module.predict_image(Cnn_model, d.screenshot(format='pillow')) == "main":
         d.click(0.05, 0.01)
@@ -252,9 +290,10 @@ def check_on_line(Cnn_model, easyocr_reader):
             logger.info("未偵測到明確狀態，預設判定為在線 (busy)")
             d.app_stop("com.mxdzz.tw.and")
             return True
-    elif get_stage(d, Cnn_model, easyocr_reader) == "異地登錄":
+    elif get_stage(d, Cnn_model) == "異地登錄":
         d.app_stop("com.mxdzz.tw.and")
         time.sleep(5*60)
         return False
     d.app_stop("com.mxdzz.tw.and")
     return False
+

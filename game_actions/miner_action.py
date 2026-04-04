@@ -9,10 +9,9 @@ from miner.models.classifier import ClassifierCNN
 from miner.rl.rl_recorder import RLRecorder
 from utils.logging_utils import logger
 from tools import click_white
-from utils.ocr_clicker import click_str
 from json_manager import create_store_manager
 import new_cnn.cnn_model as cnn_model
-
+import img_tools
 
 def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, rl_recorder: RLRecorder = None, Cnn_model=None, max_duration_minutes: float = 6.0):
     """
@@ -56,7 +55,8 @@ def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, 
             d.click(394+random.randint(-3,3),599+random.randint(-3,3)) #+30隻鎬子
         d.click(272, 752)
         time.sleep(3)
-        click_str("確定", d, easyocr_reader)
+        # click_str("確定", d, easyocr_reader)
+        img_tools.click_str_by_server(d, "確定")
         time.sleep(3)
         #保存截圖
         img = d.screenshot(format='opencv')

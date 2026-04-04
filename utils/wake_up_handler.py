@@ -25,7 +25,7 @@ def release_wakeup_lock(ip):
     if 'emulator-5554' in ip or '3a8d31f2' in ip:
         _wakeup_lock = False
 
-def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader):
+def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_online_check_once: bool = False):
     """
     Handles the device wake-up, unlock, and synchronization logic.
     """
@@ -153,34 +153,82 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader):
     if should_skip_wake(ip):
         return d
 
+    def _is_5554_busy_by_state() -> bool:
+        """Fallback busy check for web_h5 backend to avoid cross-thread Playwright access."""
+        states = bot_state.get_all_states()
+        st = states.get('emulator-5554', {}) or {}
+        status = str(st.get("status", "OFFLINE")).upper()
+        if status == "OFFLINE":
+            return False
+
+        task = str(st.get("task", "") or "")
+        step = str(st.get("step", "") or "")
+        text = f"{task} {step}"
+
+        # Explicit free/idle markers first.
+        free_markers = ["休眠", "離線", "等待喚醒", "等待啟動", "thread exit"]
+        if any(m in text for m in free_markers):
+            return False
+
+        # Explicit busy markers.
+        busy_markers = ["喚醒中", "啟動", "挖礦", "任務", "戰鬥", "執行", "忙碌", "主頁面"]
+        if any(m in text for m in busy_markers):
+            return True
+
+        # Heartbeat stale => treat as not busy.
+        last_update = float(st.get("last_update", 0) or 0)
+        if last_update > 0 and (time.time() - last_update) > 120:
+            return False
+        return True
+
     # --- 核心邏輯：5558 啟動前透過 5554 檢查帳號線上狀態 ---
-    if 'emulator-5558' in ip:
+    if 'emulator-5558' in ip and not skip_online_check_once:
         while True:
-            logger.info(f"[{ip}] 準備執行，先借用 emulator-5554 檢查帳號是否正在線上...")
+            logger.info(f"[{ip}] 5558 等待 5554 狀態檢查(check_on_line request)...")
             is_busy = True
             try:
-                # 獲取 5554 的設備鎖，確保檢查時 5554 不會亂動
-                with bot_state.get_device_lock('emulator-5554'):
-                    logger.info(f"[{ip}] 已鎖定 5554，開始執行實體 check_on_line...")
-                    # check_on_line 內部會連接到 5554 並操作
-                    # 回傳 False 代表 "pass" (帳號不在線，安全)
-                    # 回傳 True 代表 "busy" (帳號在線，不安全)
-                    is_busy = check_on_line(Cnn_model, easyocr_reader)
+                bot_state.activate_online_check_priority(
+                    requester_ip=ip,
+                    checker_ip='emulator-5554',
+                    ttl_sec=180.0,
+                )
+                req_id = bot_state.submit_online_check_request(
+                    requester_ip=ip,
+                    checker_ip='emulator-5554',
+                )
+                result = bot_state.wait_online_check_result(req_id, timeout_sec=150.0)
+                status = str(result.get('status', 'pending'))
+                if status == 'done':
+                    is_busy = bool(result.get('result_busy', True))
+                    logger.info(
+                        f"[{ip}] 5554 online-check result: busy={is_busy}, detail={result.get('detail', '')}"
+                    )
+                else:
+                    logger.warning(
+                        f"[{ip}] 5554 online-check timeout/failed: status={status}, error={result.get('error', '')}"
+                    )
+                    is_busy = True
             except Exception as e:
-                logger.error(f"[{ip}] 借用 5554 檢查時發生異常: {e}")
-                is_busy = True # 發生錯誤時保守起見視為忙碌
-            
-            if not is_busy:
-                logger.info(f"[{ip}] 檢查通過：帳號目前不在線上，5558 準備啟動任務。")
-                break
-            else:
-                # 獲取設定的休眠時間 (分鐘)
-                wait_min = config_manager.get_device_config(ip).get("online_check_interval", 5)
-                logger.info(f"[{ip}] 帳號正在線上 (via 5554)，5558 避讓休眠 {wait_min} 分鐘...")
-                bot_state.update_state(ip, task="等待中", step=f"帳號在線避讓中 ({wait_min}分鐘)")
-                time.sleep(wait_min * 60)
+                logger.error(f"[{ip}] 檢查 5554 狀態失敗: {e}")
+                is_busy = True
+            finally:
+                bot_state.release_online_check_priority(
+                    requester_ip=ip,
+                    checker_ip='emulator-5554',
+                )
 
-    # --- 喚醒與解鎖手機 (fc65396d / 實體手機) ---
+            if not is_busy:
+                logger.info(f"[{ip}] 5554 狀態可放行，5558 繼續喚醒")
+                break
+
+            wait_min = config_manager.get_device_config(ip).get("online_check_interval", 5)
+            wait_sec = max(1, int(float(wait_min) * 60))
+            logger.info(f"[{ip}] 5558 在線中，{wait_sec} 秒後重新檢查")
+            for remain in range(wait_sec, 0, -1):
+                bot_state.update_state(ip, task="等待放行", step=f"5558在線中，{remain} 秒後重新檢查")
+                time.sleep(1)
+
+    # --- 直連設備喚醒流程 (fc65396d / 192.168) ---
     if 'fc65396d' in ip or '192.168' in ip:
         logger.info(f"[{ip}] 檢查螢幕狀態...")
         
@@ -218,7 +266,25 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader):
     # 分流延遲
     if 'emulator-5556' in ip or 'emulator-5554' in ip:
         logger.info(f"[{ip}] 執行啟動分流，等待 5 分鐘...")
-        time.sleep(60 * 5)
+        deadline = time.time() + (60 * 5)
+        while time.time() < deadline:
+            if 'emulator-5554' in ip and bot_state.has_pending_online_check_request('emulator-5554'):
+                logger.info(f"[{ip}] 偵測到 5558 的 online-check 請求，提前結束分流等待")
+                break
+            if bot_state.check_skip_sleep(ip):
+                logger.info(f"[{ip}] 收到 skip_sleep，提前結束分流等待")
+                break
+            time.sleep(1)
+
+        # Checker 裝置若此時已有互檢請求，直接回主迴圈先處理 mailbox，
+        # 不要繼續往下執行自己的 app_stop / 喚醒流程。
+        if 'emulator-5554' in ip:
+            if (
+                bot_state.has_pending_online_check_request('emulator-5554')
+                or bot_state.is_online_check_priority_active('emulator-5554')
+            ):
+                logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 emulator-5558 上線檢查")
+                return d
     elif '3a8d31f2' in ip:
         time.sleep(10)
     

@@ -222,7 +222,7 @@ def encode_image(img):
     img_base64 = base64.b64encode(buffer).decode('utf-8')
     return img_base64
 
-def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
+def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
     """透過 HTTP 分析技能，若預設伺服器無法連線則自動退回到備援伺服器。
 
     參數:
@@ -245,6 +245,8 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
     servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
     _ensure_ocr_probe_thread()
     servers = _filter_servers_by_circuit(servers)
+    if isinstance(max_servers, int) and max_servers > 0:
+        servers = servers[:max_servers]
     logger.info(f"OCR servers priority (mode={mode}): {servers}")
 
     # 讀取 timeout 與重試設定
@@ -300,7 +302,7 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
     return {'success': False, 'error': 'all servers failed', 'errors': errors}
 
 
-def get_all_text(img, OCR_SERVER_URL=None):
+def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
     """Return a list of detected text strings (converted to traditional Chinese).
 
     Args:
@@ -317,7 +319,7 @@ def get_all_text(img, OCR_SERVER_URL=None):
         if img_cv is None:
             return []
 
-        res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL)
+        res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
         if res.get('success') is False:
             return []
         ocr_results = res.get('ocr_results', [])
@@ -511,18 +513,43 @@ def click_str_by_server(d: u2.Device, target_str: str, shift_x=0, shift_y=0, x_r
                 return True
         logger.warning(f"[{caller_file}:{caller_line}] 嘗試3次後未找到 '{target_str}'")
         return False
-def check_str_in_region(d: u2.Device, target_str: str, x_range: tuple = None, y_range: tuple = None) -> bool:
-    """檢查指定區域內是否存在目標文字"""
+def check_str_in_region(d_or_img, target_str: str, x_range: tuple = None, y_range: tuple = None) -> bool:
+    """檢查指定區域內是否存在目標文字。
+
+    支援三種輸入型別：
+    - u2.Device (或類似有 screenshot 方法)
+    - OpenCV 圖片 ndarray
+    - 圖片檔案路徑字串
+    """
     retry = 3
     converter = opencc.OpenCC('s2t')
     target_str = converter.convert(target_str)
+
     for _ in range(retry):
-        img = d.screenshot(format='opencv')
+        # 取得 img_cv：支援 ndarray / path / device
+        img_cv = None
+        try:
+            if isinstance(d_or_img, np.ndarray):
+                img_cv = d_or_img
+            elif isinstance(d_or_img, str) and os.path.exists(d_or_img):
+                img_cv = cv2.imread(d_or_img)
+            else:
+                # assume device-like object with screenshot()
+                img_cv = d_or_img.screenshot(format='opencv')
+        except Exception:
+            img_cv = None
+
+        if img_cv is None:
+            continue
+
+        img = img_cv
         if y_range:
             img = img[y_range[0]:y_range[1], :]
         if x_range:
             img = img[:, x_range[0]:x_range[1]]
+
         result = analyze_skill_via_http(img)
+        print(result)
         if result.get('success') is False:
             continue
         for item in result.get('ocr_results', []):

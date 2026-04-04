@@ -3,6 +3,7 @@ import time
 import cv2
 import numpy as np
 import json
+import os
 from datetime import datetime, timedelta, timezone
 import json
 import time
@@ -27,6 +28,75 @@ def preprocess_for_ocr(img_roi):
         scaled, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 25, 10
     )
     return binary
+def cut_img(raw_img):
+    gray = cv2.cvtColor(raw_img, cv2.COLOR_BGR2GRAY)
+    # 1) 二值化（反相，讓線/字變白）
+    bw = cv2.adaptiveThreshold(
+        gray, 255,
+        cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV,
+        31, 10
+)
+
+    # 2) 只保留水平線：水平 kernel 越寬，越能抓長橫線
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (80, 1))
+    h_lines = cv2.morphologyEx(bw, cv2.MORPH_OPEN, h_kernel, iterations=1)
+
+    # 3) 把線加粗一點（方便找輪廓）
+    h_lines = cv2.dilate(h_lines, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), iterations=1)
+
+    # 4) 找水平線輪廓
+    cnts, _ = cv2.findContours(h_lines, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    lines = []
+    H, W = bw.shape
+    for c in cnts:
+        x, y, w, h = cv2.boundingRect(c)
+        # 篩選：要夠長、夠扁（你可依畫面調）
+        if w > 0.6 * W and h <= 8:
+            lines.append((y, x, x+w))
+
+    # 5) 依 y 排序並做去重（同一條線可能被切成多段）
+    lines.sort(key=lambda t: t[0])
+    ys = []
+    for y, x1, x2 in lines:
+        if not ys or abs(y - ys[-1]) > 10:   # 10px 內視為同一條
+            ys.append(y)
+
+    pad_top = 8
+    pad_bottom = 8
+
+    # 例如：切分線之間的區域
+    segments = []
+    for i in range(len(ys) - 1):
+        y1 = max(0, ys[i] + pad_top)
+        y2 = min(H, ys[i+1] - pad_bottom)
+        if y2 - y1 > 20:
+            roi = raw_img[y1:y2, :]
+            segments.append(roi)
+    return segments
+
+def _save_ocr_fail(block_img, who_text, time_text, reason, idx):
+    try:
+        base_dir = r"A:\ocr_fails\fight_car"
+        os.makedirs(base_dir, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        prefix = f"row_{idx:02d}_{ts}"
+        img_path = os.path.join(base_dir, f"{prefix}.png")
+        meta_path = os.path.join(base_dir, f"{prefix}.json")
+
+        if block_img is not None and block_img.size > 0:
+            cv2.imwrite(img_path, block_img)
+
+        meta = {
+            "reason": reason,
+            "who_text": who_text,
+            "time_text": time_text,
+            "timestamp": ts
+        }
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 # ==========================================
 # 2. 區塊解析邏輯
@@ -36,8 +106,8 @@ def parse_log_blocks(device, rounds=3):
     
     all_spots_data = {} 
     
-    ROI_Y_START = 220
-    ROI_Y_END = 850
+    ROI_Y_START = 200
+    ROI_Y_END = 777
     BLOCK_HEIGHT = 160 
     STEP = 60          
     
@@ -45,41 +115,118 @@ def parse_log_blocks(device, rounds=3):
         print(f"--- 第 {round_i + 1} / {rounds} 輪 ---")
         
         raw_img = device.screenshot(format='opencv')
+
         if raw_img is None: continue
+        cut_imgs = cut_img(raw_img[ROI_Y_START:ROI_Y_END, :])
+        if not cut_imgs:
+            print("未能切出任何區塊，跳過本輪。")
+            continue
 
-        list_area = raw_img[ROI_Y_START:ROI_Y_END, :]
-        h, w = list_area.shape[:2]
-        
-        for y in range(0, h - BLOCK_HEIGHT + 1, STEP):
-            block_img = list_area[y : y + BLOCK_HEIGHT, :]
-            processed_block = preprocess_for_ocr(block_img)
-            if processed_block is None: continue
-            
+        for idx, block_img in enumerate(cut_imgs):
+            print(f"解析區塊 {idx + 1} / {len(cut_imgs)} ...")
+            who_fight_X_start = 141
+            who_fight_X_end = 387
+            what_time_X_start = 391
+            what_time_X_end = 481
+
+            who_fight_result = None
+            what_time_X_result = None
             try:
-                ocr_result = img_tools.analyze_skill_via_http(processed_block)
-            except:
-                continue
+                who_fight_result = img_tools.analyze_skill_via_http(
+                    preprocess_for_ocr(block_img[:, who_fight_X_start:who_fight_X_end])
+                )
+            except Exception:
+                pass
+            try:
+                what_time_X_result = img_tools.analyze_skill_via_http(
+                    preprocess_for_ocr(block_img[:, what_time_X_start:what_time_X_end])
+                )
+            except Exception:
+                pass
 
-            print(f"[OCR_RAW] round={round_i + 1} y={y} result={ocr_result}")
+            print("-----")
+            who_fight_combined_text = ""
+            if who_fight_result and isinstance(who_fight_result, dict):
+                for r in who_fight_result.get('ocr_results', []):
+                    who_fight_combined_text += r.get('text', '')
+            print(f"Row {idx:02d} OCR Result: {who_fight_combined_text}")
 
-            if ocr_result and isinstance(ocr_result, dict) and 'ocr_results' in ocr_result:
-                
-                # 使用幾何排序法解析
-                block_data = _extract_spatial_geometry(ocr_result)
-                
-                for spot_name, info in block_data.items():
-                    if spot_name not in all_spots_data:
-                        event_dt = info['dt']
-                        attacker = info['attacker']
-                        
-                        end_dt = event_dt + timedelta(hours=4)
-                        end_str = end_dt.strftime("%H:%M:%S")
-                        
-                        print(f"  [抓到了] {spot_name} (s{attacker}) | 結束: {end_str}")
-                        all_spots_data[spot_name] = {
-                            'end_time': end_str,
-                            'attacker': attacker
-                        }
+            raw_str = ""
+            if what_time_X_result and isinstance(what_time_X_result, dict):
+                texts = [r.get('text', '') for r in what_time_X_result.get('ocr_results', [])]
+                raw_str = " ".join(texts).strip()
+
+            if raw_str:
+                norm_raw = (raw_str.replace('Ｏ', '0')
+                                     .replace('O', '0')
+                                     .replace('o', '0')
+                                     .replace('S', '5')
+                                     .replace('s', '5'))
+                time_match = re.search(r'(\d{2}:\d{2}:\d{2})', norm_raw)
+                if time_match:
+                    t_str = time_match.group(1)
+                    try:
+                        now = datetime.now()
+                        dt_obj = datetime(now.year, now.month, now.day,
+                                          int(t_str[:2]), int(t_str[3:5]), int(t_str[6:]))
+                        if dt_obj > now and (dt_obj - now).total_seconds() > 3600:
+                            dt_obj -= timedelta(days=1)
+                        print(f"匹配成功！轉換後的物件: {dt_obj}")
+                        print(f"年份: {dt_obj.year}, 小時: {dt_obj.hour}")
+                    except ValueError as e:
+                        print(f"匹配失敗，格式不符: {e}")
+                        _save_ocr_fail(block_img, who_fight_combined_text, raw_str, "time_parse_error", idx)
+                else:
+                    print("匹配失敗，格式不符: 無法擷取時間")
+                    _save_ocr_fail(block_img, who_fight_combined_text, raw_str, "time_missing", idx)
+            else:
+                print("匹配失敗，格式不符: 空字串")
+                _save_ocr_fail(block_img, who_fight_combined_text, raw_str, "time_empty", idx)
+
+            spot_name = None
+            m_spot = re.search(r'跨界車位\s*(\d{1,2})', who_fight_combined_text)
+            if m_spot:
+                spot_name = f"跨界車位{m_spot.group(1)}"
+
+            attacker = "Unknown"
+            m_att = re.search(r'[sS]\s*(\d{4})', who_fight_combined_text)
+            if m_att:
+                attacker = m_att.group(1)
+
+            if not spot_name:
+                _save_ocr_fail(block_img, who_fight_combined_text, raw_str, "spot_missing", idx)
+
+            if spot_name and raw_str:
+                norm_raw = (raw_str.replace('Ｏ', '0')
+                                     .replace('O', '0')
+                                     .replace('o', '0')
+                                     .replace('S', '5')
+                                     .replace('s', '5'))
+                time_match = re.search(r'(\d{2}:\d{2}:\d{2})', norm_raw)
+                if time_match:
+                    t_str = time_match.group(1)
+                    try:
+                        now = datetime.now()
+                        event_dt = datetime(now.year, now.month, now.day,
+                                            int(t_str[:2]), int(t_str[3:5]), int(t_str[6:]))
+                        if event_dt > now and (event_dt - now).total_seconds() > 3600:
+                            event_dt -= timedelta(days=1)
+                    except ValueError:
+                        event_dt = None
+                else:
+                    event_dt = None
+
+                if event_dt is not None and spot_name not in all_spots_data:
+                    end_dt = event_dt + timedelta(hours=4)
+                    end_str = end_dt.strftime("%H:%M:%S")
+
+                    print(f"  [抓到了] {spot_name} (s{attacker}) | 結束: {end_str}")
+                    all_spots_data[spot_name] = {
+                        'end_time': end_str,
+                        'attacker': attacker
+                    }
+                elif event_dt is None:
+                    _save_ocr_fail(block_img, who_fight_combined_text, raw_str, "event_dt_none", idx)
         
         if round_i < rounds - 1:
             device.swipe(86, 754, 86, 200, duration=0.5)
@@ -125,6 +272,9 @@ def _extract_spatial_geometry(ocr_data):
         return None
 
     def _parse_dt_from_text(text: str):
+        # 先進行標準化，處理 OCR 常見錯誤
+        text = text.replace('.', ':').replace(',', ':').replace('Ｏ', '0').replace('O', '0')
+        
         # 先嘗試完整日期時間
         dt_match = re.search(r'(\d{4}/\d{2}/\d{2}).*?(\d{2}:\d{2}:\d{2})', text)
         if dt_match:
@@ -309,6 +459,7 @@ def flush_logs(device):
 
     # 執行掃描
     img_tools.click_str_by_server(device, '家園', y_range=(850, 959),shift_y=-50)
+    time.sleep(0.3)
     img_tools.click_str_by_server(device, '菇菇車位', y_range=(451, 502), wait_timeout=10)
     img_tools.click_str_by_server(device, '找車位', y_range=(850, 950), wait_timeout=5)
     img_tools.click_str_by_server(device, '跨服車位', y_range=(700, 850), wait_timeout=5)
