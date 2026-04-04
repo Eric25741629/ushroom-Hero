@@ -1,4 +1,4 @@
-import time
+﻿import time
 import uiautomator2 as u2
 import easyocr
 import numpy as np
@@ -7,14 +7,226 @@ import mask
 import cv2
 import random
 import os
-from json_manager import time_recording, return_time, create_store_manager
+from json_manager import time_recording, return_time, create_store_manager, JsonDataManager
 import img_tools
-from typing import List
+from typing import List, Optional, Callable, Dict, Any
 import datetime
 import BUY
 import logging
-
+import json
 logger = logging.getLogger(__name__)
+
+_TPE = datetime.timezone(datetime.timedelta(hours=8))
+
+
+def _resolve_device_id(d: Any) -> str:
+    """Resolve device id across ADB and Playwright backends."""
+    try:
+        adb_dev = getattr(d, "adb_device", None)
+        if adb_dev is not None:
+            info = getattr(adb_dev, "info", {}) or {}
+            serial = info.get("serialno") or info.get("serial")
+            if serial:
+                return str(serial)
+    except Exception:
+        pass
+
+    for attr in ("device_id", "serial", "device_serial"):
+        value = getattr(d, attr, None)
+        if value:
+            return str(value)
+
+    try:
+        info = getattr(d, "device_info", {}) or {}
+        serial = info.get("serial") or info.get("serialno")
+        if serial:
+            return str(serial)
+    except Exception:
+        pass
+
+    try:
+        info = getattr(d, "info", {}) or {}
+        serial = info.get("serial") or info.get("serialno")
+        if serial:
+            return str(serial)
+    except Exception:
+        pass
+
+    return "unknown"
+
+
+def _compute_biweekly_slot_key(now: Optional[datetime.datetime] = None) -> Optional[str]:
+    """Return a slot key for Sat/Sun 20:00~20:04 (Asia/Taipei), else None."""
+    if now is None:
+        now = datetime.datetime.now(_TPE)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=_TPE)
+    else:
+        now = now.astimezone(_TPE)
+
+    if now.weekday() not in (5, 6):
+        return None
+    if now.hour != 20 or now.minute > 4:
+        return None
+    return f"{now.strftime('%Y-%m-%d')}-20"
+
+
+def _record_biweekly_slot(ip: str, slot_key: str, result: str, step: str, detail: str = "") -> None:
+    manager = JsonDataManager(ip)
+    manager.record_timestamp(
+        "bounty_road_biweekly_slot",
+        {
+            "slot_key": slot_key,
+            "result": result,
+            "step": step,
+            "detail": detail,
+        },
+    )
+
+
+def _safe_click_step(
+    d,
+    label: str,
+    retry: int = 3,
+    step_timeout_s: int = 8,
+    logger_obj: Optional[logging.Logger] = None,
+    **kwargs,
+) -> bool:
+    lg = logger_obj or logger
+    start = time.time()
+    for attempt in range(1, retry + 1):
+        if time.time() - start > step_timeout_s:
+            break
+        ok = False
+        try:
+            ok = bool(img_tools.click_str_by_server(d, label, **kwargs))
+        except Exception as exc:
+            lg.warning(f"safe_click exception label={label} attempt={attempt}: {exc}")
+        if ok:
+            return True
+        time.sleep(min(2.0, 0.4 * attempt))
+    return False
+
+
+def _recover_to_home(d, logger_obj: Optional[logging.Logger] = None) -> bool:
+    lg = logger_obj or logger
+    try:
+        for _ in range(3):
+            d.click(509, 56)
+            time.sleep(0.2)
+        img_tools.click_str_by_server(d, "關閉")
+        img_tools.click_str_by_server(d, "確定")
+        d.click(274, 875)
+        time.sleep(0.5)
+        return True
+    except Exception as exc:
+        lg.warning(f"recover_to_home failed: {exc}")
+        return False
+
+
+
+def _append_biweekly_log(ip: str, payload: Dict[str, Any]) -> None:
+    try:
+        os.makedirs("logs", exist_ok=True)
+        safe_ip = ip.replace(":", "_").replace(" ", "_")
+        path = os.path.join("logs", f"biweekly_{safe_ip}.log")
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning(f"append biweekly log failed: {exc}")
+def run_biweekly_bounty_road_single(
+    d,
+    ip: str,
+    logger_obj: Optional[logging.Logger] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> bool:
+    """MVP biweekly instance runner with slot dedupe, guarded steps, safe exit and recovery."""
+    lg = logger_obj or logger
+    now = datetime.datetime.now(_TPE)
+    slot_key = _compute_biweekly_slot_key(now)
+    if not slot_key:
+        return False
+
+    rec = return_time(ip, name="bounty_road_biweekly_slot") or {}
+    if isinstance(rec, dict) and rec.get("slot_key") == slot_key:
+        lg.info(f"[{ip}] biweekly slot already executed: {slot_key}")
+        return False
+
+    run_id = f"{ip}-{int(time.time())}"
+    _record_biweekly_slot(ip, slot_key, "started", "enter", detail=run_id)
+    _append_biweekly_log(ip, {"event": "started", "slot_key": slot_key, "run_id": run_id, "ts": datetime.datetime.now(_TPE).isoformat()})
+
+    log_ctx: Dict[str, Any] = {
+        "ts": datetime.datetime.now(_TPE).isoformat(),
+        "device_id": ip,
+        "run_id": run_id,
+        "trigger_slot": slot_key,
+        "phase": "10",
+    }
+
+    try:
+        if not _safe_click_step(d, "賞金之路", retry=4, step_timeout_s=12, x_range=(0, 68), logger_obj=lg):
+            raise RuntimeError("STEP_TIMEOUT:賞金之路(入口)")
+        if not _safe_click_step(d, "賞金之路", retry=4, step_timeout_s=12, logger_obj=lg):
+            raise RuntimeError("STEP_TIMEOUT:賞金之路")
+        if not _safe_click_step(d, "大盜來襲", retry=4, step_timeout_s=12, logger_obj=lg):
+            raise RuntimeError("STEP_TIMEOUT:大盜來襲")
+        _safe_click_step(d, "恭喜獲得", retry=2, step_timeout_s=4, logger_obj=lg)
+
+        for _ in range(2):
+            d.click(7, 167)
+            time.sleep(0.5)
+
+        for label in ("道具收集處", "高級", "10次", "挑戰"):
+            if not _safe_click_step(d, label, retry=3, step_timeout_s=10, logger_obj=lg):
+                raise RuntimeError(f"STEP_TIMEOUT:{label}")
+        if not _safe_click_step(d, "開啟自動戰鬥", retry=3, step_timeout_s=10, x_range=(397, 502), logger_obj=lg):
+            raise RuntimeError("STEP_TIMEOUT:開啟自動戰鬥")
+
+        started = time.time()
+        max_duration_s = 10 * 60
+        idle_cycles = 0
+        max_idle_cycles = 18
+        while True:
+            if should_stop and should_stop():
+                lg.info(f"[{ip}] biweekly interrupted by external stop")
+                break
+            elapsed = time.time() - started
+            if elapsed > max_duration_s:
+                lg.info(f"[{ip}] biweekly loop exit by max_duration_s={max_duration_s}")
+                break
+            if idle_cycles >= max_idle_cycles:
+                lg.info(f"[{ip}] biweekly loop exit by idle_cycles={idle_cycles}")
+                break
+
+            progressed = False
+            if img_tools.check_str_by_server(d, "高級"):
+                time.sleep(10)
+                progressed = True
+
+            for label, shift_x in (("回復", 300), ("減少", 300), ("熄火", 300)):
+                _safe_click_step(d, "餵食", retry=2, step_timeout_s=5, logger_obj=lg)
+                if _safe_click_step(d, label, retry=2, step_timeout_s=5, shift_x=shift_x, logger_obj=lg):
+                    time.sleep(1)
+                    d.click(286, 500)
+                    d.send_keys(text="999999999", clear=True)
+                    d.click(100, 200)
+                    time.sleep(0.2)
+                    _safe_click_step(d, "使用", retry=2, step_timeout_s=5, logger_obj=lg)
+                    progressed = True
+
+            idle_cycles = 0 if progressed else (idle_cycles + 1)
+
+        _record_biweekly_slot(ip, slot_key, "success", "done", detail=run_id)
+        _append_biweekly_log(ip, {"event": "success", "slot_key": slot_key, "run_id": run_id, "ts": datetime.datetime.now(_TPE).isoformat()})
+        lg.info(json.dumps({**log_ctx, "step": "done", "result": "success"}, ensure_ascii=False))
+        return True
+    except Exception as exc:
+        recovered = _recover_to_home(d, logger_obj=lg)
+        _record_biweekly_slot(ip, slot_key, "failed", "recover", detail=f"{run_id}|recovered={recovered}|err={exc}")
+        _append_biweekly_log(ip, {"event": "failed", "slot_key": slot_key, "run_id": run_id, "recovered": recovered, "error": str(exc), "ts": datetime.datetime.now(_TPE).isoformat()})
+        lg.error(json.dumps({**log_ctx, "step": "recover", "result": "failed", "error_code": "FLOW_EXCEPTION", "error_detail": str(exc), "recovery_result": recovered}, ensure_ascii=False))
+        return False
 
 class BattleManager:
     def __init__(self, device: u2.Device, reader: easyocr.Reader,cnn_model=None):
@@ -324,9 +536,14 @@ def cloud_fighting(d,ip,name='大車輪'):
                 img_tools.click_str_by_server(d, '開始挑戰')
                 time.sleep(7)
                 start = time.time()
+                err = False
                 while True:
                     # 若已經看到「挑戰成功」，跳出內層迴圈
                     if img_tools.click_str_by_server(d, '挑戰成功'):
+                        break
+                    if img_tools.click_str_by_server(d, '挑戰失敗'):
+                        print("挑戰失敗，重新嘗試")
+                        err =True
                         break
                     # timeout 檢查
                     if time.time() - start > MAX_CHALLENGE_WAIT:
@@ -335,6 +552,9 @@ def cloud_fighting(d,ip,name='大車輪'):
                     if img_tools.click_str_by_server(d, '恭喜獲得'):
                         break
                     time.sleep(2)
+                if err:
+                    d.click(477,894)
+                    break
     d.click(276,888)   
     time.sleep(1)
     img_tools.click_str_by_server(d,'關閉')
@@ -602,6 +822,14 @@ def fight_test(d):
             d.click(274,875)
             time.sleep(1)
         buy_god_everyweek(d)
+        #領取獎勵 
+        d.click(45,262)
+        time.sleep(1)
+        img_tools.click_str_by_server(d,'本周積分',shift_y=90)
+        #點擊空白處
+        time.sleep(0.2)
+        for i in range(3):
+            d.click(509,56)
         time.sleep(2)
         d.click(490,919)#點擊退出
         time.sleep(1)
@@ -614,7 +842,7 @@ def _update_store_record_extra(manager, title, extra_fields):
     data[title] = record
     manager.save_data(data)
 def buy_god_everyweek(d):
-    ip = d.adb_device.info.get('serialno')
+    ip = _resolve_device_id(d)
     """每週購買：萬神_秘寶閣（以 ISO 週判斷，使用 StoreDataManager 的 week 判斷）"""
     store_manager = create_store_manager(ip)
     # 現行 ISO 週字串，用於檢查次數記錄（避免跨週累加）
@@ -727,7 +955,7 @@ def hell_door(d, ip):
 
 def fight_snow_country(d:u2.Device,device_id=None, max_success_per_week=2, max_checks_per_week=6):
     if device_id is None:
-        device_id = d.device_info.get('serial')
+        device_id = _resolve_device_id(d)
     """執行 '雪國危機'，每週最多記錄 `max_success_per_week` 次成功；同時限制每週檢查次數 `max_checks_per_week`。
     本函式行為：
     - 以 ISO 年-週 作為週鍵，週換時自動重置計數。
@@ -859,3 +1087,6 @@ if __name__ == "__main__":
     # # 執行所有戰鬥實例
     battle_manager.execute_all_battles(ip='7fe98fc6',check=True)
     # battle_manager.swipe_screen((0.5, 0.8), (0.5, 0.65), delay=0.5)
+
+
+

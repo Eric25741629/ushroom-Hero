@@ -14,6 +14,7 @@ else:  # pragma: no cover - 測試環境僅需輕量別名
     DeviceLike = Any
 
 from miner.core.config import GRID_CFG, HIT_TABLE
+from miner.core.mechanics import get_bomb_affected_cells, get_drill_affected_cells
 class ItemPlacementError(Exception):
     pass
 from .planner import base_label, enter_cost
@@ -21,6 +22,7 @@ PLACEABLE_MATERIALS = {"empty", "dug_pit"}
 
 from miner.core.vision_utils import check_points
 from miner.rl.rl_recorder import RLRecorder
+from tools import click_white
 
 Coordinate = Tuple[int, int]
 
@@ -171,18 +173,11 @@ def execute_plan_steps(
                 tap_cell(d, r, c, 1, wait_ms=500)
                 # 標記受影響區域 unreachable_pit -> dug_pit，reachable_pit -> empty，其他障礙 -> empty (粗略更新以利後續規劃更快)
                 H, W = GRID_CFG["H"], GRID_CFG["W"]
-                def bomb_cells(rr:int, cc:int) -> List[Coordinate]:
-                    rel = [(0,0),(0,-1),(0,1),(-1,0),(1,0),(-1,-1),(-1,1),(1,-1),(1,1),(-2,0),(2,0)]
-                    return [(rr+dr,cc+dc) for dr,dc in rel if 0 <= rr+dr < H and 0 <= cc+dc < W]
-                def drill_cells(rr:int, cc:int) -> List[Coordinate]:
-                    cells = [(r0,cc) for r0 in range(rr,H)]
-                    if H>0:
-                        if cc>0:
-                            cells.append((H-1,cc-1))
-                        if cc < W-1:
-                            cells.append((H-1,cc+1))
-                    return cells
-                affected = bomb_cells(r,c) if item_type=="bomb" else drill_cells(r,c)
+                affected = (
+                    get_bomb_affected_cells(r, c, H, W)
+                    if item_type == "bomb"
+                    else get_drill_affected_cells(r, c, H, W)
+                )
                 hit_pit = False
                 for (ar,ac) in affected:
                     lbl = board[ar][ac]
@@ -195,10 +190,13 @@ def execute_plan_steps(
                         board[ar][ac] = "empty"
                 
                 if hit_pit:
-                    print(f"    [Executor] 道具 {item_type} 炸到礦洞，執行兩次確認點擊 (394, 152)")
+                    print(f"    [Executor] 道具 {item_type} 炸到礦洞，執行兩次確認點擊 + 兩次點空白處")
                     d.click(394, 152)
                     time.sleep(0.3)
                     d.click(394, 152)
+                    time.sleep(0.3)
+                    click_white(d)
+                    click_white(d)
                     time.sleep(0.5)
 
                 print("    使用道具後更新局部盤面(含 unreachable_pit->empty)，停止執行，將重新規劃")

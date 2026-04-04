@@ -1,108 +1,208 @@
 import logging
 import os
+import sys
 import threading
 import atexit
+import errno
+import time
 
 from logging.handlers import RotatingFileHandler
 
-# 建立 logs 資料夾
-if not os.path.exists("logs"):
-    os.makedirs("logs")
 
-# 執行緒鎖，確保 logger 初始化的執行緒安全
+class SafeRotatingFileHandler(RotatingFileHandler):
+    """RotatingFileHandler variant that avoids stream seek issues on Windows/SMB."""
+
+    def shouldRollover(self, record):
+        if self.stream is None:
+            self.stream = self._open()
+
+        if self.maxBytes > 0:
+            try:
+                file_size = os.path.getsize(self.baseFilename)
+                msg = "%s\n" % self.format(record)
+                if file_size + len(msg) >= self.maxBytes:
+                    return 1
+            except Exception:
+                pass
+        return 0
+
+
+class SafeConsoleHandler(logging.StreamHandler):
+    """Console handler that ignores EINVAL flush/write errors on Windows."""
+
+    def __init__(self, stream=None):
+        super().__init__(stream or sys.stdout)
+        try:
+            if hasattr(self.stream, "reconfigure"):
+                self.stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+    def emit(self, record):
+        try:
+            super().emit(record)
+        except OSError as exc:
+            if getattr(exc, "errno", None) == errno.EINVAL:
+                return
+            raise
+
+
+def _ensure_utf8_stdio():
+    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
+        try:
+            if stream is not None and hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
+_ensure_utf8_stdio()
+os.makedirs("logs", exist_ok=True)
+
 _logger_lock = threading.Lock()
+_startup_logs_rotated = False
+
+
+def _build_rotated_log_path(log_path: str, stamp: str) -> str:
+    base, ext = os.path.splitext(log_path)
+    candidate = f"{base}.{stamp}{ext}"
+    if not os.path.exists(candidate):
+        return candidate
+    index = 1
+    while True:
+        candidate = f"{base}.{stamp}.{index}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        index += 1
+
+
+def rotate_existing_logs_once(log_dir: str = "logs") -> None:
+    """Rename existing .log files once per process so startup begins with fresh logs."""
+    global _startup_logs_rotated
+    with _logger_lock:
+        if _startup_logs_rotated:
+            return
+        os.makedirs(log_dir, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        for name in sorted(os.listdir(log_dir)):
+            if not name.endswith(".log"):
+                continue
+            old_path = os.path.join(log_dir, name)
+            if not os.path.isfile(old_path):
+                continue
+            try:
+                if os.path.getsize(old_path) <= 0:
+                    continue
+            except OSError:
+                continue
+            new_path = _build_rotated_log_path(old_path, stamp)
+            try:
+                os.replace(old_path, new_path)
+            except OSError:
+                # Another process may still be holding the file.
+                continue
+        _startup_logs_rotated = True
+
+
+def _reset_handlers(logger_obj: logging.Logger) -> None:
+    for handler in logger_obj.handlers[:]:
+        try:
+            handler.close()
+        finally:
+            logger_obj.removeHandler(handler)
+
+
+def _build_formatter() -> logging.Formatter:
+    return logging.Formatter(
+        '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
 
 def setup_logger_for_device(device_id: str) -> logging.Logger:
-    """為指定的設備建立獨立 logger，按 IP 分檔並加上 [IP] 標籤。"""
+    """Create a per-device logger writing to logs/<device>.log and console."""
+    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
+
     with _logger_lock:
         logger_name = f"logger_{device_id}"
-        logger = logging.getLogger(logger_name)
-        
-        # 清除舊的 handler（避免重複或混淆）
-        logger.handlers = []
-        logger.propagate = False
-        
-        logger.setLevel(logging.INFO)
-        
-        # 檔案 handler：各設備獨立檔案
-        log_file = f"logs/{device_id}.log"
-        # 使用 RotatingFileHandler，設定最大 10MB，保留 5 個備份
-        file_handler = RotatingFileHandler(
-            log_file, 
-            maxBytes=10*1024*1024, 
-            backupCount=5, 
-            encoding='utf-8', 
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+
+        formatter = _build_formatter()
+        log_file = f"logs/{safe_device_id}.log"
+        file_handler = SafeRotatingFileHandler(
+            log_file,
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding='utf-8',
             mode='a'
         )
         file_handler.setLevel(logging.INFO)
-        
-        # 格式：包含 [檔案:行號]
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
         file_handler.setFormatter(formatter)
-        
-        # 也加入控制台 handler（可選）
-        console_handler = logging.StreamHandler()
+
+        console_handler = SafeConsoleHandler(stream=sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(formatter)
-        
-        logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
-        
-        return logger
+
+        logger_obj.addHandler(file_handler)
+        logger_obj.addHandler(console_handler)
+        return logger_obj
+
 
 def setup_miner_logger(device_id: str) -> logging.Logger:
-    """建立挖礦專用的獨立 logger (miner_{IP}.log)"""
+    """Create miner logger writing to logs/miner_<device>.log and console."""
+    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
+
     with _logger_lock:
         logger_name = f"miner_{device_id}"
-        m_logger = logging.getLogger(logger_name)
-        m_logger.handlers = []
-        m_logger.propagate = False
-        m_logger.setLevel(logging.INFO)
-        
-        log_file = f"logs/miner_{device_id}.log"
-        handler = RotatingFileHandler(
-            log_file, 
-            maxBytes=5*1024*1024, # 5MB
-            backupCount=3, 
-            encoding='utf-8'
-        )
-        formatter = logging.Formatter(
-            '%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        )
-        handler.setFormatter(formatter)
-        m_logger.addHandler(handler)
-        
-        # 同時輸出到控制台以便觀察
-        console = logging.StreamHandler()
-        console.setFormatter(formatter)
-        m_logger.addHandler(console)
-        
-        return m_logger
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
 
-# 預設 logger（用於主執行緒或不帶 IP 的日誌）
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        formatter = _build_formatter()
+        log_file = f"logs/miner_{safe_device_id}.log"
+        file_handler = SafeRotatingFileHandler(
+            log_file,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding='utf-8',
+            mode='a'
+        )
+        file_handler.setFormatter(formatter)
+
+        console_handler = SafeConsoleHandler(stream=sys.stdout)
+        console_handler.setFormatter(formatter)
+
+        logger_obj.addHandler(file_handler)
+        logger_obj.addHandler(console_handler)
+        return logger_obj
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    stream=sys.stdout,
+)
 default_logger = logging.getLogger(__name__)
 
-# 使用 threading.local() 為每個線程維護獨立的 logger
 _thread_local = threading.local()
 
+
 def get_thread_logger():
-    """獲取當前線程的 logger，如果未設定則返回預設 logger"""
     return getattr(_thread_local, 'logger', default_logger)
 
+
 def set_thread_logger(logger_instance):
-    """為當前線程設定專屬 logger"""
     _thread_local.logger = logger_instance
 
-# 為了向後兼容，使用屬性訪問
+
 class LoggerProxy:
     def __getattr__(self, name):
         return getattr(get_thread_logger(), name)
 
+
 logger = LoggerProxy()
-# 在程式結束時強制關閉 logging handlers，確保所有日誌已 flush 並關閉
 atexit.register(logging.shutdown)

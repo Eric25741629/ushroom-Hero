@@ -1,9 +1,0 @@
-{
-  "created_at": "2025-10-12 05:32:46",
-  "train_command": [
-    "C:\\Users\\Eric\\.conda\\envs\\mushroom1\\python.exe",
-    "a:\\菇勇者全自動掛機\\miner\\train_rl.py"
-  ],
-  "auto_train": true,
-  "train_interval": 300.0
-}

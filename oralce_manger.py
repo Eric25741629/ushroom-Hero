@@ -8,7 +8,7 @@ def click_str(str1: str, d, easyocr_reader):
         os.mkdir("oracle")
 
     img = d.screenshot(format='opencv')
-    cv2.imwrite("oracle/ocracle{time.time()}", img)
+    # cv2.imwrite("oracle/ocracle{time.time()}", img)
     result = easyocr_reader.readtext(img)
     for i in result:
         if str1 in str(i[1]):
@@ -17,8 +17,42 @@ def click_str(str1: str, d, easyocr_reader):
             d.click(center[0], center[1])
             return True
     return False
+import uiautomator2 as u2
+import random
+import cnn_model
 
-
+def oralce(d: u2.Device, Cnn_model, easyocr_reader, ip):
+    d.click(321, 919)
+    retry = 0
+    while (retry < 5):
+        img = d.screenshot(format='opencv')
+        # 顏色檢測 - 家園
+        # color check - homeland
+        print(cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')))
+        if cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) == "homeplace":
+            break
+        retry += 1
+        click_white(d)
+    if retry == 5:
+        return
+    # cv2.imwrite(f"oracle/ocracle{time.time()}.jpg", img)
+    time.sleep(1)
+    d.click(101, 158)
+    time.sleep(3)
+    d.click(500, 174)
+    time.sleep(3)
+    for _ in range(5):
+        d.click(394+random.randint(-3,3),599+random.randint(-3,3)) #+30隻鎬子
+    d.click(272, 752)
+    time.sleep(3)
+    click_str("確定", d, easyocr_reader)
+    time.sleep(3)
+    click_white(d)
+    click_white(d)
+    d.click(500, 913)
+    time.sleep(3)
+    d.click(321, 919)
+    time.sleep(3)
 # def oralce(d, easyocr_reader):
 #     d.click(321, 919)
 #     retry = 0

@@ -1,0 +1,189 @@
+import time
+
+import bot_state
+import config_manager
+from device_wrapper import MonitoredDevice, close_all_web_devices, create_web_device_if_enabled
+
+
+LOGIN_CONFLICT_SLEEP_SEC = 30 * 60
+
+
+def shutdown_web_devices(logger_obj) -> None:
+    try:
+        close_all_web_devices(logger_obj=logger_obj)
+    except Exception as e:
+        logger_obj.warning(f"[System] close_all_web_devices failed: {e}")
+
+
+def mark_login_conflict_sleep(ip: str, sleep_sec: int = LOGIN_CONFLICT_SLEEP_SEC) -> float:
+    wake_ts = time.time() + sleep_sec
+    wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+    bot_state.update_state(
+        ip,
+        task="休眠中",
+        step=f"偵測到異地登錄 (預計 {wake_time_str} 喚醒)",
+        next_wake_at=wake_ts,
+    )
+    return wake_ts
+
+
+def check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip: str = "emulator-5554"):
+    try:
+        is_busy = bool(check_on_line_fn(cnn_model))
+        reason = "account_online" if is_busy else "account_offline"
+        return is_busy, reason
+    except Exception as e:
+        logger_obj.warning(f"[{check_ip}] check_on_line_detail fallback due to error: {e}")
+        return True, f"check_failed:{e}"
+
+
+def wait_for_checker_gate_before_start(
+    ip: str,
+    logger_obj,
+    checker_ip: str = "emulator-5554",
+) -> None:
+    while True:
+        logger_obj.info(f"[{ip}] 啟動前等待 {checker_ip} 放行 (online-check request)...")
+        is_busy = True
+        try:
+            bot_state.activate_online_check_priority(
+                requester_ip=ip,
+                checker_ip=checker_ip,
+                ttl_sec=180.0,
+            )
+            req_id = bot_state.submit_online_check_request(
+                requester_ip=ip,
+                checker_ip=checker_ip,
+            )
+            result = bot_state.wait_online_check_result(req_id, timeout_sec=150.0)
+            status = str(result.get("status", "pending"))
+            if status == "done":
+                is_busy = bool(result.get("result_busy", True))
+                logger_obj.info(f"[{ip}] {checker_ip} 放行檢查結果: busy={is_busy}, detail={result.get('detail', '')}")
+            else:
+                logger_obj.warning(f"[{ip}] {checker_ip} 放行檢查失敗/逾時: status={status}, error={result.get('error', '')}")
+                is_busy = True
+        except Exception as e:
+            logger_obj.error(f"[{ip}] 啟動前檢查 {checker_ip} 狀態失敗: {e}")
+            is_busy = True
+        finally:
+            bot_state.release_online_check_priority(
+                requester_ip=ip,
+                checker_ip=checker_ip,
+            )
+
+        if not is_busy:
+            logger_obj.info(f"[{ip}] {checker_ip} 已放行，繼續啟動 web_h5")
+            return
+
+        wait_min = config_manager.get_device_config(ip).get("online_check_interval", 5)
+        wait_sec = max(1, int(float(wait_min) * 60))
+        logger_obj.info(f"[{ip}] 5558 在線中，{wait_sec} 秒後重新檢查")
+        for remain in range(wait_sec, 0, -1):
+            bot_state.update_state(ip, task="等待放行", step=f"5558在線中，{remain} 秒後重新檢查")
+            time.sleep(1)
+
+
+def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_fn) -> None:
+    if ip != "emulator-5554":
+        return
+
+    while True:
+        req = bot_state.pop_online_check_request("emulator-5554")
+        if not req:
+            return
+
+        req_id = req.get("id")
+        requester_ip = req.get("requester_ip")
+        try:
+            logger_obj.info(f"[emulator-5554] processing online-check request from {requester_ip} (req={req_id})")
+            bot_state.update_state(
+                "emulator-5554",
+                task="線程互檢",
+                step=f"處理 {requester_ip} 上線檢查請求",
+            )
+            is_busy, reason = check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip="emulator-5554")
+            bot_state.complete_online_check_request(
+                req_id,
+                is_busy=is_busy,
+                detail=f"checked by emulator-5554 for requester={requester_ip}; reason={reason}",
+            )
+        except Exception as e:
+            logger_obj.error(f"[emulator-5554] online-check request failed: req={req_id}, err={e}")
+            bot_state.fail_online_check_request(req_id, str(e))
+
+
+def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
+    device_cfg = config_manager.get_device_config(ip)
+    backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+    checker_ip = str(device_cfg.get("startup_checker_ip", "")).strip() or "emulator-5554"
+    require_checker_gate = bool(device_cfg.get("require_checker_before_web_start", False))
+    has_manual_web_launch_request = bool(
+        backend_kind == "web_h5" and bot_state.has_pending_web_launch_request(ip)
+    )
+    skip_online_check_once = False
+
+    if ip == "emulator-5558" and backend_kind == "web_h5":
+        require_checker_gate = True
+    if has_manual_web_launch_request and require_checker_gate:
+        device_logger.info(f"[{ip}] 偵測到手動開網頁請求，略過啟動前在線檢查並直接建立 web_h5 session")
+        require_checker_gate = False
+
+    if backend_kind == "web_h5" and require_checker_gate:
+        wait_for_checker_gate_before_start(ip, device_logger, checker_ip=checker_ip)
+        if ip == "emulator-5558":
+            skip_online_check_once = True
+
+    web_device = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=device_logger)
+    if web_device is not None:
+        device_logger.info(f"[{ip}] backend=web_h5, url={device_cfg.get('web_url', '')}")
+        return web_device, MonitoredDevice(web_device, ip), backend_kind, skip_online_check_once
+
+    device_obj = connect_device_fn(ip, logger=device_logger)
+    return device_obj, MonitoredDevice(device_obj, ip), backend_kind, skip_online_check_once
+
+
+def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj) -> bool:
+    web_launch_req = bot_state.consume_web_launch_request(ip)
+    if web_launch_req is None or backend_kind != "web_h5":
+        return False
+
+    try:
+        payload = dict(web_launch_req.get("payload") or {})
+        clear_cookies_once = bool(payload.get("clear_cookies_once", False))
+        manual_hold_until_closed = bool(payload.get("manual_hold_until_closed", False))
+        bot_state.update_state(ip, task="網頁啟動", step="正在開啟/恢復網頁")
+        logger_obj.info(f"[{ip}] 收到中控網頁啟動請求，準備開啟頁面")
+        if clear_cookies_once:
+            try:
+                device_obj.clear_cookies()
+                logger_obj.info(f"[{ip}] 已執行一次性清除 Cookies")
+            except Exception as clear_err:
+                logger_obj.warning(f"[{ip}] 一次性清除 Cookies 失敗: {clear_err}")
+        device_obj.app_start(package_name="com.mxdzz.tw.and", use_monkey=True)
+        bot_state.complete_web_launch_request(ip, ok=True, message="web page opened")
+        if manual_hold_until_closed:
+            logger_obj.info(f"[{ip}] 已進入手動操作模式，將暫停自動流程直到網頁關閉")
+            while True:
+                still_open = False
+                try:
+                    alive_fn = getattr(device_obj, "is_alive", None)
+                    still_open = bool(alive_fn()) if callable(alive_fn) else False
+                except Exception:
+                    still_open = False
+                if bot_state.check_manual_release(ip):
+                    logger_obj.info(f"[{ip}] 收到強制結束手動模式指令，恢復自動流程")
+                    bot_state.update_state(ip, task="手動操作結束", step="已強制刷新狀態並恢復自動流程")
+                    break
+                if not still_open:
+                    logger_obj.info(f"[{ip}] 偵測到網頁已關閉，結束手動操作模式並恢復自動流程")
+                    bot_state.update_state(ip, task="手動操作結束", step="恢復自動流程")
+                    break
+                bot_state.update_state(ip, task="手動操作中", step="已暫停自動流程，關閉網頁後自動恢復")
+                time.sleep(1)
+        time.sleep(1)
+    except Exception as e:
+        bot_state.complete_web_launch_request(ip, ok=False, error=str(e))
+        bot_state.update_state(ip, task="手動操作失敗", step=str(e))
+        logger_obj.warning(f"[{ip}] 開啟網頁失敗: {e}")
+    return True

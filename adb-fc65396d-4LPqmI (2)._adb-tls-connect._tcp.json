@@ -1,0 +1,57 @@
+{
+    "car_market_timestamp": 1749844253.839275,
+    "car_market_buy_num": 2,
+    "family_market_timestamp": 1760631226.258999,
+    "family_market_buy_num": 6,
+    "mission_timestamp": 1760630705.97066,
+    "mission_num": 1,
+    "Martial_Soul": {
+        "timestamp": 1760630831.90255,
+        "date": "2025-10-17",
+        "datetime": "2025-10-17 00:07:11"
+    },
+    "daily": {
+        "car_market_timestamp": 1760630934.025499,
+        "car_market_buy_num": 2,
+        "car_market_check_time": 1
+    },
+    "weekly": {
+        "car_market_timestamp": 1760287427.078551,
+        "car_market_buy_num": 2,
+        "car_market_check_time": 1
+    },
+    "park": {
+        "timestamp": 1760668582.818135,
+        "date": "2025-10-17",
+        "datetime": "2025-10-17 10:36:22"
+    },
+    "神秘商人": {
+        "count": 5,
+        "last_time": "2025-10-16 23:59:11"
+    },
+    "挖礦": {
+        "last_time": "2025-10-17 11:16:25"
+    },
+    "farm_seed_purchase": {
+        "timestamp": 1760630861.176216,
+        "date": "2025-10-17",
+        "datetime": "2025-10-17 00:07:41"
+    },
+    "farm_card_weekly": {
+        "timestamp": 1760287322.454297,
+        "date": "2025-10-13",
+        "datetime": "2025-10-13 00:42:02"
+    },
+    "guardian_spirit": {
+        "timestamp": 1760631293.54159,
+        "date": "2025-10-17",
+        "datetime": "2025-10-17 00:14:53"
+    },
+    "week_family_market_timestamp": 1760545592.624059,
+    "week_family_market_buy_num": 2,
+    "地獄之門": {
+        "timestamp": 1760670823.377566,
+        "date": "2025-10-17",
+        "datetime": "2025-10-17 11:13:43"
+    }
+}

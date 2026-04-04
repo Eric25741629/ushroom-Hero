@@ -10,7 +10,9 @@ import torch.nn as nn
 import torch.optim as optim
 
 
-LOG_FILE = os.path.join(os.path.dirname(__file__), "rl_logs", "events.jsonl")
+LOG_FILE = os.path.normpath(
+    os.path.join(os.path.dirname(__file__), "..", "rl_logs", "events.jsonl")
+)
 BOARD_SHAPE = (7, 6)  # 與 Mining.py 一致
 
 ACTION_INDEX = {

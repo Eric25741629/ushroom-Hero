@@ -9,13 +9,18 @@ from miner.models.classifier import ClassifierCNN
 from miner.rl.rl_recorder import RLRecorder
 from utils.logging_utils import logger
 from tools import click_white
-from utils.ocr_clicker import click_str
 from json_manager import create_store_manager
 import new_cnn.cnn_model as cnn_model
+import img_tools
 
-
-def oracle(d: u2.Device, easyocr_reader, ip, clf: ClassifierCNN, rl_recorder: RLRecorder = None, Cnn_model=None):
-    '''挖礦主流程 請先確保在主頁面'''
+def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, rl_recorder: RLRecorder = None, Cnn_model=None, max_duration_minutes: float = 6.0):
+    """
+    挖礦主流程 (已遷移至 PaddleOCR)。
+    原本的 easyocr_reader 已不再使用。
+    """
+    if ip is None:
+        raise ValueError("ip parameter is required for oracle task.")
+        
     d.click(321, 919)
     retry = 0
     while (retry < 5):
@@ -37,7 +42,11 @@ def oracle(d: u2.Device, easyocr_reader, ip, clf: ClassifierCNN, rl_recorder: RL
     d.click(101, 158)
     time.sleep(3)
     try:
-        run_mining(d, ip, clf, rl_recorder=rl_recorder)
+        run_mining(d, ip, clf, rl_recorder=rl_recorder, max_duration_minutes=max_duration_minutes)
+        # 成功後記錄進度
+        from json_manager import time_recording
+        time_recording(ip, name="挖礦")
+        logger.info(f"[{ip}] 挖礦任務已完成並記錄。")
     except Exception as e:
         logger.error(f"連線失敗: {e}")
         d.click(500, 174)
@@ -46,7 +55,8 @@ def oracle(d: u2.Device, easyocr_reader, ip, clf: ClassifierCNN, rl_recorder: RL
             d.click(394+random.randint(-3,3),599+random.randint(-3,3)) #+30隻鎬子
         d.click(272, 752)
         time.sleep(3)
-        click_str("確定", d, easyocr_reader)
+        # click_str("確定", d, easyocr_reader)
+        img_tools.click_str_by_server(d, "確定")
         time.sleep(3)
         #保存截圖
         img = d.screenshot(format='opencv')

@@ -1,4 +1,4 @@
-"""
+﻿"""
 ADB 操作模組
 整合常用的 ADB 和 uiautomator2 操作
 """
@@ -7,11 +7,112 @@ import shlex
 import time
 import random
 import logging
+import sys
 from typing import Union, List
 import uiautomator2 as u2
 
+try:
+    from utils.mumu_control import discover_control_exe, MuMuController
+except Exception:
+    discover_control_exe = None
+    MuMuController = None
+
 # 預設 logger
 default_logger = logging.getLogger(__name__)
+_mumu_controller = None
+
+
+def tap_device(d, x: int, y: int, *args, **kwargs):
+    """統一封裝點擊動作，優先使用 tap，其次回退到 click。"""
+    tap_fn = getattr(d, "tap", None)
+    if callable(tap_fn):
+        return tap_fn(x, y, *args, **kwargs)
+
+    click_fn = getattr(d, "click", None)
+    if callable(click_fn):
+        return click_fn(x, y, *args, **kwargs)
+
+    raise AttributeError("Device does not support tap/click")
+
+
+def swipe_device(d, *args, **kwargs):
+    """統一封裝滑動動作，優先使用 swipe，其次回退到 gesture_swipe。"""
+    swipe_fn = getattr(d, "swipe", None)
+    if callable(swipe_fn):
+        return swipe_fn(*args, **kwargs)
+
+    gesture_swipe_fn = getattr(d, "gesture_swipe", None)
+    if callable(gesture_swipe_fn):
+        return gesture_swipe_fn(*args, **kwargs)
+
+    raise AttributeError("Device does not support swipe/gesture_swipe")
+
+
+def xpath_click_device(d, xpath_expr: str, *args, **kwargs):
+    """統一封裝 XPath 點擊，讓上層只依賴單一介面。"""
+    xpath_fn = getattr(d, "xpath", None)
+    if not callable(xpath_fn):
+        raise AttributeError("Device does not support xpath")
+
+    node = xpath_fn(xpath_expr)
+    click_fn = getattr(node, "click", None)
+    if callable(click_fn):
+        click_fn(*args, **kwargs)
+        return True
+
+    raise AttributeError("XPath node does not support click")
+
+
+def _is_emulator_offline_error(msg: str) -> bool:
+    text = (msg or "").lower()
+    markers = [
+        "not online",
+        "not found",
+        "device offline",
+        "offline",
+        "cannot connect",
+        "connection",
+        "timeout",
+    ]
+    return any(m in text for m in markers)
+
+
+def _get_mumu_controller(logger: logging.Logger = None):
+    global _mumu_controller
+    if _mumu_controller is not None:
+        return _mumu_controller
+
+    if discover_control_exe is None or MuMuController is None:
+        return None
+
+    exe = discover_control_exe()
+    if not exe:
+        if logger:
+            safe_log(logger, 'warning', "[Watchdog] 找不到 MuMuManager.exe，無法執行模擬器重啟")
+        return None
+
+    _mumu_controller = MuMuController(exe)
+    return _mumu_controller
+
+
+def _try_restart_emulator(serial: str, logger: logging.Logger = None) -> bool:
+    controller = _get_mumu_controller(logger)
+    if controller is None:
+        return False
+
+    action = controller.restart(serial)
+    if action.ok:
+        if logger:
+            safe_log(logger, 'info', f"[{serial}] MuMu 重啟成功: rc={action.returncode}, cost={action.duration_sec:.2f}s")
+        return True
+
+    if logger:
+        safe_log(
+            logger,
+            'error',
+            f"[{serial}] MuMu 重啟失敗: rc={action.returncode}, stderr={action.stderr or '<empty>'}"
+        )
+    return False
 
 
 def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
@@ -52,9 +153,73 @@ def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
     return result.stdout.strip()
 
 
-def connect_u2_with_retries(serial: str, max_retries: int = 5, initial_delay: int = 5, logger: logging.Logger = None) -> u2.Device:
+def safe_log(logger: logging.Logger, level: str, msg: str, *args, **kwargs):
+    """Call logger methods but swallow exceptions raised by handler emit (e.g., OSError on flush).
+
+    This prevents a logging handler failure from crashing the worker thread.
+    """
+    try:
+        if level == 'info':
+            logger.info(msg, *args, **kwargs)
+        elif level == 'warning':
+            logger.warning(msg, *args, **kwargs)
+        elif level == 'error':
+            logger.error(msg, *args, **kwargs)
+        elif level == 'debug':
+            logger.debug(msg, *args, **kwargs)
+        else:
+            logger.log(logging.INFO, msg, *args, **kwargs)
+    except Exception:
+        try:
+            # Fallback to printing minimal message to stderr
+            print(f"[LOG-{level.upper()}] {msg}", file=sys.stderr)
+        except Exception:
+            pass
+
+
+def wait_for_device_ready(serial: str, timeout: int = 60, logger: logging.Logger = None) -> bool:
+    """
+    等待設備完全啟動 (檢查 sys.boot_completed)
+    
+    Args:
+        serial: 設備序號
+        timeout: 最大等待秒數
+        logger: 日誌記錄器
+        
+    Returns:
+        bool: 設備是否就緒
+    """
+    if logger is None:
+        logger = default_logger
+        
+    start_time = time.time()
+    logger.info(f"[{serial}] 等待系統啟動 (sys.boot_completed)...")
+    
+    while time.time() - start_time < timeout:
+        try:
+            # 檢查 boot_completed 屬性
+            output = run_adb('shell getprop sys.boot_completed', device_serial=serial)
+            if output == '1':
+                logger.info(f"[{serial}] 系統已完全啟動")
+                return True
+        except Exception:
+            pass
+        time.sleep(2)
+        
+    logger.warning(f"[{serial}] 等待系統啟動超時 ({timeout}s)")
+    return False
+
+
+def connect_u2_with_retries(
+    serial: str,
+    max_retries: int = 5,
+    initial_delay: int = 5,
+    logger: logging.Logger = None,
+    auto_restart_on_offline: bool = True,
+) -> u2.Device:
     """
     嘗試用 uiautomator2 連線，多次重試並採用指數退避。
+    連線前會先確認設備系統已完全啟動。
     
     Args:
         serial: 設備序號或 IP 地址
@@ -71,23 +236,43 @@ def connect_u2_with_retries(serial: str, max_retries: int = 5, initial_delay: in
     if logger is None:
         logger = default_logger
 
+    # 先等待系統啟動 (僅針對 emulator 類型設備加強檢查)
+    if 'emulator' in serial or '127.0.0.1' in serial:
+        wait_for_device_ready(serial, timeout=5, logger=logger)
+
     last_exc = None
+    restart_attempted = False
     for attempt in range(1, max_retries + 1):
         try:
-            logger.info(f"[{serial}] 嘗試連線 (attempt {attempt}/{max_retries})")
+            safe_log(logger, 'info', f"[{serial}] 嘗試連線 (attempt {attempt}/{max_retries})")
             d = u2.connect(serial)
             # 確認基本資訊可取得，避免回傳半連線物件
             _ = d.info
-            logger.info(f"[{serial}] 連線成功")
+            safe_log(logger, 'info', f"[{serial}] 連線成功")
             return d
         except Exception as e:
             last_exc = e
-            logger.warning(f"[{serial}] 連線失敗: {e}")
+            safe_log(logger, 'warning', f"[{serial}] 連線失敗: {e}")
+
+            # 對 emulator 的 offline 錯誤，允許自動重啟一次再重試
+            if (
+                auto_restart_on_offline
+                and serial.startswith('emulator-')
+                and not restart_attempted
+                and _is_emulator_offline_error(str(e))
+            ):
+                safe_log(logger, 'warning', f"[{serial}] 偵測到離線錯誤，嘗試自動重啟模擬器...")
+                if _try_restart_emulator(serial, logger=logger):
+                    restart_attempted = True
+                    safe_log(logger, 'info', f"[{serial}] 重啟後等待 8s 再重試連線")
+                    time.sleep(8)
+                    continue
+
             if attempt == max_retries:
-                logger.error(f"[{serial}] 已達最大重試次數 {max_retries}")
+                safe_log(logger, 'error', f"[{serial}] 已達最大重試次數 {max_retries}")
                 break
             sleep_time = initial_delay * (2 ** (attempt - 1))
-            logger.info(f"[{serial}] {sleep_time}s 後重試...")
+            safe_log(logger, 'info', f"[{serial}] {sleep_time}s 後重試...")
             time.sleep(sleep_time)
 
     # 最後再拋出最後一次的例外，讓呼叫端決定如何處理
@@ -101,7 +286,7 @@ def unlock_screen(d: u2.Device):
     Args:
         d: uiautomator2 Device 物件
     """
-    d.swipe(0.05, 0.7, 0.9, 0.7, 0.05)
+    swipe_device(d, 0.05, 0.7, 0.9, 0.7, 0.05)
 
 
 def start_game_by_icon(d: u2.Device, ip: str, logger: logging.Logger = None) -> bool:
@@ -128,7 +313,7 @@ def start_game_by_icon(d: u2.Device, ip: str, logger: logging.Logger = None) -> 
         # 嘗試點擊「菇勇者傳說」圖示
         if d.xpath('//*[@text="菇勇者傳說"]').exists:
             logger.info(f"[{ip}] 找到遊戲圖示,點擊啟動")
-            d.xpath('//*[@text="菇勇者傳說"]').click()
+            xpath_click_device(d, '//*[@text="菇勇者傳說"]')
             time.sleep(2 + random.random())
             return True
         else:
@@ -168,8 +353,9 @@ def click_random(d: u2.Device, x: int, y: int, rand_range: int = 5):
         y: Y 座標
         rand_range: 隨機偏移範圍
     """
-    d.click(x + random.randint(-rand_range, rand_range), 
-            y + random.randint(-rand_range, rand_range))
+    tap_device(d,
+               x + random.randint(-rand_range, rand_range),
+               y + random.randint(-rand_range, rand_range))
 
 
 def safe_click(d: u2.Device, x: int, y: int, delay: float = 0.5, rand_delay: bool = True):
@@ -183,7 +369,7 @@ def safe_click(d: u2.Device, x: int, y: int, delay: float = 0.5, rand_delay: boo
         delay: 基礎延遲秒數
         rand_delay: 是否添加隨機延遲
     """
-    d.click(x, y)
+    tap_device(d, x, y)
     if rand_delay:
         time.sleep(delay + random.random())
     else:
@@ -285,3 +471,4 @@ def reset_screen_settings(device_serial: str, logger=None):
     
     run_adb('shell wm density reset', device_serial=device_serial)
     run_adb('shell wm size reset', device_serial=device_serial)
+

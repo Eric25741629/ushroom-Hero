@@ -1,0 +1,2 @@
+import sys
+!{sys.executable} PaddleOCR/tools/train.py -c configs/rec/PP-OCRv5/PP-OCRv5_server_rec.yml -o Global.pretrained_model=./PP-OCRv5_server_rec_pretrained.pdparams Train.dataset.label_file_list='["dataset/rec/rec_gt_train.txt"]' Eval.dataset.label_file_list='["dataset/rec/rec_gt_val.txt"]' Global.character_dict_path=ppocr/utils/dict/my_min_dict.txt

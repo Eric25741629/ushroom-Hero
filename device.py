@@ -68,25 +68,49 @@ def get_adb_devices():
         return []
     
 def close_nofication(d):
+    """
+    清理通知與 Messenger 氣泡等遮擋物
+    """
     try:
-        d.open_quick_settings()
-        if not d.xpath('//*[@content-desc="方向鎖定"]').info.get("checked"):
-            d.xpath('//*[@content-desc="方向鎖定"]').click()   
-        if not d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
-            d.xpath('//*[@content-desc="勿擾模式"]').click()  
-        d.click(0.71, 0.016)
-        if d(className="android.widget.FrameLayout", packageName="mrv.masked.com.facebook.orca").exists:
-            print("有FB")
-            point = d(className="android.widget.FrameLayout", packageName="mrv.masked.com.facebook.orca").info.get("bounds")
-            x1,y1,x2,y2 = point.get("left"),point.get("top"),point.get("right"),point.get("bottom")
-            print(x1,y1,x2,y2)
-            print(point)
-            middle_x = (x1 + x2) / 2
-            middle_y = (y1 + y2) / 2
-            print(middle_x, middle_y)
-            d.swipe(middle_x, middle_y,500, 2141,duration=0.2)
+        # 1. 處理系統設定 (方向鎖定/勿擾)
+        try:
+            d.open_quick_settings()
+            time.sleep(1)
+            if not d.xpath('//*[@content-desc="方向鎖定"]').info.get("checked"):
+                d.xpath('//*[@content-desc="方向鎖定"]').click()   
+            if not d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
+                d.xpath('//*[@content-desc="勿擾模式"]').click()  
+            d.click(0.71, 0.016) # 點擊空白處返回
+        except:
+            pass
+
+        # 2. 處理 Messenger 氣泡 (包含雙開版本)
+        # 遍歷所有元件，尋找包名包含 facebook.orca 的元件
+        # 氣泡通常是一個浮動的 FrameLayout 或 ImageView
+        screen_info = d.info
+        screen_w = screen_info.get("displayWidth", 540)
+        screen_h = screen_info.get("displayHeight", 960)
+        
+        # 嘗試尋找 Messenger 相關元件 (模糊匹配包名)
+        fb_elements = d(packageNameMatches=r".*facebook\.orca.*")
+        if fb_elements.exists:
+            print("偵測到 Messenger 相關氣泡/視窗")
+            for el in fb_elements:
+                try:
+                    bounds = el.info.get("bounds")
+                    if bounds:
+                        mid_x = (bounds['left'] + bounds['right']) / 2
+                        mid_y = (bounds['top'] + bounds['bottom']) / 2
+                        
+                        # 往螢幕底部中央滑動 (關閉氣泡)
+                        print(f"掃除氣泡於: ({mid_x}, {mid_y}) -> 底部")
+                        d.swipe(mid_x, mid_y, screen_w / 2, screen_h - 10, duration=0.2)
+                        time.sleep(0.5)
+                except:
+                    continue
+                    
     except Exception as e:
-        print(f"An error occurred: {e}")  
+        print(f"清理遮擋物時發生錯誤: {e}")
 def open_nofication(d):
     try:
         d.open_quick_settings()

@@ -18,13 +18,14 @@ from streaming_dataset import (
 )
 from simplecnn import SimpleCNN
 from check_dataset import make_transforms
+from config.paths import DATASET_MINES_DIR_STR
 
 
 def test_memory_usage():
     """測試記憶體使用情況"""
     
     # 檢查是否有測試資料
-    test_data_dir = Path("dataset/mines")
+    test_data_dir = Path(DATASET_MINES_DIR_STR)
     if not test_data_dir.exists():
         print(f"測試資料目錄不存在: {test_data_dir}")
         print("請確保有資料集可供測試")
@@ -160,7 +161,7 @@ def main():
     parser.add_argument('--test-type', choices=['memory', 'compare'], default='memory',
                        help='測試類型: memory=記憶體測試, compare=方法比較')
     parser.add_argument('--dataset-path', type=str, 
-                       default='dataset/mines',
+                       default=DATASET_MINES_DIR_STR,
                        help='測試用資料集路徑')
     
     args = parser.parse_args()

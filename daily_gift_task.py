@@ -21,9 +21,7 @@ def buy_gift_for_friend_once(d, ip_str='emulator-5554'):
     Returns:
         bool: 是否執行成功
     """
-    if ip_str == 'emulator-5556':
-        print("設備 emulator-5556 跳過此任務")
-        return False
+
     
     try:
         click_str_by_server(d, '家園', shift_y=-20, y_range=(934, 959))
@@ -71,6 +69,68 @@ def buy_gift_for_friend_once(d, ip_str='emulator-5554'):
         return False
 
 
+def claim_daily_free_pack_once(d):
+    """
+    單次領取自選禮包免費獎勵
+    
+    Args:
+        d: uiautomator2 設備對象
+    
+    Returns:
+        bool: 是否成功領取
+    """
+    try:
+        # 1. 點擊自選禮包
+        if click_str_by_server(d, '自選禮包', wait_timeout=5):
+            time.sleep(1.5)
+            # 2. 點擊免費
+            if click_str_by_server(d, '免費', y_range=(334, 380), wait_timeout=5):
+                time.sleep(1)
+                # 3. 點擊恭喜獲得 (關閉獎勵彈窗)
+                click_str_by_server(d, '恭喜獲得', wait_timeout=5)
+                time.sleep(1)
+                # 4. 點擊特定座標關閉禮包介面
+                d.click(274, 841)
+                print("✓ 成功領取每日自選禮包")
+                return True
+            else:
+                print("! 未找到免費獎勵，可能已領取")
+                # 嘗試關閉介面
+                d.click(274, 841)
+                return False
+        return False
+    except Exception as e:
+        print(f"領取自選禮包時發生錯誤: {e}")
+        return False
+
+
+def claim_daily_free_pack_daily(d, ip_str='emulator-5554'):
+    """
+    每日領取一次自選禮包免費獎勵（自動管理執行狀態）
+    
+    Args:
+        d: uiautomator2 設備對象
+        ip_str: 設備IP字串
+    
+    Returns:
+        dict: 執行結果
+    """
+    manager = JsonDataManager(ip_str)
+    task_name = "daily_free_pack"
+    
+    if manager.is_same_day(task_name):
+        print(f"✓ 今日自選禮包已領取過")
+        return {"executed": False, "reason": "already_done_today"}
+    
+    print("開始執行每日自選禮包領取任務...")
+    if claim_daily_free_pack_once(d):
+        manager.record_timestamp(task_name, {"status": "completed"})
+        return {"executed": True, "status": "success"}
+    else:
+        # 這裡不記錄時間戳，以便下次重試
+        return {"executed": False, "status": "failed"}
+
+
 def buy_gift_for_friend_daily(d, ip_str='emulator-5554', times=1):
     """
     每日贈禮任務（自動管理執行狀態）
@@ -109,6 +169,12 @@ def buy_gift_for_friend_daily(d, ip_str='emulator-5554', times=1):
     
     print(f"開始執行每日贈禮任務（共 {times} 次）...")
     
+    # 在執行贈禮任務前，先領取每日自選禮包獎勵
+    try:
+        claim_daily_free_pack_daily(d, ip_str)
+    except Exception as e:
+        print(f"領取每日自選禮包時發生錯誤: {e}")
+
     success_count = 0
     fail_count = 0
     

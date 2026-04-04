@@ -1,0 +1,15 @@
+__pycache__/*
+*.pyc
+*.pyo
+*.pyd
+*.jpg
+*.png
+*.gif
+*.zip
+*.txt
+playwright_profile/*
+logs/*
+miner/.vscode/settings.json
+OCR/*
+playwright_profile_5560/*
+playwright_profile_fresh/*

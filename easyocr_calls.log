@@ -1,0 +1,427 @@
+Scanned root: a:\菇勇者全自動掛機
+Found 51 matches in 18 files
+
+--- File: 2026-01-20 195013\fight_car.py ---
+[13] import_easyocr: import easyocr
+Context:
+import torch
+import uiautomator2 as u2
+import easyocr
+from tools import android_devices
+import img_tools
+
+--- File: Open_gold.py ---
+[5] import_easyocr: import easyocr
+Context:
+import time
+import numpy as np
+import easyocr
+import uiautomator2 as u2
+import winsound
+
+[45] readtext_call:             ocr_results_with_confidence = reader.readtext(img[634:744, 291:367], detail=1)
+Context:
+            img = device.capture_screenshot()
+            # 使用 detail=1 來獲取信心程度
+            ocr_results_with_confidence = reader.readtext(img[634:744, 291:367], detail=1)
+            ocr_area=img[634:744, 291:367]
+            # 檢查信心程度並保存低信心截圖
+
+[57] easyocr_dot:                     # 使用 easyocr 判斷的區塊範圍保存截圖
+Context:
+                        os.makedirs("ocr_fails")
+                    timestamp = int(time.time() * 1000)  # 毫秒級時間戳
+                    # 使用 easyocr 判斷的區塊範圍保存截圖
+                    x1,y1,x2,y2 = map(int, detection[0][0] + detection[0][2] )
+                    print(x1,y1,x2,y2)
+
+[146] readtext_call:                 now_ocr_results_with_confidence = reader.readtext(now_stage, detail=1)
+Context:
+                
+                # 安全地處理 OCR 結果，加入信心程度檢查
+                now_ocr_results_with_confidence = reader.readtext(now_stage, detail=1)
+                all_ocr_results_with_confidence = reader.readtext(all_stage, detail=1)
+                
+
+[147] readtext_call:                 all_ocr_results_with_confidence = reader.readtext(all_stage, detail=1)
+Context:
+                # 安全地處理 OCR 結果，加入信心程度檢查
+                now_ocr_results_with_confidence = reader.readtext(now_stage, detail=1)
+                all_ocr_results_with_confidence = reader.readtext(all_stage, detail=1)
+                
+                # 檢查 now_stage 的信心程度
+
+[158] easyocr_dot:                         # 使用 easyocr 判斷的區塊範圍保存截圖
+Context:
+                            os.makedirs("ocr_fails")
+                        timestamp = int(time.time() * 1000)
+                        # 使用 easyocr 判斷的區塊範圍保存截圖
+                        x_min, y_min, x_max, y_max = map(int, detection[0][0] + detection[0][2])
+                        x1,x2,y1,y2 = map(int, detection[0][0] + detection[0][2])
+
+[177] easyocr_dot:                         # 使用 easyocr 判斷的區塊範圍保存截圖
+Context:
+                            os.makedirs("ocr_fails")
+                        timestamp = int(time.time() * 1000)
+                        # 使用 easyocr 判斷的區塊範圍保存截圖
+                        x_min, y_min, x_max, y_max = map(int, detection[0][0] + detection[0][2])
+                        x1,x2,y1,y2 = map(int, detection[0][0] + detection[0][2])
+
+[242] readtext_call:                     all_ocr_results_with_confidence = reader.readtext(all_stage, detail=1)
+Context:
+                    
+                    # 使用 detail=1 獲取信心程度
+                    all_ocr_results_with_confidence = reader.readtext(all_stage, detail=1)
+                    
+                    # 檢查信心程度並保存低信心截圖
+
+[297] easyocr_reader:     reader = easyocr.Reader(['en', 'ch_tra'])
+Context:
+
+if __name__ == "__main__":
+    reader = easyocr.Reader(['en', 'ch_tra'])
+
+    current_device_ip = 'fc65396d'
+
+--- File: Store.py ---
+[9] import_easyocr: import easyocr
+Context:
+import torch
+import uiautomator2 as u2
+import easyocr
+from tools import android_devices
+import img_tools
+
+[422] easyocr_reader:     easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+Context:
+    d=u2.connect('7fe98fc6')
+    Cnn_model = cnn_model.load_cnn_model("cnn_model.pth")
+    easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+    buy_store(d, '7fe98fc6', Cnn_model, easyocr_reader)  # 替換為實際的IP地址
+    
+--- File: ____fail.py ---
+[7] import_easyocr: import easyocr
+Context:
+import miner.simplecnn
+# from oralce_manger import oralce
+import easyocr
+import point
+import uiautomator2 as u2
+
+[75] readtext_call:                 img_text_ocr = self.easyocr_reader.readtext(
+Context:
+            wait_time = time.time()
+            while True:
+                img_text_ocr = self.easyocr_reader.readtext(
+                    self.d.screenshot(format='opencv'), detail=0)
+                # Assuming stage_by_str and other helpers are accessible
+
+[91] readtext_call:         ocr_result = self.easyocr_reader.readtext(img_screenshot, detail=0)
+Context:
+
+        img_screenshot = self.d.screenshot(format='opencv')
+        ocr_result = self.easyocr_reader.readtext(img_screenshot, detail=0)
+
+        if "你的帳號在另一個地方登錄" in ocr_result or "退出遊戲" in ocr_result:
+
+[117] readtext_call:             ocr_result_rewards = self.easyocr_reader.readtext(
+Context:
+            reward(self.d, self.easyocr_reader)
+        else:
+            ocr_result_rewards = self.easyocr_reader.readtext(
+                self.d.screenshot(format='opencv'), detail=0)
+            if any(keyword in ocr_result_rewards for keyword in ["放置獎勵", "離線獎勵"]):
+
+[148] readtext_call:         ocr_text_for_family = self.easyocr_reader.readtext(
+Context:
+
+        # Need to re-fetch OCR results if stage_by_str relies on fresh text
+        ocr_text_for_family = self.easyocr_reader.readtext(
+            self.d.screenshot(format='opencv'), detail=0)
+        if stage_by_str(self.d, ocr_text_for_family) == "主頁面" or current_time_details.tm_hour == 23:
+
+[233] easyocr_reader:     easyocr_reader = easyocr.Reader(
+Context:
+
+if __name__ == "__main__":    # Initialize the EasyOCR reader
+    easyocr_reader = easyocr.Reader(
+        ['ch_tra', 'en'], gpu=True)  # Use GPU if available
+    cnn_model = SimpleCNN(num_classes=10)
+
+--- File: battle.py ---
+[3] readtext_call:     result = easyocr_reader.readtext(img)
+Context:
+def click_str(str1: str):
+    img = d.screenshot(format='opencv')
+    result = easyocr_reader.readtext(img)
+    for i in result:
+        if str1 in str(i[1]):
+
+[16] readtext_call:     result = easyocr_reader.readtext(img)
+Context:
+def battle_instance(battel_names: str):
+    img = d.screenshot(format='opencv')
+    result = easyocr_reader.readtext(img)
+    find = False
+    for i in result:
+
+--- File: fight_car.py ---
+[14] import_easyocr: import easyocr
+Context:
+import torch
+import uiautomator2 as u2
+import easyocr
+from tools import android_devices
+import img_tools
+
+--- File: game_initialization.py ---
+[61] readtext_call:             ocr_result = easyocr_reader.readtext(img, detail=0)
+Context:
+        try:
+            img = d.screenshot(format='opencv')
+            ocr_result = easyocr_reader.readtext(img, detail=0)
+            current_stage = stage_by_str(d, ocr_result, img)
+            logger.info(f"[{ip}] 目前頁面: {current_stage}")
+
+--- File: gold_mananer.py ---
+[31] readtext_call:                 result = self.reader.readtext(img[634:744, 291:367], detail=0)
+Context:
+                time.sleep(1)
+                img = self.capture_screenshot()
+                result = self.reader.readtext(img[634:744, 291:367], detail=0)
+                result = [i.replace("學", "擊").replace("舉", "擊")
+                          for i in result]
+
+--- File: new_battle.py ---
+[3] import_easyocr: import easyocr
+Context:
+import time
+import uiautomator2 as u2
+import easyocr
+import numpy as np
+from tools import click_white
+
+[20] easyocr_reader:     def __init__(self, device: u2.Device, reader: easyocr.Reader,cnn_model=None):
+Context:
+
+class BattleManager:
+    def __init__(self, device: u2.Device, reader: easyocr.Reader,cnn_model=None):
+        self.device = device
+        self.reader = reader
+
+[64] readtext_call:         result = self.reader.readtext(img)
+Context:
+        """
+        img = self.capture_screenshot()
+        result = self.reader.readtext(img)
+        for item in result:
+            if text in str(item[1]):
+
+[79] readtext_call:         result = self.reader.readtext(img)
+Context:
+        
+        img = self.capture_screenshot()
+        result = self.reader.readtext(img)
+        print(f"OCR結果：{result}")
+        find = False
+
+[100] readtext_call:             cropped_result = self.reader.readtext(cropped_img, detail=0)
+Context:
+            cropped_img = img[center[1] - 40:center[1] +
+                              40, center[0] - 40:center[0] + 30]
+            cropped_result = self.reader.readtext(cropped_img, detail=0)
+            print(f"檢查結果：{cropped_result}")
+            if '入場' not in str(cropped_result) or '場' not in str(cropped_result):
+
+[869] easyocr_reader:     reader = easyocr.Reader(['ch_tra', 'en'])
+Context:
+    # cv2.imshow("img", mask_img)
+    # cv2.waitKey(0)
+    reader = easyocr.Reader(['ch_tra', 'en'])
+    battle_manager = BattleManager(device, reader)
+    # img = battle_manager.capture_screenshot()
+
+[872] readtext_call:     # result = reader.readtext(img)
+Context:
+    battle_manager = BattleManager(device, reader)
+    # img = battle_manager.capture_screenshot()
+    # result = reader.readtext(img)
+    # print(f"OCR結果：{result}")
+    # battle_manager.handle_battle("神樹試煉")
+
+--- File: new_main_before20250514.py ---
+[22] import_easyocr: import easyocr
+Context:
+)
+import daily_gift_task
+import easyocr
+import point
+import uiautomator2 as u2
+
+[111] easyocr_reader: def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
+Context:
+    return stage
+
+def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
+    # 初始化狀態監控
+    bot_state.init_device(ip)
+
+[538] easyocr_reader: easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+Context:
+
+
+easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+
+# 全域變數，用來管理運行中的執行緒
+
+--- File: oralce_manger.py ---
+[12] readtext_call:     result = easyocr_reader.readtext(img)
+Context:
+    img = d.screenshot(format='opencv')
+    # cv2.imwrite("oracle/ocracle{time.time()}", img)
+    result = easyocr_reader.readtext(img)
+    for i in result:
+        if str1 in str(i[1]):
+
+--- File: park.py ---
+[13] import_easyocr: import easyocr
+Context:
+import os
+import new_cnn.cnn_model as cnn_model
+import easyocr
+from json_manager import ParkMarketDataManager
+import BUY
+
+[594] readtext_call:             result = self.reader.readtext(img[372:442, 380:465], detail=0)
+Context:
+            time.sleep(2)
+            img = self.capture_screenshot()
+            result = self.reader.readtext(img[372:442, 380:465], detail=0)
+            print("ocr:", result)
+            if 'O/' in str( result) or '0/' in str(result):
+
+[653] easyocr_reader:     easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+Context:
+    # d = u2.connect("emulator-5554")
+    d = u2.connect("7fe98fc6")
+    easyocr_reader = easyocr.Reader(['ch_tra', 'en'])
+    Cnn_model = cnn_model.load_cnn_model("cnn_model.pth")
+    ParkingManagers = ParkingManager(d,easyocr_reader,'7fe98fc6',Cnn_model,False)
+
+--- File: park_test.py ---
+[13] import_easyocr: import easyocr
+Context:
+import os
+import new_cnn.cnn_model as cnn_model
+import easyocr
+class ParkMarket(device):
+    def __init__(self, device: u2.Device, device_ip):
+
+[654] readtext_call:             result = self.reader.readtext(img[413:442, 359:422], detail=0)
+Context:
+            time.sleep(2)
+            img = self.capture_screenshot()
+            result = self.reader.readtext(img[413:442, 359:422], detail=0)
+            if 'O/m' in result or '0/m' in result:
+                #print("full")
+
+[708] easyocr_reader:     reader = easyocr.Reader(['ch_sim', 'en'])  # 初始化 OCR
+Context:
+    # 測試用 不連線
+    d = u2.connect('adb-fc65396d-4LPqmI (2)._adb-tls-connect._tcp')  # 連接到指定設備
+    reader = easyocr.Reader(['ch_sim', 'en'])  # 初始化 OCR
+    manager = ParkMarket(d, '7fe98fc6')
+    print(manager.check())
+
+--- File: tools\find_easyocr_calls.py ---
+[2] easyocr_dot: """Scan repository for easyocr usages and write easyocr_calls.log
+Context:
+#!/usr/bin/env python3
+"""Scan repository for easyocr usages and write easyocr_calls.log
+
+Writes file path, line number, matched line, and small context.
+
+[13] easyocr_dot:     ('import_easyocr', re.compile(r'^\s*(?:from\s+easyocr\s+import|import\s+easyocr)\b')),
+Context:
+
+PATTERNS = [
+    ('import_easyocr', re.compile(r'^\s*(?:from\s+easyocr\s+import|import\s+easyocr)\b')),
+    ('easyocr_reader', re.compile(r'\beasyocr\.Reader\b')),
+    ('readtext_call', re.compile(r'\.readtext\s*\(')),
+
+--- File: trash\core\state_detector.py ---
+[148] readtext_call:             result = self.easyocr_reader.readtext(img, detail=0)
+Context:
+            
+            # OCR識別
+            result = self.easyocr_reader.readtext(img, detail=0)
+            
+            # 根據文字內容判斷狀態
+
+--- File: trash\core\task_scheduler.py ---
+[311] readtext_call:                 result = self.game_actions.easyocr_reader.readtext(img, detail=0)
+Context:
+            img = self.device_manager.screenshot_manager.take_screenshot()
+            if img is not None:
+                result = self.game_actions.easyocr_reader.readtext(img, detail=0)
+                from new_main_before20250514 import stage_by_str
+                stage = stage_by_str(self.device_manager.device, result)
+
+--- File: trash\core\task_scheduler_fixed.py ---
+[319] readtext_call:                 result = self.game_actions.easyocr_reader.readtext(img, detail=0)
+Context:
+            img = self.device_manager.screenshot_manager.take_screenshot()
+            if img is not None:
+                result = self.game_actions.easyocr_reader.readtext(img, detail=0)
+                from new_main_before20250514 import stage_by_str
+                stage = stage_by_str(self.device_manager.device, result)
+
+--- File: trash\modules\game_state_detector.py ---
+[10] import_easyocr: import easyocr
+Context:
+import logging
+import uiautomator2 as u2
+import easyocr
+from typing import List, Tuple, Optional
+from .screenshot_monitor import ScreenshotMonitor
+
+[19] easyocr_reader:     def __init__(self, device: u2.Device, ocr_reader: easyocr.Reader, 
+Context:
+    """遊戲狀態檢測器"""
+    
+    def __init__(self, device: u2.Device, ocr_reader: easyocr.Reader, 
+                 cnn_model=None, screenshot_monitor: ScreenshotMonitor = None):
+        self.device = device
+
+[119] readtext_call:             result = self.ocr_reader.readtext(img, detail=0)
+Context:
+        try:
+            # 進行OCR識別
+            result = self.ocr_reader.readtext(img, detail=0)
+            full_text = "".join(result)
+            
+
+[183] readtext_call:             result = self.ocr_reader.readtext(img, detail=0)
+Context:
+        
+        try:
+            result = self.ocr_reader.readtext(img, detail=0)
+            conflict_detected = any(
+                text in result for text in ["你的帳號在另一個地方登錄", "退出遊戲"]
+
+[214] readtext_call:             result = self.ocr_reader.readtext(img, detail=0)
+Context:
+        
+        try:
+            result = self.ocr_reader.readtext(img, detail=0)
+            has_announcement = "公告" in result
+            
+
+[256] readtext_call:             result = self.ocr_reader.readtext(img, detail=0)
+Context:
+            
+            # 使用OCR檢測
+            result = self.ocr_reader.readtext(img, detail=0)
+            has_rewards = any(
+                keyword in result for keyword in ["放置獎勵", "離線獎勵", "領取"]
+

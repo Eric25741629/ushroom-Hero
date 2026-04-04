@@ -1,0 +1,726 @@
+﻿from flask import Flask, request, jsonify, abort
+import numpy as np
+import torch
+from paddleocr import PaddleOCR
+import cv2
+import base64
+import time
+import os
+import ipaddress
+import traceback
+import threading
+import queue
+import itertools
+
+app = Flask(__name__)
+ocr_lock = threading.Lock()  # ????
+OCR_FAILS_DIR = "ocr_fails_new"
+OCR_FAILS_COUNT_FILE = os.path.join(OCR_FAILS_DIR, "count.txt")
+MAX_OCR_FAIL_IMAGES = int(os.environ.get("MAX_OCR_FAIL_IMAGES", "10000"))
+MIN_OCR_FAIL_SCORE = float(os.environ.get("MIN_OCR_FAIL_SCORE", "0.2"))
+MAX_OCR_FAIL_SCORE = float(os.environ.get("MAX_OCR_FAIL_SCORE", "0.8"))
+ocr_fails_count_lock = threading.Lock()
+ocr_fails_count = None
+
+# IP?賢??株身摰?- ?芸?閮?100.64.0.* 蝬脫挾
+ALLOWED_NETWORK = ipaddress.IPv4Network('100.64.0.0/24')
+# ===== ?啣?嚗 decode ??dataURL ?舀 =====
+def strip_data_url(b64_str: str) -> str:
+    # ?舀 data:image/png;base64,xxxx
+    if not b64_str:
+        return b64_str
+    s = b64_str.strip()
+    if s.lower().startswith("data:") and "," in s:
+        return s.split(",", 1)[1]
+    return s
+
+def decode_base64_image(b64_str: str):
+    """base64 -> cv2 image, with retries. return (img, err_str_or_None)"""
+    b64_str = strip_data_url(b64_str)
+
+    img = None
+    decode_err = None
+    for attempt in range(IMG_DECODE_RETRIES):
+        try:
+            img_data = base64.b64decode(b64_str, validate=True)
+            nparr = np.frombuffer(img_data, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is not None:
+                return img, None
+            decode_err = 'cv2.imdecode returned None'
+        except Exception as ex:
+            decode_err = str(ex)
+        time.sleep(RETRY_DELAY)
+    return None, decode_err
+
+
+def init_ocr_fail_counter():
+    """Load cached fail count from txt or count files once."""
+    global ocr_fails_count
+    if ocr_fails_count is not None:
+        return
+
+    count = 0
+    if os.path.exists(OCR_FAILS_COUNT_FILE):
+        try:
+            with open(OCR_FAILS_COUNT_FILE, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+                count = int(raw) if raw else 0
+        except Exception as e:
+            print(f"霈??靽∪??芸?閮憭望?嚗?粹??啗?蝞? {e}")
+
+    elif os.path.isdir(OCR_FAILS_DIR):
+        try:
+            count = sum(
+                1
+                for name in os.listdir(OCR_FAILS_DIR)
+                if os.path.isfile(os.path.join(OCR_FAILS_DIR, name))
+                and name.lower().endswith((".jpg", ".jpeg", ".png"))
+            )
+        except Exception as e:
+            print(f"蝯梯?雿縑敹??仃???身??0: {e}")
+
+    ocr_fails_count = max(0, count)
+    persist_ocr_fail_counter()
+
+
+def persist_ocr_fail_counter():
+    """Persist counter to txt for fast reload."""
+    try:
+        if not os.path.exists(OCR_FAILS_DIR):
+            os.makedirs(OCR_FAILS_DIR)
+        with open(OCR_FAILS_COUNT_FILE, "w", encoding="utf-8") as f:
+            f.write(str(ocr_fails_count or 0))
+    except Exception as e:
+        print(f"靽?雿縑敹???詨仃?? {e}")
+
+def check_ip_allowed():
+    """瑼Ｘ隢?IP?臬?典?閮梁?蝬脫挾??""
+    client_ip = request.environ.get('HTTP_X_FORWARDED_FOR', request.environ.get('REMOTE_ADDR', ''))
+    
+    # 憒????P嚗??誨??嚗?蝚砌???
+    if ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+    
+    try:
+        # 雿輻???ip_address嚗??IPv4/IPv6
+        client_address = ipaddress.ip_address(client_ip)
+
+        # ?迂?雿?嚗?憒?127.0.0.1 ??::1嚗?潭璈葫閰??亙熒瑼Ｘ
+        if client_address.is_loopback:
+            return
+
+        # ?桀??芸?閮?IPv4 ?摰雯畾?
+        if isinstance(client_address, ipaddress.IPv4Address):
+            if client_address not in ALLOWED_NETWORK:
+                print(f"[Security] Blocked access from {client_ip} - not in allowed network {ALLOWED_NETWORK}")
+                abort(403)  # Forbidden
+        else:
+            # ?亦 IPv6 銝??嚗?閮剜?蝯??航??瘙撖穿?
+            print(f"[Security] Blocked access from IPv6 {client_ip} - not allowed")
+            abort(403)
+    except ValueError:
+        print(f"[Security] Invalid IP address: {client_ip}")
+        abort(403)
+
+@app.before_request
+def before_request():
+    """瘥?瘙??賣炎?付P"""
+    check_ip_allowed()
+
+# OCR concurrent settings
+OCR_WORKERS = max(1, int(os.environ.get("OCR_WORKERS", "1")))
+OCR_INFER_TIMEOUT = float(os.environ.get("OCR_INFER_TIMEOUT", "30"))
+
+OCR_ENGINE_CONFIG = {
+    "text_recognition_model_dir": r"A:\OCR_model\v2",
+    "text_detection_model_dir": r"A:\OCR_model\det_v2",
+    "use_doc_orientation_classify": False,
+    "use_doc_unwarping": False,
+    "use_textline_orientation": False,
+}
+
+
+class OCRWorkerPool:
+    """Each worker owns one PaddleOCR instance for concurrent inference."""
+
+    def __init__(self, worker_count: int):
+        self.worker_count = max(1, int(worker_count))
+        self._rr = itertools.count()
+        self._queues = [queue.Queue(maxsize=32) for _ in range(self.worker_count)]
+        self._threads = []
+        self._ready_events = []
+        self._init_errors = {}
+        self._single_engine = None
+
+        if self.worker_count == 1:
+            self._single_engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+            return
+
+        for idx in range(self.worker_count):
+            ready_event = threading.Event()
+            self._ready_events.append(ready_event)
+            t = threading.Thread(
+                target=self._worker_loop,
+                args=(idx, ready_event),
+                daemon=True,
+                name=f"ocr-worker-{idx}",
+            )
+            t.start()
+            self._threads.append(t)
+
+        for ev in self._ready_events:
+            ev.wait()
+
+        if self._init_errors:
+            details = "; ".join(
+                f"worker {idx}: {err}" for idx, err in sorted(self._init_errors.items())
+            )
+            raise RuntimeError(f"OCR worker init failed: {details}")
+
+    def _worker_loop(self, worker_idx: int, ready_event: threading.Event):
+        try:
+            engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+        except Exception as e:
+            self._init_errors[worker_idx] = str(e)
+            ready_event.set()
+            return
+
+        ready_event.set()
+        q = self._queues[worker_idx]
+        while True:
+            img_roi, result_q = q.get()
+            if img_roi is None:
+                result_q.put((False, RuntimeError("OCR worker stopped")))
+                q.task_done()
+                return
+            try:
+                result_q.put((True, engine.predict(input=img_roi)))
+            except Exception as ex:
+                result_q.put((False, ex))
+            finally:
+                q.task_done()
+
+    def predict(self, img_roi):
+        if self.worker_count == 1:
+            with ocr_lock:
+                return self._single_engine.predict(input=img_roi)
+
+        result_q = queue.Queue(maxsize=1)
+        idx = next(self._rr) % self.worker_count
+        self._queues[idx].put((img_roi, result_q))
+        ok, payload = result_q.get(timeout=OCR_INFER_TIMEOUT)
+        if ok:
+            return payload
+        raise payload
+
+
+ocr_pool = OCRWorkerPool(OCR_WORKERS)
+
+# 閰???銵?
+SKILL_MAP = {
+    '??': '??, '??: '??,
+    '?湔?': '??, '??: '??, 
+    '???': '??, '??: '??,
+    '??': '??, '??: '??, '??: '??,
+    '?': '??, '??: '??,
+    '?儔': '??, '??: '??,
+    '??賣??: '?', '?': '?'
+}
+
+# 銝????賜???
+UNWANTED_COMBOS = {
+    ('?', '??), ('?', '??), ('?', '??), ('?', '??),
+    ('??, '??), ('??, '??), ('??, '??),
+    ('??, '??), ('??, '??), ('??, '??),
+    ('??, '??), ('??, '??), ('??, '??)
+}
+
+def normalize_text(text):
+    """蝯曹??? OCR 隤方儘"""
+    text = text.replace("??", "??")
+    text = (text.replace("??, "??)
+                .replace("摮?, "??)
+                .replace("??, "??)
+                .replace("?湧成", "?湔?")
+                .replace("??", "??")
+                .replace("?湔?", "?湔?")
+                .replace("??, "??)
+                .replace("憸?, "憿?).replace("??", "?"))
+    return text
+
+STAGE_TEXT_REPLACEMENTS = [
+    ("撅?", "??"),
+    ("???, "??"),
+    ("?喟??, "??"),
+    ("??_6", "??"),
+    ("???, "???"),
+    ("???", "??"),
+    ("6", ""),
+    ("4", ""),
+    ("穢", ""),
+    ("??", "???),
+    ("???, "???),
+]
+
+def normalize_stage_text(text):
+    """靘??????隤方儘"""
+    text = normalize_text(text)
+    for src, dst in STAGE_TEXT_REPLACEMENTS:
+        text = text.replace(src, dst)
+    return text
+
+# ?岫?
+IMG_DECODE_RETRIES = int(os.environ.get('IMG_DECODE_RETRIES', '3'))
+OCR_EMPTY_RETRIES = int(os.environ.get('OCR_EMPTY_RETRIES', '2'))
+RETRY_DELAY = float(os.environ.get('OCR_RETRY_DELAY', '0.6'))
+
+def text_to_skill(text):
+    """撠?摮??箸??賜葬撖?""
+    text = normalize_text(text)
+    
+    if text is None:
+        return None
+    
+    # 摰閰??
+    if "??賣?? in text or "??賜??? in text: return "?"
+    if "??" in text: return "??
+    if "?湔?" in text or "??" in text: return "??
+    if "???" in text: return "??
+    if "??" in text: return "??
+    if "?" in text: return "??
+    if "?儔" in text: return "??
+    
+    # ?典??寥?
+    if "?" in text: return "?"
+    if "?? in text: return "??
+    if "?? in text or "?? in text: return "??
+    if "?? in text: return "??
+    if "?? in text or "?? in text: return "??
+    if "?? in text: return "??
+    if "?? in text: return "??
+    
+    return None
+
+def get_skill_combo(ocr_results):
+    """敺?OCR 蝯?????賜???雿輻 dict 蝯?嚗?""
+    skills = []
+    for result in ocr_results:
+        text = result.get("text", "")
+        skill = text_to_skill(text)
+        if skill and skill not in skills:
+            skills.append(skill)
+            if len(skills) == 2:
+                break
+    return ''.join(skills)
+
+
+def normalize_combo(combo):
+    """蝯曹???蝪∪神"""
+    if len(combo) != 2:
+        return combo
+        
+    # ?寞???閬?
+    if set(combo) == {'??, '??}: combo = '??'
+    elif set(combo) == {'??, '??}: combo = '???'  
+    elif set(combo) == {'?', '??}: combo = '???
+    elif set(combo) == {'??, '??}: combo = '??'
+    
+    # 甇?????
+    replacements = {
+        '??': '???', '??': '???', '??': '???', '??: '???',
+        '??: '???', '??': '???, '??': '??', '??': '??',
+        '??': '??', '??': '??', '??': '???
+    }
+    
+    return replacements.get(combo, combo)
+
+def is_unwanted_combo(combo):
+    """?斗?臬?箔?閬?蝯?"""
+    if len(combo) != 2:
+        return False
+    return (combo[0], combo[1]) in UNWANTED_COMBOS or (combo[1], combo[0]) in UNWANTED_COMBOS
+
+def extract_ocr_results(img_roi):
+    """?? OCR 蝯?嚗摨扳?嚗?""
+    try:
+        if img_roi is None:
+            return []
+        if not hasattr(img_roi, "shape"):
+            return []
+        if img_roi.size == 0:
+            return []
+
+        if img_roi.ndim == 2:
+            img_roi = cv2.cvtColor(img_roi, cv2.COLOR_GRAY2BGR)
+        elif img_roi.ndim == 3 and img_roi.shape[2] == 4:
+            img_roi = cv2.cvtColor(img_roi, cv2.COLOR_BGRA2BGR)
+
+        if img_roi.dtype != np.uint8:
+            img_roi = img_roi.astype(np.uint8, copy=False)
+
+        img_roi = np.ascontiguousarray(img_roi)
+
+        H, W = img_roi.shape[:2]
+        if H <= 0 or W <= 0:
+            return []
+        if H < 2 or W < 2:
+            return []
+        # Run inference through worker pool (or single-engine fallback).
+        res_list = ocr_pool.predict(img_roi)
+        if not res_list:
+            return []
+
+        res_obj = res_list[0]
+        texts = res_obj.get("rec_texts", []) or []
+        scores = res_obj.get("rec_scores", []) or []
+        polys = res_obj.get("rec_polys", None)
+        boxes = res_obj.get("rec_boxes", None)
+
+        H, W = img_roi.shape[:2]
+        results = []
+
+        for i, text in enumerate(texts):
+            score = float(scores[i]) if i < len(scores) else 0.0
+
+            # ???耦/?寞?
+            if polys is not None and len(polys) > i:
+                poly = np.asarray(polys[i]).reshape(-1, 2)
+            elif boxes is not None and len(boxes) > i:
+                b = np.asarray(boxes[i]).flatten().astype(int)
+                if b.size == 4:
+                    x1, y1, x2_or_w, y2_or_h = b.tolist()
+                    if x2_or_w > x1 and y2_or_h > y1:
+                        x2, y2 = x2_or_w, y2_or_h
+                    else:
+                        x2, y2 = x1 + x2_or_w, y1 + y2_or_h
+                    poly = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
+                else:
+                    continue
+            else:
+                # 瘝?摨扳?撠梢???
+                poly = np.array([[0, 0], [W-1, 0], [W-1, H-1], [0, H-1]])
+
+            # ??polygon ??bbox
+            x1y1 = poly.min(axis=0)
+            x2y2 = poly.max(axis=0)
+            x1, y1 = int(x1y1[0]), int(x1y1[1])
+            x2, y2 = int(x2y2[0]), int(x2y2[1])
+            w, h = x2 - x1, y2 - y1
+            cx, cy = x1 + w/2.0, y1 + h/2.0
+
+            # ?詨?摨扳?嚗?~1嚗?
+            bbox_rel = [x1 / W, y1 / H, x2 / W, y2 / H]
+
+            results.append({
+                "text": text,
+                "score": score,
+                "poly": poly.astype(int).tolist(),
+                "bbox": [x1, y1, x2, y2],
+                "center": [cx, cy],
+                "size": [w, h],
+                "bbox_rel": bbox_rel
+            })
+
+            # 靽??芸?嚗??靽∪?摨佗?銝???MAX_OCR_FAIL_IMAGES ?批嚗?
+            save_low_confidence_screenshot(img_roi, poly, text, score, "general")
+
+        # 隞仿霈????嚗?銝?銝??椰?啣嚗?
+        results.sort(key=lambda r: (r["bbox"][1] // 10, r["bbox"][0]))
+        return results
+    except Exception as e:
+        tb = traceback.format_exc()
+        print(f"OCR ??憭望?: {e}\n{tb}")
+        # ??嚗? API 撅文隞亙??唾底蝝圈隤?
+        raise
+def save_low_confidence_screenshot(img, poly, text, score, stage_type):
+    """靽?雿縑敹漲?芸?"""
+    global ocr_fails_count
+    try:
+        # ?芯?摮縑敹漲??0.2 ??0.8 銋????
+        if score <= MIN_OCR_FAIL_SCORE or score >= MAX_OCR_FAIL_SCORE:
+            return
+            
+        timestamp = int(time.time() * 1000)
+        pts = np.asarray(poly, dtype=int)
+        x1, y1 = pts.min(axis=0)
+        x2, y2 = pts.max(axis=0)
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = max(x1 + 1, x2), max(y1 + 1, y2)
+
+        if y2 <= y1 or x2 <= x1:
+            return
+
+        crop = img[y1:y2, x1:x2]
+        filename = os.path.join(OCR_FAILS_DIR, f"{stage_type}_low_confidence_{score:.3f}_{timestamp}.jpg")
+
+        with ocr_fails_count_lock:
+            init_ocr_fail_counter()
+            if ocr_fails_count >= MAX_OCR_FAIL_IMAGES:
+                print(f"雿縑敹?歇????{ocr_fails_count}/{MAX_OCR_FAIL_IMAGES}嚗???摮?)
+                return
+            if not os.path.exists(OCR_FAILS_DIR):
+                os.makedirs(OCR_FAILS_DIR)
+
+            if not cv2.imwrite(filename, crop):
+                print("?芸?靽?憭望?: cv2.imwrite ? False")
+                return
+
+            ocr_fails_count = (ocr_fails_count or 0) + 1
+            persist_ocr_fail_counter()
+
+        print(f"雿縑敹?? {filename} ('{text}', 靽∪?: {score:.3f})")
+    except Exception as e:
+        print(f"?芸?靽?憭望?: {e}")
+
+@app.route('/analyze_skill', methods=['POST'])
+def analyze_skill():
+    """????賜???""
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Content-Type 敹???application/json'}), 400
+
+        data = request.get_json(silent=True) or {}
+        if 'image' not in data:
+            return jsonify({'success': False, 'message': '蝻箏? image 甈?'}), 400
+
+        # 閫?? base64 ??嚗閫?Ⅳ??None ??閰行甈∴??啣??舫? IMG_DECODE_RETRIES 隤踵嚗?
+        img = None
+        decode_err = None
+        for attempt in range(IMG_DECODE_RETRIES):
+            try:
+                img_data = base64.b64decode(data['image'], validate=True)
+                nparr = np.frombuffer(img_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    break
+                decode_err = 'cv2.imdecode returned None'
+            except Exception as ex:
+                decode_err = str(ex)
+            # ?交??嚗?怎?敺??岫
+            time.sleep(RETRY_DELAY)
+
+        if img is None:
+            return jsonify({'success': False, 'message': '?⊥?閫?Ⅳ??', 'detail': decode_err}), 400
+
+        # ?澆 OCR嚗?蝛箇????岫撟暹活嚗CR_EMPTY_RETRIES嚗?
+        ocr_results = extract_ocr_results(img)
+        if not ocr_results:
+            for _ in range(OCR_EMPTY_RETRIES):
+                time.sleep(RETRY_DELAY)
+                ocr_results = extract_ocr_results(img)
+                if ocr_results:
+                    break
+        if not ocr_results:
+            return jsonify({'success': False, 'message': '?⊥?霅??'}), 200
+
+        combo = get_skill_combo(ocr_results)
+        normalized_combo = normalize_combo(combo)
+        is_unwanted = is_unwanted_combo(normalized_combo)  # ?冽迤閬?敺?
+
+        return jsonify({
+            'success': True,
+            'ocr_results': [
+                {
+                    'text': r.get('text', ''),
+                    'score': r.get('score', 0.0),
+                    'bbox': r.get('bbox', []),
+                    'bbox_rel': r.get('bbox_rel', [])
+                } for r in ocr_results
+            ],
+            'combo': combo,
+            'normalized_combo': normalized_combo,
+            'is_unwanted': is_unwanted
+        }), 200
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        return jsonify({'success': False, 'message': f'???航炊: {str(e)}', 'traceback': tb}), 500
+
+@app.route('/analyze_stage', methods=['POST'])
+def analyze_stage():
+    """???挾??"""
+    try:
+        data = request.json
+        img_data = base64.b64decode(data['image'])
+        nparr = np.frombuffer(img_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        # ??decode 憭望?????None嚗?閰?IMG_DECODE_RETRIES 甈?
+        img = None
+        decode_err = None
+        for attempt in range(IMG_DECODE_RETRIES):
+            try:
+                img_data = base64.b64decode(data['image'], validate=True)
+                nparr = np.frombuffer(img_data, np.uint8)
+                img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                if img is not None:
+                    break
+                decode_err = 'cv2.imdecode returned None'
+            except Exception as ex:
+                decode_err = str(ex)
+            time.sleep(RETRY_DELAY)
+
+        if img is None:
+            return jsonify({'success': False, 'message': '?⊥?閫?Ⅳ??', 'detail': decode_err})
+
+        all_results = extract_ocr_results(img)
+        if not all_results:
+            for _ in range(OCR_EMPTY_RETRIES):
+                time.sleep(RETRY_DELAY)
+                all_results = extract_ocr_results(img)
+                if all_results:
+                    break
+        
+        if not all_results:
+            return jsonify({
+                'success': False,
+                'message': '?⊥?霅?挾鞈?'
+            })
+        
+        stage_texts = []
+        for result in all_results:
+            text = result.get("text", "")
+            if not text:
+                continue
+            text = normalize_stage_text(text)
+            stage_texts.append(text)
+        
+        stage_texts = [s for s in stage_texts if s.strip()]
+        
+        return jsonify({
+            'success': True,
+            'stage_texts': stage_texts
+        })
+        
+    except Exception as e:
+        tb = traceback.format_exc()
+        return jsonify({
+            'success': False,
+            'message': f'???航炊: {str(e)}',
+            'traceback': tb
+        })
+
+@app.route('/ocr', methods=['POST'])
+def ocr_general():
+    """
+    ? OCR嚗? OCR ??蝯? + 摨扳?嚗??????閫????
+    payload: { "image": "<base64 or dataURL>" }
+    """
+    try:
+        if not request.is_json:
+            return jsonify({'success': False, 'message': 'Content-Type 敹???application/json'}), 400
+
+        data = request.get_json(silent=True) or {}
+        if 'image' not in data:
+            return jsonify({'success': False, 'message': '蝻箏? image 甈?'}), 400
+
+        img, decode_err = decode_base64_image(data['image'])
+        if img is None:
+            return jsonify({'success': False, 'message': '?⊥?閫?Ⅳ??', 'detail': decode_err}), 400
+
+        # OCR + 蝛箇???閰?
+        ocr_results = extract_ocr_results(img)
+        if not ocr_results:
+            for _ in range(OCR_EMPTY_RETRIES):
+                time.sleep(RETRY_DELAY)
+                ocr_results = extract_ocr_results(img)
+                if ocr_results:
+                    break
+
+        return jsonify({
+            'success': True,
+            'ocr_results': [
+                {
+                    'text': r.get('text', ''),
+                    'score': r.get('score', 0.0),
+                    'bbox': r.get('bbox', []),
+                    'bbox_rel': r.get('bbox_rel', []),
+                    # ?乩??喃???poly嚗?頛之嚗?撠勗?瘨酉閫?
+                    # 'poly': r.get('poly', [])
+                } for r in ocr_results
+            ],
+            'meta': {
+                'h': int(img.shape[0]),
+                'w': int(img.shape[1]),
+            }
+        }), 200
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        return jsonify({'success': False, 'message': f'???航炊: {str(e)}', 'traceback': tb}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """?亙熒瑼Ｘ"""
+    return jsonify({'status': 'ok', 'ocr_workers': OCR_WORKERS})
+
+@app.route('/', methods=['GET'])
+def index():
+    """?寡楝??- ???箸靽⊥"""
+    return jsonify({
+        'service': 'OCR Server',
+        'version': '1.0',
+        'endpoints': [
+            '/analyze_skill',
+            '/analyze_stage', 
+            '/health'
+        ],
+        'status': 'running'
+    })
+
+@app.route('/favicon.ico')
+def favicon():
+    """?? favicon 隢?"""
+    return '', 204
+
+@app.errorhandler(400)
+def bad_request(error):
+    """?? 400 ?航炊"""
+    return jsonify({'error': 'Bad Request', 'message': 'Invalid request format'}), 400
+
+@app.errorhandler(403)
+def forbidden(error):
+    """?? 403 ?航炊 - IP銝?賢???""
+    return jsonify({'error': 'Forbidden', 'message': 'Access denied - IP not in whitelist'}), 403
+
+@app.errorhandler(404)
+def not_found(error):
+    """?? 404 ?航炊"""
+    return jsonify({'error': 'Not Found', 'message': 'Endpoint not found'}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    """?? 500 ?航炊"""
+    return jsonify({'error': 'Internal Server Error', 'message': 'Server encountered an error'}), 500
+
+# ???芾???憭?頛詨 traceback ?嫣噶摰?銵?
+@app.errorhandler(Exception)
+def handle_unexpected_exception(error):
+    tb = traceback.format_exc()
+    print(f"[Unexpected 500] {error}\n{tb}")
+    return jsonify({
+        'error': 'Internal Server Error',
+        'message': str(error),
+        'traceback': tb,
+    }), 500
+
+if __name__ == '__main__':
+    print("OCR ???典??葉...")
+    print(f"IP ?: ?芸?閮曹???{ALLOWED_NETWORK} 蝬脫挾??")
+    
+    # 瘛餃??亥??蔭嚗?撠?隤?
+    import logging
+    log = logging.getLogger('werkzeug')
+    
+    log.setLevel(logging.WARNING)  # ?芷＊蝷箄郎???航炊
+    
+    # ?迂???啣?霈?寡?蝬??啣?/???身蝬??唳?????(0.0.0.0)
+    # ?見?Ｗ?亙??祆? (localhost) 隢?嚗??舀????100.64.0.0/24 ??蝡航?瘙?
+    bind_host = os.environ.get('OCR_BIND_HOST', '0.0.0.0')
+    bind_port = int(os.environ.get('OCR_PORT', '5001'))
+
+    print(f"??蝬?: http://{bind_host}:{bind_port} (?身撠??舐嚗???瑼Ｘ)")
+    print(f"OCR workers: {OCR_WORKERS}")
+    # ?亙????璈????閮剖??啣?霈 OCR_BIND_HOST=127.0.0.1
+    app.run(host=bind_host, port=bind_port, debug=False, threaded=True)
+

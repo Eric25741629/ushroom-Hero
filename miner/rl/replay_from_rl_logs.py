@@ -83,7 +83,7 @@ def run_on_boards(boards: List[List[List[str]]]) -> None:
 
 def main():
     here = os.path.dirname(__file__)
-    rl_root = os.path.join(here, "rl_logs")
+    rl_root = os.path.normpath(os.path.join(here, "..", "rl_logs"))
     paths = guess_log_paths(rl_root)
     if not paths:
         print(f"找不到任何 RL 日誌於 {rl_root}")

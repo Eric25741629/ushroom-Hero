@@ -2,10 +2,11 @@ import numpy as np
 import cv2
 import time
 import uiautomator2 as u2
+from adb_operations import tap_device
 
 
 def click_white(d: u2.Device):
-    d.click(509, 56)
+    tap_device(d, 509, 56)
     time.sleep(1)
 
 
@@ -48,5 +49,5 @@ class android_devices:
                 break
         return img
     def click_white(self):
-        self.devices.click(509, 56)
+        tap_device(self.devices, 509, 56)
         time.sleep(1)

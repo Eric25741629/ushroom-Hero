@@ -10,7 +10,180 @@ import opencc
 import uiautomator2 as u2
 import traceback
 import inspect
+import threading
 logger = logging.getLogger(__name__)
+
+OCR_SERVER_MAIN = "http://100.64.0.5:5001"
+OCR_SERVER_BACKUP = "http://100.64.0.7:5001"
+OCR_SERVER_LOCAL = "http://localhost:5001"
+# main / backup / auto
+_OCR_SERVER_MODE = os.getenv("OCR_SERVER_MODE", "main").strip().lower()
+_OCR_CB_LOCK = threading.Lock()
+_OCR_SERVER_FAIL_UNTIL = {}  # {server_base_url: unix_ts}
+_OCR_PROBE_THREAD = None
+_OCR_LAST_SUCCESS_SERVER = None
+
+
+def set_ocr_server_mode(mode: str):
+    """Set OCR server mode at runtime: main / backup / auto."""
+    global _OCR_SERVER_MODE
+    normalized = (mode or "main").strip().lower()
+    if normalized not in {"main", "backup", "auto"}:
+        raise ValueError(f"Invalid OCR server mode: {mode}")
+    _OCR_SERVER_MODE = normalized
+
+
+def get_ocr_server_mode() -> str:
+    return _OCR_SERVER_MODE
+
+
+def _get_ocr_mode_from_config() -> str:
+    """Read OCR mode from config_manager if available; fallback to runtime/env mode."""
+    try:
+        import config_manager
+        cfg = config_manager.get_ocr_config()
+        mode = str(cfg.get("server_mode", _OCR_SERVER_MODE)).strip().lower()
+        if mode in {"main", "backup", "auto"}:
+            return mode
+    except Exception:
+        pass
+    return _OCR_SERVER_MODE
+
+
+def _build_ocr_server_priority(explicit_url=None):
+    """Build server priority list from configured mode while preserving compatibility."""
+    servers = []
+
+    if explicit_url:
+        servers.append(explicit_url.rstrip('/'))
+
+    mode = _get_ocr_mode_from_config()
+    if mode == "backup":
+        preferred = [OCR_SERVER_BACKUP, OCR_SERVER_MAIN, OCR_SERVER_LOCAL]
+    elif mode == "auto":
+        preferred = [OCR_SERVER_MAIN, OCR_SERVER_BACKUP, OCR_SERVER_LOCAL]
+    else:
+        preferred = [OCR_SERVER_MAIN, OCR_SERVER_BACKUP, OCR_SERVER_LOCAL]
+
+    for s in preferred:
+        if s and s not in servers:
+            servers.append(s)
+
+    # Also honor configured custom servers order if provided in global OCR config.
+    try:
+        import config_manager
+        cfg = config_manager.get_ocr_config()
+        for s in cfg.get("servers", []):
+            s = str(s).strip().rstrip('/')
+            if s and s not in servers:
+                servers.append(s)
+    except Exception:
+        pass
+
+    return servers
+
+
+def _get_ocr_circuit_config():
+    cfg = {
+        "fail_cooldown_sec": 300,
+        "probe_interval_sec": 120,
+        "probe_timeout_sec": 2,
+    }
+    try:
+        import config_manager
+        ocr_cfg = config_manager.get_ocr_config()
+        cfg["fail_cooldown_sec"] = int(ocr_cfg.get("fail_cooldown_sec", cfg["fail_cooldown_sec"]))
+        cfg["probe_interval_sec"] = int(ocr_cfg.get("probe_interval_sec", cfg["probe_interval_sec"]))
+        cfg["probe_timeout_sec"] = int(ocr_cfg.get("probe_timeout_sec", cfg["probe_timeout_sec"]))
+    except Exception:
+        pass
+    cfg["fail_cooldown_sec"] = max(30, min(3600, cfg["fail_cooldown_sec"]))
+    cfg["probe_interval_sec"] = max(60, min(600, cfg["probe_interval_sec"]))
+    cfg["probe_timeout_sec"] = max(1, min(10, cfg["probe_timeout_sec"]))
+    return cfg
+
+
+def _mark_server_failed(server: str):
+    now = time.time()
+    conf = _get_ocr_circuit_config()
+    until = now + conf["fail_cooldown_sec"]
+    with _OCR_CB_LOCK:
+        _OCR_SERVER_FAIL_UNTIL[server] = until
+    logger.warning(f"[OCR-CB] mark failed: {server}, skip until {time.strftime('%H:%M:%S', time.localtime(until))}")
+
+
+def _mark_server_recovered(server: str):
+    global _OCR_LAST_SUCCESS_SERVER
+    with _OCR_CB_LOCK:
+        _OCR_LAST_SUCCESS_SERVER = server
+        if server in _OCR_SERVER_FAIL_UNTIL:
+            _OCR_SERVER_FAIL_UNTIL.pop(server, None)
+            logger.info(f"[OCR-CB] recovered: {server}")
+
+
+def _is_server_in_cooldown(server: str) -> bool:
+    now = time.time()
+    with _OCR_CB_LOCK:
+        until = _OCR_SERVER_FAIL_UNTIL.get(server, 0)
+    return now < float(until)
+
+
+def _filter_servers_by_circuit(servers):
+    active = [s for s in servers if not _is_server_in_cooldown(s)]
+    if active and len(active) != len(servers):
+        skipped = [s for s in servers if s not in active]
+        logger.info(f"[OCR-CB] skip cooled-down servers: {skipped}")
+    return active if active else servers
+
+
+def _ocr_probe_loop():
+    while True:
+        try:
+            conf = _get_ocr_circuit_config()
+            now = time.time()
+            with _OCR_CB_LOCK:
+                candidates = [s for s, until in _OCR_SERVER_FAIL_UNTIL.items() if now >= float(until)]
+            for srv in candidates:
+                try:
+                    r = requests.get(f"{srv}/health", timeout=conf["probe_timeout_sec"])
+                    if r.status_code == 200:
+                        _mark_server_recovered(srv)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(_get_ocr_circuit_config()["probe_interval_sec"])
+
+
+def _ensure_ocr_probe_thread():
+    global _OCR_PROBE_THREAD
+    if _OCR_PROBE_THREAD is not None and _OCR_PROBE_THREAD.is_alive():
+        return
+    with _OCR_CB_LOCK:
+        if _OCR_PROBE_THREAD is None or not _OCR_PROBE_THREAD.is_alive():
+            _OCR_PROBE_THREAD = threading.Thread(target=_ocr_probe_loop, daemon=True, name="OCRCircuitProbe")
+            _OCR_PROBE_THREAD.start()
+            logger.info("[OCR-CB] probe thread started")
+
+
+def get_ocr_runtime_status(explicit_url=None):
+    mode = _get_ocr_mode_from_config()
+    servers = _build_ocr_server_priority(explicit_url=explicit_url)
+    active_servers = _filter_servers_by_circuit(servers)
+    now = time.time()
+    with _OCR_CB_LOCK:
+        last_success = _OCR_LAST_SUCCESS_SERVER
+        cooldown = {
+            s: max(0, int(until - now))
+            for s, until in _OCR_SERVER_FAIL_UNTIL.items()
+            if now < float(until)
+        }
+    return {
+        "mode": mode,
+        "last_success_server": last_success,
+        "active_servers": active_servers,
+        "cooldown_seconds": cooldown,
+    }
 
 def check_red_dot(d, roi: tuple) -> bool:
     """
@@ -49,7 +222,7 @@ def encode_image(img):
     img_base64 = base64.b64encode(buffer).decode('utf-8')
     return img_base64
 
-def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
+def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
     """透過 HTTP 分析技能，若預設伺服器無法連線則自動退回到備援伺服器。
 
     參數:
@@ -68,39 +241,32 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
     logger.debug(f"[OCR調用追蹤] 被調用於: {caller_file}:{caller_line} in {caller_function}()")
     
     img_base64 = encode_image(img_roi)
-    # 伺服器清單（按優先順序）：優先使用本地端 (localhost)，
-    # 之後嘗試使用傳入的 OCR_SERVER_URL，再嘗試既有的遠端備援
-    local_candidates = ["http://100.64.0.7:5001", "http://localhost:5001"]
-    fallback = "http://100.64.0.7:5001"
+    mode = _get_ocr_mode_from_config()
+    servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
+    _ensure_ocr_probe_thread()
+    servers = _filter_servers_by_circuit(servers)
+    if isinstance(max_servers, int) and max_servers > 0:
+        servers = servers[:max_servers]
+    logger.info(f"OCR servers priority (mode={mode}): {servers}")
 
-    servers = []
-    # 優先加入本機候選
-    for s in local_candidates:
-        if s not in servers:
-            servers.append(s)
-    # 若呼叫者指定了 OCR_SERVER_URL，放在本地候選之後
-    if OCR_SERVER_URL:
-        if OCR_SERVER_URL not in servers:
-            servers.append(OCR_SERVER_URL)
-    else:
-        # 保留原先的預設遠端（舊用戶端位址），但放在本地之後
-        default_remote = "http://100.64.0.5:5001"
-        if default_remote not in servers:
-            servers.append(default_remote)
-    # 最後加入備援
-    if fallback not in servers:
-        servers.append(fallback)
-
-    logger.debug(f"OCR servers priority: {servers}")
+    # 讀取 timeout 與重試設定
+    timeout_sec = 20
+    try:
+        import config_manager
+        timeout_sec = int(config_manager.get_ocr_config().get('timeout_sec', timeout_sec))
+    except Exception:
+        pass
 
     errors = []
-    for srv in servers:
+    for idx, srv in enumerate(servers):
         try:
             url = f"{srv}/analyze_skill"
-            logger.debug(f"[{caller_file}:{caller_line}] OCR request -> {url}")
-            response = requests.post(url, json={'image': img_base64}, timeout=20)
+            logger.info(f"[{caller_file}:{caller_line}] OCR request -> {url} (timeout={timeout_sec}s)")
+            response = requests.post(url, json={'image': img_base64}, timeout=timeout_sec)
             if response.status_code == 200:
                 try:
+                    _mark_server_recovered(srv)
+                    logger.info(f"[{caller_file}:{caller_line}] OCR success from {srv}")
                     return response.json()
                 except Exception as e_json:
                     err = f"解析 JSON 失敗 from {srv}: {e_json}"
@@ -111,23 +277,95 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None):
             else:
                 err = f"HTTP {response.status_code} from {srv}"
                 logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
-                # 嘗試記錄響應內容以了解錯誤詳情
+                _mark_server_failed(srv)
                 try:
-                    error_detail = response.text[:500]  # 只記錄前500字元
-                    logger.warning(f"[{caller_file}:{caller_line}] Server response: {error_detail}")
-                except:
+                    error_detail = response.text[:500]
+                    logger.debug(f"[{caller_file}:{caller_line}] Server response: {error_detail}")
+                except Exception:
                     pass
                 errors.append(err)
+                # 若還有下一個伺服器，繼續嘗試
+                if idx < len(servers) - 1:
+                    logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器...")
                 continue
         except Exception as e:
             err = f"HTTP 請求失敗 to {srv}: {e}"
             logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
+            _mark_server_failed(srv)
             errors.append(err)
-            # 嘗試下一個伺服器
+            if idx < len(servers) - 1:
+                logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器 due to error...")
             continue
 
     # 所有伺服器均失敗，回傳詳細錯誤資訊
     logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
+    return {'success': False, 'error': 'all servers failed', 'errors': errors}
+
+
+def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
+    """Return a list of detected text strings (converted to traditional Chinese).
+
+    Args:
+        img: OpenCV image (ndarray) or file path.
+        OCR_SERVER_URL: optional explicit server URL to prefer.
+    Returns:
+        list of strings (texts). Empty list on failure.
+    """
+    try:
+        if isinstance(img, str) and os.path.exists(img):
+            img_cv = cv2.imread(img)
+        else:
+            img_cv = img
+        if img_cv is None:
+            return []
+
+        res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
+        if res.get('success') is False:
+            return []
+        ocr_results = res.get('ocr_results', [])
+        converter = opencc.OpenCC('s2t')
+        texts = [converter.convert(item.get('text', '')) for item in ocr_results]
+        return texts
+    except Exception as e:
+        logger.exception(f"get_all_text error: {e}")
+        return []
+
+
+def analyze_stage_via_server(img, OCR_SERVER_URL=None):
+    """Call remote stage analyzer endpoint. Returns server JSON or {'success': False}.
+    Falls back across configured servers similar to analyze_skill_via_http.
+    """
+    caller_frame = inspect.currentframe().f_back
+    caller_info = inspect.getframeinfo(caller_frame)
+    caller_file = os.path.basename(caller_info.filename)
+    caller_line = caller_info.lineno
+
+    img_base64 = encode_image(img)
+    servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
+    _ensure_ocr_probe_thread()
+    servers = _filter_servers_by_circuit(servers)
+    errors = []
+    for srv in servers:
+        try:
+            url = f"{srv}/analyze_stage"
+            logger.debug(f"[{caller_file}:{caller_line}] stage request -> {url}")
+            response = requests.post(url, json={'image': img_base64}, timeout=20)
+            if response.status_code == 200:
+                try:
+                    _mark_server_recovered(srv)
+                    return response.json()
+                except Exception as e_json:
+                    errors.append(f"解析 JSON 失敗 from {srv}: {e_json}")
+                    continue
+            else:
+                _mark_server_failed(srv)
+                errors.append(f"HTTP {response.status_code} from {srv}")
+                continue
+        except Exception as e:
+            _mark_server_failed(srv)
+            errors.append(f"HTTP 請求失敗 to {srv}: {e}")
+            continue
+    logger.error(f"analyze_stage_via_server: all servers failed: {errors}")
     return {'success': False, 'error': 'all servers failed', 'errors': errors}
 def find_and_click(d, findImgPath, threshold=0.8, x=0, y=0):
     img = d.screenshot(format='opencv')
@@ -275,18 +513,43 @@ def click_str_by_server(d: u2.Device, target_str: str, shift_x=0, shift_y=0, x_r
                 return True
         logger.warning(f"[{caller_file}:{caller_line}] 嘗試3次後未找到 '{target_str}'")
         return False
-def check_str_in_region(d: u2.Device, target_str: str, x_range: tuple = None, y_range: tuple = None) -> bool:
-    """檢查指定區域內是否存在目標文字"""
+def check_str_in_region(d_or_img, target_str: str, x_range: tuple = None, y_range: tuple = None) -> bool:
+    """檢查指定區域內是否存在目標文字。
+
+    支援三種輸入型別：
+    - u2.Device (或類似有 screenshot 方法)
+    - OpenCV 圖片 ndarray
+    - 圖片檔案路徑字串
+    """
     retry = 3
     converter = opencc.OpenCC('s2t')
     target_str = converter.convert(target_str)
+
     for _ in range(retry):
-        img = d.screenshot(format='opencv')
+        # 取得 img_cv：支援 ndarray / path / device
+        img_cv = None
+        try:
+            if isinstance(d_or_img, np.ndarray):
+                img_cv = d_or_img
+            elif isinstance(d_or_img, str) and os.path.exists(d_or_img):
+                img_cv = cv2.imread(d_or_img)
+            else:
+                # assume device-like object with screenshot()
+                img_cv = d_or_img.screenshot(format='opencv')
+        except Exception:
+            img_cv = None
+
+        if img_cv is None:
+            continue
+
+        img = img_cv
         if y_range:
             img = img[y_range[0]:y_range[1], :]
         if x_range:
             img = img[:, x_range[0]:x_range[1]]
+
         result = analyze_skill_via_http(img)
+        print(result)
         if result.get('success') is False:
             continue
         for item in result.get('ocr_results', []):

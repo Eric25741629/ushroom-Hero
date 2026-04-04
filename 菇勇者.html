@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>菇勇者 - 跨界車位戰情室</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #16213e;
+            --text-main: #e94560;
+            --text-sec: #0f3460;
+            --safe-color: #4caf50;
+            --warn-color: #ff9800;
+            --danger-color: #ff3333;
+            --expired-color: #535c68;
+            --input-bg: #233055;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: white;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 { margin-bottom: 20px; color: #fff; text-shadow: 0 0 10px rgba(233, 69, 96, 0.5); }
+
+        /* 控制面板區 */
+        .controls {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 15px;
+            width: 90%;
+            max-width: 900px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            border: 1px solid #333;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            padding: 10px;
+            background: rgba(0,0,0,0.2);
+            border-radius: 10px;
+        }
+
+        label { font-weight: bold; color: #ccc; font-size: 0.9em; }
+
+        input[type="range"] {
+            width: 150px;
+            accent-color: var(--text-main);
+            cursor: pointer;
+        }
+
+        /* 輸入框樣式 */
+        input[type="text"] {
+            background: var(--input-bg);
+            border: 1px solid #444;
+            color: white;
+            padding: 8px;
+            border-radius: 5px;
+            text-align: center;
+            width: 110px;
+            font-size: 1em;
+        }
+        input[type="number"] {
+            background: var(--input-bg);
+            border: 1px solid #444;
+            color: white;
+            padding: 8px;
+            border-radius: 5px;
+            text-align: center;
+            width: 110px;
+            font-size: 1em;
+        }
+        
+        button.action-btn {
+            padding: 8px 15px;
+            border-radius: 5px;
+            border: none;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+
+        /* 一鍵靜音按鈕 */
+        #muteBtn {
+            background-color: var(--safe-color);
+            color: white;
+            font-size: 1.1em;
+            width: 140px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        #muteBtn.muted {
+            background-color: #555;
+            color: #aaa;
+        }
+
+        .apply-btn {
+            background-color: var(--text-main);
+            color: white;
+        }
+        .apply-btn:hover { background-color: #c0354a; }
+
+        .reset-btn {
+            background-color: #444;
+            color: #ccc;
+        }
+        .reset-btn:hover { background-color: #666; }
+
+        /* 網格佈局 */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            width: 95%;
+            max-width: 1200px;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, opacity 0.3s;
+            border-left: 5px solid var(--safe-color);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+        }
+
+        .card:hover { transform: translateY(-5px); }
+        .card.warning { border-left-color: var(--warn-color); }
+        
+        .card.danger { 
+            border-left-color: var(--danger-color); 
+            animation: pulse 1.5s infinite;
+            background-color: #2b1d2e;
+        }
+        
+        .card.expired {
+            border-left-color: var(--expired-color);
+            opacity: 0.5;
+            filter: grayscale(0.9);
+        }
+
+        /* 如果是超過一小時的 very-expired，取消灰化以便保留可讀性，
+           但仍用黃色斜帶強調 (ribbon 在 ::before) */
+        .card.very-expired {
+            opacity: 1 !important;
+            filter: none !important;
+            /* 讓左側邊條帶點黃意，提升可視性 */
+            border-left-color: #ffd24d;
+            /* 可視上略微提亮背景但不改變主題 */
+            background-color: rgba(255, 210, 77, 0.03);
+        }
+
+        .card.very-expired .countdown {
+            color: #ffd24d; /* 讓倒數文字也帶點黃，方便辨識 */
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            color: #ccc;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: 0.3s;
+        }
+        .close-btn:hover { background: var(--danger-color); color: white; }
+
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(255, 51, 51, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 51, 51, 0); }
+        }
+
+        /* 閃爍樣式：倒數 60 秒內使用 */
+        @keyframes blink {
+            0% { opacity: 1; transform: translateY(0); }
+            50% { opacity: 0.35; transform: translateY(-3px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        .card.blinking {
+            animation: blink 0.9s ease-in-out infinite;
+            border-left-color: #ffd24d; /* 讓閃爍時色調更醒目 */
+            box-shadow: 0 6px 18px rgba(255,210,77,0.08);
+        }
+
+        .spot-name { font-size: 1.4em; font-weight: bold; margin-bottom: 10px; }
+        .attacker { color: #888; font-size: 0.9em; margin-bottom: 15px; }
+        .attacker span { color: #fff; background: #333; padding: 2px 6px; border-radius: 4px; }
+        .time-info { font-size: 1.1em; margin-bottom: 5px; }
+        .countdown { 
+            font-size: 1.8em; 
+            font-weight: bold; 
+            text-align: center; 
+            margin-top: 15px; 
+            color: var(--safe-color);
+            font-family: 'Courier New', Courier, monospace;
+        }
+
+        .card.warning .countdown { color: var(--warn-color); }
+        .card.danger .countdown { color: var(--danger-color); }
+        .card.expired .countdown { color: var(--expired-color); font-size: 1.4em; }
+
+        /* 超過一小時的已結束，用醒目的黃色斜帶 (ribbon) 標示 */
+        .card.very-expired::before {
+            content: '';
+            position: absolute;
+            top: -14px;
+            right: -44px;
+            width: 180px;
+            height: 36px;
+            background: linear-gradient(90deg, #ffdd66 0%, #ffd24d 100%);
+            transform: rotate(45deg);
+            box-shadow: 0 2px 6px rgba(0,0,0,0.35);
+            z-index: 6;
+            pointer-events: none;
+        }
+        /* 可選：在斜帶上放文字（目前註解掉，如需顯示解除註解） */
+        .card.very-expired::after {
+            content: '';
+            /* 保留空的 ::after 以便未來顯示文字或圖示 */
+        }
+
+        /* 左上：當前時間（大字） */
+        #current-time {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            font-size: 1.6rem;
+            color: #e0e0e0;
+            font-weight: 700;
+            background: rgba(0,0,0,0.35);
+            padding: 6px 10px;
+            border-radius: 6px;
+            z-index: 9999;
+            cursor: move;
+            user-select: none;
+        }
+
+        /* 右上：系統上次更新時間（固定，不與當前時間混在一起） */
+        #system-update {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            font-size: 0.95rem;
+            color: #aaa;
+            background: rgba(0,0,0,0.35);
+            padding: 6px 10px;
+            border-radius: 6px;
+            z-index: 9999;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🍄 跨界車位戰情室</h1>
+
+    <!-- 設備管理儀表板 -->
+    <div id="device-management" class="controls" style="display:flex; flex-direction:column; align-items:stretch;">
+        <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+            <div style="width: 40px;"></div> <!-- Spacer -->
+            <h3 style="margin:0; text-align:center; color:var(--text-main);">⚙️ 設備管理與設定</h3>
+            <button class="action-btn reset-btn" style="padding: 4px 8px; font-size: 0.8em;" onclick="fetchDeviceConfigs()">🔄 刷新</button>
+        </div>
+        <div id="device-config-container" style="display:flex; flex-wrap:wrap; gap:15px; justify-content:center;">
+            <div style="color:#888;">正在等待設備連線...</div>
+        </div>
+    </div>
+
+    <!-- 每日任務儀表板 -->
+    <div id="task-dashboard" class="controls" style="display:none; flex-direction:column; align-items:stretch;">
+        <h3 style="margin:0 0 10px 0; text-align:center; color:var(--text-main);">📅 每日任務進度</h3>
+        <div id="task-container" style="display:flex; flex-wrap:wrap; gap:15px; justify-content:center;">
+            <!-- 任務卡片會由 JS 動態插入 -->
+        </div>
+    </div>
+
+    <div class="controls">
+        <button id="muteBtn" class="action-btn" onclick="toggleMute()">
+            <span id="muteIcon">🔊</span> 
+            <span id="muteText">音效開啟</span>
+        </button>
+
+        <div class="control-group">
+            <label>提前提醒</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input id="alertMin" type="number" min="0" max="1440" value="5" style="width:110px; text-align:center;" oninput="updateThreshold()"> 分
+                <input id="alertSec" type="number" min="0" max="59" value="0" style="width:110px; text-align:center;" oninput="updateThreshold()"> 秒
+            </div>
+            <div style="margin-top:6px; font-size:0.9em; color:var(--text-main);" id="thresholdDisplay">提前提醒: 5 分 0 秒</div>
+        </div>
+
+        <div class="control-group">
+            <label>提醒重複間隔 (秒)</label>
+            <input id="alertRepeat" type="number" min="5" max="3600" value="60" style="width:160px; text-align:center;" oninput="updateRepeat()">
+            <div style="font-size:0.85em; color:#888; margin-top:6px;">提醒後冷卻時間（秒）</div>
+        </div>
+        
+        <div class="control-group">
+            <label>排除己方伺服器 (ID)</label>
+            <div style="display: flex; gap: 5px;">
+                <input type="text" id="excludeServerInput" placeholder="例如: 1411">
+                <button class="action-btn apply-btn" onclick="saveExcludeServer()">套用</button>
+            </div>
+            <div id="excludeStatus" style="font-size: 0.8em; color: #888;">目前排除: 無</div>
+        </div>
+
+        <div class="control-group">
+            <label>顯示操作</label>
+            <button class="action-btn reset-btn" onclick="restoreHidden()">重置手動隱藏</button>
+        </div>
+
+
+
+        <div class="control-group">
+            <label>每隔多久校正一次 (秒)</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input id="timeSyncSec" type="number" min="10" max="86400" value="300" style="width:110px; text-align:center;" oninput="updateTimeSyncInterval()"> 秒
+                <button class="action-btn apply-btn" onclick="syncTaipeiTime()">立即同步</button>
+            </div>
+            <div id="timeSyncStatus" style="font-size:0.85em; color:#888; margin-top:6px;">上次校正: 未校正</div>
+        </div>
+
+        
+    </div>
+
+    <div id="grid" class="grid-container">
+        <div style="grid-column: 1/-1; text-align: center; color: #888;">正在讀取 car_fight.json...</div>
+    </div>
+
+    <div id="current-time">現在: --:--:--</div>
+    <div id="system-update">上次更新: ---</div>
+
+    <script>
+        const JSON_URL = 'car_fight.json';
+        let parkingData = {};
+        
+        // 狀態變數
+        let soundEnabled = true; // 預設開啟音效
+        // 警示閾值（秒），由 UI 的分鐘/秒欄位控制
+        let alertThresholdSeconds = 5 * 60;
+        // 警示重複間隔（秒），提醒後冷卻多長時間可再次提醒
+        let alertRepeatSeconds = 60;
+        let alertedSpots = new Set();
+        let hiddenSpots = new Set(); 
+        // 從 LocalStorage 讀取設定，並標準化為最多 4 位數字
+        let excludedServerId = (localStorage.getItem('excludedServerId') || "").toString().replace(/\D/g, '').slice(0,4);
+
+        const AUTO_HIDE_SECONDS = 3600; 
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // 台北時間校正相關
+        // taipeiOffsetMs = taipeiServerTimeMs - localNowMs
+        let taipeiOffsetMs = parseInt(localStorage.getItem('taipeiOffsetMs') || '0', 10) || 0;
+        let timeSyncSec = parseInt(localStorage.getItem('timeSyncSec') || '300', 10) || 300;
+        let timeSyncIntervalId = null;
+
+        // 初始化界面
+        document.getElementById('excludeServerInput').value = excludedServerId;
+        updateExcludeStatus();
+        // 初始化提醒 UI 與設定
+        updateThreshold();
+        updateRepeat();
+        // 初始化台北校正 UI
+        try { document.getElementById('timeSyncSec').value = timeSyncSec; } catch(e){}
+        updateTimeSyncStatus();
+        scheduleTimeSync();
+
+        // 如果是以 file:// 開啟，提示使用者改用本機 HTTP 伺服器
+        if (location.protocol === 'file:') {
+            const gridEl = document.getElementById('grid');
+            gridEl.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: #f39c12; font-size:1.1em;">偵測到以 <code>file://</code> 開啟頁面；瀏覽器可能會封鎖 fetch 請改用本機 HTTP 伺服器（例如：<code>python -m http.server</code>）再重新整理。</div>`;
+        }
+
+        // --- 音效相關函式 ---
+        function toggleMute() {
+            soundEnabled = !soundEnabled;
+            const btn = document.getElementById('muteBtn');
+            const icon = document.getElementById('muteIcon');
+            const text = document.getElementById('muteText');
+
+            if (soundEnabled) {
+                // 開啟音效
+                audioCtx.resume();
+                btn.classList.remove('muted');
+                btn.style.backgroundColor = "var(--safe-color)";
+                icon.innerText = "🔊";
+                text.innerText = "音效開啟";
+                // 測試播一聲
+                playBeep(0.1); 
+            } else {
+                // 靜音
+                btn.classList.add('muted');
+                btn.style.backgroundColor = "#555";
+                icon.innerText = "🔇";
+                text.innerText = "音效已關";
+            }
+        }
+
+        function playBeep(duration = 0.5) {
+            if (!soundEnabled) return;
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            oscillator.type = 'square';
+            oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+            oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + duration);
+        }
+
+        // 三短音（滴滴滴）: 三個短促音符，間隔短暫停頓
+        function playDiDiDi() {
+            if (!soundEnabled) return;
+            const now = audioCtx.currentTime;
+            const beepDur = 0.12; // 每聲長度
+            const gap = 0.12; // 聲間間隔
+            const freq = 880; // 頻率稍高，像滴滴聲
+
+            for (let i = 0; i < 3; i++) {
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(freq, now + i * (beepDur + gap));
+                gain.gain.setValueAtTime(0.18, now + i * (beepDur + gap));
+                gain.gain.exponentialRampToValueAtTime(0.001, now + i * (beepDur + gap) + beepDur);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start(now + i * (beepDur + gap));
+                osc.stop(now + i * (beepDur + gap) + beepDur + 0.02);
+            }
+        }
+
+        // --- 伺服器排除功能 ---
+        function saveExcludeServer() {
+            // 讀取輸入，標準化為數字並取前四位
+            const raw = document.getElementById('excludeServerInput').value.trim();
+            const norm = raw.replace(/\D/g, '').slice(0,4);
+            excludedServerId = norm;
+            localStorage.setItem('excludedServerId', norm); // 儲存到瀏覽器
+            updateExcludeStatus();
+            renderGrid(); // 重新渲染
+        }
+
+        function updateExcludeStatus() {
+            const statusEl = document.getElementById('excludeStatus');
+            if (excludedServerId) {
+                statusEl.innerText = `目前排除: s${excludedServerId}`;
+                statusEl.style.color = "var(--safe-color)";
+            } else {
+                statusEl.innerText = "目前排除: 無";
+                statusEl.style.color = "#888";
+            }
+        }
+
+        function updateThreshold() {
+            const m = parseInt(document.getElementById('alertMin').value) || 0;
+            const s = parseInt(document.getElementById('alertSec').value) || 0;
+            alertThresholdSeconds = m * 60 + s;
+            document.getElementById('thresholdDisplay').innerText = `提前提醒: ${m} 分 ${s} 秒`;
+            alertedSpots.clear();
+            renderGrid();
+        }
+
+        function updateRepeat() {
+            const v = parseInt(document.getElementById('alertRepeat').value) || 60;
+            alertRepeatSeconds = Math.max(5, Math.min(3600, v));
+        }
+
+        function hideSpot(spotName) {
+            hiddenSpots.add(spotName);
+            renderGrid();
+        }
+
+        function restoreHidden() {
+            hiddenSpots.clear();
+            renderGrid();
+        }
+
+        // --- 核心邏輯 ---
+        async function fetchData() {
+            try {
+                const response = await fetch(`${JSON_URL}?t=${new Date().getTime()}`);
+                if (!response.ok) throw new Error("File not found");
+                parkingData = await response.json();
+                // 如果 JSON 含有 _SYSTEM_UPDATE_TIME，使用它顯示為上次更新時間
+                updateSystemTimeDisplay(parkingData);
+
+                renderGrid();
+            } catch (error) {
+                console.error('Error loading JSON:', error);
+                // 在畫面上顯示錯誤資訊，讓使用者不必打開 Console
+                const gridEl = document.getElementById('grid');
+                gridEl.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: #ff6b6b;">載入 JSON 失敗：${error.message || '無法存取檔案'}<br><small style=\"color:#ccc\">可能原因：以 <code>file://</code> 開啟、檔案路徑錯誤，或瀏覽器阻擋本機存取。請用本機 HTTP 伺服器再試。</small></div>`;
+                document.getElementById('system-update').innerText = `更新失敗: ${error.message || 'fetch error'}`;
+            }
+        }
+
+        function updateSystemTimeDisplay(data) {
+            try {
+                if (!data) return;
+                const sys = data['_SYSTEM_UPDATE_TIME'];
+                if (sys && sys.end_time) {
+                    // 若 end_time 是完整時間字串 (例如 2025-12-31 05:11:52)，直接顯示
+                    document.getElementById('system-update').innerText = `上次更新: ${sys.end_time}`;
+                    return;
+                }
+            } catch (e) {
+                // ignore
+            }
+            // 若沒有系統更新時間，顯示當下時間
+            const now = getNow();
+            document.getElementById('system-update').innerText = `上次更新: ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+        }
+
+        function renderGrid() {
+            const container = document.getElementById('grid');
+            container.innerHTML = '';
+
+            // 排除以 '_' 開頭的內部欄位（例如 _SYSTEM_UPDATE_TIME），只渲染真實車位
+            const sortedSpots = Object.entries(parkingData)
+                .filter(([name, info]) => !name || !name.startsWith('_'))
+                .map(([name, info]) => {
+                    return { name, ...info, remainingSeconds: calculateRemainingSeconds(info.end_time) };
+                }).sort((a, b) => a.remainingSeconds - b.remainingSeconds);
+
+            let visibleCount = 0;
+
+            sortedSpots.forEach(spot => {
+                // 1. 手動隱藏過濾
+                if (hiddenSpots.has(spot.name)) return;
+
+                // 2. [新增功能] 伺服器排除過濾
+                // 如果設定了排除 ID，先取搶佔者的前四位數字再比對（避免長 ID 誤判）
+                const attackerDigits = String(spot.attacker).replace(/\D/g, '');
+                const attackerShort = attackerDigits.slice(0, 4);
+                if (excludedServerId && attackerShort === excludedServerId) {
+                    return;
+                }
+
+                // 3. 過期處理：超過1小時不自動隱藏，改為以三角標示
+                let veryExpired = false;
+                if (spot.remainingSeconds < 0) {
+                    if (Math.abs(spot.remainingSeconds) > AUTO_HIDE_SECONDS) {
+                        veryExpired = true; // 超過一小時但不要自動隱藏
+                    }
+                }
+
+                visibleCount++;
+                const card = document.createElement('div');
+                card.className = 'card';
+                
+                const secondsLeft = spot.remainingSeconds;
+                let statusClass = '';
+                let statusText = formatCountdown(spot.remainingSeconds);
+
+                // 狀態判斷（以秒為單位）
+                if (secondsLeft <= 0) {
+                    statusClass = 'expired';
+                    statusText = `已經開始 ${formatTimePassed(Math.abs(secondsLeft))}`;
+                } else if (secondsLeft <= 60) {
+                    // 最後 60 秒：視覺閃爍並播放三短音提醒（遵循 alertRepeatSeconds 冷卻）
+                    statusClass = 'danger';
+                    // 稍後把 blinking 加到 card
+                    checkAlert(spot.name, 'triple');
+                } else if (secondsLeft <= alertThresholdSeconds) {
+                    // 提前提醒範圍（例如預設 5 分鐘）
+                    statusClass = 'danger';
+                    checkAlert(spot.name);
+                } else if (secondsLeft <= alertThresholdSeconds + 10 * 60) {
+                    statusClass = 'warning';
+                }
+
+                if (statusClass) card.classList.add(statusClass);
+                // 若在結束後 +-一分鐘，額外加上 blinking 樣式
+                if (secondsLeft < 0 && Math.abs(secondsLeft) <= 60) card.classList.add('blinking');
+                if (veryExpired) card.classList.add('very-expired');
+
+                card.innerHTML = `
+                    <button class="close-btn" onclick="hideSpot('${spot.name}')" title="隱藏此車位">×</button>
+                    <div class="spot-name">
+                        ${spot.name}
+                        <span style="font-size:0.6em; opacity:0.7;">ID: ${spot.name.replace(/[^0-9]/g, '')}</span>
+                    </div>
+                    <div class="attacker">搶佔者: <span style="background:${statusClass === 'danger' ? '#ff3333' : '#333'}">s${attackerShort}</span></div>
+                    <div class="time-info">結束: ${spot.end_time}</div>
+                    <div class="countdown">
+                        ${statusText}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
+
+            if (visibleCount === 0) {
+                let msg = "目前沒有監控目標";
+                if (excludedServerId) msg += `<br>(已排除 s${excludedServerId})`;
+                container.innerHTML = `<div style="grid-column: 1/-1; text-align: center; margin-top: 50px; color: #666; font-size: 1.2em;">${msg}</div>`;
+            }
+        }
+
+        function calculateRemainingSeconds(endTimeStr) {
+            const now = getNow();
+            const [h, m, s] = endTimeStr.split(':').map(Number);
+            let target = new Date(getNow().getTime());
+            target.setHours(h, m, s, 0);
+
+            if ((now - target) > 12 * 3600 * 1000) {
+                target.setDate(target.getDate() + 1);
+            }
+            return Math.floor((target - now) / 1000);
+        }
+
+        function formatCountdown(seconds) {
+            if (seconds <= 0) return "已結束";
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            const s = seconds % 60;
+            if (h > 0) return `${h}時 ${m}分 ${s}秒`;
+            return `${m}分 ${s}秒`;
+        }
+        
+        function formatTimePassed(seconds) {
+            const h = Math.floor(seconds / 3600);
+            const m = Math.floor((seconds % 3600) / 60);
+            if (h > 0) return `${h}時${m}分`;
+            return `${m}分`;
+        }
+
+        // 檢查並播放提醒：支援預設單音與三短音（pattern = 'single'|'triple'）
+        function checkAlert(spotName, pattern = 'single') {
+            if (alertedSpots.has(spotName)) return;
+            if (!soundEnabled) {
+                // 還是要標記已提醒以免短時間重複觸發
+                alertedSpots.add(spotName);
+                setTimeout(() => alertedSpots.delete(spotName), alertRepeatSeconds * 1000);
+                return;
+            }
+            if (pattern === 'triple') {
+                playDiDiDi();
+            } else {
+                playBeep(0.25);
+            }
+            alertedSpots.add(spotName);
+            setTimeout(() => alertedSpots.delete(spotName), alertRepeatSeconds * 1000);
+        }
+
+        
+
+        // 啟動定時器
+        setInterval(() => renderGrid(), 1000);
+        setInterval(() => fetchData(), 60000);
+        fetchData();
+
+        // 顯示並每秒更新當前時間（顯示到秒）
+        function updateClock() {
+            const now = getNow();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            const text = `${hh}:${mm}:${ss}`;
+            const el = document.getElementById('current-time');
+            if (el) el.innerText = `現在: ${text}`;
+        }
+        updateClock();
+        setInterval(updateClock, 1000);
+
+        // 使 #current-time 可拖移，並將位置儲存到 localStorage
+        (function makeCurrentTimeDraggable() {
+            const el = document.getElementById('current-time');
+            if (!el) return;
+            el.style.position = 'fixed';
+
+            // 讀取先前儲存的位置
+            try {
+                const raw = localStorage.getItem('currentTimePos');
+                if (raw) {
+                    const pos = JSON.parse(raw);
+                    if (typeof pos.left === 'number') el.style.left = pos.left + 'px';
+                    if (typeof pos.top === 'number') el.style.top = pos.top + 'px';
+                }
+            } catch (e) { /* ignore */ }
+
+            let dragging = false;
+            let offsetX = 0, offsetY = 0;
+
+            function onDown(clientX, clientY) {
+                const rect = el.getBoundingClientRect();
+                offsetX = clientX - rect.left;
+                offsetY = clientY - rect.top;
+                dragging = true;
+                document.body.style.userSelect = 'none';
+            }
+
+            function onMove(clientX, clientY) {
+                if (!dragging) return;
+                let left = clientX - offsetX;
+                let top = clientY - offsetY;
+                // clamp to viewport
+                const pad = 8;
+                const maxLeft = window.innerWidth - el.offsetWidth - pad;
+                const maxTop = window.innerHeight - el.offsetHeight - pad;
+                left = Math.max(pad, Math.min(maxLeft, left));
+                top = Math.max(pad, Math.min(maxTop, top));
+                el.style.left = left + 'px';
+                el.style.top = top + 'px';
+            }
+
+            function onUp() {
+                if (!dragging) return;
+                dragging = false;
+                document.body.style.userSelect = '';
+                // 儲存位置
+                try {
+                    const left = parseInt(el.style.left, 10) || 12;
+                    const top = parseInt(el.style.top, 10) || 12;
+                    localStorage.setItem('currentTimePos', JSON.stringify({ left, top }));
+                } catch (e) { /* ignore */ }
+            }
+
+            // mouse events
+            el.addEventListener('mousedown', (ev) => { ev.preventDefault(); onDown(ev.clientX, ev.clientY); });
+            window.addEventListener('mousemove', (ev) => { onMove(ev.clientX, ev.clientY); });
+            window.addEventListener('mouseup', () => { onUp(); });
+
+            // touch events
+            el.addEventListener('touchstart', (ev) => { ev.preventDefault(); const t = ev.touches[0]; onDown(t.clientX, t.clientY); }, { passive: false });
+            window.addEventListener('touchmove', (ev) => { const t = ev.touches[0]; if (t) onMove(t.clientX, t.clientY); }, { passive: false });
+            window.addEventListener('touchend', () => { onUp(); });
+        })();
+
+        /* --------- Push / Notification support --------- */
+        // helper: base64 URL -> Uint8Array
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+            return outputArray;
+        }
+
+        // 前端註冊 Service Worker 並訂閱 Push
+        async function initPush() {
+            const statusEl = document.getElementById('pushStatus');
+            try {
+                if (!('serviceWorker' in navigator)) throw new Error('Service Worker 不被瀏覽器支援');
+                if (!('PushManager' in window)) throw new Error('Push API 不被瀏覽器支援');
+
+                statusEl.innerText = '狀態: 註冊 Service Worker...';
+                const reg = await navigator.serviceWorker.register('/sw.js');
+
+                statusEl.innerText = '狀態: 請求通知權限...';
+                const perm = await Notification.requestPermission();
+                if (perm !== 'granted') throw new Error('使用者拒絕通知權限');
+
+                statusEl.innerText = '狀態: 取得 VAPID 公鑰...';
+                const resp = await fetch('/vapidPublicKey');
+                if (!resp.ok) throw new Error('無法取得 VAPID 公鑰');
+                const vapidPublicKey = await resp.text();
+
+                statusEl.innerText = '狀態: 訂閱 Push...';
+                const sub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: urlBase64ToUint8Array(vapidPublicKey)
+                });
+
+                // 將 subscription 傳給伺服器儲存
+                const save = await fetch('/save-subscription', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(sub)
+                });
+                if (!save.ok) throw new Error('無法儲存 subscription');
+
+                statusEl.innerText = '狀態: 已啟用';
+                document.getElementById('enablePushBtn').innerText = '已啟用';
+
+                // 處理從 SW 傳回的訊息（例如播放聲音）
+                navigator.serviceWorker.addEventListener('message', ev => {
+                    try {
+                        const d = ev.data || {};
+                        if (d && d.type === 'play-sound') {
+                            playDiDiDi();
+                        }
+                    } catch (e) { console.warn(e); }
+                });
+
+            } catch (e) {
+                statusEl.innerText = '狀態: 失敗 - ' + (e.message || e);
+                console.error('initPush error', e);
+            }
+        }
+
+        /* --------- 台北時間校正功能 --------- */
+        function getNow() {
+            return new Date(Date.now() + (taipeiOffsetMs || 0));
+        }
+
+        async function syncTaipeiTime() {
+            // 先透過你的伺服器 API (/api/time) 取得網路時間（伺服器會對外查多個時間來源），
+            // 若 /api/time 無法取得再由前端直接嘗試數個外部時間 API 作為備援。
+            try {
+                const srv = await fetch('/api/time');
+                if (srv.ok) {
+                    const j = await srv.json();
+                    if (j.server_ms) {
+                        const serverMs = Number(j.server_ms);
+                        const localMs = Date.now();
+                        taipeiOffsetMs = serverMs - localMs;
+                        localStorage.setItem('taipeiOffsetMs', String(taipeiOffsetMs));
+                        updateTimeSyncStatus(true);
+                        updateClock();
+                        renderGrid();
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.warn('Server /api/time failed, falling back to external providers', e);
+            }
+
+            // 前端備援：直接嘗試外部時間 API
+            const externalProviders = [
+                'https://worldtimeapi.org/api/timezone/Asia/Taipei',
+                'https://timeapi.io/api/Time/current/zone?timeZone=Asia/Taipei',
+                'http://worldclockapi.com/api/json/utc/now'
+            ];
+
+            for (const url of externalProviders) {
+                try {
+                    const r = await fetch(url);
+                    if (!r.ok) continue;
+                    const data = await r.json();
+                    const dt = data.datetime || data.dateTime || data.currentDateTime || data.utc_datetime || data.currentDateTime;
+                    const serverMs = dt ? Date.parse(dt) : (data.server_ms || data.timestamp || null);
+                    if (serverMs) {
+                        const localMs = Date.now();
+                        taipeiOffsetMs = Number(serverMs) - localMs;
+                        localStorage.setItem('taipeiOffsetMs', String(taipeiOffsetMs));
+                        updateTimeSyncStatus(true);
+                        updateClock();
+                        renderGrid();
+                        return;
+                    }
+                } catch (e) {
+                    console.warn('external provider failed', url, e);
+                    continue;
+                }
+            }
+
+            // 全部失敗
+            updateTimeSyncStatus(false);
+        }
+
+        function updateTimeSyncStatus(success) {
+            const el = document.getElementById('timeSyncStatus');
+            if (!el) return;
+            if (success === undefined) {
+                // 初始顯示
+                if (taipeiOffsetMs) {
+                    const t = new Date(Date.now() + taipeiOffsetMs);
+                    el.innerText = `上次校正: ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+                } else {
+                    el.innerText = '上次校正: 未校正';
+                }
+                return;
+            }
+            if (success) {
+                const t = new Date(Date.now() + taipeiOffsetMs);
+                el.innerText = `上次校正: ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+                el.style.color = 'var(--safe-color)';
+            } else {
+                el.innerText = '上次校正: 失敗';
+                el.style.color = '#ff6b6b';
+            }
+        }
+
+        function scheduleTimeSync() {
+            if (timeSyncIntervalId) clearInterval(timeSyncIntervalId);
+            timeSyncIntervalId = setInterval(syncTaipeiTime, Math.max(10, timeSyncSec) * 1000);
+        }
+
+        function updateTimeSyncInterval() {
+            const v = parseInt(document.getElementById('timeSyncSec').value) || 300;
+            timeSyncSec = Math.max(10, Math.min(86400, v));
+            localStorage.setItem('timeSyncSec', String(timeSyncSec));
+            scheduleTimeSync();
+        }
+
+        // 初始立即同步一次
+        syncTaipeiTime();
+
+        /* --------- 每日任務儀表板邏輯 --------- */
+        async function fetchTaskStatus() {
+            try {
+                // 1. 先取得所有設備列表
+                const statusResp = await fetch('/api/status');
+                if (!statusResp.ok) return; // 可能不是在 Master 模式或服務未啟動
+                
+                const statusData = await statusResp.json();
+                const bots = statusData.bots || {};
+                const ips = Object.keys(bots);
+                
+                if (ips.length === 0) return;
+
+                // 顯示儀表板
+                document.getElementById('task-dashboard').style.display = 'flex';
+                const container = document.getElementById('task-container');
+                container.innerHTML = ''; // 清空重繪
+
+                // 2. 針對每個設備取得任務進度
+                for (const ip of ips) {
+                    try {
+                        // 處理遠端 IP (worker:ip)
+                        const cleanIp = ip.includes(':') ? ip.split(':')[1] : ip;
+                        
+                        const progResp = await fetch(`/api/daily_progress/${ip}`);
+                        if (!progResp.ok) continue;
+                        
+                        const tasks = await progResp.json();
+                        const botName = bots[ip].name || cleanIp;
+
+                        // 建立設備卡片
+                        const card = document.createElement('div');
+                        card.style.background = 'rgba(0,0,0,0.3)';
+                        card.style.padding = '10px';
+                        card.style.borderRadius = '8px';
+                        card.style.minWidth = '200px';
+                        
+                        let html = `<div style="font-weight:bold; margin-bottom:8px; border-bottom:1px solid #444; padding-bottom:4px;">${botName}</div>`;
+                        html += `<div style="display:grid; grid-template-columns: 1fr auto; gap:5px; font-size:0.9em;">`;
+                        
+                        // 排序：讓「每日任務」排在最前面，其他依名稱
+                        const sortedKeys = Object.keys(tasks).sort((a, b) => {
+                            if (a === '每日任務') return -1;
+                            if (b === '每日任務') return 1;
+                            return a.localeCompare(b);
+                        });
+
+                        for (const taskName of sortedKeys) {
+                            const isDone = tasks[taskName];
+                            const statusIcon = isDone ? '✅' : '⬜';
+                            const statusColor = isDone ? '#4caf50' : '#888';
+                            html += `<div style="color:#ccc;">${taskName}</div>`;
+                            html += `<div style="color:${statusColor};">${statusIcon}</div>`;
+                        }
+                        html += `</div>`;
+                        
+                        card.innerHTML = html;
+                        container.appendChild(card);
+                    } catch (e) {
+                        console.warn(`Fetch progress for ${ip} failed`, e);
+                    }
+                }
+
+            } catch (e) {
+                console.warn('Task dashboard update failed', e);
+            }
+        }
+
+        // 啟動任務狀態更新 (每 60 秒)
+        setInterval(async () => {
+            await fetchTaskStatus();
+            await fetchDeviceConfigs();
+        }, 60000);
+        
+        // 延遲一點執行，避免剛載入時搶頻寬
+        setTimeout(async () => {
+            await fetchTaskStatus();
+            await fetchDeviceConfigs();
+        }, 2000);
+
+        /* --------- 設備管理與設定邏輯 --------- */
+        async function fetchDeviceConfigs() {
+            try {
+                const statusResp = await fetch('/api/status');
+                if (!statusResp.ok) return;
+                const statusData = await statusResp.json();
+                const bots = statusData.bots || {};
+                const ips = Object.keys(bots);
+                if (ips.length === 0) return;
+
+                const container = document.getElementById('device-config-container');
+                
+                // 為了避免每次循環都重繪導致使用者正在輸入時被洗掉
+                // 我們只在容器為空，或者設備數量變動時才重繪
+                if (container.children.length !== ips.length) {
+                    container.innerHTML = '';
+                    for (const ip of ips) {
+                        const configResp = await fetch(`/api/config/${ip}`);
+                        if (!configResp.ok) continue;
+                        const config = await configResp.json();
+                        const botName = bots[ip].name || ip;
+                        // 處理包含冒號的 IP 用於 ID
+                        const safeId = ip.replace(/:/g, '_');
+
+                        const card = document.createElement('div');
+                        card.className = 'control-group';
+                        card.style.minWidth = '220px';
+                        card.innerHTML = `
+                            <div style="font-weight:bold; border-bottom:1px solid #444; width:100%; text-align:center; padding-bottom:5px; margin-bottom:10px;">${botName}</div>
+                            <div style="display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center;">
+                                <label>在線檢查 (分)</label>
+                                <input type="number" id="interval-${safeId}" value="${config.online_check_interval || 5}" min="1" max="1440" style="width:50px;">
+                                
+                                <label>開燈間隔 (時)</label>
+                                <input type="number" id="lamp-${safeId}" value="${config.lamp_check_interval || 2}" min="1" max="24" style="width:50px;">
+
+                                <label>開燈時長 (秒)</label>
+                                <input type="number" id="dur-${safeId}" value="${config.lamp_duration_sec || 300}" min="10" max="3600" style="width:50px;">
+                            </div>
+                            <button class="action-btn apply-btn" style="width:100%; margin-top:10px;" onclick="updateDeviceSettings('${ip}')">儲存設定</button>
+                        `;
+                        container.appendChild(card);
+                    }
+                }
+                
+                if (ips.length > 0) {
+                    document.getElementById('device-management').style.display = 'flex';
+                }
+            } catch (e) {
+                console.warn('Failed to fetch device configs', e);
+            }
+        }
+
+        async function updateDeviceSettings(ip) {
+            const safeId = ip.replace(/:/g, '_');
+            const intervalVal = parseInt(document.getElementById(`interval-${safeId}`).value);
+            const lampVal = parseInt(document.getElementById(`lamp-${safeId}`).value);
+            const durVal = parseInt(document.getElementById(`dur-${safeId}`).value);
+            
+            if (isNaN(intervalVal) || intervalVal < 1 || isNaN(lampVal) || lampVal < 1 || isNaN(durVal) || durVal < 10) {
+                return alert('請輸入有效的數字');
+            }
+
+            try {
+                const resp = await fetch(`/api/config/${ip}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        online_check_interval: intervalVal,
+                        lamp_check_interval: lampVal,
+                        lamp_duration_sec: durVal
+                    })
+                });
+                if (resp.ok) {
+                    alert(`${ip} 設定已更新`);
+                } else {
+                    alert('更新失敗');
+                }
+            } catch (e) {
+                console.error(e);
+                alert('網路錯誤');
+            }
+        }
+
+        // 初始載入設定
+        setTimeout(fetchDeviceConfigs, 3000);
+
+    </script>
+</body>
+</html>

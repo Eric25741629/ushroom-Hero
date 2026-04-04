@@ -5,21 +5,50 @@ import numpy as np
 import uiautomator2 as u2
 import time
 from mask import *
+from img_tools import click_str_by_server
 import json
 import os
+from typing import Optional, Union
 
 class device:
-    def __init__(self, device: u2.Device):
+    def __init__(self, device: Optional[u2.Device], test_image: Optional[np.ndarray] = None):
         self.device = device
+        self.test_image = test_image
+
+    def set_test_image(self, image: Union[str, np.ndarray]):
+        """Set a local image for offline testing."""
+        if isinstance(image, str):
+            loaded = cv2.imread(image)
+            if loaded is None:
+                raise ValueError(f"Failed to load test image: {image}")
+            self.test_image = loaded
+            return
+
+        if isinstance(image, np.ndarray):
+            self.test_image = image
+            return
+
+        raise TypeError("image must be a file path or numpy.ndarray")
+
+    def _get_screenshot(self):
+        """Return injected test image first; fallback to device screenshot."""
+        if self.test_image is not None:
+            return self.test_image.copy()
+
+        if self.device is None:
+            raise ValueError("device is None and no test image provided")
+
+        img = self.device.screenshot(format='opencv')
+        if img is None:
+            raise ValueError("Failed to capture screenshot")
+        return img
 
     def capture_screenshot(self):
         """取得當前螢幕截圖"""
         max_attempts = 10  # 避免死循环
         attempts = 0
         while attempts < max_attempts:
-            img = self.device.screenshot(format='opencv')
-            if img is None:
-                raise ValueError("Failed to capture screenshot")
+            img = self._get_screenshot()
 
             conditions = [
                 abs(np.sum(img[234, 189]) - np.sum([179, 91, 70])) < 10,
@@ -34,6 +63,8 @@ class device:
             ]
 
             if all(conditions):
+                if self.test_image is not None:
+                    break
                 self.device.click(509, 56)
                 time.sleep(1)
                 attempts += 1
@@ -51,10 +82,12 @@ class device:
 
 
 class mission(device):
-    def __init__(self, device: u2.Device, ip):
+    def __init__(self, device: Optional[u2.Device], ip, test_image: Optional[Union[str, np.ndarray]] = None):
         super().__init__(device)
+        if test_image is not None:
+            self.set_test_image(test_image)
         self.device_ip = ip
-        self.data_file=self.device_ip + '.json'
+        self.data_file = self.device_ip + '.json'
 
 
     def load_data(self):
@@ -139,8 +172,20 @@ class mission(device):
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, lower, upper)
         return mask
-    def is_color_match(self,img, coord, color, tolerance=10):
-        return abs(np.sum(img[coord]) - np.sum(color)) < tolerance
+    def _get_patch_mean_color(self, img, coord, patch=5):
+        y, x = coord
+        h, w = img.shape[:2]
+        half = max(0, patch // 2)
+        y0 = max(0, y - half)
+        y1 = min(h, y + half + 1)
+        x0 = max(0, x - half)
+        x1 = min(w, x + half + 1)
+        region = img[y0:y1, x0:x1]
+        return np.mean(region, axis=(0, 1))
+
+    def is_color_match(self, img, coord, color, tolerance=10, patch=5):
+        mean_color = self._get_patch_mean_color(img, coord, patch=patch)
+        return abs(np.sum(mean_color) - np.sum(color)) < tolerance
 
     def done_mission(self):
         img = self.capture_screenshot()
@@ -163,9 +208,13 @@ class mission(device):
             ((267, 381), [206, 237, 246]),
             ((860, 476), [244, 255, 255])
         ]
-
-        # 檢查條件
-        if any(self.is_color_match(img, coord, color) for coord, color in mission_conditions) and all(self.is_color_match(img, coord, color) for coord, color in additional_conditions):
+        print(
+            [self.is_color_match(img, coord, color, patch=5) for coord, color in mission_conditions],
+            [self.is_color_match(img, coord, color, patch=5) for coord, color in additional_conditions],
+        )
+        #印出不同位置的顏色值以供調試
+        
+        if any(self.is_color_match(img, coord, color, patch=5) for coord, color in mission_conditions) and all(self.is_color_match(img, coord, color, patch=5) for coord, color in additional_conditions):
             return False
         return True
 
@@ -190,8 +239,10 @@ class mission(device):
             time.sleep(1)
         start = time.time()
 
-        while (self.done_mission() and time.time() - start < 60):
-            self.device.click(420,  352)
+        while time.time() - start < 60:
+            clicked = click_str_by_server(self.device, "領取", x_range=(250, 540), y_range=(240, 470))
+            if not clicked:
+                break
             time.sleep(0.3)
             self.device.click(131, 766)
             time.sleep(0.3)
@@ -236,7 +287,7 @@ class mission(device):
         time.sleep(1)
 
     def do_mission2_1(self):
-        img = self.device.screenshot(format='opencv')
+        img = self._get_screenshot()
         conditions =[abs(np.sum(img[231,126]) - np.sum([137, 207, 220])) < 10, abs(np.sum(img[245,258]) - np.sum([76, 99, 191])) < 10, abs(np.sum(img[276,385]) - np.sum([23, 41, 112])) < 10, abs(np.sum(img[316,469]) - np.sum([47, 102, 163])) < 10, abs(np.sum(img[229,422]) - np.sum([95, 122, 203])) < 10, abs(np.sum(img[321,168]) - np.sum([215, 234, 255])) < 10, abs(np.sum(img[285,140]) - np.sum([192, 241, 255])) < 10, abs(np.sum(img[297,269]) - np.sum([108, 152, 241])) < 10, abs(np.sum(img[312,269]) - np.sum([109, 165, 236])) < 10, abs(np.sum(img[346,289]) - np.sum([175, 213, 225])) < 10, abs(np.sum(img[327,304]) - np.sum([111, 176, 221])) < 10, abs(np.sum(img[213,474]) - np.sum([3, 24, 216])) < 10]
 
         if all(conditions):
@@ -266,6 +317,11 @@ class mission(device):
                 buy_num = self.get_buy_data()[1]
                 self.record(buy_num+1)
 if __name__ == '__main__':
-    d = u2.connect('fc65396d')
-    m = mission(d, 'fc65396d')
+    # Offline image test example:
+    # m = mission(None, 'offline_test', test_image='mission/test_case.png')
+    # print("done_mission:", m.done_mission())
+    d = u2.connect('7fe98fc6')
+    m = mission(d, '7fe98fc6')
     m.do_allmission()
+    # m = mission(None, 'offline_test', test_image=r'C:\\Users\\Eric\\AppData\\Local\\Temp\\lamp.png')
+    # print(m.done_mission())

@@ -1,0 +1,372 @@
+{
+  "window": {
+    "start": "2026-03-23T00:00:00",
+    "end": "2026-03-30T00:00:00",
+    "days": 7
+  },
+  "scanned": {
+    "text_log_files": 13,
+    "rl_files": 13
+  },
+  "totals": {
+    "text_lines": 78290,
+    "warning": 19945,
+    "error": 969,
+    "ocr_issue_count": 11047,
+    "misjudge_count": 0,
+    "screenshot_count": 27,
+    "rl_events": 3639,
+    "verify_fail_count": 127,
+    "terminated_floor7_count": 2403
+  },
+  "devices": {
+    "7fe98fc6": {
+      "text_lines": 18127,
+      "warning": 6833,
+      "error": 0,
+      "ocr_issue_count": 1188,
+      "misjudge_count": 0,
+      "screenshot_count": 0,
+      "active_hours": 61,
+      "rl_events": 829,
+      "verify_fail_count": 28,
+      "terminated_floor7_count": 570,
+      "avg_step_cost_expected": 1.1834,
+      "actions": {
+        "dig": 829
+      },
+      "top_messages": [
+        {
+          "msg": "本地 OCR 辨識結果: 主頁面",
+          "count": 1136
+        },
+        {
+          "msg": "[ITEM STATUS] items_available={'drill': 0, 'bomb': 0}",
+          "count": 1013
+        },
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 894
+        },
+        {
+          "msg": "⚠️  無挖礦步驟 (A* Planning complete (nodes=1).)",
+          "count": 759
+        },
+        {
+          "msg": "剩餘寶箱: 0",
+          "count": 759
+        },
+        {
+          "msg": "底層開啟: True",
+          "count": 759
+        },
+        {
+          "msg": "花費成本: 0.0",
+          "count": 759
+        },
+        {
+          "msg": "📊 空氣識別統計:",
+          "count": 759
+        },
+        {
+          "msg": "[7fe98fc6] 目前頁面: 未知",
+          "count": 304
+        },
+        {
+          "msg": "🔄 定期校正鏟子數量: 20.0 -> 20",
+          "count": 236
+        }
+      ]
+    },
+    "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
+      "text_lines": 11736,
+      "warning": 5097,
+      "error": 549,
+      "ocr_issue_count": 126,
+      "misjudge_count": 0,
+      "screenshot_count": 0,
+      "active_hours": 31,
+      "rl_events": 419,
+      "verify_fail_count": 1,
+      "terminated_floor7_count": 303,
+      "avg_step_cost_expected": 1.1718,
+      "actions": {
+        "dig": 419
+      },
+      "top_messages": [
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 偵測到螢幕開啟 (人為操作中)，每 5 秒自動檢測一次...",
+          "count": 2836
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 連線失敗: device adb-fc65396d-4LPqmI._adb-tls-connect._tcp not online",
+          "count": 1325
+        },
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 459
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 嘗試連線 (attempt 1/5)",
+          "count": 278
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 檢查螢幕狀態時發生錯誤: device 'adb-fc65396d-4LPqmI._adb-tls-connect._tcp' not found",
+          "count": 266
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 5s 後重試...",
+          "count": 266
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 嘗試連線 (attempt 2/5)",
+          "count": 266
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 10s 後重試...",
+          "count": 266
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 嘗試連線 (attempt 3/5)",
+          "count": 266
+        },
+        {
+          "msg": "[adb-fc65396d-4LPqmI._adb-tls-connect._tcp] 20s 後重試...",
+          "count": 266
+        }
+      ]
+    },
+    "emulator-5554": {
+      "text_lines": 11832,
+      "warning": 3326,
+      "error": 17,
+      "ocr_issue_count": 845,
+      "misjudge_count": 0,
+      "screenshot_count": 8,
+      "active_hours": 40,
+      "rl_events": 709,
+      "verify_fail_count": 19,
+      "terminated_floor7_count": 502,
+      "avg_step_cost_expected": 1.1777,
+      "actions": {
+        "dig": 709
+      },
+      "top_messages": [
+        {
+          "msg": "本地 OCR 辨識結果: 主頁面",
+          "count": 765
+        },
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 752
+        },
+        {
+          "msg": "[ITEM STATUS] items_available={'drill': 0, 'bomb': 0}",
+          "count": 493
+        },
+        {
+          "msg": "⚠️  無挖礦步驟 (A* Planning complete (nodes=1).)",
+          "count": 367
+        },
+        {
+          "msg": "剩餘寶箱: 0",
+          "count": 367
+        },
+        {
+          "msg": "底層開啟: True",
+          "count": 367
+        },
+        {
+          "msg": "花費成本: 0.0",
+          "count": 367
+        },
+        {
+          "msg": "📊 空氣識別統計:",
+          "count": 367
+        },
+        {
+          "msg": "[emulator-5554] 目前頁面: 未知",
+          "count": 195
+        },
+        {
+          "msg": "- 可達空氣: 12",
+          "count": 187
+        }
+      ]
+    },
+    "emulator-5556": {
+      "text_lines": 8663,
+      "warning": 2585,
+      "error": 8,
+      "ocr_issue_count": 520,
+      "misjudge_count": 0,
+      "screenshot_count": 2,
+      "active_hours": 36,
+      "rl_events": 482,
+      "verify_fail_count": 13,
+      "terminated_floor7_count": 329,
+      "avg_step_cost_expected": 1.1639,
+      "actions": {
+        "dig": 482
+      },
+      "top_messages": [
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 497
+        },
+        {
+          "msg": "本地 OCR 辨識結果: 主頁面",
+          "count": 438
+        },
+        {
+          "msg": "[ITEM STATUS] items_available={'drill': 0, 'bomb': 0}",
+          "count": 377
+        },
+        {
+          "msg": "⚠️  無挖礦步驟 (A* Planning complete (nodes=1).)",
+          "count": 285
+        },
+        {
+          "msg": "剩餘寶箱: 0",
+          "count": 285
+        },
+        {
+          "msg": "底層開啟: True",
+          "count": 285
+        },
+        {
+          "msg": "花費成本: 0.0",
+          "count": 285
+        },
+        {
+          "msg": "📊 空氣識別統計:",
+          "count": 285
+        },
+        {
+          "msg": "[emulator-5556] 目前頁面: 未知",
+          "count": 217
+        },
+        {
+          "msg": "- 總空氣數: 25",
+          "count": 215
+        }
+      ]
+    },
+    "emulator-5558": {
+      "text_lines": 5201,
+      "warning": 270,
+      "error": 16,
+      "ocr_issue_count": 477,
+      "misjudge_count": 0,
+      "screenshot_count": 1,
+      "active_hours": 27,
+      "rl_events": 510,
+      "verify_fail_count": 22,
+      "terminated_floor7_count": 297,
+      "avg_step_cost_expected": 1.1412,
+      "actions": {
+        "dig": 510
+      },
+      "top_messages": [
+        {
+          "msg": "[ITEM STATUS] items_available={'drill': 0, 'bomb': 0}",
+          "count": 431
+        },
+        {
+          "msg": "本地 OCR 辨識結果: 主頁面",
+          "count": 414
+        },
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 371
+        },
+        {
+          "msg": "[emulator-5558] 目前頁面: 未知",
+          "count": 175
+        },
+        {
+          "msg": "大腦偵測到獎勵介面: 領取",
+          "count": 65
+        },
+        {
+          "msg": "[emulator-5558] 目前頁面: 主頁面",
+          "count": 63
+        },
+        {
+          "msg": "Step 1: dig -> (6, 2)  cost=1.0",
+          "count": 58
+        },
+        {
+          "msg": "Step 1: dig -> (6, 3)  cost=1.0",
+          "count": 50
+        },
+        {
+          "msg": "偵測到車位倉庫 (ROI 判定)",
+          "count": 49
+        },
+        {
+          "msg": "[emulator-5558] 5554 仍忙碌，5558 休眠 5 分鐘後再檢查",
+          "count": 44
+        }
+      ]
+    },
+    "emulator-5560": {
+      "text_lines": 22731,
+      "warning": 1834,
+      "error": 379,
+      "ocr_issue_count": 7891,
+      "misjudge_count": 0,
+      "screenshot_count": 16,
+      "active_hours": 44,
+      "rl_events": 690,
+      "verify_fail_count": 44,
+      "terminated_floor7_count": 402,
+      "avg_step_cost_expected": 1.1652,
+      "actions": {
+        "dig": 690
+      },
+      "top_messages": [
+        {
+          "msg": "本地 OCR 辨識結果: 主頁面",
+          "count": 7695
+        },
+        {
+          "msg": "[ITEM STATUS] items_available={'drill': 0, 'bomb': 0}",
+          "count": 725
+        },
+        {
+          "msg": "A* Planning complete (nodes=2).",
+          "count": 536
+        },
+        {
+          "msg": "[emulator-5560] device config skip_wake=True，跳過喚醒",
+          "count": 395
+        },
+        {
+          "msg": "地獄之門: 尚未到達執行時間或已執行過",
+          "count": 391
+        },
+        {
+          "msg": "今日已執行過每日加速，跳過",
+          "count": 382
+        },
+        {
+          "msg": "沒有在主頁面，跳過雲端戰鬥",
+          "count": 376
+        },
+        {
+          "msg": "[emulator-5560] 今日已執行過競技場挑戰，跳過",
+          "count": 367
+        },
+        {
+          "msg": "[emulator-5560] 菇菇武道會: 檢查執行條件 - should=True, need_record=False",
+          "count": 361
+        },
+        {
+          "msg": "[emulator-5560] sea: 檢查執行條件 - should=False, need_record=False",
+          "count": 360
+        }
+      ]
+    }
+  }
+}
