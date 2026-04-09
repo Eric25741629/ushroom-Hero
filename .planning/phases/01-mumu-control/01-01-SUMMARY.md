@@ -1,4 +1,4 @@
-﻿# SUMMARY - Plan 01.1-01
+# SUMMARY - Plan 01-01
 
 ## What was built
 - Added `utils/mumu_control.py` with MuMu `control.exe` wrapper.

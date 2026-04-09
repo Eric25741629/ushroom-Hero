@@ -1,13 +1,13 @@
-﻿# Phase 10 Research: 雙週副本（週六/週日 20:00）MVP 自動化實作研究
+# Phase 4 Research: 雙週副本（週六/週日 20:00）MVP 自動化實作研究
 
 ## Research Scope
-本研究聚焦 Phase 10 MVP：
+本研究聚焦 Phase 4 MVP：
 - 僅在週六/週日 20:00 觸發雙週副本流程。
 - 覆蓋進入副本、自動戰鬥啟動、戰鬥補給維持、失敗復原到主畫面。
 - 不新增 OCR 訓練或 UI 大改。
 
 ## Existing Architecture Alignment
-- 目前 roadmap 的長線方向是「穩定性 + 排程 + 可觀測」，Phase 10 MVP 可作為 SCH/STAB 的垂直切片。
+- 目前 roadmap 的長線方向是「穩定性 + 排程 + 可觀測」，Phase 4 MVP 可作為 SCH/STAB 的垂直切片。
 - 既有流程中已存在多個 click/OCR 互動點，MVP 應避免重寫主流程，改以 wrapper 與子流程封裝落地。
 - 建議以「最小侵入」方式新增 `biweekly_instance` 任務模組，並接入現有主循環/任務入口。
 
@@ -126,9 +126,9 @@
 - 驗證一次完整成功 run 與至少一次失敗 recovery run 可被追溯。
 - 設定最小告警條件：連續 N 次 slot 失敗時提示人工介入。
 
-## Planning Notes for Phase 10
+## Planning Notes for Phase 4
 - 建議先以單裝置 MVP 上線，確認 2 個週末執行穩定後，再擴到多裝置。
-- Phase 10 的完成定義應包含：
+- Phase 4 的完成定義應包含：
   - 週六/週日 20:00 觸發正確且無重複。
   - 關鍵步驟重試 + timeout 生效。
   - 戰鬥迴圈可在可預期時間內退出。

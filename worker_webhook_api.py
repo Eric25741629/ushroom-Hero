@@ -58,6 +58,8 @@ def apply_remote_commands(ips, commands: dict):
             bot_state.set_skip_sleep(ip)
         if cmd.get("manual_release"):
             bot_state.set_manual_release(ip)
+        if cmd.get("force_sleep"):
+            bot_state.request_force_sleep(ip)
         if cmd.get("recover"):
             try:
                 reset_screen_settings(ip)

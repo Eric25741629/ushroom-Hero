@@ -1,4 +1,4 @@
-﻿---
+---
 phase: 10
 slug: 20-00
 status: draft
@@ -7,7 +7,7 @@ wave_0_complete: true
 created: 2026-03-15
 ---
 
-# Phase 10 - Validation Strategy
+# Phase 4 - Validation Strategy
 
 > Per-phase validation contract for feedback sampling during execution.
 
@@ -38,12 +38,12 @@ created: 2026-03-15
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 10-01-01 | 01 | 1 | SCH-01 | unit | `pytest -q tests/test_biweekly_scheduler.py::test_trigger_window_and_weekday` | no (W0) | pending |
-| 10-01-02 | 01 | 1 | SCH-01 | unit | `pytest -q tests/test_biweekly_scheduler.py::test_slot_dedupe_persistence` | no (W0) | pending |
-| 10-01-03 | 01 | 1 | STAB-02 | integration | `pytest -q tests/test_instance_flow_guards.py::test_safe_click_retry_timeout` | no (W0) | pending |
-| 10-02-01 | 02 | 2 | STAB-02 | integration | `pytest -q tests/test_instance_flow_guards.py::test_combat_loop_exit_conditions` | no (W0) | pending |
-| 10-02-02 | 02 | 2 | STAB-04 | integration | `pytest -q tests/test_instance_flow_guards.py::test_fail_safe_recovery_to_home` | no (W0) | pending |
-| 10-02-03 | 02 | 2 | STAB-04 | unit | `pytest -q tests/test_instance_flow_guards.py::test_structured_failure_logging_fields` | no (W0) | pending |
+| 04-01-01 | 01 | 1 | SCH-01 | unit | `pytest -q tests/test_biweekly_scheduler.py::test_trigger_window_and_weekday` | no (W0) | pending |
+| 04-01-02 | 01 | 1 | SCH-01 | unit | `pytest -q tests/test_biweekly_scheduler.py::test_slot_dedupe_persistence` | no (W0) | pending |
+| 04-01-03 | 01 | 1 | STAB-02 | integration | `pytest -q tests/test_instance_flow_guards.py::test_safe_click_retry_timeout` | no (W0) | pending |
+| 04-02-01 | 02 | 2 | STAB-02 | integration | `pytest -q tests/test_instance_flow_guards.py::test_combat_loop_exit_conditions` | no (W0) | pending |
+| 04-02-02 | 02 | 2 | STAB-04 | integration | `pytest -q tests/test_instance_flow_guards.py::test_fail_safe_recovery_to_home` | no (W0) | pending |
+| 04-02-03 | 02 | 2 | STAB-04 | unit | `pytest -q tests/test_instance_flow_guards.py::test_structured_failure_logging_fields` | no (W0) | pending |
 
 ---
 

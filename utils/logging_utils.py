@@ -5,6 +5,7 @@ import threading
 import atexit
 import errno
 import time
+import glob
 
 from logging.handlers import RotatingFileHandler
 
@@ -61,6 +62,7 @@ os.makedirs("logs", exist_ok=True)
 
 _logger_lock = threading.Lock()
 _startup_logs_rotated = False
+_ocr_logger_cache = {}
 
 
 def _build_rotated_log_path(log_path: str, stamp: str) -> str:
@@ -119,6 +121,18 @@ def _build_formatter() -> logging.Formatter:
     )
 
 
+def _purge_old_files(pattern: str, max_age_days: int) -> None:
+    cutoff_ts = time.time() - (max_age_days * 86400)
+    for path in glob.glob(pattern):
+        try:
+            if not os.path.isfile(path):
+                continue
+            if os.path.getmtime(path) < cutoff_ts:
+                os.remove(path)
+        except OSError:
+            continue
+
+
 def setup_logger_for_device(device_id: str) -> logging.Logger:
     """Create a per-device logger writing to logs/<device>.log and console."""
     safe_device_id = device_id.replace(":", "_").replace(" ", "_")
@@ -148,6 +162,41 @@ def setup_logger_for_device(device_id: str) -> logging.Logger:
 
         logger_obj.addHandler(file_handler)
         logger_obj.addHandler(console_handler)
+        return logger_obj
+
+
+def get_or_create_ocr_logger(device_id: str) -> logging.Logger:
+    """Create a per-device OCR trace logger with aggressive size and age limits."""
+    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
+    log_dir = os.path.join("logs", "ocr_trace")
+    os.makedirs(log_dir, exist_ok=True)
+
+    with _logger_lock:
+        cached = _ocr_logger_cache.get(safe_device_id)
+        if cached is not None:
+            return cached
+
+        logger_name = f"ocr_trace_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+
+        formatter = _build_formatter()
+        log_file = os.path.join(log_dir, f"{safe_device_id}.log")
+        file_handler = SafeRotatingFileHandler(
+            log_file,
+            maxBytes=512 * 1024,
+            backupCount=4,
+            encoding='utf-8',
+            mode='a'
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+
+        _purge_old_files(os.path.join(log_dir, f"{safe_device_id}.log*"), max_age_days=5)
+        _ocr_logger_cache[safe_device_id] = logger_obj
         return logger_obj
 
 
@@ -197,6 +246,23 @@ def get_thread_logger():
 
 def set_thread_logger(logger_instance):
     _thread_local.logger = logger_instance
+    logger_name = getattr(logger_instance, "name", "")
+    if logger_name.startswith("logger_"):
+        _thread_local.device_id = logger_name[len("logger_"):]
+
+
+def get_thread_device_id():
+    return getattr(_thread_local, "device_id", None)
+
+
+def log_ocr_trace(message: str) -> None:
+    device_id = get_thread_device_id()
+    if not device_id:
+        return
+    try:
+        get_or_create_ocr_logger(device_id).info(message)
+    except Exception:
+        return
 
 
 class LoggerProxy:

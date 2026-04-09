@@ -77,7 +77,7 @@
     .top-bar {
       display: flex;
       justify-content: space-between;
-      align-items: center;
+      align-items: flex-start;
       margin-bottom: 30px;
       padding: 0 10px 15px;
       border-bottom: 1px solid #333;
@@ -85,6 +85,18 @@
       gap: 10px;
     }
     h1 { margin: 0; font-size: 1.6em; display: flex; align-items: center; gap: 10px; }
+    .top-bar-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+    }
+    .top-bar-buttons {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     .ocr-badge {
       font-size: 0.55em;
       padding: 4px 8px;
@@ -96,6 +108,90 @@
     .ocr-badge.ok { background: var(--safe-color); color: #fff; }
     .ocr-badge.error { background: var(--danger-color); color: #fff; }
     .ocr-runtime { margin-left: 8px; font-size: 0.5em; color: #9ecbff; font-weight: normal; }
+    .program-info {
+      min-width: 320px;
+      max-width: 460px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(100, 181, 246, 0.35);
+      background: linear-gradient(180deg, rgba(25, 34, 49, 0.96), rgba(17, 24, 34, 0.98));
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+    .program-info:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.32);
+      border-color: rgba(158, 203, 255, 0.65);
+    }
+    .program-info:focus-visible {
+      outline: 2px solid rgba(158, 203, 255, 0.9);
+      outline-offset: 2px;
+    }
+    .program-info-title {
+      font-size: 0.78em;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #9ecbff;
+      margin-bottom: 8px;
+      font-weight: 700;
+    }
+    .program-info-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.82em;
+      line-height: 1.45;
+      margin-top: 4px;
+    }
+    .program-info-key {
+      color: var(--text-secondary);
+      flex: 0 0 auto;
+    }
+    .program-info-value {
+      color: #ffffff;
+      text-align: right;
+      word-break: break-word;
+      flex: 1 1 auto;
+    }
+    .program-info-row.fix .program-info-value {
+      color: #b7e3c0;
+    }
+    .program-info-hint {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid rgba(158, 203, 255, 0.16);
+      font-size: 0.72em;
+      color: #89a7c5;
+      text-align: right;
+    }
+    .program-info-modal {
+      max-width: 680px;
+    }
+    .program-info-modal .program-info {
+      min-width: 0;
+      max-width: none;
+      width: 100%;
+      cursor: default;
+      transform: none;
+    }
+    .program-info-modal .program-info:hover {
+      transform: none;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+      border-color: rgba(100, 181, 246, 0.35);
+    }
+    .program-info-modal .program-info-row {
+      align-items: flex-start;
+      font-size: 0.9em;
+      margin-top: 10px;
+    }
+    .program-info-modal .program-info-key {
+      min-width: 88px;
+    }
+    .program-info-modal .program-info-value {
+      text-align: left;
+      white-space: pre-wrap;
+    }
 
     .grid-container {
       display: grid;
@@ -187,6 +283,7 @@
     .btn-resume { background: var(--safe-color); color: #fff; }
     .btn-skip { background: var(--accent-color); color: #fff; }
     .btn-recover { background: #8d6e63; color: white; flex: 0 0 auto; width: 72px; }
+    .btn-force { background: #c62828; color: #fff; }
 
     .modal-overlay {
       display: none;
@@ -248,12 +345,29 @@
       padding: 12px;
       font-family: Consolas, monospace;
     }
+    .war-room-shell {
+      background: var(--card-bg);
+      border-radius: 10px;
+      padding: 10px;
+      border-top: 4px solid #d64f6c;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+    .war-room-frame {
+      width: 100%;
+      min-height: calc(100vh - 180px);
+      border: none;
+      border-radius: 8px;
+      background: #0f1725;
+    }
     @media (max-width: 820px) {
       body { padding-left: 20px; }
       .side-rail { width: 100%; height: auto; bottom: auto; flex-direction: row; }
       .side-rail.expanded { width: 100%; }
       .labeler-grid { grid-template-columns: 1fr; }
       .top-bar { margin-top: 60px; }
+      .top-bar-right { width: 100%; align-items: stretch; }
+      .program-info { min-width: 0; width: 100%; max-width: none; }
+      .top-bar-buttons { justify-content: flex-start; }
     }
   </style>
 </head>
@@ -261,6 +375,7 @@
   <div id="sideRail" class="side-rail">
     <button class="side-toggle" onclick="toggleSidebar()">☰</button>
     <button id="navDashboard" class="nav-btn active" onclick="switchPage('dashboard')">🏠 <span class="nav-label">主控頁</span></button>
+    <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
   </div>
 
@@ -271,12 +386,30 @@
       <span id="ocr-status" class="ocr-badge">OCR 檢查中...</span>
       <span id="ocr-runtime" class="ocr-runtime"></span>
     </h1>
-    <div style="display:flex; gap:10px; flex-wrap:wrap;">
-      <button class="btn btn-skip" style="padding:5px 14px;" onclick="openOcrSettings()">設定 OCR</button>
-      <button class="btn btn-pause" style="padding:5px 14px; background:#444;color:#fff;" onclick="refreshDevices()">重啟 ADB</button>
-      <button class="btn btn-pause" style="padding:5px 14px;" onclick="globalAction('pause')">全部暫停</button>
-      <button class="btn btn-resume" style="padding:5px 14px;" onclick="globalAction('resume')">全部恢復</button>
-      <button class="btn btn-skip" style="padding:5px 14px;" onclick="globalAction('skip')">全部跳過睡眠</button>
+    <div class="top-bar-right">
+      <div class="program-info" role="button" tabindex="0" aria-label="查看程式資訊詳情" onclick="openProgramInfoModal()" onkeydown="handleProgramInfoKeydown(event)">
+        <div class="program-info-title">程式資訊</div>
+        <div class="program-info-row">
+          <span class="program-info-key">版本號</span>
+          <span class="program-info-value">{{ program_info.version }}</span>
+        </div>
+        <div class="program-info-row">
+          <span class="program-info-key">git 更新</span>
+          <span class="program-info-value">{{ program_info.git_time }}</span>
+        </div>
+        <div class="program-info-row fix">
+          <span class="program-info-key">修復 bug/優化</span>
+          <span class="program-info-value">{{ program_info.fix_note }}</span>
+        </div>
+        <div class="program-info-hint">點擊查看詳情</div>
+      </div>
+      <div class="top-bar-buttons">
+        <button class="btn btn-skip" style="padding:5px 14px;" onclick="openOcrSettings()">設定 OCR</button>
+        <button class="btn btn-pause" style="padding:5px 14px; background:#444;color:#fff;" onclick="refreshDevices()">重啟 ADB</button>
+        <button class="btn btn-pause" style="padding:5px 14px;" onclick="globalAction('pause')">全部暫停</button>
+        <button class="btn btn-resume" style="padding:5px 14px;" onclick="globalAction('resume')">全部恢復</button>
+        <button class="btn btn-skip" style="padding:5px 14px;" onclick="globalAction('skip')">全部跳過睡眠</button>
+      </div>
     </div>
   </div>
 
@@ -345,6 +478,21 @@
     </div>
   </div>
 
+  <div id="page-war-room" class="page">
+    <div class="top-bar">
+      <h1><span>跨界車位戰情室</span></h1>
+    </div>
+    <div class="war-room-shell">
+      <iframe
+        id="warRoomFrame"
+        class="war-room-frame"
+        title="跨界車位戰情室"
+        loading="lazy"
+        src=""
+      ></iframe>
+    </div>
+  </div>
+
   <div id="configModal" class="modal-overlay">
     <div class="modal">
       <div class="modal-header">裝置設定</div>
@@ -408,8 +556,10 @@
         </div>
         <div class="action-bar" style="margin-top:10px;">
           <button class="btn btn-skip" type="button" onclick="startWebLogin()">在中控開啟手動登入</button>
+          <button class="btn btn-skip" type="button" onclick="backupWebState()">備份 Cookies</button>
         </div>
         <div id="webLoginStatusText" style="margin-top:8px; color:#9fb3c8; font-size:0.86em;">尚未啟動網頁登入</div>
+        <div style="margin-top:4px; color:#7f97b6; font-size:0.78em;">預設會沿用舊 cookies/state；若沒有舊檔才會建立新的。</div>
       </div>
 
       <div class="form-group">
@@ -511,10 +661,35 @@
     </div>
   </div>
 
+  <div id="programInfoModal" class="modal-overlay" onclick="closeProgramInfoModal(event)">
+    <div class="modal program-info-modal">
+      <div class="modal-header">程式資訊詳情</div>
+      <div class="program-info">
+        <div class="program-info-title">程式資訊</div>
+        <div class="program-info-row">
+          <span class="program-info-key">版本號</span>
+          <span class="program-info-value">{{ program_info.version }}</span>
+        </div>
+        <div class="program-info-row">
+          <span class="program-info-key">git 更新</span>
+          <span class="program-info-value">{{ program_info.git_time }}</span>
+        </div>
+        <div class="program-info-row fix">
+          <span class="program-info-key">修復 bug/優化</span>
+          <span class="program-info-value">{{ program_info.fix_note }}</span>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" onclick="closeProgramInfoModal()">關閉</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentStatus = {};
     let progressCache = {};
     let currentPage = 'dashboard';
+    let warRoomLoaded = false;
 
     function formatTime(ts) {
       if (!ts) return '--:--:--';
@@ -570,14 +745,37 @@
     function switchPage(page) {
       currentPage = page;
       document.getElementById('page-dashboard').classList.toggle('active', page === 'dashboard');
+      document.getElementById('page-war-room').classList.toggle('active', page === 'war-room');
       document.getElementById('page-labeler').classList.toggle('active', page === 'labeler');
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
+      document.getElementById('navWarRoom').classList.toggle('active', page === 'war-room');
       document.getElementById('navLabeler').classList.toggle('active', page === 'labeler');
       if (page === 'labeler') {
         loadLabelerConfig();
         fetchLabelerStatus();
+      } else if (page === 'war-room') {
+        if (!warRoomLoaded) {
+          document.getElementById('warRoomFrame').src = '/war-room/';
+          warRoomLoaded = true;
+        }
       } else {
         fetchStatus();
+      }
+    }
+
+    function openProgramInfoModal() {
+      document.getElementById('programInfoModal').classList.add('active');
+    }
+
+    function closeProgramInfoModal(event) {
+      if (event && event.target !== event.currentTarget) return;
+      document.getElementById('programInfoModal').classList.remove('active');
+    }
+
+    function handleProgramInfoKeydown(event) {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openProgramInfoModal();
       }
     }
 
@@ -847,7 +1045,7 @@
 
         const actionBar = document.getElementById(`actions-${ip}`);
         const showWebLaunch = info.backend === 'web_h5';
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-force`;
         if (card.dataset.actionKey !== actionKey) {
           card.dataset.actionKey = actionKey;
           actionBar.innerHTML = `
@@ -857,6 +1055,7 @@
             }
             ${showWebLaunch ? `<button class="btn btn-skip" onclick="launchWebPage('${ip}')">開啟網頁</button>` : ''}
             <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
+            <button class="btn btn-force" onclick="forceSleep('${ip}')">強制休眠</button>
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
           `;
         }
@@ -904,7 +1103,10 @@
         web_clear_cookies_on_start: document.getElementById('chkWebClearCookies').checked,
         web_stop_mode: document.getElementById('editWebStopMode').value || 'keep_page',
         web_viewport_width: parseInt(document.getElementById('editWebViewportWidth').value || '540', 10),
-        web_viewport_height: parseInt(document.getElementById('editWebViewportHeight').value || '960', 10)
+        web_viewport_height: parseInt(document.getElementById('editWebViewportHeight').value || '960', 10),
+        prefer_existing_state: true,
+        backup_before_open: true,
+        persist_settings: false
       };
       if (!payload.web_url) {
         alert('請先填寫 Web 登入網址');
@@ -921,11 +1123,32 @@
         if (resp.status === 409) {
           alert('網頁登入流程已在執行中');
         } else {
-          alert('已啟動手動登入流程，請到彈出的瀏覽器完成登入後按 Resume。');
+          alert('已啟動手動登入流程（優先沿用舊 cookies/state，並自動先做備份）。');
         }
         await pollWebLoginStatus(ip);
       } catch (e) {
         alert('啟動網頁登入失敗: ' + e);
+      }
+    }
+
+    async function backupWebState() {
+      const ip = document.getElementById('editIp').value;
+      if (!ip) return;
+      const payload = {
+        web_state_file: document.getElementById('editWebStateFile').value.trim() || 'auth_state/{device_id}.json'
+      };
+      try {
+        const resp = await fetch(`/api/web_backup_state/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const result = await resp.json();
+        if (!resp.ok || result.status === 'error') throw new Error(result.message || 'backup failed');
+        alert(`備份完成\n來源: ${result.state_file}\n備份: ${result.backup_file}`);
+        await pollWebLoginStatus(ip);
+      } catch (e) {
+        alert('備份 cookies/state 失敗: ' + e);
       }
     }
 
@@ -1086,6 +1309,11 @@
     async function skipSleep(ip) {
       if (!confirm(`確定讓 [${ip}] 跳過本次睡眠嗎？`)) return;
       callApi(`/api/skip_sleep/${ip}`);
+    }
+
+    async function forceSleep(ip) {
+      if (!confirm(`確定要對 [${ip}] 強制中斷當前任務並直接進入休眠嗎？\n這會優先於目前執行流程。`)) return;
+      callApi(`/api/force_sleep/${ip}`);
     }
 
     async function recoverScreen(ip) {

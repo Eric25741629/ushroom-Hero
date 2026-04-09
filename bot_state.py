@@ -270,6 +270,8 @@ def check_refresh_needed() -> bool:
 _skip_sleep_flags: Dict[str, bool] = {}
 # manual-hold one-shot release flags
 _manual_release_flags: Dict[str, bool] = {}
+# force-sleep one-shot flags
+_force_sleep_flags: Dict[str, bool] = {}
 
 # Web login / launch request mailbox.
 _web_launch_requests: Dict[str, Dict[str, Any]] = {}
@@ -289,6 +291,34 @@ def set_skip_sleep(ip: str):
     """
     with _global_lock:
         _skip_sleep_flags[ip] = True
+
+
+def request_force_sleep(ip: str, reason: str = "強制休眠"):
+    """Request the device to stop current work and enter sleep as soon as possible."""
+    with _global_lock:
+        _force_sleep_flags[ip] = True
+        _skip_sleep_flags.pop(ip, None)
+        _manual_release_flags.pop(ip, None)
+        req = _web_launch_requests.get(ip)
+        if req and req.get("status") == "pending":
+            req["status"] = "cancelled"
+            req["completed_at"] = time.time()
+            req["last_message"] = reason
+        if ip in _states:
+            st = _states[ip]
+            st["paused"] = False
+            st["task"] = "強制休眠"
+            st["step"] = reason
+            st.pop("next_wake_at", None)
+            st["last_update"] = time.time()
+    if ip in _pause_events:
+        _pause_events[ip].set()
+
+
+def check_force_sleep(ip: str) -> bool:
+    """Atomically check and consume the force-sleep flag for `ip`."""
+    with _global_lock:
+        return bool(_force_sleep_flags.pop(ip, False))
 
 
 def clear_skip_sleep(ip: str):
@@ -544,6 +574,7 @@ def clear_offline_devices():
             _states.pop(ip, None)
             _pause_events.pop(ip, None)
             _skip_sleep_flags.pop(ip, None)
+            _force_sleep_flags.pop(ip, None)
         with _global_lock:
             _locks.pop(ip, None)
 
@@ -576,5 +607,6 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
                 _states.pop(ip, None)
                 _pause_events.pop(ip, None)
                 _skip_sleep_flags.pop(ip, None)
+                _force_sleep_flags.pop(ip, None)
                 with _global_lock:
                     _locks.pop(ip, None)

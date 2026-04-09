@@ -12,9 +12,17 @@ from worker_webhook_api import apply_remote_commands, normalize_master_url, reso
 _worker_sync_thread_started = False
 
 
+def _get_float(config: dict, key: str, default: float, minimum: float = 0.1) -> float:
+    try:
+        return max(minimum, float(config.get(key, default)))
+    except Exception:
+        return max(minimum, float(default))
+
+
 def _worker_sync_loop():
     print("[WorkerSync] 啟動 Worker->Master 狀態同步執行緒")
     next_poll_at = 0.0
+    next_report_at = 0.0
     while True:
         try:
             g = config_manager.get_global_config()
@@ -27,6 +35,8 @@ def _worker_sync_loop():
                 time.sleep(2)
                 continue
             webhook_url = resolve_worker_webhook_url(master_url, worker_id)
+            sync_timeout_sec = _get_float(g, "worker_sync_timeout_sec", 10.0, minimum=1.0)
+            failure_backoff_sec = _get_float(g, "worker_sync_failure_backoff_sec", 6.0, minimum=1.0)
             states = bot_state.get_all_states()
             try:
                 adb_now = set(get_adb_devices())
@@ -54,17 +64,20 @@ def _worker_sync_loop():
                     "paused": st.get("paused", False),
                     "logs": st.get("logs", []),
                 }
-            try:
-                requests.post(
-                    f"{master_url}/api/report_status",
-                    json=payload,
-                    timeout=3.5,
-                    verify=False,
-                )
-            except Exception as e:
-                print(f"[WorkerSync] 回報失敗: {e}")
-
             now = time.time()
+            if now >= next_report_at:
+                try:
+                    requests.post(
+                        f"{master_url}/api/report_status",
+                        json=payload,
+                        timeout=sync_timeout_sec,
+                        verify=False,
+                    )
+                    next_report_at = now + 1.2
+                except Exception as e:
+                    print(f"[WorkerSync] 回報失敗: {e}")
+                    next_report_at = now + failure_backoff_sec
+
             poll_interval = 6.0 if webhook_url else 1.2
             if now >= next_poll_at:
                 next_poll_at = now + poll_interval
@@ -72,7 +85,7 @@ def _worker_sync_loop():
                     resp = requests.post(
                         f"{master_url}/api/poll_commands",
                         json={"worker_id": worker_id, "ips": ips},
-                        timeout=3.5,
+                        timeout=sync_timeout_sec,
                         verify=False,
                     )
                     if resp.ok:
@@ -82,6 +95,7 @@ def _worker_sync_loop():
                             bot_state.set_refresh_needed()
                 except Exception as e:
                     print(f"[WorkerSync] 拉取指令失敗: {e}")
+                    next_poll_at = now + failure_backoff_sec
         except Exception as e:
             print(f"[WorkerSync] 未預期錯誤: {e}")
         time.sleep(1.2)

@@ -1,3 +1,5 @@
+from typing import Optional
+
 import numpy as np
 from utils.logging_utils import logger
 
@@ -11,6 +13,13 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
     Determines the current game stage based on OCR text.
     """
     full_text = "".join(ocr_str)
+
+    # Login-conflict popup text varies across builds/OCR results.
+    if (
+        ("另一個地方" in full_text and ("登入" in full_text or "登錄" in full_text))
+        or "被迫下線" in full_text
+    ):
+        return "異地登錄"
 
     # 0. 優先判定「車位倉庫」：此頁常疊在主頁元素上，若先判主頁面容易誤判
     if ("車位倉庫" in full_text and
@@ -30,6 +39,11 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
     # 2. 其他頁面判定
     stage_keywords = {
         "你的帳號在另一個地方登錄": "異地登錄",
+        "你的帳號在另一個地方登入": "異地登錄",
+        "您的帳號在另一個地方登錄": "異地登錄",
+        "您的帳號在另一個地方登入": "異地登錄",
+        "您已被迫下線": "異地登錄",
+        "被迫下線": "異地登錄",
         "退出遊戲": "異地登錄",
         "隱藏": "隱藏",
         "前往活動": "前往活動",
@@ -97,11 +111,12 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
 
 import img_tools
 
-def get_stage(d, Cnn_model, easyocr_reader=None):
+def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = None):
     """ 
     截圖並判斷目前所在的頁面 (優先使用遠端大腦判定)。
     """
-    img = d.screenshot(format='opencv')
+    if img is None:
+        img = d.screenshot(format='opencv')
     
     # --- 本地優先判定 (Local first) ---
     # 1. 優先檢查特定區域 (ROI) 的彈窗標題

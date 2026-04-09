@@ -11,6 +11,7 @@ import time
 import random
 import logging
 from typing import Tuple
+from PIL import Image
 import img_tools
 from tools import click_white
 from adb_operations import connect_u2_with_retries, start_game_by_icon
@@ -74,7 +75,7 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
     return False
 
 
-def resolve_stage_until_stable(d, ip: str, Cnn_model=None, reward_fn=None, logger: logging.Logger = None, max_chain: int = 6) -> str:
+def resolve_stage_until_stable(d, ip: str, Cnn_model=None, reward_fn=None, logger: logging.Logger = None, max_chain: int = 6, img=None) -> str:
     """Use one state-detection path for startup and normal loops."""
     if logger is None:
         logger = logging.getLogger(__name__)
@@ -83,8 +84,10 @@ def resolve_stage_until_stable(d, ip: str, Cnn_model=None, reward_fn=None, logge
 
     stage = "未知"
     # Startup and normal loops both use the same resolver so popup combinations are handled consistently.
+    current_img = img
     for _ in range(max_chain):
-        stage = get_stage(d, Cnn_model)
+        stage = get_stage(d, Cnn_model, img=current_img)
+        current_img = None
         if _handle_known_stage_popup(d, ip, stage, reward_fn=reward_fn, logger=logger):
             continue
         return stage
@@ -243,14 +246,15 @@ def check_on_line(Cnn_model):
     start_time = time.time()
     while (time.time() - start_time) < 60:
         try:
-            screen_stage = cnn_model_module.predict_image(
-                Cnn_model, d.screenshot(format='pillow'))
+            current_img = d.screenshot(format='opencv')
+            current_pil = Image.fromarray(current_img[..., ::-1])
+            screen_stage = cnn_model_module.predict_image(Cnn_model, current_pil)
             logger.info(f"目前頁面: {screen_stage}")
             if screen_stage == "main":
                 logger.info("in game")
                 time.sleep(5)
                 break
-            elif cnn_model_module.predict_image(Cnn_model, d.screenshot(format='pillow')) == "reward":
+            elif screen_stage == "reward":
                 reward(d)
             else:
                 logger.info("not in game")
@@ -262,7 +266,9 @@ def check_on_line(Cnn_model):
             if not is_web_backend:
                 d.app_stop("com.mxdzz.tw.and")
             return True
-    if cnn_model_module.predict_image(Cnn_model, d.screenshot(format='pillow')) == "main":
+    current_img = d.screenshot(format='opencv')
+    current_pil = Image.fromarray(current_img[..., ::-1])
+    if cnn_model_module.predict_image(Cnn_model, current_pil) == "main":
         d.click(0.05, 0.01)
         time.sleep(1)
         d.click(54, 364)
@@ -270,8 +276,8 @@ def check_on_line(Cnn_model):
         
         # 使用 PaddleOCR 進行判定
         # 區域調整為包含文字可能出現的範圍
-        img = d.screenshot(format='opencv')[220:270, 180:380]
-        results = img_tools.get_all_text(img)
+        stage_ocr_img = current_img[220:270, 180:380]
+        results = img_tools.get_all_text(stage_ocr_img)
         logger.info(f"線上狀態辨識結果: {results}")
         
         full_text = "".join(results)
@@ -290,7 +296,7 @@ def check_on_line(Cnn_model):
             logger.info("未偵測到明確狀態，預設判定為在線 (busy)")
             d.app_stop("com.mxdzz.tw.and")
             return True
-    elif get_stage(d, Cnn_model) == "異地登錄":
+    elif get_stage(d, Cnn_model, img=current_img) == "異地登錄":
         d.app_stop("com.mxdzz.tw.and")
         time.sleep(5*60)
         return False

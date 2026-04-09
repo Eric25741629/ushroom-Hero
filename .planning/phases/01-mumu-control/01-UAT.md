@@ -1,7 +1,7 @@
 ﻿---
 status: diagnosed
-phase: 01.1-mumu-control-exe-launch-shutdown-restart-show-window-hide-window-emulator
-source: 01.1-01-SUMMARY.md, 01.1-02-SUMMARY.md
+phase: 01-mumu-control
+source: 01-01-SUMMARY.md, 01-02-SUMMARY.md
 started: 2026-03-13T15:20:08.2556131Z
 updated: 2026-03-15T08:55:00Z
 ---
@@ -48,4 +48,4 @@ skipped: 0
   root_cause: "控制器實作僅搜尋 control.exe，但實際可控執行檔只有 MuMuManager.exe 固定路徑，導致命令無法下發。"
   artifacts:`r`n    - path: "utils/mumu_control.py"`r`n      issue: "discover_control_exe() 未包含唯一可用的 MuMuManager.exe 路徑"
   missing:`r`n    - "將執行檔探索改為固定支援 MuMuManager.exe 路徑"`r`n    - "加入測試驗證僅 MuMuManager.exe 存在時仍可控制"`r`n    - "記錄實際採用 executable 路徑以便現場驗證"
-  debug_session: ".planning/debug/01.1-mumu-manager-only-path.md"
+  debug_session: ".planning/debug/01-mumu-manager-only-path.md"

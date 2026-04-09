@@ -13,3 +13,15 @@ miner/.vscode/settings.json
 OCR/*
 playwright_profile_5560/*
 playwright_profile_fresh/*
+.env
+.mcp.json
+auth_state/backups/
+.runtime/
+reports/event_index/
+find_img/
+ocr_fails/
+.planning/*.bak-*
+*.sync-conflict-*
+.claude/
+*/utils/__pycache__/*
+*/__pycache__/*

@@ -1,8 +1,8 @@
-﻿# Phase 01.1: MuMu 模擬器管理與卡死自動重啟 - Context
+# Phase 1: MuMu 模擬器管理與卡死自動重啟 - Context
 
 **Gathered:** 2026-03-13
 **Status:** Ready for planning
-**Source:** User clarification in $gsd-plan-phase 01.1
+**Source:** User clarification in $gsd-plan-phase 1
 
 <domain>
 ## Phase Boundary
@@ -59,5 +59,5 @@
 
 ---
 
-*Phase: 01.1-mumu-control-exe-launch-shutdown-restart-show-window-hide-window-emulator*
+*Phase: 01-mumu-control*
 *Context gathered: 2026-03-13 via user clarification*

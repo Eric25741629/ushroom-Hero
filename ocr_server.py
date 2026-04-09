@@ -11,6 +11,7 @@ import traceback
 import threading
 import queue
 import itertools
+from pathlib import Path
 
 app = Flask(__name__)
 ocr_lock = threading.Lock()  # 初始化鎖
@@ -134,8 +135,14 @@ OCR_WORKERS = max(1, int(os.environ.get("OCR_WORKERS", "1")))
 OCR_INFER_TIMEOUT = float(os.environ.get("OCR_INFER_TIMEOUT", "30"))
 
 OCR_ENGINE_CONFIG = {
-    "text_recognition_model_dir": r"A:\OCR_model\v2",
-    "text_detection_model_dir": r"A:\OCR_model\det_v2",
+    "text_recognition_model_dir": os.environ.get(
+        "OCR_TEXT_RECOGNITION_MODEL_DIR",
+        str(Path(__file__).resolve().parent / "OCR_model" / "v2"),
+    ),
+    "text_detection_model_dir": os.environ.get(
+        "OCR_TEXT_DETECTION_MODEL_DIR",
+        str(Path(__file__).resolve().parent / "OCR_model" / "det_v2"),
+    ),
     "use_doc_orientation_classify": False,
     "use_doc_unwarping": False,
     "use_textline_orientation": False,

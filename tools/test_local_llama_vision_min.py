@@ -8,7 +8,8 @@ import requests
 # 只要改這三個
 ENDPOINT = "http://100.64.0.7:1234/v1/chat/completions"
 MODEL = "qwen/qwen3.5-9b"
-IMAGE_PATH = r"A:\ocr_fails\now_stage_low_confidence_0.060_1753959214881.jpg"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+IMAGE_PATH = str(PROJECT_ROOT / "ocr_fails" / "now_stage_low_confidence_0.060_1753959214881.jpg")
 
 
 def main():

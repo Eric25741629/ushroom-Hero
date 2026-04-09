@@ -1,4 +1,4 @@
-﻿# Phase 10: 雙週副本（週六/週日 20:00）自動開啟與戰鬥補給穩定化 - Context
+# Phase 4: 雙週副本（週六/週日 20:00）自動開啟與戰鬥補給穩定化 - Context
 
 **Gathered:** 2026-03-15
 **Status:** Ready for planning
@@ -51,5 +51,5 @@
 
 ---
 
-*Phase: 10-20-00*
+*Phase: 04-biweekly-dungeon*
 *Context gathered: 2026-03-15 via direct user constraints*

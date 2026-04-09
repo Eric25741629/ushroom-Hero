@@ -1,4 +1,4 @@
-﻿# SUMMARY - Plan 10-02
+# SUMMARY - Plan 04-02
 
 ## What was built
 - Added `run_biweekly_bounty_road_single(...)` in `new_battle.py` with deterministic combat loop exit conditions:

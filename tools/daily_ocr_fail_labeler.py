@@ -106,6 +106,62 @@ def extract_json_object_from_text(text: str) -> dict | None:
         return None
 
 
+def extract_content_from_response(data: dict) -> str:
+    """
+    Accept multiple OpenAI-compatible response shapes and return text content.
+    Supports:
+    - chat.completions: {"choices":[{"message":{"content":"..."}}]}
+    - message.content as list blocks
+    - responses API: {"output_text":"..."} or {"output":[...]}
+    """
+    if not isinstance(data, dict):
+        return ""
+
+    output_text = data.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices:
+        msg_obj = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if isinstance(msg_obj, dict):
+            content = msg_obj.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+            if isinstance(content, list):
+                parts = []
+                for item in content:
+                    if isinstance(item, dict):
+                        text = item.get("text")
+                        if isinstance(text, str) and text.strip():
+                            parts.append(text.strip())
+                if parts:
+                    return "\n".join(parts).strip()
+            reasoning = msg_obj.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning.strip()
+
+    output = data.get("output")
+    if isinstance(output, list):
+        parts = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content = item.get("content")
+            if isinstance(content, list):
+                for c in content:
+                    if isinstance(c, dict):
+                        text = c.get("text") or c.get("output_text")
+                        if isinstance(text, str) and text.strip():
+                            parts.append(text.strip())
+            elif isinstance(content, str) and content.strip():
+                parts.append(content.strip())
+        if parts:
+            return "\n".join(parts).strip()
+
+    return ""
+
+
 def query_llama_has_text(
     *,
     image_path: Path,
@@ -166,10 +222,12 @@ def query_llama_has_text(
                     raise RuntimeError(f"variant#{variant_idx} HTTP {resp.status_code}: {body}")
 
                 data = resp.json()
-                msg_obj = data["choices"][0]["message"]
-                content = (msg_obj.get("content") or "").strip()
+                content = extract_content_from_response(data)
                 if not content:
-                    content = (msg_obj.get("reasoning_content") or "").strip()
+                    keys = ",".join(sorted(data.keys()))
+                    raise RuntimeError(
+                        f"variant#{variant_idx} response missing choices/content; top_keys={keys}"
+                    )
 
                 try:
                     parsed = parse_json_response(content)

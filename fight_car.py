@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import json
 import os
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import json
 import time
@@ -77,12 +78,13 @@ def cut_img(raw_img):
 
 def _save_ocr_fail(block_img, who_text, time_text, reason, idx):
     try:
-        base_dir = r"A:\ocr_fails\fight_car"
+        project_root = Path(__file__).resolve().parent
+        base_dir = project_root / "ocr_fails" / "fight_car"
         os.makedirs(base_dir, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         prefix = f"row_{idx:02d}_{ts}"
-        img_path = os.path.join(base_dir, f"{prefix}.png")
-        meta_path = os.path.join(base_dir, f"{prefix}.json")
+        img_path = str(base_dir / f"{prefix}.png")
+        meta_path = str(base_dir / f"{prefix}.json")
 
         if block_img is not None and block_img.size > 0:
             cv2.imwrite(img_path, block_img)

@@ -925,7 +925,7 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     
     # 初始點擊
     click_and_wait(d, 447, 801, 2)
-    click_and_wait(d, 276, 636, 1)
+    click_and_wait(d, 281, 636, 1)
     
     while time.time() - start_time < times:
         # 記錄連續跳過不完整 OCR 的次數，若超過上限就結束整個開裝流程
@@ -1045,7 +1045,7 @@ def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAUL
     - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合），
                           若為 True，則在比較詞條時將 `連` 與 `爆` 視為一個整體
     """
-    click_and_wait(d, 276, 721, 1)
+    click_and_wait(d, 281, 721, 1)
     click_and_wait(d, 268, 869, 1)
     click_and_wait(d, 282, 584, 1)
     
@@ -1223,7 +1223,7 @@ def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAUL
         print("警告：無法重新識別階段，點擊第一個")
         click_and_wait(d, 281, 350, 1)
         
-    click_and_wait(d, 276, 721, 1)
+    click_and_wait(d, 281, 721, 1)
     click_and_wait(d, 268, 869, 1)
     click_and_wait(d, 441, 805, 1)
     click_and_wait(d, 271, 634, 1)

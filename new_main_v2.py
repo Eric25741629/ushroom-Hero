@@ -106,6 +106,7 @@ from runtime_services.device_scan_service import (
     use_phone_ocr_lamp_mode,
 )
 from runtime_services.device_runtime_service import (
+    ForceSleepRequested,
     handle_connect_failure,
     is_emulator_serial,
     is_recoverable_connect_error,
@@ -184,12 +185,19 @@ class StartupBypassError(Exception):
     pass
 
 
-def get_stage_with_check(d, ip, Cnn_model):
+def get_stage_with_check(d, ip, Cnn_model, img=None):
     """
     使用與啟動流程相同的狀態判斷器。
     先清掉已知首頁彈窗，再回傳穩定 stage。
     """
-    stage = resolve_stage_until_stable(d, ip, Cnn_model=Cnn_model, reward_fn=reward, logger=logger)
+    stage = resolve_stage_until_stable(
+        d,
+        ip,
+        Cnn_model=Cnn_model,
+        reward_fn=reward,
+        logger=logger,
+        img=img,
+    )
     if stage == "異地登錄":
         logger.warning(f"[{ip}] 全域偵測到異地登錄，強制停止遊戲")
         d.app_stop("com.mxdzz.tw.and")
@@ -205,6 +213,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
     d_orig = None
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
+    force_sleep_now = False
     
     try:
         # 為該設備設定獨立的 logger（按 IP 分檔），先建立 logger 以便連線階段可記錄
@@ -277,6 +286,8 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         )
 
         while (1):
+            if bot_state.check_force_sleep(ip):
+                raise ForceSleepRequested("force sleep requested from dashboard")
             if handle_pending_web_launch(ip, d, backend_kind, logger):
                 continue
             process_online_check_requests(ip, Cnn_model, logger, check_on_line)
@@ -358,7 +369,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 if check_in_game(d) :
                     logger.debug(f"[{ip}] 已確認在遊戲中")
                     # 即使在遊戲中，也要檢查是否有「放置獎勵」或「領取」彈窗阻擋
-                    stage_check = get_stage_with_check(d, ip, Cnn_model)
+                    stage_check = get_stage_with_check(d, ip, Cnn_model, img=img)
                     if stage_check in ["放置獎勵", "離線獎勵", "領取"]:
                         logger.info(f"[{ip}] 偵測到 {stage_check} 彈窗，執行自動領取...")
                         reward(d)
@@ -470,8 +481,8 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 # if stage == "主頁面":
                 #     status = manager.check_and_park(protect=True)
 
-                logger.debug(f"[{ip}] 確認家族任務資格：主頁面={get_stage_with_check(d, ip, Cnn_model) == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
                 stage = get_stage_with_check(d, ip, Cnn_model)
+                logger.debug(f"[{ip}] 確認家族任務資格：主頁面={stage == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
                 if stage == "主頁面" :
                     bot_state.update_state(ip, task="家族任務", step="執行中")
                     family_manager.go_to_family()
@@ -797,6 +808,17 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 else:
                     d.app_stop("com.mxdzz.tw.and")
                 
+            except ForceSleepRequested as e:
+                force_sleep_now = True
+                sleep_policy = "force_sleep"
+                sleep_reason = "強制休眠"
+                logger.warning(f"[{ip}] 收到強制休眠請求，終止當前任務並進入休眠: {e}")
+                try:
+                    if d is not None and backend_kind != "web_h5":
+                        d.app_stop("com.mxdzz.tw.and")
+                except Exception as stop_err:
+                    logger.debug(f"[{ip}] force sleep app_stop skipped/failed: {stop_err}")
+
             except StartupBypassError as e:
                 forced_wake_ts = time.time() + 1800
                 sleep_policy = "startup_bypass_30m"
@@ -916,6 +938,8 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                     f"[{ip}] 套用強制休眠策略: reason={sleep_reason}, policy={sleep_policy}, "
                     f"預計休眠 {sleep_duration/60:.1f} 分鐘"
                 )
+            elif force_sleep_now:
+                logger.info(f"[{ip}] 已強制中斷當前任務，將直接進入休眠流程，預計休眠 {sleep_duration/60:.1f} 分鐘")
             elif '7fe98fc6' in ip:
                 logger.info(f"[{ip}] 裝置為 7fe98fc6，設定為每小時喚醒一次，預計休眠 {sleep_duration/60:.1f} 分鐘")
             else:

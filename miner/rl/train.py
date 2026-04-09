@@ -15,9 +15,12 @@ import numpy as np
 from simplecnn import SimpleCNN, resize_size
 
 
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[1] / 'dataset' / 'mines'
+
+
 def parse_args():
     p = argparse.ArgumentParser(description='Train SimpleCNN on mines dataset')
-    p.add_argument('--data-dir', type=str, default=r'A:\菇勇者全自動掛機\miner\dataset\mines',
+    p.add_argument('--data-dir', type=str, default=str(DEFAULT_DATA_DIR),
                    help='root of dataset with class subfolders')
     p.add_argument('--epochs', type=int, default=10)
     p.add_argument('--batch-size', type=int, default=32)

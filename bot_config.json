@@ -1,81 +1,44 @@
 {
     "devices": {
-        "emulator-5560": {
-            "name": "emulator-5560",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "online_check_interval": 5,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "skip_wake": false,
-            "wake_blackout_hours": "7",
-            "mining_duration_min": 6,
-            "backend": "web_h5",
-            "web_url": "https://mushroomh5.acenetgame.com",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_stop_mode": "close_browser",
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "backend_display_id": ""
-        },
-        "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
-            "name": "我的手機",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "online_check_interval": 5,
-            "lamp_check_interval": 1,
-            "lamp_duration_sec": 1200,
-            "mining_duration_min": 10
-        },
         "emulator-5554": {
             "name": "emulator-5554",
             "backend": "web_h5",
-            "backend_display_id": "emulator-5554",
-            "web_url": "https://mushroomh5.acenetgame.com",
+            "backend_display_id": "",
+            "web_url": "https://mushroomh5.acenetgame.com/",
             "web_canvas_selector": "canvas",
             "web_profile_dir": "playwright_profile/{device_id}",
             "web_state_file": "auth_state/{device_id}.json",
             "web_channel": "chrome",
             "web_headless": false,
+            "web_clear_cookies_on_start": false,
             "web_viewport_width": 540,
             "web_viewport_height": 960,
+            "web_stop_mode": "close_browser",
             "enable_farm": true,
             "enable_arena": true,
             "enable_mining": true,
             "enable_dungeon": true,
+            "enable_shop_manager": true,
+            "enable_dungeon_manager": true,
             "is_real_phone": false,
             "keep_screen_on": false,
             "screenshot_debug": false,
             "online_check_interval": 5,
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "web_stop_mode": "close_browser"
+            "mining_duration_min": 6
         },
         "emulator-5556": {
             "name": "emulator-5556",
             "backend": "web_h5",
-            "backend_display_id": "emulator-5556",
-            "web_url": "https://mushroomh5.acenetgame.com",
+            "backend_display_id": "",
+            "web_url": "https://mushroomh5.acenetgame.com/",
             "web_canvas_selector": "canvas",
             "web_profile_dir": "playwright_profile/{device_id}",
             "web_state_file": "auth_state/{device_id}.json",
             "web_channel": "chrome",
             "web_headless": false,
+            "web_clear_cookies_on_start": false,
             "web_viewport_width": 540,
             "web_viewport_height": 960,
             "web_stop_mode": "close_browser",
@@ -83,25 +46,27 @@
             "enable_arena": true,
             "enable_mining": true,
             "enable_dungeon": true,
+            "enable_shop_manager": true,
+            "enable_dungeon_manager": true,
             "is_real_phone": false,
             "keep_screen_on": false,
             "screenshot_debug": false,
             "online_check_interval": 5,
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "web_clear_cookies_on_start": false
+            "mining_duration_min": 6
         },
         "emulator-5558": {
             "name": "emulator-5558",
             "backend": "web_h5",
-            "backend_display_id": "emulator-5558",
-            "web_url": "https://mushroomh5.acenetgame.com",
+            "backend_display_id": "",
+            "web_url": "https://mushroomh5.acenetgame.com/",
             "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile_fresh/{device_id}",
+            "web_profile_dir": "playwright_profile/{device_id}",
             "web_state_file": "auth_state/{device_id}.json",
             "web_channel": "chrome",
             "web_headless": false,
+            "web_clear_cookies_on_start": false,
             "web_viewport_width": 540,
             "web_viewport_height": 960,
             "web_stop_mode": "close_browser",
@@ -109,48 +74,58 @@
             "enable_arena": true,
             "enable_mining": true,
             "enable_dungeon": true,
+            "enable_shop_manager": true,
+            "enable_dungeon_manager": true,
             "is_real_phone": false,
             "keep_screen_on": false,
             "screenshot_debug": false,
             "online_check_interval": 5,
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "web_clear_cookies_on_start": false
+            "mining_duration_min": 6
+        },
+        "emulator-5560": {
+            "name": "emulator-5560",
+            "backend": "web_h5",
+            "backend_display_id": "",
+            "web_url": "https://mushroomh5.acenetgame.com/",
+            "web_canvas_selector": "canvas",
+            "web_profile_dir": "playwright_profile/{device_id}",
+            "web_state_file": "auth_state/{device_id}.json",
+            "web_channel": "chrome",
+            "web_headless": false,
+            "web_clear_cookies_on_start": false,
+            "web_viewport_width": 540,
+            "web_viewport_height": 960,
+            "web_stop_mode": "close_browser",
+            "enable_farm": true,
+            "enable_arena": true,
+            "enable_mining": true,
+            "enable_dungeon": true,
+            "enable_shop_manager": true,
+            "enable_dungeon_manager": true,
+            "is_real_phone": false,
+            "keep_screen_on": false,
+            "screenshot_debug": false,
+            "online_check_interval": 5,
+            "lamp_check_interval": 2,
+            "lamp_duration_sec": 300,
+            "mining_duration_min": 6
         }
     },
     "global": {
         "mode": "master",
         "master_url": "http://127.0.0.1:5002",
         "worker_id": "unknown_worker",
-        "host_settings": {
-            "YOUR-DORM-PC-NAME": {
-                "mode": "master"
-            },
-            "YOUR-LAPTOP-NAME": {
-                "mode": "worker",
-                "master_url": "http://127.0.0.1:5002",
-                "worker_id": "laptop_worker"
-            },
-            "DESKTOP-OV0ASQ4": {
-                "mode": "worker",
-                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
-                "worker_id": "desktop_ov0asq4"
-            },
-            "DESKTOP-B7UMOAV": {
-                "mode": "worker",
-                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
-                "worker_id": "desktop_b7umoav",
-                "allow_web_backend": false
-            }
-        },
+        "worker_sync_timeout_sec": 10.0,
+        "worker_sync_failure_backoff_sec": 6.0,
         "ocr": {
             "servers": [
                 "http://100.64.0.5:5001",
                 "http://100.64.0.7:5001",
                 "http://localhost:5001"
             ],
-            "server_mode": "auto",
+            "server_mode": "main",
             "timeout_sec": 20,
             "img_decode_retries": 3,
             "ocr_empty_retries": 2,
@@ -171,6 +146,21 @@
             "labeler_daily_time": "02:00",
             "trainer_epochs": "10",
             "trainer_remove_source": "false"
+        },
+        "host_settings": {
+            "DESKTOP-OV0ASQ4": {
+                "mode": "worker",
+                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
+                "worker_id": "desktop_ov0asq4"
+            },
+            "YOUR-DORM-PC-NAME": {
+                "mode": "master"
+            },
+            "YOUR-LAPTOP-NAME": {
+                "mode": "worker",
+                "master_url": "http://127.0.0.1:5002",
+                "worker_id": "laptop_worker"
+            }
         }
     }
 }

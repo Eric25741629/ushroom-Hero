@@ -7,6 +7,8 @@ import cv2
 import numpy as np
 from typing import Any, Dict, Iterable, Optional
 from PIL import Image
+from utils.action_tracker import ActionTraceRecorder
+from runtime_services.device_runtime_service import ForceSleepRequested
 
 logger = logging.getLogger(__name__)
 _WEB_DEVICE_LOCK = threading.Lock()
@@ -120,9 +122,53 @@ class MonitoredDevice:
     def __init__(self, original_d, ip: str):
         self._d = original_d
         self._ip = ip
+        self._tracker = ActionTraceRecorder()
+
+    def _trace(self, event_type: str, payload: Optional[Dict[str, Any]] = None, meaning: str = ""):
+        try:
+            self._tracker.log(
+                device_id=self._ip,
+                event_type=event_type,
+                source="MonitoredDevice",
+                meaning=meaning,
+                actor=type(self._d).__name__,
+                payload=payload or {},
+            )
+        except Exception:
+            pass
+
+    def _auto_meaning(self, event_type: str, explicit_meaning: str = "", payload: Optional[Dict[str, Any]] = None) -> str:
+        text = str(explicit_meaning or "").strip()
+        if text:
+            return text
+        try:
+            st = (bot_state.get_all_states() or {}).get(self._ip, {})
+        except Exception:
+            st = {}
+        task = str(st.get("task", "") or "").strip()
+        step = str(st.get("step", "") or "").strip()
+        base = " | ".join([x for x in [task, step] if x]) or "未標註任務"
+        p = payload or {}
+        if event_type == "xpath_click":
+            xpath = str(p.get("xpath", "") or "").strip()
+            return f"{base} | XPath點擊: {xpath}" if xpath else f"{base} | XPath點擊"
+        if event_type in {"tap", "click"}:
+            if "x" in p and "y" in p:
+                return f"{base} | 座標點擊: ({p.get('x')}, {p.get('y')})"
+            return f"{base} | 座標點擊"
+        if event_type == "swipe":
+            return f"{base} | 滑動: ({p.get('x0')}, {p.get('y0')}) -> ({p.get('x1')}, {p.get('y1')})"
+        if event_type == "screenshot":
+            fmt = str(p.get("format", "") or "").strip()
+            return f"{base} | 截圖{(' format=' + fmt) if fmt else ''}"
+        return f"{base} | {event_type}"
 
     def _pause_guard(self):
+        if bot_state.check_force_sleep(self._ip):
+            raise ForceSleepRequested()
         bot_state.check_pause(self._ip)
+        if bot_state.check_force_sleep(self._ip):
+            raise ForceSleepRequested()
 
     def _screen_size(self):
         info = getattr(self._d, "info", {}) or {}
@@ -144,7 +190,10 @@ class MonitoredDevice:
     def tap(self, x, y, *args, **kwargs):
         """統一的點擊入口。"""
         self._pause_guard()
+        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
         x, y = self._to_px(x, y)
+        payload = {"x": x, "y": y}
+        self._trace("tap", payload, meaning=self._auto_meaning("tap", meaning, payload))
         tap_fn = getattr(self._d, "tap", None)
         if callable(tap_fn):
             return tap_fn(x, y, *args, **kwargs)
@@ -152,6 +201,10 @@ class MonitoredDevice:
 
     def click(self, x, y, *args, **kwargs):
         """點擊前先檢查是否暫停"""
+        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        payload = {"x": x, "y": y}
+        self._trace("click", payload, meaning=self._auto_meaning("click", meaning, payload))
+        kwargs["trace_meaning"] = meaning
         return self.tap(x, y, *args, **kwargs)
 
     def click_pct(self, x_ratio: float, y_ratio: float, *args, **kwargs):
@@ -160,6 +213,9 @@ class MonitoredDevice:
 
     def gesture_swipe(self, *args, **kwargs):
         self._pause_guard()
+        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        payload = {"args_len": len(args)}
+        self._trace("gesture_swipe", payload, meaning=self._auto_meaning("gesture_swipe", meaning, payload))
         gesture_swipe_fn = getattr(self._d, "gesture_swipe", None)
         if callable(gesture_swipe_fn):
             return gesture_swipe_fn(*args, **kwargs)
@@ -167,12 +223,15 @@ class MonitoredDevice:
 
     def swipe(self, *args, **kwargs):
         self._pause_guard()
+        meaning = str(kwargs.get("trace_meaning", "") or kwargs.get("trace_purpose", "") or "")
 
         if len(args) >= 4:
             x0, y0 = self._to_px(args[0], args[1])
             x1, y1 = self._to_px(args[2], args[3])
             rest = args[4:]
             args = (x0, y0, x1, y1, *rest)
+            payload = {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
+            self._trace("swipe", payload, meaning=self._auto_meaning("swipe", meaning, payload))
         return self.gesture_swipe(*args, **kwargs)
 
     def swipe_pct(self, x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs):
@@ -182,10 +241,17 @@ class MonitoredDevice:
     def screenshot(self, *args, **kwargs):
         """截圖前也檢查暫停，確保不會在暫停時瘋狂截圖"""
         self._pause_guard()
+        fmt = kwargs.get("format")
+        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        payload = {"format": str(fmt) if fmt is not None else ""}
+        self._trace("screenshot", payload, meaning=self._auto_meaning("screenshot", meaning, payload))
         return self._d.screenshot(*args, **kwargs)
 
     def xpath_click(self, xpath_expr, *args, **kwargs):
         self._pause_guard()
+        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        payload = {"xpath": str(xpath_expr)}
+        self._trace("xpath_click", payload, meaning=self._auto_meaning("xpath_click", meaning, payload))
         node = self._d.xpath(xpath_expr)
         click_fn = getattr(node, "click", None)
         if callable(click_fn):
@@ -211,6 +277,7 @@ class MonitoredDevice:
             pkg_name = kwargs.pop('package_name', None)
         if pkg_name is None:
             raise TypeError("app_stop() missing 1 required positional argument: 'pkg_name'")
+        self._trace("app_stop", {"package": str(pkg_name)})
         # Call underlying device; prefer keyword for compatibility
         try:
             return self._d.app_stop(pkg_name, *args, **kwargs)
@@ -223,6 +290,7 @@ class MonitoredDevice:
             pkg_name = kwargs.pop('package_name', None)
         if pkg_name is None:
             raise TypeError("app_start() missing 1 required positional argument: 'pkg_name'")
+        self._trace("app_start", {"package": str(pkg_name)})
         try:
             return self._d.app_start(pkg_name, *args, **kwargs)
         except TypeError:

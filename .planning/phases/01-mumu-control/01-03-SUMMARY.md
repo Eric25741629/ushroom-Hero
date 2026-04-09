@@ -1,4 +1,4 @@
-﻿# SUMMARY - Plan 01.1-03
+# SUMMARY - Plan 01-03
 
 ## What was built
 - Updated MuMu executable discovery to support manager-only environment by resolving to:

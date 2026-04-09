@@ -1,4 +1,4 @@
-﻿# SUMMARY - Plan 01.1-02
+# SUMMARY - Plan 01-02
 
 ## What was built
 - Added `utils/emulator_recovery.py` with restart orchestration.

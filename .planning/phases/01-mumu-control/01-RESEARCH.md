@@ -1,4 +1,4 @@
-﻿# Phase 01.1 Research - MuMu 模擬器管理與卡死自動重啟
+# Phase 1 Research - MuMu 模擬器管理與卡死自動重啟
 
 ## Objective
 為既有 `emulator-*` 裝置建立 MuMu `control.exe` 指令封裝、卡死偵測、與自動重啟恢復流程，避免掛機中途整台模擬器卡死。
@@ -6,7 +6,7 @@
 ## Current Reality
 - 裝置控制主鏈路已存在（ADB/uiautomator2 + 多裝置流程）。
 - 卡死恢復目前缺乏「模擬器層級」一致處理。
-- `Phase 01.1` 是緊急插入 phase，需盡量低侵入整合。
+- `Phase 1` 是目前排程中的首個 phase，需盡量低侵入整合。
 
 ## Command Contract (Locked)
 - `control -v <index> launch`

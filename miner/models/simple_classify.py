@@ -15,14 +15,18 @@ from tqdm import tqdm
 from simplecnn import SimpleCNN, resize_size
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_LOW_CONFIDENCE_DIR = PROJECT_ROOT / 'miner' / 'dataset' / 'low_confidence'
+
+
 def main():
     # 參數設定
     parser = argparse.ArgumentParser(description='簡單圖片分類移動工具')
     parser.add_argument('--input-dir', type=str, 
-                       default=r'A:\菇勇者全自動掛機\dataset\low_confidence',
+                       default=str(DEFAULT_LOW_CONFIDENCE_DIR),
                        help='輸入資料夾（包含要分類的圖片）')
     parser.add_argument('--output-dir', type=str,
-                       default=r'A:\菇勇者全自動掛機\dataset\low_confidence',
+                       default=str(DEFAULT_LOW_CONFIDENCE_DIR),
                        help='輸出資料夾（會在此建立類別子資料夾）')
     parser.add_argument('--model-path', type=str,
                        default='checkpoints/best.pth',

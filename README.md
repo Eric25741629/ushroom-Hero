@@ -186,3 +186,12 @@ log 目錄在 `logs/`。
 
 - [README_FLASK_SERVER.md](/a:/菇勇者全自動掛機/README_FLASK_SERVER.md)
 - [README_NEW_ARCHITECTURE.md](/a:/菇勇者全自動掛機/README_NEW_ARCHITECTURE.md)
+
+## Developer Docs Index
+
+- [Event Index Dev Guide](/C:/nas同步_project/菇勇者全自動掛機/docs/EVENT_INDEX_DEV_GUIDE.md)
+- [Smart Screenshot + LLM Analyzer](/C:/nas同步_project/菇勇者全自動掛機/docs/SMART_SCREENSHOT_LLM_ANALYZER.md)
+
+## Local Skills (Repo)
+
+- Skill: [`event-index-observatory`](/C:/nas同步_project/菇勇者全自動掛機/.codex/skills/event-index-observatory/SKILL.md)

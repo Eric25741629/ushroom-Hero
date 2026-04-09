@@ -1,9 +1,13 @@
-﻿from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory
 import bot_state
-import config_manager # 新增設定管理器
-import json_manager   # 新增資料管理器
+import config_manager  # 新增設定管理器
+import json_manager  # 新增資料管理器
 import logging
 import os
+import json
+import shutil
+import subprocess
+from functools import lru_cache
 from adb_operations import run_adb
 import requests
 import datetime
@@ -17,20 +21,19 @@ from types import SimpleNamespace
 from pathlib import Path
 
 # Disable Flask logs to keep console clean
-log = logging.getLogger('werkzeug')
+log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
+_WAR_ROOM_DIR = Path(__file__).resolve().parent / "push_project" / "web"
 
 # Master 模式：存放給遠端 Worker 的指令佇列
 # { "school_laptop:emulator-5554": { "paused": True, "skip_sleep": False } }
 # Worker ID 是 "worker_id:ip"
-_remote_commands = {} 
+_remote_commands = {}
 
 # Master 模式：全域指令 (發給所有 Worker)
-_global_commands = {
-    "refresh_needed": False
-}
+_global_commands = {"refresh_needed": False}
 _worker_webhook_endpoints = {}
 _state_maintenance_started = False
 
@@ -165,20 +168,22 @@ def _handle_labeler_line(line: str):
 def _run_labeler_once_worker(cfg: dict):
     try:
         with _labeler_lock:
-            _labeler_state.update({
-                "running": True,
-                "started_at": time.time(),
-                "finished_at": None,
-                "total": 0,
-                "done": 0,
-                "kept": 0,
-                "deleted": 0,
-                "errors": 0,
-                "current": "",
-                "last_error": "",
-                "logs": [],
-                "paused": False,
-            })
+            _labeler_state.update(
+                {
+                    "running": True,
+                    "started_at": time.time(),
+                    "finished_at": None,
+                    "total": 0,
+                    "done": 0,
+                    "kept": 0,
+                    "deleted": 0,
+                    "errors": 0,
+                    "current": "",
+                    "last_error": "",
+                    "logs": [],
+                    "paused": False,
+                }
+            )
 
         os.makedirs(_labeler_control_dir, exist_ok=True)
         for fn in ("pause.flag", "stop.flag"):
@@ -198,7 +203,9 @@ def _run_labeler_once_worker(cfg: dict):
             model=cfg["labeler_model"],
             timeout=int(str(cfg.get("labeler_timeout_sec", "120")).strip() or "120"),
             max_retries=int(str(cfg.get("labeler_max_retries", "2")).strip() or "2"),
-            retry_delay_sec=float(str(cfg.get("labeler_retry_delay_sec", "1.5")).strip() or "1.5"),
+            retry_delay_sec=float(
+                str(cfg.get("labeler_retry_delay_sec", "1.5")).strip() or "1.5"
+            ),
             control_dir=_labeler_control_dir,
             once=True,
             daily_time=cfg.get("labeler_daily_time", "02:00"),
@@ -227,14 +234,16 @@ def _run_labeler_once_worker(cfg: dict):
 def _run_trainer_worker(cfg: dict):
     try:
         with _trainer_lock:
-            _trainer_state.update({
-                "running": True,
-                "started_at": time.time(),
-                "finished_at": None,
-                "current": "",
-                "last_error": "",
-                "logs": [],
-            })
+            _trainer_state.update(
+                {
+                    "running": True,
+                    "started_at": time.time(),
+                    "finished_at": None,
+                    "current": "",
+                    "last_error": "",
+                    "logs": [],
+                }
+            )
             _append_trainer_log("[START] trainer worker started")
             _append_trainer_log("[EXEC] native python function call")
 
@@ -243,10 +252,17 @@ def _run_trainer_worker(cfg: dict):
             str(Path("OCR/auto_train_workflow.py").resolve()),
         )
         argv = [
-            "--source-dir", cfg["labeler_output_dir"],
-            "--epochs", str(cfg.get("trainer_epochs", "10")),
+            "--source-dir",
+            cfg["labeler_output_dir"],
+            "--epochs",
+            str(cfg.get("trainer_epochs", "10")),
         ]
-        if str(cfg.get("trainer_remove_source", "false")).lower() in {"1", "true", "yes", "on"}:
+        if str(cfg.get("trainer_remove_source", "false")).lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
             argv.append("--remove-source")
 
         def on_line(line: str):
@@ -274,7 +290,9 @@ def _run_trainer_worker(cfg: dict):
             _append_trainer_log(f"[ERROR] worker exception: {exc}")
 
 
-def _check_llama_endpoint(endpoint: str, model: str, timeout_sec: float = 8.0) -> tuple[bool, str]:
+def _check_llama_endpoint(
+    endpoint: str, model: str, timeout_sec: float = 8.0
+) -> tuple[bool, str]:
     endpoint = str(endpoint or "").strip()
     model = str(model or "local-model").strip()
     if not endpoint:
@@ -285,9 +303,7 @@ def _check_llama_endpoint(endpoint: str, model: str, timeout_sec: float = 8.0) -
             "model": model,
             "temperature": 0,
             "max_tokens": 16,
-            "messages": [
-                {"role": "user", "content": "Reply OK only."}
-            ],
+            "messages": [{"role": "user", "content": "Reply OK only."}],
         }
         r = requests.post(endpoint, json=payload, timeout=timeout_sec)
         if r.status_code != 200:
@@ -314,21 +330,157 @@ def _normalize_web_login_state(ip: str):
             "last_message": "",
             "last_state_file": "",
             "last_profile_dir": "",
+            "last_backup_file": "",
+            "reused_existing_session": False,
         }
         _web_login_state[ip] = state
     return state
 
 
+def _resolve_web_profile_dir(ip: str, profile_dir_raw: str) -> str:
+    raw = (
+        str(profile_dir_raw or "playwright_profile/{device_id}").strip()
+        or "playwright_profile/{device_id}"
+    )
+    profile_dir = raw.format(device_id=ip, ip=ip)
+    if not os.path.normpath(profile_dir).endswith(ip):
+        profile_dir = os.path.join(profile_dir, ip)
+    if not os.path.isabs(profile_dir):
+        profile_dir = os.path.join(os.getcwd(), profile_dir)
+    return os.path.normpath(profile_dir)
+
+
+def _resolve_web_state_file(ip: str, state_file_raw: str) -> str:
+    raw = (
+        str(state_file_raw or "auth_state/{device_id}.json").strip()
+        or "auth_state/{device_id}.json"
+    )
+    state_file = raw.format(device_id=ip, ip=ip)
+    if "{device_id}" not in raw and "{ip}" not in raw:
+        if os.path.basename(state_file).lower() == "auth_state.json":
+            state_file = os.path.join(
+                os.path.dirname(state_file), "auth_state", f"{ip}.json"
+            )
+    if not os.path.isabs(state_file):
+        state_file = os.path.join(os.getcwd(), state_file)
+    return os.path.normpath(state_file)
+
+
+def _existing_profile_dir(paths) -> str:
+    seen = set()
+    for path in paths:
+        p = os.path.normpath(str(path or "").strip())
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if not os.path.isdir(p):
+            continue
+        cookies_db = os.path.join(p, "Default", "Network", "Cookies")
+        if os.path.exists(cookies_db):
+            return p
+        try:
+            with os.scandir(p) as it:
+                for _ in it:
+                    return p
+        except Exception:
+            continue
+    return ""
+
+
+def _existing_state_file(paths) -> str:
+    seen = set()
+    for path in paths:
+        p = os.path.normpath(str(path or "").strip())
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if not os.path.isfile(p):
+            continue
+        try:
+            if os.path.getsize(p) > 0:
+                return p
+        except Exception:
+            continue
+    return ""
+
+
+def _backup_web_state_file(ip: str, state_file: str) -> str:
+    if not os.path.isfile(state_file):
+        raise FileNotFoundError(state_file)
+    backup_root = os.path.join(os.path.dirname(state_file), "backups", ip)
+    os.makedirs(backup_root, exist_ok=True)
+    stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime())
+    backup_path = os.path.join(backup_root, f"state_{stamp}.json")
+    shutil.copy2(state_file, backup_path)
+    return backup_path
+
+
+def _restore_web_state_to_context(context, state_file: str) -> tuple[bool, str]:
+    if not os.path.isfile(state_file):
+        return False, "state_file_missing"
+
+    try:
+        with open(state_file, "r", encoding="utf-8-sig") as f:
+            state_data = json.load(f)
+    except Exception as exc:
+        return False, f"read_state_failed:{exc}"
+
+    cookies = state_data.get("cookies", []) if isinstance(state_data, dict) else []
+    origins = state_data.get("origins", []) if isinstance(state_data, dict) else []
+    cookie_count = 0
+    local_count = 0
+
+    if isinstance(cookies, list) and cookies:
+        try:
+            context.add_cookies(cookies)
+            cookie_count = len(cookies)
+        except Exception as exc:
+            return False, f"add_cookies_failed:{exc}"
+
+    if isinstance(origins, list) and origins:
+        page = context.pages[0] if context.pages else context.new_page()
+        for item in origins:
+            if not isinstance(item, dict):
+                continue
+            origin = str(item.get("origin") or "").strip()
+            local_entries = item.get("localStorage") or []
+            if not origin or not isinstance(local_entries, list) or not local_entries:
+                continue
+            try:
+                page.goto(origin, wait_until="domcontentloaded", timeout=15000)
+                page.evaluate(
+                    """
+                    (entries) => {
+                        for (const row of entries || []) {
+                            if (!row || typeof row.name !== 'string') continue;
+                            const value = row.value === undefined || row.value === null ? '' : String(row.value);
+                            localStorage.setItem(row.name, value);
+                        }
+                    }
+                    """,
+                    local_entries,
+                )
+                local_count += len(local_entries)
+            except Exception:
+                continue
+
+    return (
+        cookie_count > 0 or local_count > 0
+    ), f"cookies={cookie_count}, localStorage={local_count}"
+
+
 def _run_web_login_worker(ip: str, payload: dict):
     with _web_login_lock:
         state = _normalize_web_login_state(ip)
-        state.update({
-            "running": True,
-            "started_at": time.time(),
-            "finished_at": None,
-            "last_error": "",
-            "last_message": "starting",
-        })
+        state.update(
+            {
+                "running": True,
+                "started_at": time.time(),
+                "finished_at": None,
+                "last_error": "",
+                "last_message": "starting",
+            }
+        )
 
     try:
         from playwright.sync_api import sync_playwright
@@ -338,35 +490,125 @@ def _run_web_login_worker(ip: str, payload: dict):
         if not web_url:
             raise ValueError("web_url is required")
 
-        profile_dir = str(payload.get("web_profile_dir") or cfg.get("web_profile_dir") or "playwright_profile/{device_id}").strip() or "playwright_profile/{device_id}"
-        state_file_raw = str(payload.get("web_state_file") or cfg.get("web_state_file") or "auth_state/{device_id}.json").strip() or "auth_state/{device_id}.json"
-        state_file = state_file_raw.format(device_id=ip, ip=ip)
-        if "{device_id}" not in state_file_raw and "{ip}" not in state_file_raw:
-            if os.path.basename(state_file).lower() == "auth_state.json":
-                state_file = os.path.join(os.path.dirname(state_file), "auth_state", f"{ip}.json")
-        channel = str(payload.get("web_channel") or cfg.get("web_channel") or "chrome").strip()
-        canvas_selector = str(payload.get("web_canvas_selector") or cfg.get("web_canvas_selector") or "canvas").strip() or "canvas"
+        request_profile_raw = (
+            str(
+                payload.get("web_profile_dir")
+                or cfg.get("web_profile_dir")
+                or "playwright_profile/{device_id}"
+            ).strip()
+            or "playwright_profile/{device_id}"
+        )
+        request_state_raw = (
+            str(
+                payload.get("web_state_file")
+                or cfg.get("web_state_file")
+                or "auth_state/{device_id}.json"
+            ).strip()
+            or "auth_state/{device_id}.json"
+        )
+        cfg_profile_raw = (
+            str(cfg.get("web_profile_dir") or "playwright_profile/{device_id}").strip()
+            or "playwright_profile/{device_id}"
+        )
+        cfg_state_raw = (
+            str(cfg.get("web_state_file") or "auth_state/{device_id}.json").strip()
+            or "auth_state/{device_id}.json"
+        )
+
+        channel = str(
+            payload.get("web_channel") or cfg.get("web_channel") or "chrome"
+        ).strip()
+        canvas_selector = (
+            str(
+                payload.get("web_canvas_selector")
+                or cfg.get("web_canvas_selector")
+                or "canvas"
+            ).strip()
+            or "canvas"
+        )
         headless = bool(payload.get("web_headless", cfg.get("web_headless", False)))
-        clear_cookies_on_start = bool(payload.get("web_clear_cookies_on_start", cfg.get("web_clear_cookies_on_start", False)))
-        viewport_width = int(payload.get("web_viewport_width") or cfg.get("web_viewport_width") or 540)
-        viewport_height = int(payload.get("web_viewport_height") or cfg.get("web_viewport_height") or 960)
+        clear_cookies_on_start = bool(
+            payload.get(
+                "web_clear_cookies_on_start",
+                cfg.get("web_clear_cookies_on_start", False),
+            )
+        )
 
-        profile_dir = profile_dir.format(device_id=ip, ip=ip)
-        if not os.path.normpath(profile_dir).endswith(ip):
-            profile_dir = os.path.join(profile_dir, ip)
+        # 手動開啟使用獨立的 viewport 設定，若未設定則回退到原本 viewport
+        manual_width = int(cfg.get("web_manual_viewport_width") or 0)
+        manual_height = int(cfg.get("web_manual_viewport_height") or 0)
+        viewport_width = int(
+            payload.get("web_viewport_width")
+            or (
+                manual_width
+                if manual_width > 0
+                else cfg.get("web_viewport_width") or 540
+            )
+        )
+        viewport_height = int(
+            payload.get("web_viewport_height")
+            or (
+                manual_height
+                if manual_height > 0
+                else cfg.get("web_viewport_height") or 960
+            )
+        )
+        prefer_existing_state = bool(payload.get("prefer_existing_state", True))
+        force_new_session = bool(payload.get("force_new_session", False))
+        backup_before_open = bool(payload.get("backup_before_open", True))
 
-        if not os.path.isabs(profile_dir):
-            profile_dir = os.path.join(os.getcwd(), profile_dir)
-        if not os.path.isabs(state_file):
-            state_file = os.path.join(os.getcwd(), state_file)
+        requested_profile_dir = _resolve_web_profile_dir(ip, request_profile_raw)
+        requested_state_file = _resolve_web_state_file(ip, request_state_raw)
+        cfg_profile_dir = _resolve_web_profile_dir(ip, cfg_profile_raw)
+        cfg_state_file = _resolve_web_state_file(ip, cfg_state_raw)
+        default_profile_dir = _resolve_web_profile_dir(
+            ip, "playwright_profile/{device_id}"
+        )
+        default_state_file = _resolve_web_state_file(ip, "auth_state/{device_id}.json")
+
+        profile_dir = requested_profile_dir
+        state_file = requested_state_file
+        reused_existing_session = False
+
+        if prefer_existing_state and not force_new_session:
+            existing_profile = _existing_profile_dir(
+                [
+                    requested_profile_dir,
+                    cfg_profile_dir,
+                    default_profile_dir,
+                ]
+            )
+            existing_state = _existing_state_file(
+                [
+                    requested_state_file,
+                    cfg_state_file,
+                    default_state_file,
+                ]
+            )
+            if existing_profile:
+                profile_dir = existing_profile
+                reused_existing_session = True
+            if existing_state:
+                state_file = existing_state
+                reused_existing_session = True
+
         os.makedirs(profile_dir, exist_ok=True)
         os.makedirs(os.path.dirname(state_file) or ".", exist_ok=True)
+
+        backup_file = ""
+        if backup_before_open and os.path.isfile(state_file):
+            try:
+                backup_file = _backup_web_state_file(ip, state_file)
+            except Exception as backup_exc:
+                app.logger.warning(f"[{ip}] backup cookies/state failed: {backup_exc}")
 
         with _web_login_lock:
             state = _normalize_web_login_state(ip)
             state["last_message"] = f"opening browser: {web_url}"
             state["last_profile_dir"] = profile_dir
             state["last_state_file"] = state_file
+            state["last_backup_file"] = backup_file
+            state["reused_existing_session"] = reused_existing_session
 
         with sync_playwright() as p:
             launch_kwargs = {
@@ -390,6 +632,33 @@ def _run_web_login_worker(ip: str, payload: dict):
                     context.clear_cookies()
                 except Exception:
                     pass
+            else:
+                profile_cookie_db = os.path.join(
+                    profile_dir, "Default", "Network", "Cookies"
+                )
+                profile_has_cookie_db = False
+                try:
+                    profile_has_cookie_db = (
+                        os.path.isfile(profile_cookie_db)
+                        and os.path.getsize(profile_cookie_db) > 0
+                    )
+                except Exception:
+                    profile_has_cookie_db = os.path.isfile(profile_cookie_db)
+
+                # New profile can still reuse old login state by loading saved cookies/localStorage.
+                if os.path.isfile(state_file) and not profile_has_cookie_db:
+                    restored, detail = _restore_web_state_to_context(
+                        context, state_file
+                    )
+                    if restored:
+                        app.logger.info(
+                            f"[{ip}] restored saved web state from {state_file} ({detail})"
+                        )
+                    else:
+                        app.logger.warning(
+                            f"[{ip}] restore saved web state skipped/failed: {detail}"
+                        )
+
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(web_url)
             try:
@@ -409,7 +678,10 @@ def _run_web_login_worker(ip: str, payload: dict):
             state = _normalize_web_login_state(ip)
             state["running"] = False
             state["finished_at"] = time.time()
-            state["last_message"] = f"login state saved: {state_file}"
+            msg = f"login state saved: {state_file}"
+            if backup_file:
+                msg += f" (backup: {backup_file})"
+            state["last_message"] = msg
     except Exception as exc:
         with _web_login_lock:
             state = _normalize_web_login_state(ip)
@@ -418,12 +690,17 @@ def _run_web_login_worker(ip: str, payload: dict):
             state["last_error"] = str(exc)
             state["last_message"] = "failed"
 
+
 def check_ocr_server():
     """Check OCR server health based on current OCR config (main/backup/auto)."""
     try:
         ocr_cfg = config_manager.get_ocr_config()
         mode = str(ocr_cfg.get("server_mode", "main")).strip().lower()
-        servers = [str(s).strip().rstrip('/') for s in ocr_cfg.get("servers", []) if str(s).strip()]
+        servers = [
+            str(s).strip().rstrip("/")
+            for s in ocr_cfg.get("servers", [])
+            if str(s).strip()
+        ]
 
         main = "http://100.64.0.5:5001"
         backup = "http://100.64.0.7:5001"
@@ -451,6 +728,7 @@ def check_ocr_server():
     except Exception:
         return False
 
+
 import cv2
 import numpy as np
 import base64
@@ -458,11 +736,47 @@ from game_state.detector import stage_by_str
 import new_cnn.cnn_model as cnn_model_module
 
 # 全域模型快取 (避免重複載入)
-_cached_models = {
-    "cnn": None
-}
+_cached_models = {"cnn": None}
 
-@app.route('/api/analyze_stage', methods=['POST'])
+_PROGRAM_FIX_NOTE = "主頁面判定共用同一張截圖，避免重複截圖"
+
+
+@lru_cache(maxsize=1)
+def _get_program_info():
+    repo_root = Path(__file__).resolve().parent
+    version = "dev"
+    git_time = "unknown"
+
+    try:
+        short_sha = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        commit_time = subprocess.run(
+            ["git", "show", "-s", "--format=%cd", "--date=iso-local", "HEAD"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        if short_sha:
+            version = f"git-{short_sha}"
+        if commit_time:
+            git_time = commit_time
+    except Exception:
+        pass
+
+    return {
+        "version": version,
+        "git_time": git_time,
+        "fix_note": _PROGRAM_FIX_NOTE,
+    }
+
+
+@app.route("/api/analyze_stage", methods=["POST"])
 def analyze_stage():
     """集中式頁面狀態判定服務"""
     try:
@@ -479,43 +793,56 @@ def analyze_stage():
         # 載入模型 (如果尚未載入)
         if _cached_models["cnn"] is None:
             from pathlib import Path
+
             model_path = "cnn_model.pth"
             if os.path.exists(model_path):
                 _cached_models["cnn"] = cnn_model_module.load_cnn_model(model_path)
-        
+
         # 1. 執行 OCR 獲取文字 (透過本地邏輯)
         from img_tools import get_all_text
+
         ocr_result = get_all_text(img)
-        
+
         # 2. 執行判定邏輯
         # 這裡我們需要傳入一個 mock 的 device 物件，因為目前的 stage_by_str 可能會用到 d (雖然目前沒用到)
         stage = stage_by_str(None, ocr_result, img)
-        
-        return jsonify({
-            "success": True,
-            "stage": stage,
-            "ocr_text": ocr_result
-        })
+
+        return jsonify({"success": True, "stage": stage, "ocr_text": ocr_result})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
 # ... (其餘 import 與全域變數保持不變) ...
 
-@app.route('/')
+
+@app.route("/")
 def index():
     """主控面板首頁"""
-    return render_template('dashboard.html')
+    return render_template("dashboard.html", program_info=_get_program_info())
 
-@app.route('/api/poll_commands', methods=['POST'])
+
+@app.route("/war-room")
+@app.route("/war-room/")
+def war_room_index():
+    """Serve the existing cross-server parking battle room inside control panel."""
+    return send_from_directory(str(_WAR_ROOM_DIR), "菇勇者.html")
+
+
+@app.route("/war-room/<path:filename>")
+def war_room_static(filename):
+    return send_from_directory(str(_WAR_ROOM_DIR), filename)
+
+
+@app.route("/api/poll_commands", methods=["POST"])
 def poll_commands():
     """Worker 輪詢指令"""
     try:
         data = request.json
         worker_id = data.get("worker_id")
         ips = data.get("ips", [])
-        
+
         # --- 1. 處理全域指令 ---
         global_resp = {}
         if _global_commands["refresh_needed"]:
@@ -538,14 +865,18 @@ def poll_commands():
                     del _remote_commands[remote_id]["recover"]
                 if "manual_release" in _remote_commands[remote_id]:
                     del _remote_commands[remote_id]["manual_release"]
+                if "force_sleep" in _remote_commands[remote_id]:
+                    del _remote_commands[remote_id]["force_sleep"]
 
-        return jsonify({
-            "status": "ok", 
-            "commands": response_cmds,
-            "global_commands": {
-                "refresh_needed": _global_commands["refresh_needed"]
+        return jsonify(
+            {
+                "status": "ok",
+                "commands": response_cmds,
+                "global_commands": {
+                    "refresh_needed": _global_commands["refresh_needed"]
+                },
             }
-        })
+        )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -585,17 +916,21 @@ def _push_remote_command_if_possible(remote_id: str):
         del queued["recover"]
     if "manual_release" in queued:
         del queued["manual_release"]
+    if "force_sleep" in queued:
+        del queued["force_sleep"]
 
-@app.route('/api/refresh_devices', methods=['POST'])
+
+@app.route("/api/refresh_devices", methods=["POST"])
 def refresh_devices():
     """觸發所有端 (Master & Worker) 重新掃描 ADB"""
     print("[Master] 正在重置 ADB Server 以刷新裝置列表...")
     try:
         # 執行 ADB 重啟
         import subprocess
-        subprocess.run(['adb', 'kill-server'], check=False)
+
+        subprocess.run(["adb", "kill-server"], check=False)
         time.sleep(1)
-        subprocess.run(['adb', 'start-server'], check=False)
+        subprocess.run(["adb", "start-server"], check=False)
         time.sleep(2)
         print("[Master] ADB Server 已重啟")
     except Exception as e:
@@ -603,7 +938,7 @@ def refresh_devices():
 
     # 1. 通知本地 Master
     bot_state.set_refresh_needed()
-    
+
     # 2. 通知所有遠端 Worker
     _global_commands["refresh_needed"] = True
     for worker_id in list(_worker_webhook_endpoints.keys()):
@@ -615,18 +950,19 @@ def refresh_devices():
                 "global_commands": {"refresh_needed": True},
             },
         )
-    
+
     # 3. 設定一個計時器，15 秒後把全域刷新 Flag 關掉 (確保所有 Worker 都有機會讀到)
     def reset_flag():
         time.sleep(15)
         _global_commands["refresh_needed"] = False
         print("[Master] 全域刷新 Flag 已重置")
-        
+
     threading.Thread(target=reset_flag, daemon=True).start()
-    
+
     return jsonify({"status": "ok", "message": "已觸發全域設備掃描"})
 
-@app.route('/api/device_data/<ip>', methods=['GET'])
+
+@app.route("/api/device_data/<ip>", methods=["GET"])
 def get_device_data(ip):
     """讀取設備的執行紀錄 JSON (例如 emulator-5554.json)"""
     try:
@@ -636,24 +972,25 @@ def get_device_data(ip):
         if ":" in ip:
             # 取最後一部分作為真實 ID
             real_device_id = ip.split(":")[-1]
-            
+
         manager = json_manager.JsonDataManager(real_device_id)
         data = manager.load_data()
         return jsonify(data)
-        
+
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/daily_progress/<ip>', methods=['GET'])
+
+@app.route("/api/daily_progress/<ip>", methods=["GET"])
 def get_daily_progress(ip):
     """獲取設備的今日進度統計"""
     try:
         real_device_id = ip
         if ":" in ip:
             real_device_id = ip.split(":")[-1]
-            
+
         manager = json_manager.JsonDataManager(real_device_id)
-        
+
         # 定義要追蹤的任務清單
         # config 格式: { "key": json_key, "cycle": (record_name, weeks) }
         tasks_config = {
@@ -665,20 +1002,14 @@ def get_daily_progress(ip):
             "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
             "商店購買": {"key": "Store"},
             "每日任務": {"key": "mission_timestamp"},
-            "坐騎衝刺": {
-                "key": "衝刺-發條",
-                "cycle": ("衝刺-發條", 4)
-            },
+            "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4)},
             "菇菇武道會": {
                 "key": "mushroom_arena_daily",
-                "cycle": ("mushroom_arena_cycle_start", 4)
+                "cycle": ("mushroom_arena_cycle_start", 4),
             },
-            "航海": {
-                "key": "sea_last_execution",
-                "cycle": ("sea_cycle_start", 4)
-            }
+            "航海": {"key": "sea_last_execution", "cycle": ("sea_cycle_start", 4)},
         }
-        
+
         results = {}
         data = manager.load_data()
 
@@ -692,7 +1023,9 @@ def get_daily_progress(ip):
                     if last_time:
                         try:
                             record_date = last_time.split(" ")[0]
-                            today = datetime.datetime.now(manager.timezone).strftime("%Y-%m-%d")
+                            today = datetime.datetime.now(manager.timezone).strftime(
+                                "%Y-%m-%d"
+                            )
                             if record_date == today:
                                 return True
                         except Exception:
@@ -703,24 +1036,30 @@ def get_daily_progress(ip):
             # 1. 檢查週期 (如果有的話)
             if "cycle" in config:
                 record_name, weeks = config["cycle"]
-                should_exec, _ = json_manager._should_execute_cycle(real_device_id, record_name, cycle_weeks=weeks)
+                should_exec, _ = json_manager._should_execute_cycle(
+                    real_device_id, record_name, cycle_weeks=weeks
+                )
                 if not should_exec:
-                    continue # 本週不執行，直接隱藏
-            
+                    continue  # 本週不執行，直接隱藏
+
             # 2. 檢查今日是否完成
             results[display_name] = check_is_today(config["key"])
-            
+
         return jsonify(results)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
 # --- Worker 回報 API ---
-@app.route('/api/report_status', methods=['POST'])
+@app.route("/api/report_status", methods=["POST"])
 def report_status():
     """接收 Worker 回報的狀態"""
     try:
-        data = request.json # { "worker_id:ip": {status...}, "__CMD__": {...}, "__META__": {...} }
-        if not data: return jsonify({"status": "empty"})
+        data = (
+            request.json
+        )  # { "worker_id:ip": {status...}, "__CMD__": {...}, "__META__": {...} }
+        if not data:
+            return jsonify({"status": "empty"})
 
         meta = data.get("__META__", {})
         if "__META__" in data:
@@ -733,7 +1072,7 @@ def report_status():
                     "url": webhook_url,
                     "updated_at": time.time(),
                 }
-        
+
         # 處理特殊指令
         if "__CMD__" in data:
             cmd = data["__CMD__"]
@@ -744,25 +1083,27 @@ def report_status():
         for remote_id, state_update in data.items():
             # 使用 bot_state.update_state 統一處理，這會自動處理 Lock 和 last_update
             bot_state.update_state(
-                remote_id, 
-                task=state_update.get("task"), 
+                remote_id,
+                task=state_update.get("task"),
                 step=state_update.get("step"),
                 next_wake_at=state_update.get("next_wake_at"),
-                paused=state_update.get("paused") # 接收暫停狀態
+                paused=state_update.get("paused"),  # 接收暫停狀態
             )
-            
+
             # 如果有 Log，也一併更新
             if "logs" in state_update and state_update["logs"]:
                 with bot_state.get_device_lock(remote_id):
                     # 這裡直接操作 _states 補上 logs
                     if remote_id in bot_state._states:
                         bot_state._states[remote_id]["logs"] = state_update["logs"]
-        
+
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
+
 # --- 控制 API (修改以支援遠端) ---
+
 
 def queue_command(ip, cmd_key, cmd_val):
     """將指令加入佇列 (針對遠端) 或直接執行 (針對本地)"""
@@ -779,41 +1120,45 @@ def queue_command(ip, cmd_key, cmd_val):
             bot_state.set_skip_sleep(ip)
         elif cmd_key == "manual_release" and cmd_val:
             bot_state.set_manual_release(ip)
+        elif cmd_key == "force_sleep" and cmd_val:
+            bot_state.request_force_sleep(ip)
         elif cmd_key == "recover" and cmd_val:
             # 本地直接執行 ADB (recover_screen 函數會處理)
             pass
 
-@app.route('/api/status')
+
+@app.route("/api/status")
 def get_status():
     states = bot_state.get_all_states()
     ocr_alive = check_ocr_server()
     ocr_runtime = {}
     try:
         from img_tools import get_ocr_runtime_status
+
         ocr_runtime = get_ocr_runtime_status()
     except Exception:
         ocr_runtime = {}
     for ip, info in states.items():
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         cfg = config_manager.get_device_config(real_ip)
-        info['name'] = (cfg.get('name') or real_ip)
-        info['is_real_phone'] = cfg.get('is_real_phone', False)
-        info['backend'] = cfg.get('backend', 'adb')
-        info['web_stop_mode'] = cfg.get('web_stop_mode', 'keep_page')
-    return jsonify({
-        "bots": states,
-        "ocr_server": ocr_alive,
-        "ocr_runtime": ocr_runtime
-    })
+        info["name"] = cfg.get("name") or real_ip
+        info["is_real_phone"] = cfg.get("is_real_phone", False)
+        info["backend"] = cfg.get("backend", "adb")
+        info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
+    return jsonify(
+        {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
+    )
 
-@app.route('/api/config/<ip>', methods=['GET'])
+
+@app.route("/api/config/<ip>", methods=["GET"])
 def get_device_conf(ip):
     """獲取指定設備的設定"""
     # 處理遠端 IP 設定讀取 (需要從檔名反推)
     real_ip = ip.split(":")[-1] if ":" in ip else ip
     return jsonify(config_manager.get_device_config(real_ip))
 
-@app.route('/api/config/<ip>', methods=['POST'])
+
+@app.route("/api/config/<ip>", methods=["POST"])
 def set_device_conf(ip):
     """更新指定設備的設定"""
     try:
@@ -824,7 +1169,8 @@ def set_device_conf(ip):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/ocr_config', methods=['GET'])
+
+@app.route("/api/ocr_config", methods=["GET"])
 def get_ocr_conf():
     """獲取 OCR 全域設定（含位置/重試/伺服器）。"""
     try:
@@ -832,7 +1178,8 @@ def get_ocr_conf():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@app.route('/api/ocr_config', methods=['POST'])
+
+@app.route("/api/ocr_config", methods=["POST"])
 def set_ocr_conf():
     """更新 OCR 全域設定（動態生效，所有讀取端下次呼叫即使用新值）。"""
     try:
@@ -843,31 +1190,43 @@ def set_ocr_conf():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/web_login/<ip>', methods=['POST'])
+@app.route("/api/web_login/<ip>", methods=["POST"])
 def start_web_login(ip):
     """Start manual Playwright login flow from control panel."""
     try:
         payload = request.get_json(silent=True) or {}
         real_ip = ip.split(":")[-1] if ":" in ip else ip
+        persist_settings = bool(payload.get("persist_settings", False))
 
-        # Persist incoming web settings first so main worker can reuse them.
+        # Keep current config by default. Persist only when explicitly requested.
         safe_cfg = {}
         for key in [
-            "backend", "backend_display_id",
-            "web_url", "web_canvas_selector",
-            "web_profile_dir", "web_state_file",
-            "web_channel", "web_headless", "web_stop_mode",
-            "web_viewport_width", "web_viewport_height",
+            "backend",
+            "backend_display_id",
+            "web_url",
+            "web_canvas_selector",
+            "web_profile_dir",
+            "web_state_file",
+            "web_channel",
+            "web_headless",
+            "web_clear_cookies_on_start",
+            "web_stop_mode",
+            "web_viewport_width",
+            "web_viewport_height",
+            "web_manual_viewport_width",
+            "web_manual_viewport_height",
         ]:
             if key in payload:
                 safe_cfg[key] = payload.get(key)
-        if safe_cfg:
+        if persist_settings and safe_cfg:
             config_manager.update_device_config(real_ip, safe_cfg)
 
         with _web_login_lock:
             state = _normalize_web_login_state(real_ip)
             if state.get("running"):
-                return jsonify({"status": "busy", "message": "web login is already running"}), 409
+                return jsonify(
+                    {"status": "busy", "message": "web login is already running"}
+                ), 409
 
         t = threading.Thread(
             target=_run_web_login_worker,
@@ -881,7 +1240,7 @@ def start_web_login(ip):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/web_login_status/<ip>', methods=['GET'])
+@app.route("/api/web_login_status/<ip>", methods=["GET"])
 def get_web_login_status(ip):
     try:
         real_ip = ip.split(":")[-1] if ":" in ip else ip
@@ -892,7 +1251,55 @@ def get_web_login_status(ip):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/web_launch/<ip>', methods=['POST'])
+@app.route("/api/web_backup_state/<ip>", methods=["POST"])
+def backup_web_state(ip):
+    """Backup saved cookies/localStorage state file for a device."""
+    try:
+        payload = request.get_json(silent=True) or {}
+        real_ip = ip.split(":")[-1] if ":" in ip else ip
+        cfg = config_manager.get_device_config(real_ip)
+
+        requested_state_raw = str(payload.get("web_state_file") or "").strip()
+        cfg_state_raw = (
+            str(cfg.get("web_state_file") or "auth_state/{device_id}.json").strip()
+            or "auth_state/{device_id}.json"
+        )
+        default_state_raw = "auth_state/{device_id}.json"
+
+        candidates = []
+        if requested_state_raw:
+            candidates.append(_resolve_web_state_file(real_ip, requested_state_raw))
+        candidates.append(_resolve_web_state_file(real_ip, cfg_state_raw))
+        candidates.append(_resolve_web_state_file(real_ip, default_state_raw))
+
+        state_file = _existing_state_file(candidates)
+        if not state_file:
+            return jsonify(
+                {
+                    "status": "error",
+                    "message": "找不到可備份的 cookies/state 檔案",
+                    "candidates": candidates,
+                }
+            ), 404
+
+        backup_file = _backup_web_state_file(real_ip, state_file)
+        with _web_login_lock:
+            state = _normalize_web_login_state(real_ip)
+            state["last_backup_file"] = backup_file
+
+        return jsonify(
+            {
+                "status": "ok",
+                "ip": real_ip,
+                "state_file": state_file,
+                "backup_file": backup_file,
+            }
+        )
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/web_launch/<ip>", methods=["POST"])
 def launch_web_page(ip):
     """Ask running device thread to open/restore web page without spawning a new Playwright context."""
     try:
@@ -907,12 +1314,14 @@ def launch_web_page(ip):
         if clear_once:
             req_payload["message"] = "clear cookies once"
         bot_state.request_web_launch(real_ip, payload=req_payload)
-        return jsonify({"status": "ok", "message": "web launch requested", "ip": real_ip})
+        return jsonify(
+            {"status": "ok", "message": "web launch requested", "ip": real_ip}
+        )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/config', methods=['GET'])
+@app.route("/api/labeler/config", methods=["GET"])
 def get_labeler_config():
     try:
         return jsonify(_get_labeler_ui_config())
@@ -920,7 +1329,7 @@ def get_labeler_config():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/config', methods=['POST'])
+@app.route("/api/labeler/config", methods=["POST"])
 def set_labeler_config():
     try:
         payload = request.json or {}
@@ -934,11 +1343,13 @@ def set_labeler_config():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/run_once', methods=['POST'])
+@app.route("/api/labeler/run_once", methods=["POST"])
 def run_labeler_once():
     with _labeler_lock:
         if _labeler_state["running"]:
-            return jsonify({"status": "busy", "message": "labeler is already running"}), 409
+            return jsonify(
+                {"status": "busy", "message": "labeler is already running"}
+            ), 409
     try:
         cfg = _get_labeler_ui_config()
         t = threading.Thread(
@@ -953,13 +1364,13 @@ def run_labeler_once():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/status', methods=['GET'])
+@app.route("/api/labeler/status", methods=["GET"])
 def get_labeler_status():
     with _labeler_lock:
         return jsonify(_labeler_state.copy())
 
 
-@app.route('/api/labeler/pause', methods=['POST'])
+@app.route("/api/labeler/pause", methods=["POST"])
 def pause_labeler():
     try:
         os.makedirs(_labeler_control_dir, exist_ok=True)
@@ -971,7 +1382,7 @@ def pause_labeler():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/resume', methods=['POST'])
+@app.route("/api/labeler/resume", methods=["POST"])
 def resume_labeler():
     try:
         pause_flag = Path(_labeler_control_dir) / "pause.flag"
@@ -984,7 +1395,7 @@ def resume_labeler():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/labeler/terminate', methods=['POST'])
+@app.route("/api/labeler/terminate", methods=["POST"])
 def terminate_labeler():
     try:
         os.makedirs(_labeler_control_dir, exist_ok=True)
@@ -994,11 +1405,13 @@ def terminate_labeler():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/trainer/run_once', methods=['POST'])
+@app.route("/api/trainer/run_once", methods=["POST"])
 def run_trainer_once():
     with _trainer_lock:
         if _trainer_state["running"]:
-            return jsonify({"status": "busy", "message": "trainer is already running"}), 409
+            return jsonify(
+                {"status": "busy", "message": "trainer is already running"}
+            ), 409
     try:
         cfg = _get_labeler_ui_config()
         t = threading.Thread(
@@ -1013,51 +1426,65 @@ def run_trainer_once():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
-@app.route('/api/trainer/status', methods=['GET'])
+@app.route("/api/trainer/status", methods=["GET"])
 def get_trainer_status():
     with _trainer_lock:
         return jsonify(_trainer_state.copy())
 
 
-@app.route('/api/labeler/check_connection', methods=['POST'])
+@app.route("/api/labeler/check_connection", methods=["POST"])
 def check_labeler_connection():
     try:
         payload = request.json or {}
         endpoint = str(payload.get("endpoint", "")).strip()
         model = str(payload.get("model", "local-model")).strip()
-        ok, detail = _check_llama_endpoint(endpoint=endpoint, model=model, timeout_sec=8.0)
-        return jsonify({
-            "status": "ok" if ok else "error",
-            "connected": ok,
-            "detail": detail,
-            "endpoint": endpoint,
-            "model": model,
-        }), (200 if ok else 400)
+        ok, detail = _check_llama_endpoint(
+            endpoint=endpoint, model=model, timeout_sec=8.0
+        )
+        return jsonify(
+            {
+                "status": "ok" if ok else "error",
+                "connected": ok,
+                "detail": detail,
+                "endpoint": endpoint,
+                "model": model,
+            }
+        ), (200 if ok else 400)
     except Exception as e:
         return jsonify({"status": "error", "connected": False, "detail": str(e)}), 500
 
-@app.route('/api/pause/<ip>', methods=['POST'])
+
+@app.route("/api/pause/<ip>", methods=["POST"])
 def pause_bot(ip):
     queue_command(ip, "paused", True)
     return jsonify({"status": "ok", "action": "paused", "ip": ip})
 
-@app.route('/api/resume/<ip>', methods=['POST'])
+
+@app.route("/api/resume/<ip>", methods=["POST"])
 def resume_bot(ip):
     queue_command(ip, "paused", False)
     return jsonify({"status": "ok", "action": "resumed", "ip": ip})
 
-@app.route('/api/skip_sleep/<ip>', methods=['POST'])
+
+@app.route("/api/skip_sleep/<ip>", methods=["POST"])
 def skip_sleep(ip):
     queue_command(ip, "skip_sleep", True)
     return jsonify({"status": "ok", "action": "skip_sleep", "ip": ip})
 
 
-@app.route('/api/manual_release/<ip>', methods=['POST'])
+@app.route("/api/manual_release/<ip>", methods=["POST"])
 def manual_release(ip):
     queue_command(ip, "manual_release", True)
     return jsonify({"status": "ok", "action": "manual_release", "ip": ip})
 
-@app.route('/api/recover/<ip>', methods=['POST'])
+
+@app.route("/api/force_sleep/<ip>", methods=["POST"])
+def force_sleep(ip):
+    queue_command(ip, "force_sleep", True)
+    return jsonify({"status": "ok", "action": "force_sleep", "ip": ip})
+
+
+@app.route("/api/recover/<ip>", methods=["POST"])
 def recover_screen(ip):
     # 遠端設備
     if ":" in ip:
@@ -1066,12 +1493,15 @@ def recover_screen(ip):
 
     # 本地設備
     try:
-        if config_manager.get_flag(ip, 'is_real_phone') or 'fc65396d' in ip:
-             run_adb('shell wm density reset && wm size reset', device_serial=ip)
-             return jsonify({"status": "ok", "action": "screen_recovered", "ip": ip})
-        return jsonify({"status": "error", "message": "此設備未設定為實體機/特殊機型"}), 403
+        if config_manager.get_flag(ip, "is_real_phone") or "fc65396d" in ip:
+            run_adb("shell wm density reset && wm size reset", device_serial=ip)
+            return jsonify({"status": "ok", "action": "screen_recovered", "ip": ip})
+        return jsonify(
+            {"status": "error", "message": "此設備未設定為實體機/特殊機型"}
+        ), 403
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
 
 def run_server(port=5002):
 
@@ -1079,4 +1509,4 @@ def run_server(port=5002):
 
     # 在 Thread 中運行時必須關閉 debug 和 reloader，否則會觸發訊號錯誤
 
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)

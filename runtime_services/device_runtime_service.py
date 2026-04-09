@@ -4,6 +4,12 @@ import bot_state
 from utils.mumu_control import MuMuController, discover_control_exe
 
 
+class ForceSleepRequested(Exception):
+    """Raised when a device should stop current work and enter sleep immediately."""
+
+    pass
+
+
 CONNECT_FAILURE_COUNTS = {}
 NON_RESTARTABLE_DEVICE_KEYWORDS = ("7fe98fc6", "fc65396d")
 EMULATOR_RESTART_THRESHOLD = 1
