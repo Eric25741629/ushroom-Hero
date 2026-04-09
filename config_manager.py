@@ -42,6 +42,8 @@ DEFAULT_DEVICE_CONFIG = {
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # ?????????????
+    "mining_planner_version": "v1",  # v1 / v2
+    "mining_save_samples": False,  # save low-confidence mining cell samples
 }
 
 # OCR 全域設定
@@ -438,6 +440,22 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         ),
     )
 
+    planner_version = str(
+        current.get(
+            "mining_planner_version",
+            DEFAULT_DEVICE_CONFIG["mining_planner_version"],
+        )
+    ).strip().lower()
+    current["mining_planner_version"] = (
+        planner_version if planner_version in {"v1", "v2"} else "v1"
+    )
+    current["mining_save_samples"] = _to_bool(
+        current.get(
+            "mining_save_samples",
+            DEFAULT_DEVICE_CONFIG["mining_save_samples"],
+        ),
+        DEFAULT_DEVICE_CONFIG["mining_save_samples"],
+    )
     for k in [
         "enable_farm",
         "enable_arena",

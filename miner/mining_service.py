@@ -10,6 +10,7 @@ import copy
 import uiautomator2 as u2
 import img_tools
 import bot_state
+import config_manager
 
 from miner.models.classifier import ClassifierCNN, load_cnn_model
 from miner.planning.executor import execute_plan_steps
@@ -22,6 +23,7 @@ from miner.planning.planner import (
     plan_min_cost_to_floor7,
 )
 from miner.planning.smart_planner import plan_smart
+from miner.v2.planner import plan_v2
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
@@ -97,16 +99,6 @@ def print_plan_result(logger_obj, title: str, result: Dict[str, Any], orig_board
             logger_obj.info(msg)
 
 
-def plan_greedy_with_rewards(board: List[List[str]]) -> Dict[str, Any]:
-    """相容性包裝：舊 demo 若還在呼叫時，回退到最小成本規劃。"""
-    return plan_min_cost_to_floor7(board)
-
-
-def plan_collect_all_mines_then_descend_v2(board: List[List[str]]) -> Dict[str, Any]:
-    """相容性包裝：舊 demo 若還在呼叫時，回退到最小成本規劃。"""
-    return plan_min_cost_to_floor7(board)
-
-
 def _build_item_plan(candidate: Dict[str, Any]) -> Dict[str, Any]:
     tool = candidate["tool"]
     target = candidate["target"]
@@ -144,10 +136,17 @@ def run(
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     # 建立挖礦專屬 Logger
     miner_logger = setup_miner_logger(ip)
+    device_cfg = config_manager.get_device_config(ip)
+    planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
+    mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
+    if planner_version not in {"v1", "v2"}:
+        planner_version = "v1"
     
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
     miner_logger.info(f"⏱️ 開始挖礦，時間限制: {max_duration_minutes} 分鐘 (設備 {ip})")
+    miner_logger.info(f"[MiningService] planner_version={planner_version}")
+    miner_logger.info(f"[MiningService] mining_save_samples={mining_save_samples}")
 
     count = check_pickaxe_count(d)
     if count < 5:
@@ -227,22 +226,40 @@ def run(
         _log_item_status()
 
         # ...
-        board, _ = clf.classify_board(shared_frame, save_samples=True)
+        board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
         board_str = get_visual_board(board)
         miner_logger.info(f"\n[MiningService] Current Board:\n{board_str}")
 
         current_items = items_available.copy() if USE_ITEMS else {'drill': 0, 'bomb': 0}
-        tool_candidate = find_tool_candidate(board, items_available=current_items) if USE_ITEMS else None
-        if tool_candidate:
-            miner_logger.info(
-                "[MiningService] using item candidate: "
-                f"{tool_candidate['tool']} at {tool_candidate['target']} "
-                f"gain={tool_candidate.get('gain', 0)} "
-                f"savings={tool_candidate.get('effective_savings', tool_candidate.get('savings', 0.0)):.1f}"
-            )
-            plan = _build_item_plan(tool_candidate)
+        plan_title = "智能規劃 (SmartPlanner)"
+        plan_started_at = time.perf_counter()
+        if planner_version == "v2":
+            plan = plan_v2(board, shovels=count, items=current_items)
+            plan_title = "V2 規劃 (Miner V2)"
         else:
-            plan = plan_smart(board, shovels=count, items=current_items)
+            tool_candidate = find_tool_candidate(board, items_available=current_items) if USE_ITEMS else None
+            if tool_candidate:
+                miner_logger.info(
+                    "[MiningService] using item candidate: "
+                    f"{tool_candidate['tool']} at {tool_candidate['target']} "
+                    f"gain={tool_candidate.get('gain', 0)} "
+                    f"savings={tool_candidate.get('effective_savings', tool_candidate.get('savings', 0.0)):.1f}"
+                )
+                plan = _build_item_plan(tool_candidate)
+            else:
+                plan = plan_smart(board, shovels=count, items=current_items)
+        plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
+        if planner_version == "v2":
+            miner_logger.info(
+                "[MiningService] planner=v2 calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
+                % (
+                    plan_elapsed_ms,
+                    plan.get("elapsed_ms", "?"),
+                    plan.get("explored_nodes", "?"),
+                    len(plan.get("steps", [])),
+                    plan.get("strategy_class", "?"),
+                )
+            )
 
         _check_force_sleep(ip)
 
@@ -290,7 +307,7 @@ def run(
                 miner_logger.error("❌ 偵測到死循環！")
                 break
 
-        print_plan_result(miner_logger, "智能規劃 (SmartPlanner)", plan, board)
+        print_plan_result(miner_logger, plan_title, plan, board)
         deadline = start_time + max_duration_seconds
         _check_force_sleep(ip)
         execute_plan_steps(d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline)

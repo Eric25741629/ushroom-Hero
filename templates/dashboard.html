@@ -597,6 +597,14 @@
             <label style="font-size:0.8em;">採礦時長（分鐘）</label>
             <input type="number" id="editMiningDuration" class="form-control" placeholder="6">
           </div>
+          <div style="grid-column:span 2;">
+            <label style="font-size:0.8em;">挖礦規劃器版本</label>
+            <select id="editMiningPlannerVersion" class="form-control">
+              <option value="v1">V1（SmartPlanner）</option>
+              <option value="v2">V2（測試中）</option>
+            </select>
+          </div>
+          <label class="checkbox-item" style="grid-column:span 2;"><input type="checkbox" id="chkMiningSaveSamples">儲存挖礦低信心樣本</label>
         </div>
       </div>
 
@@ -1212,6 +1220,8 @@
         document.getElementById('editLampInterval').value = config.lamp_check_interval || 2;
         document.getElementById('editLampDuration').value = config.lamp_duration_sec || 300;
         document.getElementById('editMiningDuration').value = config.mining_duration_min || 6;
+        document.getElementById('editMiningPlannerVersion').value = config.mining_planner_version || 'v1';
+        document.getElementById('chkMiningSaveSamples').checked = !!config.mining_save_samples;
         document.getElementById('editBackend').value = config.backend || 'adb';
         document.getElementById('editWebUrl').value = config.web_url || '';
         document.getElementById('editCanvasSelector').value = config.web_canvas_selector || 'canvas';
@@ -1244,6 +1254,8 @@
         lamp_check_interval: parseInt(document.getElementById('editLampInterval').value || '2', 10),
         lamp_duration_sec: parseInt(document.getElementById('editLampDuration').value || '300', 10),
         mining_duration_min: parseInt(document.getElementById('editMiningDuration').value || '6', 10),
+        mining_planner_version: document.getElementById('editMiningPlannerVersion').value || 'v1',
+        mining_save_samples: document.getElementById('chkMiningSaveSamples').checked,
         backend: document.getElementById('editBackend').value || 'adb',
         web_url: document.getElementById('editWebUrl').value.trim(),
         web_canvas_selector: document.getElementById('editCanvasSelector').value.trim() || 'canvas',
