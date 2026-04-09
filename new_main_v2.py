@@ -122,9 +122,17 @@ from runtime_services.web_session_service import (
     process_online_check_requests,
     shutdown_web_devices,
 )
+from utils.smart_screenshot import SmartScreenshotRecorder
+
+# Devices that should skip guardian spirit / skill partner collection.
+# Keep legacy behavior: emulator-5558 is excluded from these tasks.
+_DEVICE_SKIP_GUARDIAN = {
+    "emulator-5558": True,
+}
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
+_smart_shot = SmartScreenshotRecorder()
 
 
 def _sanitize_filename_part(value: object) -> str:
@@ -135,29 +143,18 @@ def _sanitize_filename_part(value: object) -> str:
 
 def save_error_screenshot(device_obj, ip: str, stage: str, reason: str) -> Optional[str]:
     try:
-        if hasattr(device_obj, "screenshot"):
-            img = device_obj.screenshot(format="opencv")
-        else:
-            img = device_obj.capture_screenshot()
-
-        if img is None:
+        image_path = _smart_shot.capture(
+            device_obj=device_obj,
+            ip=ip,
+            stage=stage,
+            reason=reason,
+            task="",
+        )
+        if not image_path:
             logger.error(f"[{ip}] {reason} 失敗，無法取得截圖，stage={stage}")
             return None
-
-        screenshot_dir = os.path.join("logs", "error_screenshots", _sanitize_filename_part(ip))
-        os.makedirs(screenshot_dir, exist_ok=True)
-
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = os.path.join(
-            screenshot_dir,
-            f"{timestamp}_{_sanitize_filename_part(reason)}_{_sanitize_filename_part(stage)}.jpg",
-        )
-
-        if not cv2.imwrite(filename, img):
-            raise RuntimeError("cv2.imwrite returned False")
-
-        logger.error(f"[{ip}] {reason}，已保存截圖，stage={stage}, path={filename}")
-        return filename
+        logger.error(f"[{ip}] {reason}，已保存截圖，stage={stage}, path={image_path}")
+        return image_path
     except Exception as e:
         logger.error(f"[{ip}] 保存錯誤截圖失敗: reason={reason}, stage={stage}, err={e}", exc_info=True)
         return None
@@ -165,7 +162,15 @@ def save_error_screenshot(device_obj, ip: str, stage: str, reason: str) -> Optio
 
 def log_main_page_mismatch(device_obj, ip: str, stage: str, task: str, reason: str) -> Optional[str]:
     bot_state.update_state(ip, task=task, step=f"未在主頁面: {stage}")
-    screenshot_path = save_error_screenshot(device_obj, ip, stage, reason)
+    screenshot_path = _smart_shot.capture(
+        device_obj=device_obj,
+        ip=ip,
+        stage=stage,
+        reason=reason,
+        task=task,
+    )
+    if not screenshot_path:
+        screenshot_path = save_error_screenshot(device_obj, ip, stage, reason)
     logger.error(f"[{ip}] {reason}，stage={stage}, screenshot={screenshot_path}")
     return screenshot_path
 
@@ -332,6 +337,10 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                     Cnn_model,
                     skip_online_check_once=skip_online_check_once,
                 )
+                # wake_up_handler may reconnect and return raw uiautomator2 device.
+                # Re-wrap to keep a consistent interface (tap/click/swipe/pause guard).
+                if not isinstance(d, MonitoredDevice):
+                    d = MonitoredDevice(d, ip)
                 skip_online_check_once = False
                 if ip == 'emulator-5554':
                     has_req = bot_state.has_pending_online_check_request('emulator-5554')
@@ -347,7 +356,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 if state_manager.get_state() == "滑動解除節電模式'":
                     unlock_screen(d)
                 if check_in_game(d) :
-                    print("in game")
+                    logger.debug(f"[{ip}] 已確認在遊戲中")
                     # 即使在遊戲中，也要檢查是否有「放置獎勵」或「領取」彈窗阻擋
                     stage_check = get_stage_with_check(d, ip, Cnn_model)
                     if stage_check in ["放置獎勵", "離線獎勵", "領取"]:
@@ -355,7 +364,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                         reward(d)
                         time.sleep(2)
                 else:
-                    print("not in game")
+                    logger.debug(f"[{ip}] 未確認在遊戲中，準備啟動")
                     bot_state.update_state(ip, task="啟動遊戲", step="正在啟動 APP")
                     if 'fc65396d' in ip or '192.168' in ip:
                         
@@ -399,8 +408,6 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                                     # img = d.screenshot(format='opencv')
                 # if red_envelope.check_red_in_pic(img):
                 # red_envelope.open_red_envelope(d)
-                if ip == "emulator-5558":
-                    switch_skill(d)
 
                 current_time = time.localtime()
                 stage = get_stage_with_check(d, ip, Cnn_model)
@@ -463,7 +470,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 # if stage == "主頁面":
                 #     status = manager.check_and_park(protect=True)
 
-                print("確認資格: {}".format(get_stage_with_check(d, ip, Cnn_model) == "主頁面" or current_time.tm_hour == 23))
+                logger.debug(f"[{ip}] 確認家族任務資格：主頁面={get_stage_with_check(d, ip, Cnn_model) == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
                 stage = get_stage_with_check(d, ip, Cnn_model)
                 if stage == "主頁面" :
                     bot_state.update_state(ip, task="家族任務", step="執行中")
@@ -473,8 +480,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
 
                 # stage=get_stage(d,Cnn_model, easyocr_reader)
 
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if ip != "emulator-5558":
+                if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
                     if stage == "主頁面":
                         guardian_record = return_time(ip, name="guardian_spirit")
                         should_get_guardian = True
@@ -486,15 +492,13 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                             time_recording(ip, name="guardian_spirit")
                     else:
                         log_main_page_mismatch(d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面")
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if ip != "emulator-5558":
+                if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
                     if stage == "主頁面":
                         bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
                         get_skill_and_partner(d)
                         time.sleep(3)
                     else:
                         log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
-                stage = get_stage_with_check(d, ip, Cnn_model)
                 if stage == "主頁面":
                     device_cfg = config_manager.get_device_config(ip)
                     if device_cfg.get("enable_shop_manager", True):
@@ -531,8 +535,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 
                 bot_state.update_state(ip, task="每日加速", step="領取中")
                 daily_acceleration(d, ip, Cnn_model)
-                
-                stage = get_stage_with_check(d, ip, Cnn_model)
+
                 if stage == "主頁面":
                     bot_state.update_state(ip, task="競技場挑戰", step="領取中")
                     click_arena_challenges(d, ip)
@@ -550,7 +553,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 
                 # 挖礦前也走全域異地登入檢查，避免彈窗卡在任意介面時漏攔。
                 stage = get_stage_with_check(d, ip, Cnn_model)
-                print("stage:", stage)
+                logger.debug(f"[{ip}] 挖礦前當前頁面：{stage}")
                 stage = get_stage_with_check(d, ip, Cnn_model)
                 if stage == "主頁面" :
                     bot_state.update_state(ip, task="挖礦/Oracle", step="執行中", log="開始執行挖礦任務")
@@ -954,6 +957,7 @@ _running_threads = {} # {ip: Thread}
 _PROCESS_START_TS = time.time()
 _STARTUP_SLEEP_SEC_BY_DEVICE = {
     "emulator-5554": 3 * 60,
+    "emulator-5556": 3 * 60,
     "emulator-5560": 3 * 60,
 }
 
@@ -963,7 +967,7 @@ def temporary_reset_cycles():
     import json
     from device import get_adb_devices
     
-    print("[System] 執行臨時週期重置 (重置週專用)...")
+    logger.info("[System] 執行臨時週期重置 (重置週專用)...")
     try:
         devices = get_adb_devices()
         for ip in devices:
@@ -977,13 +981,13 @@ def temporary_reset_cycles():
                 for key in keys_to_reset:
                     if key in data:
                         del data[key]
-                        print(f"  - [{ip}] 已清除 {key}")
+                        logger.info(f"  - [{ip}] 已清除 {key}")
                 
                 with open(filename, 'w', encoding='utf-8') as f:
                     json.dump(data, f, indent=4, ensure_ascii=False)
-        print("[System] 週期重置完成。")
+        logger.info("[System] 週期重置完成。")
     except Exception as e:
-        print(f"[System] 重置失敗: {e}")
+        logger.error(f"[System] 重置失敗：{e}")
 
 if __name__ == "__main__":
     import config_manager
@@ -996,7 +1000,7 @@ if __name__ == "__main__":
         server_thread = threading.Thread(target=control_panel_app.run_server, args=(5002,), daemon=True)
         server_thread.start()
     else:
-        print("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
+        logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
         ensure_worker_webhook_started()
         ensure_worker_sync_started()
     # 確保模型在本機 SSD
@@ -1005,7 +1009,7 @@ if __name__ == "__main__":
     Cnn_model = cnn_model.load_cnn_model(local_pth)
     oralce_cnn_model, oralce_classes, resolved_device = load_miner_cnn_model()
     ocr = 1
-    print("[System] 核心已就緒，開始循環掃描 ADB 設備... (按 Ctrl+C 可退出)")
+    logger.info("[System] 核心已就緒，開始循環掃描 ADB 設備... (按 Ctrl+C 可退出)")
     try:
         while True:
             scan_and_start_devices(
@@ -1019,10 +1023,10 @@ if __name__ == "__main__":
             )
             for _ in range(300):  # 0.1s * 300 = 30s
                 if bot_state.check_refresh_needed():
-                    print("[System] 收到立即掃描請求！")
+                    logger.info("[System] 收到立即掃描請求！")
                     break
                 time.sleep(0.1)
     except KeyboardInterrupt:
-        print("\n[System] 收到退出信號，正在關閉所有執行緒...")
+        logger.info("\n[System] 收到退出信號，正在關閉所有執行緒...")
         shutdown_web_devices(logger)
-        print("[System] 程式已結束。")
+        logger.info("[System] 程式已結束。")
