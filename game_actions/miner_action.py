@@ -12,6 +12,7 @@ from tools import click_white
 from json_manager import create_store_manager
 import new_cnn.cnn_model as cnn_model
 import img_tools
+from runtime_services.device_runtime_service import ForceSleepRequested
 
 def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, rl_recorder: RLRecorder = None, Cnn_model=None, max_duration_minutes: float = 6.0):
     """
@@ -47,8 +48,11 @@ def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, 
         from json_manager import time_recording
         time_recording(ip, name="挖礦")
         logger.info(f"[{ip}] 挖礦任務已完成並記錄。")
+    except ForceSleepRequested as e:
+        logger.warning(f"[{ip}] 挖礦收到強制休眠請求，略過挖礦失敗復原流程: {e}")
+        raise
     except Exception as e:
-        logger.error(f"連線失敗: {e}")
+        logger.error(f"[{ip}] 挖礦流程例外: {e}")
         d.click(500, 174)
         time.sleep(3)
         for _ in range(5):

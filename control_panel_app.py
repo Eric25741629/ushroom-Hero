@@ -26,6 +26,8 @@ log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
 _WAR_ROOM_DIR = Path(__file__).resolve().parent / "push_project" / "web"
+_REPO_ROOT = Path(__file__).resolve().parent
+_README_PATH = _REPO_ROOT / "README.md"
 
 # Master 模式：存放給遠端 Worker 的指令佇列
 # { "school_laptop:emulator-5554": { "paused": True, "skip_sleep": False } }
@@ -77,6 +79,13 @@ DEFAULT_LABELER_UI_CONFIG = {
     "trainer_epochs": "10",
     "trainer_remove_source": "false",
 }
+
+
+def _load_readme_text() -> str:
+    try:
+        return _README_PATH.read_text(encoding="utf-8-sig")
+    except Exception as e:
+        return f"README 讀取失敗: {e}"
 
 
 def _append_labeler_log(line: str):
@@ -821,6 +830,13 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 def index():
     """主控面板首頁"""
     return render_template("dashboard.html", program_info=_get_program_info())
+
+
+@app.route("/readme")
+@app.route("/readme/")
+def readme_page():
+    """Serve README content inside the control panel."""
+    return render_template("readme_viewer.html", readme_text=_load_readme_text())
 
 
 @app.route("/war-room")

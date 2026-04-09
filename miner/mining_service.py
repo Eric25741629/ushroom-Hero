@@ -9,6 +9,7 @@ import copy
 
 import uiautomator2 as u2
 import img_tools
+import bot_state
 
 from miner.models.classifier import ClassifierCNN, load_cnn_model
 from miner.planning.executor import execute_plan_steps
@@ -26,9 +27,15 @@ from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 from tools import click_white
+from runtime_services.device_runtime_service import ForceSleepRequested
 
 # 功能開關：規劃器是否允許使用鑽頭/炸彈道具。
 USE_ITEMS: bool = True
+
+
+def _check_force_sleep(ip: str) -> None:
+    if bot_state.check_force_sleep(ip):
+        raise ForceSleepRequested(f"[{ip}] force sleep requested during mining")
 
 
 def _dismiss_mining_overlay_if_needed(d: u2.Device, frame, miner_logger) -> bool:
@@ -197,6 +204,7 @@ def run(
     iterations = 0
     overlay_check_attempted = False
     while count >= 1:
+        _check_force_sleep(ip)
         if time.time() - start_time > max_duration_seconds:
             miner_logger.info(f"⏳ 已達到時間限制 ({max_duration_minutes} 分鐘)，停止挖礦")
             break
@@ -235,6 +243,8 @@ def run(
             plan = _build_item_plan(tool_candidate)
         else:
             plan = plan_smart(board, shovels=count, items=current_items)
+
+        _check_force_sleep(ip)
 
         if not plan.get("ok"):
             miner_logger.warning(f"❌ 規劃失敗: {plan.get('message', '未知錯誤')}")
@@ -282,6 +292,7 @@ def run(
 
         print_plan_result(miner_logger, "智能規劃 (SmartPlanner)", plan, board)
         deadline = start_time + max_duration_seconds
+        _check_force_sleep(ip)
         execute_plan_steps(d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline)
         # ...
 

@@ -165,10 +165,10 @@ class MonitoredDevice:
 
     def _pause_guard(self):
         if bot_state.check_force_sleep(self._ip):
-            raise ForceSleepRequested()
+            raise ForceSleepRequested(f"[{self._ip}] force sleep requested before device action")
         bot_state.check_pause(self._ip)
         if bot_state.check_force_sleep(self._ip):
-            raise ForceSleepRequested()
+            raise ForceSleepRequested(f"[{self._ip}] force sleep requested after pause check")
 
     def _screen_size(self):
         info = getattr(self._d, "info", {}) or {}

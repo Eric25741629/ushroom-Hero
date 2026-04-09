@@ -376,6 +376,7 @@
     <button class="side-toggle" onclick="toggleSidebar()">☰</button>
     <button id="navDashboard" class="nav-btn active" onclick="switchPage('dashboard')">🏠 <span class="nav-label">主控頁</span></button>
     <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button>
+    <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📘 <span class="nav-label">README</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
   </div>
 
@@ -487,6 +488,21 @@
         id="warRoomFrame"
         class="war-room-frame"
         title="跨界車位戰情室"
+        loading="lazy"
+        src=""
+      ></iframe>
+    </div>
+  </div>
+
+  <div id="page-readme" class="page">
+    <div class="top-bar">
+      <h1><span>README</span></h1>
+    </div>
+    <div class="war-room-shell">
+      <iframe
+        id="readmeFrame"
+        class="war-room-frame"
+        title="README"
         loading="lazy"
         src=""
       ></iframe>
@@ -690,6 +706,7 @@
     let progressCache = {};
     let currentPage = 'dashboard';
     let warRoomLoaded = false;
+    let readmeLoaded = false;
 
     function formatTime(ts) {
       if (!ts) return '--:--:--';
@@ -746,9 +763,11 @@
       currentPage = page;
       document.getElementById('page-dashboard').classList.toggle('active', page === 'dashboard');
       document.getElementById('page-war-room').classList.toggle('active', page === 'war-room');
+      document.getElementById('page-readme').classList.toggle('active', page === 'readme');
       document.getElementById('page-labeler').classList.toggle('active', page === 'labeler');
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
       document.getElementById('navWarRoom').classList.toggle('active', page === 'war-room');
+      document.getElementById('navReadme').classList.toggle('active', page === 'readme');
       document.getElementById('navLabeler').classList.toggle('active', page === 'labeler');
       if (page === 'labeler') {
         loadLabelerConfig();
@@ -757,6 +776,11 @@
         if (!warRoomLoaded) {
           document.getElementById('warRoomFrame').src = '/war-room/';
           warRoomLoaded = true;
+        }
+      } else if (page === 'readme') {
+        if (!readmeLoaded) {
+          document.getElementById('readmeFrame').src = '/readme/';
+          readmeLoaded = true;
         }
       } else {
         fetchStatus();

@@ -175,6 +175,28 @@ def log_main_page_mismatch(device_obj, ip: str, stage: str, task: str, reason: s
     logger.error(f"[{ip}] {reason}，stage={stage}, screenshot={screenshot_path}")
     return screenshot_path
 
+
+def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger_obj) -> None:
+    """Stop the current runtime device immediately for force-sleep handling."""
+    if device_obj is None:
+        logger_obj.warning(f"[{ip}] 強制休眠時找不到裝置實例，略過停止動作")
+        return
+
+    try:
+        if backend_kind == "web_h5":
+            close_fn = getattr(device_obj, "close", None)
+            if callable(close_fn):
+                close_fn()
+                logger_obj.info(f"[{ip}] 強制休眠已關閉 web_h5 瀏覽器")
+            else:
+                device_obj.app_stop("com.mxdzz.tw.and")
+                logger_obj.info(f"[{ip}] 強制休眠已停止 web_h5 會話")
+        else:
+            device_obj.app_stop("com.mxdzz.tw.and")
+            logger_obj.info(f"[{ip}] 強制休眠已關閉 adb 應用")
+    except Exception as stop_err:
+        logger_obj.warning(f"[{ip}] 強制休眠停止裝置失敗: backend={backend_kind}, err={stop_err}")
+
 class LoginConflictError(Exception):
     """自定義異常：用於處理異地登錄並終止當前喚醒 session"""
     pass
@@ -813,11 +835,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 sleep_policy = "force_sleep"
                 sleep_reason = "強制休眠"
                 logger.warning(f"[{ip}] 收到強制休眠請求，終止當前任務並進入休眠: {e}")
-                try:
-                    if d is not None and backend_kind != "web_h5":
-                        d.app_stop("com.mxdzz.tw.and")
-                except Exception as stop_err:
-                    logger.debug(f"[{ip}] force sleep app_stop skipped/failed: {stop_err}")
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
             except StartupBypassError as e:
                 forced_wake_ts = time.time() + 1800
