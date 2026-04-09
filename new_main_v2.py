@@ -197,6 +197,88 @@ def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger
     except Exception as stop_err:
         logger_obj.warning(f"[{ip}] 強制休眠停止裝置失敗: backend={backend_kind}, err={stop_err}")
 
+
+def run_sleep_cycle(
+    ip: str,
+    logger_obj,
+    *,
+    forced_wake_ts: Optional[float] = None,
+    force_sleep_now: bool = False,
+    sleep_policy: str = "aligned_window",
+    sleep_reason: str = "常規對齊喚醒",
+    enable_dungeon_manager: bool = False,
+):
+    cur_ts = time.time()
+
+    def calc_aligned_wake_ts(base_ts: float, min_sleep_sec: int, win_min: int = 20) -> float:
+        earliest = base_ts + min_sleep_sec
+        hour_floor = earliest - (earliest % 3600)
+        win_end = hour_floor + win_min * 60
+
+        if earliest <= win_end:
+            return float(random.randint(int(earliest), int(win_end)))
+        next_hour = hour_floor + 3600
+        return float(next_hour + random.randint(0, win_min * 60))
+
+    if "emulator-5558" in ip:
+        min_sleep_sec = int(random.uniform(1, 3) * 3600)
+    else:
+        min_sleep_sec = (60 + random.randint(-5, 5)) * 60
+
+    if forced_wake_ts is not None:
+        wake_ts = forced_wake_ts
+    else:
+        if "7fe98fc6" in ip:
+            wake_ts = cur_ts + 3600 + random.randint(0, 30)
+        else:
+            wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
+
+    wake_ts = adjust_wake_time_for_cars(wake_ts)
+
+    if ip == "emulator-5556" and enable_dungeon_manager:
+        today_wday = time.localtime().tm_wday
+        if today_wday in (5, 6):
+            biweek_record = return_time(ip, name="雙週副本")
+            should_execute_biweek = False
+
+            if biweek_record is None:
+                should_execute_biweek = True
+            else:
+                should_execute_biweek = biweek_record.get("is_next_biweek", False)
+
+            if should_execute_biweek:
+                now = time.time()
+                today_midnight = now - (now % 86400) + 86400
+                biweek_wake_ts = today_midnight - 86400 + 19 * 3600 + 57 * 60
+
+                if biweek_wake_ts > now and biweek_wake_ts < wake_ts:
+                    wake_ts = biweek_wake_ts
+                    logger_obj.info(f"[{ip}] 雙週副本喚醒條件觸發，設定喚醒時間為 19:57")
+
+    sleep_duration = max(0, int(wake_ts - cur_ts))
+    wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
+    bot_state.update_state(
+        ip,
+        task="休眠中",
+        step=f"{sleep_reason} | policy={sleep_policy} | 預計休眠 {sleep_duration/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
+        next_wake_at=wake_ts,
+    )
+
+    if forced_wake_ts is not None:
+        logger_obj.info(
+            f"[{ip}] 套用強制休眠策略: reason={sleep_reason}, policy={sleep_policy}, "
+            f"預計休眠 {sleep_duration/60:.1f} 分鐘"
+        )
+    elif force_sleep_now:
+        logger_obj.info(f"[{ip}] 已強制中斷當前任務，將直接進入休眠流程，預計休眠 {sleep_duration/60:.1f} 分鐘")
+    elif "7fe98fc6" in ip:
+        logger_obj.info(f"[{ip}] 裝置為 7fe98fc6，設定為每小時喚醒一次，預計休眠 {sleep_duration/60:.1f} 分鐘")
+    else:
+        logger_obj.info(f"[{ip}] 本次喚醒將落在每小時 00~20 分，預計休眠 {sleep_duration/60:.1f} 分鐘")
+
+    interrupted = sleep_until_wake_or_interrupt(ip, wake_ts, logger_obj)
+    return wake_ts, interrupted, time.time()
+
 class LoginConflictError(Exception):
     """自定義異常：用於處理異地登錄並終止當前喚醒 session"""
     pass
@@ -242,6 +324,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         device_logger = setup_logger_for_device(ip)
         # 設定當前線程的 logger
         set_thread_logger(device_logger)
+        backend_kind = str(config_manager.get_device_config(ip).get("backend", "adb")).strip().lower()
 
         startup_sleep_sec = int(_STARTUP_SLEEP_SEC_BY_DEVICE.get(ip, 0) or 0)
         elapsed_sec = int(time.time() - _PROCESS_START_TS)
@@ -261,24 +344,40 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
                 time.sleep(1)
 
-        try:
-            d_orig, d, backend_kind, skip_online_check_once = initialize_runtime_device(
-                ip,
-                device_logger,
-                connect_u2_with_retries,
-            )
-            reset_connect_failure(ip)
-        except Exception as e:
-            if backend_kind == "web_h5":
-                device_logger.error(f"[{ip}] web_h5 backend init failed: {e}")
-                device_logger.warning(f"[{ip}] web_h5 init backoff 30s to avoid relaunch storm")
-                time.sleep(30)
+        while True:
+            try:
+                d_orig, d, backend_kind, skip_online_check_once = initialize_runtime_device(
+                    ip,
+                    device_logger,
+                    connect_u2_with_retries,
+                )
+                reset_connect_failure(ip)
+                break
+            except ForceSleepRequested as e:
+                force_sleep_now = True
+                device_logger.warning(f"[{ip}] 初始化期間收到強制休眠，暫停啟動並進入休眠: {e}")
+                stop_runtime_device_for_sleep(d_orig, ip, backend_kind, device_logger)
+                _, _, wake_up_time = run_sleep_cycle(
+                    ip,
+                    device_logger,
+                    force_sleep_now=True,
+                    sleep_policy="force_sleep",
+                    sleep_reason="強制休眠",
+                    enable_dungeon_manager=enable_dungeon_manager,
+                )
+                force_sleep_now = False
+                continue
+            except Exception as e:
+                if backend_kind == "web_h5":
+                    device_logger.error(f"[{ip}] web_h5 backend init failed: {e}")
+                    device_logger.warning(f"[{ip}] web_h5 init backoff 30s to avoid relaunch storm")
+                    time.sleep(30)
+                    bot_state.set_offline(ip, reason=f"init failed: {e}")
+                    return
+                handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
+                device_logger.error(f"[{ip}] connect init failed: {e}")
                 bot_state.set_offline(ip, reason=f"init failed: {e}")
                 return
-            handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
-            device_logger.error(f"[{ip}] connect init failed: {e}")
-            bot_state.set_offline(ip, reason=f"init failed: {e}")
-            return
         
         wake_up_time = time.time()
         
@@ -882,88 +981,15 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 open_nofication(d)
                 d.screen_off()
             release_wakeup_lock(ip)
-            last_wake_time = time.time()
-            cur_ts = last_wake_time
-
-            def calc_aligned_wake_ts(cur_ts: float, min_sleep_sec: int, win_min: int = 20) -> float:
-                """
-                至少睡 min_sleep_sec 秒後，把喚醒時間對齊到每小時 00~win_min 分
-                """
-                earliest = cur_ts + min_sleep_sec
-                hour_floor = earliest - (earliest % 3600)
-                win_end = hour_floor + win_min * 60
-
-                if earliest <= win_end:
-                    return float(random.randint(int(earliest), int(win_end)))
-                else:
-                    next_hour = hour_floor + 3600
-                    return float(next_hour + random.randint(0, win_min * 60))
-
-            # 分開設定兩種設備的「最少休眠」
-            if 'emulator-5558' in ip:
-                min_sleep_sec = int(random.uniform(1, 3) * 3600)  # emulator-5558：1~3 小時
-            else:
-                min_sleep_sec = (60 + random.randint(-5, 5)) * 60  # 一般設備：60±5 分
-
-            if forced_wake_ts is not None:
-                wake_ts = forced_wake_ts
-            else:
-                # 新增規則：若為 7fe98fc6，強制每小時喚醒一次
-                if '7fe98fc6' in ip:
-                    # 每小時喚醒一次，加入少許抖動（0~30秒）以避免與其他裝置完全同步
-                    wake_ts = cur_ts + 3600 + random.randint(0, 30)
-                else:
-                    wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
-
-            # --- 新增：根據車位戰鬥調整時間 ---
-            wake_ts = adjust_wake_time_for_cars(wake_ts)
-
-            # --- 新增：雙週副本喚醒條件（星期六/日 19:57）---
-            if ip == "emulator-5556" and enable_dungeon_manager:
-                today_wday = time.localtime().tm_wday
-                if today_wday in (5, 6):  # 星期六或星期日
-                    biweek_record = return_time(ip, name="雙週副本")
-                    should_execute_biweek = False
-                    
-                    if biweek_record is None:
-                        should_execute_biweek = True
-                    else:
-                        # is_next_biweek=True 代表是下一兩週了，應該執行；False 則本兩週已執行，應跳過
-                        should_execute_biweek = biweek_record.get("is_next_biweek", False)
-                    
-                    if should_execute_biweek:
-                        now = time.time()
-                        # 計算今天的 19:57
-                        today_midnight = now - (now % 86400) + 86400
-                        biweek_wake_ts = today_midnight - 86400 + 19 * 3600 + 57 * 60
-                        
-                        # 如果當前時間還早於喚醒時間，且這個喚醒時間比目前的 wake_ts 更早，則使用它
-                        if biweek_wake_ts > now and biweek_wake_ts < wake_ts:
-                            wake_ts = biweek_wake_ts
-                            logger.info(f"[{ip}] 雙週副本喚醒條件觸發，設定喚醒時間為 19:57")
-
-            sleep_duration = max(0, int(wake_ts - cur_ts))
-            wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
-            bot_state.update_state(
+            wake_ts, interrupted, wake_up_time = run_sleep_cycle(
                 ip,
-                task="休眠中",
-                step=f"{sleep_reason} | policy={sleep_policy} | 預計休眠 {sleep_duration/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                next_wake_at=wake_ts,
+                logger,
+                forced_wake_ts=forced_wake_ts,
+                force_sleep_now=force_sleep_now,
+                sleep_policy=sleep_policy,
+                sleep_reason=sleep_reason,
+                enable_dungeon_manager=enable_dungeon_manager,
             )
-
-            if forced_wake_ts is not None:
-                logger.info(
-                    f"[{ip}] 套用強制休眠策略: reason={sleep_reason}, policy={sleep_policy}, "
-                    f"預計休眠 {sleep_duration/60:.1f} 分鐘"
-                )
-            elif force_sleep_now:
-                logger.info(f"[{ip}] 已強制中斷當前任務，將直接進入休眠流程，預計休眠 {sleep_duration/60:.1f} 分鐘")
-            elif '7fe98fc6' in ip:
-                logger.info(f"[{ip}] 裝置為 7fe98fc6，設定為每小時喚醒一次，預計休眠 {sleep_duration/60:.1f} 分鐘")
-            else:
-                logger.info(f"[{ip}] 本次喚醒將落在每小時 00~20 分，預計休眠 {sleep_duration/60:.1f} 分鐘")
-
-            interrupted = sleep_until_wake_or_interrupt(ip, wake_ts, logger)
             if interrupted and bot_state.has_pending_web_launch_request(ip) and time.time() < wake_ts:
                 resume_sleep_until_ts = wake_ts
                 resume_sleep_reason = "手動操作結束後返回休眠"
@@ -974,9 +1000,6 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 ):
                     resume_sleep_until_ts = wake_ts
                     resume_sleep_reason = "互檢完成後返回休眠"
-
-            wake_up_time = time.time()
-
     except Exception as e:
         if backend_kind != "web_h5" and is_emulator_serial(ip) and is_recoverable_connect_error(str(e)):
             handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)

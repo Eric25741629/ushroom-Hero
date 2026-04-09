@@ -15,6 +15,7 @@ from img_tools import (
     click_str_by_server,
     analyze_skill_via_http as shared_analyze_skill_via_http,
     analyze_stage_via_server as shared_analyze_stage_via_server,
+    get_all_text
 )
 from config.paths import OCR_FAILS_DIR_STR
 current_index = 0
@@ -28,24 +29,22 @@ SKIP_INCOMPLETE_LIMIT = 3
 
 LAMP_SELL_PAGE_PIXEL_PROFILES = (
     (
-        ((332, 564), (58, 65, 198)),
-        ((212, 564), (58, 65, 198)),
+        ((211, 585), (58, 65, 198)),
+        ((332, 585), (58, 65, 198)),
     ),
     (
-        ((332, 564), (58, 65, 197)),
-        ((212, 564), (58, 65, 197)),
+        ((211, 585), (58, 65, 198)),
+        ((332, 573), (58, 65, 197)),
     ),
 )
 
 LAMP_READY_PIXEL_PROFILES = (
     (
-        ((375, 576), (180, 208, 219)),
         ((121, 700), (178, 209, 218)),
         ((408, 795), (42, 155, 111)),
         ((217, 790), (58, 65, 198)),
     ),
     (
-        ((375, 576), (163, 198, 216)),
         ((121, 700), (90, 111, 132)),
         ((408, 795), (32, 32, 43)),
         ((217, 790), (132, 104, 99)),
@@ -922,11 +921,16 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     if not check_server_health():
         print("錯誤: 無法連接到 OCR 服務器")
         return
-    
+    ocr_results= get_all_text(d.screenshot(format='opencv')[802:821, 210:335])
+    if ocr_results != []:
+        gold_num=ocr_results[0]
+    else:
+        gold_num = gold_num
     # 初始點擊
     click_and_wait(d, 447, 801, 2)
     click_and_wait(d, 281, 636, 1)
     
+    last_gold_num = -1
     while time.time() - start_time < times:
         # 記錄連續跳過不完整 OCR 的次數，若超過上限就結束整個開裝流程
         if 'ocr_skip_count' not in globals():
@@ -939,14 +943,28 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
             print("當前在全部出售頁面")
             if click_str_by_server(d,"全部出售",y_range=(535,600)):
                 return 
-        # 檢查是否在正確畫面
-        if not is_lamp_ready_page(img):
+        # 檢查神燈是否在減少 210 802 335 821
+        ocr_results= get_all_text(d.screenshot(format='opencv')[802:821, 210:335])
+        if ocr_results != []:
+            #神燈數量不會差異很大 理論上+-1000內 都算正常變化，避免 OCR 偶爾誤判導致重置 last_gold_num
+            #先正規化數字（去除非數字字元），再比較
+
+            gold_num = ocr_results[0]
+        else:
+            gold_num = gold_num
+        if last_gold_num != -1 and gold_num != last_gold_num:
+            print(f"神燈數量變化: {last_gold_num} -> {gold_num}")
+            time.sleep(10)
+            last_gold_num = gold_num
             continue
-            
+        else:
+            print(f"神燈數量: {gold_num}")
+            d.click(271, 576)
+            time.sleep(5)
+        last_gold_num = gold_num
         time.sleep(1)
-        img = device.capture_screenshot()
-        gold_num =img[802:825,240:317]
         # 提取技能資訊，使用通用 /ocr + 本地解析
+        img = device.capture_screenshot()
         skill_roi = img[634:744, 291:367]
         skill_result = analyze_skill_via_http(skill_roi)
 
@@ -969,7 +987,7 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
             print("不需要的組合")
             click_and_wait(d, 227, 798, 1)
             confirm_if_needed(d, device)
-                
+            
         else:
             print("需要的組合")
             # 處理需要的組合的邏輯（is_compare 參數會在內部處理機率比較）
@@ -988,7 +1006,6 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
             else:
                 # 若成功處理一次，重置連續跳過計數
                 globals()['ocr_skip_count'] = 0
-        
     # 結束清理
     click_and_wait(d, 447, 801, 2)
     click_and_wait(d, 273, 560, 2)
@@ -1008,7 +1025,7 @@ def process_wanted_combo(d, combo, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_
     img = device.capture_screenshot()
     
     # 分析當前階段
-    all_stage = img[328:832, 147:371]
+    all_stage = img[328:938, 147:371]
     stage_result = analyze_stage_via_http(all_stage)
 
     if not stage_result :
@@ -1045,9 +1062,9 @@ def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAUL
     - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合），
                           若為 True，則在比較詞條時將 `連` 與 `爆` 視為一個整體
     """
-    click_and_wait(d, 281, 721, 1)
-    click_and_wait(d, 268, 869, 1)
-    click_and_wait(d, 282, 584, 1)
+    click_and_wait(d, 378, 721, 1) #切換按鈕
+    click_and_wait(d, 268, 869, 1) #關閉方案選單
+    click_and_wait(d, 282, 584, 1) #點開開到裝備
     
     # 在此位置（第 592 行）先比對「開出」(rolled) 與「原有」(original) 的詞條，再決定是否執行換裝
     device = D.device(d)
@@ -1223,7 +1240,7 @@ def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAUL
         print("警告：無法重新識別階段，點擊第一個")
         click_and_wait(d, 281, 350, 1)
         
-    click_and_wait(d, 281, 721, 1)
+    click_and_wait(d, 347, 721, 1)
     click_and_wait(d, 268, 869, 1)
     click_and_wait(d, 441, 805, 1)
     click_and_wait(d, 271, 634, 1)
@@ -1232,8 +1249,8 @@ def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAUL
     return False
 
 if __name__ == "__main__":
-    current_device_ip = 'adb-fc65396d-4LPqmI._adb-tls-connect._tcp'
-    # current_device_ip = '7fe98fc6'
+    # current_device_ip = 'adb-fc65396d-4LPqmI._adb-tls-connect._tcp'
+    current_device_ip = '7fe98fc6'
     # current_device_ip = 'emulator-5554'
     # 檢查服務器連接
     if not check_server_health():
@@ -1264,29 +1281,30 @@ if __name__ == "__main__":
         click_str_by_server(d,"全部出售",y_range=(535,600))
          
     
-    print(f"成功連接到設備: {current_device_ip}")
-    # open_the_gold(d, times=-1, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip)
+    # print(f"成功連接到設備: {current_device_ip}")
+    # img = d.screenshot(format='opencv')
+    # print(is_lamp_ready_page(img))
+    open_the_gold(d, times=-1, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip)
 
-    img = d.screenshot(format='opencv')
-    # orig_rois_for_smart_phone = [
-    #     img[400:430, 292:439],
-    #     img[450:480, 292:439]
+    # orig_rois2_for_computer = [
+    #     img[420:450, 292:439],
+    #     img[460:490, 292:439]
     # ]
-    orig_rois2_for_computer = [
-        img[420:450, 292:439],
-        img[460:490, 292:439]
-    ]
-    cv2.imshow("orig_roi_1", orig_rois2_for_computer[0])
-    cv2.imshow("orig_roi_2", orig_rois2_for_computer[1])
-    cv2.waitKey(0)
+    # cv2.imshow("orig_roi_1", orig_rois_for_smart_phone[0])
+    # cv2.imshow("orig_roi_2", orig_rois_for_smart_phone[1])
+    # cv2.waitKey(0)
     # # 解析 ROI 為 (skill, prob) 列表
     # rolled = read_pairs_from_rois(  orig_rois_for_smart_phone)
-
+    # rolled_rois = [
+    #     img[645:675, 295:439],
+    #     img[696:724, 295:439]
+    # ]
     # # cv2.waitKey(0)
     # # # 解析 ROI 為 (skill, prob) 列表
-    # # # rolled = read_pairs_from_rois(rolled_rois)
-    # # original = read_pairs_from_rois(rolled_rois)
-    # print(f"original pairs: {rolled}")
+    # rolled = read_pairs_from_rois(rolled_rois)
+    # original = read_pairs_from_rois(orig_rois_for_smart_phone)
+    # print(f"rolled pairs: {rolled}")
+    # print(f"original pairs: {original}")
     # gold_num_img =img[802:825,240:317]
     # 提取技能資訊並透過 HTTP 分析
     # gold_num = analyze_skill_via_http(gold_num_img)

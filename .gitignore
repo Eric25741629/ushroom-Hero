@@ -25,3 +25,5 @@ ocr_fails/
 .claude/
 */utils/__pycache__/*
 */__pycache__/*
+miner/core/__pycache__/*
+**/__pycache__/*
