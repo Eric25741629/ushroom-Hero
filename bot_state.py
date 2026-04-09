@@ -1,7 +1,10 @@
 ﻿import threading
 import time
 import uuid
+import logging
 from typing import Dict, Optional, Any
+
+logger = logging.getLogger(__name__)
 
 # 存放所有設備狀態的字典
 # 結構範例:
@@ -52,7 +55,7 @@ def init_device(ip: str):
             "paused": False,
             "logs": []
         }
-    print(f"[BotState] 設備 {ip} 已上線並註冊狀態監控。")
+    logger.debug(f"[BotState] 設備 {ip} 已上線並註冊狀態監控。")
 
 
 def ensure_device_visible(ip: str, status: str = "OFFLINE", step: str = "等待啟動..."):
@@ -85,7 +88,7 @@ def set_offline(ip: str, reason: str = "正常結束"):
             _states[ip]["status"] = "OFFLINE"
             _states[ip]["step"] = reason
             _states[ip]["last_update"] = time.time()
-    print(f"[BotState] 設備 {ip} 已離線: {reason}")
+    logger.info(f"[BotState] 設備 {ip} 已離線：{reason}")
 
 def update_state(
     ip: str,
@@ -127,7 +130,7 @@ def update_state(
             state["step"] = step
             
         if log is not None:
-            # ?芯???敺?10 璇?logs
+            # 只保留最近 10 筆 logs
             state["logs"].append(f"{time.strftime('%H:%M:%S')} - {log}")
             if len(state["logs"]) > 10:
                 state["logs"].pop(0)
@@ -149,12 +152,17 @@ def check_pause(ip: str):
     event = _pause_events[ip]
     
     if not event.is_set():
-        # 狀態更新為暫停中
-        update_state(ip, step="*** 暫停中 (等待指令) ***")
-        
-        # 阻塞在這裡，直到 set() 被呼叫
-        event.wait()
-        
+        while not event.is_set():
+            if has_pending_web_launch_request(ip):
+                update_state(ip, step="*** 暫停中，但收到手動開網頁請求 ***")
+                return True
+
+            # 狀態更新為暫停中
+            update_state(ip, step="*** 暫停中 (等待指令) ***")
+
+            # 只短暫等待，讓手動開網頁這類高優先請求能插隊處理。
+            event.wait(timeout=1.0)
+
         # 醒來後更新狀態
         update_state(ip, step="恢復執行")
 
@@ -165,7 +173,7 @@ def set_pause(ip: str, paused: bool):
     paused=False -> 恢復 (set event)
     """
     if ip not in _pause_events:
-        print(f"[BotState] 無法設定暫停，找不到設備 {ip}")
+        logger.warning(f"[BotState] 無法設定暫停，找不到設備 {ip}")
         return
 
     with get_device_lock(ip):
@@ -174,10 +182,10 @@ def set_pause(ip: str, paused: bool):
 
     if paused:
         _pause_events[ip].clear() # 設為 False，觸發 wait
-        print(f"[BotState] 已發送暫停信號給 {ip}")
+        logger.info(f"[BotState] 已發送暫停信號給 {ip}")
     else:
         _pause_events[ip].set()   # 設為 True，解除 wait
-        print(f"[BotState] 已發送恢復信號給 {ip}")
+        logger.info(f"[BotState] 已發送恢復信號給 {ip}")
 
 def get_all_states() -> Dict[str, Dict[str, Any]]:
     """
@@ -570,4 +578,3 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
                 _skip_sleep_flags.pop(ip, None)
                 with _global_lock:
                     _locks.pop(ip, None)
-
