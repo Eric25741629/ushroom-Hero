@@ -24,6 +24,8 @@ from pathlib import Path
 log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
@@ -797,27 +799,39 @@ def _get_program_info():
     git_time = "unknown"
     fix_note = _PROGRAM_FIX_NOTE_FALLBACK
 
+    # Windows 預設 locale 常是 cp950 (zh-TW)，git 輸出 UTF-8 bytes 撞 cp950
+    # 解碼會 raise UnicodeDecodeError，讓整段資訊全變 fallback。明確指定
+    # encoding="utf-8" + errors="replace" 才是穩定做法。
     def _git(args):
         return subprocess.run(
-            ["git", *args],
-            cwd=repo_root,
+            ["git", "-c", "i18n.logOutputEncoding=UTF-8", *args],
+            cwd=str(repo_root),
             capture_output=True,
-            text=True,
             check=True,
+            encoding="utf-8",
+            errors="replace",
         ).stdout.strip()
 
     try:
         short_sha = _git(["rev-parse", "--short", "HEAD"])
-        commit_time = _git(["show", "-s", "--format=%cd", "--date=iso-local", "HEAD"])
-        commit_subject = _git(["show", "-s", "--format=%s", "HEAD"])
         if short_sha:
             version = f"git-{short_sha}"
+    except Exception as exc:
+        logger.warning("[program_info] read short_sha failed: %s", exc)
+
+    try:
+        commit_time = _git(["show", "-s", "--format=%cd", "--date=iso-local", "HEAD"])
         if commit_time:
             git_time = commit_time
+    except Exception as exc:
+        logger.warning("[program_info] read commit_time failed: %s", exc)
+
+    try:
+        commit_subject = _git(["show", "-s", "--format=%s", "HEAD"])
         if commit_subject:
             fix_note = commit_subject
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("[program_info] read commit_subject failed: %s", exc)
 
     info = {
         "version": version,
