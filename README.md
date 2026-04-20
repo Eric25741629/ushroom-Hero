@@ -140,7 +140,7 @@ python new_main_v2.py
 專案有兩套 OCR 使用情境：
 
 - 一般畫面辨識：由 [img_tools.py](/a:/菇勇者全自動掛機/img_tools.py) 統一管理
-- 神燈 / 點金：由 [Open_gold_paddle_ocr.py](/a:/菇勇者全自動掛機/Open_gold_paddle_ocr.py) 呼叫，但現在也已改成共用 `img_tools` 的 fallback 機制
+- 開神燈：由 [Open_gold_paddle_ocr.py](/a:/菇勇者全自動掛機/Open_gold_paddle_ocr.py) 呼叫，但現在也已改成共用 `img_tools` 的 fallback 機制
 
 OCR server 由 `bot_config.json -> global -> ocr` 控制，支援多台 server priority。
 

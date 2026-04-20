@@ -27,7 +27,12 @@ class PlaywrightContextConfig:
     storage_state 等選項，直接從這裡延伸即可。
     """
 
-    def __init__(self, viewport: Optional[Dict[str, int]] = None, device_scale_factor: float = 1.0, **extra_options: Any):
+    def __init__(
+        self,
+        viewport: Optional[Dict[str, int]] = None,
+        device_scale_factor: float = 1.0,
+        **extra_options: Any,
+    ):
         self.viewport = dict(viewport or DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS["viewport"])
         self.extra_options = dict(extra_options)
 
@@ -48,7 +53,12 @@ class PlaywrightContextAdapter:
     3. 讓上層程式未來可無痛切換到 Playwright。
     """
 
-    def __init__(self, browser: Any = None, context: Any = None, config: Optional[PlaywrightContextConfig] = None):
+    def __init__(
+        self,
+        browser: Any = None,
+        context: Any = None,
+        config: Optional[PlaywrightContextConfig] = None,
+    ):
         self._browser = browser
         self._context = context
         self._config = config or PlaywrightContextConfig()
@@ -113,18 +123,25 @@ class PlaywrightContextAdapter:
             self._context.close()
             self._context = None
 
+
 class MonitoredDevice:
     """
     裝置操作包裝類別。
     透過單一介面封裝點擊、滑動、截圖、XPath 點擊等動作，
     方便後續替換不同平台的底層實作。
     """
+
     def __init__(self, original_d, ip: str):
         self._d = original_d
         self._ip = ip
         self._tracker = ActionTraceRecorder()
 
-    def _trace(self, event_type: str, payload: Optional[Dict[str, Any]] = None, meaning: str = ""):
+    def _trace(
+        self,
+        event_type: str,
+        payload: Optional[Dict[str, Any]] = None,
+        meaning: str = "",
+    ):
         try:
             self._tracker.log(
                 device_id=self._ip,
@@ -137,7 +154,12 @@ class MonitoredDevice:
         except Exception:
             pass
 
-    def _auto_meaning(self, event_type: str, explicit_meaning: str = "", payload: Optional[Dict[str, Any]] = None) -> str:
+    def _auto_meaning(
+        self,
+        event_type: str,
+        explicit_meaning: str = "",
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
         text = str(explicit_meaning or "").strip()
         if text:
             return text
@@ -165,15 +187,21 @@ class MonitoredDevice:
 
     def _pause_guard(self):
         if bot_state.check_force_sleep(self._ip):
-            raise ForceSleepRequested(f"[{self._ip}] force sleep requested before device action")
+            raise ForceSleepRequested(
+                f"[{self._ip}] force sleep requested before device action"
+            )
         bot_state.check_pause(self._ip)
         if bot_state.check_force_sleep(self._ip):
-            raise ForceSleepRequested(f"[{self._ip}] force sleep requested after pause check")
+            raise ForceSleepRequested(
+                f"[{self._ip}] force sleep requested after pause check"
+            )
 
     def _screen_size(self):
         info = getattr(self._d, "info", {}) or {}
         width = info.get("displayWidth") or info.get("screenWidth") or info.get("width")
-        height = info.get("displayHeight") or info.get("screenHeight") or info.get("height")
+        height = (
+            info.get("displayHeight") or info.get("screenHeight") or info.get("height")
+        )
         return width, height
 
     def _to_px(self, x, y):
@@ -181,7 +209,12 @@ class MonitoredDevice:
 
         若 $0 \le x,y < 1$，視為螢幕比例；否則視為絕對座標。
         """
-        if isinstance(x, (int, float)) and isinstance(y, (int, float)) and 0 <= x < 1 and 0 <= y < 1:
+        if (
+            isinstance(x, (int, float))
+            and isinstance(y, (int, float))
+            and 0 <= x < 1
+            and 0 <= y < 1
+        ):
             width, height = self._screen_size()
             if width and height:
                 return int(width * x), int(height * y)
@@ -190,7 +223,9 @@ class MonitoredDevice:
     def tap(self, x, y, *args, **kwargs):
         """統一的點擊入口。"""
         self._pause_guard()
-        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
+        )
         x, y = self._to_px(x, y)
         payload = {"x": x, "y": y}
         self._trace("tap", payload, meaning=self._auto_meaning("tap", meaning, payload))
@@ -201,9 +236,13 @@ class MonitoredDevice:
 
     def click(self, x, y, *args, **kwargs):
         """點擊前先檢查是否暫停"""
-        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
+        )
         payload = {"x": x, "y": y}
-        self._trace("click", payload, meaning=self._auto_meaning("click", meaning, payload))
+        self._trace(
+            "click", payload, meaning=self._auto_meaning("click", meaning, payload)
+        )
         kwargs["trace_meaning"] = meaning
         return self.tap(x, y, *args, **kwargs)
 
@@ -213,9 +252,15 @@ class MonitoredDevice:
 
     def gesture_swipe(self, *args, **kwargs):
         self._pause_guard()
-        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
+        )
         payload = {"args_len": len(args)}
-        self._trace("gesture_swipe", payload, meaning=self._auto_meaning("gesture_swipe", meaning, payload))
+        self._trace(
+            "gesture_swipe",
+            payload,
+            meaning=self._auto_meaning("gesture_swipe", meaning, payload),
+        )
         gesture_swipe_fn = getattr(self._d, "gesture_swipe", None)
         if callable(gesture_swipe_fn):
             return gesture_swipe_fn(*args, **kwargs)
@@ -223,7 +268,9 @@ class MonitoredDevice:
 
     def swipe(self, *args, **kwargs):
         self._pause_guard()
-        meaning = str(kwargs.get("trace_meaning", "") or kwargs.get("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.get("trace_meaning", "") or kwargs.get("trace_purpose", "") or ""
+        )
 
         if len(args) >= 4:
             x0, y0 = self._to_px(args[0], args[1])
@@ -231,7 +278,9 @@ class MonitoredDevice:
             rest = args[4:]
             args = (x0, y0, x1, y1, *rest)
             payload = {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
-            self._trace("swipe", payload, meaning=self._auto_meaning("swipe", meaning, payload))
+            self._trace(
+                "swipe", payload, meaning=self._auto_meaning("swipe", meaning, payload)
+            )
         return self.gesture_swipe(*args, **kwargs)
 
     def swipe_pct(self, x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs):
@@ -242,16 +291,35 @@ class MonitoredDevice:
         """截圖前也檢查暫停，確保不會在暫停時瘋狂截圖"""
         self._pause_guard()
         fmt = kwargs.get("format")
-        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
+        )
         payload = {"format": str(fmt) if fmt is not None else ""}
-        self._trace("screenshot", payload, meaning=self._auto_meaning("screenshot", meaning, payload))
-        return self._d.screenshot(*args, **kwargs)
+        self._trace(
+            "screenshot",
+            payload,
+            meaning=self._auto_meaning("screenshot", meaning, payload),
+        )
+        t0 = time.time()
+        result = self._d.screenshot(*args, **kwargs)
+        elapsed_ms = (time.time() - t0) * 1000
+        try:
+            bot_state.record_screenshot_time(self._ip, elapsed_ms)
+        except Exception:
+            pass
+        return result
 
     def xpath_click(self, xpath_expr, *args, **kwargs):
         self._pause_guard()
-        meaning = str(kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or "")
+        meaning = str(
+            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
+        )
         payload = {"xpath": str(xpath_expr)}
-        self._trace("xpath_click", payload, meaning=self._auto_meaning("xpath_click", meaning, payload))
+        self._trace(
+            "xpath_click",
+            payload,
+            meaning=self._auto_meaning("xpath_click", meaning, payload),
+        )
         node = self._d.xpath(xpath_expr)
         click_fn = getattr(node, "click", None)
         if callable(click_fn):
@@ -274,9 +342,11 @@ class MonitoredDevice:
     def app_stop(self, pkg_name=None, *args, **kwargs):
         """Stop an app. Accepts either positional `pkg_name` or keyword `package_name`."""
         if pkg_name is None:
-            pkg_name = kwargs.pop('package_name', None)
+            pkg_name = kwargs.pop("package_name", None)
         if pkg_name is None:
-            raise TypeError("app_stop() missing 1 required positional argument: 'pkg_name'")
+            raise TypeError(
+                "app_stop() missing 1 required positional argument: 'pkg_name'"
+            )
         self._trace("app_stop", {"package": str(pkg_name)})
         # Call underlying device; prefer keyword for compatibility
         try:
@@ -287,9 +357,11 @@ class MonitoredDevice:
     def app_start(self, pkg_name=None, *args, **kwargs):
         """Start an app. Accepts either positional `pkg_name` or keyword `package_name`."""
         if pkg_name is None:
-            pkg_name = kwargs.pop('package_name', None)
+            pkg_name = kwargs.pop("package_name", None)
         if pkg_name is None:
-            raise TypeError("app_start() missing 1 required positional argument: 'pkg_name'")
+            raise TypeError(
+                "app_start() missing 1 required positional argument: 'pkg_name'"
+            )
         self._trace("app_start", {"package": str(pkg_name)})
         try:
             return self._d.app_start(pkg_name, *args, **kwargs)
@@ -298,7 +370,7 @@ class MonitoredDevice:
 
     def __getattr__(self, name):
         """
-        委派 (Delegation): 
+        委派 (Delegation):
         如果呼叫的方法在本類別中沒定義 (例如 .xpath, .info, .press)，
         則自動轉發給原始的 u2 設備物件。
         """
@@ -319,20 +391,20 @@ class MonitoredDevice:
         將長時間休眠拆解成小段，每段都檢查暫停標誌。
         """
         end_time = time.time() + seconds
-        
+
         # 只有大於 5 秒的休眠才記錄 Log，避免洗版
         if seconds > 5:
             bot_state.update_state(self._ip, log=f"休眠 {seconds} 秒...")
-        
+
         while time.time() < end_time:
             # 隨時檢查暫停
             bot_state.check_pause(self._ip)
-            
+
             # 檢查是否收到跳過指令
             if bot_state.check_skip_sleep(self._ip):
                 bot_state.update_state(self._ip, log="休眠已跳過")
                 break
-                
+
             # 每次休眠一小段，提高反應速度
             time.sleep(0.5)
             if time.time() >= end_time:
@@ -356,16 +428,29 @@ class PlaywrightGameDevice:
 
     backend_kind = "web_h5"
 
-    def __init__(self, device_id: str, cfg: Optional[Dict[str, Any]] = None, logger_obj: Optional[logging.Logger] = None):
+    def __init__(
+        self,
+        device_id: str,
+        cfg: Optional[Dict[str, Any]] = None,
+        logger_obj: Optional[logging.Logger] = None,
+    ):
         self.device_id = device_id
         self.cfg = cfg or {}
         self.logger = logger_obj or logger
         self.owner_thread_id = threading.get_ident()
 
         self.web_url = str(self.cfg.get("web_url") or "").strip()
-        self.canvas_selector = str(self.cfg.get("web_canvas_selector") or "canvas").strip() or "canvas"
+        self.canvas_selector = (
+            str(self.cfg.get("web_canvas_selector") or "canvas").strip() or "canvas"
+        )
         self.viewport_width = int(self.cfg.get("web_viewport_width") or 540)
         self.viewport_height = int(self.cfg.get("web_viewport_height") or 960)
+        # 截圖方法: 'playwright' (預設) 或 'canvas_capture'
+        self.screenshot_method = (
+            str(self.cfg.get("web_screenshot_method") or "playwright").strip().lower()
+        )
+        if self.screenshot_method not in {"playwright", "canvas_capture"}:
+            self.screenshot_method = "playwright"
         self.info = {
             "displayWidth": self.viewport_width,
             "displayHeight": self.viewport_height,
@@ -385,9 +470,16 @@ class PlaywrightGameDevice:
         try:
             from playwright.sync_api import sync_playwright
         except Exception as exc:  # pragma: no cover
-            raise RuntimeError("Playwright is required for web_h5 backend. Please install playwright.") from exc
+            raise RuntimeError(
+                "Playwright is required for web_h5 backend. Please install playwright."
+            ) from exc
 
-        profile_dir = str(self.cfg.get("web_profile_dir") or "playwright_profile/{device_id}").strip() or "playwright_profile/{device_id}"
+        profile_dir = (
+            str(
+                self.cfg.get("web_profile_dir") or "playwright_profile/{device_id}"
+            ).strip()
+            or "playwright_profile/{device_id}"
+        )
         # 每個裝置都使用自己的 profile/cookies 資料夾，避免共享登入狀態。
         # 若設定值包含 {device_id} / {ip}，會先做字串替換；否則會自動在尾端附加 device_id。
         profile_dir = profile_dir.format(device_id=self.device_id, ip=self.device_id)
@@ -398,11 +490,16 @@ class PlaywrightGameDevice:
         os.makedirs(profile_dir, exist_ok=True)
 
         channel = str(self.cfg.get("web_channel") or "chrome").strip()
-        state_file_raw = str(self.cfg.get("web_state_file") or "auth_state/{device_id}.json").strip() or "auth_state/{device_id}.json"
+        state_file_raw = (
+            str(self.cfg.get("web_state_file") or "auth_state/{device_id}.json").strip()
+            or "auth_state/{device_id}.json"
+        )
         state_file = state_file_raw.format(device_id=self.device_id, ip=self.device_id)
         if "{device_id}" not in state_file_raw and "{ip}" not in state_file_raw:
             if os.path.basename(state_file).lower() == "auth_state.json":
-                state_file = os.path.join(os.path.dirname(state_file), "auth_state", f"{self.device_id}.json")
+                state_file = os.path.join(
+                    os.path.dirname(state_file), "auth_state", f"{self.device_id}.json"
+                )
         if state_file and not os.path.isabs(state_file):
             state_file = os.path.join(os.getcwd(), state_file)
 
@@ -416,11 +513,16 @@ class PlaywrightGameDevice:
                 except Exception:
                     pass
 
-        def _build_launch_kwargs(target_profile: str, use_channel: bool) -> Dict[str, Any]:
+        def _build_launch_kwargs(
+            target_profile: str, use_channel: bool
+        ) -> Dict[str, Any]:
             kwargs: Dict[str, Any] = {
                 "user_data_dir": target_profile,
                 "headless": bool(self.cfg.get("web_headless", False)),
-                "viewport": {"width": self.viewport_width, "height": self.viewport_height},
+                "viewport": {
+                    "width": self.viewport_width,
+                    "height": self.viewport_height,
+                },
                 "device_scale_factor": 1.0,
                 "ignore_default_args": ["--enable-automation"],
                 "args": [
@@ -434,12 +536,18 @@ class PlaywrightGameDevice:
             return kwargs
 
         local_app_data = os.environ.get("LOCALAPPDATA", "")
-        fallback_profile_dir = os.path.join(local_app_data, "mushroom_playwright_profiles", self.device_id) if local_app_data else ""
+        fallback_profile_dir = (
+            os.path.join(local_app_data, "mushroom_playwright_profiles", self.device_id)
+            if local_app_data
+            else ""
+        )
 
         self._playwright = sync_playwright().start()
         last_err: Optional[Exception] = None
         launch_attempts = [(profile_dir, True)]
-        if fallback_profile_dir and os.path.abspath(fallback_profile_dir) != os.path.abspath(profile_dir):
+        if fallback_profile_dir and os.path.abspath(
+            fallback_profile_dir
+        ) != os.path.abspath(profile_dir):
             launch_attempts.append((fallback_profile_dir, True))
         # Last fallback: same profile, but no channel ("chrome") to avoid channel-specific startup issues.
         launch_attempts.append((profile_dir, False))
@@ -448,8 +556,12 @@ class PlaywrightGameDevice:
             try:
                 os.makedirs(target_profile, exist_ok=True)
                 _clear_chrome_singleton_locks(target_profile)
-                launch_kwargs = _build_launch_kwargs(target_profile, use_channel=use_channel)
-                self._context = self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+                launch_kwargs = _build_launch_kwargs(
+                    target_profile, use_channel=use_channel
+                )
+                self._context = self._playwright.chromium.launch_persistent_context(
+                    **launch_kwargs
+                )
                 if target_profile != profile_dir:
                     self.logger.warning(
                         f"[{self.device_id}] web_h5 switched profile dir to fallback: {target_profile}"
@@ -472,13 +584,17 @@ class PlaywrightGameDevice:
             self._playwright = None
             if last_err is not None:
                 raise last_err
-            raise RuntimeError(f"[{self.device_id}] web_h5 launch failed without detailed exception")
+            raise RuntimeError(
+                f"[{self.device_id}] web_h5 launch failed without detailed exception"
+            )
 
         # Deprecated behavior:
         # web_clear_cookies_on_start used to clear on every startup and could wipe session repeatedly.
         # Cookie clearing should now be requested explicitly via one-shot control-panel action.
 
-        self._page = self._context.pages[0] if self._context.pages else self._context.new_page()
+        self._page = (
+            self._context.pages[0] if self._context.pages else self._context.new_page()
+        )
 
         if self.web_url:
             opened = self._open_game_url()
@@ -487,7 +603,9 @@ class PlaywrightGameDevice:
         try:
             self._page.wait_for_selector(self.canvas_selector, timeout=15000)
         except Exception:
-            self.logger.warning(f"[{self.device_id}] web_h5 backend did not find selector: {self.canvas_selector}")
+            self.logger.warning(
+                f"[{self.device_id}] web_h5 backend did not find selector: {self.canvas_selector}"
+            )
 
         if state_file:
             try:
@@ -498,7 +616,9 @@ class PlaywrightGameDevice:
     @staticmethod
     def _is_target_closed_error(exc: Exception) -> bool:
         text = str(exc or "").lower()
-        return ("target page, context or browser has been closed" in text) or ("target closed" in text)
+        return ("target page, context or browser has been closed" in text) or (
+            "target closed" in text
+        )
 
     def _is_session_unavailable(self) -> bool:
         """Return True when Playwright session/page is missing or closed."""
@@ -510,8 +630,10 @@ class PlaywrightGameDevice:
             return True
 
     def _page_has_canvas(self, page) -> bool:
+        # Short timeout: page is already loaded, canvas should resolve in <200ms.
+        # The old 1200ms was adding up to 1.2s on every screenshot health-check.
         try:
-            page.wait_for_selector(self.canvas_selector, timeout=1200)
+            page.wait_for_selector(self.canvas_selector, timeout=200)
             return True
         except Exception:
             return False
@@ -521,7 +643,11 @@ class PlaywrightGameDevice:
         if self._context is None:
             return False
         try:
-            pages = [p for p in (self._context.pages or []) if p is not None and not p.is_closed()]
+            pages = [
+                p
+                for p in (self._context.pages or [])
+                if p is not None and not p.is_closed()
+            ]
         except Exception:
             return False
         if not pages:
@@ -555,7 +681,11 @@ class PlaywrightGameDevice:
 
         # 4) Fallback to first non-blank page.
         try:
-            pages = [p for p in (self._context.pages or []) if p is not None and not p.is_closed()]
+            pages = [
+                p
+                for p in (self._context.pages or [])
+                if p is not None and not p.is_closed()
+            ]
             for p in pages:
                 url = str(p.url or "").strip().lower()
                 if url not in {"", "about:blank"}:
@@ -570,7 +700,9 @@ class PlaywrightGameDevice:
         if (not self._is_session_unavailable()) and self._sync_active_page():
             return
         suffix = f" ({reason})" if reason else ""
-        self.logger.warning(f"[{self.device_id}] web_h5 session unavailable{suffix}, restarting browser session...")
+        self.logger.warning(
+            f"[{self.device_id}] web_h5 session unavailable{suffix}, restarting browser session..."
+        )
         self._restart_browser_session()
         self._sync_active_page()
 
@@ -603,14 +735,20 @@ class PlaywrightGameDevice:
             return False
         nav_timeout_ms = int(self.cfg.get("web_nav_timeout_ms") or 30000)
         try:
-            self._page.goto(self.web_url, wait_until="domcontentloaded", timeout=nav_timeout_ms)
+            self._page.goto(
+                self.web_url, wait_until="domcontentloaded", timeout=nav_timeout_ms
+            )
         except Exception as nav_err:
-            self.logger.warning(f"[{self.device_id}] web_h5 goto timeout/fail: {nav_err}")
+            self.logger.warning(
+                f"[{self.device_id}] web_h5 goto timeout/fail: {nav_err}"
+            )
             try:
                 # Fallback: wait for response commit only, to avoid hard-failing whole startup.
                 self._page.goto(self.web_url, wait_until="commit", timeout=10000)
             except Exception as fallback_err:
-                self.logger.warning(f"[{self.device_id}] web_h5 fallback goto failed: {fallback_err}")
+                self.logger.warning(
+                    f"[{self.device_id}] web_h5 fallback goto failed: {fallback_err}"
+                )
                 return False
         try:
             self._page.reload(wait_until="domcontentloaded")
@@ -643,10 +781,20 @@ class PlaywrightGameDevice:
                 return box
         except Exception:
             pass
-        return {"x": 0.0, "y": 0.0, "width": float(self.viewport_width), "height": float(self.viewport_height)}
+        return {
+            "x": 0.0,
+            "y": 0.0,
+            "width": float(self.viewport_width),
+            "height": float(self.viewport_height),
+        }
 
     def _normalize_xy(self, x: float, y: float) -> tuple[float, float]:
-        if isinstance(x, (int, float)) and isinstance(y, (int, float)) and 0 <= x < 1 and 0 <= y < 1:
+        if (
+            isinstance(x, (int, float))
+            and isinstance(y, (int, float))
+            and 0 <= x < 1
+            and 0 <= y < 1
+        ):
             x = float(x) * self.viewport_width
             y = float(y) * self.viewport_height
         return float(x), float(y)
@@ -682,20 +830,79 @@ class PlaywrightGameDevice:
     def gesture_swipe(self, *args, **kwargs):
         return self.swipe(*args, **kwargs)
 
+    def _screenshot_via_canvas_capture(self) -> Optional[bytes]:
+        """使用 Canvas Capture API 從 canvas 元素獲取圖像資料。
+
+        通過執行 JavaScript 調用 canvas.toDataURL() 獲取 base64 圖像，
+        適用於某些 Playwright 原生截圖無法正確捕捉 canvas 內容的情境。
+        """
+        try:
+            # 執行 JavaScript 獲取 canvas 的 base64 圖像資料
+            script = """
+                () => {
+                    const canvas = document.querySelector('canvas');
+                    if (!canvas) return null;
+                    try {
+                        return canvas.toDataURL('image/png');
+                    } catch (e) {
+                        return null;
+                    }
+                }
+            """
+            result = self._page.evaluate(script)
+            if (
+                result
+                and isinstance(result, str)
+                and result.startswith("data:image/png;base64,")
+            ):
+                # 解碼 base64 資料
+                import base64
+
+                base64_data = result.split(",")[1]
+                return base64.b64decode(base64_data)
+            return None
+        except Exception as exc:
+            self.logger.debug(f"[{self.device_id}] Canvas capture failed: {exc}")
+            return None
+
     def screenshot(self, format=None, *args, **kwargs):
         data: Optional[bytes] = None
         last_exc: Optional[Exception] = None
 
         for attempt in range(2):
-            if attempt == 0:
-                time.sleep(5)
+            if attempt > 0:
+                # Only sleep on retry (session was lost and just restarted).
+                # The original code had `if attempt == 0` which caused a mandatory
+                # 5-second sleep on every single screenshot call.
+                time.sleep(1)
+            # _ensure_browser_session already calls _sync_active_page internally;
+            # calling it again right after was redundant and added extra canvas-check
+            # overhead on every screenshot.
             self._ensure_browser_session("screenshot")
-            self._sync_active_page()
             try:
-                try:
-                    data = self._page.locator(self.canvas_selector).first.screenshot(timeout=5000)
-                except Exception:
-                    data = self._page.screenshot()
+                # 根據設定的截圖方法選擇實現
+                if self.screenshot_method == "canvas_capture":
+                    # 使用 Canvas Capture API
+                    data = self._screenshot_via_canvas_capture()
+                    if data is None:
+                        self.logger.warning(
+                            f"[{self.device_id}] Canvas capture returned None, falling back to playwright screenshot"
+                        )
+                        # 回退到 Playwright 原生截圖
+                        try:
+                            data = self._page.locator(
+                                self.canvas_selector
+                            ).first.screenshot(timeout=5000)
+                        except Exception:
+                            data = self._page.screenshot()
+                else:
+                    # 預設使用 Playwright 原生截圖
+                    try:
+                        data = self._page.locator(
+                            self.canvas_selector
+                        ).first.screenshot(timeout=5000)
+                    except Exception:
+                        data = self._page.screenshot()
                 break
             except Exception as exc:
                 last_exc = exc
@@ -753,9 +960,13 @@ class PlaywrightGameDevice:
     def clear_cookies(self):
         self._ensure_browser_session("clear_cookies")
         if self._context is None:
-            raise RuntimeError(f"[{self.device_id}] web_h5 context unavailable for clear_cookies")
+            raise RuntimeError(
+                f"[{self.device_id}] web_h5 context unavailable for clear_cookies"
+            )
         self._context.clear_cookies()
-        self.logger.info(f"[{self.device_id}] web_h5 cookies cleared by one-shot request")
+        self.logger.info(
+            f"[{self.device_id}] web_h5 cookies cleared by one-shot request"
+        )
         return True
 
     def app_stop(self, *args, **kwargs):
@@ -765,7 +976,9 @@ class PlaywrightGameDevice:
                 self.close()
             except Exception as exc:
                 if self._is_target_closed_error(exc):
-                    self.logger.info(f"[{self.device_id}] web_h5 app_stop ignored already-closed target")
+                    self.logger.info(
+                        f"[{self.device_id}] web_h5 app_stop ignored already-closed target"
+                    )
                 else:
                     raise
             self._closed_by_stop = True
@@ -812,7 +1025,9 @@ class PlaywrightGameDevice:
                     self._context.close()
                 except Exception as exc:
                     if self._is_target_closed_error(exc):
-                        self.logger.info(f"[{self.device_id}] web_h5 close ignored already-closed browser context")
+                        self.logger.info(
+                            f"[{self.device_id}] web_h5 close ignored already-closed browser context"
+                        )
                     else:
                         raise
                 finally:
@@ -822,8 +1037,12 @@ class PlaywrightGameDevice:
                     self._playwright.stop()
                 except Exception as exc:
                     text = str(exc or "").lower()
-                    if "event loop is closed" in text or self._is_target_closed_error(exc):
-                        self.logger.info(f"[{self.device_id}] web_h5 close ignored already-stopped playwright")
+                    if "event loop is closed" in text or self._is_target_closed_error(
+                        exc
+                    ):
+                        self.logger.info(
+                            f"[{self.device_id}] web_h5 close ignored already-stopped playwright"
+                        )
                     else:
                         raise
                 finally:
@@ -837,7 +1056,11 @@ class PlaywrightGameDevice:
                     _WEB_DEVICE_REGISTRY.pop(self.device_id, None)
 
 
-def create_web_device_if_enabled(ip: str, cfg: Optional[Dict[str, Any]] = None, logger_obj: Optional[logging.Logger] = None):
+def create_web_device_if_enabled(
+    ip: str,
+    cfg: Optional[Dict[str, Any]] = None,
+    logger_obj: Optional[logging.Logger] = None,
+):
     config = cfg or {}
     backend = str(config.get("backend", "adb")).strip().lower()
     if backend != "web_h5":
@@ -872,4 +1095,6 @@ def close_all_web_devices(logger_obj: Optional[logging.Logger] = None) -> None:
         try:
             device.close()
         except Exception as exc:
-            log.warning(f"[{ip}] close web_h5 device failed during global shutdown: {exc}")
+            log.warning(
+                f"[{ip}] close web_h5 device failed during global shutdown: {exc}"
+            )

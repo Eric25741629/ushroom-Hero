@@ -25,9 +25,14 @@ log = logging.getLogger("werkzeug")
 log.setLevel(logging.ERROR)
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
 _WAR_ROOM_DIR = Path(__file__).resolve().parent / "push_project" / "web"
 _REPO_ROOT = Path(__file__).resolve().parent
 _README_PATH = _REPO_ROOT / "README.md"
+_UPDATE_PATH = _REPO_ROOT / "update.txt"
+_BUG_FEEDBACK_PATH = _REPO_ROOT / "reports" / "bug_feedback.jsonl"
+_TEMPLATES_DIR = _REPO_ROOT / "templates"
 
 # Master 模式：存放給遠端 Worker 的指令佇列
 # { "school_laptop:emulator-5554": { "paused": True, "skip_sleep": False } }
@@ -86,6 +91,30 @@ def _load_readme_text() -> str:
         return _README_PATH.read_text(encoding="utf-8-sig")
     except Exception as e:
         return f"README 讀取失敗: {e}"
+
+
+def _load_update_text() -> str:
+    try:
+        return _UPDATE_PATH.read_text(encoding="utf-8-sig")
+    except Exception as e:
+        return f"update.txt 讀取失敗: {e}"
+
+
+def _file_mtime(path: Path) -> int:
+    try:
+        return int(path.stat().st_mtime_ns)
+    except Exception:
+        return 0
+
+
+def _get_frontend_version() -> str:
+    tracked = [
+        _TEMPLATES_DIR / "dashboard.html",
+        _TEMPLATES_DIR / "readme_viewer.html",
+        _UPDATE_PATH,
+        Path(__file__).resolve(),
+    ]
+    return "-".join(str(_file_mtime(path)) for path in tracked)
 
 
 def _append_labeler_log(line: str):
@@ -747,42 +776,57 @@ import new_cnn.cnn_model as cnn_model_module
 # 全域模型快取 (避免重複載入)
 _cached_models = {"cnn": None}
 
-_PROGRAM_FIX_NOTE = "主頁面判定共用同一張截圖，避免重複截圖"
+_PROGRAM_FIX_NOTE_FALLBACK = "(無法讀取最新 commit message)"
+_PROGRAM_INFO_CACHE: dict = {"value": None, "expires_at": 0.0}
+_PROGRAM_INFO_TTL_SEC = 30.0
 
 
-@lru_cache(maxsize=1)
 def _get_program_info():
+    """右上角程式資訊：版本 / git 時間 / 最新修補摘要。
+
+    `fix_note` 取最新 commit 的 subject line，這樣每次 git commit 之後
+    儀表板自動反映新內容（30 秒 TTL，避免把每次頁面渲染都付一次 git fork 成本）。
+    """
+    now = time.time()
+    cached = _PROGRAM_INFO_CACHE.get("value")
+    if cached and now < _PROGRAM_INFO_CACHE.get("expires_at", 0):
+        return cached
+
     repo_root = Path(__file__).resolve().parent
     version = "dev"
     git_time = "unknown"
+    fix_note = _PROGRAM_FIX_NOTE_FALLBACK
+
+    def _git(args):
+        return subprocess.run(
+            ["git", *args],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
 
     try:
-        short_sha = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        commit_time = subprocess.run(
-            ["git", "show", "-s", "--format=%cd", "--date=iso-local", "HEAD"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+        short_sha = _git(["rev-parse", "--short", "HEAD"])
+        commit_time = _git(["show", "-s", "--format=%cd", "--date=iso-local", "HEAD"])
+        commit_subject = _git(["show", "-s", "--format=%s", "HEAD"])
         if short_sha:
             version = f"git-{short_sha}"
         if commit_time:
             git_time = commit_time
+        if commit_subject:
+            fix_note = commit_subject
     except Exception:
         pass
 
-    return {
+    info = {
         "version": version,
         "git_time": git_time,
-        "fix_note": _PROGRAM_FIX_NOTE,
+        "fix_note": fix_note,
     }
+    _PROGRAM_INFO_CACHE["value"] = info
+    _PROGRAM_INFO_CACHE["expires_at"] = now + _PROGRAM_INFO_TTL_SEC
+    return info
 
 
 @app.route("/api/analyze_stage", methods=["POST"])
@@ -829,14 +873,24 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 @app.route("/")
 def index():
     """主控面板首頁"""
-    return render_template("dashboard.html", program_info=_get_program_info())
+    return render_template(
+        "dashboard.html",
+        program_info=_get_program_info(),
+        frontend_version=_get_frontend_version(),
+    )
 
 
-@app.route("/readme")
-@app.route("/readme/")
-def readme_page():
-    """Serve README content inside the control panel."""
-    return render_template("readme_viewer.html", readme_text=_load_readme_text())
+@app.route("/updates")
+@app.route("/updates/")
+def updates_page():
+    """Serve update.txt content inside the control panel."""
+    return render_template(
+        "readme_viewer.html",
+        page_title="更新公告",
+        page_subtitle="目前顯示的是 repo 根目錄的 `update.txt` 內容。",
+        page_text=_load_update_text(),
+        frontend_version=_get_frontend_version(),
+    )
 
 
 @app.route("/war-room")
@@ -1161,6 +1215,7 @@ def get_status():
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
+        info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
     return jsonify(
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
     )
@@ -1172,6 +1227,46 @@ def get_device_conf(ip):
     # 處理遠端 IP 設定讀取 (需要從檔名反推)
     real_ip = ip.split(":")[-1] if ":" in ip else ip
     return jsonify(config_manager.get_device_config(real_ip))
+
+
+@app.route("/api/bug_feedback", methods=["POST"])
+def submit_bug_feedback():
+    try:
+        data = request.get_json(silent=True) or {}
+        title = str(data.get("title", "")).strip()
+        detail = str(data.get("detail", "")).strip()
+        reporter = str(data.get("reporter", "")).strip()
+        page = str(data.get("page", "")).strip()
+        if not title or not detail:
+            return jsonify({"status": "error", "message": "title and detail are required"}), 400
+
+        payload = {
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+            "title": title,
+            "detail": detail,
+            "reporter": reporter,
+            "page": page,
+        }
+        _BUG_FEEDBACK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with _BUG_FEEDBACK_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        return jsonify({"status": "ok"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/frontend_version", methods=["GET"])
+def get_frontend_version():
+    return jsonify({"version": _get_frontend_version()})
+
+
+@app.after_request
+def add_no_cache_headers(response):
+    if request.method == "GET":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/api/config/<ip>", methods=["POST"])

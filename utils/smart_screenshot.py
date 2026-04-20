@@ -91,10 +91,19 @@ class SmartScreenshotRecorder:
         task: str = "",
         extra: Optional[dict[str, Any]] = None,
     ) -> Optional[str]:
+        # 記錄截圖請求開始時間
+        request_start = dt.datetime.now()
+        request_start_iso = request_start.isoformat()
+
         if hasattr(device_obj, "screenshot"):
             img = device_obj.screenshot(format="opencv")
         else:
             img = device_obj.capture_screenshot()
+
+        # 記錄截圖完成時間並計算延遲
+        request_end = dt.datetime.now()
+        request_end_iso = request_end.isoformat()
+        latency_ms = (request_end - request_start).total_seconds() * 1000
 
         if img is None:
             return None
@@ -109,10 +118,9 @@ class SmartScreenshotRecorder:
         if not self._save_image_unicode_safe(image_path, img):
             raise RuntimeError("cv2.imwrite returned False")
 
-        now_iso = dt.datetime.now().isoformat()
         caller = self._caller_info()
         event = {
-            "timestamp": now_iso,
+            "timestamp": request_end_iso,
             "device_id": ip,
             "task": task,
             "stage": stage,
@@ -121,6 +129,11 @@ class SmartScreenshotRecorder:
             "trigger": caller,
             "actor": type(device_obj).__name__,
             "source": "SmartScreenshotRecorder.capture",
+            "request_timing": {
+                "request_start": request_start_iso,
+                "request_end": request_end_iso,
+                "latency_ms": round(latency_ms, 3),
+            },
         }
         if extra:
             event["extra"] = extra
@@ -141,7 +154,7 @@ class SmartScreenshotRecorder:
         )
 
         annotation_note = {
-            "updated_at": now_iso,
+            "updated_at": request_end_iso,
             "task": task,
             "stage": stage,
             "reason": reason,

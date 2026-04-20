@@ -3,7 +3,7 @@ from __future__ import annotations
 import heapq
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from miner.core.mechanics import get_drill_affected_cells
 from miner.planning.planner import plan_min_cost_to_floor7
@@ -31,6 +31,30 @@ def is_air(label: str) -> bool:
 
 def is_reachable(label: str) -> bool:
     return not normalize_label(label).startswith("unreachable_")
+
+
+def is_frontier_diggable(board: Board, r: int, c: int) -> bool:
+    """A cell is diggable if it is a confirmed-reachable hard cell, or if
+    it is `unreachable_*` but 4-adjacent to a confirmed-reachable empty.
+
+    Trusts CNN for interior `unreachable_*` pockets — those stay
+    untouchable until a path actually opens to them.
+    """
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    label = normalize_label(board[r][c])
+    if is_air(label):
+        return False
+    if not label.startswith("unreachable_"):
+        return True
+    for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        nr, nc = r + dr, c + dc
+        if not (0 <= nr < rows and 0 <= nc < cols):
+            continue
+        nlabel = normalize_label(board[nr][nc])
+        if base_label(nlabel) in {"empty", "dug_pit"} and not nlabel.startswith("unreachable_"):
+            return True
+    return False
 
 
 def dig_cost(label: str) -> int:
@@ -89,44 +113,51 @@ def deepest_reachable_air_row(board: Board) -> int:
 
 
 def update_exposure(board: Board) -> None:
+    """Plan-start exposure: trust CNN, only canonicalize legacy labels.
+
+    Reachability is taken from CNN's `unreachable_*` prefix as ground truth —
+    we DO NOT seed BFS from arbitrary empties or strip prefixes by adjacency.
+    Earlier versions did, which amplified CNN errors and made the planner
+    target cells that were never actually reachable. Simulation-time exposure
+    (after a dig opens a wall) is handled by `promote_after_dig`.
+    """
     rows = len(board)
     cols = len(board[0]) if board else 0
-    queue: List[Coordinate] = []
-    reachable_air: set[Coordinate] = set()
-
     for r in range(rows):
         for c in range(cols):
-            label = normalize_label(board[r][c])
-            if is_air(label) and not label.startswith("unreachable_"):
+            if normalize_label(board[r][c]) == "void":
                 board[r][c] = "empty"
-                reachable_air.add((r, c))
-                queue.append((r, c))
 
-    head = 0
-    while head < len(queue):
-        r, c = queue[head]
-        head += 1
+
+def promote_after_dig(board: Board, dug: List[Coordinate]) -> None:
+    """Simulation-time exposure update around just-emptied cells.
+
+    For every cell we just opened up, flood-fill through 4-adjacent
+    `unreachable_empty` (an opened pocket really is empty), and one-pass
+    promote 4-adjacent `unreachable_dirt/rock/pit` (now diggable).
+    Stops at the boundary of hard cells, so unrelated isolated pockets
+    elsewhere on the board stay untouched.
+    """
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    queue: List[Coordinate] = list(dug)
+    seen: set[Coordinate] = set(dug)
+    while queue:
+        r, c = queue.pop()
         for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nr, nc = r + dr, c + dc
-            if 0 <= nr < rows and 0 <= nc < cols:
-                label = normalize_label(board[nr][nc])
-                if (nr, nc) in reachable_air:
-                    continue
-                if is_air(label):
-                    board[nr][nc] = "empty"
-                    reachable_air.add((nr, nc))
-                    queue.append((nr, nc))
-
-    for r in range(rows):
-        for c in range(cols):
-            label = normalize_label(board[r][c])
-            if not label.startswith("unreachable_"):
+            if not (0 <= nr < rows and 0 <= nc < cols):
                 continue
-            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nr, nc = r + dr, c + dc
-                if (nr, nc) in reachable_air:
-                    board[r][c] = label.replace("unreachable_", "", 1)
-                    break
+            if (nr, nc) in seen:
+                continue
+            label = normalize_label(board[nr][nc])
+            if label == "unreachable_empty":
+                board[nr][nc] = "empty"
+                seen.add((nr, nc))
+                queue.append((nr, nc))
+            elif label.startswith("unreachable_"):
+                board[nr][nc] = normalize_label(label.replace("unreachable_", "", 1))
+                seen.add((nr, nc))
 
 
 def get_bomb_targets(r: int, c: int, rows: int, cols: int) -> Tuple[List[Coordinate], int]:
@@ -155,20 +186,22 @@ def apply_dig(board: Board, pos: Coordinate) -> float:
         board[r][c] = "dug_pit"
     elif not is_air(label):
         board[r][c] = "empty"
-    update_exposure(board)
+    promote_after_dig(board, [(r, c)])
     return cost
 
 
 def apply_drill(board: Board, pos: Coordinate) -> float:
     rows = len(board)
     cols = len(board[0]) if board else 0
+    affected: List[Coordinate] = []
     for nr, nc in get_drill_affected_cells(pos[0], pos[1], rows, cols):
         label = normalize_label(board[nr][nc])
         if label in PIT_LABELS:
             board[nr][nc] = "dug_pit"
         elif not is_air(label):
             board[nr][nc] = "empty"
-    update_exposure(board)
+        affected.append((nr, nc))
+    promote_after_dig(board, affected)
     return 3.0
 
 
@@ -182,7 +215,7 @@ def apply_bomb(board: Board, pos: Coordinate) -> Tuple[float, bool, int]:
             board[nr][nc] = "dug_pit"
         elif not is_air(label):
             board[nr][nc] = "empty"
-    update_exposure(board)
+    promote_after_dig(board, list(targets))
     return 3.0, offscreen_bottom_hits > 0, offscreen_bottom_hits
 
 
@@ -192,6 +225,22 @@ def board_signature(board: Board, items: Dict[str, int], offscreen_floor7_open: 
         items.get("drill", 0),
         items.get("bomb", 0),
         bool(offscreen_floor7_open),
+    )
+
+
+def action_signature(action: Dict[str, Any]) -> Tuple[Any, Any, Any, Any, Any]:
+    pos = action.get("pos")
+    target = action.get("target")
+    if isinstance(pos, list):
+        pos = tuple(pos)
+    if isinstance(target, list):
+        target = tuple(target)
+    return (
+        action.get("type"),
+        action.get("item"),
+        pos,
+        target,
+        action.get("action"),
     )
 
 
@@ -278,6 +327,44 @@ def goal_reached(board: Board, strategy_class: str, offscreen_floor7_open: bool)
     return floor7_open(board, offscreen_floor7_open=offscreen_floor7_open)
 
 
+def partial_progress_rank(
+    baseline: Dict[str, Any],
+    current: Dict[str, Any],
+    strategy_class: str,
+    total_cost: float,
+    history_len: int,
+) -> Tuple[float, float, float, float, float, float]:
+    if strategy_class == "has_pit":
+        pits_cleared = float(baseline["remaining_pits"] - current["remaining_pits"])
+        top_row_cleared = float(baseline["top_row_pits"] - current["top_row_pits"])
+        return (
+            pits_cleared,
+            top_row_cleared,
+            float(current["deepest_reachable_air_row"]),
+            float(bool(current["floor7_open"])),
+            -float(total_cost),
+            -float(history_len),
+        )
+
+    depth_gain = float(current["deepest_reachable_air_row"] - baseline["deepest_reachable_air_row"])
+    return (
+        float(bool(current["floor7_open"])),
+        depth_gain,
+        0.0,
+        0.0,
+        -float(total_cost),
+        -float(history_len),
+    )
+
+
+def has_partial_progress(baseline: Dict[str, Any], current: Dict[str, Any], strategy_class: str) -> bool:
+    if strategy_class == "has_pit":
+        return current["remaining_pits"] < baseline["remaining_pits"]
+    if current["floor7_open"]:
+        return True
+    return current["deepest_reachable_air_row"] > baseline["deepest_reachable_air_row"]
+
+
 def simulate_action(
     board: Board,
     items: Dict[str, int],
@@ -327,10 +414,13 @@ def score_transition(
     offscreen_hits: int,
 ) -> float:
     score = 0.0
-    score += float(before["top_row_pits"] - after["top_row_pits"]) * 200.0
-    score += float(before["remaining_pits"] - after["remaining_pits"]) * 50.0
-    score += float(after["deepest_reachable_air_row"] - before["deepest_reachable_air_row"]) * 6.0
-    score -= float(step_cost) * 2.0
+    pits_cleared = float(before["remaining_pits"] - after["remaining_pits"])
+    top_cleared = float(before["top_row_pits"] - after["top_row_pits"])
+    # 礦物有限，鏟子相對便宜：把 pit 清除權重拉到絕對主導，深度只是次要排序。
+    score += top_cleared * 1000.0
+    score += pits_cleared * 500.0
+    score += float(after["deepest_reachable_air_row"] - before["deepest_reachable_air_row"]) * 1.0
+    score -= float(step_cost) * 0.5
 
     if strategy_class == "no_pit":
         if after["floor7_open"]:
@@ -340,13 +430,20 @@ def score_transition(
 
     if action["type"] == "use":
         pos_r, _ = action["pos"]
-        if before["top_row_pits"] > 0:
-            score -= 100.0
         score += float(pos_r) * 1.5
         if action["item"] == "bomb":
             score += float(offscreen_hits) * 4.0
         else:
             score += float(after["deepest_reachable_air_row"] - before["deepest_reachable_air_row"]) * 3.0
+        # 在 has_pit 模式下用道具卻沒打到任何 pit → 重罰，避免拿炸彈鑽頭通路。
+        if strategy_class == "has_pit" and pits_cleared <= 0:
+            score -= 400.0
+
+    # has_pit 硬約束：頂層還有礦時，任何讓 floor7 變開的動作都是禁忌
+    # （遊戲一捲動，row 0 的礦永久丟失）。
+    if strategy_class == "has_pit" and after["remaining_pits"] > 0:
+        if not before["floor7_open"] and after["floor7_open"]:
+            score -= 10000.0
 
     return score
 
@@ -363,8 +460,7 @@ def build_actions(
 
     for r in range(rows):
         for c in range(cols):
-            label = normalize_label(board[r][c])
-            if not is_air(label) and is_reachable(label):
+            if is_frontier_diggable(board, r, c):
                 actions.append({"type": "dig", "pos": (r, c)})
 
     air_cells = get_reachable_air_cells(board)
@@ -377,6 +473,8 @@ def build_actions(
 
     before = build_analysis(board, offscreen_floor7_open=offscreen_floor7_open)
     ranked_actions: List[Dict[str, Any]] = []
+    has_pit_safe_alt = False
+    pending: List[Dict[str, Any]] = []
     for action in actions:
         transition = simulate_action(board, items, action, offscreen_floor7_open)
         if transition is None:
@@ -393,6 +491,23 @@ def build_actions(
             strategy_class,
             transition["offscreen_hits"],
         )
+        # has_pit 硬約束：礦未清完前，禁止任何讓 floor7 變開的動作 —
+        # 一旦地圖捲動，row 0 / row 1 的礦會永久丟失。
+        triggers_floor7 = (
+            strategy_class == "has_pit"
+            and after["remaining_pits"] > 0
+            and not before["floor7_open"]
+            and after["floor7_open"]
+        )
+        if triggers_floor7:
+            transition["_floor7_trigger"] = True
+        else:
+            has_pit_safe_alt = True
+        pending.append(transition)
+
+    for transition in pending:
+        if transition.get("_floor7_trigger") and has_pit_safe_alt:
+            continue
         ranked_actions.append(transition)
 
     ranked_actions.sort(key=lambda entry: entry["score"], reverse=True)
@@ -404,12 +519,16 @@ def plan_v2(
     shovels: float = 100.0,
     items: Optional[Dict[str, int]] = None,
     max_nodes: int = 4000,
+    blocked_first_steps: Optional[Set[Tuple[Any, Any, Any, Any, Any]]] = None,
+    blocked_actions: Optional[Set[Tuple[Any, Any, Any, Any, Any]]] = None,
 ) -> Dict[str, Any]:
     started_at = time.perf_counter()
     work_board = normalize_board(board)
     update_exposure(work_board)
     strategy_class = classify_strategy(work_board)
     item_state = {"drill": int((items or {}).get("drill", 0)), "bomb": int((items or {}).get("bomb", 0))}
+    blocked_first_step_signatures = set(blocked_first_steps or set())
+    blocked_action_signatures = set(blocked_actions or set()) | blocked_first_step_signatures
 
     start = SearchNode(
         priority=heuristic(work_board, strategy_class, item_state),
@@ -422,11 +541,32 @@ def plan_v2(
     pq: List[SearchNode] = [start]
     seen: Dict[Tuple[Any, ...], float] = {board_signature(work_board, item_state, False): 0.0}
     best: Optional[SearchNode] = None
+    baseline_analysis = build_analysis(work_board, offscreen_floor7_open=False)
+    best_partial: Optional[SearchNode] = None
+    best_partial_analysis: Optional[Dict[str, Any]] = None
+    best_partial_rank: Optional[Tuple[float, float, float, float, float, float]] = None
     explored = 0
 
     while pq and explored < max_nodes:
         current = heapq.heappop(pq)
         explored += 1
+
+        current_analysis = build_analysis(
+            current.board,
+            offscreen_floor7_open=current.offscreen_floor7_open,
+        )
+        if current.history and has_partial_progress(baseline_analysis, current_analysis, strategy_class):
+            rank = partial_progress_rank(
+                baseline_analysis,
+                current_analysis,
+                strategy_class,
+                current.total_cost,
+                len(current.history),
+            )
+            if best_partial_rank is None or rank > best_partial_rank:
+                best_partial = current
+                best_partial_analysis = current_analysis
+                best_partial_rank = rank
 
         if goal_reached(current.board, strategy_class, current.offscreen_floor7_open):
             best = current
@@ -438,6 +578,11 @@ def plan_v2(
             strategy_class=strategy_class,
             offscreen_floor7_open=current.offscreen_floor7_open,
         ):
+            next_action = dict(transition["action"])
+            next_action_signature = action_signature(next_action)
+            if next_action_signature in blocked_action_signatures:
+                continue
+
             next_board = transition["next_board"]
             next_items = transition["next_items"]
             next_history = list(current.history)
@@ -447,7 +592,6 @@ def plan_v2(
             if current.total_cost + step_cost > shovels:
                 continue
 
-            next_action = dict(transition["action"])
             next_history.append(next_action)
 
             signature = board_signature(next_board, next_items, next_offscreen_floor7)
@@ -475,6 +619,25 @@ def plan_v2(
             )
 
     if best is None:
+        if best_partial is not None and best_partial_analysis is not None:
+            # 鏟子預算不足時，退而求其次回傳可推進盤面的部分計畫，避免主流程卡死。
+            mode_label = "pit-clearing" if strategy_class == "has_pit" else "floor7"
+            elapsed_ms = (time.perf_counter() - started_at) * 1000.0
+            return {
+                "ok": True,
+                "strategy_class": strategy_class,
+                "message": f"{mode_label} partial plan (budget-limited, nodes={explored})",
+                "steps": best_partial.history,
+                "total_cost": float(best_partial.total_cost),
+                "remaining_pits": best_partial_analysis["remaining_pits"],
+                "top_row_pits": best_partial_analysis["top_row_pits"],
+                "floor7_open": best_partial_analysis["floor7_open"],
+                "exit_guard_required": best_partial_analysis["exit_guard_required"],
+                "partial": True,
+                "explored_nodes": explored,
+                "elapsed_ms": round(elapsed_ms, 3),
+            }
+
         elapsed_ms = (time.perf_counter() - started_at) * 1000.0
         return {
             "ok": False,

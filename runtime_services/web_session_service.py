@@ -44,6 +44,9 @@ def wait_for_checker_gate_before_start(
     checker_ip: str = "emulator-5554",
 ) -> None:
     while True:
+        if bot_state.check_force_sleep(ip):
+            logger_obj.warning(f"[{ip}] force sleep requested while waiting for {checker_ip} online-check")
+            raise ForceSleepRequested()
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
@@ -85,6 +88,9 @@ def wait_for_checker_gate_before_start(
         wait_sec = max(1, int(float(wait_min) * 60))
         logger_obj.info(f"[{ip}] checker busy, sleeping {wait_sec} sec before retry")
         for remain in range(wait_sec, 0, -1):
+            if bot_state.check_force_sleep(ip):
+                logger_obj.warning(f"[{ip}] force sleep requested during checker retry backoff")
+                raise ForceSleepRequested()
             bot_state.update_state(ip, task="等待互檢", step=f"{checker_ip} 忙碌中，{remain} 秒後重試")
             time.sleep(1)
 

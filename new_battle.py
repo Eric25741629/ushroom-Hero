@@ -948,8 +948,9 @@ def hell_door(d, ip):
             break    
     # img_tools.click_str_by_server(d,'討伐結束',y_range=(0,308))
     time.sleep(1)
-    d.click(521,27)
-    d.click(521,27)
+    d.click(521,17)
+    d.click(521,17)
+    time.sleep(0.5)
     d.click(random.randint(191,256),random.randint(886,946)) #再次點擊副本退出
     time.sleep(1)
 

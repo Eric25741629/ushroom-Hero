@@ -1,6 +1,6 @@
 import time
 import random
-from adb_operations import connect_u2_with_retries
+from adb_operations import connect_u2_with_retries, get_battery_level
 from device import close_nofication
 from game_initialization import check_on_line
 import bot_state # 引入狀態管理
@@ -230,8 +230,19 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
 
     # --- 直連設備喚醒流程 (fc65396d / 192.168) ---
     if 'fc65396d' in ip or '192.168' in ip:
+        # 檢查電量
+        battery_level = get_battery_level(ip, logger)
+        if battery_level >= 0:
+            logger.info(f"[{ip}] 當前電量: {battery_level}%")
+            if battery_level < 20:
+                logger.warning(f"[{ip}] 電量過低 ({battery_level}%)，跳過本次執行")
+                bot_state.update_state(ip, task="跳過", step=f"電量過低 ({battery_level}%)，等待充電")
+                return d
+        else:
+            logger.warning(f"[{ip}] 無法獲取電量資訊，繼續執行")
+
         logger.info(f"[{ip}] 檢查螢幕狀態...")
-        
+
         while True:
             try:
                 d.info.get('screenOn')

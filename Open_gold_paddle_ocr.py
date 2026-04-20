@@ -159,7 +159,7 @@ def analyze_skill_via_http(img_roi):
     try:
         return shared_analyze_skill_via_http(img_roi, OCR_SERVER_URL=None)
     except Exception as e:
-        print(f"HTTP 隢?憭望?: {e}")
+        print(f"HTTP 請求失敗: {e}")
         return None
 
 
@@ -202,7 +202,7 @@ def analyze_stage_via_http(img):
     try:
         return shared_analyze_stage_via_server(img, OCR_SERVER_URL=None)
     except Exception as e:
-        print(f"HTTP 隢?憭望?: {e}")
+        print(f"HTTP 請求失敗: {e}")
         return None
 
 
@@ -925,11 +925,11 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     if ocr_results != []:
         gold_num=ocr_results[0]
     else:
-        gold_num = gold_num
+        gold_num = -1
     # 初始點擊
     click_and_wait(d, 447, 801, 2)
     click_and_wait(d, 281, 636, 1)
-    
+
     last_gold_num = -1
     while time.time() - start_time < times:
         # 記錄連續跳過不完整 OCR 的次數，若超過上限就結束整個開裝流程
@@ -941,7 +941,7 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
         img = device.capture_screenshot()
         if is_lamp_sell_page(img):
             print("當前在全部出售頁面")
-            if click_str_by_server(d,"全部出售",y_range=(535,600)):
+            if click_str_by_server(d,"全部出售"):
                 return 
         # 檢查神燈是否在減少 210 802 335 821
         ocr_results= get_all_text(d.screenshot(format='opencv')[802:821, 210:335])

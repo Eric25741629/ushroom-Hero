@@ -44,19 +44,22 @@ def _extract_inventory_number(result: Optional[dict]) -> int:
         return 0
 
     ocr_results = result.get("ocr_results", []) if isinstance(result, dict) else []
+    candidates: list[int] = []
     for res in ocr_results:
         text = str(res.get("text", "")).strip()
         if "/" in text:
             left = text.split("/", 1)[0]
             nums = re.findall(r"\d+", left)
             if nums:
-                return int(nums[-1])
+                candidates.append(int(nums[-1]))
+                continue
 
         nums = re.findall(r"\d+", text)
         if nums:
-            return int(nums[-1])
+            # 保守取最小值，避免 OCR 把 0/2、2/2 或旁邊殘影誤讀成較大的可用數量。
+            candidates.append(min(int(num) for num in nums))
 
-    return 0
+    return min(candidates) if candidates else 0
 
 
 def _get_frame(d, frame=None):

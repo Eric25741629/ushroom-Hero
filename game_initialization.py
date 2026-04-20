@@ -10,7 +10,11 @@
 import time
 import random
 import logging
+from datetime import datetime
+from pathlib import Path
 from typing import Tuple
+
+import cv2
 from PIL import Image
 import img_tools
 from tools import click_white
@@ -22,6 +26,33 @@ import new_cnn.cnn_model as cnn_model_module
 import bot_state
 import config_manager
 from device_wrapper import create_web_device_if_enabled
+
+
+def _save_online_check_debug_images(ip: str, full_img, roi_img, attempt: int, logger_obj: logging.Logger) -> None:
+    debug_dir = Path("logs") / "online_check_debug" / ip
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    def _save(path: Path, img) -> bool:
+        try:
+            if cv2.imwrite(str(path), img):
+                return True
+        except Exception:
+            pass
+        ok, buf = cv2.imencode(path.suffix, img)
+        if not ok:
+            return False
+        buf.tofile(str(path))
+        return path.exists() and path.stat().st_size > 0
+
+    full_path = debug_dir / f"{timestamp}_attempt{attempt}_full.png"
+    roi_path = debug_dir / f"{timestamp}_attempt{attempt}_roi.png"
+    saved_full = _save(full_path, full_img)
+    saved_roi = _save(roi_path, roi_img)
+    logger_obj.info(
+        f"[{ip}] online-check debug images saved: full={full_path if saved_full else 'failed'}, "
+        f"roi={roi_path if saved_roi else 'failed'}"
+    )
 
 
 class StartupLoginConflictError(Exception):
@@ -276,6 +307,8 @@ def check_on_line(Cnn_model):
         
         # 使用 PaddleOCR 進行判定
         # 區域調整為包含文字可能出現的範圍
+        current_img = d.screenshot(format='opencv')
+        
         stage_ocr_img = current_img[220:270, 180:380]
         results = img_tools.get_all_text(stage_ocr_img)
         logger.info(f"線上狀態辨識結果: {results}")

@@ -17,10 +17,37 @@ from miner.core.config import GRID_CFG, HIT_TABLE
 from miner.core.mechanics import get_bomb_affected_cells, get_drill_affected_cells
 class ItemPlacementError(Exception):
     pass
+
+
+class OutOfItemError(Exception):
+    def __init__(self, item_type: str, live_count: int):
+        self.item_type = item_type
+        self.live_count = int(live_count)
+        super().__init__(f"{item_type} unavailable (live_count={live_count})")
+
+
+class NoBoardChangeError(Exception):
+    def __init__(
+        self,
+        step: Dict[str, Any],
+        reason: str,
+        item_type: Optional[str] = None,
+        board_before: Optional[List[List[str]]] = None,
+        board_after: Optional[List[List[str]]] = None,
+    ):
+        self.step = step
+        self.reason = reason
+        self.item_type = item_type
+        self.board_before = board_before
+        self.board_after = board_after
+        super().__init__(reason)
+
+
 from .planner import base_label, enter_cost
 PLACEABLE_MATERIALS = {"empty", "dug_pit"}
 
 from miner.core.vision_utils import check_points
+from miner.core.ocr_utils import check_drill_num, check_boom_num
 from miner.rl.rl_recorder import RLRecorder
 from tools import click_white
 
@@ -93,6 +120,16 @@ def select_item(d: DeviceLike, item_type: str) -> None:
     d.click(x, y)
     # 動畫稍長，適度多等一下，避免誤觸
     d.sleep(0.5)
+
+
+def get_live_item_count(d: DeviceLike, item_type: str) -> int:
+    """Read live consumable count from a fresh screenshot right before use."""
+    frame = d.screenshot(format="opencv")
+    if item_type == "drill":
+        return int(check_drill_num(d, frame=frame))
+    if item_type == "bomb":
+        return int(check_boom_num(d, frame=frame))
+    return 0
 
 
 def verify_cell_empty(
@@ -168,27 +205,44 @@ def execute_plan_steps(
                         f"    ⚠️ 無法在 ({r},{c}) 放置 {item_type}，目前格子為 {target_label}，僅允許 empty/dug_pit，停止並重新規劃"
                     )
                     return
+                live_count = get_live_item_count(d, item_type)
+                if live_count <= 0:
+                    print(
+                        f"    [Executor] live inventory check failed for {item_type}: "
+                        f"count={live_count}, abort item step"
+                    )
+                    raise OutOfItemError(item_type, live_count)
                 select_item(d, item_type)
                 print(f"  - 於 ({r},{c}) 使用 {item_type}")
                 tap_cell(d, r, c, 1, wait_ms=500)
-                # 標記受影響區域 unreachable_pit -> dug_pit，reachable_pit -> empty，其他障礙 -> empty (粗略更新以利後續規劃更快)
+                # 先以實際畫面確認是否真的改變版面；若完全沒變，視為非法/無效道具使用。
+                time.sleep(0.8)
+                img_after_use = d.screenshot()
+                board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
+                if board_after_use == board:
+                    raise NoBoardChangeError(
+                        step=step,
+                        reason=f"{item_type} made no board change",
+                        item_type=item_type,
+                        board_before=[row[:] for row in board],
+                        board_after=[row[:] for row in board_after_use],
+                    )
+
+                hit_pit = False
                 H, W = GRID_CFG["H"], GRID_CFG["W"]
                 affected = (
                     get_bomb_affected_cells(r, c, H, W)
                     if item_type == "bomb"
                     else get_drill_affected_cells(r, c, H, W)
                 )
-                hit_pit = False
-                for (ar,ac) in affected:
-                    lbl = board[ar][ac]
-                    if "pit" in lbl and "dug" not in lbl:
+                for ar, ac in affected:
+                    before_label = board[ar][ac]
+                    after_label = board_after_use[ar][ac]
+                    if "pit" in before_label and after_label == "empty":
                         hit_pit = True
-                    if lbl == "reachable_pit" or lbl == "unreachable_pit":
-                        # 直接挖開得獎勵（獎勵已在規劃階段計入），標記 empty
-                        board[ar][ac] = "empty"
-                    elif base_label(lbl) not in ("empty","dug_pit","pit","void"):
-                        board[ar][ac] = "empty"
-                
+                        break
+
+                board[:] = [row[:] for row in board_after_use]
                 if hit_pit:
                     print(f"    [Executor] 道具 {item_type} 炸到礦洞，執行兩次確認點擊 + 兩次點空白處")
                     d.click(394, 152)
@@ -272,10 +326,18 @@ def execute_plan_steps(
                             }
                         )
                     return
+                img_after_dig = d.screenshot()
+                board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
+                if board_after_dig == step_board_before:
+                    raise NoBoardChangeError(
+                        step=step,
+                        reason=f"dig at ({r},{c}) made no board change",
+                        board_before=step_board_before,
+                        board_after=[row[:] for row in board_after_dig],
+                    )
+                board[:] = [row[:] for row in board_after_dig]
                 cell_events.append(cell_event)
 
-            img2 = d.screenshot()
-            board, _ = clf.classify_board(img2, save_samples=False)
             if rl_recorder:
                 rl_recorder.record_transition(
                     {
@@ -308,4 +370,5 @@ __all__ = [
     "tap_cell",
     "verify_cell_empty",
     "execute_plan_steps",
+    "NoBoardChangeError",
 ]

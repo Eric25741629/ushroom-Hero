@@ -292,24 +292,46 @@ def unlock_screen(d: u2.Device):
 def start_game_by_icon(d: u2.Device, ip: str, logger: logging.Logger = None) -> bool:
     """
     透過點擊桌面圖示啟動遊戲 (模擬真人操作)
-    
+
     Args:
         d: uiautomator2 Device 物件
         ip: 設備 IP 或序號 (用於日誌)
         logger: 日誌記錄器
-        
+
     Returns:
         是否成功透過圖示啟動 (True=圖示啟動, False=備用方式)
     """
     if logger is None:
         logger = default_logger
-        
+
     try:
+        # 先確保已進入桌面
+        if not ensure_on_launcher(d, ip, logger):
+            logger.warning(f"[{ip}] 無法進入桌面，嘗試強制返回並繼續")
+            # 嘗試多次返回
+            for _ in range(5):
+                d.press("back")
+                time.sleep(0.3)
+            d.press("home")
+            time.sleep(1)
+
         # 回到桌面
         for i in range(2):
             d.press("home")
         time.sleep(1 + random.random())
-        
+
+        # 再次確認在桌面
+        if not is_on_launcher(d, logger):
+            logger.warning(f"[{ip}] 按 home 後仍不在桌面，嘗試解鎖")
+            try:
+                if not d.info.get('screenOn'):
+                    d.unlock()
+                    time.sleep(0.5)
+                    d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.1)
+                    time.sleep(1)
+            except Exception:
+                pass
+
         # 嘗試點擊「菇勇者傳說」圖示
         if d.xpath('//*[@text="菇勇者傳說"]').exists:
             logger.info(f"[{ip}] 找到遊戲圖示,點擊啟動")
@@ -461,14 +483,142 @@ def set_screen_for_game(device_serial: str, logger=None):
 def reset_screen_settings(device_serial: str, logger=None):
     """
     重置屏幕密度和尺寸為默認值
-    
+
     Args:
         device_serial: 設備序號
         logger: 日誌記錄器（可選）
     """
     if logger:
         logger.info(f"[{device_serial}] 重置屏幕配置")
-    
+
     run_adb('shell wm density reset', device_serial=device_serial)
     run_adb('shell wm size reset', device_serial=device_serial)
+
+
+def get_battery_level(device_serial: str, logger: logging.Logger = None) -> int:
+    """
+    獲取設備電池電量百分比
+
+    Args:
+        device_serial: 設備序號
+        logger: 日誌記錄器（可選）
+
+    Returns:
+        int: 電池電量百分比 (0-100)，如果獲取失敗返回 -1
+    """
+    if logger is None:
+        logger = default_logger
+
+    try:
+        output = run_adb('shell dumpsys battery', device_serial=device_serial)
+        # 解析 level: XX
+        for line in output.split('\n'):
+            if 'level:' in line.lower():
+                level_str = line.split(':')[-1].strip()
+                return int(level_str)
+        logger.warning(f"[{device_serial}] 無法從 dumpsys battery 解析電量")
+        return -1
+    except Exception as e:
+        logger.error(f"[{device_serial}] 獲取電量失敗: {e}")
+        return -1
+
+
+def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
+    """
+    檢查設備是否已進入桌面（Launcher）
+
+    Args:
+        d: uiautomator2 Device 物件
+        logger: 日誌記錄器（可選）
+
+    Returns:
+        bool: 是否在桌面
+    """
+    if logger is None:
+        logger = default_logger
+
+    try:
+        current_app = d.app_current()
+        package = current_app.get('package', '')
+
+        # 常見的桌面 Launcher 包名
+        launcher_packages = [
+            'com.android.launcher',
+            'com.android.launcher2',
+            'com.android.launcher3',
+            'com.google.android.launcher',
+            'com.miui.home',  # 小米
+            'com.huawei.android.launcher',  # 華為
+            'com.sec.android.app.launcher',  # 三星
+            'com.oppo.launcher',  # OPPO
+            'com.vivo.launcher',  # vivo
+            'com.asus.launcher',  # 華碩
+            'com.sonyericsson.home',  # Sony
+            'com.htc.launcher',  # HTC
+            'com.lge.launcher',  # LG
+            'com.google.android.apps.nexuslauncher',  # Pixel
+            'com.microsoft.launcher',
+            'com.teslacoilsw.launcher',  # Nova Launcher
+            'com.actionlauncher.playstore',  # Action Launcher
+        ]
+
+        is_launcher = any(pkg in package for pkg in launcher_packages)
+
+        if is_launcher:
+            logger.debug(f"[{d.serial}] 檢測到桌面: {package}")
+        else:
+            logger.debug(f"[{d.serial}] 當前應用不是桌面: {package}")
+
+        return is_launcher
+    except Exception as e:
+        logger.warning(f"[{d.serial}] 檢查桌面狀態失敗: {e}")
+        return False
+
+
+def ensure_on_launcher(d: u2.Device, ip: str, logger: logging.Logger = None, max_attempts: int = 5) -> bool:
+    """
+    確保設備已進入桌面，如果不在桌面則嘗試返回
+
+    Args:
+        d: uiautomator2 Device 物件
+        ip: 設備 IP 或序號（用於日誌）
+        logger: 日誌記錄器（可選）
+        max_attempts: 最大嘗試次數
+
+    Returns:
+        bool: 是否成功進入桌面
+    """
+    if logger is None:
+        logger = default_logger
+
+    for attempt in range(max_attempts):
+        if is_on_launcher(d, logger):
+            logger.info(f"[{ip}] 已進入桌面")
+            return True
+
+        logger.info(f"[{ip}] 未在桌面，嘗試返回 (attempt {attempt + 1}/{max_attempts})")
+
+        # 嘗試返回桌面
+        d.press("home")
+        time.sleep(0.5 + random.random() * 0.5)
+
+        # 嘗試解鎖（如果在鎖定畫面）
+        try:
+            if not d.info.get('screenOn'):
+                d.unlock()
+                time.sleep(0.5)
+                d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.1)
+                time.sleep(0.5)
+        except Exception:
+            pass
+
+        # 再次檢查
+        if is_on_launcher(d, logger):
+            logger.info(f"[{ip}] 成功進入桌面")
+            return True
+
+        time.sleep(1)
+
+    logger.warning(f"[{ip}] 無法進入桌面，已達最大嘗試次數")
+    return False
 

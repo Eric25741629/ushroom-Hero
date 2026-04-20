@@ -2,6 +2,7 @@
 import time
 import uuid
 import logging
+from collections import deque
 from typing import Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,10 @@ _global_lock = threading.Lock()
 
 # refresh flag for prompting immediate ADB rescan
 _refresh_needed = False
+
+# Rolling window of screenshot durations (ms) per device — last 50 samples
+_SCREENSHOT_WINDOW = 50
+_screenshot_windows: Dict[str, deque] = {}
 
 
 def get_device_lock(ip: str) -> threading.Lock:
@@ -187,6 +192,16 @@ def set_pause(ip: str, paused: bool):
         _pause_events[ip].set()   # 設為 True，解除 wait
         logger.info(f"[BotState] 已發送恢復信號給 {ip}")
 
+def record_screenshot_time(ip: str, duration_ms: float) -> None:
+    """Record one screenshot duration sample for rolling-average tracking."""
+    with _global_lock:
+        if ip not in _states:
+            return
+        if ip not in _screenshot_windows:
+            _screenshot_windows[ip] = deque(maxlen=_SCREENSHOT_WINDOW)
+        _screenshot_windows[ip].append(duration_ms)
+
+
 def get_all_states() -> Dict[str, Dict[str, Any]]:
     """
     獲取所有設備的狀態快照 (給 UI 使用)。
@@ -194,9 +209,14 @@ def get_all_states() -> Dict[str, Dict[str, Any]]:
     """
     import copy
     with _global_lock:
-        # 簡單的淺拷貝通常就夠了，因為我們只讀取第一層 key
-        # 但為了保險起見，這裡做一個快照
-        return copy.deepcopy(_states)
+        snapshot = copy.deepcopy(_states)
+        for ip, state in snapshot.items():
+            window = _screenshot_windows.get(ip)
+            if window:
+                state["avg_screenshot_ms"] = sum(window) / len(window)
+            else:
+                state["avg_screenshot_ms"] = None
+        return snapshot
 
 
 def record_emulator_restart(ip: str, reason: str, when_ts: Optional[float] = None):

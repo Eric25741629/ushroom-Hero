@@ -48,7 +48,10 @@ Each device thread runs an independent automation loop with:
 | Wake-up handler | `utils/wake_up_handler.py` | Screen wake/ unlock, connection locking |
 | OCR | `img_tools.py` | Multi-server fallback with circuit breaker |
 | OCR (开神灯) | `Open_gold_paddle_ocr.py` | 神灯 OCR，已改用 `img_tools` 共用 fallback |
-| Mining AI | `miner/` | A* planner, CNN classifier, RL logging |
+| Mining AI (v1) | `miner/` | A* planner, CNN classifier, RL logging (current runtime) |
+| Mining AI (v2) | `miner/v2/` | Fresh rewrite — dry-run planner + classifier, switchable behind flag |
+| OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
+| Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
 
 ### Runtime Services (lazy-started)
 
@@ -72,6 +75,17 @@ Key files:
 - `miner/planning/smart_planner.py` - A* implementation
 - `miner/models/classifier.py` - CNN block classifier
 - `miner/core/mechanics.py` - prop effect calculations (source of truth)
+
+### Miner V2 (experimental, not wired into runtime)
+
+Rewrite under `miner/v2/`: new top-level strategy `has_pit` vs `no_pit`, bombs/drill as first-class search actions (not side evaluators), `dug_pit` treated as air. Classifier + dry-run planner only — no executor. Switchable in runtime via feature flag (see `a36c505` commit), but defaults off.
+
+Debug CLIs (run on a single screenshot):
+```bash
+python -m miner.v2.debug_with_image <screenshot.png>
+python -m miner.v2.debug_with_image_plan <screenshot.png> --shovels 100 --drill 1 --bomb 1
+python -m miner.v2.debug_with_image_llm <screenshot.png> [--with-image]
+```
 
 ## Configuration (`bot_config.json`)
 
@@ -154,6 +168,26 @@ from bot_state import mark_refresh_needed
 mark_refresh_needed()
 ```
 
+### Run tests
+
+```bash
+# Full suite (conftest.py adds repo root to sys.path)
+pytest
+
+# Single file / single test
+pytest tests/test_miner_v2_planner.py
+pytest tests/test_miner_v2_planner.py::test_name -v
+```
+
+Tests live in `tests/` with fixtures under `tests/fixtures/` and screenshot fixtures under `tests/images/`. Notable areas: miner v2 (`test_miner_v2_*`), MuMu watchdog (`test_mumu_*`), instance-flow guards, biweekly scheduler, OCR utils.
+
+### Standalone lamp (神燈) entry
+
+```bash
+python Open_gold_paddle_ocr.py            # 連閃裝備模式預設啟用
+python Open_gold_paddle_ocr.py --no-lian-shan
+```
+
 ## OCR 架構
 
 專案有兩套 OCR 使用情境：
@@ -161,7 +195,7 @@ mark_refresh_needed()
 | 情境 | 模組 | 說明 |
 |------|------|------|
 | 一般畫面辨識 | `img_tools.py` | 統一管理，支援多 server priority fallback |
-| 開神燈/點金 | `Open_gold_paddle_ocr.py` | 已改用 `img_tools` 共用 fallback 機制 |
+| 開神燈 | `Open_gold_paddle_ocr.py` | 已改用 `img_tools` 共用 fallback 機制 |
 
 **Fallback 順序**：
 1. 配置的多台 OCR server (`bot_config.json` → `global.ocr.servers`)
@@ -170,9 +204,45 @@ mark_refresh_needed()
 
 **Circuit Breaker**：連續失敗後啟用冷卻機制，避免重複失敗
 
-## Notes
+## Runtime Constraints
+
+- **No `.pyc` writes**: `sys.dont_write_bytecode = True` is set early to avoid I/O stalls when the repo lives on SMB/NAS. Don't re-enable bytecode.
+- **Model sync**: `utils/model_sync.ensure_local_model()` copies CNN weights to local SSD before load — required for NAS-hosted checkouts.
+- **UTF-8 BOM**: Many JSON / `.py` files carry a BOM. When reading with `open()`, use `encoding="utf-8-sig"` or strip it — plain `utf-8` will leave a stray `\ufeff`.
+- **Thread registry**: `_running_threads` in `new_main_v2.py` tracks every device thread. `Ctrl+C` fans out to `shutdown_web_devices()` before exit — don't bypass it.
+- **Login conflicts**: `StartupLoginConflictError` / `LoginConflictError` force a 30-min device sleep. Treat as expected, not as a bug to catch-and-retry.
+- **RL logs path**: Unified at `miner/rl_logs/<device>/events.jsonl` with rotation. The old `miner/rl/rl_logs/` path is deprecated — don't resurrect it.
+
+## Scheduling Notes
 
 - Wake times align to hourly 00~20 min window by default
-- `7fe98fc6` device wakes every hour (special case)
+- `7fe98fc6` wakes every hour (±30 s)
+- `emulator-5558` uses 1~3 h random interval
 - `emulator-5554` handles cross-device online-check for `emulator-5558`
-- Web H5 devices use Playwright Chrome channel with persisted profiles
+- `emulator-5556` runs biweekly bounty dungeon Sat/Sun 19:57
+- `adjust_wake_time_for_cars()` shifts wake for 車位戰鬥
+- Web H5 devices use Playwright Chrome channel with persisted profiles (`playwright_profile*/`)
+
+## GSD Workflow
+
+This repo uses the GSD planning structure under `.planning/` (`PROJECT.md`, `ROADMAP.md`, `REQUIREMENTS.md`, `STATE.md`, `phases/`, `todos/`, `codebase/`). Active phases live in `.planning/phases/NN-<slug>/`. When doing non-trivial work, prefer the `/gsd:*` commands (e.g. `gsd:progress`, `gsd:plan-phase`, `gsd:execute-phase`) over ad-hoc edits.
+
+## Companion Docs
+
+- `AGENTS.md` — GSD-oriented operations manual (startup checklist, FAQ, test commands)
+- `PROJECT_OVERVIEW.md` / `SCRIPT_ARCHITECTURE.md` — conceptual layering (入口 → 裝置 → 辨識 → 任務 → 設定)
+- `PROJECT_RUNBOOK.md` — maintenance principles (observability-first, cache vs real-time checks)
+- `README_FLASK_SERVER.md` / `README_NEW_ARCHITECTURE.md` — deeper dives on dashboard and refactor
+- `docs/EVENT_INDEX_DEV_GUIDE.md`, `docs/SMART_SCREENSHOT_LLM_ANALYZER.md` — subsystem guides
+## Testing Conventions
+
+### TDD Workflow
+- Always write failing tests BEFORE implementation
+- Use AAA pattern: Arrange-Act-Assert
+- One assertion per test when possible
+- Test names describe behavior: "should_return_empty_when_no_items"
+
+### Test-First Rules
+- When I ask for a feature, write tests first
+- Tests should FAIL initially (no implementation exists)
+- Only after tests are written, implement minimal code to pass

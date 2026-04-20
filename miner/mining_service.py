@@ -13,7 +13,7 @@ import bot_state
 import config_manager
 
 from miner.models.classifier import ClassifierCNN, load_cnn_model
-from miner.planning.executor import execute_plan_steps
+from miner.planning.executor import NoBoardChangeError, OutOfItemError, execute_plan_steps
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
 from miner.planning.item_planner import find_tool_candidate
@@ -24,6 +24,7 @@ from miner.planning.planner import (
 )
 from miner.planning.smart_planner import plan_smart
 from miner.v2.planner import plan_v2
+from miner.v3.planner import plan_v3
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
@@ -126,6 +127,41 @@ def _build_item_plan(candidate: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _normalize_signature_value(value: Any) -> Any:
+    if isinstance(value, (list, tuple)):
+        return tuple(value)
+    return value
+
+
+def _board_signature(board: List[List[str]]) -> Tuple[Tuple[str, ...], ...]:
+    return tuple(tuple(cell for cell in row) for row in board)
+
+
+def _step_signature(step: Dict[str, Any]) -> Tuple[Any, Any, Any, Any, Any]:
+    return (
+        step.get("type"),
+        step.get("item"),
+        _normalize_signature_value(step.get("pos")),
+        _normalize_signature_value(step.get("target")),
+        step.get("action"),
+    )
+
+
+def _count_planned_item_uses(steps: List[Dict[str, Any]]) -> Dict[str, int]:
+    planned: Dict[str, int] = {}
+    for step in steps:
+        item_name: Optional[str] = None
+        if step.get("type") == "use" and step.get("item"):
+            item_name = str(step.get("item"))
+        else:
+            action = str(step.get("action", ""))
+            if action.startswith("use_"):
+                item_name = action.split("_", 1)[1]
+        if item_name:
+            planned[item_name] = planned.get(item_name, 0) + 1
+    return planned
+
+
 def run(
     d: u2.Device,
     ip: str,
@@ -139,7 +175,7 @@ def run(
     device_cfg = config_manager.get_device_config(ip)
     planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
-    if planner_version not in {"v1", "v2"}:
+    if planner_version not in {"v1", "v2", "v3"}:
         planner_version = "v1"
     
     start_time = time.time()
@@ -195,13 +231,11 @@ def run(
             f"zero_streaks={zero_streaks}, blacklist={sorted(item_blacklist)}"
         )
 
-    history_states = []
-    history_actions = []
-    stuck_limit = 3
+    # 同一個非法操作或無效道具在同版面下只會被嘗試一次；直到版面真的變化才清空。
+    blocked_action_signatures: Set[Tuple[Any, Any, Any, Any, Any]] = set()
+    last_board_signature: Optional[Tuple[Tuple[str, ...], ...]] = None
 
-    retry_count = 0
     iterations = 0
-    overlay_check_attempted = False
     while count >= 1:
         _check_force_sleep(ip)
         if time.time() - start_time > max_duration_seconds:
@@ -211,10 +245,10 @@ def run(
         iterations += 1
         # Shared frame for this loop: pickaxe/item OCR + board classification.
         shared_frame = d.screenshot(format="opencv")
-        if not overlay_check_attempted:
-            overlay_check_attempted = True
-            if _dismiss_mining_overlay_if_needed(d, shared_frame, miner_logger):
-                shared_frame = d.screenshot(format="opencv")
+        # 礦洞彈窗在「挖到 pit」後可能被遮蓋，executor 的本地清理不一定夠 —
+        # 每輪重新做一次 OCR 檢查並 click_white，避免主迴圈被卡在彈窗上。
+        if _dismiss_mining_overlay_if_needed(d, shared_frame, miner_logger):
+            shared_frame = d.screenshot(format="opencv")
         if iterations % 3 == 0:
             real_count = check_pickaxe_count(d, frame=shared_frame)
             miner_logger.info(f"🔄 定期校正鏟子數量: {count:.1f} -> {real_count}")
@@ -229,12 +263,31 @@ def run(
         board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
         board_str = get_visual_board(board)
         miner_logger.info(f"\n[MiningService] Current Board:\n{board_str}")
+        state_signature = _board_signature(board)
+        if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
+            miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")
+            blocked_action_signatures.clear()
+        last_board_signature = state_signature
 
         current_items = items_available.copy() if USE_ITEMS else {'drill': 0, 'bomb': 0}
         plan_title = "智能規劃 (SmartPlanner)"
         plan_started_at = time.perf_counter()
-        if planner_version == "v2":
-            plan = plan_v2(board, shovels=count, items=current_items)
+        if planner_version == "v3":
+            v3_blocked = {sig[:3] for sig in blocked_action_signatures}
+            plan = plan_v3(
+                board,
+                shovels=count,
+                items=current_items,
+                blocked_actions=v3_blocked,
+            )
+            plan_title = "V3 規劃 (Miner V3)"
+        elif planner_version == "v2":
+            plan = plan_v2(
+                board,
+                shovels=count,
+                items=current_items,
+                blocked_actions=blocked_action_signatures,
+            )
             plan_title = "V2 規劃 (Miner V2)"
         else:
             tool_candidate = find_tool_candidate(board, items_available=current_items) if USE_ITEMS else None
@@ -249,10 +302,11 @@ def run(
             else:
                 plan = plan_smart(board, shovels=count, items=current_items)
         plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
-        if planner_version == "v2":
+        if planner_version in {"v2", "v3"}:
             miner_logger.info(
-                "[MiningService] planner=v2 calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
+                "[MiningService] planner=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
                 % (
+                    planner_version,
                     plan_elapsed_ms,
                     plan.get("elapsed_ms", "?"),
                     plan.get("explored_nodes", "?"),
@@ -260,6 +314,14 @@ def run(
                     plan.get("strategy_class", "?"),
                 )
             )
+            stats = plan.get("stats")
+            if stats:
+                miner_logger.info(f"[MiningService] planner={planner_version} stats={stats}")
+            if blocked_action_signatures:
+                miner_logger.info(
+                    "[MiningService] planner=%s blocked_actions=%s"
+                    % (planner_version, len(blocked_action_signatures))
+                )
 
         _check_force_sleep(ip)
 
@@ -300,17 +362,67 @@ def run(
             
             continue
 
-        # ...（死循環偵測）...
-        if len(history_states) == stuck_limit:
-            if len(set(history_states)) == 1 and len(set(history_actions)) == 1:
-                # ...
-                miner_logger.error("❌ 偵測到死循環！")
-                break
+        # 規劃後、執行前做一次 live 道具複查，避免 OCR 誤判為有道具卻實際已歸零。
+        planned_item_uses = _count_planned_item_uses(plan.get("steps", []))
+        if planned_item_uses:
+            live_frame = d.screenshot(format="opencv")
+            live_counts = {
+                "drill": check_drill_num(d, frame=live_frame),
+                "bomb": check_boom_num(d, frame=live_frame),
+            }
+            replanning_due_to_item_shortage = False
+            for item_name, need_count in planned_item_uses.items():
+                live_count = int(live_counts.get(item_name, 0))
+                cached_count = int(items_available.get(item_name, 0))
+                # 若 live 比快取小，優先相信 live，避免高估導致錯誤規劃。
+                if live_count < cached_count:
+                    miner_logger.info(
+                        f"[ITEM STATUS] live 校正 {item_name}: {cached_count} -> {live_count}"
+                    )
+                    items_available[item_name] = live_count
+
+                if live_count < need_count:
+                    miner_logger.warning(
+                        f"[ITEM STATUS] 規劃需 {item_name} x{need_count}，但 live={live_count}，"
+                        "加入黑名單並重新規劃"
+                    )
+                    item_blacklist.add(item_name)
+                    items_available[item_name] = 0
+                    zero_streaks[item_name] = max(zero_streaks.get(item_name, 0), zero_streak_limit)
+                    replanning_due_to_item_shortage = True
+
+            if replanning_due_to_item_shortage:
+                continue
 
         print_plan_result(miner_logger, plan_title, plan, board)
         deadline = start_time + max_duration_seconds
         _check_force_sleep(ip)
-        execute_plan_steps(d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline)
+        try:
+            execute_plan_steps(d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline)
+        except NoBoardChangeError as exc:
+            action_signature = _step_signature(exc.step)
+            if exc.item_type:
+                item_blacklist.add(exc.item_type)
+                items_available[exc.item_type] = 0
+                zero_streaks[exc.item_type] = max(zero_streaks.get(exc.item_type, 0), zero_streak_limit)
+                miner_logger.warning(
+                    f"[MiningService] {exc.item_type} 使用後版面未變，加入黑名單直到下次挖礦重置"
+                )
+            else:
+                blocked_action_signatures.add(action_signature)
+                miner_logger.warning(
+                    f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}"
+                )
+            continue
+        except OutOfItemError as exc:
+            item_blacklist.add(exc.item_type)
+            items_available[exc.item_type] = 0
+            zero_streaks[exc.item_type] = max(zero_streaks.get(exc.item_type, 0), zero_streak_limit)
+            miner_logger.warning(
+                f"[MiningService] live item check failed for {exc.item_type}: "
+                f"count={exc.live_count}; blacklist for current mining run"
+            )
+            continue
         # ...
 
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>README Viewer</title>
+  <title>{{ page_title or '文字檢視' }}</title>
   <style>
     :root {
       --bg-color: #10151d;
@@ -58,10 +58,34 @@
 <body>
   <div class="shell">
     <div class="header">
-      <h1 class="title">README</h1>
-      <p class="subtitle">目前顯示的是 repo 根目錄的 `README.md` 內容。</p>
+      <h1 class="title">{{ page_title or '文字檢視' }}</h1>
+      <p class="subtitle">{{ page_subtitle or '' }}</p>
     </div>
-    <pre class="content">{{ readme_text }}</pre>
+    <pre class="content">{{ page_text }}</pre>
   </div>
+  <script>
+    const INITIAL_FRONTEND_VERSION = '{{ frontend_version }}';
+    let currentFrontendVersion = INITIAL_FRONTEND_VERSION;
+
+    async function checkFrontendVersion() {
+      try {
+        const response = await fetch(`/api/frontend_version?_=${Date.now()}`, { cache: 'no-store' });
+        const data = await response.json();
+        const nextVersion = data.version || '';
+        if (!currentFrontendVersion) {
+          currentFrontendVersion = nextVersion;
+          return;
+        }
+        if (nextVersion && nextVersion !== currentFrontendVersion) {
+          window.location.reload();
+        }
+      } catch (e) {
+        console.error('frontend version check failed', e);
+      }
+    }
+
+    setInterval(checkFrontendVersion, 3000);
+    checkFrontendVersion();
+  </script>
 </body>
 </html>

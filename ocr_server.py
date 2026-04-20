@@ -134,7 +134,20 @@ def before_request():
 OCR_WORKERS = max(1, int(os.environ.get("OCR_WORKERS", "1")))
 OCR_INFER_TIMEOUT = float(os.environ.get("OCR_INFER_TIMEOUT", "30"))
 
-OCR_ENGINE_CONFIG = {
+OCR_FORCE_OFFICIAL_MODEL = os.environ.get("OCR_FORCE_OFFICIAL_MODEL", "").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+OCR_BASE_CONFIG = {
+    "use_doc_orientation_classify": False,
+    "use_doc_unwarping": False,
+    "use_textline_orientation": False,
+}
+
+OCR_LOCAL_ENGINE_CONFIG = {
     "text_recognition_model_dir": os.environ.get(
         "OCR_TEXT_RECOGNITION_MODEL_DIR",
         str(Path(__file__).resolve().parent / "OCR_model" / "v2"),
@@ -143,10 +156,32 @@ OCR_ENGINE_CONFIG = {
         "OCR_TEXT_DETECTION_MODEL_DIR",
         str(Path(__file__).resolve().parent / "OCR_model" / "det_v2"),
     ),
-    "use_doc_orientation_classify": False,
-    "use_doc_unwarping": False,
-    "use_textline_orientation": False,
+    **OCR_BASE_CONFIG,
 }
+
+OCR_OFFICIAL_ENGINE_CONFIG = dict(OCR_BASE_CONFIG)
+
+
+def create_ocr_engine():
+    """Prefer local models, but fall back to official PaddleOCR models if local init fails."""
+    if OCR_FORCE_OFFICIAL_MODEL:
+        print("[OCR] OCR_FORCE_OFFICIAL_MODEL is enabled; using official PaddleOCR models.")
+        return PaddleOCR(**OCR_OFFICIAL_ENGINE_CONFIG), "official", OCR_OFFICIAL_ENGINE_CONFIG
+
+    try:
+        engine = PaddleOCR(**OCR_LOCAL_ENGINE_CONFIG)
+        print(
+            "[OCR] Using local OCR models:"
+            f" det={OCR_LOCAL_ENGINE_CONFIG['text_detection_model_dir']},"
+            f" rec={OCR_LOCAL_ENGINE_CONFIG['text_recognition_model_dir']}"
+        )
+        return engine, "local", OCR_LOCAL_ENGINE_CONFIG
+    except Exception as exc:
+        print("[OCR] Local OCR model init failed. Falling back to official PaddleOCR models.")
+        print(f"[OCR] Local model error: {exc}")
+        engine = PaddleOCR(**OCR_OFFICIAL_ENGINE_CONFIG)
+        print("[OCR] Using official PaddleOCR models.")
+        return engine, "official", OCR_OFFICIAL_ENGINE_CONFIG
 
 
 class OCRWorkerPool:
@@ -160,10 +195,15 @@ class OCRWorkerPool:
         self._ready_events = []
         self._init_errors = {}
         self._single_engine = None
+        self._engine_source = None
+        self._engine_config = None
 
         if self.worker_count == 1:
-            self._single_engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+            self._single_engine, self._engine_source, self._engine_config = create_ocr_engine()
             return
+
+        probe_engine, self._engine_source, self._engine_config = create_ocr_engine()
+        del probe_engine
 
         for idx in range(self.worker_count):
             ready_event = threading.Event()
@@ -188,7 +228,7 @@ class OCRWorkerPool:
 
     def _worker_loop(self, worker_idx: int, ready_event: threading.Event):
         try:
-            engine = PaddleOCR(**OCR_ENGINE_CONFIG)
+            engine = PaddleOCR(**self._engine_config)
         except Exception as e:
             self._init_errors[worker_idx] = str(e)
             ready_event.set()

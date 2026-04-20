@@ -29,6 +29,7 @@ DEFAULT_DEVICE_CONFIG = {
     "web_manual_viewport_width": 0,  # 手動開啟視窗寬度 (0=使用 web_viewport_width)
     "web_manual_viewport_height": 0,  # 手動開啟視窗高度 (0=使用 web_viewport_height)
     "web_stop_mode": "keep_page",  # keep_page / blank / close_browser
+    "web_screenshot_method": "playwright",  # playwright / canvas_capture
     "enable_farm": True,  # 啟用農場
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
@@ -41,8 +42,8 @@ DEFAULT_DEVICE_CONFIG = {
     "online_check_interval": 5,  # 偵測到上線後的避讓休眠時間 (分鐘)
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
-    "mining_duration_min": 6,  # ?????????????
-    "mining_planner_version": "v1",  # v1 / v2
+    "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
+    "mining_planner_version": "v1",  # v1 / v2 / v3
     "mining_save_samples": False,  # save low-confidence mining cell samples
 }
 
@@ -399,6 +400,17 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         stop_mode if stop_mode in allowed_stop_modes else "keep_page"
     )
 
+    # 截圖方法: playwright (預設) 或 canvas_capture
+    screenshot_method = (
+        str(current.get("web_screenshot_method", "playwright")).strip().lower()
+    )
+    allowed_screenshot_methods = {"playwright", "canvas_capture"}
+    current["web_screenshot_method"] = (
+        screenshot_method
+        if screenshot_method in allowed_screenshot_methods
+        else "playwright"
+    )
+
     current["online_check_interval"] = max(
         1,
         min(
@@ -440,14 +452,18 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         ),
     )
 
-    planner_version = str(
-        current.get(
-            "mining_planner_version",
-            DEFAULT_DEVICE_CONFIG["mining_planner_version"],
+    planner_version = (
+        str(
+            current.get(
+                "mining_planner_version",
+                DEFAULT_DEVICE_CONFIG["mining_planner_version"],
+            )
         )
-    ).strip().lower()
+        .strip()
+        .lower()
+    )
     current["mining_planner_version"] = (
-        planner_version if planner_version in {"v1", "v2"} else "v1"
+        planner_version if planner_version in {"v1", "v2", "v3"} else "v1"
     )
     current["mining_save_samples"] = _to_bool(
         current.get(

@@ -314,6 +314,12 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
     bot_state.init_device(ip)
     device_logger = logger
     backend_kind = "adb"
+    enable_dungeon_manager = bool(
+        config_manager.get_device_config(ip).get(
+            "enable_dungeon_manager",
+            config_manager.get_device_config(ip).get("enable_dungeon", True),
+        )
+    )
     d_orig = None
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
@@ -860,16 +866,16 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 if use_phone_ocr_lamp_mode(ip):
                     if stage == "主頁面":
                         lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-                        bot_state.update_state(ip, task="點金 (OCR)", step=f"執行中 ({lamp_dur}s)")
-                        logger.info(f"[{ip}] 使用手機 OCR 點金模式，持續 {lamp_dur}s")
+                        bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
+                        logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
                         Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10),is_compare=True,device_ip=ip)
                     else:
-                        log_main_page_mismatch(d, ip, stage, "點金 (OCR)", "手機 OCR 點金前不在主頁面")
+                        log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
                 if 'emulator-5560' in ip:
                     if stage =="主頁面":
                         lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
-                        bot_state.update_state(ip, task="點金 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
-                        logger.info(f"[{ip}] 使用 5560 OCR 點金模式，持續 {lamp_dur}s")
+                        bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
+                        logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
                         Open_gold_paddle_ocr.open_the_gold(
                             d,
                             times=lamp_dur + random.randint(-10, 10),
@@ -877,20 +883,67 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                             device_ip=ip,
                         )
                     else:
-                        log_main_page_mismatch(d, ip, stage, "點金 (OCR)", "5560 OCR 點金前不在主頁面")
-                # --- 動態開神燈/點金邏輯 ---
+                        log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
+                # --- 動態開神燈邏輯 ---
                 elif ip != "emulator-5558":
                     if stage == "主頁面":
                         device_cfg = config_manager.get_device_config(ip)
-                        lamp_interval = device_cfg.get("lamp_check_interval", 2)
-                        lamp_dur = device_cfg.get("lamp_duration_sec", 300)
-                        
-                        if current_time.tm_hour % lamp_interval == 0:
-                            bot_state.update_state(ip, task="點金", step=f"執行中 ({lamp_dur}s)")
-                            logger.info(f"[{ip}] 使用一般點金模式，interval={lamp_interval}h, duration={lamp_dur}s")
+                        lamp_interval = float(device_cfg.get("lamp_check_interval", 2))
+                        lamp_dur = int(device_cfg.get("lamp_duration_sec", 300))
+                        lamp_record_name = "general_lamp_last_execution"
+                        lamp_record = return_time(ip, name=lamp_record_name)
+                        now_ts = time.time()
+
+                        if lamp_interval <= 0:
+                            logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
+                            lamp_interval = 2.0
+
+                        threshold_sec = lamp_interval * 3600.0
+                        last_ts = None
+                        last_dt_str = "None"
+                        elapsed_sec = None
+                        should_run_lamp = False
+                        reason = ""
+
+                        if lamp_record and lamp_record.get("timestamp"):
+                            try:
+                                last_ts = float(lamp_record.get("timestamp"))
+                            except (TypeError, ValueError):
+                                last_ts = None
+
+                        if last_ts and last_ts > 0:
+                            elapsed_sec = max(0.0, now_ts - last_ts)
+                            last_dt_str = datetime.datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
+                            should_run_lamp = elapsed_sec >= threshold_sec
+                            remaining_sec = max(0.0, threshold_sec - elapsed_sec)
+                            reason = (
+                                "elapsed>=threshold"
+                                if should_run_lamp
+                                else f"elapsed<threshold, remaining={remaining_sec/60:.1f}m"
+                            )
+                        else:
+                            should_run_lamp = True
+                            reason = "no_valid_last_record"
+
+                        elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
+                        logger.info(
+                            f"[{ip}] 開神燈排程檢查: last={last_dt_str}, elapsed_h={elapsed_h_text}, "
+                            f"threshold_h={lamp_interval:.2f}, should_run={should_run_lamp}, reason={reason}"
+                        )
+
+                        if should_run_lamp:
+                            bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
+                            logger.info(
+                                f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
+                            )
                             Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
+                            time_recording(ip, name=lamp_record_name)
+                            logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
+                        else:
+                            logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
                     else:
-                        log_main_page_mismatch(d, ip, stage, "點金", "一般點金前不在主頁面")
+                        logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
+                        log_main_page_mismatch(d, ip, stage, "開神燈", "一般開神燈前不在主頁面")
                     
                             
 

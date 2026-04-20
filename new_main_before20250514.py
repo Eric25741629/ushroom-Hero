@@ -402,22 +402,22 @@ def main(ip, easyocr_reader: easyocr.Reader, Cnn_model, oralce_cnn_model, oralce
                     stage = get_stage_with_check(d, ip, Cnn_model, easyocr_reader)
                     if stage == "主頁面" and 'fc65396d' in ip :
                         lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-                        bot_state.update_state(ip, task="點金 (OCR)", step=f"執行中 ({lamp_dur}s)")
+                        bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
                         Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10),is_compare=True,device_ip=ip)
                     
-                    # --- 動態開神燈/點金邏輯 ---
+                    # --- 動態開神燈邏輯 ---
                     elif stage == "主頁面" and ip != "emulator-5558":
                         device_cfg = config_manager.get_device_config(ip)
                         lamp_interval = device_cfg.get("lamp_check_interval", 2)
                         lamp_dur = device_cfg.get("lamp_duration_sec", 300)
                         
                         if current_time.tm_hour % lamp_interval == 0:
-                            bot_state.update_state(ip, task="點金", step=f"執行中 ({lamp_dur}s)")
+                            bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
                             Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
                         
                     elif stage == "主頁面" and current_time.tm_hour % 2 == 0 and  ip == "emulator-5562" :
                         lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-                        bot_state.update_state(ip, task="點金", step=f"執行中 ({lamp_dur}s)")
+                        bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
                         Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
                             
 

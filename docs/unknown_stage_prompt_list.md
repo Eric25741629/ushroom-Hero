@@ -11,7 +11,7 @@
 ### 1. 農場 / 作物頁
 
 代表樣本：
-- [20260409_082459_626986_一般點金前不在主頁面_未知.jpg](../logs/error_screenshots/emulator-5556/20260409_082459_626986_一般點金前不在主頁面_未知.jpg)
+- [20260409_082459_626986_一般開神燈前不在主頁面_未知.jpg](../logs/error_screenshots/emulator-5556/20260409_082459_626986_一般開神燈前不在主頁面_未知.jpg)
 - [20260409_082404_677156_航海任務前不在主頁面_未知.jpg](../logs/error_screenshots/emulator-5556/20260409_082404_677156_航海任務前不在主頁面_未知.jpg)
 - [20260409_082454_446808_好友每日禮物前不在主頁面_未知.jpg](../logs/error_screenshots/emulator-5556/20260409_082454_446808_好友每日禮物前不在主頁面_未知.jpg)
 
@@ -159,9 +159,9 @@
 ```text
 device_id: emulator-5556
 timestamp: 2026-04-09 08:24:59
-task: 一般點金前不在主頁面
+task: 一般開神燈前不在主頁面
 ocr_text: ...
-image_path: logs/error_screenshots/emulator-5556/20260409_082459_626986_一般點金前不在主頁面_未知.jpg
+image_path: logs/error_screenshots/emulator-5556/20260409_082459_626986_一般開神燈前不在主頁面_未知.jpg
 
 請判斷畫面 stage，並回 JSON。
 ```
