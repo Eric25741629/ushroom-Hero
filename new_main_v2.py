@@ -1,4 +1,4 @@
-﻿import sys
+import sys
 import os
 
 # 方案四：優化 SMB/NAS 執行效率
@@ -318,6 +318,505 @@ def get_stage_with_check(d, ip, Cnn_model, img=None):
         raise LoginConflictError("偵測到異地登錄")
     return stage
 
+
+# ---------------------------------------------------------------------------
+# Helper functions extracted from main() to reduce its size
+# ---------------------------------------------------------------------------
+
+def _handle_startup_sleep(ip: str, device_logger) -> None:
+    startup_sleep_sec = int(_STARTUP_SLEEP_SEC_BY_DEVICE.get(ip, 0) or 0)
+    elapsed_sec = int(time.time() - _PROCESS_START_TS)
+    remaining_startup_sleep = max(0, startup_sleep_sec - elapsed_sec)
+    if remaining_startup_sleep > 0:
+        for remain in range(remaining_startup_sleep, 0, -1):
+            if ip == "emulator-5554":
+                if (
+                    bot_state.has_pending_online_check_request("emulator-5554")
+                    or bot_state.is_online_check_priority_active("emulator-5554")
+                ):
+                    device_logger.info(f"[{ip}] 收到 emulator-5558 上線檢查請求，提前結束啟動休眠")
+                    break
+            if bot_state.has_pending_web_launch_request(ip):
+                device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
+                break
+            bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
+            time.sleep(1)
+
+
+def _maybe_resume_sleep(
+    ip: str,
+    Cnn_model,
+    resume_sleep_until_ts: Optional[float],
+    resume_sleep_reason: str,
+    logger_obj,
+) -> tuple:
+    """Handle resume-sleep gate at top of main while loop.
+
+    Returns (updated_ts, updated_reason, should_continue).
+    Caller does `if should_continue: continue`.
+    """
+    if ip == 'emulator-5554':
+        has_req = bot_state.has_pending_online_check_request('emulator-5554')
+        has_priority = bot_state.is_online_check_priority_active('emulator-5554')
+        if has_req or has_priority:
+            process_online_check_requests(ip, Cnn_model, logger_obj, check_on_line)
+            time.sleep(0.2)
+            return resume_sleep_until_ts, resume_sleep_reason, True
+        if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+            wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
+            remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
+            detail = resume_sleep_reason or "返回休眠"
+            bot_state.update_state(
+                ip,
+                task="休眠中",
+                step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
+                next_wake_at=resume_sleep_until_ts,
+            )
+            logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
+            interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
+            if interrupted:
+                return None, "", True
+            return None, "", False
+    elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+        wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
+        remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
+        detail = resume_sleep_reason or "返回休眠"
+        bot_state.update_state(
+            ip,
+            task="休眠中",
+            step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
+            next_wake_at=resume_sleep_until_ts,
+        )
+        logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
+        interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
+        if interrupted:
+            return None, "", True
+        return None, "", False
+    return resume_sleep_until_ts, resume_sleep_reason, False
+
+
+def _run_at_main_page(
+    d,
+    ip: str,
+    Cnn_model,
+    task_name: str,
+    mismatch_reason: str,
+    fn,
+    *,
+    step: str = "執行中",
+    log: Optional[str] = None,
+) -> str:
+    """Fetch stage, run fn() on main page, else log mismatch. Returns stage."""
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        if log:
+            bot_state.update_state(ip, task=task_name, step=step, log=log)
+        else:
+            bot_state.update_state(ip, task=task_name, step=step)
+        fn()
+    else:
+        log_main_page_mismatch(d, ip, stage, task_name, mismatch_reason)
+    return stage
+
+
+def _run_lamp_if_due(d, ip: str, stage: str) -> None:
+    """Run lamp (神燈) for the appropriate device mode using the given stage."""
+    if use_phone_ocr_lamp_mode(ip):
+        if stage == "主頁面":
+            lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
+            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
+            logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
+            _run_lamp(d, ip, lamp_dur, is_compare=True)
+        else:
+            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
+    if 'emulator-5560' in ip:
+        if stage == "主頁面":
+            lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
+            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
+            logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
+            _run_lamp(d, ip, lamp_dur, is_compare=False)
+        else:
+            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
+    elif ip != "emulator-5558":
+        if stage == "主頁面":
+            device_cfg = config_manager.get_device_config(ip)
+            lamp_interval = float(device_cfg.get("lamp_check_interval", 2))
+            lamp_dur = int(device_cfg.get("lamp_duration_sec", 300))
+            lamp_record_name = "general_lamp_last_execution"
+            lamp_record = return_time(ip, name=lamp_record_name)
+            now_ts = time.time()
+
+            if lamp_interval <= 0:
+                logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
+                lamp_interval = 2.0
+
+            threshold_sec = lamp_interval * 3600.0
+            last_ts = None
+            last_dt_str = "None"
+            elapsed_sec = None
+            should_run_lamp = False
+            reason = ""
+
+            if lamp_record and lamp_record.get("timestamp"):
+                try:
+                    last_ts = float(lamp_record.get("timestamp"))
+                except (TypeError, ValueError):
+                    last_ts = None
+
+            if last_ts and last_ts > 0:
+                elapsed_sec = max(0.0, now_ts - last_ts)
+                last_dt_str = datetime.datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
+                should_run_lamp = elapsed_sec >= threshold_sec
+                remaining_sec = max(0.0, threshold_sec - elapsed_sec)
+                reason = (
+                    "elapsed>=threshold"
+                    if should_run_lamp
+                    else f"elapsed<threshold, remaining={remaining_sec/60:.1f}m"
+                )
+            else:
+                should_run_lamp = True
+                reason = "no_valid_last_record"
+
+            elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
+            logger.info(
+                f"[{ip}] 開神燈排程檢查: last={last_dt_str}, elapsed_h={elapsed_h_text}, "
+                f"threshold_h={lamp_interval:.2f}, should_run={should_run_lamp}, reason={reason}"
+            )
+
+            if should_run_lamp:
+                bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
+                logger.info(
+                    f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
+                )
+                _run_lamp(d, ip, lamp_dur)
+                time_recording(ip, name=lamp_record_name)
+                logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
+            else:
+                logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
+        else:
+            logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
+            log_main_page_mismatch(d, ip, stage, "開神燈", "一般開神燈前不在主頁面")
+
+
+def _run_weekly_dungeon(
+    d,
+    ip: str,
+    stage: str,
+    enable_dungeon_manager: bool,
+    current_time,
+) -> None:
+    """Run 萬神試煉 if scheduled for this week and appropriate day/time."""
+    record_time = return_time(ip, name="萬神試煉")
+    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
+    logging.info("萬神試煉紀錄: {}".format(record_time))
+    fight_trial_time = 1
+    if record_time is None:
+        fight_trial_time = 0
+        should_execute = True
+    else:
+        should_execute = record_time.get("is_next_week", False) or fight_trial_time == 0
+        logging.info("fight_trial_time: {}, should_execute: {}, record_time: {}".format(fight_trial_time, should_execute, record_time))
+    if enable_dungeon_manager and should_execute and (
+        (current_time.tm_wday == 0 and current_time.tm_hour > 12) or
+        (1 <= current_time.tm_wday <= 5)
+    ):
+        is_not_sunday = current_time.tm_wday != 6
+        is_monday_afternoon = current_time.tm_wday == 0 and current_time.tm_hour > 12
+        is_after_monday = current_time.tm_wday > 0
+        should_run_fight_test = should_execute and is_not_sunday and (is_monday_afternoon or is_after_monday)
+        if should_run_fight_test:
+            if stage == "主頁面":
+                bot_state.update_state(ip, task="萬神試煉", step="執行中")
+                new_battle.fight_test(d)
+                time_recording(ip, name="萬神試煉")
+            else:
+                log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
+
+
+def _run_biweekly_dungeon(
+    d,
+    ip: str,
+    stage: str,
+    enable_dungeon_manager: bool,
+    now_local,
+) -> None:
+    """Run 雙週副本 for emulator-5556 on Sat/Sun at 20:xx if due this biweek."""
+    if ip == "emulator-5556" and enable_dungeon_manager:
+        biweek_record = return_time(ip, name="雙週副本")
+        should_execute_biweek = False
+
+        if biweek_record is None:
+            should_execute_biweek = True
+            logging.info("雙週副本紀錄：無（首次執行）")
+        else:
+            should_execute_biweek = biweek_record.get("is_next_biweek", False)
+            logging.info("雙週副本紀錄：{}, should_execute: {}".format(biweek_record, should_execute_biweek))
+
+        if (now_local.tm_wday in (5, 6)) and (now_local.tm_hour == 20) and now_local.tm_min >= 0:
+            if should_execute_biweek:
+                if stage == "主頁面":
+                    bot_state.update_state(ip, task="雙週副本", step="排程觸發與穩定流程")
+                    new_battle.run_biweekly_bounty_road_single(
+                        d,
+                        ip,
+                        logger_obj=logger,
+                        should_stop=lambda: bot_state.check_pause(ip) or bot_state.check_skip_sleep(ip),
+                    )
+                    time_recording(ip, name="雙週副本")
+                else:
+                    log_main_page_mismatch(d, ip, stage, "雙週副本", "雙週副本到達執行時間但不在主頁面")
+            else:
+                logging.info("[{ip}] 本兩週已執行過雙週副本，跳過本次執行")
+
+
+def _run_daily_tasks(
+    d,
+    ip: str,
+    Cnn_model,
+    clf,
+    rl_recorder,
+    current_time,
+    enable_dungeon_manager: bool,
+    wheel_manager,
+    mission_manager,
+    family_manager,
+) -> None:
+    """Execute the full per-wake task sequence (20 tasks) for one device."""
+    # Task 1: 地獄之門
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    record_time = return_time(ip, name="地獄之門")
+    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
+    logging.info("地獄之門紀錄: {}".format(record_time))
+    hell_gate_time = 1
+    if record_time is None:
+        hell_gate_time = 0
+        should_execute = True
+    else:
+        should_execute = record_time.get("is_next_day", False) or hell_gate_time == 0
+        logging.info("hell_gate_time: {}, should_execute: {}, record_time: {}".format(hell_gate_time, should_execute, record_time))
+    if should_execute and current_time.tm_min < 20:
+        if stage == "主頁面":
+            bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
+            new_battle.hell_door(d, ip)
+            time_recording(ip, name="地獄之門")
+        else:
+            log_main_page_mismatch(d, ip, stage, "地獄之門", "地獄之門到達執行時間但不在主頁面")
+    else:
+        logger.info("地獄之門: 尚未到達執行時間或已執行過")
+
+    # Task 2: 農場任務
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="農場任務",
+        mismatch_reason="農場任務前不在主頁面",
+        fn=lambda: farm_manager.farm(d, ip, Cnn_model),
+        step="準備進入",
+    )
+
+    # Task 3: 點擊寶箱
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="點擊寶箱", step="領取獎勵")
+        d.tap(random.randint(261, 271), 369)  # 點擊寶箱
+        time.sleep(1)
+        reward(d)
+        time.sleep(3)
+    else:
+        bot_state.update_state(ip, task="點擊寶箱", step=f"未在主頁面: {stage}")
+        screenshot_path = save_error_screenshot(d, ip, stage, "點擊寶箱前不在主頁面")
+        logger.error(f"[{ip}] 點擊寶箱前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+
+    # Task 4: 家族任務
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    logger.debug(f"[{ip}] 確認家族任務資格：主頁面={stage == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="家族任務", step="執行中")
+        family_manager.go_to_family()
+    else:
+        log_main_page_mismatch(d, ip, stage, "家族任務", "家族任務前不在主頁面")
+
+    # Task 5 & 6: 守護靈 + 技能夥伴 (reuse stage from Task 4, matching original)
+    if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
+        if stage == "主頁面":
+            guardian_record = return_time(ip, name="guardian_spirit")
+            should_get_guardian = True
+            if guardian_record is not None:
+                should_get_guardian = guardian_record.get("is_next_day", False)
+            if should_get_guardian:
+                bot_state.update_state(ip, task="領取守護靈", step="領取中")
+                get_Guardian_Spirit(d)
+                time_recording(ip, name="guardian_spirit")
+        else:
+            log_main_page_mismatch(d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面")
+    if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
+        if stage == "主頁面":
+            bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
+            get_skill_and_partner(d)
+            time.sleep(3)
+        else:
+            log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
+
+    # Task 7: 商店購買
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        device_cfg = config_manager.get_device_config(ip)
+        if device_cfg.get("enable_shop_manager", True):
+            store_record = return_time(ip, name="Store")
+            should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
+            if should_check_store:
+                bot_state.update_state(ip, task="商店購買", step="執行中")
+                Store.buy_store(d, Cnn_model)
+                time_recording(ip, name="Store")
+            else:
+                logger.info("商店購買: 尚未過期且非23點，跳過")
+        else:
+            logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
+    else:
+        bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
+        screenshot_path = save_error_screenshot(d, ip, stage, "商店購買前不在主頁面")
+        logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+
+    # Task 8: 坐騎強化
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="坐騎強化",
+        mismatch_reason="坐騎強化前不在主頁面",
+        fn=lambda: rank_events.park_spring(d, ip),
+    )
+
+    # Task 9: 每日加速 (no main-page guard)
+    bot_state.update_state(ip, task="每日加速", step="領取中")
+    daily_acceleration(d, ip, Cnn_model)
+
+    # Task 10: 競技場挑戰
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="競技場挑戰",
+        mismatch_reason="競技場挑戰前不在主頁面",
+        fn=lambda: click_arena_challenges(d, ip),
+        step="領取中",
+    )
+
+    # Task 11: 挖礦/Oracle (original had duplicate get_stage_with_check — collapsed to one via helper)
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="挖礦/Oracle",
+        mismatch_reason="挖礦/Oracle 前不在主頁面",
+        fn=lambda: oracle(
+            d, None, ip=ip, clf=clf, rl_recorder=rl_recorder,
+            Cnn_model=Cnn_model,
+            max_duration_minutes=config_manager.get_device_config(ip).get("mining_duration_min", 6),
+        ),
+        log="開始執行挖礦任務",
+    )
+
+    # Task 12: 所有日常任務 (20:00–23:00 only)
+    if 20 <= current_time.tm_hour < 23:
+        stage = _run_at_main_page(
+            d, ip, Cnn_model,
+            task_name="所有日常任務",
+            mismatch_reason="所有日常任務執行前不在主頁面",
+            fn=lambda: mission_manager.do_allmission(),
+            step="檢查/執行中",
+        )
+
+    # Task 13: 菇菇武道會
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="菇菇武道會", step="週期檢查/執行")
+        _run_periodic_cycle(
+            ip,
+            record_name="mushroom_arena_cycle_start",
+            should_execute_fn=should_execute_mushroom_arena,
+            action_fn=mushroom_arena,
+            display_name="菇菇武道會",
+            d=d,
+            daily_limit_name="mushroom_arena_daily",
+        )
+    else:
+        bot_state.update_state(ip, task="菇菇武道會", step=f"未在主頁面: {stage}")
+        screenshot_path = save_error_screenshot(d, ip, stage, "菇菇武道會前不在主頁面")
+        logger.error(f"[{ip}] 菇菇武道會前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+
+    # Task 14: 航海任務
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="航海任務 (Sea)", step="週期檢查/執行")
+        _run_periodic_cycle(
+            ip,
+            record_name="sea_last_execution",
+            should_execute_fn=should_execute_sea_with_cooldown,
+            action_fn=sea,
+            display_name="sea",
+            d=d,
+            cycle_record_name="sea_cycle_start",
+        )
+    else:
+        bot_state.update_state(ip, task="航海任務 (Sea)", step=f"未在主頁面: {stage}")
+        screenshot_path = save_error_screenshot(d, ip, stage, "航海任務前不在主頁面")
+        logger.error(f"[{ip}] 航海任務前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+
+    # Task 15: 萬神試煉
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
+
+    # Task 16: 雲端戰鬥
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if enable_dungeon_manager:
+        if stage == "主頁面":
+            bot_state.update_state(ip, task="雲端戰鬥", step="領取中")
+            new_battle.run_weekly_cloud_fighting_single(d, ip)
+        else:
+            bot_state.update_state(ip, task="雲端戰鬥", step=f"未在主頁面: {stage}")
+            screenshot_path = save_error_screenshot(d, ip, stage, "雲端戰鬥前不在主頁面")
+            logger.error(f"[{ip}] 雲端戰鬥前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+    else:
+        logger.info(f"[{ip}] 副本管家已停用，跳過雲端戰鬥")
+
+    # Task 17: 雙週副本
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    now_local = time.localtime()
+    _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
+
+    # Task 18: 好友每日禮物
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="好友每日禮物", step="領取中")
+        daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1)
+        stage = get_stage_with_check(d, ip, Cnn_model)
+    else:
+        log_main_page_mismatch(d, ip, stage, "好友每日禮物", "好友每日禮物前不在主頁面")
+
+    # Task 19: 開神燈
+    _run_lamp_if_due(d, ip, stage)
+
+    # Task 20: 轉盤金幣
+    stage = get_stage_with_check(d, ip, Cnn_model)
+    if stage == "主頁面":
+        bot_state.update_state(ip, task="轉盤金幣", step="執行中")
+        logger.info(f"[{ip}] 準備執行轉盤金幣，stage={stage}")
+        spin_done = bool(wheel_manager.spin_and_send_gold())
+        if spin_done:
+            logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
+        else:
+            logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
+    else:
+        bot_state.update_state(ip, task="轉盤金幣", step=f"未在主頁面: {stage}")
+        screenshot_path = save_error_screenshot(d, ip, stage, "轉盤金幣執行前不在主頁面")
+        logger.error(f"[{ip}] 轉盤金幣執行前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+
+    # Device cleanup
+    if ip == "emulator-5558":
+        switch_skill(d, '騙人用')
+    if "fc65396d" in ip:
+        d.app_start("com.android.chrome")
+        time.sleep(2)
+        d.app_stop("com.mxdzz.tw.and")
+        time.sleep(1)
+    else:
+        d.app_stop("com.mxdzz.tw.and")
+
+
 def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
     # 初始化狀態監控
     bot_state.init_device(ip)
@@ -341,23 +840,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         set_thread_logger(device_logger)
         backend_kind = str(config_manager.get_device_config(ip).get("backend", "adb")).strip().lower()
 
-        startup_sleep_sec = int(_STARTUP_SLEEP_SEC_BY_DEVICE.get(ip, 0) or 0)
-        elapsed_sec = int(time.time() - _PROCESS_START_TS)
-        remaining_startup_sleep = max(0, startup_sleep_sec - elapsed_sec)
-        if remaining_startup_sleep > 0:
-            for remain in range(remaining_startup_sleep, 0, -1):
-                if ip == "emulator-5554":
-                    if (
-                        bot_state.has_pending_online_check_request("emulator-5554")
-                        or bot_state.is_online_check_priority_active("emulator-5554")
-                    ):
-                        device_logger.info(f"[{ip}] 收到 emulator-5558 上線檢查請求，提前結束啟動休眠")
-                        break
-                if bot_state.has_pending_web_launch_request(ip):
-                    device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
-                    break
-                bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
-                time.sleep(1)
+        _handle_startup_sleep(ip, device_logger)
 
         while True:
             try:
@@ -427,50 +910,11 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
             if handle_pending_web_launch(ip, d, backend_kind, logger):
                 continue
             process_online_check_requests(ip, Cnn_model, logger, check_on_line)
-            if ip == 'emulator-5554':
-                has_req = bot_state.has_pending_online_check_request('emulator-5554')
-                has_priority = bot_state.is_online_check_priority_active('emulator-5554')
-                if has_req or has_priority:
-                    # Yield 5554 normal workflow to serve 5558 online-check first.
-                    process_online_check_requests(ip, Cnn_model, logger, check_on_line)
-                    time.sleep(0.2)
-                    continue
-                if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-                    wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-                    remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-                    detail = resume_sleep_reason or "返回休眠"
-                    bot_state.update_state(
-                        ip,
-                        task="休眠中",
-                        step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                        next_wake_at=resume_sleep_until_ts,
-                    )
-                    logger.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-                    interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger)
-                    if interrupted:
-                        resume_sleep_until_ts = None
-                        resume_sleep_reason = ""
-                        continue
-                    resume_sleep_until_ts = None
-                    resume_sleep_reason = ""
-            elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-                wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-                remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-                detail = resume_sleep_reason or "返回休眠"
-                bot_state.update_state(
-                    ip,
-                    task="休眠中",
-                    step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                    next_wake_at=resume_sleep_until_ts,
-                )
-                logger.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-                interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger)
-                if interrupted:
-                    resume_sleep_until_ts = None
-                    resume_sleep_reason = ""
-                    continue
-                resume_sleep_until_ts = None
-                resume_sleep_reason = ""
+            resume_sleep_until_ts, resume_sleep_reason, _skip = _maybe_resume_sleep(
+                ip, Cnn_model, resume_sleep_until_ts, resume_sleep_reason, logger
+            )
+            if _skip:
+                continue
             forced_wake_ts = None
             sleep_policy = "aligned_window"
             sleep_reason = "常規對齊喚醒"
@@ -556,441 +1000,14 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 # if red_envelope.check_red_in_pic(img):
                 # red_envelope.open_red_envelope(d)
 
-                current_time = time.localtime()
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                record_time = return_time(ip, name="地獄之門")
-                logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-                logging.info("地獄之門紀錄: {}".format(record_time))
-                hell_gate_time = 1
-                if record_time is None :
-                    #  "萬神試煉" 的記錄不存在  
-                    hell_gate_time = 0
-                    should_execute = True
-                else:
-                    should_execute = record_time.get("is_next_day", False) or hell_gate_time == 0
-                    logging.info("hell_gate_time: {}, should_execute: {}, record_time: {}".format(hell_gate_time, should_execute, record_time))
-                if should_execute and current_time.tm_min < 20:
-                    if stage == "主頁面":
-                        bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
-                        # goto_hell_gate(d, easyocr_reader)
-                        new_battle.hell_door(d, ip)
-                        time_recording(ip, name="地獄之門")
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "地獄之門", "地獄之門到達執行時間但不在主頁面")
-                else:
-                    logger.info("地獄之門: 尚未到達執行時間或已執行過")
-                if '7fe98fc6' in ip:
-                    stage = get_stage_with_check(d, ip, Cnn_model)
-                    if stage == "主頁面":
-                        flush_logs(d)
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "flush_logs", "flush_logs 前不在主頁面")
-
-                # stage = get_stage_with_check(d, ip, Cnn_model)
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="農場任務", step="準備進入")
-                    save_time = farm_manager.farm(d, ip, Cnn_model)
-                else:
-                    log_main_page_mismatch(d, ip, stage, "農場任務", "農場任務前不在主頁面")
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="點擊寶箱", step="領取獎勵")
-                    d.tap(random.randint(261, 271), 369)  # 點擊寶箱
-                    time.sleep(1)
-                    reward(d)
-                    time.sleep(3)
-                else:
-                    bot_state.update_state(ip, task="點擊寶箱", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "點擊寶箱前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 點擊寶箱前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-                # stage = get_stage_with_check(d, ip, Cnn_model)
-                # logger.info(f"目前頁面: {stage}, 開始檢查停車狀態")
-                # if stage == "主頁面":
-                #     status = manager.check_and_park(protect=True)
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                logger.debug(f"[{ip}] 確認家族任務資格：主頁面={stage == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
-                if stage == "主頁面" :
-                    bot_state.update_state(ip, task="家族任務", step="執行中")
-                    family_manager.go_to_family()
-                else:
-                    log_main_page_mismatch(d, ip, stage, "家族任務", "家族任務前不在主頁面")
-
-                # stage=get_stage(d,Cnn_model, easyocr_reader)
-
-                if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
-                    if stage == "主頁面":
-                        guardian_record = return_time(ip, name="guardian_spirit")
-                        should_get_guardian = True
-                        if guardian_record is not None:
-                            should_get_guardian = guardian_record.get("is_next_day", False)
-                        if should_get_guardian:
-                            bot_state.update_state(ip, task="領取守護靈", step="領取中")
-                            get_Guardian_Spirit(d)
-                            time_recording(ip, name="guardian_spirit")
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面")
-                if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
-                    if stage == "主頁面":
-                        bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
-                        get_skill_and_partner(d)
-                        time.sleep(3)
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
-                if stage == "主頁面":
-                    device_cfg = config_manager.get_device_config(ip)
-                    if device_cfg.get("enable_shop_manager", True):
-                        store_record = return_time(ip, name="Store")
-                        # 每 3 小時檢查一次 (10800秒) 或 23點強制檢查
-                        should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
-                        
-                        if should_check_store:
-                            bot_state.update_state(ip, task="商店購買", step="執行中")
-                            Store.buy_store(d, Cnn_model)
-                            time_recording(ip, name="Store")
-                        else:
-                            logger.info("商店購買: 尚未過期且非23點，跳過")
-                    else:
-                        logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
-                else:
-                    bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "商店購買前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-
-                # --- 新增：週活動 - 坐騎強化 (衝刺-發條) ---
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    rank_events.park_spring(d, ip)
-                else:
-                    log_main_page_mismatch(d, ip, stage, "坐騎強化", "坐騎強化前不在主頁面")
-                
-                bot_state.update_state(ip, task="每日加速", step="領取中")
-                daily_acceleration(d, ip, Cnn_model)
-
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="競技場挑戰", step="領取中")
-                    click_arena_challenges(d, ip)
-                else:
-                    bot_state.update_state(ip, task="競技場挑戰", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "競技場挑戰前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 競技場挑戰前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-                
-                # 挖礦前也走全域異地登入檢查，避免彈窗卡在任意介面時漏攔。
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                logger.debug(f"[{ip}] 挖礦前當前頁面：{stage}")
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面" :
-                    bot_state.update_state(ip, task="挖礦/Oracle", step="執行中", log="開始執行挖礦任務")
-                    device_cfg = config_manager.get_device_config(ip)
-                    mining_duration_min = device_cfg.get("mining_duration_min", 6)
-                    oracle(d, None, ip=ip, clf=clf, rl_recorder=rl_recorder, Cnn_model=Cnn_model, max_duration_minutes=mining_duration_min)
-                else:
-                    log_main_page_mismatch(d, ip, stage, "挖礦/Oracle", "挖礦/Oracle 前不在主頁面")
-
-                    # if _should_perform_oracle_action(ip):
-                    #     oracle(d, easyocr_reader, ip=ip, clf=clf, rl_recorder=rl_recorder, Cnn_model=Cnn_model)
-                    #     time.sleep(3)
-                    #     # 使用新的JSON管理器記錄
-                    #     store_manager = create_store_manager(ip)
-                        
-                        # store_manager.record_purchase("挖礦", {"last_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if 20 <= current_time.tm_hour < 23:
-                    if stage == "主頁面":
-                        # 直接呼叫 do_allmission，它內部會透過 check() 檢查 mission_timestamp
-                        bot_state.update_state(ip, task="所有日常任務", step="檢查/執行中")
-                        mission_manager.do_allmission()
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "所有日常任務", "所有日常任務執行前不在主頁面")
-                    
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="菇菇武道會", step="週期檢查/執行")
-                    _run_periodic_cycle(
-                        ip,
-                        record_name="mushroom_arena_cycle_start",
-                        should_execute_fn=should_execute_mushroom_arena,
-                        action_fn=mushroom_arena,
-                        display_name="菇菇武道會",
-                        d=d,
-                        daily_limit_name="mushroom_arena_daily",
-                            )
-                else:
-                    bot_state.update_state(ip, task="菇菇武道會", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "菇菇武道會前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 菇菇武道會前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-                
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="航海任務 (Sea)", step="週期檢查/執行")
-                    _run_periodic_cycle(
-                        ip,
-                        record_name="sea_last_execution",
-                        should_execute_fn=should_execute_sea_with_cooldown,
-                        action_fn=sea,
-                        display_name="sea",
-                        d=d,
-                        cycle_record_name="sea_cycle_start",
-                    )
-                else:
-                    bot_state.update_state(ip, task="航海任務 (Sea)", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "航海任務前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 航海任務前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                record_time = return_time(ip, name="萬神試煉")
-                device_cfg = config_manager.get_device_config(ip)
-                enable_dungeon_manager = device_cfg.get("enable_dungeon_manager", device_cfg.get("enable_dungeon", True))
-                is_not_sunday = False
-                is_monday_afternoon = False
-                is_after_monday = False
-                logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-                logging.info("萬神試煉紀錄: {}".format(record_time))
-                fight_trial_time = 1
-                if record_time is None :
-                    #  "萬神試煉" 的記錄不存在  
-                     
-                    fight_trial_time = 0
-                    should_execute = True
-                else:
-                    # is_same_week=True 代表本週已執行，應跳過；False 則本週尚未執行
-                    should_execute = record_time.get("is_next_week", False) or fight_trial_time == 0
-                    logging.info("fight_trial_time: {}, should_execute: {}, record_time: {}".format(fight_trial_time, should_execute, record_time))
-                # 僅在星期一下午（大於12點）或星期二到六的任何時間執行，星期日永不執行
-                if enable_dungeon_manager and should_execute and (
-                    (current_time.tm_wday == 0 and current_time.tm_hour > 12) or
-                    (1 <= current_time.tm_wday <= 5)
-                ):
-                    is_not_sunday = current_time.tm_wday != 6  # 不是星期日
-                    is_monday_afternoon = current_time.tm_wday == 0 and current_time.tm_hour > 12  # 星期一下午
-                    is_after_monday = current_time.tm_wday > 0  # 星期二到星期六
-                    should_run_fight_test = should_execute and is_not_sunday and (is_monday_afternoon or is_after_monday)
-                    if should_run_fight_test:
-                        if stage == "主頁面":
-                            bot_state.update_state(ip, task="萬神試煉", step="執行中")
-                            new_battle.fight_test(d)
-                            time_recording(ip, name="萬神試煉")
-                        else:
-                            log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if enable_dungeon_manager:
-                    if stage == "主頁面":
-                        bot_state.update_state(ip, task="雲端戰鬥", step="領取中")
-                        new_battle.run_weekly_cloud_fighting_single(d,ip)
-                    else:
-                        bot_state.update_state(ip, task="雲端戰鬥", step=f"未在主頁面: {stage}")
-                        screenshot_path = save_error_screenshot(
-                            d,
-                            ip,
-                            stage,
-                            "雲端戰鬥前不在主頁面",
-                        )
-                        logger.error(
-                            f"[{ip}] 雲端戰鬥前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                        )
-                else:
-                    logger.info(f"[{ip}] 副本管家已停用，跳過雲端戰鬥")
-
-                # Phase 10 MVP: biweekly instance slot (Sat/Sun 20:00 Asia/Taipei).
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                now_local = time.localtime()
-                
-                # 檢查雙週副本記錄
-                if ip == "emulator-5556" and enable_dungeon_manager:
-                    biweek_record = return_time(ip, name="雙週副本")
-                    should_execute_biweek = False
-                    
-                    if biweek_record is None:
-                        # 記錄不存在，首次執行
-                        should_execute_biweek = True
-                        logging.info("雙週副本紀錄：無（首次執行）")
-                    else:
-                        # is_next_biweek=True 代表是下一兩週了，應該執行；False 則本兩週已執行，應跳過
-                        should_execute_biweek = biweek_record.get("is_next_biweek", False)
-                        logging.info("雙週副本紀錄：{}, should_execute: {}".format(biweek_record, should_execute_biweek))
-                    
-                    # 僅在星期六或星期日 19:57-20:04 之間執行
-                    if (now_local.tm_wday in (5, 6)) and (now_local.tm_hour == 20) and now_local.tm_min >= 0:
-                        if should_execute_biweek:
-                            if stage == "主頁面":
-                                bot_state.update_state(ip, task="雙週副本", step="排程觸發與穩定流程")
-                                new_battle.run_biweekly_bounty_road_single(
-                                    d,
-                                    ip,
-                                    logger_obj=logger,
-                                    should_stop=lambda: bot_state.check_pause(ip) or bot_state.check_skip_sleep(ip),
-                                )
-                                # 執行後記錄時間
-                                time_recording(ip, name="雙週副本")
-                            else:
-                                log_main_page_mismatch(d, ip, stage, "雙週副本", "雙週副本到達執行時間但不在主頁面")
-                        else:
-                            logging.info("[{ip}] 本兩週已執行過雙週副本，跳過本次執行")
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="好友每日禮物", step="領取中")
-                    daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1)
-                    stage = get_stage_with_check(d, ip, Cnn_model)
-                else:
-                    log_main_page_mismatch(d, ip, stage, "好友每日禮物", "好友每日禮物前不在主頁面")
-                if use_phone_ocr_lamp_mode(ip):
-                    if stage == "主頁面":
-                        lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-                        bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
-                        logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
-                        Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10),is_compare=True,device_ip=ip)
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
-                if 'emulator-5560' in ip:
-                    if stage =="主頁面":
-                        lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
-                        bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
-                        logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
-                        Open_gold_paddle_ocr.open_the_gold(
-                            d,
-                            times=lamp_dur + random.randint(-10, 10),
-                            is_compare=False,
-                            device_ip=ip,
-                        )
-                    else:
-                        log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
-                # --- 動態開神燈邏輯 ---
-                elif ip != "emulator-5558":
-                    if stage == "主頁面":
-                        device_cfg = config_manager.get_device_config(ip)
-                        lamp_interval = float(device_cfg.get("lamp_check_interval", 2))
-                        lamp_dur = int(device_cfg.get("lamp_duration_sec", 300))
-                        lamp_record_name = "general_lamp_last_execution"
-                        lamp_record = return_time(ip, name=lamp_record_name)
-                        now_ts = time.time()
-
-                        if lamp_interval <= 0:
-                            logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
-                            lamp_interval = 2.0
-
-                        threshold_sec = lamp_interval * 3600.0
-                        last_ts = None
-                        last_dt_str = "None"
-                        elapsed_sec = None
-                        should_run_lamp = False
-                        reason = ""
-
-                        if lamp_record and lamp_record.get("timestamp"):
-                            try:
-                                last_ts = float(lamp_record.get("timestamp"))
-                            except (TypeError, ValueError):
-                                last_ts = None
-
-                        if last_ts and last_ts > 0:
-                            elapsed_sec = max(0.0, now_ts - last_ts)
-                            last_dt_str = datetime.datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
-                            should_run_lamp = elapsed_sec >= threshold_sec
-                            remaining_sec = max(0.0, threshold_sec - elapsed_sec)
-                            reason = (
-                                "elapsed>=threshold"
-                                if should_run_lamp
-                                else f"elapsed<threshold, remaining={remaining_sec/60:.1f}m"
-                            )
-                        else:
-                            should_run_lamp = True
-                            reason = "no_valid_last_record"
-
-                        elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
-                        logger.info(
-                            f"[{ip}] 開神燈排程檢查: last={last_dt_str}, elapsed_h={elapsed_h_text}, "
-                            f"threshold_h={lamp_interval:.2f}, should_run={should_run_lamp}, reason={reason}"
-                        )
-
-                        if should_run_lamp:
-                            bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
-                            logger.info(
-                                f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
-                            )
-                            Open_gold_paddle_ocr.open_the_gold(d, times=lamp_dur+random.randint(-10,10))
-                            time_recording(ip, name=lamp_record_name)
-                            logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
-                        else:
-                            logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
-                    else:
-                        logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
-                        log_main_page_mismatch(d, ip, stage, "開神燈", "一般開神燈前不在主頁面")
-                    
-                            
-
-                stage = get_stage_with_check(d, ip, Cnn_model)
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="轉盤金幣", step="執行中")
-                    logger.info(f"[{ip}] 準備執行轉盤金幣，stage={stage}")
-                    spin_done = bool(wheel_manager.spin_and_send_gold())
-                    if spin_done:
-                        logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
-                    else:
-                        logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
-                else:
-                    bot_state.update_state(ip, task="轉盤金幣", step=f"未在主頁面: {stage}")
-                    screenshot_path = save_error_screenshot(
-                        d,
-                        ip,
-                        stage,
-                        "轉盤金幣執行前不在主頁面",
-                    )
-                    logger.error(
-                        f"[{ip}] 轉盤金幣執行前不在主頁面，stage={stage}, screenshot={screenshot_path}"
-                    )
-                    
-
-
-
-                if ip == "emulator-5558":
-                    switch_skill(d,'騙人用')
-                if "fc65396d" in ip:
-                    #打開chrome 
-                    d.app_start("com.android.chrome")
-                    time.sleep(2)
-                    d.app_stop("com.mxdzz.tw.and")
-                    time.sleep(1)
-                else:
-                    d.app_stop("com.mxdzz.tw.and")
-                
+                _run_daily_tasks(
+                    d, ip, Cnn_model, clf, rl_recorder,
+                    current_time=time.localtime(),
+                    enable_dungeon_manager=enable_dungeon_manager,
+                    wheel_manager=wheel_manager,
+                    mission_manager=mission_manager,
+                    family_manager=family_manager,
+                )
             except ForceSleepRequested as e:
                 force_sleep_now = True
                 sleep_policy = "force_sleep"
