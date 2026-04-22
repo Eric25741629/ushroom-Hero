@@ -752,7 +752,7 @@
 
     <button id="navDashboard" class="nav-btn active" onclick="switchPage('dashboard')">🏠 <span class="nav-label">主控頁</span></button>
 
-    <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button>
+    <!-- [暫時隱藏] <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button> -->
     <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📢 <span class="nav-label">更新公告</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
 
@@ -958,33 +958,14 @@
 
 
 
+  <!-- [暫時隱藏] 跨界車位戰情室頁面
   <div id="page-war-room" class="page">
-
-    <div class="top-bar">
-
-      <h1><span>跨界車位戰情室</span></h1>
-
-    </div>
-
+    <div class="top-bar"><h1><span>跨界車位戰情室</span></h1></div>
     <div class="war-room-shell">
-
-      <iframe
-
-        id="warRoomFrame"
-
-        class="war-room-frame"
-
-        title="跨界車位戰情室"
-
-        loading="lazy"
-
-        src=""
-
-      ></iframe>
-
+      <iframe id="warRoomFrame" class="war-room-frame" title="跨界車位戰情室" loading="lazy" src=""></iframe>
     </div>
-
   </div>
+  -->
 
   <div id="page-readme" class="page">
     <div class="top-bar">
@@ -1195,6 +1176,22 @@
 
           </div>
 
+          <div>
+
+            <label style="font-size:0.8em;">喚醒最短間隔（小時）</label>
+
+            <input type="number" id="editSleepMinHours" class="form-control" placeholder="1" step="0.5" min="0.25" max="24">
+
+          </div>
+
+          <div>
+
+            <label style="font-size:0.8em;">喚醒最長間隔（小時）</label>
+
+            <input type="number" id="editSleepMaxHours" class="form-control" placeholder="1" step="0.5" min="0.25" max="24">
+
+          </div>
+
           <div style="grid-column:span 2;">
 
             <label style="font-size:0.8em;">挖礦規劃器版本</label>
@@ -1230,6 +1227,10 @@
           <label class="checkbox-item"><input type="checkbox" id="chkMining">啟用挖礦（Mining）</label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用地城（螺旋/秘境）</label>
+
+          <div style="border-top:1px solid #444; margin:4px 0;"></div>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkOpenGoldV2">使用新版開神燈（opengold_v2）</label>
 
           <div style="border-top:1px solid #444; margin:4px 0;"></div>
 
@@ -1451,7 +1452,7 @@
 
     let currentPage = 'dashboard';
 
-    let warRoomLoaded = false;
+    let warRoomLoaded = false; // [暫時隱藏] 戰情室
     let updatesLoaded = false;
     let currentFrontendVersion = INITIAL_FRONTEND_VERSION;
 
@@ -1598,13 +1599,13 @@
 
       document.getElementById('page-dashboard').classList.toggle('active', page === 'dashboard');
 
-      document.getElementById('page-war-room').classList.toggle('active', page === 'war-room');
+      // document.getElementById('page-war-room').classList.toggle('active', page === 'war-room'); // [暫時隱藏]
       document.getElementById('page-readme').classList.toggle('active', page === 'readme');
       document.getElementById('page-labeler').classList.toggle('active', page === 'labeler');
 
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
 
-      document.getElementById('navWarRoom').classList.toggle('active', page === 'war-room');
+      // document.getElementById('navWarRoom').classList.toggle('active', page === 'war-room'); // [暫時隱藏]
       document.getElementById('navReadme').classList.toggle('active', page === 'readme');
       document.getElementById('navLabeler').classList.toggle('active', page === 'labeler');
 
@@ -1614,16 +1615,7 @@
 
         fetchLabelerStatus();
 
-      } else if (page === 'war-room') {
-
-        if (!warRoomLoaded) {
-
-          document.getElementById('warRoomFrame').src = '/war-room/';
-
-          warRoomLoaded = true;
-
-        }
-
+      // [暫時隱藏] else if (page === 'war-room') { warRoomFrame load }
       } else if (page === 'readme') {
 
         if (!updatesLoaded) {
@@ -2149,19 +2141,15 @@
 
             <div class="info-grid">
 
-              <span class="label">執行後端</span><span id="backend-${ip}">${info.backend || 'adb'}</span>
-
-              <span class="label">Web 停止策略</span><span id="web-stop-${ip}">${info.web_stop_mode || 'keep_page'}</span>
-
               <span class="label">目前任務</span><span id="task-${ip}">${info.task || '--'}</span>
 
               <span class="label">目前步驟</span><span id="step-${ip}">${info.step || '--'}</span>
 
               <span class="label">下次喚醒</span><span id="countdown-${ip}">--</span>
 
-              <span class="label">最後更新</span><span id="time-${ip}">${formatTime(info.last_update)}</span>
+              <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">更新 <span id="time-${ip}">${formatTime(info.last_update)}</span> · 截圖 <span id="sst-${ip}">--</span></span>
 
-              <span class="label">截圖平均</span><span id="sst-${ip}">--</span>
+              <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">後端：<span id="backend-${ip}">${info.backend || 'adb'}</span></span>
 
             </div>
 
@@ -2558,6 +2546,8 @@
 
         document.getElementById('chkDungeon').checked = config.enable_dungeon !== false;
 
+        document.getElementById('chkOpenGoldV2').checked = config.use_opengold_v2 === true;
+
         document.getElementById('chkRealPhone').checked = config.is_real_phone === true;
 
         document.getElementById('editOnlineInterval').value = config.online_check_interval || 5;
@@ -2567,6 +2557,10 @@
         document.getElementById('editLampDuration').value = config.lamp_duration_sec || 300;
 
         document.getElementById('editMiningDuration').value = config.mining_duration_min || 6;
+
+        document.getElementById('editSleepMinHours').value = config.sleep_min_hours || 1;
+
+        document.getElementById('editSleepMaxHours').value = config.sleep_max_hours || 1;
 
         const plannerSelect = document.getElementById('editMiningPlanner');
 
@@ -2634,6 +2628,8 @@
 
         enable_dungeon: document.getElementById('chkDungeon').checked,
 
+        use_opengold_v2: document.getElementById('chkOpenGoldV2').checked,
+
         is_real_phone: document.getElementById('chkRealPhone').checked,
 
         online_check_interval: parseInt(document.getElementById('editOnlineInterval').value || '5', 10),
@@ -2643,6 +2639,10 @@
         lamp_duration_sec: parseInt(document.getElementById('editLampDuration').value || '300', 10),
 
         mining_duration_min: parseInt(document.getElementById('editMiningDuration').value || '6', 10),
+
+        sleep_min_hours: parseFloat(document.getElementById('editSleepMinHours').value || '1'),
+
+        sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
         mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
 

@@ -1181,6 +1181,12 @@ def report_status():
                     if remote_id in bot_state._states:
                         bot_state._states[remote_id]["logs"] = state_update["logs"]
 
+            # 同步截圖平均時間
+            if "avg_screenshot_ms" in state_update:
+                with bot_state.get_device_lock(remote_id):
+                    if remote_id in bot_state._states:
+                        bot_state._states[remote_id]["avg_screenshot_ms"] = state_update["avg_screenshot_ms"]
+
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
