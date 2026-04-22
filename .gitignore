@@ -27,3 +27,31 @@ ocr_fails/
 */__pycache__/*
 miner/core/__pycache__/*
 **/__pycache__/*
+
+# Per-device runtime state (written by bot_state / json_manager)
+/emulator-*.json
+/7fe98fc6.json
+/adb-*.json
+/test_device.json
+
+# Playwright auth storage (cookies/localStorage, drift every run)
+auth_state/*.json
+
+# Miner RL event logs
+miner/rl_logs/
+
+# Runtime coordination and reports
+.coordination/
+reports/miner_v2/
+
+# OCR model binaries (large)
+OCR_model/
+
+# graphify output
+graphify-out/
+
+# Cross-device car-fight runtime record
+push_project/web/car_fight.json
+
+# Personal scratch notebooks
+Untitled-*.ipynb
