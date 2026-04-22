@@ -77,9 +77,8 @@ def test_store_manager():
     print(f"挖礦今天已購買: {manager.is_purchased_today('挖礦')}")
     print(f"神秘商人今天已購買: {manager.is_purchased_today('神秘商人')}")
     
-    # 檢查是否過期
-    print(f"挖礦記錄過期(12小時): {manager.is_purchase_expired('挖礦', hours=12)}")
-    print(f"神秘商人記錄過期(24小時): {manager.is_purchase_expired('神秘商人', hours=24)}")
+    # is_purchase_expired 已移除，改用 is_record_expired + return_time
+
 
 def test_backward_compatibility():
     """測試向後兼容性"""
