@@ -88,11 +88,35 @@ class UIController:
             return True
         return False
     
+    def is_comparison_panel_visible(self, img: Optional[np.ndarray] = None) -> bool:
+        """判斷比較面板是否已顯示（開燈成功）"""
+        if img is None:
+            img = self.capture_screenshot()
+        pixels = self.config.comparison_panel_pixels
+        return all(
+            self._pixel_sum_close(img, x, y, color)
+            for (x, y), color in pixels
+        )
+
+    def click_auto_mode_button(self):
+        """點擊自動開裝按鈕"""
+        x, y = self.config.auto_mode_button
+        self.click_and_wait(x, y, 2)
+
+    def click_start_confirm(self):
+        """點擊開始確認彈窗"""
+        x, y = self.config.start_confirm_button
+        self.click_and_wait(x, y, 2)
+
     def navigate_to_lamp(self):
-        """導航到神燈頁面"""
+        """導航到神燈頁面，並啟用自動模式"""
         # 初始點擊進入神燈介面
         self.click_and_wait(447, 801, 2)
         self.click_and_wait(281, 636, 1)
+        # 點擊「自動」按鈕啟用自動開裝模式
+        self.click_auto_mode_button()
+        # 點擊彈出的「開始」確認視窗
+        self.click_start_confirm()
     
     def exit_lamp(self):
         """退出神燈頁面"""

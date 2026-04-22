@@ -54,7 +54,8 @@
             "online_check_interval": 5,
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
-            "mining_duration_min": 6
+            "mining_duration_min": 6,
+            "use_opengold_v2": true
         },
         "emulator-5558": {
             "name": "emulator-5558",
@@ -82,7 +83,8 @@
             "online_check_interval": 5,
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
-            "mining_duration_min": 6
+            "mining_duration_min": 6,
+            "use_opengold_v2": false
         },
         "emulator-5560": {
             "name": "emulator-5560",

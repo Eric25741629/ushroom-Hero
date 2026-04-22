@@ -99,6 +99,7 @@ import config_manager
 
 import bot_state
 from device_wrapper import MonitoredDevice
+from opengold_v2.lamp_service import LampService as _LampServiceV2
 from worker_webhook_api import ensure_worker_webhook_started
 from runtime_services.device_scan_service import (
     refresh_adb_server,
@@ -287,6 +288,17 @@ class LoginConflictError(Exception):
 class StartupBypassError(Exception):
     """遊戲啟動失敗，觸發避讓休眠。"""
     pass
+
+
+def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
+    """開神燈執行入口；use_opengold_v2=true 時走 LampService，否則走舊版。"""
+    device_cfg = config_manager.get_device_config(ip)
+    duration = lamp_dur + random.randint(-10, 10)
+    if device_cfg.get("use_opengold_v2", False):
+        svc = _LampServiceV2(d, device_ip=ip)
+        svc.run(times=duration, is_compare=is_compare)
+    else:
+        Open_gold_paddle_ocr.open_the_gold(d, times=duration, is_compare=is_compare, device_ip=ip)
 
 
 def get_stage_with_check(d, ip, Cnn_model, img=None):

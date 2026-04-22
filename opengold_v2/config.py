@@ -56,7 +56,21 @@ class OpenGoldConfig:
     
     # 神燈數量顯示區域
     gold_num_roi: Tuple[int, int, int, int] = (802, 821, 210, 335)
-    
+
+    # ========== 自動模式啟動座標 ==========
+    # 「自動」按鈕（位於底部右側，點擊後出現開始彈窗）
+    auto_mode_button: Tuple[int, int] = (370, 826)
+    # 「開始」確認彈窗按鈕（自動模式啟動後出現）
+    start_confirm_button: Tuple[int, int] = (271, 576)
+
+    # ========== 比較面板像素特徵（判斷開燈是否成功顯示比較介面）==========
+    # 比較面板中「NEW」標記的像素特徵（紅色 NEW 標籤位置）
+    comparison_panel_pixels: List[Tuple[Tuple[int, int], Tuple[int, int, int]]] = field(
+        default_factory=lambda: [
+            ((45, 577), (50, 58, 184)),   # NEW 標籤藍色背景
+        ]
+    )
+
     # 技能資訊區域
     skill_roi: Tuple[int, int, int, int] = (634, 744, 291, 367)
     
