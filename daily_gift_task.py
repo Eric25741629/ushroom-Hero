@@ -223,7 +223,7 @@ def check_task_status(ip_str='emulator-5554'):
     Returns:
         dict: 任務記錄，如果不存在則返回 None
     """
-    manager = JsonDataManager(ip_str, file_suffix="gift_task")
+    manager = JsonDataManager(ip_str)
     record = manager.get_record("daily_gift_friend")
     
     if record:
