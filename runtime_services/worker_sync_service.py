@@ -63,6 +63,7 @@ def _worker_sync_loop():
                     "next_wake_at": st.get("next_wake_at"),
                     "paused": st.get("paused", False),
                     "logs": st.get("logs", []),
+                    "avg_screenshot_ms": st.get("avg_screenshot_ms"),
                 }
             now = time.time()
             if now >= next_report_at:

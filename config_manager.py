@@ -45,6 +45,8 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
     "mining_planner_version": "v1",  # v1 / v2 / v3
     "mining_save_samples": False,  # save low-confidence mining cell samples
+    "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
+    "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
 }
 
 # OCR 全域設定
@@ -343,6 +345,12 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         except Exception:
             return d
 
+    def _to_float(v, d):
+        try:
+            return float(v)
+        except Exception:
+            return d
+
     def _to_bool(v, d=False):
         if isinstance(v, bool):
             return v
@@ -472,6 +480,16 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         ),
         DEFAULT_DEVICE_CONFIG["mining_save_samples"],
     )
+    _sleep_min = max(0.25, min(24.0, _to_float(
+        current.get("sleep_min_hours"),
+        DEFAULT_DEVICE_CONFIG["sleep_min_hours"],
+    )))
+    _sleep_max = max(0.25, min(24.0, _to_float(
+        current.get("sleep_max_hours"),
+        DEFAULT_DEVICE_CONFIG["sleep_max_hours"],
+    )))
+    current["sleep_min_hours"] = _sleep_min
+    current["sleep_max_hours"] = max(_sleep_min, _sleep_max)
     for k in [
         "enable_farm",
         "enable_arena",
@@ -482,6 +500,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         "is_real_phone",
         "keep_screen_on",
         "screenshot_debug",
+        "use_opengold_v2",
     ]:
         if k in current:
             current[k] = bool(current[k])
