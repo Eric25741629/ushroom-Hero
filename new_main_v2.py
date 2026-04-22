@@ -221,18 +221,15 @@ def run_sleep_cycle(
         next_hour = hour_floor + 3600
         return float(next_hour + random.randint(0, win_min * 60))
 
-    if "emulator-5558" in ip:
-        min_sleep_sec = int(random.uniform(1, 3) * 3600)
-    else:
-        min_sleep_sec = (60 + random.randint(-5, 5)) * 60
+    _cfg = config_manager.get_device_config(ip)
+    _sleep_min = float(_cfg.get("sleep_min_hours", 1.0))
+    _sleep_max = float(_cfg.get("sleep_max_hours", 1.0))
+    min_sleep_sec = int(random.uniform(_sleep_min, max(_sleep_min, _sleep_max)) * 3600)
 
     if forced_wake_ts is not None:
         wake_ts = forced_wake_ts
     else:
-        if "7fe98fc6" in ip:
-            wake_ts = cur_ts + 3600 + random.randint(0, 30)
-        else:
-            wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
+        wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
 
     wake_ts = adjust_wake_time_for_cars(wake_ts)
 

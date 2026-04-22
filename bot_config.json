@@ -55,7 +55,9 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "use_opengold_v2": true
+            "use_opengold_v2": true,
+            "sleep_min_hours": 1,
+            "sleep_max_hours": 1
         },
         "emulator-5558": {
             "name": "emulator-5558",
@@ -84,7 +86,9 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "use_opengold_v2": false
+            "use_opengold_v2": false,
+            "sleep_min_hours": 1,
+            "sleep_max_hours": 2.75
         },
         "emulator-5560": {
             "name": "emulator-5560",
