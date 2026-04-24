@@ -91,18 +91,33 @@
 - 📉 new_main_v2.py：793 → 768（-25）
 - 🧪 tests：238 → 244（+6）
 
-### Phase 7：日常任務 pipeline（最高風險、最大收益）
+### Phase 7：日常任務 pipeline — 方案 A（保守搬，使用者 2026-04-24 選定）
 - [ ] **7.1** 先寫 `game_actions/daily_pipeline.py` 的骨架，定義 `DailyContext`（把 `d, ip, Cnn_model, clf, rl_recorder, current_time, enable_dungeon_manager, wheel_manager, mission_manager, family_manager` 收進一個 dataclass）
-- [ ] **7.2** 把 `_run_daily_tasks` 整塊搬過去；先保留 20 個任務的單一 `run(ctx)` 流程，不改內部結構
+- [ ] **7.2** 把 `_run_daily_tasks` 整塊搬過去；保留 20 個任務的單一 `run(ctx)` 流程，不改內部結構
 - [ ] **7.3** 把 `_DEVICE_SKIP_GUARDIAN` 常數一併搬走
 - [ ] **7.4** `new_main_v2.py` 改為呼叫 `daily_pipeline.run(ctx)`
-- [ ] **7.5** `pytest` 綠燈 commit
-- [ ] **7.6** *（可選，下一迭代再做）* 把 20 個任務拆成 `tasks/*.py` 的 `Task` 物件 + registry — 本次先不動，風險太高
+- [ ] **7.5** TDD：寫 smoke-level 測試驗證 pipeline 能跑通 + mock 住所有任務副作用後順序正確；維持 `pytest` 綠燈
+- [ ] **7.6** commit
+- [ ] 🚀 **可與 Phase 8a 並行**（不同檔案區段，merge 衝突風險集中在 imports 區）
 
-### Phase 8：清掉已經沒用的 top-level import
-- [ ] **8.1** 掃描 `new_main_v2.py` 剩下的 imports，刪掉已搬走函式的相依（`new_battle`, `Open_gold_paddle_ocr`, `daily_gift_task`, ...）
-- [ ] **8.2** `python -c "import new_main_v2"` 不報錯
-- [ ] **8.3** `pytest` 綠燈 commit
+### Phase 8a：清掉 Phase 1–6 遺留的 stale imports（可與 Phase 7 並行）
+- [ ] **8a.1** 移除只被 Phase 1–6 已搬走函式用到的 imports：
+  - `import Open_gold_paddle_ocr`（Phase 2）
+  - `from opengold_v2.lamp_service import LampService as _LampServiceV2`（Phase 2）
+  - `use_phone_ocr_lamp_mode`（Phase 2）
+  - `resolve_stage_until_stable`（Phase 3）— **注意 `check_on_line`、`handle_game_startup_pages`、`StartupLoginConflictError` 還在用，不要誤刪**
+  - `mark_login_conflict_sleep`（Phase 3）
+  - `adjust_wake_time_for_cars`（Phase 5）
+  - `sleep_until_wake_or_interrupt`（Phase 5）
+  - `import re`（Phase 1）
+- [ ] **8a.2** 每刪一個 import 都要驗證：`grep` 確認該符號不再被 `new_main_v2.py` 引用（_run_daily_tasks 內仍在用的不能刪）
+- [ ] **8a.3** `pytest` 綠燈 commit
+
+### Phase 8b：清掉 Phase 7 搬走後新增的 stale imports（依賴 Phase 7 完成）
+- [ ] **8b.1** 等 Phase 7 merge 完成後，掃 `new_main_v2.py` 剩下的 imports
+- [ ] **8b.2** 刪掉只在 `_run_daily_tasks` 裡用的（`new_battle`、`daily_gift_task`、`Store`、`rank_events`、`farm_manager`、`new_cnn.cnn_model`、`daily_acceleration`、`click_arena_challenges`、`switch_skill`、`_run_periodic_cycle`、`should_execute_mushroom_arena`、`mushroom_arena`、`oracle`、`_should_perform_oracle_action`、`sea`、`ClassifierCNN`、`RLRecorder`、`DATASET_LOW_CONFIDENCE_DIR_STR` 等）
+- [ ] **8b.3** `python -c "import new_main_v2"` 不報錯
+- [ ] **8b.4** `pytest` 綠燈 commit
 
 ### Phase 9：`main()` 內部重組（可選，評估後決定）
 - [ ] **9.1** 嘗試把 `main()` 拆成：
@@ -121,6 +136,23 @@
 - [ ] **11.1** 再跑一次完整 `pytest`
 - [ ] **11.2** 比對 `wc -l new_main_v2.py` 前後差距、記在本檔
 - [ ] **11.3** 更新 `CLAUDE.md` 的 Entry Points 區塊（如果結構描述過時）
+
+---
+
+## 未來迭代（本次不做）
+
+### 🔮 Future Phase — daily_pipeline task registry（方案 B 延後）
+**Why**：本次 Phase 7 選 A（保守搬），daily_pipeline.py 仍是一塊 ~245 行的 monolithic 函式。下一版當有「新增/刪除/重排任務」的需求浮現時再做。
+
+**目標**：把 20 個任務拆成 `game_actions/tasks/*.py` 的獨立 `Task` 物件
+- 每個 Task 實作 `name`、`should_run(ctx) -> bool`、`run(ctx)`
+- Pipeline 改為 `TASKS: list[Task]` + for-loop 呼叫
+- 隱性 stage 共用契約（目前 task 4→5/6、task 18→19）顯式寫進 `ctx.shared_stage`
+- TDD 每個任務一組測試（20+ 條）
+
+**不做的原因**：
+- 當前 20 個任務間有「無文件化的順序/狀態依賴」，搬位置同時重構風險太高
+- B 的價值要等下一版功能需求（新增任務、客製排序）才體現
 
 ---
 
@@ -154,4 +186,4 @@
 | 3 | `5398886` | new_main_v2.py 1057 → 1012 (-45) |
 | 4 | `b1e706a` | new_main_v2.py 1012 → 942 (-70) |
 | 5 | `412daeb` | new_main_v2.py 942 → 793 (-149) |
-| 6 | _(pending)_ | new_main_v2.py 793 → 768 (-25) |
+| 6 | `6880543` | new_main_v2.py 793 → 768 (-25) |
