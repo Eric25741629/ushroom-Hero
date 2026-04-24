@@ -91,14 +91,16 @@
 - 📉 new_main_v2.py：793 → 768（-25）
 - 🧪 tests：238 → 244（+6）
 
-### Phase 7：日常任務 pipeline — 方案 A（保守搬，使用者 2026-04-24 選定）
-- [ ] **7.1** 先寫 `game_actions/daily_pipeline.py` 的骨架，定義 `DailyContext`（把 `d, ip, Cnn_model, clf, rl_recorder, current_time, enable_dungeon_manager, wheel_manager, mission_manager, family_manager` 收進一個 dataclass）
-- [ ] **7.2** 把 `_run_daily_tasks` 整塊搬過去；保留 20 個任務的單一 `run(ctx)` 流程，不改內部結構
-- [ ] **7.3** 把 `_DEVICE_SKIP_GUARDIAN` 常數一併搬走
-- [ ] **7.4** `new_main_v2.py` 改為呼叫 `daily_pipeline.run(ctx)`
-- [ ] **7.5** TDD：寫 smoke-level 測試驗證 pipeline 能跑通 + mock 住所有任務副作用後順序正確；維持 `pytest` 綠燈
-- [ ] **7.6** commit
-- [ ] 🚀 **可與 Phase 8a 並行**（不同檔案區段，merge 衝突風險集中在 imports 區）
+### Phase 7：日常任務 pipeline — 方案 A（保守搬） ✅
+- [x] **7.1** `game_actions/daily_pipeline.py`（324 行）建立，`DailyContext` dataclass 收 10 個參數
+- [x] **7.2** `_run_daily_tasks` 整塊搬過去，20 任務順序與隱性契約保留
+- [x] **7.3** `_DEVICE_SKIP_GUARDIAN` 一併搬走
+- [x] **7.4** `new_main_v2.py` 改呼叫 `run_daily_pipeline(ctx)`
+- [x] **7.5** 4 條 smoke-level TDD 測試（red→green）
+- [x] **7.6** commit：`f72f0f1`
+- 🚀 **與 Phase 8a 並行完成**（Agent worktree，fast-forward merge）
+- 📉 new_main_v2.py：760 → 506（-254，**史上最大一次瘦身**）
+- 🧪 tests：244 → 248（+4）
 
 ### Phase 8a：清掉 Phase 1–6 遺留的 stale imports（可與 Phase 7 並行） ✅
 - [x] **8a.1** 移除 8 個已證實 dead 的 top-level imports（`import Open_gold_paddle_ocr`、`_LampServiceV2`、`use_phone_ocr_lamp_mode`、`resolve_stage_until_stable`、`mark_login_conflict_sleep`、`adjust_wake_time_for_cars`、`sleep_until_wake_or_interrupt`、`import re`）
@@ -108,11 +110,16 @@
 - 🧪 tests 不變（純清理，無新測試）— 例外於 TDD 規則，因為「刪 dead code」沒新行為可鎖
 - 🚀 **與 Agent A（Phase 7）並行執行**
 
-### Phase 8b：清掉 Phase 7 搬走後新增的 stale imports（依賴 Phase 7 完成）
-- [ ] **8b.1** 等 Phase 7 merge 完成後，掃 `new_main_v2.py` 剩下的 imports
-- [ ] **8b.2** 刪掉只在 `_run_daily_tasks` 裡用的（`new_battle`、`daily_gift_task`、`Store`、`rank_events`、`farm_manager`、`new_cnn.cnn_model`、`daily_acceleration`、`click_arena_challenges`、`switch_skill`、`_run_periodic_cycle`、`should_execute_mushroom_arena`、`mushroom_arena`、`oracle`、`_should_perform_oracle_action`、`sea`、`ClassifierCNN`、`RLRecorder`、`DATASET_LOW_CONFIDENCE_DIR_STR` 等）
-- [ ] **8b.3** `python -c "import new_main_v2"` 不報錯
-- [ ] **8b.4** `pytest` 綠燈 commit
+### Phase 8b：清掉 Phase 7 搬走後新增的 stale imports（依賴 Phase 7 完成） ✅
+- [x] **8b.1** 系統化 grep 每個 top-level import，確認用量
+- [x] **8b.2** 移除 ~30 個 dead imports：
+  - `subprocess`、`Sea.sea`、`torch`、`datetime`、`daily_gift_task`、`point`、`uiautomator2 as u2`、`get_Guardian_Spirit`、`numpy`、`cv2`、`mask`、`img_tools`、`Skill *`、`park *`、`new_battle`、`tools.click_white`、`Assistant.assistant`、`pytz`、`Store`、`rank_events`、`fight_car.flush_logs`、`switch_skill`、`click_str`、`game_state.detector.get_stage`、`oracle`、`_should_perform_oracle_action`、`_run_periodic_cycle`、`should_execute_mushroom_arena`、`mushroom_arena`、`load_oracle_cnn_model`、`daily_acceleration`、`click_arena_challenges`、`json_manager.*`（整組）、`run_mining`、`shlex`、`BUY`、`default_logger`
+  - `adb_operations` 精簡：只保留 `connect_u2_with_retries`、`unlock_screen`、`start_game_by_icon`、`check_in_game`、`set_screen_for_game`、`reset_screen_settings`
+  - `device` 精簡：只保留 `get_adb_devices`、`open_nofication`
+- [x] **8b.3** 語法檢查（`ast.parse`）OK
+- [x] **8b.4** `pytest` 綠燈（248 passed，無回歸）
+- 📉 new_main_v2.py：506 → 463（-43）**突破 500 行目標**
+- 🧪 tests 不變（純清理）
 
 ### Phase 9：`main()` 內部重組（可選，評估後決定）
 - [ ] **9.1** 嘗試把 `main()` 拆成：
@@ -182,4 +189,6 @@
 | 4 | `b1e706a` | new_main_v2.py 1012 → 942 (-70) |
 | 5 | `412daeb` | new_main_v2.py 942 → 793 (-149) |
 | 6 | `6880543` | new_main_v2.py 793 → 768 (-25) |
-| 8a | _(pending)_ | new_main_v2.py 768 → 760 (-8) — 與 Phase 7 並行 |
+| 8a | `af352cf` | new_main_v2.py 768 → 760 (-8) — 與 Phase 7 並行 |
+| 7 | `f72f0f1` | new_main_v2.py 760 → 506 (-254) — Agent worktree |
+| 8b | _(pending)_ | new_main_v2.py 506 → 463 (-43) |

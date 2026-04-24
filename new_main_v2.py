@@ -5,81 +5,39 @@ import os
 # 關閉 .pyc 檔案寫入，避免在網路路徑產生大量 I/O 導致卡頓
 sys.dont_write_bytecode = True
 
-import subprocess
-from Sea import sea
-import torch
 import os
-import datetime
 import json
 from adb_operations import (
-    run_adb, connect_u2_with_retries, unlock_screen,
-    start_game_by_icon, check_in_game, click_random,
-    safe_click, ensure_screen_on, stop_app,
-    screenshot_opencv, screenshot_pillow,
+    connect_u2_with_retries, unlock_screen,
+    start_game_by_icon, check_in_game,
     set_screen_for_game, reset_screen_settings,
 )
-import daily_gift_task
-import point
-import uiautomator2 as u2
-from everyday_mission.Guardian_Spirit_manger import get_Guardian_Spirit
 import time
-import numpy as np
-from device import get_adb_devices,close_nofication,open_nofication
+from device import get_adb_devices, open_nofication
 from adb_devices import launch_clone
-import cv2
-import mask
-import img_tools
-from Skill import *
-from park import *
 from family import Family_manager
-from farm import farm_manager
-import new_battle
 import random
-from tools import click_white
 from Spin_Wheel import spin_wheel
 from Mission import mission
 from State import state
-from Assistant import assistant
-import logging
 import atexit
-import pytz
-import Store
-import rank_events
-#引入log 通知 不使用print
 import threading
-from fight_car import flush_logs
 
 from utils.logging_utils import (
     setup_logger_for_device,
     set_thread_logger,
     logger,
-    default_logger,
     rotate_existing_logs_once,
 )
-from game_actions.skill_manager import switch_skill
 from game_actions.reward_manager import reward
-from utils.ocr_clicker import click_str
-from game_state.detector import get_stage
-from game_actions.miner_action import oracle, _should_perform_oracle_action
-from game_actions.periodic_tasks import _run_periodic_cycle, should_execute_mushroom_arena, mushroom_arena
 from game_initialization import (
     check_on_line,
     handle_game_startup_pages,
     StartupLoginConflictError,
 )
-from utils.model_loader import load_oracle_cnn_model
-from game_actions.daily_tasks import daily_acceleration, click_arena_challenges
 import new_cnn.cnn_model as cnn_model
-# 導入新的JSON管理器，保持向後兼容
-from json_manager import (
-    time_recording, return_time, create_store_manager,
-    is_expired, _should_execute_cycle, should_execute_sea_with_cooldown,
-    is_record_expired
-)
 from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_cnn_model
-from miner.mining_service import run as run_mining
 from miner.rl.rl_recorder import RLRecorder
-import shlex
 from typing import Optional
 import urllib3
 import warnings
@@ -88,7 +46,6 @@ urllib3.disable_warnings(InsecureRequestWarning)
 warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 import requests
 requests.packages.urllib3.disable_warnings()
-import BUY
 from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 import config_manager
