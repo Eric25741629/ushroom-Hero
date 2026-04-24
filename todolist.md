@@ -76,15 +76,13 @@
 - 📉 new_main_v2.py：1012 → 942（-70）
 - 🧪 tests：212 → 224（+12）
 
-### Phase 5：sleep 服務（中高風險）
-- [ ] **5.1** 新建 `runtime_services/sleep_service.py`，搬移：
-  - `calc_aligned_wake_ts`（從 `run_sleep_cycle` 內抽出為 top-level）
-  - `run_sleep_cycle`
-  - `_maybe_resume_sleep`
-  - `stop_runtime_device_for_sleep`
-  - `StartupBypassError`
-- [ ] **5.2** `calc_aligned_wake_ts` 是純函式 → 補單元測試（邊界：min_sleep_sec=0、跨小時）
-- [ ] **5.3** `pytest` 綠燈 commit
+### Phase 5：sleep 服務（中高風險） ✅
+- [x] **5.1** 新建 `runtime_services/sleep_service.py`（195 行），搬移全部 5 個 symbol
+- [x] **5.2** `calc_aligned_wake_ts` 抽成 top-level 純函式（原本是 `run_sleep_cycle` 內的 nested def），補 3 條邊界測試
+- [x] **5.3** 14 條 TDD 測試（red→green）
+- [x] **5.4** `pytest` 綠燈（238 passed）
+- 📉 new_main_v2.py：942 → 793（-149，**本次最大瘦身**）
+- 🧪 tests：224 → 238（+14）
 
 ### Phase 6：startup sleep helper（低風險）
 - [ ] **6.1** 新建 `runtime_services/startup_sleep.py`，搬移：
@@ -154,4 +152,5 @@
 | 1 | `a7333b1` | new_main_v2.py 1187 → 1146 (-41) |
 | 2 | `31747a1` | new_main_v2.py 1146 → 1057 (-89) |
 | 3 | `5398886` | new_main_v2.py 1057 → 1012 (-45) |
-| 4 | _(pending)_ | new_main_v2.py 1012 → 942 (-70) |
+| 4 | `b1e706a` | new_main_v2.py 1012 → 942 (-70) |
+| 5 | _(pending)_ | new_main_v2.py 942 → 793 (-149) |
