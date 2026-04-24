@@ -69,12 +69,12 @@
 - 📉 new_main_v2.py：1057 → 1012（-45）
 - 🧪 tests：206 → 212（+6）
 
-### Phase 4：副本排程（中風險）
-- [ ] **4.1** 新建 `game_actions/dungeon_scheduler.py`，搬移：
-  - `_run_weekly_dungeon`（萬神試煉）
-  - `_run_biweekly_dungeon`（5556 雙週副本）
-- [ ] **4.2** 若有純函式邏輯（時間判斷），補 1–2 個單元測試
-- [ ] **4.3** `pytest` 綠燈 commit
+### Phase 4：副本排程（中風險） ✅
+- [x] **4.1** 新建 `game_actions/dungeon_scheduler.py`（93 行）
+- [x] **4.2** 12 條 TDD 測試鎖住時間窗邏輯（週/雙週、週一下午/週日跳過、5556 限定等）
+- [x] **4.3** `pytest` 綠燈（224 passed）
+- 📉 new_main_v2.py：1012 → 942（-70）
+- 🧪 tests：212 → 224（+12）
 
 ### Phase 5：sleep 服務（中高風險）
 - [ ] **5.1** 新建 `runtime_services/sleep_service.py`，搬移：
@@ -153,4 +153,5 @@
 |-------|--------|---------|
 | 1 | `a7333b1` | new_main_v2.py 1187 → 1146 (-41) |
 | 2 | `31747a1` | new_main_v2.py 1146 → 1057 (-89) |
-| 3 | _(pending)_ | new_main_v2.py 1057 → 1012 (-45) |
+| 3 | `5398886` | new_main_v2.py 1057 → 1012 (-45) |
+| 4 | _(pending)_ | new_main_v2.py 1012 → 942 (-70) |
