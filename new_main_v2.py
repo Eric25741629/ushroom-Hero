@@ -15,11 +15,7 @@ from adb_operations import (
 import time
 from device import get_adb_devices, open_nofication
 from adb_devices import launch_clone
-from family import Family_manager
 import random
-from Spin_Wheel import spin_wheel
-from Mission import mission
-from State import state
 import atexit
 import threading
 
@@ -36,8 +32,7 @@ from game_initialization import (
     StartupLoginConflictError,
 )
 import new_cnn.cnn_model as cnn_model
-from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_cnn_model
-from miner.rl.rl_recorder import RLRecorder
+from miner.models.classifier import load_cnn_model as load_miner_cnn_model
 from typing import Optional
 import urllib3
 import warnings
@@ -90,6 +85,7 @@ from runtime_services.sleep_service import (
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
 from game_actions.daily_pipeline import DailyContext, run as run_daily_pipeline
+from game_actions.manager_factory import _init_runtime_managers
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
@@ -162,25 +158,8 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         logger.info(f"[{ip}] 設定隨機喚醒偏移: {wake_random_offset} 分鐘")
         protect = False if ('emulator-5558' in ip or 'emulator-5562' in ip or '7fe98fc6' in ip or 'fc65396d' in ip) else True
 
-        # manager = ParkingManager(
-        #     device=d, reader=easyocr_reader, ip=ip, cnn_model=Cnn_model,protect=protect)
-        # battle_manager = new_battle.BattleManager(
-        #     device=d, reader=easyocr_reader, cnn_model=Cnn_model)
-        wheel_manager = spin_wheel(device=d, cnn_model=Cnn_model,devices_serial=ip)
-        mission_manager = mission(device=d, ip=ip)
-        family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
-        state_manager = state(device=d, cnn_model=Cnn_model)
-        # assistant_manager = assistant(d=d, cnn_model=Cnn_model)
-        clf = ClassifierCNN(model=oralce_cnn_model, classes=oralce_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
-
-        # 建立 RL 記錄器（記錄但不自動訓練）
-        rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))
-        os.makedirs(rl_logs_dir, exist_ok=True)
-        rl_recorder = RLRecorder(
-            log_dir=rl_logs_dir,
-            auto_train=False,  # 不自動訓練
-            flush_interval=1,
-        )
+        wheel_manager, mission_manager, family_manager, state_manager, clf, rl_recorder = \
+            _init_runtime_managers(d, ip, Cnn_model, oralce_cnn_model, oralce_classes)
 
         while (1):
             if bot_state.check_force_sleep(ip):
