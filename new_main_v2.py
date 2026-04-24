@@ -127,6 +127,11 @@ from runtime_services.web_session_service import (
 )
 from utils.screenshot_helpers import save_error_screenshot, log_main_page_mismatch
 from game_actions.lamp_scheduler import _run_lamp_if_due
+from game_actions.stage_guard import (
+    LoginConflictError,
+    get_stage_with_check,
+    _run_at_main_page,
+)
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -238,35 +243,9 @@ def run_sleep_cycle(
     interrupted = sleep_until_wake_or_interrupt(ip, wake_ts, logger_obj)
     return wake_ts, interrupted, time.time()
 
-class LoginConflictError(Exception):
-    """自定義異常：用於處理異地登錄並終止當前喚醒 session"""
-    pass
-
-
 class StartupBypassError(Exception):
     """遊戲啟動失敗，觸發避讓休眠。"""
     pass
-
-
-def get_stage_with_check(d, ip, Cnn_model, img=None):
-    """
-    使用與啟動流程相同的狀態判斷器。
-    先清掉已知首頁彈窗，再回傳穩定 stage。
-    """
-    stage = resolve_stage_until_stable(
-        d,
-        ip,
-        Cnn_model=Cnn_model,
-        reward_fn=reward,
-        logger=logger,
-        img=img,
-    )
-    if stage == "異地登錄":
-        logger.warning(f"[{ip}] 全域偵測到異地登錄，強制停止遊戲")
-        d.app_stop("com.mxdzz.tw.and")
-        mark_login_conflict_sleep(ip)
-        raise LoginConflictError("偵測到異地登錄")
-    return stage
 
 
 # ---------------------------------------------------------------------------
@@ -343,30 +322,6 @@ def _maybe_resume_sleep(
             return None, "", True
         return None, "", False
     return resume_sleep_until_ts, resume_sleep_reason, False
-
-
-def _run_at_main_page(
-    d,
-    ip: str,
-    Cnn_model,
-    task_name: str,
-    mismatch_reason: str,
-    fn,
-    *,
-    step: str = "執行中",
-    log: Optional[str] = None,
-) -> str:
-    """Fetch stage, run fn() on main page, else log mismatch. Returns stage."""
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        if log:
-            bot_state.update_state(ip, task=task_name, step=step, log=log)
-        else:
-            bot_state.update_state(ip, task=task_name, step=step)
-        fn()
-    else:
-        log_main_page_mismatch(d, ip, stage, task_name, mismatch_reason)
-    return stage
 
 
 def _run_weekly_dungeon(

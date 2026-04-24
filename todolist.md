@@ -62,12 +62,12 @@
 - 🧪 tests：196 → 206（+10 lamp scheduler）
 - 💡 TDD 發現：原邏輯「phone-OCR 分支 + general 分支可以同時觸發」— 測試鎖住了這個行為
 
-### Phase 3：stage guard 共用（低風險，為後續鋪路）
-- [ ] **3.1** 新建 `game_actions/stage_guard.py`，搬移：
-  - `get_stage_with_check`（含 LoginConflictError 觸發點）
-  - `_run_at_main_page`
-  - `LoginConflictError`（class）
-- [ ] **3.2** `pytest` 綠燈 commit
+### Phase 3：stage guard 共用（低風險，為後續鋪路） ✅
+- [x] **3.1** 新建 `game_actions/stage_guard.py`（~85 行），搬移 `get_stage_with_check`、`_run_at_main_page`、`LoginConflictError`
+- [x] **3.2** 6 條 TDD 測試（red→green）
+- [x] **3.3** `reward` 改為 lazy import（避開 `tools → adb_operations` eager chain 在測試被 stub 時炸掉）
+- 📉 new_main_v2.py：1057 → 1012（-45）
+- 🧪 tests：206 → 212（+6）
 
 ### Phase 4：副本排程（中風險）
 - [ ] **4.1** 新建 `game_actions/dungeon_scheduler.py`，搬移：
@@ -152,4 +152,5 @@
 | Phase | Commit | 行數變化 |
 |-------|--------|---------|
 | 1 | `a7333b1` | new_main_v2.py 1187 → 1146 (-41) |
-| 2 | _(pending)_ | new_main_v2.py 1146 → 1057 (-89) |
+| 2 | `31747a1` | new_main_v2.py 1146 → 1057 (-89) |
+| 3 | _(pending)_ | new_main_v2.py 1057 → 1012 (-45) |
