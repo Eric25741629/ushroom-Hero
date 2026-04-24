@@ -126,6 +126,7 @@ from runtime_services.web_session_service import (
     shutdown_web_devices,
 )
 from utils.screenshot_helpers import save_error_screenshot, log_main_page_mismatch
+from game_actions.lamp_scheduler import _run_lamp_if_due
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -247,17 +248,6 @@ class StartupBypassError(Exception):
     pass
 
 
-def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
-    """開神燈執行入口；use_opengold_v2=true 時走 LampService，否則走舊版。"""
-    device_cfg = config_manager.get_device_config(ip)
-    duration = lamp_dur + random.randint(-10, 10)
-    if device_cfg.get("use_opengold_v2", False):
-        svc = _LampServiceV2(d, device_ip=ip)
-        svc.run(times=duration, is_compare=is_compare)
-    else:
-        Open_gold_paddle_ocr.open_the_gold(d, times=duration, is_compare=is_compare, device_ip=ip)
-
-
 def get_stage_with_check(d, ip, Cnn_model, img=None):
     """
     使用與啟動流程相同的狀態判斷器。
@@ -377,85 +367,6 @@ def _run_at_main_page(
     else:
         log_main_page_mismatch(d, ip, stage, task_name, mismatch_reason)
     return stage
-
-
-def _run_lamp_if_due(d, ip: str, stage: str) -> None:
-    """Run lamp (神燈) for the appropriate device mode using the given stage."""
-    if use_phone_ocr_lamp_mode(ip):
-        if stage == "主頁面":
-            lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
-            logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
-            _run_lamp(d, ip, lamp_dur, is_compare=True)
-        else:
-            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
-    if 'emulator-5560' in ip:
-        if stage == "主頁面":
-            lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
-            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
-            logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
-            _run_lamp(d, ip, lamp_dur, is_compare=False)
-        else:
-            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
-    elif ip != "emulator-5558":
-        if stage == "主頁面":
-            device_cfg = config_manager.get_device_config(ip)
-            lamp_interval = float(device_cfg.get("lamp_check_interval", 2))
-            lamp_dur = int(device_cfg.get("lamp_duration_sec", 300))
-            lamp_record_name = "general_lamp_last_execution"
-            lamp_record = return_time(ip, name=lamp_record_name)
-            now_ts = time.time()
-
-            if lamp_interval <= 0:
-                logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
-                lamp_interval = 2.0
-
-            threshold_sec = lamp_interval * 3600.0
-            last_ts = None
-            last_dt_str = "None"
-            elapsed_sec = None
-            should_run_lamp = False
-            reason = ""
-
-            if lamp_record and lamp_record.get("timestamp"):
-                try:
-                    last_ts = float(lamp_record.get("timestamp"))
-                except (TypeError, ValueError):
-                    last_ts = None
-
-            if last_ts and last_ts > 0:
-                elapsed_sec = max(0.0, now_ts - last_ts)
-                last_dt_str = datetime.datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
-                should_run_lamp = elapsed_sec >= threshold_sec
-                remaining_sec = max(0.0, threshold_sec - elapsed_sec)
-                reason = (
-                    "elapsed>=threshold"
-                    if should_run_lamp
-                    else f"elapsed<threshold, remaining={remaining_sec/60:.1f}m"
-                )
-            else:
-                should_run_lamp = True
-                reason = "no_valid_last_record"
-
-            elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
-            logger.info(
-                f"[{ip}] 開神燈排程檢查: last={last_dt_str}, elapsed_h={elapsed_h_text}, "
-                f"threshold_h={lamp_interval:.2f}, should_run={should_run_lamp}, reason={reason}"
-            )
-
-            if should_run_lamp:
-                bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
-                logger.info(
-                    f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
-                )
-                _run_lamp(d, ip, lamp_dur)
-                time_recording(ip, name=lamp_record_name)
-                logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
-            else:
-                logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
-        else:
-            logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
-            log_main_page_mismatch(d, ip, stage, "開神燈", "一般開神燈前不在主頁面")
 
 
 def _run_weekly_dungeon(

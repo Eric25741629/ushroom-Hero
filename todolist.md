@@ -24,11 +24,15 @@
 
 ## 執行原則
 
-1. **漸進式搬遷**：每一步保留 `new_main_v2.py` 的舊 API（或用 re-export），避免一次斷掉太多連結。
-2. **每步都要跑測試**：`pytest` 要維持綠燈；有新純函式就補單元測試。
-3. **小步原子 commit**：一個步驟一個 commit，方便回滾。
+1. **TDD 優先（本專案硬要求）**：每個 Phase 都要先寫 characterization test（鎖住目前行為），看到紅燈 → 搬遷 → 看到綠燈 → commit。
+   - 測試檔放在 `tests/test_<新模組名>.py`（例如 `tests/test_screenshot_helpers.py`）
+   - 用 AAA pattern：Arrange（建 mock / stub）→ Act（呼叫函式）→ Assert
+   - 每個 Phase 至少鎖 3 條：正常路徑、邊界、錯誤路徑
+2. **漸進式搬遷**：保留 `new_main_v2.py` 舊 API（或用 re-export），避免一次斷掉太多連結。
+3. **小步原子 commit**：一個 Phase 一個 commit（含 tests + 實作），方便回滾。
 4. **不改行為**：純粹搬位置，不修 bug、不加功能、不改命名語意。有疑慮就先註記，不動。
 5. **隱性契約先挖出來**：例如 `_run_daily_tasks` 裡 task 4 的 stage 被 task 5/6 複用；task 18 執行後要重取 stage 給 task 19（lamp）。搬之前先寫成 docstring。
+6. **commit 策略**：每個 Phase 做完自行 commit（2026-04-24 與使用者確認）。
 
 ---
 
@@ -38,21 +42,25 @@
 - [x] **0.1** 建立 baseline：跑 `pytest` 記下目前通過/失敗清單 → **190 passed**
 - [x] **0.2** 確認沒有其他 Python 檔 import `new_main_v2` 的函式（已查：只有 `fix_prints.py` 字面字串、`runtime_services/__init__.py` 註解）
 
-### Phase 1：截圖/mismatch helper（低風險，熱身）
-- [ ] **1.1** 新建 `utils/screenshot_helpers.py`，搬移：
-  - `_sanitize_filename_part`
+### Phase 1：截圖/mismatch helper（低風險，熱身） ✅
+- [x] **1.1** 新建 `utils/screenshot_helpers.py`（48 行），搬移：
+  - ~~`_sanitize_filename_part`~~ — 發現是 dead code（`utils/smart_screenshot.py` 已有一份），直接刪除
   - `save_error_screenshot`
   - `log_main_page_mismatch`
-  - `_smart_shot` 單例（或改為參數注入）
-- [ ] **1.2** 在 `new_main_v2.py` 改為 `from utils.screenshot_helpers import ...`
-- [ ] **1.3** `pytest` 綠燈後 commit
+  - `_smart_shot` 單例（搬到新模組內）
+- [x] **1.2** `new_main_v2.py` 改為 `from utils.screenshot_helpers import ...`
+- [x] **1.3** `pytest` 綠燈（190 passed，與 baseline 一致）
+- 📉 new_main_v2.py：1187 → 1146 行（-41）
 
-### Phase 2：神燈排程（中低風險）
-- [ ] **2.1** 新建 `game_actions/lamp_scheduler.py`，搬移：
+### Phase 2：神燈排程（中低風險） ✅
+- [x] **2.1** 新建 `game_actions/lamp_scheduler.py`（112 行），搬移：
   - `_run_lamp`（LampService v2 / 舊版分流）
   - `_run_lamp_if_due`（phone OCR / 5560 / 一般三種分支）
-- [ ] **2.2** 把 `use_phone_ocr_lamp_mode` 的 import 移進新模組
-- [ ] **2.3** `pytest` 綠燈 + 手動確認 `_run_daily_tasks` 的 task 19 仍用新路徑，commit
+- [x] **2.2** 先寫 10 條 TDD 測試（紅），再搬 code（綠）
+- [x] **2.3** `pytest` 綠燈（206 passed）；task 19 改呼叫 `from game_actions.lamp_scheduler import _run_lamp_if_due`
+- 📉 new_main_v2.py：1146 → 1057（-89）
+- 🧪 tests：196 → 206（+10 lamp scheduler）
+- 💡 TDD 發現：原邏輯「phone-OCR 分支 + general 分支可以同時觸發」— 測試鎖住了這個行為
 
 ### Phase 3：stage guard 共用（低風險，為後續鋪路）
 - [ ] **3.1** 新建 `game_actions/stage_guard.py`，搬移：
@@ -141,4 +149,7 @@
 
 ### Phase commits
 
-_執行中會把每個 Phase 的完成 commit hash 記在這裡_
+| Phase | Commit | 行數變化 |
+|-------|--------|---------|
+| 1 | `a7333b1` | new_main_v2.py 1187 → 1146 (-41) |
+| 2 | _(pending)_ | new_main_v2.py 1146 → 1057 (-89) |
