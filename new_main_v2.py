@@ -125,7 +125,7 @@ from runtime_services.web_session_service import (
     process_online_check_requests,
     shutdown_web_devices,
 )
-from utils.smart_screenshot import SmartScreenshotRecorder
+from utils.screenshot_helpers import save_error_screenshot, log_main_page_mismatch
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -135,47 +135,6 @@ _DEVICE_SKIP_GUARDIAN = {
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
-_smart_shot = SmartScreenshotRecorder()
-
-
-def _sanitize_filename_part(value: object) -> str:
-    text = str(value or "unknown").strip()
-    text = re.sub(r'[\\/:*?"<>|\s]+', "_", text)
-    return text[:80] or "unknown"
-
-
-def save_error_screenshot(device_obj, ip: str, stage: str, reason: str) -> Optional[str]:
-    try:
-        image_path = _smart_shot.capture(
-            device_obj=device_obj,
-            ip=ip,
-            stage=stage,
-            reason=reason,
-            task="",
-        )
-        if not image_path:
-            logger.error(f"[{ip}] {reason} 失敗，無法取得截圖，stage={stage}")
-            return None
-        logger.error(f"[{ip}] {reason}，已保存截圖，stage={stage}, path={image_path}")
-        return image_path
-    except Exception as e:
-        logger.error(f"[{ip}] 保存錯誤截圖失敗: reason={reason}, stage={stage}, err={e}", exc_info=True)
-        return None
-
-
-def log_main_page_mismatch(device_obj, ip: str, stage: str, task: str, reason: str) -> Optional[str]:
-    bot_state.update_state(ip, task=task, step=f"未在主頁面: {stage}")
-    screenshot_path = _smart_shot.capture(
-        device_obj=device_obj,
-        ip=ip,
-        stage=stage,
-        reason=reason,
-        task=task,
-    )
-    if not screenshot_path:
-        screenshot_path = save_error_screenshot(device_obj, ip, stage, reason)
-    logger.error(f"[{ip}] {reason}，stage={stage}, screenshot={screenshot_path}")
-    return screenshot_path
 
 
 def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger_obj) -> None:
