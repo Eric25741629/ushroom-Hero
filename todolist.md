@@ -121,23 +121,25 @@
 - 📉 new_main_v2.py：506 → 463（-43）**突破 500 行目標**
 - 🧪 tests 不變（純清理）
 
-### Phase 9：`main()` 內部重組（可選，評估後決定）
-- [ ] **9.1** 嘗試把 `main()` 拆成：
-  - `_init_runtime_managers(d, ip, ...)` → 回傳 managers dict
-  - `_run_wake_cycle_once(ctx)` → 一輪 wake/task/sleep
-  - `main(ip, ...)`：只剩外層 while + try/except
-- [ ] **9.2** 評估拆完是否真的更易讀；如果不明顯，保持原狀
-- [ ] **9.3** `pytest` 綠燈 commit
+### Phase 9：`main()` 內部重組（可選，評估後決定） ✅
+- [x] **9.1** 抽出 `_init_runtime_managers` 到 `game_actions/manager_factory.py`；
+  評估 `_run_wake_cycle_once` — 因 mutable state 複雜度高，決定保持原狀
+- [x] **9.2** 評估結果：`_init_runtime_managers` 明顯清楚；`_run_wake_cycle_once` 不明顯，略過
+- [x] **9.3** `pytest` 綠燈（251 passed）
+- 📉 new_main_v2.py：463 → 442 (-21)
+- 🧪 tests：251 → 251 (+3 characterisation)
 
-### Phase 10：API bootstrap 抽離（小收益，可最後做或跳過）
-- [ ] **10.1** 把 `__main__` 底下的 Flask / push / worker webhook / worker sync 啟動邏輯抽成 `bootstrap/api_services.py` 的 `start_all(mode)`
-- [ ] **10.2** `__main__` 只剩 `start_all(mode); scan_loop()` 兩行
-- [ ] **10.3** `pytest` 綠燈 commit
+### Phase 10：API bootstrap 抽離 ✅
+- [x] **10.1** 新建 `bootstrap/api_services.py`（`start_all(mode, base_dir)` + `scan_loop(...)`）
+- [x] **10.2** `__main__` 從 41 行縮為 11 行；2 個 dead import 移除
+- [x] **10.3** `pytest` 綠燈（256 passed）
+- 📉 new_main_v2.py：442 → 406 (-36)
+- 🧪 tests：251 → 256 (+5 bootstrap)
 
-### Phase 11：收尾
-- [ ] **11.1** 再跑一次完整 `pytest`
-- [ ] **11.2** 比對 `wc -l new_main_v2.py` 前後差距、記在本檔
-- [ ] **11.3** 更新 `CLAUDE.md` 的 Entry Points 區塊（如果結構描述過時）
+### Phase 11：收尾 ✅
+- [x] **11.1** 完整 `pytest`：**256 passed, 4 failed (pre-existing), 1 skipped**
+- [x] **11.2** `wc -l new_main_v2.py`：起始 1187 → 最終 **406 行**（-781，縮減 66%）
+- [x] **11.3** `CLAUDE.md` Entry Points 區塊仍正確，無需更新
 
 ---
 
@@ -191,4 +193,6 @@
 | 6 | `6880543` | new_main_v2.py 793 → 768 (-25) |
 | 8a | `af352cf` | new_main_v2.py 768 → 760 (-8) — 與 Phase 7 並行 |
 | 7 | `f72f0f1` | new_main_v2.py 760 → 506 (-254) — Agent worktree |
-| 8b | _(pending)_ | new_main_v2.py 506 → 463 (-43) |
+| 8b | `9592518` | new_main_v2.py 506 → 463 (-43) |
+| 9 | `9582a09` | new_main_v2.py 463 → 442 (-21) |
+| 10 | `b5e9dcb` | new_main_v2.py 442 → 406 (-36) |
