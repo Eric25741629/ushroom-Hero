@@ -47,11 +47,7 @@ import config_manager
 
 import bot_state
 from device_wrapper import MonitoredDevice
-from worker_webhook_api import ensure_worker_webhook_started
-from runtime_services.device_scan_service import (
-    refresh_adb_server,
-    scan_and_start_devices,
-)
+from runtime_services.device_scan_service import refresh_adb_server
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
     WakeLoopInterrupted,
@@ -60,8 +56,6 @@ from runtime_services.device_runtime_service import (
     is_recoverable_connect_error,
     reset_connect_failure,
 )
-from runtime_services.push_server_service import ensure_push_server_started
-from runtime_services.worker_sync_service import ensure_worker_sync_started
 from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
@@ -400,43 +394,13 @@ def temporary_reset_cycles():
         logger.error(f"[System] 重置失敗：{e}")
 
 if __name__ == "__main__":
-    import config_manager
+    from bootstrap.api_services import start_all, scan_loop
     rotate_existing_logs_once()
-    ensure_push_server_started(base_dir=os.path.dirname(os.path.abspath(__file__)))
-    import control_panel_app
-    import threading
-    # 只有 Master 模式才啟動網頁伺服器
-    if config_manager.get_global_config().get("mode", "master") == "master":
-        server_thread = threading.Thread(target=control_panel_app.run_server, args=(5002,), daemon=True)
-        server_thread.start()
-    else:
-        logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
-        ensure_worker_webhook_started()
-        ensure_worker_sync_started()
-    # 確保模型在本機 SSD
+    _mode = config_manager.get_global_config().get("mode", "master")
+    start_all(_mode, base_dir=os.path.dirname(os.path.abspath(__file__)))
     from utils.model_sync import ensure_local_model
     local_pth = ensure_local_model("cnn_model.pth")
     Cnn_model = cnn_model.load_cnn_model(local_pth)
     oralce_cnn_model, oralce_classes, resolved_device = load_miner_cnn_model()
-    ocr = 1
     logger.info("[System] 核心已就緒，開始循環掃描 ADB 設備... (按 Ctrl+C 可退出)")
-    try:
-        while True:
-            scan_and_start_devices(
-                main,
-                _running_threads,
-                Cnn_model,
-                oralce_cnn_model,
-                oralce_classes,
-                ocr,
-                logger,
-            )
-            for _ in range(300):  # 0.1s * 300 = 30s
-                if bot_state.check_refresh_needed():
-                    logger.info("[System] 收到立即掃描請求！")
-                    break
-                time.sleep(0.1)
-    except KeyboardInterrupt:
-        logger.info("\n[System] 收到退出信號，正在關閉所有執行緒...")
-        shutdown_web_devices(logger)
-        logger.info("[System] 程式已結束。")
+    scan_loop(main, _running_threads, Cnn_model, oralce_cnn_model, oralce_classes, 1, logger)
