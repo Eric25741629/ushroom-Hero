@@ -100,18 +100,13 @@
 - [ ] **7.6** commit
 - [ ] 🚀 **可與 Phase 8a 並行**（不同檔案區段，merge 衝突風險集中在 imports 區）
 
-### Phase 8a：清掉 Phase 1–6 遺留的 stale imports（可與 Phase 7 並行）
-- [ ] **8a.1** 移除只被 Phase 1–6 已搬走函式用到的 imports：
-  - `import Open_gold_paddle_ocr`（Phase 2）
-  - `from opengold_v2.lamp_service import LampService as _LampServiceV2`（Phase 2）
-  - `use_phone_ocr_lamp_mode`（Phase 2）
-  - `resolve_stage_until_stable`（Phase 3）— **注意 `check_on_line`、`handle_game_startup_pages`、`StartupLoginConflictError` 還在用，不要誤刪**
-  - `mark_login_conflict_sleep`（Phase 3）
-  - `adjust_wake_time_for_cars`（Phase 5）
-  - `sleep_until_wake_or_interrupt`（Phase 5）
-  - `import re`（Phase 1）
-- [ ] **8a.2** 每刪一個 import 都要驗證：`grep` 確認該符號不再被 `new_main_v2.py` 引用（_run_daily_tasks 內仍在用的不能刪）
-- [ ] **8a.3** `pytest` 綠燈 commit
+### Phase 8a：清掉 Phase 1–6 遺留的 stale imports（可與 Phase 7 並行） ✅
+- [x] **8a.1** 移除 8 個已證實 dead 的 top-level imports（`import Open_gold_paddle_ocr`、`_LampServiceV2`、`use_phone_ocr_lamp_mode`、`resolve_stage_until_stable`、`mark_login_conflict_sleep`、`adjust_wake_time_for_cars`、`sleep_until_wake_or_interrupt`、`import re`）
+- [x] **8a.2** 每個都 grep 過確認沒被引用
+- [x] **8a.3** `pytest` 綠燈（244 passed，無回歸）
+- 📉 new_main_v2.py：768 → 760（-8）
+- 🧪 tests 不變（純清理，無新測試）— 例外於 TDD 規則，因為「刪 dead code」沒新行為可鎖
+- 🚀 **與 Agent A（Phase 7）並行執行**
 
 ### Phase 8b：清掉 Phase 7 搬走後新增的 stale imports（依賴 Phase 7 完成）
 - [ ] **8b.1** 等 Phase 7 merge 完成後，掃 `new_main_v2.py` 剩下的 imports
@@ -187,3 +182,4 @@
 | 4 | `b1e706a` | new_main_v2.py 1012 → 942 (-70) |
 | 5 | `412daeb` | new_main_v2.py 942 → 793 (-149) |
 | 6 | `6880543` | new_main_v2.py 793 → 768 (-25) |
+| 8a | _(pending)_ | new_main_v2.py 768 → 760 (-8) — 與 Phase 7 並行 |

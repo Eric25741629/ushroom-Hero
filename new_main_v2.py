@@ -46,7 +46,6 @@ import pytz
 import Store
 import rank_events
 #引入log 通知 不使用print
-import Open_gold_paddle_ocr
 import threading
 from fight_car import flush_logs
 
@@ -66,7 +65,6 @@ from game_actions.periodic_tasks import _run_periodic_cycle, should_execute_mush
 from game_initialization import (
     check_on_line,
     handle_game_startup_pages,
-    resolve_stage_until_stable,
     StartupLoginConflictError,
 )
 from utils.model_loader import load_oracle_cnn_model
@@ -82,7 +80,6 @@ from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_
 from miner.mining_service import run as run_mining
 from miner.rl.rl_recorder import RLRecorder
 import shlex
-import re
 from typing import Optional
 import urllib3
 import warnings
@@ -93,18 +90,15 @@ import requests
 requests.packages.urllib3.disable_warnings()
 import BUY
 from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
-from utils.car_fight_utils import adjust_wake_time_for_cars
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 import config_manager
 
 import bot_state
 from device_wrapper import MonitoredDevice
-from opengold_v2.lamp_service import LampService as _LampServiceV2
 from worker_webhook_api import ensure_worker_webhook_started
 from runtime_services.device_scan_service import (
     refresh_adb_server,
     scan_and_start_devices,
-    use_phone_ocr_lamp_mode,
 )
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
@@ -113,7 +107,6 @@ from runtime_services.device_runtime_service import (
     is_emulator_serial,
     is_recoverable_connect_error,
     reset_connect_failure,
-    sleep_until_wake_or_interrupt,
 )
 from runtime_services.push_server_service import ensure_push_server_started
 from runtime_services.worker_sync_service import ensure_worker_sync_started
@@ -121,7 +114,6 @@ from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
     initialize_runtime_device,
-    mark_login_conflict_sleep,
     process_online_check_requests,
     shutdown_web_devices,
 )
