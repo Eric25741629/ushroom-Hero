@@ -10,6 +10,16 @@ class ForceSleepRequested(Exception):
     pass
 
 
+class WakeLoopInterrupted(Exception):
+    """Raised inside `handle_device_wakeup` when a pending web-launch request
+    (or similar user action) needs the main loop to re-evaluate top-of-loop
+    handlers before attempting wake-up again. The main loop should catch this
+    and `continue` — do NOT put the device to sleep.
+    """
+
+    pass
+
+
 CONNECT_FAILURE_COUNTS = {}
 NON_RESTARTABLE_DEVICE_KEYWORDS = ("7fe98fc6", "fc65396d")
 EMULATOR_RESTART_THRESHOLD = 1

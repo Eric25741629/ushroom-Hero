@@ -5,6 +5,29 @@ from device import close_nofication
 from game_initialization import check_on_line
 import bot_state # 引入狀態管理
 import config_manager # 引入設定管理
+from runtime_services.device_runtime_service import (
+    ForceSleepRequested,
+    WakeLoopInterrupted,
+)
+
+
+def _honor_dashboard_controls(ip: str) -> None:
+    """Called from any long-running wait inside the wake-up flow.
+
+    - pause: blocks until user un-pauses (`check_pause` handles blocking).
+    - force-sleep: raises ForceSleepRequested so main loop catches and sleeps.
+    - pending web-launch: raises WakeLoopInterrupted so main loop catches
+      and re-evaluates the top-of-loop handlers (no forced sleep).
+    """
+    bot_state.check_pause(ip)
+    if bot_state.check_force_sleep(ip):
+        raise ForceSleepRequested(
+            f"[{ip}] force sleep requested during wake-up wait"
+        )
+    if bot_state.has_pending_web_launch_request(ip):
+        raise WakeLoopInterrupted(
+            f"[{ip}] web-launch request received during wake-up wait"
+        )
 
 # Global lock for synchronization
 _wakeup_lock = False
@@ -184,6 +207,10 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     # --- 核心邏輯：5558 啟動前透過 5554 檢查帳號線上狀態 ---
     if 'emulator-5558' in ip and not skip_online_check_once:
         while True:
+            # Honor dashboard controls at every loop entry so the user can
+            # pause / force-sleep / request-web-launch without waiting for
+            # the full online_check_interval to elapse.
+            _honor_dashboard_controls(ip)
             logger.info(f"[{ip}] 5558 等待 5554 狀態檢查(check_on_line request)...")
             is_busy = True
             try:
@@ -225,6 +252,10 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
             wait_sec = max(1, int(float(wait_min) * 60))
             logger.info(f"[{ip}] 5558 在線中，{wait_sec} 秒後重新檢查")
             for remain in range(wait_sec, 0, -1):
+                # Every second, give the dashboard a chance to abort this
+                # wait — pause / force-sleep / web-launch must not have to
+                # wait the full `online_check_interval` minutes to take effect.
+                _honor_dashboard_controls(ip)
                 bot_state.update_state(ip, task="等待放行", step=f"5558在線中，{remain} 秒後重新檢查")
                 time.sleep(1)
 

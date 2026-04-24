@@ -5,6 +5,9 @@ import random
 import time
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+import cv2
+import numpy as np
+
 if TYPE_CHECKING:  # 僅在型別檢查時才載入，避免循環匯入與硬性依賴
     import uiautomator2 as uiauto
 
@@ -89,13 +92,67 @@ def is_placeable_label(label: str) -> bool:
     return base_label(label) in PLACEABLE_MATERIALS
 
 
+def wait_frame_stable(
+    d: DeviceLike,
+    roi: Optional[Tuple[int, int, int, int]] = None,
+    poll_interval: float = 0.2,
+    max_wait: float = 2.0,
+    diff_threshold: float = 2.0,
+    min_wait: float = 0.3,
+) -> Any:
+    """等到畫面動畫結束為止 — 兩張相鄰 poll 的平均像素差低於 threshold 就算穩定。
+
+    - `min_wait` 先硬等一段（給點擊事件抵達設備的時間），再開始輪詢。
+    - `roi` = (y0, y1, x0, x1)，只比對這個區域（例如只盯棋盤 + 彈窗區）。
+      傳 None 時比對整張 frame。
+    - `max_wait` 是自 `min_wait` 之後的最大額外等待。
+    - 回傳最後一張截圖，方便呼叫端重用。
+    """
+    if min_wait > 0:
+        time.sleep(min_wait)
+
+    def _extract(frame):
+        if roi is None:
+            return frame
+        y0, y1, x0, x1 = roi
+        return frame[y0:y1, x0:x1]
+
+    prev = _extract(d.screenshot(format="opencv"))
+    started = time.time()
+    last_frame = prev
+    while time.time() - started < max_wait:
+        time.sleep(poll_interval)
+        curr_full = d.screenshot(format="opencv")
+        curr = _extract(curr_full)
+        if curr.shape != prev.shape:
+            prev = curr
+            last_frame = curr_full
+            continue
+        diff = cv2.absdiff(prev, curr)
+        if float(np.mean(diff)) < diff_threshold:
+            return curr_full
+        prev = curr
+        last_frame = curr_full
+    return last_frame
+
+
 def tap_cell(d: DeviceLike, r: int, c: int, hits: int, wait_ms: int = 150) -> None:
-    """在指定格子重複點擊指定次數。"""
+    """在指定格子重複點擊指定次數，並等到動畫結束才回傳。"""
     x, y = cell_center_xy(r, c)
     for _ in range(hits):
         d.click(x + random.randint(-10, 10), y + random.randint(-10, 10))
         d.sleep(wait_ms / 1000.0)
-    time.sleep(0.5 + random.random() * 0.5)
+    # Adaptive wait for the dig animation / reward popup to finish rather
+    # than a fixed 0.5-1.0s tail. Rock/dirt stabilise in ~0.4s; pit reward
+    # popups need 1-2s. ROI caps the compare region to board + bottom popup.
+    wait_frame_stable(
+        d,
+        roi=(200, 960, 0, 540),
+        poll_interval=0.2,
+        max_wait=2.0,
+        diff_threshold=2.0,
+        min_wait=0.3,
+    )
 
 
 def select_item(d: DeviceLike, item_type: str) -> None:
@@ -215,9 +272,18 @@ def execute_plan_steps(
                 select_item(d, item_type)
                 print(f"  - 於 ({r},{c}) 使用 {item_type}")
                 tap_cell(d, r, c, 1, wait_ms=500)
-                # 先以實際畫面確認是否真的改變版面；若完全沒變，視為非法/無效道具使用。
-                time.sleep(0.8)
-                img_after_use = d.screenshot()
+                # Items (bomb 3×3+cross, drill full column) trigger the
+                # longest animations in the game — explosion + chain shatter
+                # + reward popups. Wait for the frame to settle instead of
+                # a fixed 0.8s sleep.
+                img_after_use = wait_frame_stable(
+                    d,
+                    roi=(200, 960, 0, 540),
+                    poll_interval=0.25,
+                    max_wait=3.0,
+                    diff_threshold=2.0,
+                    min_wait=0.5,
+                )
                 board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
                 if board_after_use == board:
                     raise NoBoardChangeError(
@@ -278,7 +344,16 @@ def execute_plan_steps(
                         d.click(394, 152)
                         time.sleep(0.3)
                         d.click(394, 152)
-                        time.sleep(0.5)
+                        # Wait for reward popup (coin +shovel animation) to
+                        # finish before any subsequent screenshot.
+                        wait_frame_stable(
+                            d,
+                            roi=(200, 960, 0, 540),
+                            poll_interval=0.25,
+                            max_wait=2.5,
+                            diff_threshold=2.0,
+                            min_wait=0.5,
+                        )
                     check_points(d.screenshot(format="opencv"))
 
                 if r < 6:
@@ -309,6 +384,18 @@ def execute_plan_steps(
                 else:
                     print(f"    第七層格子 ({r},{c}) 跳過驗證")
                     print(f"    ⚠️ 觸發下樓，停止執行剩餘路徑，請重新規劃")
+                    # Row-6 dig triggers a full scroll + new-row-generation
+                    # animation — the longest in the whole game. Main loop
+                    # will re-screenshot immediately after we return, so wait
+                    # for the scroll to land before exiting.
+                    wait_frame_stable(
+                        d,
+                        roi=(200, 960, 0, 540),
+                        poll_interval=0.3,
+                        max_wait=3.5,
+                        diff_threshold=2.0,
+                        min_wait=0.7,
+                    )
                     cell_event["verify_success"] = True
                     cell_events.append(cell_event)
                     if rl_recorder:

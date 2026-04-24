@@ -220,11 +220,16 @@ def _expand(
             offscreen_bottom_hits=transition["offscreen_bottom_hits"],
         )
         pits_cleared = pits_before - pits_after
+        # Digging a pit is the whole point — never filter it out as a floor7
+        # loss. `pits_cleared > 0` covers both direct pit digs and item uses
+        # that hit pits. Non-productive row-6 digs (rock/dirt) still get
+        # filtered so the planner doesn't scroll the board for no reward.
         triggers_floor7_loss = (
             strategy == "has_pit"
             and pits_after > 0
             and not floor7_before
             and floor7_after
+            and pits_cleared <= 0
         )
         pending.append((action, transition, score, pits_cleared, triggers_floor7_loss))
         if not triggers_floor7_loss:

@@ -108,6 +108,7 @@ from runtime_services.device_scan_service import (
 )
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
+    WakeLoopInterrupted,
     handle_connect_failure,
     is_emulator_serial,
     is_recoverable_connect_error,
@@ -1014,6 +1015,16 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 sleep_reason = "強制休眠"
                 logger.warning(f"[{ip}] 收到強制休眠請求，終止當前任務並進入休眠: {e}")
                 stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
+
+            except WakeLoopInterrupted as e:
+                # Dashboard requested web-launch (or similar) while we were
+                # blocked inside the wake-up loop. Do NOT put the device to
+                # sleep — just jump back to the top of the loop so
+                # handle_pending_web_launch fires on the next iteration.
+                logger.info(
+                    f"[{ip}] 喚醒流程被 dashboard 打斷，回主迴圈頂端重新評估: {e}"
+                )
+                continue
 
             except StartupBypassError as e:
                 forced_wake_ts = time.time() + 1800
