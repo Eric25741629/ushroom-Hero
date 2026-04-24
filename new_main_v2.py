@@ -615,26 +615,27 @@ def _run_daily_tasks(
     )
 
     # Task 3: 點擊寶箱
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        bot_state.update_state(ip, task="點擊寶箱", step="領取獎勵")
-        d.tap(random.randint(261, 271), 369)  # 點擊寶箱
+    def _tap_chest():
+        d.tap(random.randint(261, 271), 369)
         time.sleep(1)
         reward(d)
         time.sleep(3)
-    else:
-        bot_state.update_state(ip, task="點擊寶箱", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "點擊寶箱前不在主頁面")
-        logger.error(f"[{ip}] 點擊寶箱前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+    _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="點擊寶箱",
+        mismatch_reason="點擊寶箱前不在主頁面",
+        fn=_tap_chest,
+        step="領取獎勵",
+    )
 
-    # Task 4: 家族任務
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    logger.debug(f"[{ip}] 確認家族任務資格：主頁面={stage == '主頁面'} 或 23 點={current_time.tm_hour == 23}")
-    if stage == "主頁面":
-        bot_state.update_state(ip, task="家族任務", step="執行中")
-        family_manager.go_to_family()
-    else:
-        log_main_page_mismatch(d, ip, stage, "家族任務", "家族任務前不在主頁面")
+    # Task 4: 家族任務 — stage reused by Tasks 5+6
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="家族任務",
+        mismatch_reason="家族任務前不在主頁面",
+        fn=family_manager.go_to_family,
+        step="執行中",
+    )
 
     # Task 5 & 6: 守護靈 + 技能夥伴 (reuse stage from Task 4, matching original)
     if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
@@ -722,10 +723,11 @@ def _run_daily_tasks(
         )
 
     # Task 13: 菇菇武道會
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        bot_state.update_state(ip, task="菇菇武道會", step="週期檢查/執行")
-        _run_periodic_cycle(
+    _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="菇菇武道會",
+        mismatch_reason="菇菇武道會前不在主頁面",
+        fn=lambda: _run_periodic_cycle(
             ip,
             record_name="mushroom_arena_cycle_start",
             should_execute_fn=should_execute_mushroom_arena,
@@ -733,17 +735,16 @@ def _run_daily_tasks(
             display_name="菇菇武道會",
             d=d,
             daily_limit_name="mushroom_arena_daily",
-        )
-    else:
-        bot_state.update_state(ip, task="菇菇武道會", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "菇菇武道會前不在主頁面")
-        logger.error(f"[{ip}] 菇菇武道會前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+        ),
+        step="週期檢查/執行",
+    )
 
     # Task 14: 航海任務
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        bot_state.update_state(ip, task="航海任務 (Sea)", step="週期檢查/執行")
-        _run_periodic_cycle(
+    _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="航海任務 (Sea)",
+        mismatch_reason="航海任務前不在主頁面",
+        fn=lambda: _run_periodic_cycle(
             ip,
             record_name="sea_last_execution",
             should_execute_fn=should_execute_sea_with_cooldown,
@@ -751,26 +752,23 @@ def _run_daily_tasks(
             display_name="sea",
             d=d,
             cycle_record_name="sea_cycle_start",
-        )
-    else:
-        bot_state.update_state(ip, task="航海任務 (Sea)", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "航海任務前不在主頁面")
-        logger.error(f"[{ip}] 航海任務前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+        ),
+        step="週期檢查/執行",
+    )
 
     # Task 15: 萬神試煉
     stage = get_stage_with_check(d, ip, Cnn_model)
     _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
 
     # Task 16: 雲端戰鬥
-    stage = get_stage_with_check(d, ip, Cnn_model)
     if enable_dungeon_manager:
-        if stage == "主頁面":
-            bot_state.update_state(ip, task="雲端戰鬥", step="領取中")
-            new_battle.run_weekly_cloud_fighting_single(d, ip)
-        else:
-            bot_state.update_state(ip, task="雲端戰鬥", step=f"未在主頁面: {stage}")
-            screenshot_path = save_error_screenshot(d, ip, stage, "雲端戰鬥前不在主頁面")
-            logger.error(f"[{ip}] 雲端戰鬥前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+        _run_at_main_page(
+            d, ip, Cnn_model,
+            task_name="雲端戰鬥",
+            mismatch_reason="雲端戰鬥前不在主頁面",
+            fn=lambda: new_battle.run_weekly_cloud_fighting_single(d, ip),
+            step="領取中",
+        )
     else:
         logger.info(f"[{ip}] 副本管家已停用，跳過雲端戰鬥")
 
@@ -779,32 +777,34 @@ def _run_daily_tasks(
     now_local = time.localtime()
     _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
 
-    # Task 18: 好友每日禮物
-    stage = get_stage_with_check(d, ip, Cnn_model)
+    # Task 18: 好友每日禮物 — stage refreshed after run for Task 19 (lamp)
+    stage = _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="好友每日禮物",
+        mismatch_reason="好友每日禮物前不在主頁面",
+        fn=lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
+        step="領取中",
+    )
     if stage == "主頁面":
-        bot_state.update_state(ip, task="好友每日禮物", step="領取中")
-        daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1)
         stage = get_stage_with_check(d, ip, Cnn_model)
-    else:
-        log_main_page_mismatch(d, ip, stage, "好友每日禮物", "好友每日禮物前不在主頁面")
 
     # Task 19: 開神燈
     _run_lamp_if_due(d, ip, stage)
 
     # Task 20: 轉盤金幣
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        bot_state.update_state(ip, task="轉盤金幣", step="執行中")
-        logger.info(f"[{ip}] 準備執行轉盤金幣，stage={stage}")
-        spin_done = bool(wheel_manager.spin_and_send_gold())
-        if spin_done:
+    def _spin_wheel():
+        logger.info(f"[{ip}] 準備執行轉盤金幣")
+        if wheel_manager.spin_and_send_gold():
             logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
         else:
             logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
-    else:
-        bot_state.update_state(ip, task="轉盤金幣", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "轉盤金幣執行前不在主頁面")
-        logger.error(f"[{ip}] 轉盤金幣執行前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+    _run_at_main_page(
+        d, ip, Cnn_model,
+        task_name="轉盤金幣",
+        mismatch_reason="轉盤金幣執行前不在主頁面",
+        fn=_spin_wheel,
+        step="執行中",
+    )
 
     # Device cleanup
     if ip == "emulator-5558":
