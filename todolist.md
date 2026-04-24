@@ -84,12 +84,12 @@
 - 📉 new_main_v2.py：942 → 793（-149，**本次最大瘦身**）
 - 🧪 tests：224 → 238（+14）
 
-### Phase 6：startup sleep helper（低風險）
-- [ ] **6.1** 新建 `runtime_services/startup_sleep.py`，搬移：
-  - `_handle_startup_sleep`
-  - `_STARTUP_SLEEP_SEC_BY_DEVICE`（常數）
-  - `_PROCESS_START_TS`（在新模組算）
-- [ ] **6.2** `pytest` 綠燈 commit
+### Phase 6：startup sleep helper（低風險） ✅
+- [x] **6.1** 新建 `runtime_services/startup_sleep.py`（44 行）。常數 `_STARTUP_SLEEP_SEC_BY_DEVICE` / `_PROCESS_START_TS` 改名為公開 `STARTUP_SLEEP_SEC_BY_DEVICE` / `PROCESS_START_TS`（方便測試 monkeypatch）
+- [x] **6.2** 6 條 TDD 測試（無預算/已過期/倒數/三種 early-exit）
+- [x] **6.3** `pytest` 綠燈（244 passed）
+- 📉 new_main_v2.py：793 → 768（-25）
+- 🧪 tests：238 → 244（+6）
 
 ### Phase 7：日常任務 pipeline（最高風險、最大收益）
 - [ ] **7.1** 先寫 `game_actions/daily_pipeline.py` 的骨架，定義 `DailyContext`（把 `d, ip, Cnn_model, clf, rl_recorder, current_time, enable_dungeon_manager, wheel_manager, mission_manager, family_manager` 收進一個 dataclass）
@@ -153,4 +153,5 @@
 | 2 | `31747a1` | new_main_v2.py 1146 → 1057 (-89) |
 | 3 | `5398886` | new_main_v2.py 1057 → 1012 (-45) |
 | 4 | `b1e706a` | new_main_v2.py 1012 → 942 (-70) |
-| 5 | _(pending)_ | new_main_v2.py 942 → 793 (-149) |
+| 5 | `412daeb` | new_main_v2.py 942 → 793 (-149) |
+| 6 | _(pending)_ | new_main_v2.py 793 → 768 (-25) |

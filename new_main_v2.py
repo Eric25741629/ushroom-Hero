@@ -139,6 +139,7 @@ from runtime_services.sleep_service import (
     run_sleep_cycle,
     stop_runtime_device_for_sleep,
 )
+from runtime_services.startup_sleep import _handle_startup_sleep
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -155,26 +156,6 @@ atexit.register(lambda: shutdown_web_devices(logger))
 # ---------------------------------------------------------------------------
 # Helper functions extracted from main() to reduce its size
 # ---------------------------------------------------------------------------
-
-def _handle_startup_sleep(ip: str, device_logger) -> None:
-    startup_sleep_sec = int(_STARTUP_SLEEP_SEC_BY_DEVICE.get(ip, 0) or 0)
-    elapsed_sec = int(time.time() - _PROCESS_START_TS)
-    remaining_startup_sleep = max(0, startup_sleep_sec - elapsed_sec)
-    if remaining_startup_sleep > 0:
-        for remain in range(remaining_startup_sleep, 0, -1):
-            if ip == "emulator-5554":
-                if (
-                    bot_state.has_pending_online_check_request("emulator-5554")
-                    or bot_state.is_online_check_priority_active("emulator-5554")
-                ):
-                    device_logger.info(f"[{ip}] 收到 emulator-5558 上線檢查請求，提前結束啟動休眠")
-                    break
-            if bot_state.has_pending_web_launch_request(ip):
-                device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
-                break
-            bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
-            time.sleep(1)
-
 
 def _run_daily_tasks(
     d,
@@ -715,12 +696,6 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
 
 # 全域變數，用來管理運行中的執行緒
 _running_threads = {} # {ip: Thread}
-_PROCESS_START_TS = time.time()
-_STARTUP_SLEEP_SEC_BY_DEVICE = {
-    "emulator-5554": 3 * 60,
-    "emulator-5556": 3 * 60,
-    "emulator-5560": 3 * 60,
-}
 
 def temporary_reset_cycles():
     """臨時重置函數：強制將本週設為活動週期的開始"""
