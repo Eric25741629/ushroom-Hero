@@ -60,33 +60,77 @@ def navigate_to_farm(d: "uiauto.Device", cnn_model=None) -> float:
     return save_time
 
 
-def navigate_to_home(d: "uiauto.Device", cnn_model=None) -> float:
-    """從農場返回首頁"""
+def navigate_to_home(
+    d: "uiauto.Device",
+    cnn_model=None,
+    device_ip: Optional[str] = None,
+) -> float:
+    """從農場返回首頁。
+
+    依 CNN 狀態決定下一個動作，最多重試 60 秒：
+    - main      : 完成
+    - homeplace : 點 home 鈕回主頁
+    - 其他      : 點 farm_tab 退出農場到家園
+    """
     save_time = 0.0
 
-    click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
-    time.sleep(wait_jitter(TIMING["very_long"]))
-
-    click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
-    time.sleep(wait_jitter(TIMING["long"]))
+    if cnn_model is None:
+        click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
+        time.sleep(wait_jitter(TIMING["very_long"]))
+        click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
+        time.sleep(wait_jitter(TIMING["long"]))
+        return save_time
 
     try:
-        cnn_s = time.time()
-        while True:
-            from new_cnn.cnn_model import predict_image
+        from utils.screenshot_helpers import save_error_screenshot
+    except Exception:
+        save_error_screenshot = None
 
+    exit_start = time.time()
+    last_state = "__init__"
+    attempt = 0
+    reached_main = False
+    while time.time() - exit_start < 60:
+        attempt += 1
+        try:
             screenshot = d.screenshot(format="pillow")
-            if cnn_model and cnn_model.predict_image(cnn_model, screenshot) == "main":
-                cnn_p = time.time()
-                saved = 3 - (cnn_p - cnn_s)
-                if saved > 0:
-                    save_time += saved
-                break
-            if time.time() - cnn_s > 60:
-                break
-    except Exception as e:
-        logger.warning(f"CNN預測失敗: {e}")
-        time.sleep(3)
+            state = cnn_model.predict_image(cnn_model, screenshot)
+        except Exception as e:
+            logger.warning(f"[farm_v2] 退出時 CNN 預測失敗 #{attempt}: {e}")
+            state = None
+
+        if state != last_state:
+            elapsed = time.time() - exit_start
+            logger.info(f"[farm_v2] 退出嘗試 #{attempt}, CNN={state}, elapsed={elapsed:.1f}s")
+            if save_error_screenshot is not None and device_ip:
+                try:
+                    save_error_screenshot(d, device_ip, str(state), f"farm_exit_attempt_{attempt}")
+                except Exception as e:
+                    logger.debug(f"[farm_v2] 截圖保存失敗: {e}")
+            last_state = state
+
+        if state == "main":
+            elapsed = time.time() - exit_start
+            saved = 3 - elapsed
+            if saved > 0:
+                save_time += saved
+            logger.info(f"[farm_v2] 已回到主頁面，耗時 {elapsed:.1f}s")
+            reached_main = True
+            break
+        elif state == "homeplace":
+            click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
+            time.sleep(wait_jitter(TIMING["long"]))
+        else:
+            click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
+            time.sleep(wait_jitter(TIMING["very_long"]))
+
+    if not reached_main:
+        logger.warning(f"[farm_v2] 退出超時 60s，最後 state={last_state}")
+        if save_error_screenshot is not None and device_ip:
+            try:
+                save_error_screenshot(d, device_ip, str(last_state), "farm_exit_timeout")
+            except Exception as e:
+                logger.debug(f"[farm_v2] 超時截圖保存失敗: {e}")
 
     return save_time
 
@@ -183,7 +227,7 @@ def run_farm(
                     if find_and_click(d, r"put.jpg"):
                         time.sleep(5)
 
-    save_time += navigate_to_home(d, cnn_model)
+    save_time += navigate_to_home(d, cnn_model, device_ip=device_ip)
 
     logger.info(f"農場流程完成，節省時間: {save_time:.2f}秒")
     return save_time

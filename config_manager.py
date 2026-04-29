@@ -43,7 +43,7 @@ DEFAULT_DEVICE_CONFIG = {
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v1",  # v1 / v2 / v3
+    "mining_planner_version": "v4",  # v1 / v2 / v3 / v4 (v4 default — planner-eval 2026-04-29)
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
@@ -96,6 +96,55 @@ DEFAULT_GLOBAL_CONFIG = {
 
 def get_hostname() -> str:
     return socket.gethostname()
+
+
+# -- type-coercion helpers shared by update_ocr_config / update_device_config --
+
+def _to_int(v: Any, d: int) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return d
+
+
+def _to_float(v: Any, d: float) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return d
+
+
+def _to_bool(v: Any, d: bool = False) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        text = v.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    return d
+
+
+def _clamp_int(v: Any, lo: int, hi: int, default: int) -> int:
+    try:
+        return max(lo, min(hi, int(v)))
+    except Exception:
+        return default
+
+
+def _clamp_float(v: Any, lo: float, hi: float, default: float) -> float:
+    try:
+        return max(lo, min(hi, float(v)))
+    except Exception:
+        return default
+
+
+def _enum_str(v: Any, allowed: set, default: str) -> str:
+    s = str(v).strip().lower()
+    return s if s in allowed else default
 
 
 def load_config() -> Dict[str, Any]:
@@ -240,56 +289,31 @@ def update_ocr_config(new_settings: Dict[str, Any]):
 
     current.update(new_settings or {})
 
-    # 防呆處理
     servers = current.get("servers", [])
     if isinstance(servers, str):
         servers = [s.strip() for s in servers.splitlines() if s.strip()]
     if not isinstance(servers, list):
         servers = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
-
     current["servers"] = [str(s).strip().rstrip("/") for s in servers if str(s).strip()]
-    mode = str(current.get("server_mode", "main")).strip().lower()
-    current["server_mode"] = mode if mode in {"main", "backup", "auto"} else "main"
     if not current["servers"]:
         current["servers"] = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
 
-    def _to_int(v, d):
-        try:
-            return int(v)
-        except Exception:
-            return d
-
-    def _to_float(v, d):
-        try:
-            return float(v)
-        except Exception:
-            return d
-
+    current["server_mode"] = _enum_str(
+        current.get("server_mode", "main"), {"main", "backup", "auto"}, "main"
+    )
     current["timeout_sec"] = max(
         1, _to_int(current.get("timeout_sec"), DEFAULT_OCR_CONFIG["timeout_sec"])
     )
     current["img_decode_retries"] = max(
-        1,
-        _to_int(
-            current.get("img_decode_retries"), DEFAULT_OCR_CONFIG["img_decode_retries"]
-        ),
+        1, _to_int(current.get("img_decode_retries"), DEFAULT_OCR_CONFIG["img_decode_retries"])
     )
     current["ocr_empty_retries"] = max(
-        0,
-        _to_int(
-            current.get("ocr_empty_retries"), DEFAULT_OCR_CONFIG["ocr_empty_retries"]
-        ),
+        0, _to_int(current.get("ocr_empty_retries"), DEFAULT_OCR_CONFIG["ocr_empty_retries"])
     )
     current["retry_delay_sec"] = max(
-        0.0,
-        _to_float(
-            current.get("retry_delay_sec"), DEFAULT_OCR_CONFIG["retry_delay_sec"]
-        ),
+        0.0, _to_float(current.get("retry_delay_sec"), DEFAULT_OCR_CONFIG["retry_delay_sec"])
     )
-    current["default_region_enabled"] = bool(
-        current.get("default_region_enabled", False)
-    )
-
+    current["default_region_enabled"] = bool(current.get("default_region_enabled", False))
     for key in ["default_x_range", "default_y_range"]:
         val = current.get(key, [0, 0])
         if not isinstance(val, list) or len(val) != 2:
@@ -339,33 +363,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
     current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
     current.update(new_settings or {})
 
-    def _to_int(v, d):
-        try:
-            return int(v)
-        except Exception:
-            return d
-
-    def _to_float(v, d):
-        try:
-            return float(v)
-        except Exception:
-            return d
-
-    def _to_bool(v, d=False):
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, (int, float)):
-            return bool(v)
-        if isinstance(v, str):
-            text = v.strip().lower()
-            if text in {"1", "true", "yes", "on"}:
-                return True
-            if text in {"0", "false", "no", "off"}:
-                return False
-        return d
-
-    backend = str(current.get("backend", "adb")).strip().lower()
-    current["backend"] = backend if backend in {"adb", "web_h5"} else "adb"
+    current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5"}, "adb")
     current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
     current["web_url"] = str(current.get("web_url", "")).strip()
     current["web_canvas_selector"] = (
@@ -379,115 +377,61 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         str(current.get("web_state_file", "auth_state/{device_id}.json")).strip()
         or "auth_state/{device_id}.json"
     )
-    current["web_channel"] = (
-        str(current.get("web_channel", "chrome")).strip() or "chrome"
-    )
+    current["web_channel"] = str(current.get("web_channel", "chrome")).strip() or "chrome"
     current["web_headless"] = _to_bool(current.get("web_headless", False), False)
     current["web_clear_cookies_on_start"] = _to_bool(
         current.get("web_clear_cookies_on_start", False), False
     )
-    current["web_viewport_width"] = max(
-        200, min(4096, _to_int(current.get("web_viewport_width"), 540))
+    current["web_viewport_width"] = _clamp_int(
+        current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
     )
-    current["web_viewport_height"] = max(
-        200, min(4096, _to_int(current.get("web_viewport_height"), 960))
+    current["web_viewport_height"] = _clamp_int(
+        current.get("web_viewport_height"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_height"]
     )
-    current["web_manual_viewport_width"] = max(
-        0, min(4096, _to_int(current.get("web_manual_viewport_width"), 0))
+    current["web_manual_viewport_width"] = _clamp_int(
+        current.get("web_manual_viewport_width"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_width"]
     )
-    current["web_manual_viewport_height"] = max(
-        0, min(4096, _to_int(current.get("web_manual_viewport_height"), 0))
+    current["web_manual_viewport_height"] = _clamp_int(
+        current.get("web_manual_viewport_height"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_height"]
     )
-    stop_mode = str(current.get("web_stop_mode", "keep_page")).strip().lower()
-    # Supported aliases:
-    # - keep_page: keep browser/page open after app_stop
-    # - blank: navigate to about:blank on app_stop
-    # - close / close_page / close_browser: close browser context on app_stop
-    allowed_stop_modes = {"keep_page", "blank", "close", "close_page", "close_browser"}
-    current["web_stop_mode"] = (
-        stop_mode if stop_mode in allowed_stop_modes else "keep_page"
+    # keep_page / blank / close / close_page / close_browser
+    current["web_stop_mode"] = _enum_str(
+        current.get("web_stop_mode", "keep_page"),
+        {"keep_page", "blank", "close", "close_page", "close_browser"},
+        "keep_page",
     )
-
-    # 截圖方法: playwright (預設) 或 canvas_capture
-    screenshot_method = (
-        str(current.get("web_screenshot_method", "playwright")).strip().lower()
+    current["web_screenshot_method"] = _enum_str(
+        current.get("web_screenshot_method", "playwright"),
+        {"playwright", "canvas_capture"},
+        "playwright",
     )
-    allowed_screenshot_methods = {"playwright", "canvas_capture"}
-    current["web_screenshot_method"] = (
-        screenshot_method
-        if screenshot_method in allowed_screenshot_methods
-        else "playwright"
+    current["online_check_interval"] = _clamp_int(
+        current.get("online_check_interval"), 1, 60, DEFAULT_DEVICE_CONFIG["online_check_interval"]
     )
-
-    current["online_check_interval"] = max(
-        1,
-        min(
-            60,
-            _to_int(
-                current.get("online_check_interval"),
-                DEFAULT_DEVICE_CONFIG["online_check_interval"],
-            ),
-        ),
+    current["lamp_check_interval"] = _clamp_int(
+        current.get("lamp_check_interval"), 1, 24, DEFAULT_DEVICE_CONFIG["lamp_check_interval"]
     )
-    current["lamp_check_interval"] = max(
-        1,
-        min(
-            24,
-            _to_int(
-                current.get("lamp_check_interval"),
-                DEFAULT_DEVICE_CONFIG["lamp_check_interval"],
-            ),
-        ),
+    current["lamp_duration_sec"] = _clamp_int(
+        current.get("lamp_duration_sec"), 30, 3600, DEFAULT_DEVICE_CONFIG["lamp_duration_sec"]
     )
-    current["lamp_duration_sec"] = max(
-        30,
-        min(
-            3600,
-            _to_int(
-                current.get("lamp_duration_sec"),
-                DEFAULT_DEVICE_CONFIG["lamp_duration_sec"],
-            ),
-        ),
+    current["mining_duration_min"] = _clamp_int(
+        current.get("mining_duration_min"), 1, 60, DEFAULT_DEVICE_CONFIG["mining_duration_min"]
     )
-    current["mining_duration_min"] = max(
-        1,
-        min(
-            60,
-            _to_int(
-                current.get("mining_duration_min"),
-                DEFAULT_DEVICE_CONFIG["mining_duration_min"],
-            ),
-        ),
-    )
-
-    planner_version = (
-        str(
-            current.get(
-                "mining_planner_version",
-                DEFAULT_DEVICE_CONFIG["mining_planner_version"],
-            )
-        )
-        .strip()
-        .lower()
-    )
-    current["mining_planner_version"] = (
-        planner_version if planner_version in {"v1", "v2", "v3"} else "v1"
+    current["mining_planner_version"] = _enum_str(
+        current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
+        {"v1", "v2", "v3", "v4"},
+        "v1",
     )
     current["mining_save_samples"] = _to_bool(
-        current.get(
-            "mining_save_samples",
-            DEFAULT_DEVICE_CONFIG["mining_save_samples"],
-        ),
+        current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
         DEFAULT_DEVICE_CONFIG["mining_save_samples"],
     )
-    _sleep_min = max(0.25, min(24.0, _to_float(
-        current.get("sleep_min_hours"),
-        DEFAULT_DEVICE_CONFIG["sleep_min_hours"],
-    )))
-    _sleep_max = max(0.25, min(24.0, _to_float(
-        current.get("sleep_max_hours"),
-        DEFAULT_DEVICE_CONFIG["sleep_max_hours"],
-    )))
+    _sleep_min = _clamp_float(
+        current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
+    )
+    _sleep_max = _clamp_float(
+        current.get("sleep_max_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_max_hours"]
+    )
     current["sleep_min_hours"] = _sleep_min
     current["sleep_max_hours"] = max(_sleep_min, _sleep_max)
     for k in [

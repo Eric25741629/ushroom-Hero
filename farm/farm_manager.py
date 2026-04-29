@@ -13,6 +13,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import img_tools
 from tools import click_white
 from json_manager import create_time_manager
+from utils.screenshot_helpers import save_error_screenshot
 
 logger = logging.getLogger(__name__)
 def check_if_partime(d):
@@ -229,21 +230,55 @@ def farm(d, ip, Cnn_model):
                     if img_tools.find_and_click(d, r'put.jpg'):
                         time.sleep(5)
 
-    d.click(480, 929)
-    time.sleep(4)
-    d.click(321, 920)
-    try:
-        cnn_s = time.time()
-        while (1):
-            if Cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) == "main":
-                cnn_p = time.time()
-                logger.info("save time {}".format(3-(cnn_p-cnn_s)))
-                save_time += 3-(cnn_p-cnn_s)
-                break
-            if time.time()-cnn_s > 60:
-                break
-    except:
-        time.sleep(3)
+    # 退出農場 → 家園 → 主頁面，最多重試 60 秒
+    # CNN 類別: main / homeplace / 其他(含農場介面)
+    # - main      : 成功，跳出
+    # - homeplace : 點 (321,920) 家園關閉鈕回主頁
+    # - 其他      : 點 (480,929) 農場右下退出鈕到家園
+    exit_start = time.time()
+    last_state = "__init__"
+    attempt = 0
+    reached_main = False
+    while time.time() - exit_start < 60:
+        attempt += 1
+        try:
+            state = Cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow'))
+        except Exception as e:
+            logger.warning(f"[farm] 退出時 CNN 預測失敗 #{attempt}: {e}")
+            state = None
+
+        state_changed = state != last_state
+        if state_changed:
+            elapsed = time.time() - exit_start
+            logger.info(f"[farm] 退出嘗試 #{attempt}, CNN={state}, elapsed={elapsed:.1f}s")
+            try:
+                save_error_screenshot(d, ip, str(state), f"farm_exit_attempt_{attempt}")
+            except Exception as e:
+                logger.debug(f"[farm] 截圖保存失敗: {e}")
+            last_state = state
+
+        if state == "main":
+            elapsed = time.time() - exit_start
+            save_time += max(0, 3 - elapsed)
+            logger.info(f"[farm] 已回到主頁面，耗時 {elapsed:.1f}s")
+            reached_main = True
+            break
+        elif state == "homeplace":
+            d.click(321 + random.randint(-5, 5), 920 + random.randint(-3, 3))
+            time.sleep(2)
+        else:
+            d.click(480 + random.randint(-5, 5), 929 + random.randint(-3, 3))
+            time.sleep(2)
+
+    if not reached_main:
+        logger.warning(f"[farm] 退出超時 60s，最後 state={last_state}，fallback click_white")
+        try:
+            save_error_screenshot(d, ip, str(last_state), "farm_exit_timeout")
+        except Exception as e:
+            logger.debug(f"[farm] 超時截圖保存失敗: {e}")
+        for _ in range(3):
+            click_white(d)
+            time.sleep(1)
     return save_time
 if __name__ == "__main__":
     import  new_cnn.cnn_model as cnn_model

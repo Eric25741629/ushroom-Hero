@@ -516,6 +516,14 @@ class PlaywrightGameDevice:
         def _build_launch_kwargs(
             target_profile: str, use_channel: bool
         ) -> Dict[str, Any]:
+            extra_args = [
+                "--disable-blink-features=AutomationControlled",
+                "--force-device-scale-factor=1",
+                "--high-dpi-support=1",
+            ]
+            debug_port = self.cfg.get("web_debug_port")
+            if debug_port:
+                extra_args.append(f"--remote-debugging-port={int(debug_port)}")
             kwargs: Dict[str, Any] = {
                 "user_data_dir": target_profile,
                 "headless": bool(self.cfg.get("web_headless", False)),
@@ -525,11 +533,7 @@ class PlaywrightGameDevice:
                 },
                 "device_scale_factor": 1.0,
                 "ignore_default_args": ["--enable-automation"],
-                "args": [
-                    "--disable-blink-features=AutomationControlled",
-                    "--force-device-scale-factor=1",
-                    "--high-dpi-support=1",
-                ],
+                "args": extra_args,
             }
             if use_channel and channel:
                 kwargs["channel"] = channel

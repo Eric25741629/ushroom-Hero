@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import os
 
 # 方案四：優化 SMB/NAS 執行效率

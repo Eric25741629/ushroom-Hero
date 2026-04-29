@@ -112,14 +112,10 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
 import img_tools
 
 def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = None):
-    """ 
-    截圖並判斷目前所在的頁面 (優先使用遠端大腦判定)。
-    """
+    """截圖並透過 OCR 文字判斷目前所在的頁面。"""
     if img is None:
         img = d.screenshot(format='opencv')
-    
-    # --- 本地優先判定 (Local first) ---
-    # 1. 優先檢查特定區域 (ROI) 的彈窗標題
+
     roi_announcement = img[170:220, 210:350]
     if any("公告" in t for t in img_tools.get_all_text(roi_announcement)):
         logger.info("偵測到公告彈窗 (ROI 判定)")
@@ -130,34 +126,16 @@ def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = Non
         logger.info("偵測到車位倉庫 (ROI 判定)")
         return "車位倉庫"
 
-    # 2. 使用本地 OCR 取得全螢幕文字並判定
     try:
         local_texts = img_tools.get_all_text(img)
     except Exception as e:
-        logger.warning(f"本地 OCR 發生例外: {e}")
+        logger.warning(f"OCR 發生例外: {e}")
         local_texts = []
 
     stage_withocr = stage_by_str(d, local_texts, img)
     if stage_withocr == "異地登錄":
         logger.error("異地登錄，請檢查帳號密碼安全性")
         return "異地登錄"
-
-    if stage_withocr != "未知":
-        logger.info(f"本地 OCR 辨識結果: {stage_withocr}")
-        return stage_withocr
-
-    # --- 若本地無法判定，嘗試遠端備援 (Remote fallback) ---
-    try:
-        remote_result = img_tools.analyze_stage_via_server(img)
-        if remote_result.get("success"):
-            stage = remote_result.get("stage", "未知")
-            logger.info(f"遠端大腦辨識結果: {stage}")
-            if stage != "未知":
-                return stage
-            else:
-                logger.debug("遠端也回傳 '未知'，最終回傳本地結果 (未知)")
-    except Exception as e:
-        logger.debug(f"遠端判定不可用: {e}")
 
     logger.info(f"OCR辨識結果: {stage_withocr}")
     return stage_withocr

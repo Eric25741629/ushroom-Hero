@@ -2,6 +2,7 @@
     "devices": {
         "emulator-5554": {
             "name": "emulator-5554",
+            "web_debug_port": 9222,
             "backend": "web_h5",
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
@@ -27,14 +28,18 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v2",
+            "mining_planner_version": "v4",
             "mining_save_samples": false,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
-            "web_screenshot_method": "playwright"
+            "web_screenshot_method": "playwright",
+            "use_opengold_v2": false,
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0
         },
         "emulator-5556": {
             "name": "emulator-5556",
+            "web_debug_port": 9223,
             "backend": "web_h5",
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
@@ -60,17 +65,18 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 10,
-            "mining_planner_version": "v3",
+            "mining_planner_version": "v4",
             "mining_save_samples": true,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
             "use_opengold_v2": true,
-            "sleep_min_hours": 1,
-            "sleep_max_hours": 1
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0
         },
         "emulator-5558": {
             "name": "emulator-5558",
+            "web_debug_port": 9224,
             "backend": "web_h5",
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
@@ -96,17 +102,18 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v3",
+            "mining_planner_version": "v4",
             "mining_save_samples": false,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
             "use_opengold_v2": false,
-            "sleep_min_hours": 1,
+            "sleep_min_hours": 1.0,
             "sleep_max_hours": 2.75
         },
         "emulator-5560": {
             "name": "emulator-5560",
+            "web_debug_port": 9225,
             "backend": "web_h5",
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
@@ -132,10 +139,14 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v2",
+            "mining_planner_version": "v4",
             "mining_save_samples": true,
             "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0
+            "web_manual_viewport_height": 0,
+            "use_opengold_v2": false,
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0,
+            "web_screenshot_method": "playwright"
         },
         "7fe98fc6": {
             "name": "7fe98fc6",
@@ -166,12 +177,12 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v3",
+            "mining_planner_version": "v4",
             "mining_save_samples": true,
             "web_screenshot_method": "playwright",
             "use_opengold_v2": true,
-            "sleep_min_hours": 1,
-            "sleep_max_hours": 1
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
             "name": "adb-fc65396d-4LPqmI._adb-tls-connect._tcp",
@@ -203,11 +214,11 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 597,
             "mining_duration_min": 6,
-            "mining_planner_version": "v3",
+            "mining_planner_version": "v4",
             "mining_save_samples": false,
             "use_opengold_v2": true,
-            "sleep_min_hours": 1,
-            "sleep_max_hours": 1
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0
         }
     },
     "global": {
