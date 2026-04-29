@@ -18,6 +18,7 @@ from img_tools import (
     get_all_text
 )
 from config.paths import OCR_FAILS_DIR_STR
+from opengold_v2.lamp_loop_state import LampLoopAction, LampLoopState
 current_index = 0
 OCR_SERVER_URL = "http://100.64.0.7:5001"  # OCR 服務器地址
 # 全域預設：是否比對機率
@@ -52,6 +53,52 @@ LAMP_READY_PIXEL_PROFILES = (
 )
 
 LAMP_PIXEL_SUM_TOLERANCE = 12
+
+# 神燈剩餘數量 ROI（魔法熔爐下方數字，每開一個 -1）
+LAMP_COUNT_ROI = (802, 821, 210, 335)
+
+
+def _safe_int(text):
+    """從 OCR 文字取出純數字並轉成 int；無數字則回 None。"""
+    if text is None:
+        return None
+    digits = ''.join(c for c in str(text) if c.isdigit())
+    if not digits:
+        return None
+    try:
+        return int(digits)
+    except Exception:
+        return None
+
+
+def _read_int_from_roi(d, y1, y2, x1, x2):
+    """擷取畫面指定 ROI 並用 OCR 解析成 int；任一步失敗回 None。"""
+    try:
+        img = d.screenshot(format='opencv')
+        if img is None:
+            return None
+        roi = img[y1:y2, x1:x2]
+        if roi.size == 0:
+            return None
+        texts = get_all_text(roi) or []
+        for t in texts:
+            n = _safe_int(t)
+            if n is not None:
+                return n
+    except Exception as exc:
+        print(f"_read_int_from_roi({y1}:{y2},{x1}:{x2}) 失敗: {exc}")
+    return None
+
+
+def get_remaining_lamp_count(d):
+    """讀取畫面下方神燈剩餘數量；失敗回 None。"""
+    return _read_int_from_roi(d, *LAMP_COUNT_ROI)
+
+
+def _navigate_to_lamp_page(d):
+    """從主頁面進入神燈頁面（與 open_the_gold 入口一致）。"""
+    click_and_wait(d, 447, 801, 2)
+    click_and_wait(d, 281, 636, 1)
 
 
 def _pixel_sum_close(img, x, y, expected_bgr, tolerance=LAMP_PIXEL_SUM_TOLERANCE):
@@ -916,54 +963,81 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     start_time = time.time()
     if times == -1:
         times = float('inf')
-    
+
     # 檢查服務器連接
     if not check_server_health():
         print("錯誤: 無法連接到 OCR 服務器")
         return
-    ocr_results= get_all_text(d.screenshot(format='opencv')[802:821, 210:335])
-    if ocr_results != []:
-        gold_num=ocr_results[0]
-    else:
-        gold_num = -1
-    # 初始點擊
-    click_and_wait(d, 447, 801, 2)
-    click_and_wait(d, 281, 636, 1)
 
-    last_gold_num = -1
+    # 初始點擊：進入神燈頁面
+    _navigate_to_lamp_page(d)
+
+    # 純邏輯狀態機（測試覆蓋於 tests/test_lamp_loop_state.py）
+    loop_state = LampLoopState(
+        stable_threshold=2,
+        reengage_after_stable=5,
+        unreadable_renav_threshold=8,
+    )
+
+    # OCR-不完整跳過計數器（function-local，避免裝置 thread 互相污染）
+    ocr_skip_count = 0
+
     while time.time() - start_time < times:
-        # 記錄連續跳過不完整 OCR 的次數，若超過上限就結束整個開裝流程
-        if 'ocr_skip_count' not in globals():
-            # 使用 globals 以便不同函式之間簡單共享這個計數（模組層級變數）
-            globals()['ocr_skip_count'] = 0
-
         device = D.device(d)
         img = device.capture_screenshot()
         if is_lamp_sell_page(img):
             print("當前在全部出售頁面")
-            if click_str_by_server(d,"全部出售"):
-                return 
-        # 檢查神燈是否在減少 210 802 335 821
-        ocr_results= get_all_text(d.screenshot(format='opencv')[802:821, 210:335])
-        if ocr_results != []:
-            #神燈數量不會差異很大 理論上+-1000內 都算正常變化，避免 OCR 偶爾誤判導致重置 last_gold_num
-            #先正規化數字（去除非數字字元），再比較
+            if click_str_by_server(d, "全部出售"):
+                return
 
-            gold_num = ocr_results[0]
-        else:
-            gold_num = gold_num
-        if last_gold_num != -1 and gold_num != last_gold_num:
-            print(f"神燈數量變化: {last_gold_num} -> {gold_num}")
-            time.sleep(10)
-            last_gold_num = gold_num
+        lamp_count = get_remaining_lamp_count(d)
+
+        # 偵測技能彈窗（必須真的解析到技能代號才算）
+        skill_roi = img[634:744, 291:367]
+        skill_result = analyze_skill_via_http(skill_roi)
+        ocr_results_raw = []
+        has_popup = False
+        if skill_result and skill_result.get('success'):
+            ocr_results_raw = skill_result.get('ocr_results', []) or []
+            if ocr_results_raw and any(
+                text_to_skill_code(it.get('text', '') if isinstance(it, dict) else '')
+                for it in ocr_results_raw
+            ):
+                has_popup = True
+
+        action = loop_state.tick(lamp_count=lamp_count, has_popup=has_popup)
+
+        if action == LampLoopAction.RENAVIGATE:
+            print(
+                f"神燈剩餘讀不到已連續 {loop_state.unreadable_renav_threshold} 次，重新導航"
+            )
+            try:
+                _navigate_to_lamp_page(d)
+            except Exception as nav_exc:
+                print(f"重新導航失敗: {nav_exc}")
+            time.sleep(1.5)
             continue
-        else:
-            print(f"神燈數量: {gold_num}")
-            d.click(271, 576)
-            time.sleep(5)
-        last_gold_num = gold_num
-        time.sleep(1)
-        # 提取技能資訊，使用通用 /ocr + 本地解析
+
+        if action == LampLoopAction.WAIT:
+            # 細分等待時長：讀不到 / 動畫中 / 等穩定門檻
+            if lamp_count is None:
+                time.sleep(1.5)
+            elif loop_state.stable_streak == 0:
+                time.sleep(2)
+            else:
+                time.sleep(1)
+            continue
+
+        if action == LampLoopAction.REENGAGE_AUTO:
+            print(f"穩定且無彈窗，重新啟用自動模式（lamp_count={lamp_count}）")
+            click_and_wait(d, 370, 826, 1)   # 自動按鈕
+            click_and_wait(d, 271, 576, 5)   # 開始確認
+            continue
+
+        # action == HANDLE_POPUP：穩定且偵測到裝備彈窗
+        print(f"神燈剩餘穩定於 {lamp_count}，偵測到裝備彈窗，點擊處理")
+        d.click(271, 576)
+        time.sleep(5)
         img = device.capture_screenshot()
         skill_roi = img[634:744, 291:367]
         skill_result = analyze_skill_via_http(skill_roi)
@@ -994,18 +1068,35 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
             skipped = process_wanted_combo(d, normalized_combo, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip, device_ip=device_ip)
             # 若 process_wanted_combo 回傳 True 表示因 OCR 不完整而跳過
             if skipped:
-                globals()['ocr_skip_count'] += 1
-                print(f"OCR 不完整已跳過次數: {globals()['ocr_skip_count']}/{SKIP_INCOMPLETE_LIMIT}")
-                if globals()['ocr_skip_count'] >= SKIP_INCOMPLETE_LIMIT:
-                    print(f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，停止開神燈。")
-                    # 結束前做必要的清理動作
+                ocr_skip_count += 1
+                print(f"OCR 不完整已跳過次數: {ocr_skip_count}/{SKIP_INCOMPLETE_LIMIT}")
+                if ocr_skip_count >= SKIP_INCOMPLETE_LIMIT:
+                    # 在中止前先確認神燈是否真的開完了：若剩餘數量 > 0，
+                    # 視為 OCR/UI 暫時失常而非任務完成，重新導航到神燈頁面後再嘗試。
+                    remaining = get_remaining_lamp_count(d)
+                    if remaining is not None and remaining > 0:
+                        print(
+                            f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
+                            f"但神燈剩餘 {remaining} 顆，重置計數並重新導航後繼續。"
+                        )
+                        ocr_skip_count = 0
+                        try:
+                            _navigate_to_lamp_page(d)
+                        except Exception as nav_exc:
+                            print(f"重新導航失敗: {nav_exc}")
+                        time.sleep(2)
+                        continue
+                    print(
+                        f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
+                        f"剩餘={remaining}，停止開神燈。"
+                    )
                     click_and_wait(d, 447, 801, 2)
                     click_and_wait(d, 273, 560, 2)
                     return
                 # 否則繼續下一回合（不重置計數）
             else:
                 # 若成功處理一次，重置連續跳過計數
-                globals()['ocr_skip_count'] = 0
+                ocr_skip_count = 0
     # 結束清理
     click_and_wait(d, 447, 801, 2)
     click_and_wait(d, 273, 560, 2)

@@ -134,27 +134,32 @@ class UIController:
             print(f"[UIController] 點擊全部出售失敗: {e}")
             return False
     
-    def get_gold_num(self) -> Optional[int]:
-        """取得神燈數量"""
+    def _read_int_from_roi(self, y1: int, y2: int, x1: int, x2: int) -> Optional[int]:
+        """擷取畫面 ROI 並 OCR 解析為 int；失敗回 None。"""
         try:
             from img_tools import get_all_text
-            
-            y1, y2, x1, x2 = self.config.gold_num_roi
+
             img = self.capture_screenshot()
             roi = img[y1:y2, x1:x2]
-            
-            ocr_results = get_all_text(roi)
-            if ocr_results:
-                # 嘗試解析第一個結果為數字
-                text = str(ocr_results[0]).strip()
-                # 去除非數字字元
-                num_str = ''.join(c for c in text if c.isdigit())
+            if roi.size == 0:
+                return None
+            ocr_results = get_all_text(roi) or []
+            for text in ocr_results:
+                num_str = ''.join(c for c in str(text) if c.isdigit())
                 if num_str:
                     return int(num_str)
             return None
         except Exception as e:
-            print(f"[UIController] 取得神燈數量失敗: {e}")
+            print(f"[UIController] _read_int_from_roi 失敗: {e}")
             return None
+
+    def get_gold_num(self) -> Optional[int]:
+        """取得神燈剩餘數量（變數名稱沿用歷史；ROI 為魔法熔爐下方數字）。"""
+        return self._read_int_from_roi(*self.config.gold_num_roi)
+
+    def get_remaining_lamp_count(self) -> Optional[int]:
+        """讀取神燈剩餘數量；與 get_gold_num 為同一個 ROI，命名僅為語意明確。"""
+        return self._read_int_from_roi(*self.config.gold_num_roi)
     
     def click_lamp_button(self):
         """點擊開神燈按鈕"""

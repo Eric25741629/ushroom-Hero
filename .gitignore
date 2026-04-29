@@ -55,3 +55,6 @@ push_project/web/car_fight.json
 
 # Personal scratch notebooks
 Untitled-*.ipynb
+
+# Temporary lamp verification samples
+tmp_lamp_verify/

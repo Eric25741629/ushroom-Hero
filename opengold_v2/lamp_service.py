@@ -366,7 +366,25 @@ class LampService:
         try:
             while time.time() - start_time < times and self.state.is_running:
                 if self.state.should_stop_for_incomplete_ocr(self.config.skip_incomplete_limit):
-                    print(f"[LampService] 連續跳過 {self.config.skip_incomplete_limit} 次 OCR 不完整，停止。")
+                    # 在中止前先確認神燈是否真的開完了：若剩餘 > 0，
+                    # 視為 OCR/UI 暫時失常而非任務完成，重置計數並嘗試重新啟用自動模式繼續。
+                    remaining = self.ui.get_remaining_lamp_count()
+                    if remaining is not None and remaining > 0:
+                        print(
+                            f"[LampService] 連續跳過 {self.config.skip_incomplete_limit} 次 OCR 不完整，"
+                            f"但神燈剩餘 {remaining} 顆，重置計數並嘗試恢復後繼續。"
+                        )
+                        self.state.record_ocr_success()
+                        try:
+                            self.ui.click_auto_mode_button()
+                            self.ui.click_start_confirm()
+                        except Exception as recover_exc:
+                            print(f"[LampService] 嘗試恢復自動模式失敗: {recover_exc}")
+                        continue
+                    print(
+                        f"[LampService] 連續跳過 {self.config.skip_incomplete_limit} 次 OCR 不完整，"
+                        f"剩餘={remaining}，停止。"
+                    )
                     break
 
                 skipped = not self.process_single_lamp(is_compare)
