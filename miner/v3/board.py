@@ -156,6 +156,21 @@ def floor7_open(board: Board) -> bool:
     return any(is_reachable_air(cell) for cell in board[last_row])
 
 
+def floor7_fully_clear(board: Board) -> bool:
+    """Row 6 is ready to scroll: every cell is reachable air.
+
+    `floor7_open` only requires *some* reachable air in row 6 — but the game
+    actually scrolls only after the entire row is dug clear. A board that
+    already has 2 reachable empties and 4 blocked cells (rocks / unreachable
+    pockets) is *not* finished — the bot still needs to dig the remaining
+    hard cells before the screen advances.
+    """
+    if not board:
+        return False
+    last_row = board[len(board) - 1]
+    return all(is_reachable_air(cell) for cell in last_row)
+
+
 def top_row_pit_count(board: Board) -> int:
     if not board:
         return 0

@@ -1235,7 +1235,7 @@ def get_status():
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
-        info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
+        info["mining_planner_version"] = cfg.get("mining_planner_version", "v4")
     return jsonify(
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
     )

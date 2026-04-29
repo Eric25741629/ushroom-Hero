@@ -1,0 +1,835 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<title>挖礦模擬器 — Mining Simulator</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    padding: 20px;
+    background: #1a1a1a;
+    color: #eee;
+    margin: 0;
+  }
+  h1 { color: #f0c040; margin: 0 0 16px; }
+  h2 { color: #f0c040; margin: 0 0 12px; font-size: 16px; }
+  h3 { color: #aaa; margin: 12px 0 6px; font-size: 13px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: auto 320px;
+    gap: 24px;
+    max-width: 900px;
+  }
+
+  .board-area { }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(6, 64px);
+    grid-template-rows: repeat(7, 64px);
+    gap: 2px;
+    background: #333;
+    padding: 2px;
+    border-radius: 4px;
+  }
+  .row-label {
+    color: #666;
+    font-size: 11px;
+    text-align: right;
+    padding-right: 6px;
+    line-height: 64px;
+  }
+  .cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    user-select: none;
+    border-radius: 3px;
+    transition: transform 0.05s, box-shadow 0.05s;
+    border: 1px solid transparent;
+    position: relative;
+  }
+  .cell:hover { transform: scale(1.06); box-shadow: 0 0 0 2px #f0c040; z-index: 1; }
+  .cell.empty, .cell.dug_pit { background: #87cefa; color: #2a4858; }
+  .cell.unreachable_empty, .cell.unreachable_void { background: #2a4858; color: #6a8898; }
+  .cell.dirt { background: #8b6f47; color: #2a1a0a; }
+  .cell.unreachable_dirt { background: #4a3a26; color: #8a7a66; }
+  .cell.rock { background: #aaa; color: #222; }
+  .cell.unreachable_rock { background: #444; color: #999; }
+  .cell.pit, .cell.reachable_pit { background: #f0c040; color: #4a3a08; box-shadow: inset 0 0 0 2px #fff5c0; }
+  .cell.unreachable_pit { background: #6a5520; color: #c0a050; }
+  .cell.frontier::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 1px dashed rgba(240, 192, 64, 0.6);
+    border-radius: 3px;
+    pointer-events: none;
+  }
+
+  .panel {
+    padding: 14px;
+    background: #2a2a2a;
+    border-radius: 8px;
+  }
+  .stat {
+    display: flex;
+    justify-content: space-between;
+    padding: 5px 0;
+    font-size: 13px;
+  }
+  .stat span:first-child { color: #aaa; }
+  .stat span:last-child { font-weight: bold; }
+  .stat.big span:last-child { color: #f0c040; font-size: 16px; }
+
+  .tools {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    margin: 10px 0;
+  }
+  .tool {
+    padding: 10px 6px;
+    background: #3a3a3a;
+    border-radius: 6px;
+    text-align: center;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: background 0.1s;
+  }
+  .tool:hover { background: #444; }
+  .tool.active { border-color: #f0c040; background: #4a3a08; }
+  .tool.disabled { opacity: 0.4; cursor: not-allowed; }
+  .tool .count { font-size: 18px; font-weight: bold; color: #f0c040; }
+  .tool .name { font-size: 11px; color: #aaa; margin-top: 2px; }
+  .tool .key { font-size: 10px; color: #666; margin-top: 2px; }
+
+  .log {
+    font-size: 11px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 6px 8px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    line-height: 1.5;
+    font-family: 'Cascadia Code', 'Menlo', monospace;
+  }
+  .log .line { margin: 1px 0; }
+  .log .reward { color: #f0c040; }
+  .log .scroll { color: #87cefa; font-weight: bold; }
+  .log .info { color: #888; }
+  .log .warn { color: #e88; }
+
+  .controls { display: flex; gap: 6px; margin-top: 10px; }
+  button {
+    padding: 6px 10px;
+    background: #555;
+    color: #eee;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    flex: 1;
+  }
+  button:hover { background: #666; }
+  button.primary { background: #c08020; }
+  button.primary:hover { background: #d09030; }
+
+  .legend {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    font-size: 11px;
+    margin-top: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 16px; height: 16px; border-radius: 2px; }
+
+  .help {
+    font-size: 11px;
+    color: #999;
+    line-height: 1.6;
+    background: #1a1a1a;
+    padding: 8px;
+    border-radius: 4px;
+    margin-top: 8px;
+  }
+  kbd {
+    background: #444;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: monospace;
+    border: 1px solid #555;
+    font-size: 10px;
+  }
+</style>
+</head>
+<body>
+
+<h1>⛏️ 挖礦模擬器</h1>
+
+<div class="layout">
+  <div class="board-area">
+    <div id="grid" class="grid"></div>
+    <div class="help">
+      <strong>玩法：</strong>選擇工具後點擊格子。鎬子挖一格、炸彈擊中 3×3+十字 共 13 格、鑽頭擊中整個垂直直行+底排左右共 9 格。
+      Row 6 只要有任一格變可達空氣就會下樓（角色走到該格 → 畫面自動推進）。<br>
+      <strong>快速鍵：</strong><kbd>1</kbd>=鎬子 <kbd>2</kbd>=炸彈 <kbd>3</kbd>=鑽頭 <kbd>R</kbd>=重置
+    </div>
+    <h3 style="margin-top: 16px;">圖示</h3>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-swatch" style="background:#87cefa"></div>空氣（可達）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#2a4858"></div>空氣（不可達）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#8b6f47"></div>泥土（cost=1）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#4a3a26"></div>泥土（不可達）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#aaa"></div>岩石（cost=2）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#444"></div>岩石（不可達）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#f0c040"></div>礦坑（可挖）</div>
+      <div class="legend-item"><div class="legend-swatch" style="background:#6a5520"></div>礦坑（不可達）</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>📊 評估指標</h2>
+    <div class="stat big"><span>總分</span><span id="score">0</span></div>
+    <div class="stat big"><span>礦坑數</span><span id="pits">0</span></div>
+    <div class="stat big"><span>下樓深度</span><span id="depth">0</span></div>
+    <div class="stat"><span>已挖格數</span><span id="digs">0</span></div>
+    <div class="stat"><span>總成本</span><span id="cost">0</span></div>
+    <div class="stat"><span>每礦坑平均成本</span><span id="cpp">-</span></div>
+
+    <h2 style="margin-top: 16px;">🛠️ 工具</h2>
+    <div class="tools">
+      <div class="tool active" data-tool="pickaxe" id="tool-pickaxe">
+        <div class="count" id="pickaxe-count">1000</div>
+        <div class="name">鎬子</div>
+        <div class="key">1 / 點擊</div>
+      </div>
+      <div class="tool" data-tool="bomb" id="tool-bomb">
+        <div class="count" id="bomb-count">10</div>
+        <div class="name">炸彈</div>
+        <div class="key">2</div>
+      </div>
+      <div class="tool" data-tool="drill" id="tool-drill">
+        <div class="count" id="drill-count">10</div>
+        <div class="name">鑽頭</div>
+        <div class="key">3</div>
+      </div>
+    </div>
+    <div class="controls">
+      <button class="primary" onclick="reset()">重置</button>
+      <button onclick="copyBoardSnippet()">複製棋盤</button>
+      <button onclick="suggest()">提示</button>
+    </div>
+
+    <h2 style="margin-top: 16px;">📝 事件 log</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+const ROWS = 7;
+const COLS = 6;
+const INIT_INV = { pickaxe: 1000, bomb: 10, drill: 10 };
+// Tape generation: pre-generate the mine and scroll the viewport over it.
+// Cluster placement runs against the whole chunk, so 3×3 isolation (and
+// 2×2/1×1 spacing) doesn't get blocked by the tiny 7-row visible window.
+const TAPE_INITIAL = 60;
+const TAPE_EXTEND = 30;
+
+const SYMBOLS = {
+  empty: '',
+  dug_pit: '',
+  unreachable_empty: '·',
+  unreachable_void: '·',
+  dirt: '土',
+  unreachable_dirt: '土',
+  rock: '岩',
+  unreachable_rock: '岩',
+  pit: '礦',
+  reachable_pit: '礦',
+  unreachable_pit: '礦',
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let mineTape = [];     // entire mine, indexed by tape row
+let viewportRow = 0;   // top of the visible window (board[0] = mineTape[viewportRow])
+let board = [];        // refs to mineTape[viewportRow .. viewportRow+ROWS-1]
+let inv = { ...INIT_INV };
+let stats = { score: 0, pits: 0, depth: 0, digs: 0, cost: 0 };
+let tool = 'pickaxe';
+let pendingScroll = false;
+// Pit clusters as discrete shapes (1×1 / 2×2 / 3×3). Reward fires only when
+// every cell of a cluster is dug; partial digs accumulate silently. Orphan
+// pits (cluster cells lost via scroll) give no reward when dug. Cell keys
+// use tape coords as `${tapeR},${c}` strings so depth past 100 is fine.
+let pitClusters = []; // [{ cells: Set<key>, total: int }]
+let cellToCluster = {}; // key → cluster ref
+
+// ---------------------------------------------------------------------------
+// Cell helpers (mirror miner/v3/board.py semantics)
+// ---------------------------------------------------------------------------
+const AIR_BASE = new Set(['empty', 'void', 'dug_pit']);
+
+function baseLabel(label) {
+  return label.replace('unreachable_', '');
+}
+function isAir(label) {
+  return AIR_BASE.has(baseLabel(label));
+}
+function isUnreachable(label) {
+  return label.startsWith('unreachable_');
+}
+function isReachableAir(label) {
+  return isAir(label) && !isUnreachable(label);
+}
+function isPit(label) {
+  // Mirror v3/board.py normalize_label: bare "pit" is the same as "reachable_pit".
+  return label === 'pit' || label === 'reachable_pit' || label === 'unreachable_pit';
+}
+
+function normalizeLabel(label) {
+  return label === 'pit' ? 'reachable_pit' : label;
+}
+
+function inBounds(r, c) {
+  return r >= 0 && r < ROWS && c >= 0 && c < COLS;
+}
+
+function neighbors4(r, c) {
+  const out = [];
+  for (const [dr, dc] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    const nr = r + dr, nc = c + dc;
+    if (inBounds(nr, nc)) out.push([nr, nc]);
+  }
+  return out;
+}
+
+function isFrontierDiggable(r, c) {
+  const cell = board[r][c];
+  if (isAir(cell)) return false;
+  if (!isUnreachable(cell)) return true;
+  for (const [nr, nc] of neighbors4(r, c)) {
+    if (isReachableAir(board[nr][nc])) return true;
+  }
+  return false;
+}
+
+function digCost(label) {
+  if (label.includes('rock')) return 2;
+  return 1; // dirt, pit
+}
+
+// ---------------------------------------------------------------------------
+// Reachability propagation (matches v3 promote_after_dig + initial BFS)
+// ---------------------------------------------------------------------------
+function recomputeReachability() {
+  // Global BFS from any reachable air cell, flooding through unreachable_empty
+  // and stripping `unreachable_` from neighbours of newly-reachable cells.
+  const reach = new Set();
+  const queue = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (isReachableAir(board[r][c])) {
+        reach.add(r * 100 + c);
+        queue.push([r, c]);
+      }
+    }
+  }
+  while (queue.length) {
+    const [r, c] = queue.shift();
+    for (const [nr, nc] of neighbors4(r, c)) {
+      const key = nr * 100 + nc;
+      if (reach.has(key)) continue;
+      const cell = board[nr][nc];
+      if (cell === 'unreachable_empty' || cell === 'unreachable_void') {
+        board[nr][nc] = 'empty';
+        reach.add(key);
+        queue.push([nr, nc]);
+      } else if (isUnreachable(cell)) {
+        // Strip prefix one-pass, mark seen so we don't continue flood.
+        // Also normalize bare "pit" → "reachable_pit" to match v3/board.py.
+        board[nr][nc] = normalizeLabel(baseLabel(cell));
+        reach.add(key);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Action targets
+// ---------------------------------------------------------------------------
+function bombTargets(r, c) {
+  const out = [];
+  for (let dr = -1; dr <= 1; dr++) {
+    for (let dc = -1; dc <= 1; dc++) {
+      if (inBounds(r + dr, c + dc)) out.push([r + dr, c + dc]);
+    }
+  }
+  for (const [dr, dc] of [[0, 2], [0, -2], [2, 0], [-2, 0]]) {
+    if (inBounds(r + dr, c + dc)) out.push([r + dr, c + dc]);
+  }
+  return out;
+}
+
+function drillTargets(r, c) {
+  const out = [];
+  for (let nr = r; nr < ROWS; nr++) out.push([nr, c]);
+  if (c - 1 >= 0) out.push([ROWS - 1, c - 1]);
+  if (c + 1 < COLS) out.push([ROWS - 1, c + 1]);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Pit collection / reward — only on cluster completion
+// ---------------------------------------------------------------------------
+function collectPits(positions) {
+  // Mark each dug pit cell. Reward fires only when a cluster's last cell
+  // gets dug (so 2×2 / 3×3 must be fully cleared to score). `positions` are
+  // visible-board coords; we look up clusters via tape coords.
+  const completed = [];
+  for (const [r, c] of positions) {
+    const key = tapeKey(viewportRow + r, c);
+    const cluster = cellToCluster[key];
+    if (!cluster) continue; // orphan pit (cluster lost via earlier scroll)
+    cluster.cells.delete(key);
+    delete cellToCluster[key];
+    if (cluster.cells.size === 0) completed.push(cluster);
+  }
+  for (const cluster of completed) {
+    const n = cluster.total;
+    const score = n * 10 + n * (n - 1) * 2;
+    stats.score += score;
+    stats.pits += n;
+    const itemCount = Math.min(3, Math.max(1, Math.ceil(n / 2)));
+    const itemType = Math.random() < 0.5 ? 'bomb' : 'drill';
+    inv[itemType] += itemCount;
+    const shape = n === 1 ? '1×1' : n === 4 ? '2×2' : n === 9 ? '3×3' : `${n}-cell`;
+    log(
+      '<span class="reward">⛏️ 完成 ' + shape + ' cluster → +' + score + ' 分, +' + itemCount + ' ' +
+      (itemType === 'bomb' ? '炸彈' : '鑽頭') + '</span>',
+    );
+    const idx = pitClusters.indexOf(cluster);
+    if (idx >= 0) pitClusters.splice(idx, 1);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Actions: dig / bomb / drill
+// ---------------------------------------------------------------------------
+function doPickaxe(r, c) {
+  if (!isFrontierDiggable(r, c)) {
+    log('<span class="warn">⚠️ (' + r + ',' + c + ') 不可挖（' + (isAir(board[r][c]) ? '已是空氣' : '不可達') + '）</span>');
+    return false;
+  }
+  const cell = board[r][c];
+  const cost = digCost(cell);
+  if (inv.pickaxe < cost) {
+    log('<span class="warn">⚠️ 鎬子不足</span>');
+    return false;
+  }
+  inv.pickaxe -= cost;
+  stats.cost += cost;
+  stats.digs += 1;
+  const pitHit = isPit(cell);
+  board[r][c] = pitHit ? 'dug_pit' : 'empty';
+  if (pitHit) collectPits([[r, c]]);
+  log('挖 (' + r + ',' + c + ') ' + (cell.includes('rock') ? '岩石' : cell.includes('pit') ? '礦坑' : '泥土') + ' cost=' + cost);
+  return true;
+}
+
+function doBomb(r, c) {
+  if (!isReachableAir(board[r][c])) {
+    log('<span class="warn">⚠️ 炸彈必須丟在可達空氣格</span>');
+    return false;
+  }
+  if (inv.bomb <= 0) { log('<span class="warn">⚠️ 沒有炸彈</span>'); return false; }
+  inv.bomb -= 1;
+  stats.digs += 1;
+  const targets = bombTargets(r, c);
+  const hits = [];
+  for (const [tr, tc] of targets) {
+    const cell = board[tr][tc];
+    if (isPit(cell)) {
+      hits.push([tr, tc]);
+      board[tr][tc] = 'dug_pit';
+    } else if (!isAir(cell)) {
+      board[tr][tc] = 'empty';
+    }
+  }
+  if (hits.length) collectPits(hits);
+  log('💣 炸彈 (' + r + ',' + c + ') 影響 ' + targets.length + ' 格，礦坑 ' + hits.length);
+  return true;
+}
+
+function doDrill(r, c) {
+  if (!isReachableAir(board[r][c])) {
+    log('<span class="warn">⚠️ 鑽頭必須丟在可達空氣格</span>');
+    return false;
+  }
+  if (inv.drill <= 0) { log('<span class="warn">⚠️ 沒有鑽頭</span>'); return false; }
+  inv.drill -= 1;
+  stats.digs += 1;
+  const targets = drillTargets(r, c);
+  const hits = [];
+  for (const [tr, tc] of targets) {
+    const cell = board[tr][tc];
+    if (isPit(cell)) {
+      hits.push([tr, tc]);
+      board[tr][tc] = 'dug_pit';
+    } else if (!isAir(cell)) {
+      board[tr][tc] = 'empty';
+    }
+  }
+  if (hits.length) collectPits(hits);
+  log('🔩 鑽頭 (' + r + ',' + c + ') 影響 ' + targets.length + ' 格，礦坑 ' + hits.length);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Scroll (descend) — when row 6 has *any* reachable air the screen scrolls.
+// The player's character can walk to that air cell and the viewport advances.
+// (Matches the actual game rule: one row-6 air cell is enough to descend.)
+// ---------------------------------------------------------------------------
+function floor7Open() {
+  return board[ROWS - 1].some(c => isReachableAir(c));
+}
+
+function scrollDown() {
+  viewportRow += 1;
+  if (viewportRow + ROWS > mineTape.length) extendMineTape(TAPE_EXTEND);
+  pruneOffscreenClusters();
+  refreshBoardView();
+  stats.depth += 1;
+  log('<span class="scroll">↓↓↓ 下樓！深度 = ' + stats.depth + ' ↓↓↓</span>');
+  recomputeReachability();
+}
+
+function checkAndMaybeScroll() {
+  // One reachable air cell on row 6 is enough — the player walks there and
+  // the screen advances. Loop in case the new row already has air (rare).
+  let safety = 0;
+  while (floor7Open() && safety++ < 10) scrollDown();
+}
+
+// ---------------------------------------------------------------------------
+// Mine generation (tape-based)
+// ---------------------------------------------------------------------------
+function refreshBoardView() {
+  // Bind board[i] to the live mineTape row — mutations through board[i][c]
+  // update the tape, so reachability promotion etc. is preserved across
+  // scrolls without copying.
+  board = [];
+  for (let i = 0; i < ROWS; i++) board.push(mineTape[viewportRow + i]);
+}
+
+function rollCell(depth, dirtP, rockP) {
+  // Pit-free row generation. Pits are added afterwards as discrete 1×1 / 2×2
+  // / 3×3 clusters — that's the actual game's shape set.
+  const emptyP = 0.08;
+  const r = Math.random();
+  if (r < emptyP) return 'unreachable_empty';
+  let acc = emptyP;
+  if (r < acc + dirtP) return 'unreachable_dirt';
+  acc += dirtP;
+  if (r < acc + rockP) return 'unreachable_rock';
+  return 'unreachable_dirt';
+}
+
+function extendMineTape(count) {
+  const startRow = mineTape.length;
+  for (let i = 0; i < count; i++) {
+    const depth = startRow + i;
+    const dirtP = Math.max(0.30, 0.55 - depth * 0.02);
+    const rockP = Math.min(0.55, 0.25 + depth * 0.02);
+    const row = [];
+    for (let c = 0; c < COLS; c++) row.push(rollCell(depth, dirtP, rockP));
+    mineTape.push(row);
+  }
+  placeClustersInTapeRange(startRow, mineTape.length);
+}
+
+function tapeKey(r, c) {
+  return `${r},${c}`;
+}
+
+function clusterFootprintTape(r, c, size) {
+  const cells = [];
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) cells.push([r + dr, c + dc]);
+  }
+  return cells;
+}
+
+function clusterRingTape(r, c, size) {
+  // 1-cell border around the cluster footprint — enforces isolation, so 1×1
+  // stays a singleton and 2×2/3×3 don't merge with neighbouring clusters.
+  const cells = [];
+  for (let dr = -1; dr <= size; dr++) {
+    for (let dc = -1; dc <= size; dc++) {
+      if (dr >= 0 && dr < size && dc >= 0 && dc < size) continue;
+      cells.push([r + dr, c + dc]);
+    }
+  }
+  return cells;
+}
+
+function canPlaceClusterTape(r, c, size) {
+  // Footprint must fit the tape, be free of air (don't erase pockets) and
+  // free of pits. Ring must be free of pits (isolation rule).
+  for (let dr = 0; dr < size; dr++) {
+    for (let dc = 0; dc < size; dc++) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= mineTape.length || nc < 0 || nc >= COLS) return false;
+      const cell = mineTape[nr][nc];
+      if (isAir(cell) || cell.includes('pit')) return false;
+    }
+  }
+  for (const [nr, nc] of clusterRingTape(r, c, size)) {
+    if (nr < 0 || nr >= mineTape.length || nc < 0 || nc >= COLS) continue;
+    if (mineTape[nr][nc].includes('pit')) return false;
+  }
+  return true;
+}
+
+function paintClusterTape(r, c, size) {
+  const cluster = { cells: new Set(), total: size * size };
+  for (const [nr, nc] of clusterFootprintTape(r, c, size)) {
+    mineTape[nr][nc] = 'unreachable_pit';
+    const key = tapeKey(nr, nc);
+    cluster.cells.add(key);
+    cellToCluster[key] = cluster;
+  }
+  pitClusters.push(cluster);
+}
+
+function tryPlaceClusterTape(size, rRange, cRange, attempts) {
+  for (let i = 0; i < attempts; i++) {
+    const r = rRange[0] + Math.floor(Math.random() * (rRange[1] - rRange[0] + 1));
+    const c = cRange[0] + Math.floor(Math.random() * (cRange[1] - cRange[0] + 1));
+    if (canPlaceClusterTape(r, c, size)) {
+      paintClusterTape(r, c, size);
+      return true;
+    }
+  }
+  return false;
+}
+
+function placeClustersInTapeRange(rMin, rMax) {
+  // Reserve tape row 0 (player's starting row) — no clusters there. For all
+  // other rows, place biggest first so 2×2/1×1 fit around the 3×3.
+  const from = Math.max(rMin, 1);
+  const span = Math.max(0, rMax - from);
+  const n3 = Math.max(1, Math.floor(span / 8));
+  for (let i = 0; i < n3; i++) {
+    tryPlaceClusterTape(3, [from, rMax - 3], [0, COLS - 3], 80);
+  }
+  const n2 = Math.max(2, Math.floor(span / 5));
+  for (let i = 0; i < n2; i++) {
+    tryPlaceClusterTape(2, [from, rMax - 2], [0, COLS - 2], 50);
+  }
+  const n1 = Math.max(2, Math.floor(span / 5));
+  for (let i = 0; i < n1; i++) {
+    tryPlaceClusterTape(1, [from, rMax - 1], [0, COLS - 1], 50);
+  }
+}
+
+function pruneOffscreenClusters() {
+  // Drop any cluster whose top-most cell has scrolled above the viewport.
+  // The visible cells of a lost cluster stay on the board as orphan pits
+  // (they look like pits but cellToCluster has no entry, so digging them
+  // gives no reward — that's the cost of not finishing in time).
+  const survivors = [];
+  for (const cluster of pitClusters) {
+    let lost = false;
+    for (const key of cluster.cells) {
+      const r = parseInt(key.split(',')[0], 10);
+      if (r < viewportRow) { lost = true; break; }
+    }
+    if (lost) {
+      for (const key of cluster.cells) delete cellToCluster[key];
+    } else {
+      survivors.push(cluster);
+    }
+  }
+  pitClusters = survivors;
+}
+
+function initBoard() {
+  mineTape = [];
+  viewportRow = 0;
+  pitClusters = [];
+  cellToCluster = {};
+  extendMineTape(TAPE_INITIAL);
+  refreshBoardView();
+  // Foothold: 2 reachable air cells on tape row 0 (row 0 is reserved from
+  // cluster placement, so nothing to overwrite here).
+  const cols = [...Array(COLS).keys()].sort(() => Math.random() - 0.5);
+  for (let i = 0; i < 2; i++) mineTape[0][cols[i]] = 'empty';
+  recomputeReachability();
+}
+
+// ---------------------------------------------------------------------------
+// UI
+// ---------------------------------------------------------------------------
+function setTool(t) {
+  if (t !== 'pickaxe' && t !== 'bomb' && t !== 'drill') return;
+  tool = t;
+  document.querySelectorAll('.tool').forEach(el => {
+    el.classList.toggle('active', el.dataset.tool === t);
+  });
+}
+
+function onCellClick(r, c) {
+  let ok = false;
+  if (tool === 'pickaxe') ok = doPickaxe(r, c);
+  else if (tool === 'bomb') ok = doBomb(r, c);
+  else if (tool === 'drill') ok = doDrill(r, c);
+  if (ok) {
+    recomputeReachability();
+    checkAndMaybeScroll();
+  }
+  render();
+}
+
+function reset() {
+  inv = { ...INIT_INV };
+  stats = { score: 0, pits: 0, depth: 0, digs: 0, cost: 0 };
+  pitClusters = [];
+  cellToCluster = {};
+  document.getElementById('log').innerHTML = '';
+  initBoard();
+  log('<span class="info">🎮 新局開始：1000 鎬 / 10 炸彈 / 10 鑽頭</span>');
+  render();
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const div = document.createElement('div');
+      const lbl = board[r][c];
+      div.className = 'cell ' + lbl;
+      if (isFrontierDiggable(r, c)) div.classList.add('frontier');
+      div.textContent = SYMBOLS[lbl] ?? '?';
+      div.title = `(${r},${c}) ${lbl}`;
+      div.addEventListener('click', () => onCellClick(r, c));
+      grid.appendChild(div);
+    }
+  }
+  document.getElementById('score').textContent = stats.score;
+  document.getElementById('pits').textContent = stats.pits;
+  document.getElementById('depth').textContent = stats.depth;
+  document.getElementById('digs').textContent = stats.digs;
+  document.getElementById('cost').textContent = stats.cost;
+  document.getElementById('cpp').textContent = stats.pits > 0 ? (stats.cost / stats.pits).toFixed(2) : '-';
+  document.getElementById('pickaxe-count').textContent = inv.pickaxe;
+  document.getElementById('bomb-count').textContent = inv.bomb;
+  document.getElementById('drill-count').textContent = inv.drill;
+
+  document.querySelectorAll('.tool').forEach(el => {
+    const t = el.dataset.tool;
+    const c = inv[t === 'pickaxe' ? 'pickaxe' : t];
+    el.classList.toggle('disabled', c <= 0);
+  });
+
+  // Game over check
+  if (inv.pickaxe <= 0 && inv.bomb <= 0 && inv.drill <= 0) {
+    log('<span class="warn">🏁 遊戲結束！得分 ' + stats.score + ' / 礦坑 ' + stats.pits + ' / 深度 ' + stats.depth + '</span>');
+  }
+}
+
+function log(msg) {
+  const div = document.createElement('div');
+  div.className = 'line';
+  div.innerHTML = msg;
+  const logEl = document.getElementById('log');
+  logEl.insertBefore(div, logEl.firstChild);
+  // Cap log to ~100 entries
+  while (logEl.children.length > 120) logEl.removeChild(logEl.lastChild);
+}
+
+function copyBoardSnippet() {
+  const py = 'board = ' + JSON.stringify(board, null, 2)
+    .replace(/"/g, "'")
+    .replace(/\[\s+/g, '[').replace(/,\s*\n\s*/g, ', ').replace(/\s*\]/g, ']')
+    .replace(/\], \[/g, '],\n    [');
+  const items = "{'drill': " + inv.drill + ", 'bomb': " + inv.bomb + "}";
+  const snippet = `from miner.v4.planner import plan_v4\n${py}\nplan = plan_v4(board, shovels=${inv.pickaxe}, items=${items})\nprint(plan)`;
+  navigator.clipboard.writeText(snippet).then(
+    () => log('<span class="info">📋 棋盤已複製為 plan_v4(...) Python snippet</span>'),
+    () => log('<span class="warn">複製失敗，請手動複製：</span>'),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Suggestion (heuristic, not the real planner — the real one is in Python)
+// ---------------------------------------------------------------------------
+function suggest() {
+  // Count visible pits
+  let pitCount = 0;
+  for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (isPit(board[r][c])) pitCount++;
+  if (pitCount > 0) {
+    // find cheapest pit dig
+    let best = null;
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (isPit(board[r][c]) && isFrontierDiggable(r, c)) {
+          const cost = digCost(board[r][c]);
+          if (!best || cost < best.cost) best = { r, c, cost, kind: 'pit' };
+        }
+      }
+    }
+    if (best) {
+      log('<span class="info">💡 提示：直接挖礦坑 (' + best.r + ',' + best.c + ') cost=' + best.cost + '</span>');
+      return;
+    }
+    // need to dig wall toward a pit — find frontier near pit
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (!isFrontierDiggable(r, c)) continue;
+        for (const [nr, nc] of neighbors4(r, c)) {
+          if (isPit(board[nr][nc])) {
+            log('<span class="info">💡 提示：挖 (' + r + ',' + c + ') 接近礦坑 (' + nr + ',' + nc + ')</span>');
+            return;
+          }
+        }
+      }
+    }
+    log('<span class="info">💡 礦坑深埋，需要挖開多層牆</span>');
+  } else {
+    log('<span class="info">💡 沒礦坑，挖到 row 6 全部變空氣即下樓</span>');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Keyboard
+// ---------------------------------------------------------------------------
+window.addEventListener('keydown', (e) => {
+  if (e.key === '1') setTool('pickaxe');
+  else if (e.key === '2') setTool('bomb');
+  else if (e.key === '3') setTool('drill');
+  else if (e.key === 'r' || e.key === 'R') reset();
+});
+
+document.querySelectorAll('.tool').forEach(el => {
+  el.addEventListener('click', () => setTool(el.dataset.tool));
+});
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+reset();
+</script>
+</body>
+</html>

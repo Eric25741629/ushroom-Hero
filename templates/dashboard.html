@@ -1202,7 +1202,9 @@
 
               <option value="v2">v2（修補版）</option>
 
-              <option value="v3">v3（cluster-aware，最新）</option>
+              <option value="v3">v3（cluster-aware）</option>
+
+              <option value="v4">v4（5-step bounded，道具稀缺感知）</option>
 
             </select>
 
@@ -2566,9 +2568,9 @@
 
         if (plannerSelect) {
 
-          const plannerVer = String(config.mining_planner_version || 'v1').toLowerCase();
+          const plannerVer = String(config.mining_planner_version || 'v4').toLowerCase();
 
-          plannerSelect.value = ['v1','v2','v3'].includes(plannerVer) ? plannerVer : 'v1';
+          plannerSelect.value = ['v1','v2','v3','v4'].includes(plannerVer) ? plannerVer : 'v4';
 
         }
 
@@ -2644,7 +2646,7 @@
 
         sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
-        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
+        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v4',
 
         backend: document.getElementById('editBackend').value || 'adb',
 
