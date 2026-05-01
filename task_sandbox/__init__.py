@@ -15,6 +15,7 @@ from .schedule import (
     WeeklyOn,
 )
 from .spec import TaskContext, TaskResult, TaskSpec, VerifyResult
+from .runner import run_task
 
 __all__ = [
     "NavTarget",
@@ -30,4 +31,5 @@ __all__ = [
     "TaskContext",
     "TaskResult",
     "VerifyResult",
+    "run_task",
 ]
