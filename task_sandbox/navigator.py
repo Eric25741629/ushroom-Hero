@@ -42,8 +42,35 @@ def _main_page_handler(ctx: TaskContext, stage_resolver: StageResolver) -> bool:
     return stage_resolver(ctx) == "主頁面"
 
 
+def _lamp_page_handler(ctx: TaskContext, stage_resolver: StageResolver) -> bool:
+    """Drive main_page -> lamp_page by clicking the 神燈 icon.
+
+    Confirms arrival via OCR (waits for "召喚" to appear, which is the
+    lamp summon button visible only on the lamp page).
+    """
+    if stage_resolver(ctx) != "主頁面":
+        return False
+
+    import img_tools
+
+    found = img_tools.click_str_by_server(ctx.device, "神燈", wait_timeout=5)
+    if not found:
+        ctx.recorder.ocr_miss("神燈", detail="lamp icon not on main page")
+        return False
+    ctx.recorder.event("click", target="神燈", via="ocr")
+
+    import time as _time
+    _time.sleep(2.0)
+
+    arrived_text = img_tools.wait_for_any_text(
+        ctx.device, ["召喚"], timeout=10, click_if_found=False,
+    )
+    return bool(arrived_text)
+
+
 NAV_HANDLERS: dict[NavTarget, NavHandler] = {
     NavTarget.MAIN_PAGE: _main_page_handler,
+    NavTarget.LAMP_PAGE: _lamp_page_handler,
 }
 
 

@@ -64,3 +64,23 @@ def test_navigate_raises_after_repeated_failure(tmp_path: Path, monkeypatch):
             stage_resolver=stage_resolver,
             max_attempts=3,
         )
+
+
+def test_navigate_lamp_page_uses_overridden_handler(tmp_path: Path, monkeypatch):
+    d = FakeDevice()
+    ctx = _ctx(tmp_path, d)
+
+    stages = iter(["主頁面"] * 5)
+
+    def stage_resolver(_ctx):
+        return next(stages)
+
+    called = {"count": 0}
+
+    def fake_lamp_handler(_ctx, _resolver):
+        called["count"] += 1
+        return True
+
+    monkeypatch.setitem(nav_mod.NAV_HANDLERS, NavTarget.LAMP_PAGE, fake_lamp_handler)
+    navigate_to(ctx, NavTarget.LAMP_PAGE, stage_resolver=stage_resolver)
+    assert called["count"] == 1
