@@ -58,3 +58,6 @@ Untitled-*.ipynb
 
 # Temporary lamp verification samples
 tmp_lamp_verify/
+
+# task_sandbox session outputs (large screenshots/videos)
+runs/
