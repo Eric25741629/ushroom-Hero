@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 import threading
 import atexit
@@ -8,6 +9,12 @@ import time
 import glob
 
 from logging.handlers import RotatingFileHandler
+
+from utils.log_paths import LogPaths
+
+# A file already rotated by us has form `<base>.YYYYMMDD_HHMMSS[.N].log`.
+# We must NOT re-rotate it, otherwise filenames balloon to `name.t1.t2.t3.log`.
+_ROTATED_SUFFIX_RE = re.compile(r"\.\d{8}_\d{6}(?:\.\d+)?\.log$")
 
 
 class SafeRotatingFileHandler(RotatingFileHandler):
@@ -78,20 +85,55 @@ def _build_rotated_log_path(log_path: str, stamp: str) -> str:
         index += 1
 
 
+def _is_rotatable_active_log(name: str) -> bool:
+    """Only rotate active log files, never previously-rotated copies or sync-conflicts.
+
+    Active form: `<base>.log` (no embedded timestamp suffix).
+    Skip:
+      - already rotated: `<base>.YYYYMMDD_HHMMSS[.N].log`
+      - syncthing residue: `*sync-conflict-*.log`
+    """
+    if not name.endswith(".log"):
+        return False
+    if "sync-conflict" in name:
+        return False
+    if _ROTATED_SUFFIX_RE.search(name):
+        return False
+    return True
+
+
+_SKIP_ROTATE_SUBDIRS = {"_archive"}
+
+
+def _iter_active_log_files(log_dir: str):
+    """Walk log_dir + first-level device subdirs, yielding (parent, filename)
+    tuples for files that pass `_is_rotatable_active_log`."""
+    for name in sorted(os.listdir(log_dir)):
+        full = os.path.join(log_dir, name)
+        if os.path.isfile(full) and _is_rotatable_active_log(name):
+            yield log_dir, name
+            continue
+        if os.path.isdir(full) and name not in _SKIP_ROTATE_SUBDIRS:
+            for sub in sorted(os.listdir(full)):
+                sub_full = os.path.join(full, sub)
+                if os.path.isfile(sub_full) and _is_rotatable_active_log(sub):
+                    yield full, sub
+
+
 def rotate_existing_logs_once(log_dir: str = "logs") -> None:
-    """Rename existing .log files once per process so startup begins with fresh logs."""
+    """Rename existing active .log files once per process so startup begins with fresh logs.
+
+    Walks both `<log_dir>/*.log` (legacy flat layout) and `<log_dir>/<device>/*.log`
+    (per-device layout). Skips `_archive/` subtree.
+    """
     global _startup_logs_rotated
     with _logger_lock:
         if _startup_logs_rotated:
             return
         os.makedirs(log_dir, exist_ok=True)
         stamp = time.strftime("%Y%m%d_%H%M%S")
-        for name in sorted(os.listdir(log_dir)):
-            if not name.endswith(".log"):
-                continue
-            old_path = os.path.join(log_dir, name)
-            if not os.path.isfile(old_path):
-                continue
+        for parent, name in _iter_active_log_files(log_dir):
+            old_path = os.path.join(parent, name)
             try:
                 if os.path.getsize(old_path) <= 0:
                     continue
@@ -133,9 +175,13 @@ def _purge_old_files(pattern: str, max_age_days: int) -> None:
             continue
 
 
+_DEVICE_LOG_RETENTION_DAYS = 7
+
+
 def setup_logger_for_device(device_id: str) -> logging.Logger:
-    """Create a per-device logger writing to logs/<device>.log and console."""
-    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
+    """Create a per-device logger writing to logs/<device>/main.log and console."""
+    log_path = LogPaths.main_log(device_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _logger_lock:
         logger_name = f"logger_{device_id}"
@@ -145,9 +191,8 @@ def setup_logger_for_device(device_id: str) -> logging.Logger:
         logger_obj.setLevel(logging.INFO)
 
         formatter = _build_formatter()
-        log_file = f"logs/{safe_device_id}.log"
         file_handler = SafeRotatingFileHandler(
-            log_file,
+            str(log_path),
             maxBytes=10 * 1024 * 1024,
             backupCount=5,
             encoding='utf-8',
@@ -162,14 +207,16 @@ def setup_logger_for_device(device_id: str) -> logging.Logger:
 
         logger_obj.addHandler(file_handler)
         logger_obj.addHandler(console_handler)
+
+        _purge_old_files(str(log_path.parent / "main.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
         return logger_obj
 
 
 def get_or_create_ocr_logger(device_id: str) -> logging.Logger:
-    """Create a per-device OCR trace logger with aggressive size and age limits."""
-    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
-    log_dir = os.path.join("logs", "ocr_trace")
-    os.makedirs(log_dir, exist_ok=True)
+    """Create a per-device OCR trace logger writing to logs/<device>/ocr_trace.log."""
+    safe_device_id = LogPaths.safe_device_id(device_id)
+    log_path = LogPaths.ocr_trace_log(device_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _logger_lock:
         cached = _ocr_logger_cache.get(safe_device_id)
@@ -183,9 +230,8 @@ def get_or_create_ocr_logger(device_id: str) -> logging.Logger:
         logger_obj.setLevel(logging.INFO)
 
         formatter = _build_formatter()
-        log_file = os.path.join(log_dir, f"{safe_device_id}.log")
         file_handler = SafeRotatingFileHandler(
-            log_file,
+            str(log_path),
             maxBytes=512 * 1024,
             backupCount=4,
             encoding='utf-8',
@@ -195,14 +241,15 @@ def get_or_create_ocr_logger(device_id: str) -> logging.Logger:
         file_handler.setFormatter(formatter)
         logger_obj.addHandler(file_handler)
 
-        _purge_old_files(os.path.join(log_dir, f"{safe_device_id}.log*"), max_age_days=5)
+        _purge_old_files(str(log_path.parent / "ocr_trace.*.log"), max_age_days=5)
         _ocr_logger_cache[safe_device_id] = logger_obj
         return logger_obj
 
 
 def setup_miner_logger(device_id: str) -> logging.Logger:
-    """Create miner logger writing to logs/miner_<device>.log and console."""
-    safe_device_id = device_id.replace(":", "_").replace(" ", "_")
+    """Create miner logger writing to logs/<device>/miner.log and console."""
+    log_path = LogPaths.miner_log(device_id)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     with _logger_lock:
         logger_name = f"miner_{device_id}"
@@ -212,9 +259,8 @@ def setup_miner_logger(device_id: str) -> logging.Logger:
         logger_obj.setLevel(logging.INFO)
 
         formatter = _build_formatter()
-        log_file = f"logs/miner_{safe_device_id}.log"
         file_handler = SafeRotatingFileHandler(
-            log_file,
+            str(log_path),
             maxBytes=5 * 1024 * 1024,
             backupCount=3,
             encoding='utf-8',
@@ -227,6 +273,8 @@ def setup_miner_logger(device_id: str) -> logging.Logger:
 
         logger_obj.addHandler(file_handler)
         logger_obj.addHandler(console_handler)
+
+        _purge_old_files(str(log_path.parent / "miner.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
         return logger_obj
 
 
