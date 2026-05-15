@@ -7,7 +7,6 @@ import os
 import json
 import shutil
 import subprocess
-from functools import lru_cache
 from adb_operations import run_adb
 import requests
 import datetime
@@ -708,11 +707,32 @@ def _run_web_login_worker(ip: str, payload: dict):
 
             with _web_login_lock:
                 state = _normalize_web_login_state(ip)
-                state["last_message"] = "waiting for manual login / Resume"
+                state["last_message"] = "請在瀏覽器中完成登入，完成後直接關閉瀏覽器即可自動儲存 cookies"
 
-            page.pause()
-            context.storage_state(path=state_file)
-            context.close()
+            _state_saved = [False]
+
+            def _save_on_close(_page):
+                if not _state_saved[0]:
+                    try:
+                        context.storage_state(path=state_file)
+                        _state_saved[0] = True
+                    except Exception as _exc:
+                        app.logger.warning(f"[{ip}] page-close state save failed: {_exc}")
+
+            page.on("close", _save_on_close)
+
+            try:
+                page.pause()  # blocks until Resume clicked in Inspector
+                if not _state_saved[0]:
+                    context.storage_state(path=state_file)
+                    _state_saved[0] = True
+            except Exception:
+                pass  # browser closed by user — _save_on_close already ran
+
+            try:
+                context.close()
+            except Exception:
+                pass
 
         with _web_login_lock:
             state = _normalize_web_login_state(ip)
@@ -1367,6 +1387,48 @@ def start_web_login(ip):
         )
         t.start()
         return jsonify({"status": "ok", "message": "web login started", "ip": real_ip})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/devices/register", methods=["POST"])
+def register_device():
+    """Create a new web_h5 device entry and immediately start the manual login flow."""
+    import re
+    try:
+        data = request.get_json(silent=True) or {}
+        device_id = str(data.get("device_id", "")).strip()
+        if not device_id:
+            return jsonify({"status": "error", "message": "device_id is required"}), 400
+        if not re.match(r'^[A-Za-z0-9_\-\.]+$', device_id):
+            return jsonify({"status": "error", "message": "device_id 只能包含英數字、底線、連字號、點"}), 400
+
+        web_url = str(data.get("web_url", "")).strip() or "https://mushroomh5.acenetgame.com/"
+
+        config_manager.update_device_config(device_id, {
+            "name": device_id,
+            "backend": "web_h5",
+            "web_url": web_url,
+        })
+
+        with _web_login_lock:
+            state = _normalize_web_login_state(device_id)
+            if state.get("running"):
+                return jsonify({"status": "busy", "message": "web login is already running"}), 409
+
+        login_payload = {
+            "web_url": web_url,
+            "prefer_existing_state": False,
+            "backup_before_open": False,
+        }
+        t = threading.Thread(
+            target=_run_web_login_worker,
+            args=(device_id, login_payload),
+            daemon=True,
+            name=f"web-login-{device_id}",
+        )
+        t.start()
+        return jsonify({"status": "ok", "device_id": device_id})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 

@@ -14,19 +14,74 @@ from tools import click_white
 cc = OpenCC('t2s')   # 繁 -> 簡
 
 
-# 模糊比對（已不使用，保留避免外部引用錯誤）
-def fuzzy_match(ocr_text, target_list, min_match_ratio=0.6):
-    if not ocr_text:
-        return False
-    return False
-
-
 # 僅做繁->簡的等值比對所需的標準化
 def _norm(text: str) -> str:
     if text is None:
         return ""
     # 僅做：繁->簡 + 去除首尾空白
     return cc.convert(str(text)).strip()
+
+
+def _levenshtein(a: str, b: str) -> int:
+    """Edit distance using O(min(|a|,|b|)) space DP."""
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+    dp = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        prev = dp[0]
+        dp[0] = i
+        for j, cb in enumerate(b, 1):
+            cur = dp[j]
+            dp[j] = prev if ca == cb else min(prev + 1, dp[j] + 1, dp[j - 1] + 1)
+            prev = cur
+    return dp[-1]
+
+
+def _is_same_card_rel(box_rel_a, box_rel_b, x_th=0.05, y_th=0.08, *, debug_flag=False) -> bool:
+    """Decide whether two relative bboxes belong to the same shop-card.
+
+    Three checks (any one passes → same card):
+      1) Tight: centres within (x_th, y_th)
+      2) Loose: centres within (x_th*1.2, y_th*1.5)
+      3) IoU-like ratio of intersect/union ≥ 0.12
+
+    Returns False on any malformed bbox tuple.
+    """
+    try:
+        ax1, ay1, ax2, ay2 = box_rel_a
+        bx1, by1, bx2, by2 = box_rel_b
+    except Exception:
+        if debug_flag:
+            print(f"[DEBUG] _is_same_card_rel: invalid boxes {box_rel_a}, {box_rel_b}")
+        return False
+
+    acx, acy = (ax1 + ax2) / 2, (ay1 + ay2) / 2
+    bcx, bcy = (bx1 + bx2) / 2, (by1 + by2) / 2
+    dx, dy = abs(acx - bcx), abs(acy - bcy)
+
+    # 精準同一格中心判定
+    if dx < x_th and dy < y_th:
+        return True
+    # 次要容差（略微放寬，但不如以前寬）
+    if dx < x_th * 1.2 and dy < y_th * 1.5:
+        return True
+
+    # 使用交集面積比例做最後判斷，門檻調高到 0.12
+    inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
+    inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
+    inter_w, inter_h = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    union = area_a + area_b - inter_area
+    ratio = (inter_area / union) if union > 0 else 0.0
+    if debug_flag:
+        print(f"[DEBUG] _is_same_card_rel: dx={dx:.3f}, dy={dy:.3f}, iou_like={ratio:.3f}")
+    return ratio >= 0.12
 
 
 @dataclass
@@ -41,7 +96,6 @@ def buy_items(
     d: u2.Device,
     wanted_items: list,
     retry_num: int = 10,
-    stop_str: str = '',
     buy_duplicates: bool = True,
     early_scroll_on_no_match: bool = False,
     crop_height: int = 620,
@@ -59,23 +113,6 @@ def buy_items(
     sold_markers_s = [_norm(x) for x in ['已售罄', '已售', '售罄']]
     SOLD_COMMON_MISREAD = {'已售馨': '已售罄', '售馨': '售罄'}
 
-    def _levenshtein(a: str, b: str) -> int:
-        if a == b:
-            return 0
-        if not a:
-            return len(b)
-        if not b:
-            return len(a)
-        dp = list(range(len(b) + 1))
-        for i, ca in enumerate(a, 1):
-            prev = dp[0]
-            dp[0] = i
-            for j, cb in enumerate(b, 1):
-                cur = dp[j]
-                dp[j] = prev if ca == cb else min(prev + 1, dp[j] + 1, dp[j - 1] + 1)
-                prev = cur
-        return dp[-1]
-
     def is_sold_text(txt_norm: str) -> bool:
         if txt_norm in sold_markers_s:
             return True
@@ -87,45 +124,9 @@ def buy_items(
             for marker in sold_markers_s
         )
 
+    # Local alias preserves the old call sites' signature (debug_flag positional).
     def is_same_card_rel(box_rel_a, box_rel_b, x_th=0.05, y_th=0.08, debug_flag=False):
-        """
-        判定兩個相對 bbox 是否屬於同一張卡片。
-        調整：
-          - 收窄垂直容差 y_th，避免把畫面其他列的售罄標記誤判為該卡片的售罄。
-          - 微調近距離寬鬆條件比例。
-          - 提高交集面積門檻以減少誤配。
-        """
-        try:
-            ax1, ay1, ax2, ay2 = box_rel_a
-            bx1, by1, bx2, by2 = box_rel_b
-        except Exception:
-            if debug_flag:
-                print(f"[DEBUG] is_same_card_rel: invalid boxes {box_rel_a}, {box_rel_b}")
-            return False
-    
-        acx, acy = (ax1 + ax2) / 2, (ay1 + ay2) / 2
-        bcx, bcy = (bx1 + bx2) / 2, (by1 + by2) / 2
-        dx, dy = abs(acx - bcx), abs(acy - bcy)
-    
-        # 精準同一格中心判定
-        if dx < x_th and dy < y_th:
-            return True
-        # 次要容差（略微放寬，但不如以前寬）
-        if dx < x_th * 1.2 and dy < y_th * 1.5:
-            return True
-    
-        # 使用交集面積比例做最後判斷，門檻調高到 0.12
-        inter_x1, inter_y1 = max(ax1, bx1), max(ay1, by1)
-        inter_x2, inter_y2 = min(ax2, bx2), min(ay2, by2)
-        inter_w, inter_h = max(0.0, inter_x2 - inter_x1), max(0.0, inter_y2 - inter_y1)
-        inter_area = inter_w * inter_h
-        area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
-        area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
-        union = area_a + area_b - inter_area
-        ratio = (inter_area / union) if union > 0 else 0.0
-        if debug_flag:
-            print(f"[DEBUG] is_same_card_rel: dx={dx:.3f}, dy={dy:.3f}, iou_like={ratio:.3f}")
-        return ratio >= 0.12
+        return _is_same_card_rel(box_rel_a, box_rel_b, x_th, y_th, debug_flag=debug_flag)
 
     def prepare_log_path():
         if not log_ocr:
