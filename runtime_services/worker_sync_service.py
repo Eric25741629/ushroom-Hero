@@ -1,5 +1,6 @@
 import threading
 import time
+from urllib.parse import urlparse
 
 import requests
 
@@ -9,7 +10,34 @@ from device import get_adb_devices
 from worker_webhook_api import apply_remote_commands, normalize_master_url, resolve_worker_webhook_url
 
 
+# H5 修法：只對本機 HTTP 略過 verify；外網 HTTPS 必須驗證憑證以防中間人攻擊。
+# 如需自簽 cert，透過 `REQUESTS_CA_BUNDLE` 環境變數提供 CA 路徑。
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
 _worker_sync_thread_started = False
+
+
+def _should_verify_tls(url: str) -> bool:
+    """Decide whether requests should verify the TLS certificate for *url*.
+
+    Returns False only for clearly local-machine traffic (plain HTTP, or
+    localhost/loopback hosts). Any external HTTPS endpoint must verify
+    its certificate to prevent man-in-the-middle attacks.
+    """
+    if not url:
+        return True
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return True
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme == "http":
+        return False
+    if host in _LOCAL_HOSTS:
+        return False
+    return True
 
 
 def _get_float(config: dict, key: str, default: float, minimum: float = 0.1) -> float:
@@ -72,7 +100,7 @@ def _worker_sync_loop():
                         f"{master_url}/api/report_status",
                         json=payload,
                         timeout=sync_timeout_sec,
-                        verify=False,
+                        verify=_should_verify_tls(master_url),
                     )
                     next_report_at = now + 1.2
                 except Exception as e:
@@ -87,7 +115,7 @@ def _worker_sync_loop():
                         f"{master_url}/api/poll_commands",
                         json={"worker_id": worker_id, "ips": ips},
                         timeout=sync_timeout_sec,
-                        verify=False,
+                        verify=_should_verify_tls(master_url),
                     )
                     if resp.ok:
                         data = resp.json() if resp.content else {}
