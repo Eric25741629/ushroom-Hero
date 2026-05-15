@@ -20,19 +20,6 @@ class SkillEvaluator:
         self.config = config or OpenGoldConfig()
         self.has_lian_shan_equip = has_lian_shan_equip
     
-    def _safe_gt(self, a: Optional[float], b: Optional[float]) -> bool:
-        """安全的大於比較，處理 None 情況"""
-        if a is None and b is None:
-            return False
-        if a is not None and b is None:
-            return True
-        if a is None and b is not None:
-            return False
-        try:
-            return (a - b) > self.config.eps
-        except Exception:
-            return False
-    
     def _gt(self, a: Optional[float], b: Optional[float]) -> bool:
         """Helper: compare numeric with EPS"""
         return (a is not None and b is not None and (a - b) > self.config.eps) or (a is not None and b is None)

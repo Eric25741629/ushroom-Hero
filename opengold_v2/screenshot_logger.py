@@ -33,16 +33,19 @@ class ScreenshotLogger:
         self.folder = os.path.join(self.base_folder, self.device_id)
         os.makedirs(self.folder, exist_ok=True)
 
+    def _list_image_files(self) -> list:
+        """列出目錄內的所有圖片檔案，回傳完整路徑清單"""
+        return [
+            os.path.join(self.folder, f)
+            for f in os.listdir(self.folder)
+            if os.path.isfile(os.path.join(self.folder, f))
+            and f.endswith(('.jpg', '.jpeg', '.png'))
+        ]
+
     def _cleanup_old_files(self):
         """清理舊檔案，確保數量不超過上限"""
         try:
-            files = [
-                os.path.join(self.folder, f)
-                for f in os.listdir(self.folder)
-                if os.path.isfile(os.path.join(self.folder, f))
-                and f.endswith(('.jpg', '.jpeg', '.png'))
-            ]
-
+            files = self._list_image_files()
             if len(files) >= self.max_files:
                 files.sort(key=lambda x: os.path.getmtime(x))
                 to_delete = len(files) - self.max_files + 1
@@ -126,23 +129,14 @@ class ScreenshotLogger:
     def get_screenshot_count(self) -> int:
         """取得目前截圖數量"""
         try:
-            return sum(
-                1 for f in os.listdir(self.folder)
-                if os.path.isfile(os.path.join(self.folder, f))
-                and f.endswith(('.jpg', '.jpeg', '.png'))
-            )
+            return len(self._list_image_files())
         except Exception:
             return 0
 
     def clear_all(self):
         """清除所有截圖"""
         try:
-            files = [
-                os.path.join(self.folder, f)
-                for f in os.listdir(self.folder)
-                if os.path.isfile(os.path.join(self.folder, f))
-                and f.endswith(('.jpg', '.jpeg', '.png'))
-            ]
+            files = self._list_image_files()
             for f in files:
                 os.remove(f)
             print(f"[ScreenshotLogger] 已清除 {len(files)} 張截圖")

@@ -210,40 +210,6 @@ def analyze_skill_via_http(img_roi):
         return None
 
 
-def normalize_server_ocr_results(raw_ocr_results, img_shape=None):
-    """
-    將 server 回傳的 ocr_results 統一成舊版 client 使用的格式：
-    每項為 [poly, text, score]
-    - 若元素為 dict（新格式），會用 bbox 生成 poly（若有），並取 text/score
-    - 若元素為 list/tuple（舊格式），保持不變
-    - 其他情況會退回占位值
-    """
-    normalized = []
-    for r in (raw_ocr_results or []):
-        try:
-            if isinstance(r, dict):
-                text = r.get('text', '')
-                score = float(r.get('score', 0.0) or 0.0)
-                bbox = r.get('bbox', [])
-                if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-                    x1, y1, x2, y2 = bbox
-                    poly = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]])
-                else:
-                    # fallback: full-image polygon if img_shape provided
-                    if img_shape is not None and len(img_shape) >= 2:
-                        h, w = img_shape[:2]
-                        poly = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]])
-                    else:
-                        poly = np.array([[0,0],[0,0],[0,0],[0,0]])
-                normalized.append([poly, text, score])
-            elif isinstance(r, (list, tuple)) and len(r) >= 2:
-                normalized.append(r)
-            else:
-                normalized.append([np.array([[0,0],[0,0],[0,0],[0,0]]), str(r), 0.0])
-        except Exception:
-            normalized.append([np.array([[0,0],[0,0],[0,0],[0,0]]), '', 0.0])
-    return normalized
-
 def analyze_stage_via_http(img):
     """Use shared OCR stage routing with fallback across configured servers."""
     try:
