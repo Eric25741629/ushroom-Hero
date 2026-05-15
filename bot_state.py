@@ -1,4 +1,4 @@
-﻿import threading
+import threading
 import time
 import uuid
 import logging
@@ -585,17 +585,32 @@ def wait_online_check_result(req_id: str, timeout_sec: float = 120.0) -> Dict[st
 
 
 def clear_offline_devices():
-    """Remove devices whose status is OFFLINE."""
+    """Remove devices whose status is OFFLINE.
+
+    H7 fix: 兩段 lock 中間 device 可能已上線，必須在 per-device lock 內
+    重新驗證 status 仍為 OFFLINE 才能刪除，避免清掉活躍 device 的狀態。
+    同步清理之前漏掉的 per-device 結構（_manual_release_flags、_screenshot_windows）。
+    """
     with _global_lock:
         to_remove = [ip for ip, st in _states.items() if str(st.get("status")) == "OFFLINE"]
 
     for ip in to_remove:
         with get_device_lock(ip):
+            st = _states.get(ip)
+            if st is None or str(st.get("status")) != "OFFLINE":
+                # device 已重新上線或被別處刪除，跳過
+                continue
+            # per-device 結構（pause_events / *_flags）由 per-device lock 護衛
             _states.pop(ip, None)
             _pause_events.pop(ip, None)
             _skip_sleep_flags.pop(ip, None)
             _force_sleep_flags.pop(ip, None)
+        # _manual_release_flags / _screenshot_windows / _locks 在他處皆以
+        # _global_lock 保護（見 record_screenshot_time、set_manual_release 等），
+        # 結構變更也走 _global_lock 才不會與其他 reader/writer 競態。
         with _global_lock:
+            _manual_release_flags.pop(ip, None)
+            _screenshot_windows.pop(ip, None)
             _locks.pop(ip, None)
 
 
