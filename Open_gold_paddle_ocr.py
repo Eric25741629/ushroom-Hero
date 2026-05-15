@@ -15,8 +15,11 @@ from img_tools import (
     click_str_by_server,
     analyze_skill_via_http as shared_analyze_skill_via_http,
     analyze_stage_via_server as shared_analyze_stage_via_server,
-    get_all_text
+    get_all_text,
+    OCRError,
 )
+import logging as _logging
+_lamp_logger = _logging.getLogger(__name__)
 from config.paths import OCR_FAILS_DIR_STR
 from opengold_v2.lamp_loop_state import LampLoopAction, LampLoopState
 current_index = 0
@@ -80,7 +83,14 @@ def _read_int_from_roi(d, y1, y2, x1, x2):
         roi = img[y1:y2, x1:x2]
         if roi.size == 0:
             return None
-        texts = get_all_text(roi) or []
+        try:
+            texts = get_all_text(roi) or []
+        except OCRError as ocr_exc:
+            # OCR 本身壞了 — 不是「畫面沒文字」。記 warning 讓 log 區分。
+            _lamp_logger.warning(
+                f"[OCR] _read_int_from_roi pipeline error ({y1}:{y2},{x1}:{x2}): {ocr_exc}"
+            )
+            return None
         for t in texts:
             n = _safe_int(t)
             if n is not None:
@@ -202,11 +212,22 @@ def encode_image(img):
     return img_base64
 
 def analyze_skill_via_http(img_roi):
-    """Use shared OCR routing with fallback across configured servers."""
+    """Use shared OCR routing with fallback across configured servers.
+
+    Backward-compat wrapper: callers in this file historically treated
+    ``None`` as "OCR failed". The shared layer now raises ``OCRError`` for
+    that case while ``[]`` means "OCR ok, no text". We catch ``OCRError``
+    here so existing callers keep working, but log a warning so it's
+    distinguishable from a real empty result in logs.
+    """
     try:
         return shared_analyze_skill_via_http(img_roi, OCR_SERVER_URL=None)
+    except OCRError as e:
+        # OCR pipeline broken — different from "no text on screen".
+        _lamp_logger.warning(f"[OCR] analyze_skill_via_http failed (pipeline error): {e}")
+        return None
     except Exception as e:
-        print(f"HTTP 請求失敗: {e}")
+        _lamp_logger.warning(f"[OCR] analyze_skill_via_http unexpected error: {e}")
         return None
 
 
@@ -245,11 +266,19 @@ def normalize_server_ocr_results(raw_ocr_results, img_shape=None):
     return normalized
 
 def analyze_stage_via_http(img):
-    """Use shared OCR stage routing with fallback across configured servers."""
+    """Use shared OCR stage routing with fallback across configured servers.
+
+    Mirrors ``analyze_skill_via_http`` — ``OCRError`` (pipeline broken)
+    is distinguished from empty results via warning log, then converted
+    to ``None`` for backward compatibility.
+    """
     try:
         return shared_analyze_stage_via_server(img, OCR_SERVER_URL=None)
+    except OCRError as e:
+        _lamp_logger.warning(f"[OCR] analyze_stage_via_http failed (pipeline error): {e}")
+        return None
     except Exception as e:
-        print(f"HTTP 請求失敗: {e}")
+        _lamp_logger.warning(f"[OCR] analyze_stage_via_http unexpected error: {e}")
         return None
 
 

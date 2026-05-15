@@ -13,6 +13,20 @@ import inspect
 import threading
 logger = logging.getLogger(__name__)
 
+
+class OCRError(Exception):
+    """OCR server / pipeline failure (transport, parse, circuit-broken).
+
+    Raised when the OCR layer itself fails (e.g. network error, HTTP 5xx,
+    bad JSON, all servers in cooldown). Distinct from a successful OCR
+    call that returned no text — that case keeps returning ``[]``.
+    """
+
+
+class OCRServerUnavailable(OCRError):
+    """所有 OCR server 都失敗，已啟動 circuit breaker。"""
+
+
 OCR_SERVER_MAIN = "http://100.64.0.5:5001"
 OCR_SERVER_BACKUP = "http://100.64.0.7:5001"
 OCR_SERVER_LOCAL = "http://localhost:5001"
@@ -297,9 +311,10 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
                 logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器 due to error...")
             continue
 
-    # 所有伺服器均失敗，回傳詳細錯誤資訊
+    # 所有伺服器均失敗 → 上拋 OCRServerUnavailable，呼叫端用 try/except 區分
+    # 「OCR 本身壞了」 vs 「OCR 正常但畫面沒文字」（後者仍回傳 []）。
     logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
-    return {'success': False, 'error': 'all servers failed', 'errors': errors}
+    raise OCRServerUnavailable(f"all OCR servers failed: {errors}")
 
 
 def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
@@ -319,13 +334,23 @@ def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
         if img_cv is None:
             return []
 
-        res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
-        if res.get('success') is False:
+        try:
+            res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
+        except OCRError:
+            # OCR pipeline itself broken — propagate so callers can distinguish
+            # 「OCR 壞了」 vs 「OCR 正常但畫面沒文字」。歷史呼叫端可在外層 try/except
+            # 包成 None / [] 維持舊行為。
+            raise
+        if not res or res.get('success') is False:
+            # 成功但無結果（理論上不會走到，因為失敗已 raise）
+            logger.warning("get_all_text: response indicates no success but no exception raised")
             return []
         ocr_results = res.get('ocr_results', [])
         converter = opencc.OpenCC('s2t')
         texts = [converter.convert(item.get('text', '')) for item in ocr_results]
         return texts
+    except OCRError:
+        raise
     except Exception as e:
         logger.exception(f"get_all_text error: {e}")
         return []
@@ -366,7 +391,7 @@ def analyze_stage_via_server(img, OCR_SERVER_URL=None):
             errors.append(f"HTTP 請求失敗 to {srv}: {e}")
             continue
     logger.error(f"analyze_stage_via_server: all servers failed: {errors}")
-    return {'success': False, 'error': 'all servers failed', 'errors': errors}
+    raise OCRServerUnavailable(f"analyze_stage: all OCR servers failed: {errors}")
 def find_and_click(d, findImgPath, threshold=0.8, x=0, y=0):
     img = d.screenshot(format='opencv')
     if not os.path.exists("find_img"):
