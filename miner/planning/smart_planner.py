@@ -157,25 +157,35 @@ class SmartPlanner:
                         board[r][c] = label.replace("unreachable_", "")
 
     def get_valid_actions(self, state: SmartState) -> List[Dict]:
+        """H9 fix: 過濾掉成本超過剩餘 shovels 的動作，避免 simulate_action
+        產生 state.shovels < 0 的非法節點。"""
         actions = []
         R, C = len(state.board), len(state.board[0])
+        cost_pickaxe = self.config.cost_pickaxe
+        cost_item = self.config.cost_item
         for r in range(R):
             for c in range(C):
                 label = state.board[r][c]
                 # 只有真正暴露且非空氣的才能挖
                 if not is_air(label) and not label.startswith("unreachable_"):
+                    dig_cost = float(get_hp(label)) * cost_pickaxe
+                    if dig_cost > state.shovels:
+                        continue  # H9: 預算不足
                     actions.append({"type": "dig", "pos": (r, c)})
 
         # 道具必須放在可達空氣上
         air_cells = [(r, c) for r in range(R) for c in range(C) 
                      if is_air(state.board[r][c]) and not state.board[r][c].startswith("unreachable_")]
-        
-        if state.items.get('drill', 0) > 0:
+
+        # H9: 使用道具的 shovel 成本固定為 cost_item；預算不足就整批跳過
+        item_affordable = cost_item <= state.shovels
+
+        if state.items.get('drill', 0) > 0 and item_affordable:
             for r, c in air_cells:
                 if any(not is_air(state.board[nr][c]) for nr in range(r + 1, R)):
                     actions.append({"type": "use", "item": "drill", "pos": (r, c)})
 
-        if state.items.get('bomb', 0) > 0:
+        if state.items.get('bomb', 0) > 0 and item_affordable:
             for r, c in air_cells:
                 actions.append({"type": "use", "item": "bomb", "pos": (r, c)})
         
