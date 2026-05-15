@@ -1,10 +1,8 @@
-from sympy import N, det
 import device as D
 import time
 import numpy as np
 import easyocr
 import uiautomator2 as u2
-import winsound
 import cv2
 current_index = 0
 
