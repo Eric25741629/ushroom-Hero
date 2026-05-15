@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
-from torchvision import datasets, models
 from typing_extensions import Literal
 
 ClassName_cnn_model = Literal[

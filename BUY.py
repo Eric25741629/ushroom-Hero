@@ -41,7 +41,6 @@ def buy_items(
     d: u2.Device,
     wanted_items: list,
     retry_num: int = 10,
-    stop_str: str = '',
     buy_duplicates: bool = True,
     early_scroll_on_no_match: bool = False,
     crop_height: int = 620,

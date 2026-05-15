@@ -7,7 +7,6 @@ import os
 import json
 import shutil
 import subprocess
-from functools import lru_cache
 from adb_operations import run_adb
 import requests
 import datetime
