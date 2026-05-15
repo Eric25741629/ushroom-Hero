@@ -38,6 +38,9 @@ from runtime_services.device_runtime_service import ForceSleepRequested
 # 功能開關：規劃器是否允許使用鑽頭/炸彈道具。
 USE_ITEMS: bool = True
 
+# 連續拿到空 plan 的容忍上限，避免無限空轉。
+_MAX_EMPTY_PLANS: int = 3
+
 
 def _check_force_sleep(ip: str) -> None:
     if bot_state.check_force_sleep(ip):
@@ -351,6 +354,7 @@ def run(
     last_board_signature: Optional[Tuple[Tuple[str, ...], ...]] = None
 
     iterations = 0
+    consecutive_empty_plans = 0
     while count >= 1:
         _check_force_sleep(ip)
         if time.time() - start_time > max_duration_seconds:
@@ -398,11 +402,26 @@ def run(
         if not plan.get("ok"):
             miner_logger.warning(f"[Mining] 規劃失敗: {plan.get('message', '未知錯誤')}")
             miner_logger.warning(f"  剩餘寶箱: {plan.get('remaining_pits', '?')}, 底層開啟: {plan.get('floor7_open', '?')}")
+            consecutive_empty_plans += 1
+            if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
+                miner_logger.warning(
+                    f"[MiningService] 連續 {consecutive_empty_plans} 次取得空 plan，中止挖礦迴圈"
+                )
+                break
             continue
 
         if not plan.get("steps"):
             _diagnose_empty_plan(board, plan, miner_logger)
+            consecutive_empty_plans += 1
+            if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
+                miner_logger.warning(
+                    f"[MiningService] 連續 {consecutive_empty_plans} 次取得空 plan，中止挖礦迴圈"
+                )
+                break
             continue
+
+        # 拿到 non-empty plan，歸零空 plan 計數
+        consecutive_empty_plans = 0
 
         if _verify_items_pre_execution(
             d, plan, items_available, item_blacklist, zero_streaks, zero_streak_limit, miner_logger
