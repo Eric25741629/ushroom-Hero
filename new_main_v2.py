@@ -363,6 +363,12 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
 
 
 # 全域變數，用來管理運行中的執行緒
+# H6: 由 main thread (scan_and_start_devices) 與 device threads
+# (handle_connect_failure → refresh_adb_server) 同時讀寫，必須在
+# `_running_threads_lock` 保護下操作。鎖實際宣告於
+# ``runtime_services.thread_registry`` 以避免循環匯入。
+from runtime_services.thread_registry import running_threads_lock as _running_threads_lock  # noqa: E402
+
 _running_threads = {} # {ip: Thread}
 
 def temporary_reset_cycles():
