@@ -1,11 +1,14 @@
 """盤面分析與規劃相關函式。"""
 from __future__ import annotations
 
+import logging
 from heapq import heappop, heappush
 from math import inf
 from typing import Any, Dict, List, Optional, Tuple
 
 from miner.core.config import COST_TABLE, MINE_LABELS, REWARD_TABLE
+
+logger = logging.getLogger(__name__)
 
 Board = List[List[str]]
 Coordinate = Tuple[int, int]
@@ -493,7 +496,15 @@ def plan_collect_all_mines_then_descend_v2(
                                 best_adj_cost = path_to_adj
                                 best_adj_cell = (rr, cc)
                                 best_adj_target = (mr, mc)
-            except Exception:
+            except (IndexError, KeyError, ValueError, TypeError) as e:
+                # 邊界錯誤：座標越界、bd/dist 結構不一致、enter_cost 收到非預期型別。
+                # 故意不接 Exception，讓真正的 bug（AttributeError / NameError 等）暴露。
+                logger.debug(
+                    "[Planner v2] 鄰格候選搜尋忽略邊界錯誤 %s: %s; unrea=%s",
+                    type(e).__name__,
+                    e,
+                    unrea,
+                )
                 best_adj_cell = None
                 best_adj_cost = inf
 
