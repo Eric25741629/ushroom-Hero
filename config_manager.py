@@ -10,7 +10,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CONFIG_FILE = str(Path(__file__).resolve().parent / "bot_config.json")
-_config_lock = threading.Lock()
+# RLock 因 update_* 會在持有鎖時呼叫 load/save，需可重入。
+_config_lock = threading.RLock()
 
 # 預設的設備設定模板
 DEFAULT_DEVICE_CONFIG = {
@@ -279,50 +280,53 @@ def get_ocr_config() -> Dict[str, Any]:
 
 def update_ocr_config(new_settings: Dict[str, Any]):
     """更新 OCR 全域設定（寫入 bot_config.json 的 global.ocr）。"""
-    config = load_config()
-    if "global" not in config:
-        config["global"] = copy.deepcopy(DEFAULT_GLOBAL_CONFIG)
+    # 整段 load + modify + save 必須在同一個 critical section，
+    # 否則其他 thread 可能在中途以舊資料 save_config 蓋掉本次變更。
+    with _config_lock:
+        config = load_config()
+        if "global" not in config:
+            config["global"] = copy.deepcopy(DEFAULT_GLOBAL_CONFIG)
 
-    current = config["global"].get("ocr", copy.deepcopy(DEFAULT_OCR_CONFIG))
-    if not isinstance(current, dict):
-        current = copy.deepcopy(DEFAULT_OCR_CONFIG)
+        current = config["global"].get("ocr", copy.deepcopy(DEFAULT_OCR_CONFIG))
+        if not isinstance(current, dict):
+            current = copy.deepcopy(DEFAULT_OCR_CONFIG)
 
-    current.update(new_settings or {})
+        current.update(new_settings or {})
 
-    servers = current.get("servers", [])
-    if isinstance(servers, str):
-        servers = [s.strip() for s in servers.splitlines() if s.strip()]
-    if not isinstance(servers, list):
-        servers = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
-    current["servers"] = [str(s).strip().rstrip("/") for s in servers if str(s).strip()]
-    if not current["servers"]:
-        current["servers"] = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
+        servers = current.get("servers", [])
+        if isinstance(servers, str):
+            servers = [s.strip() for s in servers.splitlines() if s.strip()]
+        if not isinstance(servers, list):
+            servers = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
+        current["servers"] = [str(s).strip().rstrip("/") for s in servers if str(s).strip()]
+        if not current["servers"]:
+            current["servers"] = copy.deepcopy(DEFAULT_OCR_CONFIG["servers"])
 
-    current["server_mode"] = _enum_str(
-        current.get("server_mode", "main"), {"main", "backup", "auto"}, "main"
-    )
-    current["timeout_sec"] = max(
-        1, _to_int(current.get("timeout_sec"), DEFAULT_OCR_CONFIG["timeout_sec"])
-    )
-    current["img_decode_retries"] = max(
-        1, _to_int(current.get("img_decode_retries"), DEFAULT_OCR_CONFIG["img_decode_retries"])
-    )
-    current["ocr_empty_retries"] = max(
-        0, _to_int(current.get("ocr_empty_retries"), DEFAULT_OCR_CONFIG["ocr_empty_retries"])
-    )
-    current["retry_delay_sec"] = max(
-        0.0, _to_float(current.get("retry_delay_sec"), DEFAULT_OCR_CONFIG["retry_delay_sec"])
-    )
-    current["default_region_enabled"] = bool(current.get("default_region_enabled", False))
-    for key in ["default_x_range", "default_y_range"]:
-        val = current.get(key, [0, 0])
-        if not isinstance(val, list) or len(val) != 2:
-            val = [0, 0]
-        current[key] = [_to_int(val[0], 0), _to_int(val[1], 0)]
+        current["server_mode"] = _enum_str(
+            current.get("server_mode", "main"), {"main", "backup", "auto"}, "main"
+        )
+        current["timeout_sec"] = max(
+            1, _to_int(current.get("timeout_sec"), DEFAULT_OCR_CONFIG["timeout_sec"])
+        )
+        current["img_decode_retries"] = max(
+            1, _to_int(current.get("img_decode_retries"), DEFAULT_OCR_CONFIG["img_decode_retries"])
+        )
+        current["ocr_empty_retries"] = max(
+            0, _to_int(current.get("ocr_empty_retries"), DEFAULT_OCR_CONFIG["ocr_empty_retries"])
+        )
+        current["retry_delay_sec"] = max(
+            0.0, _to_float(current.get("retry_delay_sec"), DEFAULT_OCR_CONFIG["retry_delay_sec"])
+        )
+        current["default_region_enabled"] = bool(current.get("default_region_enabled", False))
+        for key in ["default_x_range", "default_y_range"]:
+            val = current.get(key, [0, 0])
+            if not isinstance(val, list) or len(val) != 2:
+                val = [0, 0]
+            current[key] = [_to_int(val[0], 0), _to_int(val[1], 0)]
 
-    config["global"]["ocr"] = current
-    save_config(config)
-    print("[Config] 已更新 OCR 全域設定")
+        config["global"]["ocr"] = current
+        save_config(config)
+        print("[Config] 已更新 OCR 全域設定")
 
 
 def save_config(config: Dict[str, Any]):
@@ -356,104 +360,107 @@ def get_device_config(ip: str) -> Dict[str, Any]:
 
 def update_device_config(ip: str, new_settings: Dict[str, Any]):
     """Update per-device config with validation/sanitization."""
-    config = load_config()
-    if "devices" not in config:
-        config["devices"] = {}
+    # 整段 load + modify + save 必須在同一個 critical section，
+    # 否則其他 thread 可能在中途以舊資料 save_config 蓋掉本次變更。
+    with _config_lock:
+        config = load_config()
+        if "devices" not in config:
+            config["devices"] = {}
 
-    current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
-    current.update(new_settings or {})
+        current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
+        current.update(new_settings or {})
 
-    current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5"}, "adb")
-    current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
-    current["web_url"] = str(current.get("web_url", "")).strip()
-    current["web_canvas_selector"] = (
-        str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
-    )
-    current["web_profile_dir"] = (
-        str(current.get("web_profile_dir", "playwright_profile/{device_id}")).strip()
-        or "playwright_profile/{device_id}"
-    )
-    current["web_state_file"] = (
-        str(current.get("web_state_file", "auth_state/{device_id}.json")).strip()
-        or "auth_state/{device_id}.json"
-    )
-    current["web_channel"] = str(current.get("web_channel", "chrome")).strip() or "chrome"
-    current["web_headless"] = _to_bool(current.get("web_headless", False), False)
-    current["web_clear_cookies_on_start"] = _to_bool(
-        current.get("web_clear_cookies_on_start", False), False
-    )
-    current["web_viewport_width"] = _clamp_int(
-        current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
-    )
-    current["web_viewport_height"] = _clamp_int(
-        current.get("web_viewport_height"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_height"]
-    )
-    current["web_manual_viewport_width"] = _clamp_int(
-        current.get("web_manual_viewport_width"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_width"]
-    )
-    current["web_manual_viewport_height"] = _clamp_int(
-        current.get("web_manual_viewport_height"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_height"]
-    )
-    # keep_page / blank / close / close_page / close_browser
-    current["web_stop_mode"] = _enum_str(
-        current.get("web_stop_mode", "keep_page"),
-        {"keep_page", "blank", "close", "close_page", "close_browser"},
-        "keep_page",
-    )
-    current["web_screenshot_method"] = _enum_str(
-        current.get("web_screenshot_method", "playwright"),
-        {"playwright", "canvas_capture"},
-        "playwright",
-    )
-    current["online_check_interval"] = _clamp_int(
-        current.get("online_check_interval"), 1, 60, DEFAULT_DEVICE_CONFIG["online_check_interval"]
-    )
-    current["lamp_check_interval"] = _clamp_int(
-        current.get("lamp_check_interval"), 1, 24, DEFAULT_DEVICE_CONFIG["lamp_check_interval"]
-    )
-    current["lamp_duration_sec"] = _clamp_int(
-        current.get("lamp_duration_sec"), 30, 3600, DEFAULT_DEVICE_CONFIG["lamp_duration_sec"]
-    )
-    current["mining_duration_min"] = _clamp_int(
-        current.get("mining_duration_min"), 1, 60, DEFAULT_DEVICE_CONFIG["mining_duration_min"]
-    )
-    current["mining_planner_version"] = _enum_str(
-        current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
-        {"v1", "v2", "v3", "v4"},
-        "v1",
-    )
-    current["mining_save_samples"] = _to_bool(
-        current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
-        DEFAULT_DEVICE_CONFIG["mining_save_samples"],
-    )
-    _sleep_min = _clamp_float(
-        current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
-    )
-    _sleep_max = _clamp_float(
-        current.get("sleep_max_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_max_hours"]
-    )
-    current["sleep_min_hours"] = _sleep_min
-    current["sleep_max_hours"] = max(_sleep_min, _sleep_max)
-    for k in [
-        "enable_farm",
-        "enable_arena",
-        "enable_mining",
-        "enable_dungeon",
-        "enable_shop_manager",
-        "enable_dungeon_manager",
-        "is_real_phone",
-        "keep_screen_on",
-        "screenshot_debug",
-        "use_opengold_v2",
-    ]:
-        if k in current:
-            current[k] = bool(current[k])
+        current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5"}, "adb")
+        current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
+        current["web_url"] = str(current.get("web_url", "")).strip()
+        current["web_canvas_selector"] = (
+            str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
+        )
+        current["web_profile_dir"] = (
+            str(current.get("web_profile_dir", "playwright_profile/{device_id}")).strip()
+            or "playwright_profile/{device_id}"
+        )
+        current["web_state_file"] = (
+            str(current.get("web_state_file", "auth_state/{device_id}.json")).strip()
+            or "auth_state/{device_id}.json"
+        )
+        current["web_channel"] = str(current.get("web_channel", "chrome")).strip() or "chrome"
+        current["web_headless"] = _to_bool(current.get("web_headless", False), False)
+        current["web_clear_cookies_on_start"] = _to_bool(
+            current.get("web_clear_cookies_on_start", False), False
+        )
+        current["web_viewport_width"] = _clamp_int(
+            current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
+        )
+        current["web_viewport_height"] = _clamp_int(
+            current.get("web_viewport_height"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_height"]
+        )
+        current["web_manual_viewport_width"] = _clamp_int(
+            current.get("web_manual_viewport_width"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_width"]
+        )
+        current["web_manual_viewport_height"] = _clamp_int(
+            current.get("web_manual_viewport_height"), 0, 4096, DEFAULT_DEVICE_CONFIG["web_manual_viewport_height"]
+        )
+        # keep_page / blank / close / close_page / close_browser
+        current["web_stop_mode"] = _enum_str(
+            current.get("web_stop_mode", "keep_page"),
+            {"keep_page", "blank", "close", "close_page", "close_browser"},
+            "keep_page",
+        )
+        current["web_screenshot_method"] = _enum_str(
+            current.get("web_screenshot_method", "playwright"),
+            {"playwright", "canvas_capture"},
+            "playwright",
+        )
+        current["online_check_interval"] = _clamp_int(
+            current.get("online_check_interval"), 1, 60, DEFAULT_DEVICE_CONFIG["online_check_interval"]
+        )
+        current["lamp_check_interval"] = _clamp_int(
+            current.get("lamp_check_interval"), 1, 24, DEFAULT_DEVICE_CONFIG["lamp_check_interval"]
+        )
+        current["lamp_duration_sec"] = _clamp_int(
+            current.get("lamp_duration_sec"), 30, 3600, DEFAULT_DEVICE_CONFIG["lamp_duration_sec"]
+        )
+        current["mining_duration_min"] = _clamp_int(
+            current.get("mining_duration_min"), 1, 60, DEFAULT_DEVICE_CONFIG["mining_duration_min"]
+        )
+        current["mining_planner_version"] = _enum_str(
+            current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
+            {"v1", "v2", "v3", "v4"},
+            "v1",
+        )
+        current["mining_save_samples"] = _to_bool(
+            current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
+            DEFAULT_DEVICE_CONFIG["mining_save_samples"],
+        )
+        _sleep_min = _clamp_float(
+            current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
+        )
+        _sleep_max = _clamp_float(
+            current.get("sleep_max_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_max_hours"]
+        )
+        current["sleep_min_hours"] = _sleep_min
+        current["sleep_max_hours"] = max(_sleep_min, _sleep_max)
+        for k in [
+            "enable_farm",
+            "enable_arena",
+            "enable_mining",
+            "enable_dungeon",
+            "enable_shop_manager",
+            "enable_dungeon_manager",
+            "is_real_phone",
+            "keep_screen_on",
+            "screenshot_debug",
+            "use_opengold_v2",
+        ]:
+            if k in current:
+                current[k] = bool(current[k])
 
-    current["name"] = str(current.get("name", ip)).strip() or ip
+        current["name"] = str(current.get("name", ip)).strip() or ip
 
-    config["devices"][ip] = current
-    save_config(config)
-    print(f"[Config] Updated device config: {ip} ({current.get('name')})")
+        config["devices"][ip] = current
+        save_config(config)
+        print(f"[Config] Updated device config: {ip} ({current.get('name')})")
 
 
 def get_flag(ip: str, key: str, default=False) -> bool:
