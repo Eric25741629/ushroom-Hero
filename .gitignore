@@ -58,3 +58,6 @@ Untitled-*.ipynb
 
 # Temporary lamp verification samples
 tmp_lamp_verify/
+
+# Persistent web session token (Codex review H3 — must not be committed)
+mushroom_session*.json
