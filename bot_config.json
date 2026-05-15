@@ -270,6 +270,8 @@
                 "master_url": "http://127.0.0.1:5002",
                 "worker_id": "laptop_worker"
             }
-        }
+        },
+        "worker_sync_timeout_sec": 10.0,
+        "worker_sync_failure_backoff_sec": 6.0
     }
 }

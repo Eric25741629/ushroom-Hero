@@ -62,3 +62,6 @@ tmp_lamp_verify/
 
 # task_sandbox session outputs (large screenshots/videos)
 runs/
+
+# Persistent web session token (Codex review H3 — must not be committed)
+mushroom_session*.json

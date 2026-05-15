@@ -6,6 +6,8 @@ from typing import Optional
 import bot_state
 import config_manager
 from device import get_adb_devices
+# H6: 共用 running_threads lock，避免讀/迭代/修改時與其他執行緒競爭。
+from runtime_services.thread_registry import running_threads_lock as _running_threads_lock
 
 
 _FIXED_EMULATORS = ["emulator-5554", "emulator-5556", "emulator-5558", "emulator-5560"]
@@ -20,7 +22,10 @@ def refresh_adb_server(running_threads: dict, logger_obj, hard_reset: bool = Fal
     paused_devices = []
     try:
         if hard_reset:
-            for other_ip, th in list(running_threads.items()):
+            # H6: snapshot 字典後在鎖外處理，避免 set_pause 期間長時間持鎖。
+            with _running_threads_lock:
+                snapshot = list(running_threads.items())
+            for other_ip, th in snapshot:
                 if other_ip == exclude_device:
                     continue
                 if th is None or not th.is_alive():
@@ -172,29 +177,32 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oralce_cnn
 
     current_devices = [d for d in current_devices if d in monitored_set]
 
-    stopped_ips = []
-    for ip, thread in running_threads.items():
-        if not thread.is_alive():
-            print(f"[System] 設備 {ip} 的執行緒已結束")
-            stopped_ips.append(ip)
+    # H6: snapshot 與所有讀/寫 running_threads 的操作都在鎖內，
+    # 避免 main thread 與 device thread 同時觸碰造成資料競爭。
+    with _running_threads_lock:
+        stopped_ips = []
+        for ip, thread in list(running_threads.items()):
+            if not thread.is_alive():
+                print(f"[System] 設備 {ip} 的執行緒已結束")
+                stopped_ips.append(ip)
 
-    for ip in stopped_ips:
-        del running_threads[ip]
+        for ip in stopped_ips:
+            del running_threads[ip]
 
-    for ip in current_devices:
-        should_start = False
-        if ip not in running_threads:
-            should_start = True
-        elif not running_threads[ip].is_alive():
-            should_start = True
+        for ip in current_devices:
+            should_start = False
+            if ip not in running_threads:
+                should_start = True
+            elif not running_threads[ip].is_alive():
+                should_start = True
 
-        if should_start:
-            print(f"[System] 發現新設備或重連設備: {ip}，正在啟動掛機執行緒...")
-            t = threading.Thread(
-                target=main_fn,
-                args=(ip, cnn_model, oralce_cnn_model, oralce_classes, ocr),
-                name=f"Bot-{ip}",
-                daemon=True,
-            )
-            t.start()
-            running_threads[ip] = t
+            if should_start:
+                print(f"[System] 發現新設備或重連設備: {ip}，正在啟動掛機執行緒...")
+                t = threading.Thread(
+                    target=main_fn,
+                    args=(ip, cnn_model, oralce_cnn_model, oralce_classes, ocr),
+                    name=f"Bot-{ip}",
+                    daemon=True,
+                )
+                t.start()
+                running_threads[ip] = t

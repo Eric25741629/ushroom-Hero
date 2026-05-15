@@ -13,6 +13,20 @@ import inspect
 import threading
 logger = logging.getLogger(__name__)
 
+
+class OCRError(Exception):
+    """OCR server / pipeline failure (transport, parse, circuit-broken).
+
+    Raised when the OCR layer itself fails (e.g. network error, HTTP 5xx,
+    bad JSON, all servers in cooldown). Distinct from a successful OCR
+    call that returned no text — that case keeps returning ``[]``.
+    """
+
+
+class OCRServerUnavailable(OCRError):
+    """所有 OCR server 都失敗，已啟動 circuit breaker。"""
+
+
 OCR_SERVER_MAIN = "http://100.64.0.5:5001"
 OCR_SERVER_BACKUP = "http://100.64.0.7:5001"
 OCR_SERVER_LOCAL = "http://localhost:5001"
@@ -243,8 +257,9 @@ def _call_ocr_endpoint(
 ):
     """Shared multi-server OCR POST loop with circuit-breaker + fallback.
 
-    Returns the server JSON on first 200, or {"success": False, "error": ..., "errors": [...]}
-    when every configured server has been exhausted.
+    Returns the server JSON on the first 200 response. Raises OCRServerUnavailable
+    when every configured server has been exhausted, so callers can distinguish
+    "OCR pipeline broken" from "OCR ran but found no text".
     """
     caller_file, caller_line, caller_function = _capture_caller_info()
 
@@ -320,7 +335,7 @@ def _call_ocr_endpoint(
         logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
     else:
         logger.error(f"{final_error_label}: all servers failed: {errors}")
-    return {"success": False, "error": "all servers failed", "errors": errors}
+    raise OCRServerUnavailable(f"{final_error_label}: {errors}")
 
 
 def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
@@ -330,7 +345,7 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
         img_roi: ROI 圖片 (OpenCV ndarray)
         OCR_SERVER_URL: 可選的主要 OCR 服務器 URL (例如 "http://100.64.0.5:5000")
 
-    回傳: server json 或 {'success': False, 'error': ...}
+    回傳: server json。所有 server 失敗時 raise OCRServerUnavailable。
     """
     return _call_ocr_endpoint(
         img_roi,
@@ -358,20 +373,31 @@ def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
         if img_cv is None:
             return []
 
-        res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
-        if res.get('success') is False:
+        try:
+            res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
+        except OCRError:
+            # OCR pipeline itself broken — propagate so callers can distinguish
+            # 「OCR 壞了」 vs 「OCR 正常但畫面沒文字」。歷史呼叫端可在外層 try/except
+            # 包成 None / [] 維持舊行為。
+            raise
+        if not res or res.get('success') is False:
+            # 成功但無結果（理論上不會走到，因為失敗已 raise）
+            logger.warning("get_all_text: response indicates no success but no exception raised")
             return []
         ocr_results = res.get('ocr_results', [])
         converter = opencc.OpenCC('s2t')
         texts = [converter.convert(item.get('text', '')) for item in ocr_results]
         return texts
+    except OCRError:
+        raise
     except Exception as e:
         logger.exception(f"get_all_text error: {e}")
         return []
 
 
 def analyze_stage_via_server(img, OCR_SERVER_URL=None):
-    """Call remote stage analyzer endpoint. Returns server JSON or {'success': False}.
+    """Call remote stage analyzer endpoint. Returns server JSON on success,
+    raises OCRServerUnavailable when every server has been exhausted.
     Falls back across configured servers similar to analyze_skill_via_http.
     """
     return _call_ocr_endpoint(

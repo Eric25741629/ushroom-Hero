@@ -43,6 +43,12 @@ _remote_commands = {}
 # Master 模式：全域指令 (發給所有 Worker)
 _global_commands = {"refresh_needed": False}
 _worker_webhook_endpoints = {}
+
+# 保護 _remote_commands / _global_commands / _worker_webhook_endpoints。
+# Flask worker thread (poll_commands, report_status, queue_command) 與背景
+# timer thread (reset_flag) 並發存取這三個 dict。RLock 允許 nested critical
+# section。HTTP I/O 一律在鎖外執行：先在鎖內 snapshot，釋放鎖後再 requests.post。
+_commands_lock = threading.RLock()
 _state_maintenance_started = False
 
 _labeler_lock = threading.Lock()
@@ -947,37 +953,36 @@ def poll_commands():
         worker_id = data.get("worker_id")
         ips = data.get("ips", [])
 
-        # --- 1. 處理全域指令 ---
-        global_resp = {}
-        if _global_commands["refresh_needed"]:
-            global_resp["refresh_needed"] = True
-            # 注意：這裡不能立刻設為 False，否則其他 Worker 就收不到了
-            # 我們改用時間戳或一個計數器，這裡簡化處理：讓 Worker 自己決定是否刷新
-            pass
+        # --- 1+2 在同一把鎖內完成快照，避免讀寫競態 ---
+        with _commands_lock:
+            global_resp = {}
+            if _global_commands["refresh_needed"]:
+                global_resp["refresh_needed"] = True
+                # 注意：這裡不能立刻設為 False，否則其他 Worker 就收不到了
 
-        # --- 2. 處理特定設備指令 ---
-        response_cmds = {}
-        # ... (中間 ips 迴圈邏輯保持不變) ...
-        for ip in ips:
-            remote_id = f"{worker_id}:{ip}"
-            if remote_id in _remote_commands:
-                response_cmds[ip] = _remote_commands[remote_id].copy()
-                # 對於 skip_sleep 這種一次性指令，讀取後刪除
-                if "skip_sleep" in _remote_commands[remote_id]:
-                    del _remote_commands[remote_id]["skip_sleep"]
-                if "recover" in _remote_commands[remote_id]:
-                    del _remote_commands[remote_id]["recover"]
-                if "manual_release" in _remote_commands[remote_id]:
-                    del _remote_commands[remote_id]["manual_release"]
-                if "force_sleep" in _remote_commands[remote_id]:
-                    del _remote_commands[remote_id]["force_sleep"]
+            response_cmds = {}
+            for ip in ips:
+                remote_id = f"{worker_id}:{ip}"
+                if remote_id in _remote_commands:
+                    response_cmds[ip] = _remote_commands[remote_id].copy()
+                    # 對於 skip_sleep 這種一次性指令，讀取後刪除
+                    if "skip_sleep" in _remote_commands[remote_id]:
+                        del _remote_commands[remote_id]["skip_sleep"]
+                    if "recover" in _remote_commands[remote_id]:
+                        del _remote_commands[remote_id]["recover"]
+                    if "manual_release" in _remote_commands[remote_id]:
+                        del _remote_commands[remote_id]["manual_release"]
+                    if "force_sleep" in _remote_commands[remote_id]:
+                        del _remote_commands[remote_id]["force_sleep"]
+
+            refresh_snapshot = _global_commands["refresh_needed"]
 
         return jsonify(
             {
                 "status": "ok",
                 "commands": response_cmds,
                 "global_commands": {
-                    "refresh_needed": _global_commands["refresh_needed"]
+                    "refresh_needed": refresh_snapshot
                 },
             }
         )
@@ -986,7 +991,9 @@ def poll_commands():
 
 
 def _push_to_worker_webhook(worker_id: str, payload: dict) -> bool:
-    endpoint = (_worker_webhook_endpoints.get(worker_id) or {}).get("url", "")
+    # snapshot endpoint URL under lock，HTTP call 放在鎖外
+    with _commands_lock:
+        endpoint = (_worker_webhook_endpoints.get(worker_id) or {}).get("url", "")
     if not endpoint:
         return False
     try:
@@ -1000,28 +1007,33 @@ def _push_remote_command_if_possible(remote_id: str):
     if ":" not in remote_id:
         return
     worker_id, device_ip = remote_id.split(":", 1)
-    queued = _remote_commands.get(remote_id)
-    if not isinstance(queued, dict) or not queued:
-        return
-
-    payload = {
-        "worker_id": worker_id,
-        "commands": {device_ip: copy.deepcopy(queued)},
-        "global_commands": {"refresh_needed": _global_commands["refresh_needed"]},
-    }
+    # 鎖內 snapshot；HTTP push 與後續 one-shot 消費分開兩段鎖
+    with _commands_lock:
+        queued = _remote_commands.get(remote_id)
+        if not isinstance(queued, dict) or not queued:
+            return
+        payload = {
+            "worker_id": worker_id,
+            "commands": {device_ip: copy.deepcopy(queued)},
+            "global_commands": {"refresh_needed": _global_commands["refresh_needed"]},
+        }
     pushed = _push_to_worker_webhook(worker_id, payload)
     if not pushed:
         return
 
-    # one-shot commands are consumed after successful push
-    if "skip_sleep" in queued:
-        del queued["skip_sleep"]
-    if "recover" in queued:
-        del queued["recover"]
-    if "manual_release" in queued:
-        del queued["manual_release"]
-    if "force_sleep" in queued:
-        del queued["force_sleep"]
+    with _commands_lock:
+        queued = _remote_commands.get(remote_id)
+        if not isinstance(queued, dict):
+            return
+        # one-shot commands are consumed after successful push
+        if "skip_sleep" in queued:
+            del queued["skip_sleep"]
+        if "recover" in queued:
+            del queued["recover"]
+        if "manual_release" in queued:
+            del queued["manual_release"]
+        if "force_sleep" in queued:
+            del queued["force_sleep"]
 
 
 @app.route("/api/refresh_devices", methods=["POST"])
@@ -1044,8 +1056,10 @@ def refresh_devices():
     bot_state.set_refresh_needed()
 
     # 2. 通知所有遠端 Worker
-    _global_commands["refresh_needed"] = True
-    for worker_id in list(_worker_webhook_endpoints.keys()):
+    with _commands_lock:
+        _global_commands["refresh_needed"] = True
+        worker_ids_snapshot = list(_worker_webhook_endpoints.keys())
+    for worker_id in worker_ids_snapshot:
         _push_to_worker_webhook(
             worker_id,
             {
@@ -1058,7 +1072,8 @@ def refresh_devices():
     # 3. 設定一個計時器，15 秒後把全域刷新 Flag 關掉 (確保所有 Worker 都有機會讀到)
     def reset_flag():
         time.sleep(15)
-        _global_commands["refresh_needed"] = False
+        with _commands_lock:
+            _global_commands["refresh_needed"] = False
         print("[Master] 全域刷新 Flag 已重置")
 
     threading.Thread(target=reset_flag, daemon=True).start()
@@ -1172,10 +1187,11 @@ def report_status():
             worker_id = str(meta.get("worker_id") or "").strip()
             webhook_url = str(meta.get("webhook_url") or "").strip()
             if worker_id and webhook_url.startswith(("http://", "https://")):
-                _worker_webhook_endpoints[worker_id] = {
-                    "url": webhook_url,
-                    "updated_at": time.time(),
-                }
+                with _commands_lock:
+                    _worker_webhook_endpoints[worker_id] = {
+                        "url": webhook_url,
+                        "updated_at": time.time(),
+                    }
 
         # 處理特殊指令
         if "__CMD__" in data:
@@ -1218,9 +1234,10 @@ def report_status():
 def queue_command(ip, cmd_key, cmd_val):
     """將指令加入佇列 (針對遠端) 或直接執行 (針對本地)"""
     if ":" in ip:
-        if ip not in _remote_commands:
-            _remote_commands[ip] = {}
-        _remote_commands[ip][cmd_key] = cmd_val
+        with _commands_lock:
+            if ip not in _remote_commands:
+                _remote_commands[ip] = {}
+            _remote_commands[ip][cmd_key] = cmd_val
         _push_remote_command_if_possible(ip)
     else:
         # 本地設備

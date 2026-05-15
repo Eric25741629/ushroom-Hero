@@ -28,13 +28,21 @@ def call_local_model(prompt):
         "stream": False
     }
     print("🧠 正在呼叫 AI 模型思考並改寫演算法...")
+    # connect=5s, read=60s。本地模型通常不會這麼久，但避免被吊死，逾時即回傳 None。
     try:
-        response = requests.post(url, json=payload)
+        response = requests.post(url, json=payload, timeout=(5, 60))
         response.raise_for_status()
         return response.json().get("response", "")
+    except requests.exceptions.Timeout as e:
+        print(f"❌ 呼叫模型逾時 (connect=5s/read=60s)：{e}")
+        return None
+    except requests.exceptions.RequestException as e:
+        print(f"❌ 呼叫模型失敗 (請確認您的模型 API 是否啟動)：{e}")
+        return None
     except Exception as e:
-        print(f"❌ 呼叫模型失敗 (請確認您的模型 API 是否啟動): {e}")
-        return ""
+        # 保留 fallback，但只記錄；非 requests 例外不應被靜默吞掉。
+        print(f"❌ 呼叫模型發生未預期錯誤：{e!r}")
+        return None
 
 def evolve_algorithm(stats):
     code = read_current_code()

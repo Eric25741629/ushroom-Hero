@@ -1233,15 +1233,44 @@ def get_alive_web_device(ip: str) -> "Optional[PlaywrightGameDevice]":
 
 
 def close_all_web_devices(logger_obj: Optional[logging.Logger] = None) -> None:
-    """Close all registered web_h5 devices and clear registry."""
+    """Close all registered web_h5 devices and clear registry.
+
+    H8 fix: Playwright sync API 是 thread-affine。greenlet dispatcher 在 owner
+    thread 的 event loop 上跑，從外部 thread 呼叫 `device.close()` 會踩到
+    "Sync API inside the asyncio loop" 或更隱晦的 dispatcher 殭屍狀態。
+
+    若呼叫端不是 owner thread（典型情境：Ctrl+C handler 從主執行緒 fan-out 給
+    所有裝置），這裡只清空 registry 並警告——process 結束時 OS 會回收
+    Playwright 子進程，硬 close 帶來的風險大於收益。長期應透過 stop event
+    讓 owner thread 自行清理。
+    """
     log = logger_obj or logger
+    current_tid = threading.get_ident()
     with _WEB_DEVICE_LOCK:
         devices = list(_WEB_DEVICE_REGISTRY.items())
-        _WEB_DEVICE_REGISTRY.clear()
+    # 不在這裡 clear registry：被 skip 的非 owner-thread device 仍由 owner thread
+    # 的 finally 自行 close 並從 registry 移除。如果在這裡直接 clear，當 owner
+    # thread 沒走到 finally（被卡住或其他原因），browser context 就成孤兒。
+    closed_or_attempted = []
     for ip, device in devices:
+        owner_tid = getattr(device, "owner_thread_id", None)
+        if owner_tid is not None and owner_tid != current_tid:
+            log.warning(
+                f"[{ip}] close_all_web_devices: caller tid={current_tid} != "
+                f"device owner tid={owner_tid}; skipping hard close to avoid "
+                f"Playwright thread-affinity violation. Owner thread should "
+                f"close on its way out; process exit will reap if not."
+            )
+            continue
         try:
             device.close()
         except Exception as exc:
             log.warning(
                 f"[{ip}] close web_h5 device failed during global shutdown: {exc}"
             )
+        # close 成功或丟例外都視為「已嘗試」，從 registry 移除
+        closed_or_attempted.append(ip)
+    if closed_or_attempted:
+        with _WEB_DEVICE_LOCK:
+            for ip in closed_or_attempted:
+                _WEB_DEVICE_REGISTRY.pop(ip, None)
