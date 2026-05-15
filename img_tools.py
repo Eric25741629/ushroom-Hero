@@ -222,6 +222,107 @@ def encode_image(img):
     img_base64 = base64.b64encode(buffer).decode('utf-8')
     return img_base64
 
+
+def _capture_caller_info():
+    """Return (basename, lineno, function_name) of the call-site two frames up
+    (i.e. the caller of the function that invokes this helper)."""
+    frame = inspect.currentframe().f_back.f_back.f_back
+    info = inspect.getframeinfo(frame)
+    return os.path.basename(info.filename), info.lineno, frame.f_code.co_name
+
+
+def _call_ocr_endpoint(
+    img,
+    endpoint,
+    *,
+    OCR_SERVER_URL=None,
+    max_servers=None,
+    timeout_sec=None,
+    verbose=False,
+    final_error_label="all servers failed",
+):
+    """Shared multi-server OCR POST loop with circuit-breaker + fallback.
+
+    Returns the server JSON on first 200, or {"success": False, "error": ..., "errors": [...]}
+    when every configured server has been exhausted.
+    """
+    caller_file, caller_line, caller_function = _capture_caller_info()
+
+    if verbose:
+        logger.debug(f"[OCR調用追蹤] 被調用於: {caller_file}:{caller_line} in {caller_function}()")
+
+    img_base64 = encode_image(img)
+
+    if timeout_sec is None:
+        timeout_sec = 20
+        try:
+            import config_manager
+            timeout_sec = int(config_manager.get_ocr_config().get("timeout_sec", timeout_sec))
+        except Exception:
+            pass
+
+    servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
+    _ensure_ocr_probe_thread()
+    servers = _filter_servers_by_circuit(servers)
+    if isinstance(max_servers, int) and max_servers > 0:
+        servers = servers[:max_servers]
+    if verbose:
+        mode = _get_ocr_mode_from_config()
+        logger.info(f"OCR servers priority (mode={mode}): {servers}")
+
+    errors = []
+    for idx, srv in enumerate(servers):
+        try:
+            url = f"{srv}{endpoint}"
+            if verbose:
+                logger.info(f"[{caller_file}:{caller_line}] OCR request -> {url} (timeout={timeout_sec}s)")
+            else:
+                logger.debug(f"[{caller_file}:{caller_line}] {endpoint.lstrip('/')} request -> {url}")
+            response = requests.post(url, json={"image": img_base64}, timeout=timeout_sec)
+            if response.status_code == 200:
+                try:
+                    _mark_server_recovered(srv)
+                    if verbose:
+                        logger.info(f"[{caller_file}:{caller_line}] OCR success from {srv}")
+                    return response.json()
+                except Exception as e_json:
+                    err = f"解析 JSON 失敗 from {srv}: {e_json}"
+                    if verbose:
+                        logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
+                    errors.append(err)
+                    continue
+            else:
+                err = f"HTTP {response.status_code} from {srv}"
+                if verbose:
+                    logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
+                _mark_server_failed(srv)
+                if verbose:
+                    try:
+                        error_detail = response.text[:500]
+                        logger.debug(f"[{caller_file}:{caller_line}] Server response: {error_detail}")
+                    except Exception:
+                        pass
+                errors.append(err)
+                if verbose and idx < len(servers) - 1:
+                    logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器...")
+                continue
+        except Exception as e:
+            err = f"HTTP 請求失敗 to {srv}: {e}"
+            if verbose:
+                logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
+            _mark_server_failed(srv)
+            errors.append(err)
+            if verbose and idx < len(servers) - 1:
+                logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器 due to error...")
+            continue
+
+    if verbose:
+        logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
+    else:
+        logger.error(f"{final_error_label}: all servers failed: {errors}")
+    return {"success": False, "error": "all servers failed", "errors": errors}
+
+
 def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
     """透過 HTTP 分析技能，若預設伺服器無法連線則自動退回到備援伺服器。
 
@@ -231,75 +332,13 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
 
     回傳: server json 或 {'success': False, 'error': ...}
     """
-    # 獲取調用者信息
-    caller_frame = inspect.currentframe().f_back
-    caller_info = inspect.getframeinfo(caller_frame)
-    caller_function = caller_frame.f_code.co_name
-    caller_file = os.path.basename(caller_info.filename)
-    caller_line = caller_info.lineno
-    
-    logger.debug(f"[OCR調用追蹤] 被調用於: {caller_file}:{caller_line} in {caller_function}()")
-    
-    img_base64 = encode_image(img_roi)
-    mode = _get_ocr_mode_from_config()
-    servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
-    _ensure_ocr_probe_thread()
-    servers = _filter_servers_by_circuit(servers)
-    if isinstance(max_servers, int) and max_servers > 0:
-        servers = servers[:max_servers]
-    logger.info(f"OCR servers priority (mode={mode}): {servers}")
-
-    # 讀取 timeout 與重試設定
-    timeout_sec = 20
-    try:
-        import config_manager
-        timeout_sec = int(config_manager.get_ocr_config().get('timeout_sec', timeout_sec))
-    except Exception:
-        pass
-
-    errors = []
-    for idx, srv in enumerate(servers):
-        try:
-            url = f"{srv}/analyze_skill"
-            logger.info(f"[{caller_file}:{caller_line}] OCR request -> {url} (timeout={timeout_sec}s)")
-            response = requests.post(url, json={'image': img_base64}, timeout=timeout_sec)
-            if response.status_code == 200:
-                try:
-                    _mark_server_recovered(srv)
-                    logger.info(f"[{caller_file}:{caller_line}] OCR success from {srv}")
-                    return response.json()
-                except Exception as e_json:
-                    err = f"解析 JSON 失敗 from {srv}: {e_json}"
-                    logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
-                    errors.append(err)
-                    # 嘗試下一個伺服器
-                    continue
-            else:
-                err = f"HTTP {response.status_code} from {srv}"
-                logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
-                _mark_server_failed(srv)
-                try:
-                    error_detail = response.text[:500]
-                    logger.debug(f"[{caller_file}:{caller_line}] Server response: {error_detail}")
-                except Exception:
-                    pass
-                errors.append(err)
-                # 若還有下一個伺服器，繼續嘗試
-                if idx < len(servers) - 1:
-                    logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器...")
-                continue
-        except Exception as e:
-            err = f"HTTP 請求失敗 to {srv}: {e}"
-            logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
-            _mark_server_failed(srv)
-            errors.append(err)
-            if idx < len(servers) - 1:
-                logger.info(f"[{caller_file}:{caller_line}] 切換到下一個 OCR 伺服器 due to error...")
-            continue
-
-    # 所有伺服器均失敗，回傳詳細錯誤資訊
-    logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
-    return {'success': False, 'error': 'all servers failed', 'errors': errors}
+    return _call_ocr_endpoint(
+        img_roi,
+        "/analyze_skill",
+        OCR_SERVER_URL=OCR_SERVER_URL,
+        max_servers=max_servers,
+        verbose=True,
+    )
 
 
 def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
@@ -335,38 +374,14 @@ def analyze_stage_via_server(img, OCR_SERVER_URL=None):
     """Call remote stage analyzer endpoint. Returns server JSON or {'success': False}.
     Falls back across configured servers similar to analyze_skill_via_http.
     """
-    caller_frame = inspect.currentframe().f_back
-    caller_info = inspect.getframeinfo(caller_frame)
-    caller_file = os.path.basename(caller_info.filename)
-    caller_line = caller_info.lineno
-
-    img_base64 = encode_image(img)
-    servers = _build_ocr_server_priority(explicit_url=OCR_SERVER_URL)
-    _ensure_ocr_probe_thread()
-    servers = _filter_servers_by_circuit(servers)
-    errors = []
-    for srv in servers:
-        try:
-            url = f"{srv}/analyze_stage"
-            logger.debug(f"[{caller_file}:{caller_line}] stage request -> {url}")
-            response = requests.post(url, json={'image': img_base64}, timeout=20)
-            if response.status_code == 200:
-                try:
-                    _mark_server_recovered(srv)
-                    return response.json()
-                except Exception as e_json:
-                    errors.append(f"解析 JSON 失敗 from {srv}: {e_json}")
-                    continue
-            else:
-                _mark_server_failed(srv)
-                errors.append(f"HTTP {response.status_code} from {srv}")
-                continue
-        except Exception as e:
-            _mark_server_failed(srv)
-            errors.append(f"HTTP 請求失敗 to {srv}: {e}")
-            continue
-    logger.error(f"analyze_stage_via_server: all servers failed: {errors}")
-    return {'success': False, 'error': 'all servers failed', 'errors': errors}
+    return _call_ocr_endpoint(
+        img,
+        "/analyze_stage",
+        OCR_SERVER_URL=OCR_SERVER_URL,
+        timeout_sec=20,
+        verbose=False,
+        final_error_label="analyze_stage_via_server",
+    )
 def find_and_click(d, findImgPath, threshold=0.8, x=0, y=0):
     img = d.screenshot(format='opencv')
     if not os.path.exists("find_img"):
