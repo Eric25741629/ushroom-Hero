@@ -142,7 +142,14 @@ def park_time(d):
                 print("今日累計停車時間:", total_minutes, "分鐘")
                 return total_minutes
     return 0
-def park_and_start(d,use_target=False, list_target=[],not_use_target=False,not_list_target=[],stop_car_name='螺旋小飛機'):
+def park_and_start(d, use_target=False, list_target=None, not_use_target=False, not_list_target=None, stop_car_name='螺旋小飛機'):
+    # NB: avoid `list_target=[]` / `not_list_target=[]` defaults — Python evaluates
+    # them once at function-def time, so any future caller that mutates them
+    # would leak state across invocations.
+    if list_target is None:
+        list_target = []
+    if not_list_target is None:
+        not_list_target = []
     stop = False
     start_time = time.time() # 記錄開始時間
     last_view_state = None # 紀錄上一輪的狀態

@@ -3,12 +3,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from utils.equipment_cache import (
     EquipmentCache,
     parse_equipment_lamp_drops,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "lamp_drops_0504_20lamps.bin"
+pytestmark = pytest.mark.skipif(
+    not FIXTURE.exists(),
+    reason="fixture lamp_drops_0504_20lamps.bin not present; add it to run parser tests",
+)
 
 
 def test_parse_equipment_lamp_drops_finds_equipment_only():

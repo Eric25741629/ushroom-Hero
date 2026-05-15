@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from typing import Any, Optional
 import bot_state
+from utils.log_paths import LogPaths
 
 
 def _sanitize_filename_part(value: object) -> str:
@@ -25,24 +26,32 @@ _RETENTION_DAYS = 30
 class ActionTraceRecorder:
     """Append-only tracker for click/screenshot/action events.
 
-    Files are rotated daily (events_YYYYMMDD.jsonl) and pruned after
-    RETENTION_DAYS days.
+    Layout: `logs/<device>/action_trace/events_YYYYMMDD.jsonl` (per-device).
+    Files rotate daily and prune after _RETENTION_DAYS.
+
+    Pass `base_dir` only for tests — production code should leave it None
+    so paths flow through `LogPaths`.
     """
 
-    def __init__(self, base_dir: str = "logs/action_trace") -> None:
-        self.base_dir = Path(base_dir)
+    def __init__(self, base_dir: Optional[str] = None) -> None:
+        self.base_dir = Path(base_dir) if base_dir else None
         self._lock = threading.Lock()
         # track last prune date per device to avoid pruning on every write
         self._last_prune: dict[str, dt.date] = {}
 
+    def _device_dir(self, device_id: str) -> Path:
+        if self.base_dir is not None:
+            return self.base_dir / _sanitize_filename_part(device_id)
+        return LogPaths.action_trace_dir(device_id)
+
     def _event_file(self, device_id: str) -> Path:
         today = dt.date.today().strftime("%Y%m%d")
-        return self.base_dir / _sanitize_filename_part(device_id) / f"events_{today}.jsonl"
+        return self._device_dir(device_id) / f"events_{today}.jsonl"
 
     def _prune_old_files(self, device_id: str) -> None:
         """Delete daily event files older than _RETENTION_DAYS."""
         cutoff = dt.date.today() - dt.timedelta(days=_RETENTION_DAYS)
-        device_dir = self.base_dir / _sanitize_filename_part(device_id)
+        device_dir = self._device_dir(device_id)
         if not device_dir.exists():
             return
         for f in device_dir.glob("events_????????.jsonl"):

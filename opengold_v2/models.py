@@ -125,17 +125,27 @@ class LampState:
     gold_num: Optional[int] = None      # 神燈數量
     last_gold_num: Optional[int] = None # 上次記錄的數量
     ocr_skip_count: int = 0             # 連續 OCR 不完整次數
+    no_decrease_streak: int = 0         # 連續使用後神燈數未減少的次數（卡死訊號）
     is_running: bool = False            # 是否正在執行
-    
+
     def should_stop_for_incomplete_ocr(self, limit: int) -> bool:
         """檢查是否應因 OCR 不完整而停止"""
         return self.ocr_skip_count >= limit
-    
+
     def record_ocr_success(self):
         """記錄 OCR 成功，重置跳過計數"""
         self.ocr_skip_count = 0
-    
+
     def record_ocr_incomplete(self) -> int:
         """記錄 OCR 不完整，回傳新的計數"""
         self.ocr_skip_count += 1
         return self.ocr_skip_count
+
+    def record_lamp_decrease(self) -> None:
+        """神燈數有減少（健康），重置 stuck-streak。"""
+        self.no_decrease_streak = 0
+
+    def record_lamp_no_change(self) -> int:
+        """神燈數未減少，streak +1，回傳新值。"""
+        self.no_decrease_streak += 1
+        return self.no_decrease_streak

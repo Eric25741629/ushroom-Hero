@@ -9,7 +9,16 @@ Behavior under test:
 - When stable for a long time + no popup → re-engage auto mode.
 - When count is unreadable for too long → re-navigate to lamp page.
 """
+import sys
+
 import pytest
+
+# Sibling tests (test_daily_pipeline, test_lamp_scheduler) stub `opengold_v2`
+# in sys.modules at collection time. Clear those stubs so we can import the
+# real package — pytest collects alphabetically so those modules sort first.
+for _k in list(sys.modules):
+    if _k == "opengold_v2" or _k.startswith("opengold_v2."):
+        del sys.modules[_k]
 
 from opengold_v2.lamp_loop_state import (
     LampLoopAction,
@@ -206,3 +215,61 @@ def test_passive_increase_can_lead_to_reengage():
     ]
 
     assert actions[-1] == LampLoopAction.REENGAGE_AUTO
+
+
+# ----- popup detected but count unreadable (popup blocks count ROI) -----
+#
+# Validated on 7fe98fc6: when the equipment-comparison popup is shown,
+# the gold count ROI (y=802-821) is covered by the 出售/裝備 buttons, so
+# OCR returns None. The popup itself is visible (skill text reads "暴擊" /
+# "回復" etc.). Without this branch tick() loops WAIT → RENAVIGATE forever
+# while the popup waits for action.
+
+def test_popup_with_unreadable_count_fires_handle_popup_after_threshold():
+    state = LampLoopState(stable_threshold=2)
+
+    state.tick(None, has_popup=True)  # unreadable_streak == 1, below threshold
+    action = state.tick(None, has_popup=True)  # unreadable_streak == 2
+
+    assert action == LampLoopAction.HANDLE_POPUP
+
+
+def test_popup_with_unreadable_count_below_threshold_just_waits():
+    state = LampLoopState(stable_threshold=2)
+
+    action = state.tick(None, has_popup=True)
+
+    assert action == LampLoopAction.WAIT
+
+
+def test_handle_popup_via_unreadable_resets_unreadable_streak():
+    state = LampLoopState(stable_threshold=2)
+
+    state.tick(None, has_popup=True)
+    state.tick(None, has_popup=True)  # → HANDLE_POPUP
+
+    assert state.unreadable_streak == 0
+
+
+def test_unreadable_without_popup_still_renavigates():
+    """Without a popup signal, prolonged unreadable count must still escalate
+    to RENAVIGATE — that's the existing escape hatch for being on the wrong page."""
+    state = LampLoopState(stable_threshold=2, unreadable_renav_threshold=8)
+
+    last = None
+    for _ in range(8):
+        last = state.tick(None, has_popup=False)
+
+    assert last == LampLoopAction.RENAVIGATE
+
+
+def test_popup_short_circuits_before_unreadable_renavigate():
+    """When popup is detected, HANDLE_POPUP must fire BEFORE unreadable_renav
+    threshold (which is much higher). Otherwise the bot renavigates away from
+    a popup it could have processed."""
+    state = LampLoopState(stable_threshold=2, unreadable_renav_threshold=20)
+
+    state.tick(None, has_popup=True)
+    action = state.tick(None, has_popup=True)
+
+    assert action == LampLoopAction.HANDLE_POPUP

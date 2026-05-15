@@ -11,11 +11,123 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import img_tools
+import new_cnn.cnn_model as _cnn_module
 from tools import click_white
 from json_manager import create_time_manager
 from utils.screenshot_helpers import save_error_screenshot
+from game_state.detector import get_stage
 
 logger = logging.getLogger(__name__)
+
+
+def _predict_stage(Cnn_model, pil_img):
+    """Wrap CNN module call so callers don't have to remember the awkward
+    `module.predict_image(instance, image)` form. Returns class name or None
+    on failure."""
+    try:
+        return _cnn_module.predict_image(Cnn_model, pil_img)
+    except Exception as e:
+        logger.debug(f"CNN predict failed: {e}")
+        return None
+
+
+def _exit_farm_to_main(d, ip, Cnn_model, save_time, *, timeout=60):
+    """Drive 農場 → 家園 → 主頁面.
+
+    OCR-based — CNN 對「農場」/「家園」沒有可靠類別，且呼叫慣例脆弱。
+    每輪：OCR get_stage → 主頁面就結束；否則
+      1) 點右下 (480, 929) — 純農場頁的「返回」鈕
+      2) OCR 找「關閉」處理彈窗（公告 / 商店 / 確認框）
+      3) 點 home (321, 920) — 在家園可回主頁面
+    Returns updated save_time.
+    """
+    exit_start = time.time()
+    last_stage = "__init__"
+    attempt = 0
+    reached_main = False
+
+    while time.time() - exit_start < timeout:
+        attempt += 1
+        try:
+            stage = get_stage(d, Cnn_model)
+        except Exception as e:
+            logger.debug(f"[farm] OCR get_stage 失敗 #{attempt}: {e}")
+            stage = None
+
+        if stage != last_stage:
+            elapsed = time.time() - exit_start
+            logger.info(f"[farm] 退出嘗試 #{attempt}, OCR={stage}, elapsed={elapsed:.1f}s")
+            try:
+                save_error_screenshot(d, ip, str(stage), f"farm_exit_attempt_{attempt}")
+            except Exception as e:
+                logger.debug(f"[farm] 截圖保存失敗: {e}")
+            last_stage = stage
+
+        if stage == "主頁面":
+            elapsed = time.time() - exit_start
+            save_time += max(0, 3 - elapsed)
+            logger.info(f"[farm] 已回到主頁面 (OCR)，耗時 {elapsed:.1f}s")
+            reached_main = True
+            break
+
+        # 放置獎勵 (offline reward) popup has no 「關閉」 — its dismiss button is
+        # 「領取」 at (~330, 725). Captured on 7fe98fc6 2026-05-02 14:32: the
+        # generic three-step exit clicked (480, 929) which is the bottom-right
+        # 商店 tab and never hit 領取, looping until 60s timeout. Use the
+        # existing reward handler which knows the (162,725)+(330,725) ritual.
+        if stage == "放置獎勵":
+            try:
+                from game_actions.reward_manager import reward as _reward
+                logger.info(f"[farm] 偵測到「放置獎勵」popup，呼叫 reward() 處理")
+                _reward(d)
+                time.sleep(2)
+                continue
+            except Exception as e:
+                logger.warning(f"[farm] reward() 失敗，退回通用步驟: {e}")
+
+        d.click(480 + random.randint(-5, 5), 929 + random.randint(-3, 3))
+        time.sleep(1.5)
+
+        if img_tools.click_str_by_server(d, "關閉", wait_timeout=0):
+            logger.info(f"[farm] OCR 找到「關閉」並點擊 (stage={stage})")
+            time.sleep(1.5)
+            continue
+
+        d.click(321 + random.randint(-5, 5), 920 + random.randint(-3, 3))
+        time.sleep(2)
+
+    if not reached_main:
+        logger.warning(f"[farm] 退出超時 {timeout}s，最後 stage={last_stage}，啟動 fallback resolver")
+        try:
+            save_error_screenshot(d, ip, str(last_stage), "farm_exit_timeout")
+        except Exception as e:
+            logger.debug(f"[farm] 超時截圖保存失敗: {e}")
+        try:
+            from game_initialization import resolve_stage_until_stable
+            from game_actions.reward_manager import reward as _reward_fn
+            final = resolve_stage_until_stable(
+                d, ip, Cnn_model=Cnn_model, reward_fn=_reward_fn, logger=logger
+            )
+            logger.warning(f"[farm] fallback resolver 後 stage={final}")
+        except Exception as e:
+            logger.error(f"[farm] fallback resolver 失敗: {e}，改用 click_white")
+            for _ in range(3):
+                click_white(d)
+                time.sleep(1)
+
+    return save_time
+
+
+def _wait_for_homeplace(d, Cnn_model, *, timeout=60, max_save=5.0):
+    """Click 家園 tab 後等 CNN 確認到達 homeplace。返回節省的時間（最多 max_save 秒）。"""
+    start = time.time()
+    while time.time() - start < timeout:
+        if _predict_stage(Cnn_model, d.screenshot(format='pillow')) == "homeplace":
+            elapsed = time.time() - start
+            saved = max(0.0, max_save - elapsed)
+            logger.info(f"save time {saved:.2f}")
+            return saved
+    return 0.0
 def check_if_partime(d):
     try:
         img = d.screenshot(format='opencv')
@@ -144,142 +256,95 @@ def farm_card(d: u2.Device):
         time.sleep(random.random())
         d.click(272,868)  #點擊關閉
         time.sleep(1)
-def farm(d, ip, Cnn_model):
-    """主程式"""
-    time_manager = create_time_manager(ip)
-    seed_record = time_manager.get_time_record("farm_seed_purchase")
-    should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
-    
-    is_same_day = time_manager.is_same_day("farm_plant_click")
-    daily_count = time_manager.get_numeric_value("farm_plant_click", "count", 0) if is_same_day else 0
+PLANT_DAILY_LIMIT = 2
+PLANT_LOOP_TIMEOUT = 25
+FERTILIZER_PIXEL_TARGET = sum([173, 112, 68])
+FERTILIZER_PIXEL_TOLERANCE = 10
+FERTILIZER_PIXEL_AT = (231, 437)  # (x, y) — img[y, x] sample point
 
-    if not should_buy_seed and daily_count >= 2:
+
+def _seed_purchase_due(time_manager):
+    record = time_manager.get_time_record("farm_seed_purchase")
+    return not record or record.get("is_next_day", True)
+
+
+def _plant_count_today(time_manager):
+    if not time_manager.is_same_day("farm_plant_click"):
+        return 0
+    return time_manager.get_numeric_value("farm_plant_click", "count", 0)
+
+
+def _maybe_collect_rewards(d) -> bool:
+    """Try the three reward-collection templates. Sleeps appropriately and
+    returns True if any matched."""
+    if img_tools.find_and_click(d, r'getting.jpg'):
+        time.sleep(7); return True
+    if img_tools.find_and_click(d, r'get_all.jpg'):
+        time.sleep(3); return True
+    if img_tools.find_and_click(d, "new_get.jpg", threshold=0.6, x=10, y=100):
+        time.sleep(7); return True
+    return False
+
+
+def _maybe_apply_fertilizer(d) -> None:
+    """If the fertilizer indicator pixel is the expected colour, run the
+    3-click fertilizer sequence."""
+    img = d.screenshot(format='opencv')
+    sx, sy = FERTILIZER_PIXEL_AT
+    pixel_sum = sum(int(c) for c in img[sy, sx])
+    if abs(pixel_sum - FERTILIZER_PIXEL_TARGET) > FERTILIZER_PIXEL_TOLERANCE:
+        return
+    d.click(199, 437); time.sleep(2)
+    d.click(126, 588); time.sleep(1)
+    d.click(165, 460); time.sleep(1)
+
+
+def _run_plant_cycle(d, time_manager, *, hour, deadline) -> None:
+    """Loop until deadline: each iter tries reward collection AND, if eligible,
+    a plant click. Behaviour matches the original `elif` chain + fall-through."""
+    while time.time() < deadline:
+        _maybe_collect_rewards(d)
+
+        if hour < 8 or _plant_count_today(time_manager) >= PLANT_DAILY_LIMIT:
+            continue
+        if not img_tools.find_and_click(d, r'plants.jpg'):
+            continue
+
+        new_count = _plant_count_today(time_manager) + 1
+        time_manager.record_timestamp("farm_plant_click", {"count": new_count})
+        time.sleep(2)
+        _maybe_apply_fertilizer(d)
+        if img_tools.find_and_click(d, r'put.jpg'):
+            time.sleep(5)
+
+
+def farm(d, ip, Cnn_model):
+    """主程式：點家園 → 進農場 → 買種子 / 週卡 / 種植循環 → 退回主頁面。"""
+    time_manager = create_time_manager(ip)
+
+    if not _seed_purchase_due(time_manager) and _plant_count_today(time_manager) >= PLANT_DAILY_LIMIT:
         return 60
 
     d.click(321, 920)
-    save_time = 0
-
-    try:
-        cnn_s = time.time()
-        while (1):
-            img = d.screenshot(format='opencv')
-            if Cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) == "homeplace":
-                cnn_p = time.time()
-                logger.info("save time {}".format(5-(cnn_p-cnn_s)))
-                save_time += 5-(cnn_p-cnn_s)
-                break
-            if time.time()-cnn_s > 60:
-                break
-    except:
-        time.sleep(5)
-    # if not os.path.exists("homeplace"):
-    #     os.makedirs("homeplace")
-    # cv2.imwrite("homeplace/homeplace_{}.jpg".format(time.time()),
-    #             d.screenshot(format='opencv'))
+    save_time = _wait_for_homeplace(d, Cnn_model)
     d.click(208, 584)
     time.sleep(5)
-    if not os.path.exists("farm"):
-        os.makedirs("farm")
-    # cv2.imwrite("farm/farm{}.jpg".format(time.time()),
-    #             d.screenshot(format='opencv'))
-    img = d.screenshot(format='opencv')[780:864, :]
-    start = time.time()
-    time_manager = create_time_manager(ip)
-    seed_record = time_manager.get_time_record("farm_seed_purchase")
-    should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
-    if should_buy_seed:
+
+    if _seed_purchase_due(time_manager):
         buy_seed(d)
         time_manager.record_time("farm_seed_purchase")
-    # d.click(479,207) #點擊打工按鈕
-    # time.sleep(2)
-    # parttime = check_if_partime(d)
-    current_time = time.localtime()
-    # d.click(272,868) #點擊關閉
-    # time.sleep(1.2)
-    date = time.localtime()
-    if ( not time_manager.is_same_week("farm_card_weekly")
-    ):
+
+    if not time_manager.is_same_week("farm_card_weekly"):
         farm_card(d)
         time_manager.record_time("farm_card_weekly")
-    while (time.time()-start < 25):
-        if img_tools.find_and_click(d, r'getting.jpg'):
-            time.sleep(7)
-        elif img_tools.find_and_click(d, r'get_all.jpg'):
-            time.sleep(3)
-        elif img_tools.find_and_click(d, "new_get.jpg", threshold=0.6, x=10, y=100):
-            time.sleep(7)
-        if current_time.tm_hour >= 8:
-            is_same_day = time_manager.is_same_day("farm_plant_click")
-            daily_count = time_manager.get_numeric_value("farm_plant_click", "count", 0) if is_same_day else 0
 
-            if daily_count < 2:
-                if img_tools.find_and_click(d, r'plants.jpg'):
-                    daily_count += 1
-                    time_manager.record_timestamp("farm_plant_click", {"count": daily_count})
-                    time.sleep(2)
-                    img = d.screenshot(format='opencv')
-                    target_sum = sum([173, 112, 68])
-                    pixel_sum = sum(int(x) for x in img[437, 231])
-                    if (abs(pixel_sum - target_sum) <= 10):
-                        d.click(199, 437)
-                        time.sleep(2)
-                        d.click(126, 588)
-                        time.sleep(1)
-                        d.click(165, 460)
-                        time.sleep(1)
-                    if img_tools.find_and_click(d, r'put.jpg'):
-                        time.sleep(5)
+    _run_plant_cycle(
+        d, time_manager,
+        hour=time.localtime().tm_hour,
+        deadline=time.time() + PLANT_LOOP_TIMEOUT,
+    )
 
-    # 退出農場 → 家園 → 主頁面，最多重試 60 秒
-    # CNN 類別: main / homeplace / 其他(含農場介面)
-    # - main      : 成功，跳出
-    # - homeplace : 點 (321,920) 家園關閉鈕回主頁
-    # - 其他      : 點 (480,929) 農場右下退出鈕到家園
-    exit_start = time.time()
-    last_state = "__init__"
-    attempt = 0
-    reached_main = False
-    while time.time() - exit_start < 60:
-        attempt += 1
-        try:
-            state = Cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow'))
-        except Exception as e:
-            logger.warning(f"[farm] 退出時 CNN 預測失敗 #{attempt}: {e}")
-            state = None
-
-        state_changed = state != last_state
-        if state_changed:
-            elapsed = time.time() - exit_start
-            logger.info(f"[farm] 退出嘗試 #{attempt}, CNN={state}, elapsed={elapsed:.1f}s")
-            try:
-                save_error_screenshot(d, ip, str(state), f"farm_exit_attempt_{attempt}")
-            except Exception as e:
-                logger.debug(f"[farm] 截圖保存失敗: {e}")
-            last_state = state
-
-        if state == "main":
-            elapsed = time.time() - exit_start
-            save_time += max(0, 3 - elapsed)
-            logger.info(f"[farm] 已回到主頁面，耗時 {elapsed:.1f}s")
-            reached_main = True
-            break
-        elif state == "homeplace":
-            d.click(321 + random.randint(-5, 5), 920 + random.randint(-3, 3))
-            time.sleep(2)
-        else:
-            d.click(480 + random.randint(-5, 5), 929 + random.randint(-3, 3))
-            time.sleep(2)
-
-    if not reached_main:
-        logger.warning(f"[farm] 退出超時 60s，最後 state={last_state}，fallback click_white")
-        try:
-            save_error_screenshot(d, ip, str(last_state), "farm_exit_timeout")
-        except Exception as e:
-            logger.debug(f"[farm] 超時截圖保存失敗: {e}")
-        for _ in range(3):
-            click_white(d)
-            time.sleep(1)
-    return save_time
+    return _exit_farm_to_main(d, ip, Cnn_model, save_time)
 if __name__ == "__main__":
     import  new_cnn.cnn_model as cnn_model
     # Cnn_model = cnn_model.load_cnn_model("cnn_model.pth")

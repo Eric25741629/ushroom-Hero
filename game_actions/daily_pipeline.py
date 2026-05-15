@@ -60,6 +60,10 @@ _DEVICE_SKIP_GUARDIAN = {
 }
 
 
+class _ConsecutiveMismatchAbort(Exception):
+    """連續 N 個任務不在主頁面時中止本輪 pipeline，讓上層 loop 重新喚醒。"""
+
+
 @dataclass
 class DailyContext:
     """Packages the 10 parameters that `_run_daily_tasks` used to receive."""
@@ -89,18 +93,45 @@ def run(ctx: DailyContext) -> None:
     mission_manager = ctx.mission_manager
     family_manager = ctx.family_manager
 
+    _streak = [0]  # 連續不在主頁面計數
+
+    def _track(stage: str) -> str:
+        """記錄 stage；連續失敗 >= 4 次時強制關閉 app 並中止 pipeline。"""
+        if stage == "主頁面":
+            _streak[0] = 0
+        else:
+            _streak[0] += 1
+            if _streak[0] >= 4:
+                logger.error(
+                    f"[{ip}] 連續 {_streak[0]} 個任務不在主頁面，"
+                    "中止本輪 pipeline，強制關閉 app"
+                )
+                _streak[0] = 0
+                try:
+                    d.app_stop("com.mxdzz.tw.and")
+                except Exception:
+                    pass
+                raise _ConsecutiveMismatchAbort()
+        return stage
+
+    def _guarded_run(task_name, mismatch_reason, fn, *, step="執行中", log=None) -> str:
+        return _track(
+            _run_at_main_page(d, ip, Cnn_model, task_name, mismatch_reason, fn, step=step, log=log)
+        )
+
     # Task 1: 地獄之門
     stage = get_stage_with_check(d, ip, Cnn_model)
     record_time = return_time(ip, name="地獄之門")
     logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
     logging.info("地獄之門紀錄: {}".format(record_time))
-    hell_gate_time = 1
+    # NB: previously had `hell_gate_time = 1` + `or hell_gate_time == 0` here.
+    # The flag was always 1 inside this else branch so the `== 0` clause was
+    # dead. Simplified to plain "is_next_day" check.
     if record_time is None:
-        hell_gate_time = 0
         should_execute = True
     else:
-        should_execute = record_time.get("is_next_day", False) or hell_gate_time == 0
-        logging.info("hell_gate_time: {}, should_execute: {}, record_time: {}".format(hell_gate_time, should_execute, record_time))
+        should_execute = record_time.get("is_next_day", False)
+        logging.info("should_execute: {}, record_time: {}".format(should_execute, record_time))
     if should_execute and current_time.tm_min < 20:
         if stage == "主頁面":
             bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
@@ -112,8 +143,7 @@ def run(ctx: DailyContext) -> None:
         logger.info("地獄之門: 尚未到達執行時間或已執行過")
 
     # Task 2: 農場任務
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="農場任務",
         mismatch_reason="農場任務前不在主頁面",
         fn=lambda: farm_manager.farm(d, ip, Cnn_model),
@@ -126,8 +156,7 @@ def run(ctx: DailyContext) -> None:
         time.sleep(1)
         reward(d)
         time.sleep(3)
-    _run_at_main_page(
-        d, ip, Cnn_model,
+    _guarded_run(
         task_name="點擊寶箱",
         mismatch_reason="點擊寶箱前不在主頁面",
         fn=_tap_chest,
@@ -135,8 +164,7 @@ def run(ctx: DailyContext) -> None:
     )
 
     # Task 4: 家族任務 — stage reused by Tasks 5+6
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="家族任務",
         mismatch_reason="家族任務前不在主頁面",
         fn=family_manager.go_to_family,
@@ -165,7 +193,7 @@ def run(ctx: DailyContext) -> None:
             log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
 
     # Task 7: 商店購買
-    stage = get_stage_with_check(d, ip, Cnn_model)
+    stage = _track(get_stage_with_check(d, ip, Cnn_model))
     if stage == "主頁面":
         device_cfg = config_manager.get_device_config(ip)
         if device_cfg.get("enable_shop_manager", True):
@@ -185,8 +213,7 @@ def run(ctx: DailyContext) -> None:
         logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
 
     # Task 8: 坐騎強化
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="坐騎強化",
         mismatch_reason="坐騎強化前不在主頁面",
         fn=lambda: rank_events.park_spring(d, ip),
@@ -197,8 +224,7 @@ def run(ctx: DailyContext) -> None:
     daily_acceleration(d, ip, Cnn_model)
 
     # Task 10: 競技場挑戰
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="競技場挑戰",
         mismatch_reason="競技場挑戰前不在主頁面",
         fn=lambda: click_arena_challenges(d, ip),
@@ -206,8 +232,7 @@ def run(ctx: DailyContext) -> None:
     )
 
     # Task 11: 挖礦/Oracle (original had duplicate get_stage_with_check — collapsed to one via helper)
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="挖礦/Oracle",
         mismatch_reason="挖礦/Oracle 前不在主頁面",
         fn=lambda: oracle(
@@ -229,8 +254,7 @@ def run(ctx: DailyContext) -> None:
         )
 
     # Task 13: 菇菇武道會
-    _run_at_main_page(
-        d, ip, Cnn_model,
+    _guarded_run(
         task_name="菇菇武道會",
         mismatch_reason="菇菇武道會前不在主頁面",
         fn=lambda: _run_periodic_cycle(
@@ -246,8 +270,7 @@ def run(ctx: DailyContext) -> None:
     )
 
     # Task 14: 航海任務
-    _run_at_main_page(
-        d, ip, Cnn_model,
+    _guarded_run(
         task_name="航海任務 (Sea)",
         mismatch_reason="航海任務前不在主頁面",
         fn=lambda: _run_periodic_cycle(
@@ -284,8 +307,7 @@ def run(ctx: DailyContext) -> None:
     _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
 
     # Task 18: 好友每日禮物 — stage refreshed after run for Task 19 (lamp)
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
+    stage = _guarded_run(
         task_name="好友每日禮物",
         mismatch_reason="好友每日禮物前不在主頁面",
         fn=lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
@@ -304,8 +326,7 @@ def run(ctx: DailyContext) -> None:
             logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
         else:
             logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
-    _run_at_main_page(
-        d, ip, Cnn_model,
+    _guarded_run(
         task_name="轉盤金幣",
         mismatch_reason="轉盤金幣執行前不在主頁面",
         fn=_spin_wheel,

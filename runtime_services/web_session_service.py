@@ -50,16 +50,11 @@ def wait_for_checker_gate_before_start(
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
-            bot_state.activate_online_check_priority(
-                requester_ip=ip,
-                checker_ip=checker_ip,
-                ttl_sec=180.0,
-            )
             req_id = bot_state.submit_online_check_request(
                 requester_ip=ip,
                 checker_ip=checker_ip,
             )
-            result = bot_state.wait_online_check_result(req_id, timeout_sec=150.0)
+            result = bot_state.wait_online_check_result(req_id, timeout_sec=60.0)
             status = str(result.get("status", "pending"))
             if status == "done":
                 is_busy = bool(result.get("result_busy", True))
@@ -74,18 +69,13 @@ def wait_for_checker_gate_before_start(
         except Exception as e:
             logger_obj.error(f"[{ip}] online-check request to {checker_ip} failed: {e}")
             is_busy = True
-        finally:
-            bot_state.release_online_check_priority(
-                requester_ip=ip,
-                checker_ip=checker_ip,
-            )
 
         if not is_busy:
             logger_obj.info(f"[{ip}] {checker_ip} is free, continue web_h5 startup")
             return
 
-        wait_min = config_manager.get_device_config(ip).get("online_check_interval", 5)
-        wait_sec = max(1, int(float(wait_min) * 60))
+        wait_sec = int(config_manager.get_device_config(ip).get("online_check_interval_sec", 30))
+        wait_sec = max(1, wait_sec)
         logger_obj.info(f"[{ip}] checker busy, sleeping {wait_sec} sec before retry")
         for remain in range(wait_sec, 0, -1):
             if bot_state.check_force_sleep(ip):

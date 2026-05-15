@@ -43,10 +43,17 @@ class LampLoopState:
 
     def tick(self, lamp_count: Optional[int], has_popup: bool) -> LampLoopAction:
         """送入新的觀察值，回傳此輪該採取的動作。"""
-        # OCR 讀不到（被動畫遮住）→ 仍在動畫中，不計穩定
+        # OCR 讀不到（被動畫或彈窗遮住）→ 仍在動畫中，不計穩定
         if lamp_count is None:
             self.stable_streak = 0
             self.unreadable_streak += 1
+            # 連續讀不到時若同時偵測到裝備彈窗，視為彈窗蓋住 count ROI
+            # （驗證自 7fe98fc6 — 裝備比較彈窗的 出售/裝備 按鈕剛好覆蓋 y=802-821）。
+            # 必須在 unreadable_renav_threshold 之前觸發 HANDLE_POPUP，否則
+            # bot 會 renavigate 離開可處理的彈窗。
+            if has_popup and self.unreadable_streak >= self.stable_threshold:
+                self.unreadable_streak = 0
+                return LampLoopAction.HANDLE_POPUP
             if self.unreadable_streak >= self.unreadable_renav_threshold:
                 self.unreadable_streak = 0
                 return LampLoopAction.RENAVIGATE

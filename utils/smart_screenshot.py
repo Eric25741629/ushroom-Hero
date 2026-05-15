@@ -11,6 +11,7 @@ from typing import Any, Optional
 import cv2
 import numpy as np
 from utils.action_tracker import ActionTraceRecorder
+from utils.log_paths import LogPaths
 
 
 def _sanitize_filename_part(value: object) -> str:
@@ -20,14 +21,21 @@ def _sanitize_filename_part(value: object) -> str:
 
 
 class SmartScreenshotRecorder:
-    """Capture screenshot + persist structured event + annotation metadata."""
+    """Capture screenshot + persist structured event + annotation metadata.
 
-    def __init__(self, base_dir: str = "logs/error_screenshots") -> None:
-        self.base_dir = Path(base_dir)
+    Layout: logs/<device>/error_screenshots/{*.jpg, events.jsonl, annotations.json}.
+    Pass `base_dir` only for tests — production code should leave it None
+    so paths flow through `LogPaths`.
+    """
+
+    def __init__(self, base_dir: Optional[str] = None) -> None:
+        self.base_dir = Path(base_dir) if base_dir else None
         self._tracker = ActionTraceRecorder()
 
     def _device_dir(self, device_id: str) -> Path:
-        return self.base_dir / _sanitize_filename_part(device_id)
+        if self.base_dir is not None:
+            return self.base_dir / _sanitize_filename_part(device_id)
+        return LogPaths.error_screenshots_dir(device_id)
 
     def _append_jsonl(self, path: Path, payload: dict[str, Any]) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

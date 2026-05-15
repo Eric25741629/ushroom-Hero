@@ -299,8 +299,6 @@ _web_launch_requests: Dict[str, Dict[str, Any]] = {}
 # Cross-thread online-check request/response mailbox.
 _online_check_queue_by_checker: Dict[str, list[str]] = {}
 _online_check_requests: Dict[str, Dict[str, Any]] = {}
-# Cooperative priority lock for checker thread (e.g., 5558 asks 5554 to yield).
-_online_check_priority_by_checker: Dict[str, Dict[str, Any]] = {}
 
 
 def set_skip_sleep(ip: str):
@@ -433,26 +431,43 @@ def get_web_launch_status(ip: str) -> Dict[str, Any]:
 
 
 def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
-    """Submit a cross-thread online-check request and return request id."""
-    req_id = str(uuid.uuid4())
-    ev = threading.Event()
+    """Submit a cross-thread online-check request and return request id.
+
+    Dedupe: if there is already a pending or processing request for the same
+    (requester, checker) pair, reuse it instead of enqueuing a duplicate. The
+    checker only needs the current "busy?" answer, not one snapshot per retry —
+    seen in logs where 5558 piled up ~60 identical requests on a sleeping 5554.
+    """
     now = time.time()
-    payload = {
-        "id": req_id,
-        "requester_ip": requester_ip,
-        "checker_ip": checker_ip,
-        "status": "pending",
-        "created_at": now,
-        "updated_at": now,
-        "result_busy": None,
-        "detail": "",
-        "error": "",
-        "_event": ev,
-    }
     with _global_lock:
+        # Scan the request mailbox (not just the queue) — a popped entry has
+        # status="processing" and is no longer in the queue, but the answer
+        # is still in flight, so a fresh submit should still reuse it.
+        for existing_id, existing in _online_check_requests.items():
+            if (
+                existing.get("requester_ip") == requester_ip
+                and existing.get("checker_ip") == checker_ip
+                and existing.get("status") in ("pending", "processing")
+            ):
+                existing["updated_at"] = now
+                _skip_sleep_flags[checker_ip] = True
+                return existing_id
+
+        req_id = str(uuid.uuid4())
+        payload = {
+            "id": req_id,
+            "requester_ip": requester_ip,
+            "checker_ip": checker_ip,
+            "status": "pending",
+            "created_at": now,
+            "updated_at": now,
+            "result_busy": None,
+            "detail": "",
+            "error": "",
+            "_event": threading.Event(),
+        }
         _online_check_requests[req_id] = payload
-        q = _online_check_queue_by_checker.setdefault(checker_ip, [])
-        q.append(req_id)
+        _online_check_queue_by_checker.setdefault(checker_ip, []).append(req_id)
         # Hint checker thread to break long sleep and process mailbox ASAP.
         _skip_sleep_flags[checker_ip] = True
         # Also request an immediate device rescan so a cold-start-delayed checker
@@ -489,43 +504,15 @@ def has_pending_online_check_request(checker_ip: str) -> bool:
         return bool(q)
 
 
-def activate_online_check_priority(requester_ip: str, checker_ip: str, ttl_sec: float = 180.0):
-    """Ask checker thread to prioritize online-check mailbox for a short TTL window."""
-    now = time.time()
-    ttl = max(10.0, float(ttl_sec))
-    with _global_lock:
-        _online_check_priority_by_checker[checker_ip] = {
-            "requester_ip": requester_ip,
-            "checker_ip": checker_ip,
-            "expires_at": now + ttl,
-            "updated_at": now,
-        }
-        # Nudge checker loop to wake up and honor priority window quickly.
-        _skip_sleep_flags[checker_ip] = True
-
-
-def release_online_check_priority(requester_ip: str, checker_ip: str):
-    """Release checker priority lock if held by requester."""
-    with _global_lock:
-        cur = _online_check_priority_by_checker.get(checker_ip)
-        if not cur:
-            return
-        if str(cur.get("requester_ip")) != str(requester_ip):
-            return
-        _online_check_priority_by_checker.pop(checker_ip, None)
-
-
 def is_online_check_priority_active(checker_ip: str) -> bool:
-    """Whether checker should yield normal flow to mailbox work."""
-    now = time.time()
+    """Return True when checker has a request currently being processed (in-flight)."""
     with _global_lock:
-        cur = _online_check_priority_by_checker.get(checker_ip)
-        if not cur:
-            return False
-        exp = float(cur.get("expires_at", 0) or 0)
-        if exp > 0 and now <= exp:
-            return True
-        _online_check_priority_by_checker.pop(checker_ip, None)
+        for req in _online_check_requests.values():
+            if (
+                req.get("checker_ip") == checker_ip
+                and req.get("status") == "processing"
+            ):
+                return True
         return False
 
 

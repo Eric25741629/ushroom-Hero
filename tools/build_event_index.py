@@ -13,8 +13,9 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Build unified event index from action/screenshot logs.")
     p.add_argument("--days", type=int, default=7, help="Analyze recent N days.")
     p.add_argument("--devices", default="", help="Comma-separated device ids (optional).")
-    p.add_argument("--action-dir", default="logs/action_trace", help="Action trace root.")
-    p.add_argument("--shot-dir", default="logs/error_screenshots", help="Screenshot trace root.")
+    # New layout: per-device subdirs under `logs/`, walked recursively.
+    p.add_argument("--action-dir", default="logs", help="Root containing action_trace events (recursed).")
+    p.add_argument("--shot-dir", default="logs", help="Root containing error_screenshots events (recursed).")
     p.add_argument("--output-dir", default="reports/event_index", help="Output directory.")
     return p.parse_args()
 
@@ -47,11 +48,11 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _iter_events(root: Path) -> list[dict[str, Any]]:
+def _iter_events(root: Path, pattern: str = "events.jsonl") -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     if not root.exists():
         return events
-    for fp in sorted(root.rglob("events.jsonl")):
+    for fp in sorted(root.rglob(pattern)):
         events.extend(_load_jsonl(fp))
     return events
 
@@ -180,8 +181,9 @@ def main() -> int:
     since = datetime.now() - timedelta(days=max(1, int(args.days)))
     allow_devices = {x.strip() for x in str(args.devices or "").split(",") if x.strip()}
 
-    action_events = _iter_events(Path(args.action_dir))
-    screenshot_events = _iter_events(Path(args.shot_dir))
+    # action_tracker writes events_YYYYMMDD.jsonl; smart_screenshot writes events.jsonl
+    action_events = _iter_events(Path(args.action_dir), pattern="events_????????.jsonl")
+    screenshot_events = _iter_events(Path(args.shot_dir), pattern="events.jsonl")
     rows = build_index(action_events, screenshot_events, since, allow_devices)
     jsonl_path, csv_path = write_outputs(rows, Path(args.output_dir))
 

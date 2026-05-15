@@ -162,9 +162,13 @@ class OCRParser:
         entries: List[Dict[str, Optional[float]]] = []
         used_idx = set()
         
-        # (1) 同框：技能暴擊3.32%
+        # (1) 同框：技能暴擊3.32% (or 暴擊3%)
+        # NB: regex must be `(\d+(?:\.\d+)?)` — the `?` belongs INSIDE the
+        # optional decimal-part, not on the outer group. Previously the outer
+        # group was optional, which let m.group(2) be None for integer
+        # percentages and crashed `float(None)`.
         for i, it in enumerate(items):
-            m = re.search(r"(.+?)(\d+(?:\.\d+))?%", it.text)
+            m = re.search(r"(.+?)(\d+(?:\.\d+)?)%", it.text)
             if m and m.group(1) and not re.fullmatch(r"[\d\.]+", m.group(1)):
                 entries.append({"詞條": m.group(1), "%": float(m.group(2))})
                 used_idx.add(i)
@@ -278,9 +282,13 @@ class OCRParser:
                 return ''
             
             ocr = skill_result.get('ocr_results') or skill_result.get('ocr_results_raw') or []
+            # Defensive: a malformed payload putting a string here would let the
+            # normalisation loop iterate per-character and emit bogus 1-char items.
+            if not isinstance(ocr, (list, tuple)):
+                return ''
             if not ocr:
                 return ''
-            
+
             def has_number(s: str) -> bool:
                 return bool(re.search(r'[0-9％%]', s))
             

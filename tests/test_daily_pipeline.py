@@ -170,6 +170,18 @@ def fake_all(monkeypatch, pipeline_mod):
     monkeypatch.setattr(pipeline_mod, "_run_weekly_dungeon", _weekly)
     monkeypatch.setattr(pipeline_mod, "_run_biweekly_dungeon", _biweekly)
 
+    # The module-load `if "new_battle" not in sys.modules` stub at the top of
+    # this file is no-op'd if a sibling test (test_biweekly_scheduler) loaded
+    # the real new_battle first. Patch the combat functions per-test on the
+    # real module so they don't drive the SimpleNamespace device into
+    # AttributeError.  monkeypatch reverts on test teardown.
+    for _fn in ("hell_door", "fight_test", "run_weekly_cloud_fighting_single",
+                "run_biweekly_bounty_road_single"):
+        if hasattr(pipeline_mod.new_battle, _fn):
+            monkeypatch.setattr(pipeline_mod.new_battle, _fn, lambda *a, **kw: None)
+        else:
+            monkeypatch.setattr(pipeline_mod.new_battle, _fn, lambda *a, **kw: None, raising=False)
+
     monkeypatch.setattr(
         pipeline_mod.bot_state, "update_state",
         lambda ip, **kw: calls["bot_state"].append({"ip": ip, **kw}),

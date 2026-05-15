@@ -8,7 +8,7 @@ Written BEFORE extraction. Locks:
     - counts down second-by-second when budget > 0
     - early-exit when a pending web launch is detected
     - 5554-specific: early-exit on pending online-check request
-    - 5554-specific: early-exit when online-check priority active
+    - 5554-specific: early-exit when online-check pending
 """
 from __future__ import annotations
 
@@ -42,12 +42,10 @@ def startup_mod():
 def fake_bot_state(monkeypatch, startup_mod):
     state = {
         "pending_online": False,
-        "priority_active": False,
         "pending_web_launch": False,
     }
     updates: list[dict] = []
     monkeypatch.setattr(startup_mod.bot_state, "has_pending_online_check_request", lambda ip: state["pending_online"])
-    monkeypatch.setattr(startup_mod.bot_state, "is_online_check_priority_active", lambda ip: state["priority_active"])
     monkeypatch.setattr(startup_mod.bot_state, "has_pending_web_launch_request", lambda ip: state["pending_web_launch"])
     monkeypatch.setattr(startup_mod.bot_state, "update_state", lambda ip, **kw: updates.append({"ip": ip, **kw}))
     state["_updates"] = updates
@@ -108,11 +106,3 @@ def test_handle_startup_sleep_5554_early_exits_on_online_check(
     assert len(fake_bot_state["_updates"]) == 0
 
 
-def test_handle_startup_sleep_5554_early_exits_on_priority_active(
-    startup_mod, fake_bot_state, zero_sleep, monkeypatch,
-):
-    monkeypatch.setattr(startup_mod, "STARTUP_SLEEP_SEC_BY_DEVICE", {"emulator-5554": 10})
-    monkeypatch.setattr(startup_mod, "PROCESS_START_TS", startup_mod.time.time())
-    fake_bot_state["priority_active"] = True
-    startup_mod._handle_startup_sleep("emulator-5554", logging.getLogger("t"))
-    assert len(fake_bot_state["_updates"]) == 0

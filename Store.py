@@ -1,14 +1,20 @@
 # buy_store
+import base64
 import json
 import os
-import time
 import random
+import time
+from typing import Dict, List, Optional, Tuple
+
 import cnn_model
+import cv2
+import easyocr
+import numpy as np
 import torch
 import uiautomator2 as u2
-import easyocr
-from tools import android_devices
+
 import img_tools
+from tools import android_devices
 # 導入新的JSON管理器，保持向後兼容
 from json_manager import create_store_manager
 def load_cnn_model(model_path, num_classes=10):
@@ -26,13 +32,7 @@ def check_json(ip,title):
     """向後兼容的檢查函數，使用新的JSON管理器"""
     manager = create_store_manager(ip)
     return manager.get_purchase_record(title)
-import os
-import cv2
-import numpy as np
-import uiautomator2 as u2
-import time
-import random
-from typing import List, Tuple, Dict, Optional
+
 
 def detect_and_crop_regions(
     device: u2.Device,
@@ -155,31 +155,21 @@ def encode_image(img):
         _, buffer = cv2.imencode('.jpg', img)
         img_base64 = base64.b64encode(buffer).decode('utf-8')
         return img_base64
-def analyze_skill_via_http(img_roi, ocr_server_url: Optional[str] = None):
-        """透過 HTTP 分析技能
 
-        如果 ocr_server_url 未提供，會嘗試從全域 OCR_SERVER_URL 取得（若在 main 中設定）。
-        回傳 response.json() 或 404 表示失敗。
+
+def analyze_skill_via_http(img_roi, ocr_server_url: Optional[str] = None):
+        """透過 HTTP 分析技能 — delegates to img_tools (single source of truth).
+
+        Returns the server JSON dict on success or `{'success': False, ...}` on
+        all-servers-failure. The downstream callers in this file already
+        type-check `isinstance(analysis, dict)` so the previous `404` int
+        sentinel was needlessly different from img_tools' contract.
         """
         try:
-            url = ocr_server_url if ocr_server_url is not None else globals().get('OCR_SERVER_URL')
-            if not url:
-                raise RuntimeError("OCR server URL 未設定")
-            img_base64 = encode_image(img_roi)
-            response = requests.post(
-                f"{url}/analyze_skill",
-                json={'image': img_base64},
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"HTTP 錯誤: {response.status_code}")
-                return 404
+            return img_tools.analyze_skill_via_http(img_roi, OCR_SERVER_URL=ocr_server_url)
         except Exception as e:
             print(f"HTTP 請求失敗: {e}")
-            return 404
+            return {'success': False, 'error': str(e)}
 
 
 def gather_detections(device: u2.Device,
@@ -329,9 +319,9 @@ def click_items_in_order(desired_list: List[str],
             else:
                 results[item] = {'clicked': False, 'reason': 'not_found', 'center': None, 'consumed': False}
     return results
+
+
 # --- 範例用法 ---
-import base64
-import requests
 def buy_all(d):
     if d.adb_device.info.get('serialno') is not None and d.adb_device.info.get('serialno') !='emulator-5558':
         desired = ['小麦', '美味果', '靈花', '爱心果',"絕密打工指南","精華","活力精華","神燈金鑰","鑽石金鑰",'神力水晶']
@@ -379,9 +369,15 @@ def buy_all(d):
 def buy_store(d,Cnn_model):
     Android_devices = android_devices(d)
     d.click(321, 919) #點擊家園
-    while(cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) != "homeplace"):
+    _deadline = time.time() + 60
+    while time.time() < _deadline:
+        if cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) == "homeplace":
+            break
         Android_devices.click_white()
         time.sleep(1)
+    else:
+        import logging as _log
+        _log.getLogger(__name__).warning("[buy_store] 等待 homeplace 逾時 60s，繼續執行")
     d.click(269, 662) #點擊商店
     time.sleep(2)
     img_tools.click_str_by_server(d,'家園管家',y_range=(180,242))

@@ -57,6 +57,16 @@ class OpenGoldConfig:
     # 神燈剩餘數量顯示區域（魔法熔爐下方數字，每開一個 -1）
     gold_num_roi: Tuple[int, int, int, int] = (802, 821, 210, 335)
 
+    # ========== 開到裝備彈窗偵測（opencv-based）==========
+    # ROI: 中下部分 — 開到裝備時的淺藍色背景在這個區域出現
+    # 校準自 flow-2026-05-03.json 節點 4 與節點 3 對比
+    got_item_popup_roi: Tuple[int, int, int, int] = (540, 720, 180, 360)
+    # HSV 範圍鎖定淺藍/青色：H 80-110, S>=30, V>=150
+    got_item_popup_hsv_lo: Tuple[int, int, int] = (80, 30, 150)
+    got_item_popup_hsv_hi: Tuple[int, int, int] = (110, 255, 255)
+    # 等待態 ≤ 0.048；got-item ≈ 0.170 → 0.10 為安全分界
+    got_item_popup_min_pct: float = 0.10
+
     # ========== 自動模式啟動座標 ==========
     # 「自動」按鈕（位於底部右側，點擊後出現開始彈窗）
     auto_mode_button: Tuple[int, int] = (370, 826)

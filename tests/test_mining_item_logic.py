@@ -16,8 +16,17 @@ if "miner.models.classifier" not in sys.modules:
         load_cnn_model=lambda: (None, None, None),
     )
 if "miner.planning.executor" not in sys.modules:
+    # NB: must include all symbols mining_service imports — it does
+    # `from miner.planning.executor import NoBoardChangeError, OutOfItemError, execute_plan_steps`
+    # so missing classes here previously caused an ImportError at collect time.
+    class _StubNoBoardChangeError(Exception):
+        pass
+    class _StubOutOfItemError(Exception):
+        pass
     sys.modules["miner.planning.executor"] = types.SimpleNamespace(
         execute_plan_steps=lambda *_args, **_kwargs: None,
+        NoBoardChangeError=_StubNoBoardChangeError,
+        OutOfItemError=_StubOutOfItemError,
     )
 if "miner.core.ocr_utils" not in sys.modules:
     sys.modules["miner.core.ocr_utils"] = types.SimpleNamespace(
@@ -83,7 +92,10 @@ def test_find_tool_candidate_prefers_bottom_triplet_bomb_with_hidden_gain():
 def test_dismiss_mining_overlay_when_ocr_finds_mine_text(monkeypatch):
     clicked = {"value": False}
 
-    def fake_get_all_text(_frame):
+    # Real signature: get_all_text(img, OCR_SERVER_URL=None, max_servers=None).
+    # mining_service passes max_servers=1, so mock must accept extra kwargs or
+    # the call dies inside the try/except and silently returns False.
+    def fake_get_all_text(_frame, **_kwargs):
         return ["發現礦洞"]
 
     def fake_click_white(_device):
@@ -99,7 +111,11 @@ def test_dismiss_mining_overlay_when_ocr_finds_mine_text(monkeypatch):
     monkeypatch.setattr("miner.mining_service.img_tools.get_all_text", fake_get_all_text)
     monkeypatch.setattr("miner.mining_service.click_white", fake_click_white)
 
-    handled = _dismiss_mining_overlay_if_needed(_DummyDevice(), object(), _Logger())
+    # Production code now slices `frame[210:550, :]` for the ROI, so the frame
+    # must look like a numpy array. Anything ≥ 550 rows tall works.
+    import numpy as np
+    fake_frame = np.zeros((960, 540, 3), dtype=np.uint8)
+    handled = _dismiss_mining_overlay_if_needed(_DummyDevice(), fake_frame, _Logger())
 
     assert handled is True
     assert clicked["value"] is True

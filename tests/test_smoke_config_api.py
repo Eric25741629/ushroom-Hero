@@ -23,6 +23,14 @@ class TestConfigApiSmoke(unittest.TestCase):
         cnn_stub.load_cnn_model = lambda path: None
         sys.modules.setdefault('new_cnn.cnn_model', cnn_stub)
 
+        # test_bootstrap_api_services.py stubs `control_panel_app` with an
+        # empty ModuleType (no `app` attr) at its own collect time. If we run
+        # after it, importlib.import_module returns that stub. Drop the stub
+        # so we get the real Flask app.
+        if 'control_panel_app' in sys.modules and not hasattr(
+            sys.modules['control_panel_app'], 'app'
+        ):
+            del sys.modules['control_panel_app']
         cls.control_panel_app = importlib.import_module('control_panel_app')
 
     def setUp(self):
@@ -39,14 +47,14 @@ class TestConfigApiSmoke(unittest.TestCase):
 
     def test_device_config_roundtrip_name(self):
         ip = 'emulator-5554'
-        payload = {'name': '???A', 'online_check_interval': 999, 'lamp_check_interval': 0, 'lamp_duration_sec': 9}
+        payload = {'name': '???A', 'online_check_interval_sec': 99999, 'lamp_check_interval': 0, 'lamp_duration_sec': 9}
         r = self.client.post(f'/api/config/{ip}', json=payload)
         self.assertEqual(r.status_code, 200)
 
         r2 = self.client.get(f'/api/config/{ip}')
         data = r2.get_json()
         self.assertEqual(data.get('name'), '???A')
-        self.assertEqual(data.get('online_check_interval'), 60)
+        self.assertEqual(data.get('online_check_interval_sec'), 3600)
         self.assertEqual(data.get('lamp_check_interval'), 1)
         self.assertEqual(data.get('lamp_duration_sec'), 30)
 

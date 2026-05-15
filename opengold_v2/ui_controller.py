@@ -4,6 +4,7 @@ UI 控制器 - 處理遊戲介面操作
 包含點擊、像素比對、頁面判斷等功能
 """
 
+import inspect
 import time
 import numpy as np
 from typing import Optional, Tuple
@@ -12,13 +13,22 @@ from .config import OpenGoldConfig
 
 class UIController:
     """遊戲 UI 控制器"""
-    
+
     def __init__(self, device, config: Optional[OpenGoldConfig] = None):
         self.device = device
         self.config = config or OpenGoldConfig()
-    
+
+    def _log_click(self, x: int, y: int, wait_time: float, reason: str) -> None:
+        """印出每次 click 的座標／原因，方便人工核對是否該點。"""
+        print(f"[CLICK] ({x:3d},{y:3d}) wait={wait_time}s  reason={reason}", flush=True)
+
     def click_and_wait(self, x: int, y: int, wait_time: float = 1.0):
-        """點擊並等待"""
+        """點擊並等待。Reason 自動由呼叫者函式名取得，方便追蹤。"""
+        try:
+            reason = inspect.currentframe().f_back.f_code.co_name
+        except Exception:
+            reason = "?"
+        self._log_click(x, y, wait_time, reason)
         self.device.click(x, y)
         time.sleep(wait_time)
     
@@ -98,15 +108,100 @@ class UIController:
             for (x, y), color in pixels
         )
 
-    def click_auto_mode_button(self):
-        """點擊自動開裝按鈕"""
-        x, y = self.config.auto_mode_button
-        self.click_and_wait(x, y, 2)
+    def _got_item_blue_pct(self, img: np.ndarray) -> float:
+        """中下 ROI 內落在「淺藍色」HSV 範圍的像素比例。"""
+        import cv2
+        y1, y2, x1, x2 = self.config.got_item_popup_roi
+        roi = img[y1:y2, x1:x2]
+        if roi.size == 0:
+            return 0.0
+        hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+        lo = np.array(self.config.got_item_popup_hsv_lo, dtype=np.uint8)
+        hi = np.array(self.config.got_item_popup_hsv_hi, dtype=np.uint8)
+        mask = cv2.inRange(hsv, lo, hi)
+        return float(mask.sum()) / 255.0 / mask.size
 
-    def click_start_confirm(self):
-        """點擊開始確認彈窗"""
-        x, y = self.config.start_confirm_button
-        self.click_and_wait(x, y, 2)
+    def is_got_item_popup(self, img: Optional[np.ndarray] = None) -> bool:
+        """中下部分背景為淺藍色 → 真的開到裝備了，這時才該點中間。
+
+        校準自 flow-2026-05-03.json：等待動畫的淺藍像素比例 ≤ 0.048，
+        開到裝備時 ≈ 0.170；用 0.10 為門檻可清楚分離（≥ 2x 安全邊際）。
+        """
+        if img is None:
+            img = self.capture_screenshot()
+        return self._got_item_blue_pct(img) >= self.config.got_item_popup_min_pct
+
+    def _has_text(self, target: str, y_range: Optional[Tuple[int, int]] = None) -> bool:
+        """單張截圖 OCR 探測：`target` 字串是否出現在指定 y_range 區段。
+
+        失敗時回 False，不寫 log。供 click_*_confirm 等動作的前置檢查使用，
+        避免 click_str_by_server 在彈窗根本不在時還等 2s 後才印 WARNING。
+        """
+        try:
+            img = self.capture_screenshot()
+            if y_range:
+                img = img[y_range[0]:y_range[1], :]
+            from img_tools import analyze_skill_via_http
+            import opencc
+
+            result = analyze_skill_via_http(img)
+            if not result or not result.get("success"):
+                return False
+            conv = opencc.OpenCC("s2t")
+            target_t = conv.convert(target)
+            for item in result.get("ocr_results") or []:
+                text = item.get("text", "") if isinstance(item, dict) else ""
+                if target_t in conv.convert(text):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def click_auto_mode_button(self) -> bool:
+        """點擊「自動」按鈕（OCR 字串定位）。前置 probe 不在則靜默跳過。"""
+        if not self._has_text("自動", y_range=(780, 870)):
+            return False
+        try:
+            from img_tools import click_str_by_server
+            clicked = click_str_by_server(
+                self.device,
+                "自動",
+                y_range=(780, 870),
+                wait_timeout=0,
+            )
+            if clicked:
+                print("[CLICK ] click_auto_mode_button hit=True", flush=True)
+                time.sleep(2)
+                return True
+            return False
+        except Exception as e:
+            print(f"[UIController] click_auto_mode_button 失敗: {e}")
+            return False
+
+    def click_start_confirm(self) -> bool:
+        """點擊「開始」確認彈窗（OCR 字串定位）。前置 probe 不在則靜默跳過。
+
+        校準自 7fe98fc6：到神燈頁時 auto 常常已經在跑、根本沒有「開始」彈窗，
+        此時不應印 [CLICK?] / 也不應呼叫底層 click_str_by_server 等 2s 才 timeout。
+        """
+        if not self._has_text("開始", y_range=(500, 700)):
+            return False
+        try:
+            from img_tools import click_str_by_server
+            clicked = click_str_by_server(
+                self.device,
+                "開始",
+                y_range=(500, 700),
+                wait_timeout=0,
+            )
+            if clicked:
+                print("[CLICK ] click_start_confirm hit=True", flush=True)
+                time.sleep(2)
+                return True
+            return False
+        except Exception as e:
+            print(f"[UIController] click_start_confirm 失敗: {e}")
+            return False
 
     def navigate_to_lamp(self):
         """導航到神燈頁面，並啟用自動模式"""
@@ -124,12 +219,13 @@ class UIController:
         self.click_and_wait(273, 560, 2)
     
     def click_all_sell(self) -> bool:
-        """點擊全部出售"""
-        # 這裡需要根據實際情況實現
-        # 可以整合 img_tools.click_str_by_server
+        """點擊全部出售（OCR 字串定位）。"""
         try:
             from img_tools import click_str_by_server
-            return click_str_by_server(self.device, "全部出售")
+            print("[CLICK?] click_all_sell — 找 '全部出售'", flush=True)
+            hit = click_str_by_server(self.device, "全部出售")
+            print(f"[CLICK ] click_all_sell hit={hit}", flush=True)
+            return hit
         except Exception as e:
             print(f"[UIController] 點擊全部出售失敗: {e}")
             return False

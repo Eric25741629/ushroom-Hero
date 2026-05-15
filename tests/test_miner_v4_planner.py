@@ -285,6 +285,58 @@ def test_plan_v4_no_pit_one_rock_dig_opens_floor7():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Known limitation: pits buried beyond depth-3 horizon
+# ---------------------------------------------------------------------------
+
+
+def test_plan_v4_5560_deeply_buried_pit_known_limitation():
+    """REGRESSION REPRODUCER: production board where v4 returns 0 steps.
+
+    Captured 2026-05-02 from emulator-5560 logs (also 5556, 5554).
+    Board legend (mining_service.get_visual_board):
+          0  1  2  3  4  5
+       0  d  d  R  .  D  d
+       1  d  r  D  .  D  d
+       2  d  d  D  .  D  R
+       3  d  d  R  .  .  .
+       4  d  _  r  R  .  .
+       5  X  r  d  D  .  D    ← X = unreachable_pit at (5, 0)
+       6  d  d  _  d  D  _
+
+    The single pit is sealed in unreachable territory (no `unreachable_*`
+    cell on the left half is 4-adjacent to a reachable empty), so the
+    minimum dig path to make the pit reachable is ≥4 actions. v4's depth=3
+    horizon plus its `_filter_actions` Manhattan ≤ depth filter only sees
+    one viable dig at (5, 3); the follow-up dig at (5, 2) is blocked by the
+    anti-scroll guard (would open floor7 without collecting a pit).
+
+    v4 therefore returns 0 steps and `pits_collected == 0`. The runtime
+    relies on a v1 (SmartPlanner) fallback for this case — see
+    `tests/test_mining_service_dispatch.py`.
+
+    If/when v4 is rewritten to handle deeply-buried pits natively (e.g.,
+    progress reward, dynamic depth extension, or relaxed anti-scroll when
+    no reachable_pit exists), this test should start producing steps and
+    pits_collected > 0 — at which point delete this test.
+    """
+    board = [
+        ["unreachable_dirt", "unreachable_dirt", "rock", "empty", "dirt", "unreachable_dirt"],
+        ["unreachable_dirt", "unreachable_rock", "dirt", "empty", "dirt", "unreachable_dirt"],
+        ["unreachable_dirt", "unreachable_dirt", "dirt", "empty", "dirt", "rock"],
+        ["unreachable_dirt", "unreachable_dirt", "rock", "empty", "empty", "empty"],
+        ["unreachable_dirt", "unreachable_empty", "unreachable_rock", "rock", "empty", "empty"],
+        ["unreachable_pit", "unreachable_rock", "unreachable_dirt", "dirt", "empty", "dirt"],
+        ["unreachable_dirt", "unreachable_dirt", "unreachable_empty", "unreachable_dirt", "dirt", "unreachable_empty"],
+    ]
+    plan = plan_v4(board, shovels=100, items={"drill": 694, "bomb": 694})
+    assert plan["ok"] is True
+    assert plan["strategy_class"] == "has_pit"
+    # Documents the limitation: v4 alone cannot collect this pit.
+    assert plan["stats"]["pits_collected"] == 0
+    assert plan["stats"]["pits_unreachable_remaining"] == 1
+
+
 def test_plan_v4_explored_nodes_bounded_by_pruning():
     # Busy board — lots of pits + items available. Without pruning, 5-layer
     # search would explode. With B&B + dominance + action filter, we want

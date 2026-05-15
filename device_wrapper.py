@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 import threading
@@ -8,11 +9,31 @@ import numpy as np
 from typing import Any, Dict, Iterable, Optional
 from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
+from utils.ws_listener import WSFrameTracker
 from runtime_services.device_runtime_service import ForceSleepRequested
 
 logger = logging.getLogger(__name__)
-_WEB_DEVICE_LOCK = threading.Lock()
+_WEB_DEVICE_LOCK = threading.RLock()
 _WEB_DEVICE_REGISTRY: Dict[str, "PlaywrightGameDevice"] = {}
+
+# Per-call screenshot duration above which we emit a per-device WARNING into
+# logs/<device>/main.log. Tuneable here; do not pepper magic numbers across
+# call sites. 500 ms is the operator-set ceiling for "something's wrong".
+_SLOW_SCREENSHOT_MS = 500
+
+
+def _reset_thread_event_loop() -> None:
+    # Playwright sync API rejects start() when the calling thread's event loop
+    # reports is_running()==True. A previous _playwright.stop() whose dispatcher
+    # fiber didn't fully shut down (e.g. Chrome was force-killed) can leave that
+    # flag stuck, which then poisons every subsequent restart in the same thread
+    # — exactly the 5554 failure mode in logs/emulator-5554/main.log (~210
+    # "Sync API inside the asyncio loop" errors). Installing a fresh loop here
+    # guarantees the next sync_playwright().start() sees a clean slate.
+    try:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except Exception:
+        pass
 
 
 DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS: Dict[str, Any] = {
@@ -135,6 +156,10 @@ class MonitoredDevice:
         self._d = original_d
         self._ip = ip
         self._tracker = ActionTraceRecorder()
+        # device_id wires the tracker into auto-body-capture mode so that
+        # interesting cmds get sample bodies persisted to
+        # tmp_ws_capture/auto/<ip>/ during normal bot runs.
+        self._ws_frame_tracker = WSFrameTracker(device_id=ip)
 
     def _trace(
         self,
@@ -142,6 +167,11 @@ class MonitoredDevice:
         payload: Optional[Dict[str, Any]] = None,
         meaning: str = "",
     ):
+        enriched: Dict[str, Any] = dict(payload or {})
+        ws_frames = self._collect_ws_frames()
+        if ws_frames:
+            enriched["ws_frames"] = ws_frames
+            enriched["ws_frames_count"] = len(ws_frames)
         try:
             self._tracker.log(
                 device_id=self._ip,
@@ -149,10 +179,33 @@ class MonitoredDevice:
                 source="MonitoredDevice",
                 meaning=meaning,
                 actor=type(self._d).__name__,
-                payload=payload or {},
+                payload=enriched,
             )
         except Exception:
             pass
+
+    def _collect_ws_frames(self) -> list:
+        """Drain WS frames captured since the previous _trace.
+
+        Only meaningful for web_h5 backend (PlaywrightGameDevice). For adb
+        devices and any error path, returns []. Each entry is
+        `{"cmd": int, "dir": "tx"|"rx", "ts": int_ms, "len": int}`.
+        """
+        d = self._d
+        if getattr(d, "backend_kind", None) != "web_h5":
+            return []
+        page = getattr(d, "_page", None)
+        if page is None:
+            return []
+        try:
+            if d.owner_thread_id != threading.get_ident():
+                return []
+        except Exception:
+            return []
+        try:
+            return self._ws_frame_tracker.drain(page, max_n=50)
+        except Exception:
+            return []
 
     def _auto_meaning(
         self,
@@ -307,6 +360,15 @@ class MonitoredDevice:
             bot_state.record_screenshot_time(self._ip, elapsed_ms)
         except Exception:
             pass
+        if elapsed_ms > _SLOW_SCREENSHOT_MS:
+            try:
+                from utils.logging_utils import get_thread_logger
+                get_thread_logger().warning(
+                    f"[{self._ip}] slow screenshot: {elapsed_ms:.0f}ms "
+                    f"(threshold={_SLOW_SCREENSHOT_MS}ms) | {self._auto_meaning('screenshot', meaning, payload)}"
+                )
+            except Exception:
+                pass
         return result
 
     def xpath_click(self, xpath_expr, *args, **kwargs):
@@ -467,6 +529,7 @@ class PlaywrightGameDevice:
         self._start()
 
     def _start(self):
+        _reset_thread_event_loop()
         try:
             from playwright.sync_api import sync_playwright
         except Exception as exc:  # pragma: no cover
@@ -738,27 +801,58 @@ class PlaywrightGameDevice:
         if not self.web_url or self._page is None:
             return False
         nav_timeout_ms = int(self.cfg.get("web_nav_timeout_ms") or 30000)
+        headless_mode = bool(self.cfg.get("web_headless", False))
+        self.logger.info(
+            f"[{self.device_id}] web_h5 opening game url: {self.web_url} "
+            f"(headless={headless_mode}, timeout={nav_timeout_ms}ms)"
+        )
+
+        goto_t0 = time.time()
         try:
             self._page.goto(
                 self.web_url, wait_until="domcontentloaded", timeout=nav_timeout_ms
             )
+            self.logger.info(
+                f"[{self.device_id}] web_h5 goto domcontentloaded ok in "
+                f"{(time.time() - goto_t0) * 1000:.0f}ms"
+            )
         except Exception as nav_err:
             self.logger.warning(
-                f"[{self.device_id}] web_h5 goto timeout/fail: {nav_err}"
+                f"[{self.device_id}] web_h5 goto timeout/fail after "
+                f"{(time.time() - goto_t0) * 1000:.0f}ms: {nav_err}"
             )
+            fallback_t0 = time.time()
             try:
                 # Fallback: wait for response commit only, to avoid hard-failing whole startup.
                 self._page.goto(self.web_url, wait_until="commit", timeout=10000)
+                self.logger.info(
+                    f"[{self.device_id}] web_h5 goto commit-only fallback ok in "
+                    f"{(time.time() - fallback_t0) * 1000:.0f}ms"
+                )
             except Exception as fallback_err:
                 self.logger.warning(
-                    f"[{self.device_id}] web_h5 fallback goto failed: {fallback_err}"
+                    f"[{self.device_id}] web_h5 fallback goto failed after "
+                    f"{(time.time() - fallback_t0) * 1000:.0f}ms: {fallback_err}"
                 )
                 return False
+
+        # Pass an explicit timeout to reload — the historical no-timeout call could
+        # block indefinitely in headless mode when the page never reaches DCL.
+        reload_t0 = time.time()
         try:
-            self._page.reload(wait_until="domcontentloaded")
-        except Exception:
+            self._page.reload(
+                wait_until="domcontentloaded", timeout=nav_timeout_ms
+            )
+            self.logger.info(
+                f"[{self.device_id}] web_h5 reload ok in "
+                f"{(time.time() - reload_t0) * 1000:.0f}ms"
+            )
+        except Exception as reload_err:
             # Some pages may transiently reject reload; keep the first successful navigation.
-            pass
+            self.logger.warning(
+                f"[{self.device_id}] web_h5 reload skipped after "
+                f"{(time.time() - reload_t0) * 1000:.0f}ms: {reload_err}"
+            )
         return True
 
     def is_alive(self) -> bool:
@@ -1023,6 +1117,13 @@ class PlaywrightGameDevice:
         return True
 
     def close(self):
+        # Both `_context.close()` and `_playwright.stop()` are independent
+        # cleanup steps — a failure in the first must NOT short-circuit
+        # the second, because that's how the Chrome subprocess gets
+        # orphaned: context.close() throws (page hung, target unresponsive),
+        # caller catches → playwright.stop() never runs → Chrome stays.
+        # Stash any non-trivial error and re-raise after cleanup is done.
+        deferred_err: Optional[Exception] = None
         try:
             if self._context is not None:
                 try:
@@ -1033,7 +1134,10 @@ class PlaywrightGameDevice:
                             f"[{self.device_id}] web_h5 close ignored already-closed browser context"
                         )
                     else:
-                        raise
+                        self.logger.warning(
+                            f"[{self.device_id}] web_h5 context close failed (continuing to playwright.stop): {exc}"
+                        )
+                        deferred_err = exc
                 finally:
                     self._context = None
             if self._playwright is not None:
@@ -1048,9 +1152,14 @@ class PlaywrightGameDevice:
                             f"[{self.device_id}] web_h5 close ignored already-stopped playwright"
                         )
                     else:
-                        raise
+                        self.logger.warning(
+                            f"[{self.device_id}] web_h5 playwright stop failed: {exc}"
+                        )
+                        if deferred_err is None:
+                            deferred_err = exc
                 finally:
                     self._playwright = None
+                    _reset_thread_event_loop()
             self._page = None
             self._in_game = False
         finally:
@@ -1058,6 +1167,8 @@ class PlaywrightGameDevice:
                 current = _WEB_DEVICE_REGISTRY.get(self.device_id)
                 if current is self:
                     _WEB_DEVICE_REGISTRY.pop(self.device_id, None)
+        if deferred_err is not None:
+            raise deferred_err
 
 
 def create_web_device_if_enabled(
@@ -1075,11 +1186,29 @@ def create_web_device_if_enabled(
     current_tid = threading.get_ident()
     with _WEB_DEVICE_LOCK:
         existing = _WEB_DEVICE_REGISTRY.get(ip)
-        if (
-            existing is not None
-            and getattr(existing, "owner_thread_id", None) == current_tid
-            and existing.is_alive()
-        ):
+        if existing is not None and getattr(existing, "owner_thread_id", None) == current_tid:
+            if existing.is_alive():
+                return existing
+            # Same-thread device is dead but its playwright may still be running.
+            # Restart in-place rather than creating a second playwright instance,
+            # which would raise "Sync API inside asyncio loop" (the 5554 failure mode).
+            log = logger_obj or logger
+            log.warning(
+                f"[{ip}] existing same-thread web device is dead, restarting in-place"
+            )
+            try:
+                existing._restart_browser_session()
+            except Exception as restart_err:
+                log.warning(
+                    f"[{ip}] in-place restart failed ({restart_err}), creating new device"
+                )
+                try:
+                    existing.close()
+                except Exception:
+                    pass
+                device = PlaywrightGameDevice(device_id=ip, cfg=config, logger_obj=logger_obj)
+                _WEB_DEVICE_REGISTRY[ip] = device
+                return device
             return existing
 
         # Cross-thread objects must never be reused with sync Playwright.
@@ -1087,6 +1216,20 @@ def create_web_device_if_enabled(
         device = PlaywrightGameDevice(device_id=ip, cfg=config, logger_obj=logger_obj)
         _WEB_DEVICE_REGISTRY[ip] = device
         return device
+
+
+def get_alive_web_device(ip: str) -> "Optional[PlaywrightGameDevice]":
+    """Return the registered web device for ip if it belongs to the current thread and is alive."""
+    current_tid = threading.get_ident()
+    with _WEB_DEVICE_LOCK:
+        existing = _WEB_DEVICE_REGISTRY.get(ip)
+        if (
+            existing is not None
+            and getattr(existing, "owner_thread_id", None) == current_tid
+            and existing.is_alive()
+        ):
+            return existing
+    return None
 
 
 def close_all_web_devices(logger_obj: Optional[logging.Logger] = None) -> None:

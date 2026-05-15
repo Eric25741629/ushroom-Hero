@@ -10,11 +10,8 @@
 import time
 import random
 import logging
-from datetime import datetime
-from pathlib import Path
-from typing import Tuple
+from typing import Optional, Tuple
 
-import cv2
 from PIL import Image
 import img_tools
 from tools import click_white
@@ -25,34 +22,7 @@ from utils.logging_utils import logger, default_logger
 import new_cnn.cnn_model as cnn_model_module
 import bot_state
 import config_manager
-from device_wrapper import create_web_device_if_enabled
-
-
-def _save_online_check_debug_images(ip: str, full_img, roi_img, attempt: int, logger_obj: logging.Logger) -> None:
-    debug_dir = Path("logs") / "online_check_debug" / ip
-    debug_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-
-    def _save(path: Path, img) -> bool:
-        try:
-            if cv2.imwrite(str(path), img):
-                return True
-        except Exception:
-            pass
-        ok, buf = cv2.imencode(path.suffix, img)
-        if not ok:
-            return False
-        buf.tofile(str(path))
-        return path.exists() and path.stat().st_size > 0
-
-    full_path = debug_dir / f"{timestamp}_attempt{attempt}_full.png"
-    roi_path = debug_dir / f"{timestamp}_attempt{attempt}_roi.png"
-    saved_full = _save(full_path, full_img)
-    saved_roi = _save(roi_path, roi_img)
-    logger_obj.info(
-        f"[{ip}] online-check debug images saved: full={full_path if saved_full else 'failed'}, "
-        f"roi={roi_path if saved_roi else 'failed'}"
-    )
+from device_wrapper import create_web_device_if_enabled, get_alive_web_device
 
 
 class StartupLoginConflictError(Exception):
@@ -235,9 +205,153 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
             )
 
 def check_on_line(Cnn_model):
+    """檢查 5558 帳號是否在線上 —— 雙重檢查 / 相互驗證模式。
+
+    Protocol path（0x0f02 friend list，< 1 秒）與 OCR path（角色頁線上狀態，~30-50 秒）
+    都會跑，**兩者都判定為下線才放行（return False）**；任一判定為在線、結果不一致、
+    或檢查失敗都回報 busy（return True）。
+
+    這是針對「protocol 偶爾誤判為下線」之類的單 path bug 加上的 safety net：
+    保守處理，寧可多 sleep 一輪也不要在玩家在線時跑 bot。
+
+    短路規則：protocol 已判定 busy 時不再跑 OCR，反正不會放行。
+
+    Config:
+    - `emulator-5558.online_check_target_pid` —— 必填，沒設視同 protocol 不可用
+    - `emulator-5558.online_check_threshold_sec` —— 預設 60
     """
-    用 5554 設備去檢查 5558 帳號是否在線上。
-    透過 5554 登入，檢查 5558 的人物線上狀態。
+    target_cfg = config_manager.get_device_config('emulator-5558')
+    target_pid = target_cfg.get('online_check_target_pid')
+    threshold_sec = int(target_cfg.get('online_check_threshold_sec', 60))
+
+    proto_result: Optional[bool] = None
+    proto_error: Optional[str] = None
+    if target_pid:
+        try:
+            proto_result = _check_on_line_via_protocol(int(target_pid), threshold_sec)
+        except Exception as e:
+            proto_error = f"{type(e).__name__}: {e}"
+            logger.warning(f"[check_on_line] protocol path failed ({proto_error})")
+    else:
+        proto_error = "online_check_target_pid not set"
+        logger.info(f"[check_on_line] {proto_error}")
+
+    if proto_result is True:
+        logger.info("[check_on_line] protocol=busy, skipping OCR (already not 放行)")
+        return True
+
+    try:
+        ocr_result = _check_on_line_via_ocr_legacy(Cnn_model)
+    except Exception as e:
+        logger.error(
+            f"[check_on_line] OCR path failed: {type(e).__name__}: {e}; "
+            f"protocol={proto_result if proto_error is None else proto_error}; "
+            f"conservative → busy",
+            exc_info=True,
+        )
+        return True
+
+    if proto_error is not None:
+        logger.warning(
+            f"[check_on_line] protocol unavailable ({proto_error}); "
+            f"無法相互驗證 → 即使 OCR={ocr_result} 也保守回報 busy"
+        )
+        return True
+
+    if proto_result is False and ocr_result is False:
+        logger.info(
+            "[check_on_line] cross-verify pass: protocol=offline, OCR=offline → 放行"
+        )
+        return False
+
+    logger.warning(
+        f"[check_on_line] cross-verify mismatch: protocol={proto_result}, "
+        f"OCR={ocr_result} → 保守回報 busy"
+    )
+    return True
+
+
+def _check_on_line_via_protocol(target_pid: int, threshold_sec: int = 60) -> bool:
+    """Protocol fast-path：透過 5554 已登入的 web_h5 session 直接查好友列表。
+
+    Returns True (busy) if target is online within threshold_sec.
+    Raises if 5554 not on web_h5 backend or page not ready.
+
+    5554 從 2 小時休眠醒來時 browser tab 可能已被 throttle，
+    `netManager._cnet` 還沒重新掛上 → 先 bring_to_front 喚醒 tab，
+    再給 RPC 較長的 netManager wait（25 秒）讓 WS 自行重連。
+    若超時就 raise，caller 會走 OCR fallback。
+    """
+    from utils.web_game_api import WebGameAPI  # lazy to avoid circular import in tests
+
+    ip = 'emulator-5554'
+    device_cfg = config_manager.get_device_config(ip)
+    backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+    if backend_kind != "web_h5":
+        raise RuntimeError("protocol path requires emulator-5554 on web_h5 backend")
+
+    # Track whether the browser was already open so we know if we should close it after.
+    # If 5554 is mid-task its device is already alive — don't close it.
+    # If we're opening a fresh session just for this check, close it when done.
+    pre_existing = get_alive_web_device(ip)
+
+    d = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=default_logger)
+    if d is None:
+        raise RuntimeError("create_web_device_if_enabled returned None")
+
+    close_after_check = pre_existing is None
+
+    try:
+        page = getattr(d, "_page", None)
+        if page is None or page.is_closed():
+            raise RuntimeError("5554 page is not available / closed")
+
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+
+        # Honor dashboard pause/force-sleep on this device. Protocol path
+        # bypasses MonitoredDevice (which usually does this in _pause_guard),
+        # so we have to call check_pause manually here AND inside the wait
+        # loop so a 25s wait doesn't ignore a mid-flight pause.
+        bot_state.check_pause(ip)
+        pause_poll = lambda: bot_state.check_pause(ip)
+
+        api = WebGameAPI(page)
+        if not api.wait_until_in_game(timeout_sec=25.0, on_poll=pause_poll):
+            st = {}
+            try:
+                st = api.game_state()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"5554 not in game after 25s: ws_ready={st.get('ws_ready_state')}"
+                f" sock_state={st.get('sock_state')} scene={st.get('scene_name')}"
+            )
+
+        bot_state.check_pause(ip)
+        is_online = api.is_player_online(
+            target_pid, threshold_sec=threshold_sec, net_wait_ms=5000,
+        )
+        logger.info(
+            f"[check_on_line/protocol] target_pid={target_pid} online={is_online}"
+        )
+        return is_online
+    finally:
+        if close_after_check:
+            try:
+                d.close()
+                logger.info(f"[check_on_line/protocol] closed temporary browser for {ip}")
+            except Exception as close_err:
+                logger.warning(f"[check_on_line/protocol] device close failed: {close_err}")
+
+
+def _check_on_line_via_ocr_legacy(Cnn_model):
+    """OCR-based check: 5554 切換到角色頁，截圖 OCR 看「線上 / X 小時前」。
+
+    保留作為 protocol path 的 fallback。完整流程約 30-50 秒，
+    替代它的 protocol path 在 1 秒內完成。
     """
     ip = 'emulator-5554'
     device_cfg = config_manager.get_device_config(ip)

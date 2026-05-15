@@ -1,3 +1,16 @@
+# =====================================================================
+# DEPRECATED — V1 神燈實作（monolithic Open_gold_paddle_ocr）
+#
+# 標準實作已遷至 `opengold_v2/lamp_service.py`（V2，模組化 + OpenGoldConfig）。
+# 本檔僅因下列裝置尚未切換而保留，請勿在此加新功能、修 bug 也優先導向 V2：
+#
+#   - emulator-5554 / 5558 / 5560 (bot_config.json: use_opengold_v2=false)
+#   - standalone CLI: `python Open_gold_paddle_ocr.py`
+#
+# Migration path: 翻 use_opengold_v2 → true 並驗證 → 全綠後刪本檔的
+# `open_the_gold` 與 lamp_scheduler 的 V1 branch。
+# V2 目前狀態：beta（3/6 裝置在跑）。
+# =====================================================================
 from sympy import N, det
 import device as D
 import time
@@ -262,100 +275,121 @@ def text_to_skill_code(text: str) -> Optional[str]:
             return code
     return None
 
+_SAME_ROW_TOLERANCE = 12  # bbox center_y delta to treat as same OCR row
+_BBOX_ROW_BUCKET = 10  # quantise bbox y by this many px when sorting top-to-bottom
+
+
+def _has_number(s):
+    return bool(re.search(r'[0-9％%]', s))
+
+
+def _is_number_only(s):
+    return bool(re.fullmatch(r'[+-]?[0-9]+(?:\.[0-9]+)?%?', s))
+
+
+def _bbox_4_tuple(b):
+    """Return b iff it looks like (x0, y0, x1, y1), else None."""
+    return b if isinstance(b, (list, tuple)) and len(b) == 4 else None
+
+
+def _normalize_ocr_entry(entry):
+    """Coerce one raw OCR entry into {text, bbox}. dict / [bbox,text,score] /
+    bare string are all accepted. Empty text → None to signal 'drop me'."""
+    if isinstance(entry, dict):
+        t, bbox = str(entry.get('text', '')).strip(), entry.get('bbox')
+    elif isinstance(entry, (list, tuple)) and len(entry) > 1:
+        t, bbox = str(entry[1]).strip(), None
+    else:
+        t, bbox = str(entry).strip(), None
+    return {'text': t, 'bbox': bbox} if t else None
+
+
+def _items_sort_key(it):
+    """Top-to-bottom, then left-to-right; missing bbox → grouped at the start."""
+    b = _bbox_4_tuple(it.get('bbox'))
+    return (b[1] // _BBOX_ROW_BUCKET, b[0]) if b else (0, 0)
+
+
+def _find_skill_with_nearby_number(skill_items, num_items):
+    """For each skill item, look for a number on the same OCR row (within
+    _SAME_ROW_TOLERANCE px). Returns 'skill number' on first hit, else None."""
+    if not num_items:
+        return None
+    for s_it in skill_items:
+        s_txt = s_it['text']
+        s_bbox = _bbox_4_tuple(s_it.get('bbox'))
+        if s_bbox:
+            s_cy = (s_bbox[1] + s_bbox[3]) / 2
+            candidates = []
+            for n_it in num_items:
+                n_bbox = _bbox_4_tuple(n_it.get('bbox'))
+                if n_bbox and abs((n_bbox[1] + n_bbox[3]) / 2 - s_cy) <= _SAME_ROW_TOLERANCE:
+                    candidates.append((abs(n_bbox[0] - s_bbox[2]), n_it))
+            if candidates:
+                candidates.sort(key=lambda x: x[0])
+                return f"{s_txt} {candidates[0][1]['text']}"
+        # bbox missing: fall back to any pure-number item
+        for n_it in num_items:
+            if _is_number_only(n_it['text']):
+                return f"{s_txt} {n_it['text']}"
+    return None
+
+
+def _simple_concat_fallback(items):
+    """Last-resort string assembly when no skill/number pairing was found.
+
+    Looks at the first 3 items only — the OCR row order put the most likely
+    'skill + number' pair near the top. Tries to surface a 'skill number'
+    pairing first, falls back to the leading number, then stitches a number
+    from later items, finally returns the first text alone.
+    """
+    texts = [it['text'] for it in items[:3]]
+    first = texts[0]
+    if _has_number(first) and not text_to_skill_code(first):
+        for t in texts[1:]:
+            if text_to_skill_code(t):
+                return f"{t} {first}"
+    if _has_number(first):
+        return first
+    for t in texts[1:]:
+        if _has_number(t):
+            return f"{first} {t}"
+    return first
+
+
 def get_first_text_from_skill_result(skill_result):
-    """從 server 回傳中取出第一個 OCR 文字（容錯處理）。"""
+    """從 server 回傳中取出第一個 OCR 文字（容錯處理）。
+
+    Strategy (in order):
+      1) Find a skill item that has a number on the same OCR row → "skill number"
+      2) Failing that, simple concat of first 3 items in row order
+      3) On any unexpected error → empty string (caller treats as 'no detection')
+    """
     try:
         if not skill_result:
             return ''
-
-        # 優先直接取 server 回傳格式中常見的欄位：
-        # skill_result['ocr_results'][0]['text']
         ocr = skill_result.get('ocr_results') or skill_result.get('ocr_results_raw') or []
-        if ocr:
-            import re
+        # Defensive: if a malformed payload puts a string here, iterating it
+        # would yield single characters which become bogus 1-char "items".
+        if not isinstance(ocr, (list, tuple)):
+            return ''
+        if not ocr:
+            return ''
 
-            def has_number(s: str) -> bool:
-                return bool(re.search(r'[0-9％%]', s))
+        items = [it for it in (_normalize_ocr_entry(e) for e in ocr) if it is not None]
+        if not items:
+            return ''
 
-            def is_number_only(s: str) -> bool:
-                return bool(re.fullmatch(r'[+-]?[0-9]+(?:\.[0-9]+)?%?', s))
+        items.sort(key=_items_sort_key)
 
-            items = []
-            for entry in ocr:
-                if isinstance(entry, dict):
-                    t = str(entry.get('text', '')).strip()
-                    bbox = entry.get('bbox', None)
-                elif isinstance(entry, (list, tuple)) and len(entry) > 1:
-                    t = str(entry[1]).strip()
-                    bbox = None
-                else:
-                    t = str(entry).strip()
-                    bbox = None
-                if t:
-                    items.append({'text': t, 'bbox': bbox})
+        skill_items = [it for it in items if text_to_skill_code(it['text'])]
+        num_items = [it for it in items if _has_number(it['text'])]
 
-            if not items:
-                return ''
+        primary = _find_skill_with_nearby_number(skill_items, num_items)
+        if primary is not None:
+            return primary
 
-            # 依 bbox 排序（仿 server：先上後下，再左到右）
-            def sort_key(it):
-                b = it.get('bbox')
-                if isinstance(b, (list, tuple)) and len(b) == 4:
-                    return (b[1] // 10, b[0])
-                return (0, 0)
-
-            items.sort(key=sort_key)
-
-            # 優先：找包含技能的文字 + 同列最近數字
-            def center_y(b):
-                return (b[1] + b[3]) / 2
-
-            skill_items = []
-            num_items = []
-            for it in items:
-                txt = it['text']
-                if text_to_skill_code(txt):
-                    skill_items.append(it)
-                if has_number(txt):
-                    num_items.append(it)
-
-            for s_it in skill_items:
-                s_txt = s_it['text']
-                s_bbox = s_it.get('bbox')
-                if not num_items:
-                    continue
-                if isinstance(s_bbox, (list, tuple)) and len(s_bbox) == 4:
-                    s_cy = center_y(s_bbox)
-                    candidates = []
-                    for n_it in num_items:
-                        n_bbox = n_it.get('bbox')
-                        if isinstance(n_bbox, (list, tuple)) and len(n_bbox) == 4:
-                            if abs(center_y(n_bbox) - s_cy) <= 12:
-                                dx = n_bbox[0] - s_bbox[2]
-                                candidates.append((abs(dx), n_it))
-                    if candidates:
-                        candidates.sort(key=lambda x: x[0])
-                        return f"{s_txt} {candidates[0][1]['text']}"
-                # bbox 不足時，退回簡單拼接
-                for n_it in num_items:
-                    if is_number_only(n_it['text']):
-                        return f"{s_txt} {n_it['text']}"
-
-            # 退回原本的簡單拼接策略（避免數字先出現導致技能缺失）
-            texts = [it['text'] for it in items[:3]]
-            first = texts[0]
-            if has_number(first) and not text_to_skill_code(first):
-                for t in texts[1:]:
-                    if text_to_skill_code(t):
-                        return f"{t} {first}"
-            if has_number(first):
-                return first
-            for t in texts[1:]:
-                if has_number(t):
-                    return f"{first} {t}"
-            return first
-
-        return ''
+        return _simple_concat_fallback(items)
     except Exception:
         return ''
 
@@ -396,199 +430,171 @@ def parse_skill_prob(text):
 
     return (skill, None)
 
-def compare_skill_pairs(rolled, original, is_compare=True, has_lian_shan_equip=True):
-    """比較兩組詞條清單（每項為 (skill, prob)），依使用者規則決策是否要換裝。
+_COMPARE_EPS = 1e-6
+_CAP7_SET = frozenset({'閃', '連', '爆', '反'})
 
-    規則摘要：
-    1) 若有 `回`（回復）則優先比較回復：若開出回復 >= 0.25 且原本 < 0.25，必換；若兩方皆為 0.25 則比較另一個詞條。
-    2) 對於 `閃, 連, 爆, 反` 這類上限為 7% 的詞條，對一組詞條會把屬於該集合的數值相加再比較總和。
-       - 特殊：若擁有連閃裝備（has_lian_shan_equip=True），則將 `連` 與 `爆` 的值相加比較。
-    3) 若涉及 `技`（技能暴擊）與 `暈`（擊暈），優先看 `技`。
 
-    參數：
-    - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合）
+def _gt_with_eps(a, b):
+    """a > b within EPS. None is treated as 'no value', smaller than any number."""
+    return (a is not None and b is not None and (a - b) > _COMPARE_EPS) or (
+        a is not None and b is None
+    )
 
-    回傳 dict，包含：
-    - 'details': 每個技能的 rolled/orig/差異
-    - 'replace': 最終是否建議更換（bool）
-    - 'reason': 字串說明
-    """
-    # 參數與常數
-    EPS = 1e-6
-    RECOVERY_THRESHOLD = 0.25
-    STUN_THRESHOLD = 3.0
-    SKILL_CRIT_THRESHOLD = 3.6
-    CAP7_SET = {'閃', '連', '爆', '反'}
 
-    # 建立映射，未提供機率視為 0.0
-    def to_map(pairs):
-        m = {}
-        for s, p in pairs:
-            if s is None:
-                continue
-            m[s] = max(m.get(s, 0.0), 0.0 if p is None else float(p))
-        return m
+def _pairs_to_skill_map(pairs):
+    """[(skill, prob), ...] → {skill: max_prob}. None probs become 0.0; None skills dropped."""
+    m = {}
+    for s, p in pairs:
+        if s is None:
+            continue
+        m[s] = max(m.get(s, 0.0), 0.0 if p is None else float(p))
+    return m
 
-    orig_map = to_map(original)
-    rolled_map = to_map(rolled)
 
+def _build_compare_details(rolled_map, orig_map):
+    """Return per-skill {rolled_prob, orig_prob, better, *_unknown, note} dict."""
     details = {}
-    # collect all skills seen
-    all_skills = set(list(orig_map.keys()) + list(rolled_map.keys()))
-    for s in all_skills:
+    for s in set(orig_map) | set(rolled_map):
+        r = rolled_map.get(s)
+        o = orig_map.get(s)
         details[s] = {
-            'rolled_prob': rolled_map.get(s, None),
-            'orig_prob': orig_map.get(s, None),
+            'rolled_prob': r,
+            'orig_prob': o,
             'better': None,
-            # 新增標記：是否為 unknown（None）
-            'rolled_unknown': False,
-            'orig_unknown': False,
-            # 比較時可能的說明
-            'note': ''
+            'rolled_unknown': r is None,
+            'orig_unknown': o is None,
+            'note': '',
         }
+    return details
 
-    # 正規化 details 中的值，並標記 unknown
-    for k in list(details.keys()):
-        r = details[k].get('rolled_prob')
-        o = details[k].get('orig_prob')
-        # 標記 unknown
-        details[k]['rolled_unknown'] = (r is None)
-        details[k]['orig_unknown'] = (o is None)
-        # 嘗試轉為 float，無法轉則保留 None
-        try:
-            details[k]['rolled_prob'] = None if r is None else float(r)
-        except Exception:
-            details[k]['rolled_prob'] = None
-            details[k]['rolled_unknown'] = True
-        try:
-            details[k]['orig_prob'] = None if o is None else float(o)
-        except Exception:
-            details[k]['orig_prob'] = None
-            details[k]['orig_unknown'] = True
 
-    # 安全比較 helper：處理 None（避免 TypeError）
-    def safe_gt(a, b):
-        # 若兩方皆為 None，回傳 False（無法判定更好）
-        if a is None and b is None:
-            return False
-        # 若 a 有數值而 b 為 None，視為 a 較好
-        if a is not None and b is None:
-            return True
-        # 若 a 為 None 而 b 有數值，視為不較好
-        if a is None and b is not None:
-            return False
-        # 否則正常比較
-        try:
-            return (a - b) > EPS
-        except Exception:
-            return False
+def _cap7_sum(skill_map, has_lian_shan_equip):
+    """Sum the cap-7% skills. Lian-shan equipment merges 連/爆 into one combined value."""
+    s = 0.0
+    if has_lian_shan_equip:
+        s += float(skill_map.get('連', 0.0)) + float(skill_map.get('爆', 0.0))
+        s += sum(float(skill_map.get(k, 0.0)) for k in _CAP7_SET if k not in ('連', '爆'))
+    else:
+        s += sum(float(skill_map.get(k, 0.0)) for k in _CAP7_SET)
+    return s
 
-    if not is_compare:
-        # 當使用者傳入 is_compare == False 時，視為要求跳過機率比對並強制更換
-        # 所有詞條都標記為 better，並返回 replace=True
-        for k in details:
-            details[k]['better'] = True
-        reason = '跳過機率比對 -> 強制更換'
-        return {'details': details, 'replace': True, 'reason': reason}
 
-    # Helper: compare numeric with EPS
-    def gt(a, b):
-        return (a is not None and b is not None and (a - b) > EPS) or (a is not None and b is None)
+def _mark_all_better_when_recovery_higher(details):
+    for k in details:
+        r = details[k].get('rolled_prob') or 0.0
+        o = details[k].get('orig_prob') or 0.0
+        details[k]['better'] = float(r) > float(o)
 
-    # 1) 回復優先（不看 0.25 門檻，只要有回就先比）
+
+def _rule_recovery_priority(rolled_map, orig_map, details):
+    """Rule 1: 回 (recovery) is dominant. Returns final dict, or None to fall through."""
+    if '回' not in rolled_map and '回' not in orig_map:
+        return None
+
     rolled_rec = rolled_map.get('回', 0.0)
     orig_rec = orig_map.get('回', 0.0)
     print(f"回復機率比較: rolled 回={rolled_rec}, original 回={orig_rec}")
 
-    if ('回' in rolled_map) or ('回' in orig_map):
-        # 先單純比較回復大小
-        if rolled_rec > orig_rec + EPS:
-            for k in details:
-                r = details[k].get('rolled_prob')
-                o = details[k].get('orig_prob')
-                try:
-                    r_val = 0.0 if r is None else float(r)
-                except Exception:
-                    r_val = 0.0
-                try:
-                    o_val = 0.0 if o is None else float(o)
-                except Exception:
-                    o_val = 0.0
-                details[k]['better'] = r_val > o_val
-            return {'details': details, 'replace': True, 'reason': 'rolled recovery higher than original'}
+    if rolled_rec > orig_rec + _COMPARE_EPS:
+        _mark_all_better_when_recovery_higher(details)
+        return {'details': details, 'replace': True, 'reason': 'rolled recovery higher than original'}
+    if orig_rec > rolled_rec + _COMPARE_EPS:
+        return {'details': details, 'replace': False, 'reason': 'original recovery higher than rolled'}
 
-        if orig_rec > rolled_rec + EPS:
-            return {'details': details, 'replace': False, 'reason': 'original recovery higher than rolled'}
+    # Recovery is equal — compare presence of any non-recovery skill.
+    if abs(rolled_rec - orig_rec) > _COMPARE_EPS:
+        return None
 
-        # 回復幾乎一樣時，才看另一個詞條
-        if abs(rolled_rec - orig_rec) <= EPS:
-            def other_skill_sum(m):
-                for k in m:
-                    if k != '回':
-                        return k, m[k]
-                return None, 0.0
+    def _first_non_recovery_skill(m):
+        for k in m:
+            if k != '回':
+                return k
+        return None
 
-            r_skill, r_val = other_skill_sum(rolled_map)
-            o_skill, o_val = other_skill_sum(orig_map)
+    r_skill = _first_non_recovery_skill(rolled_map)
+    o_skill = _first_non_recovery_skill(orig_map)
+    if r_skill and not o_skill:
+        return {'details': details, 'replace': True, 'reason': 'rolled has non-recovery skill while original lacks it'}
+    if not r_skill and o_skill:
+        return {'details': details, 'replace': False, 'reason': 'original has non-recovery skill while rolled lacks it'}
+    return None  # Both have non-recovery skills — let later rules decide.
 
-            if r_skill and not o_skill:
-                return {'details': details, 'replace': True, 'reason': 'rolled has non-recovery skill while original lacks it'}
-            if not r_skill and o_skill:
-                return {'details': details, 'replace': False, 'reason': 'original has non-recovery skill while rolled lacks it'}
-            # 若兩邊都有第二詞條且回復一樣，就交給後續規則
 
-    # 2) 技能爆擊優先於擊暈
-    if '技' in all_skills or '暈' in all_skills:
-        tech_r = rolled_map.get('技', 0.0)
-        tech_o = orig_map.get('技', 0.0)
-        if gt(tech_r, tech_o):
-            return {'details': details, 'replace': True, 'reason': 'rolled has higher skill-crit (技)'}
-        elif tech_r == tech_o and tech_r > 0:
-            # equal 技, fallback: compare 暈
-            stun_r = rolled_map.get('暈', 0.0)
-            stun_o = orig_map.get('暈', 0.0)
-            if gt(stun_r, stun_o):
-                return {'details': details, 'replace': True, 'reason': '技 equal, but rolled has higher 暈'}
+def _rule_skill_crit_over_stun(rolled_map, orig_map, details):
+    """Rule 2: 技 (skill-crit) outranks 暈 (stun); on tie use 暈 as tiebreaker."""
+    if '技' not in rolled_map and '技' not in orig_map and '暈' not in rolled_map and '暈' not in orig_map:
+        return None
+    tech_r = rolled_map.get('技', 0.0)
+    tech_o = orig_map.get('技', 0.0)
+    if _gt_with_eps(tech_r, tech_o):
+        return {'details': details, 'replace': True, 'reason': 'rolled has higher skill-crit (技)'}
+    if tech_r == tech_o and tech_r > 0:
+        if _gt_with_eps(rolled_map.get('暈', 0.0), orig_map.get('暈', 0.0)):
+            return {'details': details, 'replace': True, 'reason': '技 equal, but rolled has higher 暈'}
+    return None
 
-    # 3) 對於 CAP7_SET，把該集合內的數值相加比較
-    # 特殊處理：若擁有連閃裝備，則 `連` 與 `爆` 視為一個整體（相加）
-    def cap7_sum(m):
-        s = 0.0
-        if has_lian_shan_equip:
-            # 連閃裝備：將 `連` 與 `爆` 視為一個整體（相加）
-            lian_shan_sum = float(m.get('連', 0.0)) + float(m.get('爆', 0.0))
-            s += lian_shan_sum
-            # 加上其他上限7%的詞條
-            for k in CAP7_SET:
-                if k not in ('連', '爆'):
-                    s += float(m.get(k, 0.0))
-        else:
-            # 普通模式：直接相加所有上限7%的詞條
-            for k in CAP7_SET:
-                s += float(m.get(k, 0.0))
-        return s
 
-    rolled_cap7 = cap7_sum(rolled_map)
-    orig_cap7 = cap7_sum(orig_map)
-    if rolled_cap7 > orig_cap7 + EPS:
+def _rule_cap7_sum(rolled_map, orig_map, details, has_lian_shan_equip):
+    """Rule 3: compare summed cap-7% skills."""
+    rolled_cap7 = _cap7_sum(rolled_map, has_lian_shan_equip)
+    orig_cap7 = _cap7_sum(orig_map, has_lian_shan_equip)
+    if rolled_cap7 > orig_cap7 + _COMPARE_EPS:
         return {'details': details, 'replace': True, 'reason': f'rolled cap7 sum {rolled_cap7} > orig {orig_cap7}'}
-    elif orig_cap7 > rolled_cap7 + EPS:
+    if orig_cap7 > rolled_cap7 + _COMPARE_EPS:
         return {'details': details, 'replace': False, 'reason': f'orig cap7 sum {orig_cap7} > rolled {rolled_cap7}'}
+    return None
 
-    # 4) 最後退回逐一比較：若任一開出詞條機率 > 原本對應詞條，視為較好
+
+def _rule_any_skill_better(rolled_map, orig_map, details):
+    """Rule 4 (fallback): replace if any single skill is better."""
     any_better = False
     for s, p in rolled_map.items():
-        o_p = orig_map.get(s, 0.0)
-        better = gt(p, o_p)
+        better = _gt_with_eps(p, orig_map.get(s, 0.0))
         details[s]['better'] = better
         if better:
             any_better = True
-
     if any_better:
         return {'details': details, 'replace': True, 'reason': 'some rolled skills have higher prob than original'}
-
-    # 若都沒有比較出差異，則不換
     return {'details': details, 'replace': False, 'reason': 'no advantage found'}
+
+
+def compare_skill_pairs(rolled, original, is_compare=True, has_lian_shan_equip=True):
+    """比較兩組詞條清單（每項為 (skill, prob)），依使用者規則決策是否要換裝。
+
+    規則順序（找到第一個分勝負的規則就回傳）：
+      1) 回 (recovery) 優先：rolled 回 > orig 回 → 換；反之不換。
+         若兩方 回 相等：rolled 有非回詞條而 orig 沒 → 換；反之不換。
+         其餘交給後續規則。
+      2) 技 (skill-crit) 高於 暈 (stun)：技 高就換；技 平則比 暈。
+      3) cap-7% 詞條集合 ({閃, 連, 爆, 反}) 總和比較。
+         連閃裝備時 `連` 與 `爆` 算同一池。
+      4) 逐項比較：任何技能 rolled > orig 就視為較好。
+
+    參數：
+    - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合）
+    - is_compare: False 時跳過所有規則，強制 replace=True
+
+    回傳 {'details', 'replace', 'reason'}。
+    """
+    rolled_map = _pairs_to_skill_map(rolled)
+    orig_map = _pairs_to_skill_map(original)
+    details = _build_compare_details(rolled_map, orig_map)
+
+    if not is_compare:
+        for k in details:
+            details[k]['better'] = True
+        return {'details': details, 'replace': True, 'reason': '跳過機率比對 -> 強制更換'}
+
+    for rule in (
+        lambda: _rule_recovery_priority(rolled_map, orig_map, details),
+        lambda: _rule_skill_crit_over_stun(rolled_map, orig_map, details),
+        lambda: _rule_cap7_sum(rolled_map, orig_map, details, has_lian_shan_equip),
+    ):
+        result = rule()
+        if result is not None:
+            return result
+
+    return _rule_any_skill_better(rolled_map, orig_map, details)
 
 def get_skill_combo(ocr_results):
     """從 OCR 結果提取技能組合（使用 text_to_skill_code）。"""
@@ -616,9 +622,18 @@ def is_unwanted_combo(combo: str) -> bool:
     return len(combo) == 2 and frozenset(combo) in UNWANTED_COMBOS
 
 
-def extract_panel_and_entries(ocr_list):
-    """從 /ocr 回傳的 ocr_results（list[dict]）萃取面板與詞條。"""
-    items = [
+_PANEL_LABELS = ("生命", "攻擊", "防禦")
+_SAME_ROW_Y_TOLERANCE = 12  # bbox center_y delta to count as the same row
+_NEAR_LEFT_X_TOLERANCE = 5  # how far term/label may overlap the value's left edge
+
+
+def _bbox_center_y(b):
+    return (b[1] + b[3]) / 2
+
+
+def _normalize_ocr_items(ocr_list):
+    """Coerce raw OCR dicts to {text, bbox, score} with normalised text."""
+    return [
         {
             "text": normalize_text(x.get("text", "")),
             "bbox": x.get("bbox"),
@@ -628,75 +643,77 @@ def extract_panel_and_entries(ocr_list):
         if x.get("text") is not None and x.get("bbox") is not None
     ]
 
-    def center_y(b):
-        return (b[1] + b[3]) / 2
 
-    # ---------- A) 面板：生命/攻擊/防禦 ----------
+def _extract_panel_attributes(items) -> Dict[str, int]:
+    """生命/攻擊/防禦 — 同框 (e.g. '生命56780') 與分框 (label + nearby number)."""
     panel: Dict[str, int] = {}
 
-    # (1) 同框：生命056780
+    # Same-frame: "生命56780"
     for it in items:
         m = re.search(r"(生命|攻擊|防禦)(\d+)", it["text"])
         if m:
             panel[m.group(1)] = int(m.group(2))
 
-    # (2) 分框：label + 數字（同列右側最近）
+    # Split-frame: label box + nearest number box on the same row to the right
     num_items = [it for it in items if re.fullmatch(r"\d+", it["text"])]
-    label_items = [it for it in items if it["text"] in ["生命", "攻擊", "防禦"]]
+    label_items = [it for it in items if it["text"] in _PANEL_LABELS]
 
     for lab in label_items:
         if lab["text"] in panel:
             continue
         candidates = []
         for num in num_items:
-            if (
-                abs(center_y(num["bbox"]) - center_y(lab["bbox"])) <= 12
-                and num["bbox"][0] >= lab["bbox"][2] - 5
-            ):
+            same_row = abs(_bbox_center_y(num["bbox"]) - _bbox_center_y(lab["bbox"])) <= _SAME_ROW_Y_TOLERANCE
+            to_the_right = num["bbox"][0] >= lab["bbox"][2] - _NEAR_LEFT_X_TOLERANCE
+            if same_row and to_the_right:
                 dx = num["bbox"][0] - lab["bbox"][2]
                 candidates.append((dx, num))
         if candidates:
             candidates.sort(key=lambda t: t[0])
             panel[lab["text"]] = int(candidates[0][1]["text"])
 
-    # ---------- B) 詞條 + % ----------
+    return panel
+
+
+def _is_term_text(t: str) -> bool:
+    """A term is anything that isn't a panel label, pure number, or percentage."""
+    if t in _PANEL_LABELS:
+        return False
+    if re.fullmatch(r"\d+", t):
+        return False
+    if re.fullmatch(r"\d+(?:\.\d+)?%", t):
+        return False
+    if re.search(r"\d", t) and "%" in t:
+        return False
+    return True
+
+
+def _extract_entries(items) -> List[Dict[str, Optional[float]]]:
+    """詞條 + % — 同框 (e.g. '技能暴擊3.32%') 與分框 (詞條 + nearby %)."""
     entries: List[Dict[str, Optional[float]]] = []
     used_idx = set()
 
-    # (1) 同框：技能暴擊3.32%
+    # Same-frame: "技能暴擊3.32%"
     for i, it in enumerate(items):
         m = re.search(r"(.+?)(\d+(?:\.\d+)?)%", it["text"])
         if m and m.group(1) and not re.fullmatch(r"[\d\.]+", m.group(1)):
             entries.append({"詞條": m.group(1), "%": float(m.group(2))})
             used_idx.add(i)
 
-    # (2) 分框：詞條一格 + % 一格（同列左側最近）
-    def is_term_text(t: str) -> bool:
-        if t in ["生命", "攻擊", "防禦"]:
-            return False
-        if re.fullmatch(r"\d+", t):
-            return False
-        if re.fullmatch(r"\d+(?:\.\d+)?%", t):
-            return False
-        if re.search(r"\d", t) and "%" in t:
-            return False
-        return True
-
+    # Split-frame: percent box + nearest term box on the same row to the left
     percent_items = [
         (i, it)
         for i, it in enumerate(items)
         if i not in used_idx and re.fullmatch(r"\d+(?:\.\d+)?%", it["text"])
     ]
-
-    term_items = [(i, it) for i, it in enumerate(items) if is_term_text(it["text"])]
+    term_items = [(i, it) for i, it in enumerate(items) if _is_term_text(it["text"])]
 
     for pi, p in percent_items:
         candidates = []
         for ti, t in term_items:
-            if (
-                abs(center_y(t["bbox"]) - center_y(p["bbox"])) <= 12
-                and t["bbox"][2] <= p["bbox"][0] + 5
-            ):
+            same_row = abs(_bbox_center_y(t["bbox"]) - _bbox_center_y(p["bbox"])) <= _SAME_ROW_Y_TOLERANCE
+            to_the_left = t["bbox"][2] <= p["bbox"][0] + _NEAR_LEFT_X_TOLERANCE
+            if same_row and to_the_left:
                 dx = p["bbox"][0] - t["bbox"][2]
                 candidates.append((dx, ti, t))
         if candidates:
@@ -709,17 +726,28 @@ def extract_panel_and_entries(ocr_list):
             entries.append({"詞條": None, "%": float(p["text"].rstrip("%"))})
             used_idx.add(pi)
 
-    # 去重（不用 pandas，避免多一個依賴）
+    return entries
+
+
+def _dedupe_entries(entries):
+    """Stable dedupe by (詞條, %) — preserves first-seen order."""
     seen = set()
-    unique_entries: List[Dict[str, Optional[float]]] = []
+    unique: List[Dict[str, Optional[float]]] = []
     for e in entries:
         key = (e.get("詞條"), e.get("%"))
         if key in seen:
             continue
         seen.add(key)
-        unique_entries.append(e)
+        unique.append(e)
+    return unique
 
-    return panel, unique_entries, items
+
+def extract_panel_and_entries(ocr_list):
+    """從 /ocr 回傳的 ocr_results（list[dict]）萃取面板與詞條。"""
+    items = _normalize_ocr_items(ocr_list)
+    panel = _extract_panel_attributes(items)
+    entries = _dedupe_entries(_extract_entries(items))
+    return panel, entries, items
 
 
 def build_combo_from_entries(entries) -> str:
@@ -917,6 +945,109 @@ def read_pairs_from_rois(rois):
         pairs.append((skill_code, prob))
     return pairs
 
+_SKILL_ROI = (slice(634, 744), slice(291, 367))
+
+
+def _read_skill_popup(img):
+    """OCR 神燈彈窗中央的技能 ROI。回傳 (has_popup, ocr_results, raw_result)。
+
+    has_popup 只在 OCR 真的解析到技能代號時才為 True — 避免雜訊誤觸發。
+    """
+    skill_roi = img[_SKILL_ROI]
+    skill_result = analyze_skill_via_http(skill_roi)
+    if not (skill_result and skill_result.get('success')):
+        return False, [], None
+    ocr_results = skill_result.get('ocr_results', []) or []
+    has_popup = bool(ocr_results) and any(
+        text_to_skill_code(it.get('text', '') if isinstance(it, dict) else '')
+        for it in ocr_results
+    )
+    return has_popup, ocr_results, skill_result
+
+
+def _adaptive_wait(loop_state, lamp_count) -> None:
+    """讀不到 1.5s / 動畫中 2s / 等穩定門檻 1s。"""
+    if lamp_count is None:
+        time.sleep(1.5)
+    elif loop_state.stable_streak == 0:
+        time.sleep(2)
+    else:
+        time.sleep(1)
+
+
+def _reengage_auto(d) -> None:
+    click_and_wait(d, 370, 826, 1)   # 自動按鈕
+    click_and_wait(d, 271, 576, 5)   # 開始確認
+
+
+def _finish_lamp_session(d) -> None:
+    click_and_wait(d, 447, 801, 2)
+    click_and_wait(d, 273, 560, 2)
+
+
+def _renav_safely(d, log_prefix: str = "") -> None:
+    try:
+        _navigate_to_lamp_page(d)
+    except Exception as nav_exc:
+        print(f"{log_prefix}重新導航失敗: {nav_exc}")
+
+
+def _handle_skip_overflow(d) -> bool:
+    """連續跳過達上限時的決策。回傳 True = 繼續，False = 結束 session。
+
+    若剩餘神燈 > 0 視為暫時 OCR 失常 → 重新導航；否則收尾結束。
+    """
+    remaining = get_remaining_lamp_count(d)
+    if remaining is not None and remaining > 0:
+        print(
+            f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
+            f"但神燈剩餘 {remaining} 顆，重置計數並重新導航後繼續。"
+        )
+        _renav_safely(d)
+        time.sleep(2)
+        return True
+    print(
+        f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
+        f"剩餘={remaining}，停止開神燈。"
+    )
+    return False
+
+
+def _handle_popup(d, device, is_compare, has_lian_shan_equip, device_ip):
+    """處理偵測到的裝備彈窗。回傳 'unwanted' / 'wanted_ok' / 'wanted_skipped' / 'noop'。"""
+    print("神燈剩餘穩定，偵測到裝備彈窗，點擊處理")
+    d.click(271, 576)
+    time.sleep(5)
+    img = device.capture_screenshot()
+    _, ocr_results_raw, skill_result = _read_skill_popup(img)
+    if not skill_result:
+        return 'noop'
+
+    parsed = parse_ocr(ocr_results_raw)
+    combo = parsed.get('combo_raw', '')
+    normalized_combo = parsed.get('combo_norm', combo)
+    is_unwanted = parsed.get('unwanted', False)
+
+    texts = [r.get('text', '') for r in ocr_results_raw if isinstance(r, dict)]
+    print(f"識別結果 (texts): {texts}")
+    print(f"技能組合: {combo} => {normalized_combo} ; 不要? {is_unwanted}")
+
+    if is_unwanted:
+        print("不需要的組合")
+        click_and_wait(d, 227, 798, 1)
+        confirm_if_needed(d, device)
+        return 'unwanted'
+
+    print("需要的組合")
+    skipped = process_wanted_combo(
+        d, normalized_combo,
+        is_compare=is_compare,
+        has_lian_shan_equip=has_lian_shan_equip,
+        device_ip=device_ip,
+    )
+    return 'wanted_skipped' if skipped else 'wanted_ok'
+
+
 def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_equip=True, device_ip: str = None):
     """自動開裝備主流程。
 
@@ -930,22 +1061,17 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     if times == -1:
         times = float('inf')
 
-    # 檢查服務器連接
     if not check_server_health():
         print("錯誤: 無法連接到 OCR 服務器")
         return
 
-    # 初始點擊：進入神燈頁面
     _navigate_to_lamp_page(d)
 
-    # 純邏輯狀態機（測試覆蓋於 tests/test_lamp_loop_state.py）
     loop_state = LampLoopState(
         stable_threshold=2,
         reengage_after_stable=5,
         unreadable_renav_threshold=8,
     )
-
-    # OCR-不完整跳過計數器（function-local，避免裝置 thread 互相污染）
     ocr_skip_count = 0
 
     while time.time() - start_time < times:
@@ -957,115 +1083,41 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
                 return
 
         lamp_count = get_remaining_lamp_count(d)
-
-        # 偵測技能彈窗（必須真的解析到技能代號才算）
-        skill_roi = img[634:744, 291:367]
-        skill_result = analyze_skill_via_http(skill_roi)
-        ocr_results_raw = []
-        has_popup = False
-        if skill_result and skill_result.get('success'):
-            ocr_results_raw = skill_result.get('ocr_results', []) or []
-            if ocr_results_raw and any(
-                text_to_skill_code(it.get('text', '') if isinstance(it, dict) else '')
-                for it in ocr_results_raw
-            ):
-                has_popup = True
-
+        has_popup, _, _ = _read_skill_popup(img)
         action = loop_state.tick(lamp_count=lamp_count, has_popup=has_popup)
 
         if action == LampLoopAction.RENAVIGATE:
-            print(
-                f"神燈剩餘讀不到已連續 {loop_state.unreadable_renav_threshold} 次，重新導航"
-            )
-            try:
-                _navigate_to_lamp_page(d)
-            except Exception as nav_exc:
-                print(f"重新導航失敗: {nav_exc}")
+            print(f"神燈剩餘讀不到已連續 {loop_state.unreadable_renav_threshold} 次，重新導航")
+            _renav_safely(d)
             time.sleep(1.5)
             continue
 
         if action == LampLoopAction.WAIT:
-            # 細分等待時長：讀不到 / 動畫中 / 等穩定門檻
-            if lamp_count is None:
-                time.sleep(1.5)
-            elif loop_state.stable_streak == 0:
-                time.sleep(2)
-            else:
-                time.sleep(1)
+            _adaptive_wait(loop_state, lamp_count)
             continue
 
         if action == LampLoopAction.REENGAGE_AUTO:
             print(f"穩定且無彈窗，重新啟用自動模式（lamp_count={lamp_count}）")
-            click_and_wait(d, 370, 826, 1)   # 自動按鈕
-            click_and_wait(d, 271, 576, 5)   # 開始確認
+            _reengage_auto(d)
             continue
 
-        # action == HANDLE_POPUP：穩定且偵測到裝備彈窗
-        print(f"神燈剩餘穩定於 {lamp_count}，偵測到裝備彈窗，點擊處理")
-        d.click(271, 576)
-        time.sleep(5)
-        img = device.capture_screenshot()
-        skill_roi = img[634:744, 291:367]
-        skill_result = analyze_skill_via_http(skill_roi)
+        # action == HANDLE_POPUP
+        outcome = _handle_popup(d, device, is_compare, has_lian_shan_equip, device_ip)
 
-        if not skill_result or not skill_result.get('success'):
-            continue
+        if outcome == 'wanted_skipped':
+            ocr_skip_count += 1
+            print(f"OCR 不完整已跳過次數: {ocr_skip_count}/{SKIP_INCOMPLETE_LIMIT}")
+            if ocr_skip_count >= SKIP_INCOMPLETE_LIMIT:
+                if _handle_skip_overflow(d):
+                    ocr_skip_count = 0
+                    continue
+                _finish_lamp_session(d)
+                return
+        elif outcome == 'wanted_ok':
+            ocr_skip_count = 0
+        # outcome in ('unwanted', 'noop'): 不動 ocr_skip_count，繼續下一輪
 
-        ocr_results_raw = skill_result.get('ocr_results', [])
-        parsed = parse_ocr(ocr_results_raw)
-        combo = parsed.get('combo_raw', '')
-        normalized_combo = parsed.get('combo_norm', combo)
-        is_unwanted = parsed.get('unwanted', False)
-
-        # 列印明確的文字結果（提高可讀性）
-        texts = [r.get('text', '') for r in ocr_results_raw if isinstance(r, dict)]
-        print(f"識別結果 (texts): {texts}")
-        print(f"技能組合: {combo} => {normalized_combo} ; 不要? {is_unwanted}")
-        
-        # 判斷是否需要（改用本地解析結果）
-        if is_unwanted:
-            print("不需要的組合")
-            click_and_wait(d, 227, 798, 1)
-            confirm_if_needed(d, device)
-            
-        else:
-            print("需要的組合")
-            # 處理需要的組合的邏輯（is_compare 參數會在內部處理機率比較）
-            skipped = process_wanted_combo(d, normalized_combo, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip, device_ip=device_ip)
-            # 若 process_wanted_combo 回傳 True 表示因 OCR 不完整而跳過
-            if skipped:
-                ocr_skip_count += 1
-                print(f"OCR 不完整已跳過次數: {ocr_skip_count}/{SKIP_INCOMPLETE_LIMIT}")
-                if ocr_skip_count >= SKIP_INCOMPLETE_LIMIT:
-                    # 在中止前先確認神燈是否真的開完了：若剩餘數量 > 0，
-                    # 視為 OCR/UI 暫時失常而非任務完成，重新導航到神燈頁面後再嘗試。
-                    remaining = get_remaining_lamp_count(d)
-                    if remaining is not None and remaining > 0:
-                        print(
-                            f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
-                            f"但神燈剩餘 {remaining} 顆，重置計數並重新導航後繼續。"
-                        )
-                        ocr_skip_count = 0
-                        try:
-                            _navigate_to_lamp_page(d)
-                        except Exception as nav_exc:
-                            print(f"重新導航失敗: {nav_exc}")
-                        time.sleep(2)
-                        continue
-                    print(
-                        f"警告：連續跳過 {SKIP_INCOMPLETE_LIMIT} 次 OCR 不完整，"
-                        f"剩餘={remaining}，停止開神燈。"
-                    )
-                    click_and_wait(d, 447, 801, 2)
-                    click_and_wait(d, 273, 560, 2)
-                    return
-                # 否則繼續下一回合（不重置計數）
-            else:
-                # 若成功處理一次，重置連續跳過計數
-                ocr_skip_count = 0
-    # 結束清理
-    click_and_wait(d, 447, 801, 2)
-    click_and_wait(d, 273, 560, 2)
+    _finish_lamp_session(d)
 
 def process_wanted_combo(d, combo, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_equip=True, device_ip: str = None):
     """處理需要的技能組合
@@ -1112,197 +1164,168 @@ def process_wanted_combo(d, combo, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_
         print(f"未找到階段 '{combo}'")
         print(f"可用階段: {stage_texts}")
 
-def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_equip=True, device_ip: str = None):
-    """執行升級序列
-    
-    參數：
-    - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合），
-                          若為 True，則在比較詞條時將 `連` 與 `爆` 視為一個整體
+_FC65396D_PHONE_TAG = 'adb-fc65396d-4LPqmI._adb-tls-connect._tcp'
+_PROB_TOO_LARGE_THRESHOLD = 10.0
+_ROLLED_ROI_BOXES = [(645, 675, 295, 439), (696, 724, 295, 439)]
+_ORIG_ROI_PHONE = [(400, 430, 292, 439), (450, 480, 292, 439)]
+_ORIG_ROI_COMPUTER = [(420, 450, 292, 439), (460, 490, 292, 439)]
+
+
+def _pairs_incomplete(pairs_list):
+    """True iff `pairs_list` is missing entries or has any None/empty skill code."""
+    if not isinstance(pairs_list, (list, tuple)) or len(pairs_list) < 2:
+        return True
+    for p in pairs_list:
+        if not p or len(p) < 1:
+            return True
+        skill = p[0]
+        if skill is None or (isinstance(skill, str) and skill.strip() == ""):
+            return True
+    return False
+
+
+def _pairs_prob_too_large(pairs_list, threshold=_PROB_TOO_LARGE_THRESHOLD):
+    """True iff any pair has a numeric prob exceeding `threshold` (i.e. OCR misread)."""
+    for p in (pairs_list or []):
+        if not p or len(p) < 2 or p[1] is None:
+            continue
+        try:
+            if float(p[1]) > float(threshold):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _slice_rois(img, boxes):
+    """Slice [(y0,y1,x0,x1), ...] boxes out of `img`."""
+    return [img[y0:y1, x0:x1] for (y0, y1, x0, x1) in boxes]
+
+
+def _select_orig_roi_pair(img, device_ip):
+    """Pick (primary, secondary) original-equipment ROI sets based on device.
+
+    The fc65396d phone places the original-equipment row higher on screen than
+    the computer/emulator UI; pick the matching ROI as primary and keep the
+    other as fallback for OCR retries.
     """
-    click_and_wait(d, 378, 721, 1) #切換按鈕
-    click_and_wait(d, 268, 869, 1) #關閉方案選單
-    click_and_wait(d, 282, 584, 1) #點開開到裝備
-    
-    # 在此位置（第 592 行）先比對「開出」(rolled) 與「原有」(original) 的詞條，再決定是否執行換裝
-    device = D.device(d)
-    img = device.capture_screenshot()
-    
-    # 讀取開出與原有 ROI（與主程式中使用的座標一致）
-    rolled_rois = [
-        img[645:675, 295:439],
-        img[696:724, 295:439]
-    ]
-    # 定義兩組原有詞條 ROI（手機 / 電腦）
-    orig_rois_for_smart_phone = [
-        img[400:430, 292:439],
-        img[450:480, 292:439]
-    ]
-    orig_rois_for_computer = [
-        img[420:450, 292:439],
-        img[460:490, 292:439]
-    ]
+    if device_ip and _FC65396D_PHONE_TAG in device_ip:
+        return _slice_rois(img, _ORIG_ROI_PHONE), _slice_rois(img, _ORIG_ROI_COMPUTER)
+    return _slice_rois(img, _ORIG_ROI_COMPUTER), _slice_rois(img, _ORIG_ROI_PHONE)
 
-    # 根據連線的 device_ip 選擇預設要使用的 ROI
-    if device_ip and 'adb-fc65396d-4LPqmI._adb-tls-connect._tcp' in device_ip:
-        primary_orig_rois = orig_rois_for_smart_phone
-        secondary_orig_rois = orig_rois_for_computer
-    else:
-        primary_orig_rois = orig_rois_for_computer
-        secondary_orig_rois = orig_rois_for_smart_phone
 
-    # 解析 ROI 為 (skill, prob) 列表
-    rolled = read_pairs_from_rois(rolled_rois)
-    original = read_pairs_from_rois(primary_orig_rois)
+def _read_original_pairs_with_fallback(primary_rois, secondary_rois):
+    """Read original-equipment pairs from primary; fall back to secondary if the
+    primary read is incomplete or has a >10% prob (OCR misread)."""
+    pairs = read_pairs_from_rois(primary_rois)
 
-    # 若原始解析不完整，嘗試使用另一組 ROI 重試一次
-    def _pairs_incomplete(pairs_list):
-        if not isinstance(pairs_list, (list, tuple)):
-            return True
-        if len(pairs_list) < 2:
-            return True
-        for p in pairs_list:
-            if not p or len(p) < 1:
-                return True
-            skill = p[0]
-            if skill is None:
-                return True
-            if isinstance(skill, str) and skill.strip() == "":
-                return True
-        return False
-
-    if _pairs_incomplete(original):
+    if _pairs_incomplete(pairs):
         print("原有詞條解析不完整，嘗試使用備用 ROI 重試...")
-        alt_original = read_pairs_from_rois(secondary_orig_rois)
-        print(f"備用 ROI 解析結果: {alt_original}")
-        # 若備用解析較完整則採用備用
-        if not _pairs_incomplete(alt_original):
-            original = alt_original
+        alt = read_pairs_from_rois(secondary_rois)
+        print(f"備用 ROI 解析結果: {alt}")
+        if not _pairs_incomplete(alt):
             print("採用備用 ROI 的解析結果")
+            pairs = alt
         else:
             print("備用 ROI 也無法完整解析，維持原始結果並交由後續處理")
 
-    # 若原有或開出詞條中的機率明顯不合理 (>10%)，也視為解析錯誤，嘗試備用 ROI
-    def _prob_too_large(pairs_list, threshold=10.0):
-        try:
-            for p in (pairs_list or []):
-                if not p or len(p) < 2:
-                    continue
-                prob = p[1]
-                if prob is None:
-                    continue
-                try:
-                    if float(prob) > float(threshold):
-                        return True
-                except Exception:
-                    continue
-        except Exception:
-            return False
-        return False
-
-    if _prob_too_large(original):
+    if _pairs_prob_too_large(pairs):
         print("原有詞條出現超過 10% 的機率，視為 OCR 誤判 -> 嘗試使用備用 ROI 重試...")
-        alt_original = read_pairs_from_rois(secondary_orig_rois)
-        print(f"備用 ROI 解析結果: {alt_original}")
-        if not _pairs_incomplete(alt_original) and not _prob_too_large(alt_original):
-            original = alt_original
+        alt = read_pairs_from_rois(secondary_rois)
+        print(f"備用 ROI 解析結果: {alt}")
+        if not _pairs_incomplete(alt) and not _pairs_prob_too_large(alt):
             print("採用備用 ROI 的解析結果（通過機率合理性檢查）")
+            pairs = alt
         else:
             print("備用 ROI 未通過或仍不完整，維持原始結果並交由後續處理")
+    return pairs
 
-    # debug: 印出解析後的詞條 pairs
-    print(f"rolled pairs: {rolled}")
-    print(f"original pairs: {original}")
-    # 若 OCR 未能完整解析（任一詞條為 None 或 空字串，或數量不足 2），
-    # 則跳過自動比較，讓使用者自行判斷
-    def ocr_incomplete(pairs_list):
-        if not isinstance(pairs_list, (list, tuple)):
-            return True
-        if len(pairs_list) < 2:
-            return True
-        for p in pairs_list:
-            # p 預期為 (skill_code, prob)
-            if not p or len(p) < 1:
-                return True
-            skill = p[0]
-            if skill is None:
-                return True
-            if isinstance(skill, str) and skill.strip() == "":
-                return True
-        return False
 
-    if ocr_incomplete(rolled) or ocr_incomplete(original):
-        print("警告：OCR 無法完整辨識詞條，交由使用者判斷，跳過自動比較")
-        # 可以在此加入額外通知或紀錄（例如保存截圖）
-        # 若啟用保存不完整結果，則把整張畫面截下來放到指定資料夾（最多保留 1000 張）
-        try:
-            if SAVE_INCOMPLETE:
-                save_incomplete_screenshot(d, folder='ocr_incomplete', max_files=1000)
-        except Exception as e:
-            print(f"嘗試保存不完整截圖時發生錯誤: {e}")
-        # 回傳 True 表示因 OCR 不完整而跳過
-        return True
+def _save_incomplete_if_enabled(d):
+    if not SAVE_INCOMPLETE:
+        return
+    try:
+        save_incomplete_screenshot(d, folder='ocr_incomplete', max_files=1000)
+    except Exception as e:
+        print(f"嘗試保存不完整截圖時發生錯誤: {e}")
 
-    # 執行既有的比較邏輯（compare_skill_pairs）
-    result = compare_skill_pairs(rolled, original, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip)
-    replace = result.get('replace', False)
-    reason = result.get('reason', '')
-    print(f"升級前比對結果: replace={replace} ; reason: {reason}")
-    
-    if replace:
-        # 較好 -> 執行換裝（保留原本動作）
-        click_and_wait(d, 376, 798, 0.3)
-        click_and_wait(d, 227, 798, 1)
 
-        # 檢查並點擊確認
-        confirm_if_needed(d, device)
-    else:
-        # 較差 -> 不換，執行「不需要的組合」分支
-        print("不需要的組合")
-        click_and_wait(d, 227, 798, 1)
-
-        # 檢查並點擊確認
-        confirm_if_needed(d, device)
-    
-    # 最終完成
+def _return_to_original_equipment(d, original_stage_texts):
+    """After upgrade decision, navigate back to the original equipment slot."""
     click_and_wait(d, 419, 720, 3)
     click_and_wait(d, 272, 796, 1)
     click_and_wait(d, 281, 350, 1)
-    
-    # 重新識別階段以確保準確性
+
     device = D.device(d)
     img = device.capture_screenshot()
-    all_stage = img[328:832, 147:371]
-    stage_result = analyze_stage_via_http(all_stage)
-    # stage_result = [i.get('stage_texts', []) for i in stage_result]
+    stage_result = analyze_stage_via_http(img[328:832, 147:371])
     print(stage_result)
+
     if stage_result and stage_result.get('success'):
-        current_stage_texts = stage_result.get("stage_texts")
-        #去除少於2字的階段
-        current_stage_texts = [text for text in current_stage_texts if len(text) >= 2]
-        # 尋找原始裝備並點擊
-        original_combo = stage_texts[0]
-        if original_combo in current_stage_texts:
-            original_index = current_stage_texts.index(original_combo)
-            print(f"切換回原始裝備 '{original_combo}' 在索引: {original_index}")
-            print(f"當前階段: {current_stage_texts}")
-            if original_index == 0:
+        current_texts = [t for t in stage_result.get("stage_texts") or [] if len(t) >= 2]
+        original_combo = original_stage_texts[0]
+        if original_combo in current_texts:
+            idx = current_texts.index(original_combo)
+            print(f"切換回原始裝備 '{original_combo}' 在索引: {idx}")
+            print(f"當前階段: {current_texts}")
+            if idx == 0:
                 click_and_wait(d, 281, 350, 1)
             else:
-                click_y = 412 + (original_index - 1) * 49
-                click_and_wait(d, 266, click_y, 1)
+                click_and_wait(d, 266, 412 + (idx - 1) * 49, 1)
         else:
             print(f"警告：未在列表中找到原始裝備 '{original_combo}'，點擊第一個")
             click_and_wait(d, 281, 350, 1)
     else:
         print("警告：無法重新識別階段，點擊第一個")
         click_and_wait(d, 281, 350, 1)
-        
+
     click_and_wait(d, 347, 721, 1)
     click_and_wait(d, 268, 869, 1)
     click_and_wait(d, 441, 805, 1)
     click_and_wait(d, 271, 634, 1)
     time.sleep(3)
-    # 回傳 False 表示沒有因 OCR 不完整而跳過
+
+
+def execute_upgrade_sequence(d, index, stage_texts, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_equip=True, device_ip: str = None):
+    """執行升級序列。Returns True iff skipped due to incomplete OCR.
+
+    參數：
+    - has_lian_shan_equip: 連閃裝備時 `連` 與 `爆` 詞條算同一池
+    """
+    click_and_wait(d, 378, 721, 1)  # 切換按鈕
+    click_and_wait(d, 268, 869, 1)  # 關閉方案選單
+    click_and_wait(d, 282, 584, 1)  # 點開開到裝備
+
+    device = D.device(d)
+    img = device.capture_screenshot()
+
+    rolled_rois = _slice_rois(img, _ROLLED_ROI_BOXES)
+    primary_orig, secondary_orig = _select_orig_roi_pair(img, device_ip)
+
+    rolled = read_pairs_from_rois(rolled_rois)
+    original = _read_original_pairs_with_fallback(primary_orig, secondary_orig)
+
+    print(f"rolled pairs: {rolled}")
+    print(f"original pairs: {original}")
+
+    if _pairs_incomplete(rolled) or _pairs_incomplete(original):
+        print("警告：OCR 無法完整辨識詞條，交由使用者判斷，跳過自動比較")
+        _save_incomplete_if_enabled(d)
+        return True
+
+    result = compare_skill_pairs(rolled, original, is_compare=is_compare, has_lian_shan_equip=has_lian_shan_equip)
+    replace = result.get('replace', False)
+    print(f"升級前比對結果: replace={replace} ; reason: {result.get('reason', '')}")
+
+    if replace:
+        click_and_wait(d, 376, 798, 0.3)
+        click_and_wait(d, 227, 798, 1)
+    else:
+        print("不需要的組合")
+        click_and_wait(d, 227, 798, 1)
+    confirm_if_needed(d, device)
+
+    _return_to_original_equipment(d, stage_texts)
     return False
 
 if __name__ == "__main__":

@@ -39,7 +39,7 @@ DEFAULT_DEVICE_CONFIG = {
     "is_real_phone": False,  # 是否為實體機/特殊機型 (原本的 fc65396d 邏輯)
     "keep_screen_on": False,  # 是否保持螢幕開啟 (不鎖屏)
     "screenshot_debug": False,  # 是否開啟截圖除錯
-    "online_check_interval": 5,  # 偵測到上線後的避讓休眠時間 (分鐘)
+    "online_check_interval_sec": 30,  # 偵測到上線後的避讓 retry 間隔 (秒)
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
@@ -405,8 +405,9 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         {"playwright", "canvas_capture"},
         "playwright",
     )
-    current["online_check_interval"] = _clamp_int(
-        current.get("online_check_interval"), 1, 60, DEFAULT_DEVICE_CONFIG["online_check_interval"]
+    current["online_check_interval_sec"] = _clamp_int(
+        current.get("online_check_interval_sec"), 5, 3600,
+        DEFAULT_DEVICE_CONFIG["online_check_interval_sec"]
     )
     current["lamp_check_interval"] = _clamp_int(
         current.get("lamp_check_interval"), 1, 24, DEFAULT_DEVICE_CONFIG["lamp_check_interval"]

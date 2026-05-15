@@ -1,3 +1,4 @@
+import os
 import time
 import random
 from adb_operations import connect_u2_with_retries, get_battery_level
@@ -9,6 +10,141 @@ from runtime_services.device_runtime_service import (
     ForceSleepRequested,
     WakeLoopInterrupted,
 )
+
+
+def _match_any(target: str, patterns) -> bool:
+    """True iff `target` equals or contains any non-empty pattern."""
+    for p in patterns:
+        if not p:
+            continue
+        if p == target or p in target:
+            return True
+    return False
+
+
+def _parse_hours(value) -> set:
+    """Parse blackout-hour spec into a set of ints in 0..23.
+
+    Accepts: list/tuple/set of digits, or a comma-separated string with optional
+    `a-b` ranges. Examples: "7", "6,7,8", [6, 7].
+
+    All resulting hours are normalised modulo 24 — previously the list path
+    skipped this normalisation while the string path applied it, so a config
+    of `[25]` and `"25"` would produce different results.
+    """
+    if value is None:
+        return set()
+    if isinstance(value, (list, tuple, set)):
+        return {int(h) % 24 for h in value if str(h).isdigit()}
+    out = set()
+    for p in (s.strip() for s in str(value).split(',')):
+        if not p:
+            continue
+        if p.isdigit():
+            out.add(int(p))
+        elif '-' in p:
+            try:
+                a, b = p.split('-', 1)
+                out.update(range(int(a), int(b) + 1))
+            except Exception:
+                continue
+    return {h % 24 for h in out}
+
+
+def _check_skip_list(ip: str, mode, lst, logger, *, source: str) -> bool:
+    """Apply a single skip-list source. Returns True iff this source decides to skip."""
+    if not lst:
+        return False
+    if isinstance(lst, str):
+        lst = [s.strip() for s in lst.split(',') if s.strip()]
+    if mode and str(mode).lower() == 'whitelist':
+        if _match_any(ip, lst):
+            logger.info(f"[{ip}] {source} wake_skip_mode=whitelist 且匹配清單，跳過喚醒")
+            return True
+        return False  # whitelist with no match → don't skip; later sources can still skip
+    # default: blacklist
+    if _match_any(ip, lst):
+        logger.info(f"[{ip}] {source} wake_skip_mode=blacklist 且匹配清單，跳過喚醒")
+        return True
+    return False
+
+
+def _check_blackout_hours(ip: str, hours_value, now_hour, logger, *, source: str) -> bool:
+    """True iff `now_hour` falls in the blackout-hours spec from `source`."""
+    if not hours_value:
+        return False
+    hours = _parse_hours(hours_value)
+    if now_hour is not None and now_hour in hours:
+        logger.info(f"[{ip}] 現在時段 ({now_hour}) 在 {source} wake_blackout_hours，跳過喚醒")
+        return True
+    return False
+
+
+def _should_skip_wake(ip: str, logger) -> bool:
+    """Decide whether to skip the wake-up flow for `ip`.
+
+    Sources checked in priority order:
+      1) WAKE_SKIP_LIST + WAKE_SKIP_MODE env vars
+      2) global config wake_skip_list / wake_skip_mode
+      3) device config skip_wake (bool) and wake_blackout_hours
+      4) blackout hours from env / global / device config
+    Whitelist mode short-circuits to False if pattern doesn't match (so later
+    sources don't override the explicit allow-list decision); blacklist falls
+    through.
+    """
+    # 1) skip-list env vars
+    env_mode = os.environ.get('WAKE_SKIP_MODE')
+    env_list = os.environ.get('WAKE_SKIP_LIST')
+    if env_list:
+        if _check_skip_list(ip, env_mode, env_list, logger, source='WAKE_SKIP_MODE='):
+            return True
+        if env_mode and env_mode.lower() == 'whitelist':
+            return False  # whitelist no-match = explicit don't-skip
+
+    # 2) global config skip-list
+    try:
+        gcfg = config_manager.get_global_config()
+        g_mode = gcfg.get('wake_skip_mode')
+        g_list = gcfg.get('wake_skip_list')
+        if g_list:
+            if _check_skip_list(ip, g_mode, g_list, logger, source='global'):
+                return True
+            if g_mode and str(g_mode).lower() == 'whitelist':
+                return False
+    except Exception as e:
+        logger.debug(f"取得 global config 時發生錯誤: {e}")
+
+    # 3) device config skip_wake flag
+    try:
+        dev_cfg = config_manager.get_device_config(ip)
+        if dev_cfg.get('skip_wake', False):
+            logger.info(f"[{ip}] device config skip_wake=True，跳過喚醒")
+            return True
+    except Exception:
+        pass
+
+    # 4) blackout hours (env / global / device)
+    try:
+        now_hour = time.localtime().tm_hour
+    except Exception:
+        now_hour = None
+
+    if _check_blackout_hours(ip, os.environ.get('WAKE_BLACKOUT_HOURS'), now_hour, logger, source='WAKE_BLACKOUT_HOURS env'):
+        return True
+    try:
+        gcfg = config_manager.get_global_config()
+        if _check_blackout_hours(ip, gcfg.get('wake_blackout_hours'), now_hour, logger, source='global'):
+            return True
+    except Exception:
+        pass
+    try:
+        dev_cfg = config_manager.get_device_config(ip)
+        if _check_blackout_hours(ip, dev_cfg.get('wake_blackout_hours'), now_hour, logger, source='device'):
+            return True
+    except Exception:
+        pass
+
+    return False
 
 
 def _honor_dashboard_controls(ip: str) -> None:
@@ -53,127 +189,8 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     Handles the device wake-up, unlock, and synchronization logic.
     """
     global _wakeup_lock
-    # 決定是否跳過喚醒的邏輯：
-    # 優先順序：環境變數 -> global config -> device config (skip_wake)
-    import os
 
-    def _match_any(target, patterns):
-        for p in patterns:
-            if not p:
-                continue
-            if p == target or p in target:
-                return True
-        return False
-
-    def should_skip_wake(ip_str: str) -> bool:
-        # 1) 環境變數
-        mode = os.environ.get('WAKE_SKIP_MODE')  # 'whitelist' 或 'blacklist'
-        lst = os.environ.get('WAKE_SKIP_LIST')  # 逗號分隔的字串或子字串
-        if lst:
-            patterns = [s.strip() for s in lst.split(',') if s.strip()]
-            if mode and mode.lower() == 'whitelist':
-                if _match_any(ip_str, patterns):
-                    logger.info(f"[{ip_str}] WAKE_SKIP_MODE=whitelist 且匹配清單，跳過喚醒")
-                    return True
-                return False
-            else:
-                # 默認為 blacklist
-                if _match_any(ip_str, patterns):
-                    logger.info(f"[{ip_str}] WAKE_SKIP_MODE=blacklist 且匹配清單，跳過喚醒")
-                    return True
-
-        # 2) global config
-        try:
-            gcfg = config_manager.get_global_config()
-            g_mode = gcfg.get('wake_skip_mode')
-            g_list = gcfg.get('wake_skip_list') or []
-            if isinstance(g_list, str):
-                g_list = [s.strip() for s in g_list.split(',') if s.strip()]
-            if g_list:
-                if g_mode and g_mode.lower() == 'whitelist':
-                    if _match_any(ip_str, g_list):
-                        logger.info(f"[{ip_str}] global wake_skip_mode=whitelist 且匹配清單，跳過喚醒")
-                        return True
-                    return False
-                else:
-                    if _match_any(ip_str, g_list):
-                        logger.info(f"[{ip_str}] global wake_skip_mode=blacklist 且匹配清單，跳過喚醒")
-                        return True
-        except Exception as e:
-            logger.debug(f"取得 global config 時發生錯誤: {e}")
-
-        # 3) device config: 單一裝置可設定 skip_wake = True
-        try:
-            dev_cfg = config_manager.get_device_config(ip_str)
-            if dev_cfg.get('skip_wake', False):
-                logger.info(f"[{ip_str}] device config skip_wake=True，跳過喚醒")
-                return True
-        except Exception:
-            pass
-
-        # 4) 喚醒黑名單時段 (env / global / device)
-        def _parse_hours(value):
-            if value is None:
-                return set()
-            if isinstance(value, (list, tuple, set)):
-                return {int(h) for h in value if str(h).isdigit()}
-            s = str(value)
-            parts = [p.strip() for p in s.split(',') if p.strip()]
-            out = set()
-            for p in parts:
-                if p.isdigit():
-                    out.add(int(p))
-                elif '-' in p:
-                    try:
-                        a, b = p.split('-', 1)
-                        a = int(a); b = int(b)
-                        out.update(range(a, b+1))
-                    except Exception:
-                        continue
-            return {h % 24 for h in out}
-
-        now_hour = None
-        try:
-            import time as _time
-            now_hour = _time.localtime().tm_hour
-        except Exception:
-            now_hour = None
-
-        # env var WAKE_BLACKOUT_HOURS (e.g. "7" or "6,7,8" or "22-6")
-        env_hours = os.environ.get('WAKE_BLACKOUT_HOURS')
-        if env_hours:
-            hours = _parse_hours(env_hours)
-            if now_hour is not None and now_hour in hours:
-                logger.info(f"[{ip_str}] 現在時段 ({now_hour}) 在 WAKE_BLACKOUT_HOURS，跳過喚醒")
-                return True
-
-        # global config wake_blackout_hours
-        try:
-            gcfg = config_manager.get_global_config()
-            g_hours = gcfg.get('wake_blackout_hours')
-            if g_hours:
-                hours = _parse_hours(g_hours)
-                if now_hour is not None and now_hour in hours:
-                    logger.info(f"[{ip_str}] 現在時段 ({now_hour}) 在 global wake_blackout_hours，跳過喚醒")
-                    return True
-        except Exception:
-            pass
-
-        # device config wake_blackout_hours
-        try:
-            dev_cfg = config_manager.get_device_config(ip_str)
-            d_hours = dev_cfg.get('wake_blackout_hours')
-            if d_hours:
-                hours = _parse_hours(d_hours)
-                if now_hour is not None and now_hour in hours:
-                    logger.info(f"[{ip_str}] 現在時段 ({now_hour}) 在 device wake_blackout_hours，跳過喚醒")
-                    return True
-        except Exception:
-            pass
-
-        return False
-
-    if should_skip_wake(ip):
+    if _should_skip_wake(ip, logger):
         return d
 
     def _is_5554_busy_by_state() -> bool:
@@ -209,52 +226,46 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         while True:
             # Honor dashboard controls at every loop entry so the user can
             # pause / force-sleep / request-web-launch without waiting for
-            # the full online_check_interval to elapse.
+            # the full online_check_interval_sec to elapse.
             _honor_dashboard_controls(ip)
             logger.info(f"[{ip}] 5558 等待 5554 狀態檢查(check_on_line request)...")
             is_busy = True
             try:
-                bot_state.activate_online_check_priority(
-                    requester_ip=ip,
-                    checker_ip='emulator-5554',
-                    ttl_sec=180.0,
-                )
                 req_id = bot_state.submit_online_check_request(
                     requester_ip=ip,
                     checker_ip='emulator-5554',
                 )
-                result = bot_state.wait_online_check_result(req_id, timeout_sec=150.0)
+                # Protocol path takes < 1s; OCR fallback takes 30-50s. 60s timeout
+                # comfortably covers both with margin.
+                result = bot_state.wait_online_check_result(req_id, timeout_sec=60.0)
                 status = str(result.get('status', 'pending'))
                 if status == 'done':
                     is_busy = bool(result.get('result_busy', True))
                     logger.info(
                         f"[{ip}] 5554 online-check result: busy={is_busy}, detail={result.get('detail', '')}"
                     )
+                elif status in ('pending', 'processing'):
+                    logger.info(
+                        f"[{ip}] 5554 online-check 尚未完成（status={status}），稍後重試"
+                    )
+                    is_busy = True
                 else:
                     logger.warning(
-                        f"[{ip}] 5554 online-check timeout/failed: status={status}, error={result.get('error', '')}"
+                        f"[{ip}] 5554 online-check failed: status={status}, error={result.get('error', '')}"
                     )
                     is_busy = True
             except Exception as e:
                 logger.error(f"[{ip}] 檢查 5554 狀態失敗: {e}")
                 is_busy = True
-            finally:
-                bot_state.release_online_check_priority(
-                    requester_ip=ip,
-                    checker_ip='emulator-5554',
-                )
 
             if not is_busy:
                 logger.info(f"[{ip}] 5554 狀態可放行，5558 繼續喚醒")
                 break
 
-            wait_min = config_manager.get_device_config(ip).get("online_check_interval", 5)
-            wait_sec = max(1, int(float(wait_min) * 60))
+            wait_sec = int(config_manager.get_device_config(ip).get("online_check_interval_sec", 30))
+            wait_sec = max(1, wait_sec)
             logger.info(f"[{ip}] 5558 在線中，{wait_sec} 秒後重新檢查")
             for remain in range(wait_sec, 0, -1):
-                # Every second, give the dashboard a chance to abort this
-                # wait — pause / force-sleep / web-launch must not have to
-                # wait the full `online_check_interval` minutes to take effect.
                 _honor_dashboard_controls(ip)
                 bot_state.update_state(ip, task="等待放行", step=f"5558在線中，{remain} 秒後重新檢查")
                 time.sleep(1)
@@ -323,7 +334,6 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         if 'emulator-5554' in ip:
             if (
                 bot_state.has_pending_online_check_request('emulator-5554')
-                or bot_state.is_online_check_priority_active('emulator-5554')
             ):
                 logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 emulator-5558 上線檢查")
                 return d

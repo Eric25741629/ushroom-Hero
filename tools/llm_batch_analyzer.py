@@ -13,7 +13,7 @@ from typing import Any
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Batch analyzer for SmartScreenshot events.")
     p.add_argument("--days", type=int, default=7, help="Analyze recent N days.")
-    p.add_argument("--input-dir", default="logs/error_screenshots", help="SmartScreenshot root dir.")
+    p.add_argument("--input-dir", default="logs", help="Logs root containing per-device error_screenshots/events.jsonl (recursed).")
     p.add_argument("--output-dir", default="reports/smart_screenshot", help="Report output dir.")
     p.add_argument("--use-llm", action="store_true", help="Enable LLM diagnosis.")
     p.add_argument("--llm-model", default="gpt-4.1-mini", help="LLM model for diagnosis.")

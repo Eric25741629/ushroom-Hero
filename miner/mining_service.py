@@ -33,6 +33,59 @@ from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 from tools import click_white
+
+
+# Cell labels that mean "no cell here" — used to count un-dug visible
+# cells for cross-check against the protocol's `0x0c01.cells` list.
+_EMPTY_CELL_LABELS = {
+    "empty", "void", "dug_pit",
+    "unreachable_empty", "unreachable_void",
+}
+
+
+def _log_inventory_validation(
+    ip: str,
+    pickaxe_count: float,
+    items_available: Dict[str, int],
+    miner_logger,
+) -> None:
+    """Cross-check OCR readings against latest captured 0x0402/0x0c11/0x4202.
+    Best-effort — swallows all errors. Purely informational."""
+    try:
+        from utils.ws_validator import validate_against_captures
+    except Exception:
+        return
+    try:
+        ocr = {
+            "pickaxe": int(pickaxe_count),
+            "drill": int(items_available.get("drill", 0)),
+            "bomb": int(items_available.get("bomb", 0)),
+        }
+        for r in validate_against_captures(
+            ip, ocr, cmds=(0x0402, 0x0c11, 0x4202),
+        ):
+            miner_logger.info(
+                f"[protocol-validate cmd=0x{r['cmd']:04x}] {r['summary']}"
+            )
+    except Exception as exc:
+        miner_logger.debug(f"[protocol-validate inventory] skipped: {exc}")
+
+
+def _log_board_validation(ip: str, board: List[List[str]], miner_logger) -> None:
+    """Cross-check classifier board against latest 0x0c01 capture."""
+    try:
+        from utils.ws_validator import validate_board_against_classifier
+    except Exception:
+        return
+    try:
+        cnn_cells = sum(
+            1 for row in board for c in row if c not in _EMPTY_CELL_LABELS
+        )
+        result = validate_board_against_classifier(ip, cnn_cells)
+        if result.get("have_body"):
+            miner_logger.info(f"[protocol-validate-board] {result['summary']}")
+    except Exception as exc:
+        miner_logger.debug(f"[protocol-validate board] skipped: {exc}")
 from runtime_services.device_runtime_service import ForceSleepRequested
 
 # 功能開關：規劃器是否允許使用鑽頭/炸彈道具。
@@ -376,9 +429,11 @@ def run(
             f"[ITEM STATUS] items_available={items_available}, "
             f"zero_streaks={zero_streaks}, blacklist={sorted(item_blacklist)}"
         )
+        _log_inventory_validation(ip, count, items_available, miner_logger)
 
         board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
         miner_logger.info(f"\n[MiningService] Current Board:\n{get_visual_board(board)}")
+        _log_board_validation(ip, board, miner_logger)
         state_signature = _board_signature(board)
         if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
             miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")

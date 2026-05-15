@@ -100,6 +100,24 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
     """Returns True when interrupted early, False when wake_ts is reached."""
     while True:
         time.sleep(1)
+        # Force-sleep requested while the device is already sleeping is
+        # effectively a no-op: the device is already in the desired state.
+        # Consume the flag and refresh the displayed state so the dashboard
+        # doesn't get stuck on the transient "強制休眠" text set by
+        # bot_state.request_force_sleep().
+        if bot_state.check_force_sleep(ip):
+            remain_sec = max(0, int(wake_ts - time.time()))
+            wake_str = time.strftime("%H:%M", time.localtime(wake_ts))
+            bot_state.update_state(
+                ip,
+                task="休眠中",
+                step=f"強制休眠（裝置原已休眠） | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_str} 喚醒)",
+                next_wake_at=wake_ts,
+            )
+            logger_obj.info(
+                f"[{ip}] 收到強制休眠請求，但裝置已在休眠中，沿用原排程喚醒至 {wake_str}"
+            )
+
         if bot_state.check_pause(ip):
             logger_obj.info(f"[{ip}] 偵測到從暫停中恢復，立即重啟初始化流程")
             return True
@@ -113,10 +131,7 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
             return True
 
         if ip == "emulator-5554":
-            if (
-                bot_state.has_pending_online_check_request("emulator-5554")
-                or bot_state.is_online_check_priority_active("emulator-5554")
-            ):
+            if bot_state.has_pending_online_check_request("emulator-5554"):
                 logger_obj.info(f"[{ip}] 偵測到 emulator-5558 上線檢查請求，提前喚醒處理")
                 return True
 

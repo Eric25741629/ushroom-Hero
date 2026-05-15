@@ -820,6 +820,8 @@
 
         <button class="btn btn-skip" style="padding:5px 14px;" onclick="globalAction('skip')">全部跳過睡眠</button>
 
+        <button class="btn btn-save" style="padding:5px 14px;" onclick="openRegisterModal()">＋ 新增帳號</button>
+
       </div>
 
     </div>
@@ -1440,6 +1442,25 @@
       <div class="modal-actions">
         <button class="btn btn-cancel" onclick="closeBugFeedbackModal()">取消</button>
         <button class="btn btn-save" onclick="submitBugFeedback()">送出</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="registerModal" class="modal-overlay" onclick="if(event.target===this)closeRegisterModal()">
+    <div class="modal" style="max-width:420px" onclick="event.stopPropagation()">
+      <div class="modal-header">新增遊戲帳號</div>
+      <div class="form-group">
+        <label>裝置名稱（英數字、底線、連字號）</label>
+        <input type="text" id="regDeviceId" class="form-control" placeholder="例如: web-001">
+      </div>
+      <div class="form-group">
+        <label>遊戲網址（留空使用預設）</label>
+        <input type="text" id="regWebUrl" class="form-control" placeholder="https://mushroomh5.acenetgame.com/">
+      </div>
+      <div id="regStatusBox" style="display:none; margin-top:10px; padding:8px; border-radius:6px; background:var(--card-bg); color:var(--text-primary); font-size:0.85em; white-space:pre-wrap;"></div>
+      <div class="modal-actions">
+        <button class="btn btn-cancel" onclick="closeRegisterModal()">取消</button>
+        <button id="regSubmitBtn" class="btn btn-save" onclick="registerAccount()">建立並開啟登入</button>
       </div>
     </div>
   </div>
@@ -2482,6 +2503,76 @@
 
     }
 
+
+    // ── 新增帳號流程 ──────────────────────────────────────
+    let _regPollInterval = null;
+
+    function openRegisterModal() {
+      document.getElementById('regDeviceId').value = '';
+      document.getElementById('regWebUrl').value = '';
+      const box = document.getElementById('regStatusBox');
+      box.style.display = 'none';
+      box.textContent = '';
+      document.getElementById('regSubmitBtn').disabled = false;
+      document.getElementById('registerModal').classList.add('active');
+    }
+
+    function closeRegisterModal() {
+      document.getElementById('registerModal').classList.remove('active');
+      if (_regPollInterval) { clearInterval(_regPollInterval); _regPollInterval = null; }
+    }
+
+    function _showRegStatus(msg) {
+      const box = document.getElementById('regStatusBox');
+      box.style.display = 'block';
+      box.textContent = msg;
+    }
+
+    async function registerAccount() {
+      const deviceId = document.getElementById('regDeviceId').value.trim();
+      if (!deviceId) { alert('請輸入裝置名稱'); return; }
+      const webUrl = document.getElementById('regWebUrl').value.trim() || '';
+      document.getElementById('regSubmitBtn').disabled = true;
+      _showRegStatus('送出中...');
+      try {
+        const resp = await fetch('/api/devices/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ device_id: deviceId, web_url: webUrl })
+        });
+        const result = await resp.json();
+        if (!resp.ok) {
+          _showRegStatus('❌ ' + (result.message || '失敗'));
+          document.getElementById('regSubmitBtn').disabled = false;
+          return;
+        }
+        _showRegStatus('瀏覽器已開啟，請在彈出的 Chrome 視窗中登入遊戲，登入後視窗會自動關閉...');
+        _regPollInterval = setInterval(() => _pollRegLoginStatus(deviceId), 2000);
+      } catch (e) {
+        _showRegStatus('❌ ' + e.message);
+        document.getElementById('regSubmitBtn').disabled = false;
+      }
+    }
+
+    async function _pollRegLoginStatus(deviceId) {
+      try {
+        const resp = await fetch(`/api/web_login_status/${deviceId}`);
+        const data = await resp.json();
+        if (!data.running && data.finished_at) {
+          clearInterval(_regPollInterval); _regPollInterval = null;
+          if (data.last_error) {
+            _showRegStatus('❌ 登入失敗: ' + data.last_error);
+            document.getElementById('regSubmitBtn').disabled = false;
+          } else {
+            _showRegStatus('✅ 登入完成！裝置「' + deviceId + '」已建立，cookies 已儲存。');
+            fetchStatus();
+          }
+        } else if (data.running) {
+          _showRegStatus('⏳ 登入進行中… ' + (data.last_message || ''));
+        }
+      } catch (_) {}
+    }
+    // ── 新增帳號流程結束 ──────────────────────────────────
 
 
     async function launchWebPage(ip) {

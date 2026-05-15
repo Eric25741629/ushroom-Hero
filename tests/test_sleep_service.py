@@ -207,7 +207,6 @@ def resume_env(monkeypatch, sleep_mod):
     calls = {"state": [], "check_on_line": [], "process_online": []}
     monkeypatch.setattr(sleep_mod.bot_state, "update_state", lambda ip, **kw: calls["state"].append({"ip": ip, **kw}))
     monkeypatch.setattr(sleep_mod.bot_state, "has_pending_online_check_request", lambda ip: False)
-    monkeypatch.setattr(sleep_mod.bot_state, "is_online_check_priority_active", lambda ip: False)
     monkeypatch.setattr(
         sleep_mod, "process_online_check_requests",
         lambda ip, cnn, log, fn: calls["process_online"].append(ip),

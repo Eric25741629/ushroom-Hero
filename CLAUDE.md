@@ -52,6 +52,10 @@ Each device thread runs an independent automation loop with:
 | Mining AI (v2) | `miner/v2/` | Fresh rewrite — dry-run planner + classifier, switchable behind flag |
 | OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
 | Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
+| Task sandbox | `task_sandbox/` | 通用任務開發/驗證框架，以神燈為第一個實作，基於 NavTarget 導航 |
+| WS listener | `utils/ws_listener.py` | WebSocket frame 擷取與回放，用於協議分析 |
+| Equipment cache | `utils/equipment_cache.py` | 解析神燈掉落二進位資料，持久化並依 uid 查詢裝備 |
+| Log paths | `utils/log_paths.py` | 集中管理 log 路徑；測試用 `LogPaths.with_root(tmp_path)` 沙箱 |
 
 ### Runtime Services (lazy-started)
 
@@ -138,10 +142,32 @@ Tasks executed in order:
 
 ## Logging
 
-- Main: `logs/{ip}.log`
-- Mining: `logs/miner_{ip}.log`
+Per-device layout (Phase 01 reorg, 2026-05-02):
+
+```
+logs/
+├── <device>/                          ← 一個裝置一個資料夾
+│   ├── main.log                       ← 主任務迴圈
+│   ├── miner.log                      ← 挖礦
+│   ├── ocr_trace.log                  ← OCR 追蹤（512KB rotated）
+│   ├── error_screenshots/             ← SmartScreenshotRecorder 產物
+│   │   ├── events.jsonl
+│   │   ├── annotations.json
+│   │   └── *.jpg
+│   └── action_trace/                  ← ActionTraceRecorder 產物
+│       └── events_YYYYMMDD.jsonl
+├── _archive/<device>/                 ← rotated 歷史檔（rotation 自動寫入）
+│   └── main.20260502_143001.log
+└── system/                            ← 預留：control panel / push server
+```
+
+- 路徑來源：`utils/log_paths.LogPaths`（測試用 `LogPaths.with_root(tmp_path)` 沙箱）
 - Format: `%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] %(message)s`
-- Auto-rotated on startup (old → `.bak`)
+- 啟動時自動 rotate：active `main.log` → `<device>/main.YYYYMMDD_HHMMSS.log`
+  - `_is_rotatable_active_log()` 過濾，跳過已 rotated 與 `sync-conflict-*`，避免 `name.t1.t2.t3.log` 檔名增生
+  - 跳過 `_archive/`、`system/` 子目錄
+- 自動 purge：每個 logger 啟動時清掉 ≥7 天前 rotated 副本（`_DEVICE_LOG_RETENTION_DAYS`），ocr_trace 5 天
+- 從舊 flat layout 遷移：先停 bot，再跑 `python tools/migrate_logs_layout.py --apply`（預設 dry-run；bot 在跑時 `--apply` 會被擋）
 
 ## Common Operations
 
@@ -212,11 +238,12 @@ python Open_gold_paddle_ocr.py --no-lian-shan
 - **Thread registry**: `_running_threads` in `new_main_v2.py` tracks every device thread. `Ctrl+C` fans out to `shutdown_web_devices()` before exit — don't bypass it.
 - **Login conflicts**: `StartupLoginConflictError` / `LoginConflictError` force a 30-min device sleep. Treat as expected, not as a bug to catch-and-retry.
 - **RL logs path**: Unified at `miner/rl_logs/<device>/events.jsonl` with rotation. The old `miner/rl/rl_logs/` path is deprecated — don't resurrect it.
+- **`_WEB_DEVICE_LOCK` 必須是 RLock**：`close()` 的 `finally` 會重入此鎖，不可降級為 `Lock`，否則同 thread 會 deadlock。
 
 ## Scheduling Notes
 
 - Wake times align to hourly 00~20 min window by default
-- `7fe98fc6` wakes every hour (±30 s)
+- `emulator-5554` / `emulator-5560` 每小時醒來一次（±30 s）
 - `emulator-5558` uses 1~3 h random interval
 - `emulator-5554` handles cross-device online-check for `emulator-5558`
 - `emulator-5556` runs biweekly bounty dungeon Sat/Sun 19:57
@@ -234,6 +261,7 @@ This repo uses the GSD planning structure under `.planning/` (`PROJECT.md`, `ROA
 - `PROJECT_RUNBOOK.md` — maintenance principles (observability-first, cache vs real-time checks)
 - `README_FLASK_SERVER.md` / `README_NEW_ARCHITECTURE.md` — deeper dives on dashboard and refactor
 - `docs/EVENT_INDEX_DEV_GUIDE.md`, `docs/SMART_SCREENSHOT_LLM_ANALYZER.md` — subsystem guides
+
 ## Testing Conventions
 
 ### TDD Workflow

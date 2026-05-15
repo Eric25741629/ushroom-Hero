@@ -31,10 +31,7 @@ def _handle_startup_sleep(ip: str, device_logger) -> None:
     if remaining_startup_sleep > 0:
         for remain in range(remaining_startup_sleep, 0, -1):
             if ip == "emulator-5554":
-                if (
-                    bot_state.has_pending_online_check_request("emulator-5554")
-                    or bot_state.is_online_check_priority_active("emulator-5554")
-                ):
+                if bot_state.has_pending_online_check_request("emulator-5554"):
                     device_logger.info(f"[{ip}] 收到 emulator-5558 上線檢查請求，提前結束啟動休眠")
                     break
             if bot_state.has_pending_web_launch_request(ip):

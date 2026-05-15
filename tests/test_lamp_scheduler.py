@@ -179,19 +179,37 @@ def test_run_lamp_defaults_to_paddle_ocr(lamp_mod, fake_config, monkeypatch):
 def test_phone_ocr_mode_runs_when_on_main_page(
     lamp_mod, fake_config, fake_bot_state, captured_lamp_calls, monkeypatch,
 ):
-    """Phone-OCR branch fires with is_compare=True. General branch is
-    independent and will ALSO fire for non-5558/5560 devices — we suppress
-    it here with a recent timestamp to keep this test focused on branch A."""
-    import time
+    """Phone-OCR branch fires with is_compare=True; the three branches are
+    mutually exclusive so general branch must not also fire."""
     fake_config["phone-ip"] = {"lamp_duration_sec": 200, "lamp_check_interval": 2}
     monkeypatch.setattr(lamp_mod, "use_phone_ocr_lamp_mode", lambda ip: ip == "phone-ip")
-    # Suppress general-branch firing (1h < 2h interval).
-    monkeypatch.setattr(lamp_mod, "return_time", lambda ip, name: {"timestamp": time.time() - 3600})
+    monkeypatch.setattr(lamp_mod, "return_time", lambda ip, name: None)
     monkeypatch.setattr(lamp_mod, "time_recording", lambda ip, name: None)
 
     lamp_mod._run_lamp_if_due(SimpleNamespace(), "phone-ip", "主頁面")
 
     assert captured_lamp_calls == [{"ip": "phone-ip", "lamp_dur": 200, "is_compare": True}]
+
+
+def test_phone_ocr_mode_does_not_also_trigger_general_branch(
+    lamp_mod, fake_config, fake_bot_state, captured_lamp_calls, monkeypatch,
+):
+    """Regression: phone-OCR device must NOT also run the general-interval
+    branch. Previously the first `if` block did not return, so phone-OCR
+    devices fell through and ran the lamp twice per cycle whenever the
+    interval threshold also passed."""
+    fake_config["phone-ip"] = {"lamp_duration_sec": 200, "lamp_check_interval": 2}
+    monkeypatch.setattr(lamp_mod, "use_phone_ocr_lamp_mode", lambda ip: ip == "phone-ip")
+    # No prior record → general branch would fire under the old buggy code.
+    monkeypatch.setattr(lamp_mod, "return_time", lambda ip, name: None)
+    recorded: list[dict] = []
+    monkeypatch.setattr(lamp_mod, "time_recording", lambda ip, name: recorded.append({"ip": ip, "name": name}))
+
+    lamp_mod._run_lamp_if_due(SimpleNamespace(), "phone-ip", "主頁面")
+
+    assert captured_lamp_calls == [{"ip": "phone-ip", "lamp_dur": 200, "is_compare": True}]
+    # General branch's bookkeeping must NOT fire for phone-OCR devices.
+    assert recorded == []
 
 
 def test_phone_ocr_mode_logs_mismatch_when_not_on_main_page(
