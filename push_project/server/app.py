@@ -1,9 +1,11 @@
 # Python Push Server for 菇勇者
 from flask import Flask, request, jsonify, send_from_directory
 from pywebpush import webpush, WebPushException
-import os, json, time
+import os, json, time, threading
 from pathlib import Path
 import base64
+
+_subs_lock = threading.Lock()
 
 app = Flask(__name__)
 
@@ -152,13 +154,14 @@ def save_sub():
         sub = request.get_json()
         if not sub or 'endpoint' not in sub:
             return ('Invalid subscription', 400)
-        SUBSCRIPTIONS.append(sub)
-        # persist to disk
-        try:
-            with open(SUBS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f'⚠️ Failed to persist subscription: {e}')
+        with _subs_lock:
+            SUBSCRIPTIONS.append(sub)
+            # persist to disk
+            try:
+                with open(SUBS_FILE, 'w', encoding='utf-8') as f:
+                    json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f'⚠️ Failed to persist subscription: {e}')
         # 詳細日誌方便除錯
         try:
             print(f'✅ Subscription saved. Total: {len(SUBSCRIPTIONS)}')
@@ -264,12 +267,13 @@ def send_push():
             # Remove invalid subscription
             try:
                 if resp is not None and status in [404, 410]:
-                    SUBSCRIPTIONS.remove(sub)
-                    try:
-                        with open(SUBS_FILE, 'w', encoding='utf-8') as f:
-                            json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
-                    except Exception:
-                        pass
+                    with _subs_lock:
+                        SUBSCRIPTIONS.remove(sub)
+                        try:
+                            with open(SUBS_FILE, 'w', encoding='utf-8') as f:
+                                json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
             except Exception:
                 pass
         except Exception as ex:
@@ -395,12 +399,13 @@ def clear_subscriptions():
     """Clear all saved subscriptions (useful after rotating VAPID keys).
     WARNING: clients will need to re-subscribe after this.
     """
-    SUBSCRIPTIONS.clear()
-    try:
-        with open(SUBS_FILE, 'w', encoding='utf-8') as f:
-            json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f'⚠️ Failed to persist cleared subscriptions: {e}')
+    with _subs_lock:
+        SUBSCRIPTIONS.clear()
+        try:
+            with open(SUBS_FILE, 'w', encoding='utf-8') as f:
+                json.dump(SUBSCRIPTIONS, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f'⚠️ Failed to persist cleared subscriptions: {e}')
     return jsonify({'ok': True, 'count': 0})
 
 @app.route('/api/time')
