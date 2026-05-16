@@ -329,8 +329,9 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
             st["step"] = reason
             st.pop("next_wake_at", None)
             st["last_update"] = time.time()
-    if ip in _pause_events:
-        _pause_events[ip].set()
+        # Set pause event inside lock — Event.set() is non-blocking, safe inside lock
+        if ip in _pause_events:
+            _pause_events[ip].set()
 
 
 def check_force_sleep(ip: str) -> bool:
