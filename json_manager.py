@@ -7,6 +7,7 @@ import copy
 import json
 import os
 import datetime
+import tempfile
 import time
 import warnings
 from dataclasses import dataclass
@@ -74,6 +75,27 @@ def _parse_recorded_date(
         except (OSError, OverflowError, ValueError):
             pass
     return None
+
+
+def _atomic_write_json(filepath: str, data, **json_kwargs) -> None:
+    """Write *data* as JSON to *filepath* atomically using temp file + os.replace().
+
+    On write failure, the original file is left untouched and the exception is re-raised.
+    Temp file is always cleaned up.
+    """
+    dirpath = os.path.dirname(os.path.abspath(filepath))
+    os.makedirs(dirpath, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(suffix=".tmp", dir=dirpath)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, **json_kwargs)
+        os.replace(tmp_path, filepath)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -173,8 +195,7 @@ class JsonDataManager:
     def save_data(self, data: Dict[str, Any]) -> bool:
         try:
             filename = self.get_filename()
-            with open(filename, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4, ensure_ascii=False)
+            _atomic_write_json(filename, data, indent=4, ensure_ascii=False)
             return True
         except Exception as e:
             print(f"保存JSON文件失敗: {e}")
