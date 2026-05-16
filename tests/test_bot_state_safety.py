@@ -10,16 +10,29 @@ def test_request_force_sleep_sets_pause_event():
     bot_state.set_pause(ip, True)
 
     unblocked = threading.Event()
+    waiter_started = threading.Event()
 
     def waiter():
+        waiter_started.set()   # signal: we are about to call check_pause
         bot_state.check_pause(ip)
         unblocked.set()
 
     t = threading.Thread(target=waiter, daemon=True)
     t.start()
-    time.sleep(0.1)
+
+    # Wait until waiter thread has started, then give check_pause a moment to enter its loop
+    assert waiter_started.wait(timeout=2.0), "Waiter thread did not start in time"
+    time.sleep(0.05)  # brief wait for check_pause to reach event.wait()
 
     bot_state.request_force_sleep(ip)
 
     assert unblocked.wait(timeout=3.0), "check_pause() did not unblock after request_force_sleep()"
     t.join(timeout=1.0)
+
+    # Teardown: remove test device from module state
+    with bot_state._global_lock:
+        bot_state._states.pop(ip, None)
+        bot_state._pause_events.pop(ip, None)
+        bot_state._force_sleep_flags.pop(ip, None)
+        bot_state._skip_sleep_flags.pop(ip, None)
+        bot_state._locks.pop(ip, None)
