@@ -32,89 +32,12 @@ def _predict_stage(Cnn_model, pil_img):
 
 
 def _exit_farm_to_main(d, ip, Cnn_model, save_time, *, timeout=60):
-    """Drive 農場 → 家園 → 主頁面.
-
-    OCR-based — CNN 對「農場」/「家園」沒有可靠類別，且呼叫慣例脆弱。
-    每輪：OCR get_stage → 主頁面就結束；否則
-      1) 點右下 (480, 929) — 純農場頁的「返回」鈕
-      2) OCR 找「關閉」處理彈窗（公告 / 商店 / 確認框）
-      3) 點 home (321, 920) — 在家園可回主頁面
-    Returns updated save_time.
-    """
-    exit_start = time.time()
-    last_stage = "__init__"
-    attempt = 0
-    reached_main = False
-
-    while time.time() - exit_start < timeout:
-        attempt += 1
-        try:
-            stage = get_stage(d, Cnn_model)
-        except Exception as e:
-            logger.debug(f"[farm] OCR get_stage 失敗 #{attempt}: {e}")
-            stage = None
-
-        if stage != last_stage:
-            elapsed = time.time() - exit_start
-            logger.info(f"[farm] 退出嘗試 #{attempt}, OCR={stage}, elapsed={elapsed:.1f}s")
-            try:
-                save_error_screenshot(d, ip, str(stage), f"farm_exit_attempt_{attempt}")
-            except Exception as e:
-                logger.debug(f"[farm] 截圖保存失敗: {e}")
-            last_stage = stage
-
-        if stage == "主頁面":
-            elapsed = time.time() - exit_start
-            save_time += max(0, 3 - elapsed)
-            logger.info(f"[farm] 已回到主頁面 (OCR)，耗時 {elapsed:.1f}s")
-            reached_main = True
-            break
-
-        # 放置獎勵 (offline reward) popup has no 「關閉」 — its dismiss button is
-        # 「領取」 at (~330, 725). Captured on 7fe98fc6 2026-05-02 14:32: the
-        # generic three-step exit clicked (480, 929) which is the bottom-right
-        # 商店 tab and never hit 領取, looping until 60s timeout. Use the
-        # existing reward handler which knows the (162,725)+(330,725) ritual.
-        if stage == "放置獎勵":
-            try:
-                from game_actions.reward_manager import reward as _reward
-                logger.info(f"[farm] 偵測到「放置獎勵」popup，呼叫 reward() 處理")
-                _reward(d)
-                time.sleep(2)
-                continue
-            except Exception as e:
-                logger.warning(f"[farm] reward() 失敗，退回通用步驟: {e}")
-
-        d.click(480 + random.randint(-5, 5), 929 + random.randint(-3, 3))
-        time.sleep(1.5)
-
-        if img_tools.click_str_by_server(d, "關閉", wait_timeout=0):
-            logger.info(f"[farm] OCR 找到「關閉」並點擊 (stage={stage})")
-            time.sleep(1.5)
-            continue
-
-        d.click(321 + random.randint(-5, 5), 920 + random.randint(-3, 3))
-        time.sleep(2)
-
-    if not reached_main:
-        logger.warning(f"[farm] 退出超時 {timeout}s，最後 stage={last_stage}，啟動 fallback resolver")
-        try:
-            save_error_screenshot(d, ip, str(last_stage), "farm_exit_timeout")
-        except Exception as e:
-            logger.debug(f"[farm] 超時截圖保存失敗: {e}")
-        try:
-            from game_initialization import resolve_stage_until_stable
-            from game_actions.reward_manager import reward as _reward_fn
-            final = resolve_stage_until_stable(
-                d, ip, Cnn_model=Cnn_model, reward_fn=_reward_fn, logger=logger
-            )
-            logger.warning(f"[farm] fallback resolver 後 stage={final}")
-        except Exception as e:
-            logger.error(f"[farm] fallback resolver 失敗: {e}，改用 click_white")
-            for _ in range(3):
-                click_white(d)
-                time.sleep(1)
-
+    """從農場返回主頁面。委託給 game_actions.navigation.navigate_to_main_page。"""
+    from game_actions.navigation import navigate_to_main_page
+    nav_start = time.time()
+    navigate_to_main_page(d, Cnn_model, ip, timeout=float(timeout), label="farm_v1")
+    elapsed = time.time() - nav_start
+    save_time += max(0.0, 3.0 - elapsed)
     return save_time
 
 
