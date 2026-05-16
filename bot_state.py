@@ -151,11 +151,12 @@ def check_pause(ip: str):
     檢查該 IP 是否被要求暫停。
     如果被暫停，執行緒會卡在這裡 (block)，直到被恢復。
     """
-    if ip not in _pause_events:
+    # Capture event reference inside lock to prevent TOCTOU with clear_offline_devices()
+    with _global_lock:
+        event = _pause_events.get(ip)
+    if event is None:
         return
 
-    event = _pause_events[ip]
-    
     if not event.is_set():
         while not event.is_set():
             if has_pending_web_launch_request(ip):

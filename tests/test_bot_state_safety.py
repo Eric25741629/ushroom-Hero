@@ -36,3 +36,32 @@ def test_request_force_sleep_sets_pause_event():
         bot_state._force_sleep_flags.pop(ip, None)
         bot_state._skip_sleep_flags.pop(ip, None)
         bot_state._locks.pop(ip, None)
+
+
+def test_check_pause_safe_after_device_cleared():
+    """check_pause() must not KeyError if device is cleared concurrently."""
+    import bot_state as bs
+    ip = "test-safety-clear-5556"
+    bot_state.init_device(ip)
+    bot_state.set_pause(ip, True)
+
+    errors = []
+
+    def pauser():
+        try:
+            bot_state.check_pause(ip)
+        except Exception as e:
+            errors.append(e)
+
+    t = threading.Thread(target=pauser, daemon=True)
+    t.start()
+    time.sleep(0.05)  # let check_pause enter its loop
+
+    # Force device offline and clear it while check_pause is waiting
+    with bs._global_lock:
+        if ip in bs._states:
+            bs._states[ip]["status"] = "OFFLINE"
+    bot_state.clear_offline_devices()
+
+    t.join(timeout=3.0)
+    assert not errors, f"check_pause() raised exception(s): {errors}"
