@@ -5,10 +5,13 @@
 """
 
 import json
+import logging
 import os
 import datetime
 import time
 import pytz
+
+logger = logging.getLogger(__name__)
 
 def check_device_data(device_id: str):
     """檢查指定設備的所有JSON數據文件"""
@@ -88,7 +91,8 @@ def check_device_data(device_id: str):
                             daily_date = datetime.datetime.fromtimestamp(daily_ts, timezone).date()
                             is_today = daily_date == current_time.date()
                             print(f"  • Daily: 已購買 {daily_num} 次，{'今天' if is_today else '不是今天'}的記錄")
-                        except:
+                        except Exception as e:
+                            logger.warning(f"[check_json_data] 例外: {e}")
                             print(f"  • Daily: 已購買 {daily_num} 次，時間戳無效")
                     else:
                         print(f"  • Daily: 已購買 {daily_num} 次，無時間記錄")
@@ -103,7 +107,8 @@ def check_device_data(device_id: str):
                             current_year, current_week, _ = current_time.date().isocalendar()
                             is_this_week = (weekly_year, weekly_week) == (current_year, current_week)
                             print(f"  • Weekly: 已購買 {weekly_num} 次，{'本週' if is_this_week else '不是本週'}的記錄")
-                        except:
+                        except Exception as e:
+                            logger.warning(f"[check_json_data] 例外: {e}")
                             print(f"  • Weekly: 已購買 {weekly_num} 次，時間戳無效")
                     else:
                         print(f"  • Weekly: 已購買 {weekly_num} 次，無時間記錄")
@@ -116,7 +121,8 @@ def check_device_data(device_id: str):
                             last_dt = datetime.datetime.strptime(record['last_time'], '%Y-%m-%d %H:%M:%S')
                             is_today = last_dt.date() == current_time.replace(tzinfo=None).date()
                             print(f"  • {item}: {'今天已購買' if is_today else '今天未購買'}")
-                        except:
+                        except Exception as e:
+                            logger.warning(f"[check_json_data] 例外: {e}")
                             print(f"  • {item}: 時間格式錯誤")
                             
         except json.JSONDecodeError as e:

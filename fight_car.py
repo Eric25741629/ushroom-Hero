@@ -1,3 +1,4 @@
+import logging
 import re
 import time
 import cv2
@@ -15,6 +16,8 @@ import uiautomator2 as u2
 import easyocr
 from tools import android_devices
 import img_tools
+
+logger = logging.getLogger(__name__)
 
 
 from json_manager import create_store_manager
@@ -269,7 +272,8 @@ def _extract_spatial_geometry(ocr_data):
             n = int(m.group(1))
             if 0 < n < 100:
                 return n
-        except:
+        except Exception as e:
+            logger.warning(f"[fight_car] 例外: {e}")
             return None
         return None
 
@@ -283,7 +287,8 @@ def _extract_spatial_geometry(ocr_data):
             full_str = f"{dt_match.group(1)} {dt_match.group(2)}"
             try:
                 return datetime.strptime(full_str, "%Y/%m/%d %H:%M:%S")
-            except:
+            except Exception as e:
+                logger.warning(f"[fight_car] 例外: {e}")
                 pass
 
         # 只有時間就用今天/昨天推定
@@ -297,7 +302,8 @@ def _extract_spatial_geometry(ocr_data):
                 if dt > now and (dt - now).total_seconds() > 3600:
                     dt -= timedelta(days=1)
                 return dt
-            except:
+            except Exception as e:
+                logger.warning(f"[fight_car] 例外: {e}")
                 pass
         return None
 

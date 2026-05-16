@@ -1,7 +1,10 @@
+import logging
 import numpy as np
 import uiautomator2 as u2
 import time
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 class device:
@@ -81,8 +84,8 @@ def close_nofication(d):
             if not d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
                 d.xpath('//*[@content-desc="勿擾模式"]').click()  
             d.click(0.71, 0.016) # 點擊空白處返回
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"[device] 例外: {e}")
 
         # 2. 處理 Messenger 氣泡 (包含雙開版本)
         # 遍歷所有元件，尋找包名包含 facebook.orca 的元件
@@ -106,7 +109,8 @@ def close_nofication(d):
                         print(f"掃除氣泡於: ({mid_x}, {mid_y}) -> 底部")
                         d.swipe(mid_x, mid_y, screen_w / 2, screen_h - 10, duration=0.2)
                         time.sleep(0.5)
-                except:
+                except Exception as e:
+                    logger.warning(f"[device] 例外: {e}")
                     continue
                     
     except Exception as e:

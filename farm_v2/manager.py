@@ -20,6 +20,7 @@ from farm_v2.operations import (
     plant_cycle,
     run_weekly_card,
 )
+from game_actions.navigation import navigate_to_main_page
 from game_state.detector import get_stage
 from utils.screenshot_helpers import save_error_screenshot
 
@@ -66,72 +67,15 @@ def navigate_to_home(
     cnn_model=None,
     device_ip: Optional[str] = None,
 ) -> float:
-    """從農場返回首頁，最多重試 60 秒。OCR 驅動。
+    """從農場返回首頁。委託給 game_actions.navigation.navigate_to_main_page。
 
-    每輪：OCR get_stage → 主頁面就結束；否則
-      1) 點右下 (480, 929) — 純農場頁的「返回」鈕
-      2) OCR 找「關閉」處理彈窗（公告 / 商店 / 確認框）
-      3) 點 home (321, 920) — 在家園可回主頁面
-    沒有 cnn_model 時走盲點簡化路徑（給測試/dry-run）。
+    Returns:
+        節省時間秒數（若導航在 3 秒內完成則補回差額；否則 0.0）。
     """
-    save_time = 0.0
-
-    if cnn_model is None:
-        click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
-        time.sleep(wait_jitter(TIMING["very_long"]))
-        click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
-        time.sleep(wait_jitter(TIMING["long"]))
-        return save_time
-
-    exit_start = time.time()
-    last_stage = "__init__"
-    attempt = 0
-    reached_main = False
-    while time.time() - exit_start < 60:
-        attempt += 1
-        try:
-            stage = get_stage(d, cnn_model)
-        except Exception as e:
-            logger.debug(f"[farm_v2] OCR get_stage 失敗 #{attempt}: {e}")
-            stage = None
-
-        if stage != last_stage:
-            elapsed = time.time() - exit_start
-            logger.info(f"[farm_v2] 退出嘗試 #{attempt}, OCR={stage}, elapsed={elapsed:.1f}s")
-            if device_ip:
-                try:
-                    save_error_screenshot(d, device_ip, str(stage), f"farm_exit_attempt_{attempt}")
-                except Exception as e:
-                    logger.debug(f"[farm_v2] 截圖保存失敗: {e}")
-            last_stage = stage
-
-        if stage == "主頁面":
-            elapsed = time.time() - exit_start
-            save_time += max(0, 3 - elapsed)
-            logger.info(f"[farm_v2] 已回到主頁面 (OCR)，耗時 {elapsed:.1f}s")
-            reached_main = True
-            break
-
-        click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
-        time.sleep(wait_jitter(TIMING["medium"]))
-
-        if img_tools.click_str_by_server(d, "關閉", wait_timeout=0):
-            logger.info(f"[farm_v2] OCR 找到「關閉」並點擊 (stage={stage})")
-            time.sleep(wait_jitter(TIMING["medium"]))
-            continue
-
-        click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
-        time.sleep(wait_jitter(TIMING["long"]))
-
-    if not reached_main:
-        logger.warning(f"[farm_v2] 退出超時 60s，最後 stage={last_stage}")
-        if device_ip:
-            try:
-                save_error_screenshot(d, device_ip, str(last_stage), "farm_exit_timeout")
-            except Exception as e:
-                logger.debug(f"[farm_v2] 超時截圖保存失敗: {e}")
-
-    return save_time
+    nav_start = time.time()
+    navigate_to_main_page(d, cnn_model, device_ip, label="farm_v2")
+    elapsed = time.time() - nav_start
+    return max(0.0, 3.0 - elapsed)
 
 
 def should_do_weekly_card(time_manager) -> bool:

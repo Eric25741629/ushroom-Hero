@@ -1,7 +1,10 @@
+import logging
 import os
 import time
 import random
 from adb_operations import connect_u2_with_retries, get_battery_level
+
+logger = logging.getLogger(__name__)
 from device import close_nofication
 from game_initialization import check_on_line
 import bot_state # 引入狀態管理
@@ -293,8 +296,8 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
                 logger.error(f"[{ip}] 檢查螢幕狀態時發生錯誤: {e}")
                 try:
                     d = connect_u2_with_retries(ip, logger=logger)
-                except:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[wake_up_handler] 例外: {e}")
                 time.sleep(60)
 
         while d.info.get('screenOn'):

@@ -1,8 +1,11 @@
 import json
+import logging
 import os
 import time
 import datetime
 from typing import List, Optional
+
+logger = logging.getLogger(__name__)
 
 CAR_FIGHT_FILE = "push_project/web/car_fight.json"
 
@@ -37,7 +40,8 @@ def get_next_car_fight_ts() -> List[float]:
                 # 保留未來 2 小時內的戰鬥即可，避免處理過時資料
                 if ts > time.time() - 600:
                     fight_ts_list.append(ts)
-            except:
+            except Exception as e:
+                logger.warning(f"[car_fight_utils] 例外: {e}")
                 continue
         
         return sorted(fight_ts_list)
