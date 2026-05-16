@@ -4,7 +4,8 @@ import threading
 import socket
 import copy
 import logging
-from typing import Dict, Any
+from dataclasses import dataclass, field
+from typing import Any, Dict
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,94 @@ DEFAULT_DEVICE_CONFIG = {
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
 }
+
+
+@dataclass
+class DeviceConfig:
+    """Typed device configuration. Replaces plain dict from get_device_config().
+
+    Known fields mirror DEFAULT_DEVICE_CONFIG. Unknown/future keys are preserved
+    in _extra and are accessible via .get() for backward compatibility.
+    """
+
+    # Identity
+    name: str = ""
+    device_id: str = ""
+
+    # Backend
+    backend: str = "adb"
+    backend_display_id: str = ""
+
+    # Web H5 settings
+    web_url: str = ""
+    web_canvas_selector: str = "canvas"
+    web_profile_dir: str = "playwright_profile/{device_id}"
+    web_state_file: str = "auth_state/{device_id}.json"
+    web_channel: str = "chrome"
+    web_headless: bool = False
+    web_clear_cookies_on_start: bool = False
+    web_viewport_width: int = 540
+    web_viewport_height: int = 960
+    web_manual_viewport_width: int = 0
+    web_manual_viewport_height: int = 0
+    web_stop_mode: str = "keep_page"
+    web_screenshot_method: str = "playwright"
+
+    # Feature flags
+    enable_farm: bool = True
+    enable_arena: bool = True
+    enable_mining: bool = True
+    enable_dungeon: bool = True
+    enable_shop_manager: bool = True
+    enable_dungeon_manager: bool = True
+
+    # Device behaviour
+    is_real_phone: bool = False
+    keep_screen_on: bool = False
+    screenshot_debug: bool = False
+    online_check_interval_sec: int = 30
+
+    # Task durations / intervals
+    lamp_check_interval: int = 2
+    lamp_duration_sec: int = 300
+    mining_duration_min: int = 6
+    mining_planner_version: str = "v4"
+    mining_save_samples: bool = False
+
+    # Sleep schedule
+    sleep_min_hours: float = 1.0
+    sleep_max_hours: float = 1.0
+
+    # Unknown / future keys preserved here for backward compat
+    _extra: Dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
+
+    @classmethod
+    def from_dict(cls, raw: Dict[str, Any]) -> "DeviceConfig":
+        """Build a DeviceConfig from a raw config dict.
+
+        Known fields are mapped to typed attributes; unknown keys are stored in
+        _extra so that callers using .get() on non-schema keys still work.
+        """
+        known = {
+            f for f in cls.__dataclass_fields__
+            if not f.startswith("_")
+        }
+        kwargs = {k: v for k, v in raw.items() if k in known}
+        extra = {k: v for k, v in raw.items() if k not in known}
+        obj = cls(**kwargs)
+        obj._extra = extra
+        return obj
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Backward-compatible dict-style access.
+
+        Checks typed attributes first, then _extra, then returns default.
+        Prefer direct attribute access (cfg.enable_farm) in new code.
+        """
+        if key in self.__dataclass_fields__ and not key.startswith("_"):
+            return getattr(self, key)
+        return self._extra.get(key, default)
+
 
 # OCR 全域設定
 DEFAULT_OCR_CONFIG = {
@@ -339,23 +428,31 @@ def save_config(config: Dict[str, Any]):
             print(f"[Config] 寫入失敗: {e}")
 
 
-def get_device_config(ip: str) -> Dict[str, Any]:
-    """獲取單一設備的設定，如果不存在則返回預設值"""
+def _get_raw_device_config(ip: str) -> Dict[str, Any]:
+    """Internal: return the raw merged device config dict (used by update_device_config)."""
     config = load_config()
     devices = config.get("devices", {})
 
-    # 如果該 IP 沒有設定，回傳預設值 (但不存入，直到使用者修改)
     if ip not in devices:
         default = DEFAULT_DEVICE_CONFIG.copy()
         default["name"] = ip  # 預設名稱就是 IP
         return default
 
-    # 確保舊的設定檔也有新的欄位 (Migration)
+    # Ensure old config files also have new fields (Migration)
     user_config = devices[ip]
     merged_config = DEFAULT_DEVICE_CONFIG.copy()
     merged_config.update(user_config)
 
     return merged_config
+
+
+def get_device_config(ip: str) -> "DeviceConfig":
+    """獲取單一設備的設定，如果不存在則返回預設值。
+
+    Returns a typed DeviceConfig. Existing callers using .get() continue to work
+    via the DeviceConfig.get() shim.
+    """
+    return DeviceConfig.from_dict(_get_raw_device_config(ip))
 
 
 def update_device_config(ip: str, new_settings: Dict[str, Any]):
