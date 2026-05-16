@@ -13,6 +13,7 @@ from json_manager import create_store_manager
 import new_cnn.cnn_model as cnn_model
 import img_tools
 from runtime_services.device_runtime_service import ForceSleepRequested
+from game_actions.navigation import navigate_to_main_page
 
 def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, rl_recorder: RLRecorder = None, Cnn_model=None, max_duration_minutes: float = 6.0):
     """
@@ -67,12 +68,7 @@ def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, 
         if not os.path.exists("oracle"):
             os.makedirs("oracle")
     # cv2.imwrite("oracle/oracle_{}.jpg".format(time.time()), img)
-    click_white(d)
-    click_white(d)
-    d.click(500, 913)
-    time.sleep(3)
-    d.click(321, 919)
-    time.sleep(3)
+    navigate_to_main_page(d, Cnn_model, ip, label="mining")
 
 def _should_perform_oracle_action(ip: str) -> bool:
     """
