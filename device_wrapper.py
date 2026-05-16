@@ -181,8 +181,8 @@ class MonitoredDevice:
                 actor=type(self._d).__name__,
                 payload=enriched,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[{self._ip}] action_tracker.log 失敗: {e}")
 
     def _collect_ws_frames(self) -> list:
         """Drain WS frames captured since the previous _trace.
@@ -204,7 +204,8 @@ class MonitoredDevice:
             return []
         try:
             return self._ws_frame_tracker.drain(page, max_n=50)
-        except Exception:
+        except Exception as e:
+            logger.debug(f"[{self._ip}] ws_frame_tracker.drain 失敗: {e}")
             return []
 
     def _auto_meaning(
@@ -358,8 +359,8 @@ class MonitoredDevice:
         elapsed_ms = (time.time() - t0) * 1000
         try:
             bot_state.record_screenshot_time(self._ip, elapsed_ms)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[{self._ip}] record_screenshot_time 失敗: {e}")
         if elapsed_ms > _SLOW_SCREENSHOT_MS:
             try:
                 from utils.logging_utils import get_thread_logger
