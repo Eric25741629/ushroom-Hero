@@ -7,11 +7,21 @@ import logging
 import time
 from typing import Optional
 
+import random
+
 import img_tools
-from farm_v2.operations import click_with_jitter, wait_jitter
-from farm_v2.config import TIMING
 from game_state.detector import get_stage
 from utils.screenshot_helpers import save_error_screenshot
+
+# Inline helpers — avoid importing from farm_v2 to prevent circular imports
+# (farm_v2.manager imports from this module)
+def _click_with_jitter(d, x: int, y: int, jitter: int = 5) -> None:
+    d.click(x + random.randint(-jitter, jitter), y + random.randint(-jitter, jitter))
+
+def _wait_jitter(base: float) -> float:
+    return base + random.uniform(-0.2, 0.2)
+
+_TIMING = {"medium": 1.0, "long": 2.0, "very_long": 3.0}
 
 logger = logging.getLogger(__name__)
 
@@ -52,14 +62,14 @@ def navigate_to_main_page(
 
     if cnn_model is None:
         # Blind mode -- no OCR available, just send the clicks
-        click_with_jitter(d, *_FARM_TAB, jitter=5)
-        time.sleep(wait_jitter(TIMING["very_long"]))
-        click_with_jitter(d, *_HOME_BTN, jitter=5)
-        time.sleep(wait_jitter(TIMING["long"]))
+        _click_with_jitter(d, *_FARM_TAB, jitter=5)
+        time.sleep(_wait_jitter(_TIMING["very_long"]))
+        _click_with_jitter(d, *_HOME_BTN, jitter=5)
+        time.sleep(_wait_jitter(_TIMING["long"]))
         return True
 
     # First round: let the page stabilize after task completion
-    time.sleep(wait_jitter(TIMING["medium"]))
+    time.sleep(_wait_jitter(_TIMING["medium"]))
 
     exit_start = time.time()
     last_stage = "__init__"
@@ -89,16 +99,16 @@ def navigate_to_main_page(
             return True
 
         # Navigate: farm tab -> dismiss popup -> home button
-        click_with_jitter(d, *_FARM_TAB, jitter=5)
-        time.sleep(wait_jitter(TIMING["medium"]))
+        _click_with_jitter(d, *_FARM_TAB, jitter=5)
+        time.sleep(_wait_jitter(_TIMING["medium"]))
 
         if img_tools.click_str_by_server(d, "關閉", wait_timeout=0):
             logger.info(f"{prefix} 找到「關閉」並點擊 (stage={stage})")
-            time.sleep(wait_jitter(TIMING["medium"]))
+            time.sleep(_wait_jitter(_TIMING["medium"]))
             continue
 
-        click_with_jitter(d, *_HOME_BTN, jitter=5)
-        time.sleep(wait_jitter(TIMING["long"]))
+        _click_with_jitter(d, *_HOME_BTN, jitter=5)
+        time.sleep(_wait_jitter(_TIMING["long"]))
 
     logger.warning(f"{prefix} 超時 {timeout:.0f}s，最後 stage={last_stage}")
     if device_ip:
