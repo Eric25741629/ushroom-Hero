@@ -367,24 +367,9 @@ class ParkMarketDataManager(JsonDataManager):
             print(f"記錄購買數據失敗: {e}")
 
     def should_purchase(self, mode: str, max_purchases: int = 2, max_checks: int = 2) -> bool:
-        if mode not in self.SECTION_KEYS:
-            raise ValueError("mode 必須是 'daily' 或 'weekly'")
-        states = self._load_states()
-        state = states[mode]
-        if mode == "daily":
-            is_new_cycle = not _ts_same_day(state.timestamp, self.timezone)
-            label, unit = "Daily", "天"
-        else:
-            is_new_cycle = not _ts_same_week(state.timestamp, self.timezone)
-            label, unit = "Weekly", "週"
-        within_purchase_limit = state.buy_num < max_purchases
-        within_check_limit = state.check_time < max_checks
-        should_buy = is_new_cycle or (within_purchase_limit and within_check_limit)
-        print(
-            f"{label} 檢查: 新的一{unit}={is_new_cycle}, 購買次數={state.buy_num}/{max_purchases}, "
-            f"檢查次數={state.check_time}/{max_checks}, 應該購買={should_buy}"
-        )
-        return should_buy
+        """Deprecated: use game_actions.shop_manager.should_purchase() instead."""
+        from game_actions.shop_manager import should_purchase as _impl
+        return _impl(self, mode, max_purchases, max_checks)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
