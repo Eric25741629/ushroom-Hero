@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import random
 import time
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import cv2
@@ -18,14 +19,63 @@ else:  # pragma: no cover - 測試環境僅需輕量別名
 
 from miner.core.config import GRID_CFG, HIT_TABLE
 from miner.core.mechanics import get_bomb_affected_cells, get_drill_affected_cells
+
+
+@dataclass
+class ExecutionResult:
+    """Resource accounting for one ``execute_plan_steps`` invocation.
+
+    The mining loop uses this to decrement its internal pickaxe / item
+    counters incrementally, so OCR can be downgraded from authoritative
+    source to validator.
+
+    Fields
+    ------
+    shovels_used:
+        Total shovel cost of cells where the executor actually issued
+        ``tap_cell`` (regardless of whether classify_board later
+        confirmed the cell as empty — the game consumed the shovel as
+        soon as the click landed). Equals ``enter_cost(label_before)``
+        summed across attempted cells.
+    drills_used / bombs_used:
+        Count of item activations dispatched (0 or 1 per call — the
+        executor returns after each item use so the planner can re-plan
+        from the new board).
+    steps_completed:
+        Number of plan steps that ran to completion. For dig steps that
+        terminated via floor7 / verify_fail this counts the partially-
+        completed step.
+    terminated_reason:
+        ``None`` if the executor ran the full plan, otherwise one of
+        ``"deadline"``, ``"floor7"``, ``"verify_fail"``,
+        ``"item_placement_invalid"``, ``"item_used"``,
+        ``"no_board_change"``, ``"out_of_item"``.
+    """
+
+    shovels_used: int = 0
+    drills_used: int = 0
+    bombs_used: int = 0
+    steps_completed: int = 0
+    terminated_reason: Optional[str] = None
+
+
 class ItemPlacementError(Exception):
     pass
 
 
 class OutOfItemError(Exception):
-    def __init__(self, item_type: str, live_count: int):
+    def __init__(
+        self,
+        item_type: str,
+        live_count: int,
+        partial_result: Optional[ExecutionResult] = None,
+    ):
         self.item_type = item_type
         self.live_count = int(live_count)
+        # Resources consumed before the exception. None when the
+        # exception bubbles up from a deeper helper that doesn't yet
+        # plumb the accounting.
+        self.partial_result = partial_result
         super().__init__(f"{item_type} unavailable (live_count={live_count})")
 
 
@@ -37,12 +87,15 @@ class NoBoardChangeError(Exception):
         item_type: Optional[str] = None,
         board_before: Optional[List[List[str]]] = None,
         board_after: Optional[List[List[str]]] = None,
+        partial_result: Optional[ExecutionResult] = None,
     ):
         self.step = step
         self.reason = reason
         self.item_type = item_type
         self.board_before = board_before
         self.board_after = board_after
+        # Resources consumed before the exception — see ExecutionResult.
+        self.partial_result = partial_result
         super().__init__(reason)
 
 
@@ -231,13 +284,23 @@ def execute_plan_steps(
     steps: List[Dict[str, Any]],
     rl_recorder: Optional[RLRecorder] = None,
     deadline: Optional[float] = None,
-) -> None:
-    """逐步執行規劃結果；支援挖路、採礦、下樓與道具使用。"""
+) -> ExecutionResult:
+    """逐步執行規劃結果；支援挖路、採礦、下樓與道具使用。
+
+    Returns an :class:`ExecutionResult` summarising resources consumed —
+    the mining loop uses it to decrement its internal counters instead of
+    relying on a full OCR re-read after each plan. On exceptions
+    (``NoBoardChangeError``, ``OutOfItemError``) the partial accounting
+    is attached as ``exc.partial_result`` so the caller can still credit
+    shovels / items consumed before the failure.
+    """
+    acc = ExecutionResult()
     try:
         for i, step in enumerate(steps, 1):
             if deadline and time.time() > deadline:
                 print(f"    [Executor] 超時 (deadline={deadline})，停止執行剩餘步驟")
-                return
+                acc.terminated_reason = "deadline"
+                return acc
 
             # Normalize SmartPlanner output to match Executor expectations
             if "type" in step and "pos" in step:
@@ -261,17 +324,26 @@ def execute_plan_steps(
                     print(
                         f"    ⚠️ 無法在 ({r},{c}) 放置 {item_type}，目前格子為 {target_label}，僅允許 empty/dug_pit，停止並重新規劃"
                     )
-                    return
+                    acc.terminated_reason = "item_placement_invalid"
+                    return acc
                 live_count = get_live_item_count(d, item_type)
                 if live_count <= 0:
                     print(
                         f"    [Executor] live inventory check failed for {item_type}: "
                         f"count={live_count}, abort item step"
                     )
-                    raise OutOfItemError(item_type, live_count)
+                    # No item consumed yet — partial accounting unchanged.
+                    raise OutOfItemError(item_type, live_count, partial_result=acc)
                 select_item(d, item_type)
                 print(f"  - 於 ({r},{c}) 使用 {item_type}")
                 tap_cell(d, r, c, 1, wait_ms=500)
+                # Item is consumed by the game as soon as the click lands —
+                # record it now so an unsuccessful board change (rare, lag /
+                # misclick) still debits the item.
+                if item_type == "drill":
+                    acc.drills_used += 1
+                elif item_type == "bomb":
+                    acc.bombs_used += 1
                 # Items (bomb 3×3+cross, drill full column) trigger the
                 # longest animations in the game — explosion + chain shatter
                 # + reward popups. Wait for the frame to settle instead of
@@ -286,12 +358,14 @@ def execute_plan_steps(
                 )
                 board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
                 if board_after_use == board:
+                    acc.terminated_reason = "no_board_change"
                     raise NoBoardChangeError(
                         step=step,
                         reason=f"{item_type} made no board change",
                         item_type=item_type,
                         board_before=[row[:] for row in board],
                         board_after=[row[:] for row in board_after_use],
+                        partial_result=acc,
                     )
 
                 hit_pit = False
@@ -321,13 +395,16 @@ def execute_plan_steps(
 
                 print("    使用道具後更新局部盤面(含 unreachable_pit->empty)，停止執行，將重新規劃")
                 time.sleep(2.5)
-                return
+                acc.steps_completed += 1
+                acc.terminated_reason = "item_used"
+                return acc
 
             step_board_before = [row[:] for row in board]
             cell_events: List[Dict[str, Any]] = []
             for (r, c) in step["dig_list"]:
                 label = board[r][c]
                 hits = required_hits(label)
+                cell_cost = int(enter_cost(label) or 0)
                 print(f"  - 挖 ({r},{c}) {label} → 需要點擊 {hits} 次")
                 cell_event: Dict[str, Any] = {
                     "row": r,
@@ -335,10 +412,14 @@ def execute_plan_steps(
                     "label_before": label,
                     "material": material_of(label),
                     "required_hits": hits,
-                    "enter_cost": enter_cost(label),
+                    "enter_cost": cell_cost,
                 }
                 if hits > 0:
                     tap_cell(d, r, c, hits, wait_ms=1000)
+                    # Each click consumes a shovel — record now because the
+                    # game has already debited it even if classify_board
+                    # later disagrees about the result.
+                    acc.shovels_used += cell_cost
                     if "pit" in label and "dug" not in label:
                         print(f"    [Executor] 挖掘礦洞 ({r},{c})，執行兩次確認點擊 (394, 152)")
                         d.click(394, 152)
@@ -361,6 +442,9 @@ def execute_plan_steps(
                     if not success:
                         print(f"    驗證未成功，補點一次 ({r},{c})")
                         tap_cell(d, r, c, 1)
+                        # The retry click is one extra shovel regardless of
+                        # the cell's enter_cost.
+                        acc.shovels_used += 1
                         success = verify_cell_empty(d, clf, r, c, max_retry=1)
                     cell_event["verify_success"] = success
                     if not success:
@@ -380,7 +464,11 @@ def execute_plan_steps(
                                     "terminated": "verify_fail",
                                 }
                             )
-                        return
+                        # Count this step as partially attempted so the
+                        # caller knows real work happened.
+                        acc.steps_completed += 1
+                        acc.terminated_reason = "verify_fail"
+                        return acc
                 else:
                     print(f"    第七層格子 ({r},{c}) 跳過驗證")
                     print(f"    ⚠️ 觸發下樓，停止執行剩餘路徑，請重新規劃")
@@ -412,15 +500,19 @@ def execute_plan_steps(
                                 "terminated": "floor7",
                             }
                         )
-                    return
+                    acc.steps_completed += 1
+                    acc.terminated_reason = "floor7"
+                    return acc
                 img_after_dig = d.screenshot()
                 board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
                 if board_after_dig == step_board_before:
+                    acc.terminated_reason = "no_board_change"
                     raise NoBoardChangeError(
                         step=step,
                         reason=f"dig at ({r},{c}) made no board change",
                         board_before=step_board_before,
                         board_after=[row[:] for row in board_after_dig],
+                        partial_result=acc,
                     )
                 board[:] = [row[:] for row in board_after_dig]
                 cell_events.append(cell_event)
@@ -438,7 +530,9 @@ def execute_plan_steps(
                         "board_after": [row[:] for row in board],
                     }
                 )
-    except ItemPlacementError:
+            acc.steps_completed += 1
+        return acc
+    except (ItemPlacementError, NoBoardChangeError, OutOfItemError):
         raise
     except Exception as exc:  # pragma: no cover - 方便偵錯
         import sys
@@ -457,5 +551,8 @@ __all__ = [
     "tap_cell",
     "verify_cell_empty",
     "execute_plan_steps",
+    "ExecutionResult",
     "NoBoardChangeError",
+    "OutOfItemError",
+    "ItemPlacementError",
 ]

@@ -14,7 +14,12 @@ import bot_state
 import config_manager
 
 from miner.models.classifier import ClassifierCNN, load_cnn_model
-from miner.planning.executor import NoBoardChangeError, OutOfItemError, execute_plan_steps
+from miner.planning.executor import (
+    ExecutionResult,
+    NoBoardChangeError,
+    OutOfItemError,
+    execute_plan_steps,
+)
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
 from miner.planning.item_planner import find_tool_candidate
@@ -93,6 +98,68 @@ USE_ITEMS: bool = True
 
 # 連續拿到空 plan 的容忍上限，避免無限空轉。
 _MAX_EMPTY_PLANS: int = 3
+
+# OCR 鏟子驗證頻率（每 N 個 iter 對照一次）。從原本 3 拉長到 5 —
+# 現在 count 由 executor 回傳的 ExecutionResult.shovels_used 增量扣減，
+# OCR 只是漂移驗證。
+_PICKAXE_OCR_VALIDATE_EVERY: int = 5
+
+# OCR 漂移容忍 — 內部 count 與 OCR 相差 <= 這個值時不調整。允許小量
+# 抖動（OCR 邊緣抖動、Reward 動畫殘留），超過則以 OCR 為準。
+_PICKAXE_DRIFT_TOLERANCE: int = 2
+
+
+def _apply_partial(
+    result: Optional[ExecutionResult],
+    count: int,
+    items_available: Dict[str, int],
+    miner_logger,
+) -> int:
+    """Decrement internal counters by the resources an ExecutionResult
+    reports consumed.
+
+    Returns the new shovel `count`. Items are debited in place on
+    ``items_available``. A ``None`` result (e.g. an older exception path
+    that didn't plumb partial accounting) is treated as zero usage so
+    callers don't have to special-case it.
+    """
+    if result is None:
+        return count
+    if result.shovels_used:
+        new_count = max(0, count - int(result.shovels_used))
+        miner_logger.info(
+            f"[MiningService] 扣減鏟子 {count} -> {new_count} (executor 用掉 {result.shovels_used})"
+        )
+        count = new_count
+    if result.drills_used:
+        items_available["drill"] = max(0, items_available.get("drill", 0) - int(result.drills_used))
+    if result.bombs_used:
+        items_available["bomb"] = max(0, items_available.get("bomb", 0) - int(result.bombs_used))
+    return count
+
+
+def _reconcile_shovel_count(
+    internal: int,
+    ocr: Optional[int],
+    tolerance: int = _PICKAXE_DRIFT_TOLERANCE,
+) -> Tuple[int, str]:
+    """Reconcile internal pickaxe counter against an OCR reading.
+
+    Returns ``(new_count, kind)`` where ``kind`` is one of:
+
+      * ``"ok"`` — within tolerance; internal value is kept.
+      * ``"drift"`` — outside tolerance; OCR wins (counter snaps to OCR).
+      * ``"ocr_unavailable"`` — OCR returned ``None`` (failure); internal
+        kept as-is.
+
+    Pure helper — no side effects, no logging. Logging is the caller's
+    responsibility so this can be reused / tested in isolation.
+    """
+    if ocr is None:
+        return internal, "ocr_unavailable"
+    if abs(internal - ocr) <= tolerance:
+        return internal, "ok"
+    return ocr, "drift"
 
 
 def _check_force_sleep(ip: str) -> None:
@@ -421,10 +488,27 @@ def run(
         # 每輪重新做一次 OCR 檢查並 click_white，避免主迴圈被卡在彈窗上。
         if _dismiss_mining_overlay_if_needed(d, shared_frame, miner_logger):
             shared_frame = d.screenshot(format="opencv")
-        if iterations % 3 == 0:
-            real_count = check_pickaxe_count(d, frame=shared_frame)
-            miner_logger.info(f"[MiningService] 定期校正鏟子數量: {count:.1f} -> {real_count}")
-            count = real_count
+        # Internal counter is the source of truth; OCR is a periodic
+        # validator. `allow_none=True` lets us distinguish "OCR says X"
+        # from "OCR is broken" — failure no longer pretends the count is
+        # 20.
+        if iterations % _PICKAXE_OCR_VALIDATE_EVERY == 0:
+            ocr_count = check_pickaxe_count(d, frame=shared_frame, allow_none=True)
+            new_count, kind = _reconcile_shovel_count(count, ocr_count)
+            if kind == "ok":
+                miner_logger.info(
+                    f"[MiningService] 鏟子 OCR 驗證 ok: internal={count}, ocr={ocr_count}"
+                )
+            elif kind == "drift":
+                miner_logger.warning(
+                    f"[MiningService] 鏟子漂移 {ocr_count - count:+d} 超過容忍 "
+                    f"±{_PICKAXE_DRIFT_TOLERANCE}, 以 OCR 為準: {count} -> {ocr_count}"
+                )
+            else:  # ocr_unavailable
+                miner_logger.info(
+                    f"[MiningService] 鏟子 OCR 不可用, 沿用內部 count={count}"
+                )
+            count = new_count
             if count < 1:
                 break
 
@@ -487,8 +571,11 @@ def run(
         deadline = start_time + max_duration_seconds
         _check_force_sleep(ip)
         try:
-            execute_plan_steps(d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline)
+            exec_result = execute_plan_steps(
+                d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline
+            )
         except NoBoardChangeError as exc:
+            count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
             action_signature = _step_signature(exc.step)
             if exc.item_type:
                 item_blacklist.add(exc.item_type)
@@ -500,6 +587,7 @@ def run(
                 miner_logger.warning(f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}")
             continue
         except OutOfItemError as exc:
+            count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
             item_blacklist.add(exc.item_type)
             items_available[exc.item_type] = 0
             zero_streaks[exc.item_type] = max(zero_streaks.get(exc.item_type, 0), zero_streak_limit)
@@ -508,6 +596,9 @@ def run(
                 f"count={exc.live_count}; blacklist for current mining run"
             )
             continue
+
+        # Plan executed cleanly — credit shovels / items consumed.
+        count = _apply_partial(exec_result, count, items_available, miner_logger)
 
 
 

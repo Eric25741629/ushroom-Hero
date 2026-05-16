@@ -67,8 +67,20 @@ def _get_frame(d, frame=None):
     return frame if frame is not None else d.screenshot(format="opencv")
 
 
-def check_pickaxe_count(d, frame=None) -> int:
-    """OCR current pickaxe count. Returns 20 on OCR failure."""
+def check_pickaxe_count(d, frame=None, allow_none: bool = False):
+    """OCR current pickaxe count.
+
+    Default fallback (``allow_none=False``): returns 20 on any OCR failure,
+    matching the legacy behaviour the old mining loop depended on.
+
+    Opt-in (``allow_none=True``): returns ``None`` on failure so the caller
+    can fall back to its own internal counter. The old default silently
+    pretended OCR succeeded with a value of 20, which let a broken OCR
+    pipeline keep the bot mining indefinitely — the new mining loop treats
+    OCR as a validator rather than a source of truth and needs to
+    distinguish "OCR says 20" from "OCR is broken".
+    """
+    fallback = None if allow_none else 20
     try:
         source = _get_frame(d, frame)
         img = source[13:40, 148:251]
@@ -76,22 +88,25 @@ def check_pickaxe_count(d, frame=None) -> int:
         _, img_bin = cv2.threshold(img_gray, 150, 255, cv2.THRESH_BINARY_INV)
         result = img_tools.analyze_skill_via_http(img_bin)
         if result is None:
-            return 20
+            return fallback
 
         ocr_results = result.get("ocr_results", [])
         if not ocr_results:
             save_ocr_error_image(img)
-            return 20
+            return fallback
 
-        text = ocr_results[0].get("text", "20").split("/", 1)[0]
+        text = ocr_results[0].get("text", "").split("/", 1)[0]
         nums = re.findall(r"\d+", text)
+        if not nums:
+            save_ocr_error_image(img)
+            return fallback
         try:
-            return int(nums[0]) if nums else 20
+            return int(nums[0])
         except ValueError:
             save_ocr_error_image(img)
-            return 20
+            return fallback
     except Exception:
-        return 20
+        return fallback
 
 
 def check_drill_num(d, frame=None) -> int:

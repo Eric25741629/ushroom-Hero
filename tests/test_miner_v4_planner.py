@@ -14,7 +14,8 @@ Design goals (revised 2026-04-29 after planner-eval skill measurements):
 """
 from __future__ import annotations
 
-from miner.v4.planner import plan_v4
+from miner.v4.planner import plan_v4, _unseal_corridor
+from miner.v3.board import canonicalize_in_place, normalize_board
 
 
 # ---------------------------------------------------------------------------
@@ -286,12 +287,15 @@ def test_plan_v4_no_pit_one_rock_dig_opens_floor7():
 
 
 # ---------------------------------------------------------------------------
-# Known limitation: pits buried beyond depth-3 horizon
+# Deeply buried unreachable pit — must still produce a non-empty plan
+# (2026-05-15: empty `steps` on this shape were causing emulator-5554 to
+# abort mining via the consecutive-empty-plans guard while still holding
+# full shovels).
 # ---------------------------------------------------------------------------
 
 
-def test_plan_v4_5560_deeply_buried_pit_known_limitation():
-    """REGRESSION REPRODUCER: production board where v4 returns 0 steps.
+def test_plan_v4_5560_deeply_buried_pit_still_makes_progress():
+    """REGRESSION: production board where v4 used to return 0 steps.
 
     Captured 2026-05-02 from emulator-5560 logs (also 5556, 5554).
     Board legend (mining_service.get_visual_board):
@@ -304,21 +308,18 @@ def test_plan_v4_5560_deeply_buried_pit_known_limitation():
        5  X  r  d  D  .  D    ← X = unreachable_pit at (5, 0)
        6  d  d  _  d  D  _
 
-    The single pit is sealed in unreachable territory (no `unreachable_*`
-    cell on the left half is 4-adjacent to a reachable empty), so the
-    minimum dig path to make the pit reachable is ≥4 actions. v4's depth=3
-    horizon plus its `_filter_actions` Manhattan ≤ depth filter only sees
-    one viable dig at (5, 3); the follow-up dig at (5, 2) is blocked by the
-    anti-scroll guard (would open floor7 without collecting a pit).
+    The pit at (5, 0) is sealed behind unreachable rock with no diggable
+    approach within Manhattan-3, and no item placement on the reachable
+    column-3 air can hit it. Before 2026-05-15 this combination made
+    `_filter_actions(has_pit)` return [], the DFS immediately exit, and
+    `plan["steps"]` come back empty — the runtime then aborted mining via
+    the consecutive-empty-plans guard.
 
-    v4 therefore returns 0 steps and `pits_collected == 0`. The runtime
-    relies on a v1 (SmartPlanner) fallback for this case — see
-    `tests/test_mining_service_dispatch.py`.
-
-    If/when v4 is rewritten to handle deeply-buried pits natively (e.g.,
-    progress reward, dynamic depth extension, or relaxed anti-scroll when
-    no reachable_pit exists), this test should start producing steps and
-    pits_collected > 0 — at which point delete this test.
+    Fix: `_filter_actions(has_pit)` now falls through to the no_pit dig
+    filter when its Manhattan filter rejects every action, and the
+    anti-scroll guard only triggers when a *reachable* pit remains. The
+    planner must produce at least one productive step that makes scroll
+    or pit-collection progress.
     """
     board = [
         ["unreachable_dirt", "unreachable_dirt", "rock", "empty", "dirt", "unreachable_dirt"],
@@ -332,9 +333,172 @@ def test_plan_v4_5560_deeply_buried_pit_known_limitation():
     plan = plan_v4(board, shovels=100, items={"drill": 694, "bomb": 694})
     assert plan["ok"] is True
     assert plan["strategy_class"] == "has_pit"
-    # Documents the limitation: v4 alone cannot collect this pit.
-    assert plan["stats"]["pits_collected"] == 0
-    assert plan["stats"]["pits_unreachable_remaining"] == 1
+    # The cardinal rule: never return an empty action set when productive
+    # digs exist on the board.
+    assert plan["steps"], (
+        f"planner must produce at least one step, got: {plan}"
+    )
+    # The plan must make some kind of progress — either collect the pit or
+    # open floor 7 so the board scrolls past the unreachable pocket.
+    final_f7_open = plan["floor7_open"]
+    pits_collected = plan["stats"]["pits_collected"]
+    assert final_f7_open or pits_collected > 0, (
+        f"plan must collect a pit or open floor 7 — got "
+        f"pits_collected={pits_collected}, floor7_open={final_f7_open}: {plan}"
+    )
+
+
+def test_plan_v4_isolated_unreachable_pit_2026_05_15_makes_progress():
+    """REGRESSION: 2026-05-15 emulator-5554 board where v4 returned 0
+    steps for ~3 iterations until the consecutive-empty-plans guard
+    aborted mining while still holding 46 shovels.
+
+    Board (mining_service.get_visual_board):
+          0  1  2  3  4  5
+       0  D  .  D  _  d  d
+       1  D  .  .  R  r  _
+       2  R  .  R  d  r  d
+       3  .  .  D  d  r  r
+       4  .  D  r  _  d  d
+       5  .  D  d  _  d  _
+       6  D  r  d  d  r  X    ← X = unreachable_pit at (6, 5)
+
+    Same failure mode as the 5560 board: pit sealed behind unreachable
+    rock with no diggable Manhattan-3 approach and no item hit possible.
+    Must produce a non-empty plan after the 2026-05-15 fix.
+    """
+    board = [
+        ["dirt", "empty", "dirt", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["dirt", "empty", "empty", "rock", "unreachable_rock", "unreachable_empty"],
+        ["rock", "empty", "rock", "unreachable_dirt", "unreachable_rock", "unreachable_dirt"],
+        ["empty", "empty", "dirt", "unreachable_dirt", "unreachable_rock", "unreachable_rock"],
+        ["empty", "dirt", "unreachable_rock", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["empty", "dirt", "unreachable_dirt", "unreachable_empty", "unreachable_dirt", "unreachable_empty"],
+        ["dirt", "unreachable_rock", "unreachable_dirt", "unreachable_dirt", "unreachable_rock", "unreachable_pit"],
+    ]
+    plan = plan_v4(board, shovels=46, items={"drill": 185, "bomb": 889})
+    assert plan["ok"] is True
+    assert plan["steps"], f"planner must produce a non-empty plan, got: {plan}"
+    pits_collected = plan["stats"]["pits_collected"]
+    assert plan["floor7_open"] or pits_collected > 0, (
+        f"plan must collect a pit or open floor 7 — got "
+        f"pits_collected={pits_collected}, floor7_open={plan['floor7_open']}: {plan}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Reverse-search corridor: when has_pit Manhattan filter is empty, the
+# planner builds an "unseal corridor" via reverse Dijkstra from each
+# unreachable pit and lets the DFS pick the optimal mix of digs and
+# drill / bomb shortcuts. These tests pin both the corridor builder and
+# the optimality of the resulting plan.
+# ---------------------------------------------------------------------------
+
+
+def _prep(board):
+    work = normalize_board(board)
+    canonicalize_in_place(work)
+    return work
+
+
+def test_unseal_corridor_empty_when_no_unreachable_pit():
+    board = _make_board()
+    board[3][3] = "reachable_pit"
+    corridor = _unseal_corridor(_prep(board), shovels_budget=100)
+    assert corridor == frozenset()
+
+
+def test_unseal_corridor_empty_when_no_reachable_air_destination():
+    """Without any reachable air on the board there's nothing for the
+    reverse search to anchor to — corridor must be empty (and the
+    runtime falls back to no_pit scroll progress)."""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[3][3] = "unreachable_pit"
+    corridor = _unseal_corridor(_prep(board), shovels_budget=100)
+    assert corridor == frozenset()
+
+
+def test_unseal_corridor_finds_simplest_one_dig_path():
+    """Wall of one dirt between reachable air and an unreachable_pit.
+    Corridor must contain the wall cell (so DFS can dig it) and the
+    pit itself."""
+    board = [["empty"] * 6 for _ in range(7)]
+    # Reachable air at (3,0). Wall at (3,1)=dirt. Pit at (3,2).
+    board[3] = ["empty", "dirt", "unreachable_pit", "empty", "empty", "empty"]
+    # Surround the pit with non-air so the only path is through (3,1).
+    for r in (2, 4):
+        for c in (1, 2, 3):
+            board[r][c] = "unreachable_rock"
+    board[3][3] = "unreachable_rock"
+    corridor = _unseal_corridor(_prep(board), shovels_budget=10)
+    assert (3, 1) in corridor, f"corridor missing wall dig cell: {sorted(corridor)}"
+    assert (3, 2) in corridor, "corridor must include the pit itself"
+
+
+def test_unseal_corridor_respects_shovel_budget():
+    """Path costs more than the shovel budget → corridor must be empty
+    (Dijkstra prunes at budget). Without this, the DFS would propose
+    a plan that the executor will run out of shovels on."""
+    board = [["unreachable_rock"] * 6 for _ in range(7)]
+    board[0][0] = "empty"           # reachable air
+    board[6][5] = "unreachable_pit"  # pit on the far corner
+    # Every cell between is rock (cost 2). Min path cost ≫ 3.
+    corridor = _unseal_corridor(_prep(board), shovels_budget=3)
+    assert corridor == frozenset()
+
+
+def test_plan_v4_corridor_drill_beats_pure_dig_when_items_available():
+    """Optimality check: on the 2026-05-15 board, the cheapest plan that
+    collects the pit is `drill (column 2) + 2 digs`, not 4–5 shovel digs.
+    The corridor exposes (5,4)/(5,5)/(6,3)/(6,5) etc, the DFS finds a
+    drill placement whose footprint overlaps the corridor, and the
+    cluster scoring picks it because shovel cost beats raw dig count."""
+    board = [
+        ["dirt", "empty", "dirt", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["dirt", "empty", "empty", "rock", "unreachable_rock", "unreachable_empty"],
+        ["rock", "empty", "rock", "unreachable_dirt", "unreachable_rock", "unreachable_dirt"],
+        ["empty", "empty", "dirt", "unreachable_dirt", "unreachable_rock", "unreachable_rock"],
+        ["empty", "dirt", "unreachable_rock", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["empty", "dirt", "unreachable_dirt", "unreachable_empty", "unreachable_dirt", "unreachable_empty"],
+        ["dirt", "unreachable_rock", "unreachable_dirt", "unreachable_dirt", "unreachable_rock", "unreachable_pit"],
+    ]
+    plan = plan_v4(board, shovels=46, items={"drill": 185, "bomb": 889})
+    assert plan["stats"]["pits_collected"] == 1, (
+        f"corridor plan must collect the buried pit: {plan}"
+    )
+    # The optimal plan uses at most ~5 shovels — without items, raw shovel
+    # paths to the pit cost 6+ (rock walls). A non-trivial improvement
+    # proves the DFS actually picked an item shortcut.
+    assert plan["stats"]["shovel_cost"] <= 5.0, (
+        f"plan should be shovel-efficient (≤5), got {plan['stats']['shovel_cost']}: {plan}"
+    )
+    assert (
+        plan["stats"]["drills_used"] >= 1 or plan["stats"]["bombs_used"] >= 1
+    ), f"plan should use an item shortcut on this board: {plan}"
+
+
+def test_plan_v4_corridor_pure_shovel_path_when_no_items():
+    """Same isolated-pit shape but no items available — DFS must still
+    collect the pit, just via a longer sequence of digs. Pin that the
+    corridor mechanism doesn't quietly assume items exist."""
+    board = [
+        ["dirt", "empty", "dirt", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["dirt", "empty", "empty", "rock", "unreachable_rock", "unreachable_empty"],
+        ["rock", "empty", "rock", "unreachable_dirt", "unreachable_rock", "unreachable_dirt"],
+        ["empty", "empty", "dirt", "unreachable_dirt", "unreachable_rock", "unreachable_rock"],
+        ["empty", "dirt", "unreachable_rock", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
+        ["empty", "dirt", "unreachable_dirt", "unreachable_empty", "unreachable_dirt", "unreachable_empty"],
+        ["dirt", "unreachable_rock", "unreachable_dirt", "unreachable_dirt", "unreachable_rock", "unreachable_pit"],
+    ]
+    plan = plan_v4(board, shovels=46, items={"drill": 0, "bomb": 0})
+    assert plan["steps"], f"non-empty plan required even without items: {plan}"
+    # Either we make scroll progress (open floor 7 to push past) or we
+    # actually carve through to the pit within the depth budget. The
+    # rolling re-plan in mining_service finishes the job across
+    # iterations; this single-pass call doesn't have to.
+    assert (
+        plan["floor7_open"] or plan["stats"]["pits_collected"] > 0
+    ), f"plan must collect pit or open floor 7: {plan}"
 
 
 def test_plan_v4_explored_nodes_bounded_by_pruning():

@@ -13,15 +13,18 @@ See design discussion 2026-04-25:
 """
 from __future__ import annotations
 
+import heapq
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Optional, Set, Tuple
 
+from miner.core.mechanics import get_bomb_affected_cells, get_drill_affected_cells
 from miner.v3.actions import (
     affected_pit_cells,
     apply_bomb,
     apply_dig,
     apply_drill,
+    dig_cost,
     enumerate_dig_actions,
     enumerate_item_actions,
 )
@@ -30,8 +33,11 @@ from miner.v3.board import (
     count_pits,
     count_remaining_pits,
     floor7_open,
+    is_air,
     is_pit,
+    is_reachable_air,
     normalize_board,
+    normalize_label,
 )
 from miner.v3.types import Board, Coordinate, PlanResult, PlanStats
 
@@ -89,7 +95,11 @@ def _cluster_value(n: int) -> float:
 class _SearchBest:
     score: float = -float("inf")
     plan: List[Dict[str, Any]] = field(default_factory=list)
+    # `cost` mirrors v3 semantics — total display cost (shovels + 3.0 per item
+    # use). Kept for legacy callers reading `total_cost`. Real shovel
+    # accounting lives in `shovel_cost` (items contribute 0 there).
     cost: float = 0.0
+    shovel_cost: float = 0.0
     pits_cleared: int = 0
     drills_used: int = 0
     bombs_used: int = 0
@@ -297,11 +307,171 @@ def _simulate(
     return next_board, next_items, float(step_cost), float(shovel_cost)
 
 
+def _no_pit_dig_filter(board: Board) -> List[Dict[str, Any]]:
+    """no_pit-style dig filter — used both for the no_pit strategy and as
+    the last-resort fallback action set in has_pit mode when even the
+    reverse-search corridor can't find an action."""
+    actions: List[Dict[str, Any]] = []
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    last_row = rows - 1
+    for action in enumerate_dig_actions(board):
+        r, c = action["pos"]
+        if r == last_row:
+            actions.append(action)
+            continue
+        for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < rows and 0 <= nc < cols:
+                cell = board[nr][nc]
+                # `unreachable_empty` is the only label that triggers flood
+                # promotion in v3 board logic.
+                if cell == "unreachable_empty" or cell == "unreachable_void":
+                    actions.append(action)
+                    break
+    return actions
+
+
+def _action_affected_cells(
+    board: Board,
+    action: Dict[str, Any],
+) -> FrozenSet[Coordinate]:
+    """All cells an action would touch (regardless of label). Mirrors
+    `affected_pit_cells` but without the pit-only filter — needed so the
+    corridor filter can score item placements that drill/bomb through
+    non-pit corridor cells."""
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    if action["type"] == "dig":
+        return frozenset({tuple(action["pos"])})
+    item = action.get("item")
+    r, c = action["pos"]
+    if item == "drill":
+        cells = get_drill_affected_cells(r, c, rows, cols)
+    elif item == "bomb":
+        cells = get_bomb_affected_cells(r, c, rows, cols)
+    else:
+        return frozenset()
+    return frozenset(
+        (nr, nc) for (nr, nc) in cells if 0 <= nr < rows and 0 <= nc < cols
+    )
+
+
+def _unseal_corridor(
+    board: Board,
+    shovels_budget: float,
+) -> FrozenSet[Coordinate]:
+    """Reverse Dijkstra from each currently-unreachable pit, finding cells
+    whose dig contributes to a feasible path back to any reachable-air
+    cell. Edge weights are `dig_cost(target)` (air cells cost 0 to
+    traverse). Cells whose cumulative path cost exceeds `shovels_budget`
+    are pruned — those pits aren't openable with the current shovel
+    inventory anyway.
+
+    Returns the union of cells on shortest-path trees from each
+    unreachable pit. The forward DFS then uses this set as its action
+    universe in has_pit fallback mode, so item placements (drill / bomb)
+    whose footprint intersects the corridor compete naturally with
+    plain digs and the cluster-aware scoring picks the lowest-cost
+    combination — which is what the user means by "最佳解 via item
+    permutations".
+    """
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    if rows == 0 or cols == 0:
+        return frozenset()
+
+    reachable_air: Set[Coordinate] = {
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if is_reachable_air(board[r][c])
+    }
+    if not reachable_air:
+        # Without any reachable air there's no destination — the corridor
+        # search has nothing to anchor to.
+        return frozenset()
+
+    unreachable_pits: List[Coordinate] = [
+        (r, c)
+        for r in range(rows)
+        for c in range(cols)
+        if normalize_label(board[r][c]) == "unreachable_pit"
+    ]
+    if not unreachable_pits:
+        return frozenset()
+
+    corridor: Set[Coordinate] = set()
+    for pit in unreachable_pits:
+        # Dijkstra from this pit. Don't traverse INTO another pit cell
+        # (would force a `dig_cost(pit)=1` traversal step that's better
+        # accounted for as a separate goal).
+        dist: Dict[Coordinate, float] = {pit: 0.0}
+        parent: Dict[Coordinate, Optional[Coordinate]] = {pit: None}
+        pq: List[Tuple[float, Coordinate]] = [(0.0, pit)]
+        reached_air: List[Coordinate] = []
+
+        while pq:
+            d, cur = heapq.heappop(pq)
+            if d > dist.get(cur, float("inf")):
+                continue
+            if cur in reachable_air and cur != pit:
+                # Found a path endpoint; do not expand beyond reachable air.
+                reached_air.append(cur)
+                continue
+            cr, cc = cur
+            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nr, nc = cr + dr, cc + dc
+                if not (0 <= nr < rows and 0 <= nc < cols):
+                    continue
+                neighbor = (nr, nc)
+                label = normalize_label(board[nr][nc])
+                # Skip other pit cells — they're separate goals, not
+                # traversal nodes for this one.
+                if label in ("reachable_pit", "unreachable_pit") and neighbor != pit:
+                    continue
+                edge = 0.0 if is_air(label) else float(dig_cost(label))
+                new_d = d + edge
+                if new_d > shovels_budget:
+                    continue
+                if new_d < dist.get(neighbor, float("inf")):
+                    dist[neighbor] = new_d
+                    parent[neighbor] = cur
+                    heapq.heappush(pq, (new_d, neighbor))
+
+        if not reached_air:
+            continue  # this pit can't be reached within budget
+
+        # Pick the cheapest reachable_air endpoint; reconstruct the path
+        # from there back to the pit. Every cell on the path is a candidate
+        # action target (digs that lie on it, or items whose footprint
+        # touches it).
+        cheapest = min(reached_air, key=lambda a: dist[a])
+        cur: Optional[Coordinate] = cheapest
+        while cur is not None:
+            corridor.add(cur)
+            cur = parent.get(cur)
+
+        # Also include every cell in the Dijkstra tree whose cost is no
+        # more than the cheapest path. These are equivalent-cost detour
+        # cells — the forward DFS may prefer a different one once items
+        # are factored in (e.g., a bomb that hits both this cell and an
+        # adjacent one). Cap by the cheapest path cost so we don't drag
+        # in cells that only make sense for "longer alternate routes".
+        best_cost = dist[cheapest]
+        for cell, cell_cost in dist.items():
+            if cell_cost <= best_cost:
+                corridor.add(cell)
+
+    return frozenset(corridor)
+
+
 def _filter_actions(
     board: Board,
     items: Dict[str, int],
     strategy: str,
     max_depth: int = MAX_DEPTH,
+    corridor: Optional[FrozenSet[Coordinate]] = None,
 ) -> List[Dict[str, Any]]:
     """Drop actions that can't improve the plan.
 
@@ -310,6 +480,21 @@ def _filter_actions(
       looser than "4-adjacent to a pit" (which dropped the entry-point dig
       when a pit is buried under multiple layers of unreachable rock — see
       Case 2 in the 2026-04-28 follow-up). Item uses must still hit ≥1 pit.
+
+      Fallback tiers when the Manhattan filter rejects every diggable cell
+      AND no item touches a pit (added 2026-05-15 after emulator-5554 got
+      stuck for multiple iterations on an isolated `unreachable_pit`):
+
+      1. **Corridor fallback**: if `corridor` is provided (reverse Dijkstra
+         from each unreachable pit, see `_unseal_corridor`), include every
+         dig on a corridor cell plus every item placement whose footprint
+         touches the corridor. This lets the forward DFS pick the optimal
+         combination of digs and drill/bomb shortcuts. The anti-scroll
+         guard in `plan_v4` is loosened in tandem to allow corridor digs
+         that open floor 7 when no *reachable* pit remains.
+      2. **no_pit fallback**: if the corridor is empty too (truly nothing
+         openable within shovel budget), fall back to floor7-opening digs
+         so the runtime can at least scroll past the dead pocket.
     - no_pit: any dig that touches row 6 reachability — directly (a row-6
       hard cell) or indirectly (a hard cell with `unreachable_empty` in its
       4-neighbourhood, since `promote_after_dig` floods through those). This
@@ -350,27 +535,26 @@ def _filter_actions(
         for action in enumerate_item_actions(board, items):
             if affected_pit_cells(board, action):
                 actions.append(action)
+
+        if not actions and corridor:
+            # Corridor fallback — see docstring. Digs on corridor cells +
+            # items whose footprint touches the corridor compete; the
+            # DFS scoring picks the cheapest combination.
+            for action in enumerate_dig_actions(board):
+                if tuple(action["pos"]) in corridor:
+                    actions.append(action)
+            for action in enumerate_item_actions(board, items):
+                affected = _action_affected_cells(board, action)
+                if affected & corridor:
+                    actions.append(action)
+
+        if not actions:
+            # Last resort — corridor was empty (no shovel-feasible path)
+            # OR no corridor was supplied. Make scroll progress so the
+            # runtime can move past the dead pocket.
+            actions = _no_pit_dig_filter(board)
     else:
-        # no_pit: dig anywhere that can affect row 6 reachability. Always
-        # include row-6 frontier digs; for higher rows include only digs
-        # adjacent to an `unreachable_empty` (their flood can promote row 6
-        # cells via a chain). This keeps the branching factor low while still
-        # finding cost-1 dirt digs that flood entire row-6 strips.
-        last_row = rows - 1
-        for action in enumerate_dig_actions(board):
-            r, c = action["pos"]
-            if r == last_row:
-                actions.append(action)
-                continue
-            for dr, dc in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < rows and 0 <= nc < cols:
-                    cell = board[nr][nc]
-                    # Normalise without import: `unreachable_empty` is the
-                    # only label that triggers flood promotion in v3 board.
-                    if cell == "unreachable_empty" or cell == "unreachable_void":
-                        actions.append(action)
-                        break
+        actions = _no_pit_dig_filter(board)
 
     return actions
 
@@ -400,6 +584,17 @@ def plan_v4(
     }
     blocked = set(blocked_actions or set())
     original_groups = _identify_pit_groups(work)
+
+    # Pre-compute the "unseal corridor" once per plan. Reverse Dijkstra from
+    # each unreachable pit identifies the cells whose dig (or whose item
+    # footprint) lies on a shovel-feasible path back to reachable air. The
+    # forward DFS uses this set when the Manhattan filter is empty so that
+    # buried-pit boards still produce a non-empty plan and the DFS can
+    # choose the optimal mix of digs and drill/bomb shortcuts within the
+    # corridor. Empty corridor = pit truly out of reach within shovel
+    # budget (or no unreachable pits) — the corridor branch then no-ops
+    # and the no_pit dig filter takes over for scroll progress.
+    corridor = _unseal_corridor(work, shovels_budget=float(shovels))
 
     best = _SearchBest(final_board=[row[:] for row in work])
     best.score = _score(
@@ -449,6 +644,7 @@ def plan_v4(
             best.score = s
             best.plan = plan[:]
             best.cost = cur_total_cost
+            best.shovel_cost = cur_shovel_cost
             best.pits_cleared = cur_pits_cleared
             best.drills_used = cur_drills
             best.bombs_used = cur_bombs
@@ -482,7 +678,7 @@ def plan_v4(
         if ub <= best.score:
             return
 
-        raw_actions = _filter_actions(cur_board, cur_items, strategy)
+        raw_actions = _filter_actions(cur_board, cur_items, strategy, corridor=corridor)
         scored: List[Tuple[float, Dict[str, Any], FrozenSet[Coordinate]]] = []
         for action in raw_actions:
             sig_action = (
@@ -525,15 +721,30 @@ def plan_v4(
             if sim is None:
                 continue
             next_board, next_items, step_cost, shovel_cost_delta = sim
+            # Hard shovel budget — the runtime caller passes its real
+            # pickaxe count as `shovels`. Plans whose cumulative shovel
+            # cost would overrun the budget are unusable (executor will
+            # run out mid-plan), so skip the action entirely. Items pass
+            # the gate because their shovel_cost_delta is 0.
+            if cur_shovel_cost + shovel_cost_delta > shovels:
+                continue
             next_pits = count_remaining_pits(next_board)
             pits_hit_now = max(0, remaining_pits - next_pits)
+            # Count only REACHABLE pits for the anti-scroll guard — if every
+            # remaining pit is unreachable, scrolling past them is fine
+            # (we couldn't collect them anyway). Without this distinction
+            # the guard blocks the only productive dig on boards where the
+            # last pit is sealed in an unreachable pocket (see
+            # `tests/test_miner_v4_planner.py::test_plan_v4_5560_*`).
+            next_reachable_pits, _ = count_pits(next_board)
 
-            # Anti-scroll: never open floor7 while pits remain if the action
-            # itself doesn't collect pits. Collecting a row-6 pit may open
-            # floor7 as a side effect — allowed because we got the pit.
+            # Anti-scroll: never open floor7 while a REACHABLE pit remains
+            # if the action itself doesn't collect a pit. Collecting a
+            # row-6 pit may open floor7 as a side effect — allowed
+            # because we got the pit.
             if (
                 strategy == "has_pit"
-                and next_pits > 0
+                and next_reachable_pits > 0
                 and not f7
                 and floor7_open(next_board)
                 and pits_hit_now == 0
@@ -578,10 +789,13 @@ def plan_v4(
         pits_collected=max(0, initial_pits - pits_after),
         pits_remaining=pits_after,
         pits_unreachable_remaining=pits_after_u,
-        shovel_cost=best.cost,
+        # `shovel_cost` is the real shovel count consumed (items contribute
+        # 0). `cost_per_pit` uses the same metric so runtime efficiency
+        # reporting reflects shovel economy, not item-display weighting.
+        shovel_cost=best.shovel_cost,
         drills_used=best.drills_used,
         bombs_used=best.bombs_used,
-        cost_per_pit=(best.cost / max(1, initial_pits - pits_after)),
+        cost_per_pit=(best.shovel_cost / max(1, initial_pits - pits_after)),
     )
     message = (
         f"v4 plan (depth={max_depth}, nodes={explored[0]}, "

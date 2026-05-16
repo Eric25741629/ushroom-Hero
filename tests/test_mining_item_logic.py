@@ -17,16 +17,27 @@ if "miner.models.classifier" not in sys.modules:
     )
 if "miner.planning.executor" not in sys.modules:
     # NB: must include all symbols mining_service imports — it does
-    # `from miner.planning.executor import NoBoardChangeError, OutOfItemError, execute_plan_steps`
-    # so missing classes here previously caused an ImportError at collect time.
+    # `from miner.planning.executor import (ExecutionResult,
+    # NoBoardChangeError, OutOfItemError, execute_plan_steps)` so
+    # missing classes here previously caused an ImportError at collect
+    # time.
     class _StubNoBoardChangeError(Exception):
         pass
     class _StubOutOfItemError(Exception):
         pass
+    class _StubExecutionResult:
+        def __init__(self, shovels_used=0, drills_used=0, bombs_used=0,
+                     steps_completed=0, terminated_reason=None):
+            self.shovels_used = shovels_used
+            self.drills_used = drills_used
+            self.bombs_used = bombs_used
+            self.steps_completed = steps_completed
+            self.terminated_reason = terminated_reason
     sys.modules["miner.planning.executor"] = types.SimpleNamespace(
-        execute_plan_steps=lambda *_args, **_kwargs: None,
+        execute_plan_steps=lambda *_args, **_kwargs: _StubExecutionResult(),
         NoBoardChangeError=_StubNoBoardChangeError,
         OutOfItemError=_StubOutOfItemError,
+        ExecutionResult=_StubExecutionResult,
     )
 if "miner.core.ocr_utils" not in sys.modules:
     sys.modules["miner.core.ocr_utils"] = types.SimpleNamespace(
