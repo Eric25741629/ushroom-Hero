@@ -1,7 +1,7 @@
 """Scan auto-captured 0x0504 lamp drops, populate equipment cache.
 
 Backfills ``cache/equipment_cache.json`` from samples that
-``WSFrameTracker`` writes to ``tmp_ws_capture/auto/<device>/``.
+``WSFrameTracker`` writes to ``logs/_archive/ws_capture/auto/<device>/``.
 
 Run periodically (e.g. nightly cron, or on bot startup) to keep cache
 warm. New lamp drops also feed it automatically when the bot's WS
@@ -10,7 +10,7 @@ listener is active and ``EquipmentCache`` is wired into the lamp pipeline.
 Usage::
 
     python -m tools.build_equipment_cache
-    python -m tools.build_equipment_cache --capture-dir tmp_ws_capture/auto
+    python -m tools.build_equipment_cache --capture-dir logs/_archive/ws_capture/auto
     python -m tools.build_equipment_cache --reset  # discard existing cache first
 
 The bot itself is not touched — this is a passive backfill.
@@ -50,8 +50,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--capture-dir",
-        default="tmp_ws_capture/auto",
-        help="Directory containing per-device captures (default: tmp_ws_capture/auto)",
+        default="logs/_archive/ws_capture/auto",
+        help="Directory containing per-device captures (default: logs/_archive/ws_capture/auto)",
     )
     parser.add_argument(
         "--cache-path",

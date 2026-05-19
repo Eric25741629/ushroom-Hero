@@ -17,7 +17,7 @@ Frame schema (one entry per WS message):
 
 The listener does NOT capture body bytes by default — only cmd + length —
 to keep the JS-side ring small. For schema work, `WSFrameTracker` can opt
-into a per-cmd capture budget (`AUTO_CAPTURE_CMDS`); bodies hit `tmp_ws_capture/auto/<device>/`
+into a per-cmd capture budget (`AUTO_CAPTURE_CMDS`); bodies hit `logs/_archive/ws_capture/auto/<device>/`
 during normal bot runs and stop once each cmd has `samples_per_cmd`
 samples on disk. No manual dump tool needed.
 """
@@ -260,7 +260,8 @@ def drain_captured_bodies(page: Any) -> List[Dict[str, Any]]:
 
 
 # High-value cmds whose request/response bodies are worth capturing during
-# normal bot runs. Sourced from `tmp_ws_capture/ANALYSIS_20260509.md`:
+# normal bot runs. Cmd list cross-references the protocol schema docs in
+# `docs/protocol/` (EQUIPMENT_SCHEMA, MINING_SCHEMA, GAME_ASSETS):
 #   神燈     — 0x0509 (RPC), 0x0304 (push), 0x0504 (push), 0x051f (RPC)
 #   挖礦     — 0x0c03 (RPC), 0x0c01 (RPC), 0x0c21 (push), 0x0c07 (push),
 #              0x0c11 (RPC, suspect mine inventory), 0x0c08 (RPC),
@@ -281,7 +282,7 @@ AUTO_CAPTURE_CMDS: Set[int] = {
     0x4707, 0x4501, 0x4504, 0x4202, 0x4215, 0x4216,
 }
 
-_DEFAULT_AUTO_CAPTURE_DIR = "tmp_ws_capture/auto"
+_DEFAULT_AUTO_CAPTURE_DIR = "logs/_archive/ws_capture/auto"
 # Re-arm the JS-side capture cfg at most this often (s). Re-arm replenishes
 # the per-cmd budget after JS slot.remaining drops to zero, and picks up
 # any (cmd, dir) that has just become "needs more" due to age.
@@ -322,7 +323,7 @@ class WSFrameTracker:
     action and now, attributable to that previous action.
 
     Optionally arms in-page body capture for `auto_capture_cmds` and
-    persists captured bodies to `tmp_ws_capture/auto/<device>/` until each
+    persists captured bodies to `logs/_archive/ws_capture/auto/<device>/` until each
     cmd has `samples_per_cmd` files on disk.
     """
 
@@ -405,7 +406,7 @@ class WSFrameTracker:
 
     def drain(self, page: Any, max_n: int = 50) -> List[Dict[str, Any]]:
         """Drain frames since the previous successful drain, and persist
-        any captured bodies to `tmp_ws_capture/auto/<device>/`.
+        any captured bodies to `logs/_archive/ws_capture/auto/<device>/`.
 
         Returns [] on first call (no baseline), on install failure, or on
         any Playwright error. Updates the high-water mark to current ms

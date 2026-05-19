@@ -32,8 +32,8 @@ def _reset_thread_event_loop() -> None:
     # guarantees the next sync_playwright().start() sees a clean slate.
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"asyncio.set_event_loop fresh-loop install failed: {e}")
 
 
 DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS: Dict[str, Any] = {
@@ -158,7 +158,7 @@ class MonitoredDevice:
         self._tracker = ActionTraceRecorder()
         # device_id wires the tracker into auto-body-capture mode so that
         # interesting cmds get sample bodies persisted to
-        # tmp_ws_capture/auto/<ip>/ during normal bot runs.
+        # logs/_archive/ws_capture/auto/<ip>/ during normal bot runs.
         self._ws_frame_tracker = WSFrameTracker(device_id=ip)
 
     def _trace(
@@ -368,8 +368,8 @@ class MonitoredDevice:
                     f"[{self._ip}] slow screenshot: {elapsed_ms:.0f}ms "
                     f"(threshold={_SLOW_SCREENSHOT_MS}ms) | {self._auto_meaning('screenshot', meaning, payload)}"
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[{self._ip}] slow-screenshot warning log failed: {e}")
         return result
 
     def xpath_click(self, xpath_expr, *args, **kwargs):
@@ -574,8 +574,8 @@ class PlaywrightGameDevice:
                 try:
                     if os.path.exists(fp):
                         os.remove(fp)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"chrome singleton-lock cleanup failed (path={fp}): {e}")
 
         def _build_launch_kwargs(
             target_profile: str, use_channel: bool
@@ -647,8 +647,8 @@ class PlaywrightGameDevice:
             # Ensure Playwright process is cleaned if all attempts fail.
             try:
                 self._playwright.stop()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[{self.device_id}] playwright.stop() after init-failure cleanup raised: {e}")
             self._playwright = None
             if last_err is not None:
                 raise last_err
@@ -678,8 +678,8 @@ class PlaywrightGameDevice:
         if state_file:
             try:
                 self._context.storage_state(path=state_file)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[{self.device_id}] storage_state save to {state_file} failed: {e}")
 
     @staticmethod
     def _is_target_closed_error(exc: Exception) -> bool:
@@ -727,8 +727,8 @@ class PlaywrightGameDevice:
                 if (not self._page.is_closed()) and self._page in pages:
                     if self._page_has_canvas(self._page):
                         return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[{self.device_id}] current-page validity probe raced/failed: {e}")
 
         # 2) Prefer page containing game canvas.
         for p in pages:
@@ -744,8 +744,8 @@ class PlaywrightGameDevice:
                 url = str(p.url or "").strip().lower()
                 if url in {"", "about:blank"}:
                     p.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[{self.device_id}] blank-page reaper failed for one page: {e}")
 
         # 4) Fallback to first non-blank page.
         try:
@@ -759,8 +759,8 @@ class PlaywrightGameDevice:
                 if url not in {"", "about:blank"}:
                     self._page = p
                     return True
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[{self.device_id}] non-blank-page fallback iter failed: {e}")
         return False
 
     def _ensure_browser_session(self, reason: str = "") -> None:
@@ -779,15 +779,15 @@ class PlaywrightGameDevice:
         try:
             if self._context is not None:
                 self._context.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[{self.device_id}] context.close() during restart raised: {e}")
         self._context = None
 
         try:
             if self._playwright is not None:
                 self._playwright.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"[{self.device_id}] playwright.stop() during restart raised: {e}")
         self._playwright = None
         self._page = None
 
@@ -878,8 +878,8 @@ class PlaywrightGameDevice:
             box = self._page.locator(self.canvas_selector).first.bounding_box()
             if box:
                 return box
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[{self.device_id}] canvas bounding_box probe failed, using fallback: {e}")
         return {
             "x": 0.0,
             "y": 0.0,
@@ -1050,8 +1050,8 @@ class PlaywrightGameDevice:
         if self.web_url and self._page is not None:
             try:
                 self._open_game_url()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[{self.device_id}] app_start: _open_game_url failed: {e}")
         self._in_game = True
         self._closed_by_stop = False
         return True
@@ -1085,8 +1085,8 @@ class PlaywrightGameDevice:
             try:
                 # Optional behavior for users who still want "hard stop" by leaving the game page.
                 self._page.goto("about:blank", wait_until="domcontentloaded")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"[{self.device_id}] stop_mode=blank goto about:blank failed: {e}")
             self._closed_by_stop = False
         else:
             self._closed_by_stop = False
@@ -1205,8 +1205,8 @@ def create_web_device_if_enabled(
                 )
                 try:
                     existing.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"[{ip}] existing.close() after failed restart raised: {e}")
                 device = PlaywrightGameDevice(device_id=ip, cfg=config, logger_obj=logger_obj)
                 _WEB_DEVICE_REGISTRY[ip] = device
                 return device

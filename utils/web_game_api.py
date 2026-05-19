@@ -17,7 +17,7 @@ prefix + 發送，回應也會被 client 端解密好交回給我們。
 - request body: `[08 01 10 <tab>]`，tab=1 是好友、tab=2 是申請/陌生人
 - response: 含每個 friend 的 player_id / name / last_login_ts
 
-詳細結構見 `tmp_ws_capture/RESEARCH.md` §4.1。
+protobuf schema 對照可參考 `docs/protocol/` 內各 _SCHEMA.md。
 """
 from __future__ import annotations
 

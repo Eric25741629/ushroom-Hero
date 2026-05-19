@@ -238,7 +238,7 @@ def main():
     parser.add_argument('--sleep', type=float, default=1.5, help='每 tick 間隔秒數')
     parser.add_argument('--stable-threshold', type=int, default=2)
     parser.add_argument('--reengage-after', type=int, default=5)
-    parser.add_argument('--out-dir', default=os.path.join(ROOT, 'tmp_lamp_verify'))
+    parser.add_argument('--out-dir', default=os.path.join(ROOT, 'logs', '_archive', 'lamp_verify'))
     parser.add_argument('--skip-home', action='store_true', help='跳過回首頁（已在主頁面時）')
     args = parser.parse_args()
 
