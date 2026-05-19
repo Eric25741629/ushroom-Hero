@@ -87,11 +87,12 @@ if "rank_events" not in sys.modules:
     _re.park_spring = lambda *a, **kw: None
     sys.modules["rank_events"] = _re
 
-# farm module (farm_manager singleton).
-if "farm" not in sys.modules:
-    _farm = types.ModuleType("farm")
-    _farm.farm_manager = SimpleNamespace(farm=lambda *a, **kw: None)
-    sys.modules["farm"] = _farm
+# farm_v2 module (manager imported as farm_manager by daily_pipeline & new_main_v2).
+if "farm_v2" not in sys.modules:
+    _farm = types.ModuleType("farm_v2")
+    _farm.manager = SimpleNamespace(farm=lambda *a, **kw: None)
+    sys.modules["farm_v2"] = _farm
+    sys.modules["farm_v2.manager"] = _farm.manager
 
 # everyday_mission.Guardian_Spirit_manger.
 if "everyday_mission" not in sys.modules:

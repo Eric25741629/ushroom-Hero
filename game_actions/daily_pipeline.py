@@ -28,7 +28,7 @@ import new_battle
 import rank_events
 import Store
 from everyday_mission.Guardian_Spirit_manger import get_Guardian_Spirit
-from farm import farm_manager
+from farm_v2 import manager as farm_manager
 from Sea import sea
 from Skill import get_skill_and_partner
 

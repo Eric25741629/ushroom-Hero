@@ -86,7 +86,7 @@ def should_do_weekly_card(time_manager) -> bool:
     return weekday in WEEKLY_CARD_DAYS
 
 
-def run_farm(
+def farm(
     d: "uiauto.Device",
     device_ip: str,
     cnn_model=None,
@@ -181,4 +181,4 @@ def quick_farm(device_ip: str) -> float:
     import uiautomator2 as u2
 
     d = u2.connect(device_ip)
-    return run_farm(d, device_ip)
+    return farm(d, device_ip)

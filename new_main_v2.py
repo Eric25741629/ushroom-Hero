@@ -32,7 +32,7 @@ import img_tools
 from Skill import *
 from park import *
 from family import Family_manager
-from farm import farm_manager
+from farm_v2 import manager as farm_manager
 import new_battle
 import random
 from tools import click_white
