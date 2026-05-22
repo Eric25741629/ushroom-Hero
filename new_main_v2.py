@@ -5,85 +5,41 @@ import os
 # 關閉 .pyc 檔案寫入，避免在網路路徑產生大量 I/O 導致卡頓
 sys.dont_write_bytecode = True
 
-import subprocess
-from Sea import sea
-import torch
 import os
-import datetime
-import json
 from adb_operations import (
-    run_adb, connect_u2_with_retries, unlock_screen,
-    start_game_by_icon, check_in_game, click_random,
-    safe_click, ensure_screen_on, stop_app,
-    screenshot_opencv, screenshot_pillow,
-    set_screen_for_game, reset_screen_settings,
+    connect_u2_with_retries, unlock_screen,
+    start_game_by_icon, check_in_game, set_screen_for_game, reset_screen_settings,
 )
-import daily_gift_task
-import point
-import uiautomator2 as u2
-from everyday_mission.Guardian_Spirit_manger import get_Guardian_Spirit
 import time
-import numpy as np
-from device import get_adb_devices,close_nofication,open_nofication
+from device import open_nofication
 from adb_devices import launch_clone
-import cv2
-import mask
-import img_tools
 from Skill import *
 from park import *
 from family import Family_manager
-from farm_v2 import manager as farm_manager
-import new_battle
 import random
-from tools import click_white
 from Spin_Wheel import spin_wheel
 from Mission import mission
 from State import state
-from Assistant import assistant
-import logging
 import atexit
-import pytz
-import Store
-import rank_events
 #引入log 通知 不使用print
-import Open_gold_paddle_ocr
 import threading
-from fight_car import flush_logs
 
 from utils.logging_utils import (
     setup_logger_for_device,
     set_thread_logger,
     logger,
-    default_logger,
     rotate_existing_logs_once,
 )
-from game_actions.skill_manager import switch_skill
 from game_actions.reward_manager import reward
-from utils.ocr_clicker import click_str
-from game_state.detector import get_stage
-from game_actions.miner_action import oracle, _should_perform_oracle_action
-from game_actions.periodic_tasks import _run_periodic_cycle, should_execute_mushroom_arena, mushroom_arena
 from game_initialization import (
     check_on_line,
     handle_game_startup_pages,
-    resolve_stage_until_stable,
     StartupLoginConflictError,
 )
-from utils.model_loader import load_oracle_cnn_model
-from game_actions.daily_tasks import daily_acceleration, click_arena_challenges
 import new_cnn.cnn_model as cnn_model
 # 導入新的JSON管理器，保持向後兼容
-from json_manager import (
-    time_recording, return_time, create_store_manager,
-    is_expired, _should_execute_cycle, should_execute_sea_with_cooldown,
-    is_record_expired
-)
 from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_cnn_model
-from miner.mining_service import run as run_mining
 from miner.rl.rl_recorder import RLRecorder
-import shlex
-import re
-from typing import Optional
 import urllib3
 import warnings
 from urllib3.exceptions import InsecureRequestWarning
@@ -91,20 +47,16 @@ urllib3.disable_warnings(InsecureRequestWarning)
 warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 import requests
 requests.packages.urllib3.disable_warnings()
-import BUY
 from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
-from utils.car_fight_utils import adjust_wake_time_for_cars
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 import config_manager
 
 import bot_state
 from device_wrapper import MonitoredDevice
-from opengold_v2.lamp_service import LampService as _LampServiceV2
 from worker_webhook_api import ensure_worker_webhook_started
 from runtime_services.device_scan_service import (
     refresh_adb_server,
     scan_and_start_devices,
-    use_phone_ocr_lamp_mode,
 )
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
@@ -112,7 +64,6 @@ from runtime_services.device_runtime_service import (
     is_emulator_serial,
     is_recoverable_connect_error,
     reset_connect_failure,
-    sleep_until_wake_or_interrupt,
 )
 from runtime_services.push_server_service import ensure_push_server_started
 from runtime_services.worker_sync_service import ensure_worker_sync_started
@@ -120,23 +71,12 @@ from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
     initialize_runtime_device,
-    mark_login_conflict_sleep,
     process_online_check_requests,
     shutdown_web_devices,
 )
-from utils.screenshot_helpers import (
-    save_error_screenshot,
-    log_main_page_mismatch,
-)
 from game_actions.stage_guard import (
     LoginConflictError,
-    _run_at_main_page,
     get_stage_with_check,
-)
-from game_actions.lamp_scheduler import _run_lamp, _run_lamp_if_due
-from game_actions.dungeon_scheduler import (
-    _run_weekly_dungeon,
-    _run_biweekly_dungeon,
 )
 from runtime_services.sleep_service import (
     StartupBypassError,
@@ -145,360 +85,12 @@ from runtime_services.sleep_service import (
     stop_runtime_device_for_sleep,
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
-
-# Devices that should skip guardian spirit / skill partner collection.
-# Keep legacy behavior: emulator-5558 is excluded from these tasks.
-_DEVICE_SKIP_GUARDIAN = {
-    "emulator-5558": True,
-}
+from game_actions import daily_pipeline
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
 
 
-def _run_redpack_check_if_due(d, ip: str) -> None:
-    """Claim any pending 紅包 via WS API.
-
-    Runs on every device with `backend == web_h5` and a live Playwright
-    page. ADB-backend devices and web_h5 devices without an attached page
-    skip entirely (no cost, no behavior change).
-
-    Two-stage detection (`utils.redpack_detector.claim_all_pending`):
-        1. send 0x2605, parse list (~50-150ms one WS roundtrip)
-        2. try grab on each via 0x2603
-    Failures and "already-claimed" errors are logged but non-fatal.
-    """
-    cfg = config_manager.get_device_config(ip) or {}
-    if str(cfg.get("backend", "")).lower() != "web_h5":
-        return
-    page = getattr(d, "_page", None)
-    if page is None:
-        return
-    try:
-        from utils.redpack_detector import claim_all_pending
-        claimed, results = claim_all_pending(page)
-    except Exception as e:
-        logger.warning(f"[{ip}] 紅包檢查發生例外 (non-fatal): {e}")
-        return
-
-    if not results:
-        logger.info(f"[{ip}] 紅包檢查: gate off (無未讀)")
-        return
-
-    bot_state.update_state(ip, task="紅包檢查", step=f"嘗試 {len(results)} 個")
-    summary = []
-    for r in results:
-        if r.success:
-            summary.append(f"OK#{r.bag_id}")
-        else:
-            ec = r.error_code if r.error_code is not None else "?"
-            summary.append(f"ERR{ec}#{r.bag_id}")
-    logger.info(
-        f"[{ip}] 紅包檢查: claimed={claimed}/{len(results)} | {', '.join(summary)}"
-    )
-
-
-def _run_carpark_check_if_due(d, ip: str) -> None:
-    """Experimental: keep cross-server park deployment aligned to the
-    daytime/nighttime targets via cocos UI clicks.
-
-    Gating (same as redpack check):
-        1. `experimental_cocos_navigation: true`
-        2. `backend == web_h5`
-        3. live Playwright page
-        4. device cfg has `carpark.enabled: true`
-
-    Other devices skip entirely — no cost, no behavior change.
-    """
-    from utils.cocos_navigator import _device_flag_enabled
-    if not _device_flag_enabled(ip):
-        return
-    cfg = config_manager.get_device_config(ip) or {}
-    if str(cfg.get("backend", "")).lower() != "web_h5":
-        return
-    carpark_cfg = cfg.get("carpark") or {}
-    if not carpark_cfg.get("enabled"):
-        return
-    page = getattr(d, "_page", None)
-    if page is None:
-        return
-    try:
-        from utils.carpark_auto import reconcile
-        from utils.carpark_click_recorder import (
-            CarparkClickRecorder, set_recorder, clear_recorder,
-        )
-        rec = CarparkClickRecorder(ip, run_tag="auto")
-        set_recorder(rec)
-        try:
-            summary = reconcile(page, carpark_cfg)
-        finally:
-            rec.close()
-            clear_recorder()
-    except Exception as e:
-        logger.warning(f"[{ip}] 車位檢查 exception (non-fatal): {e}")
-        return
-    bot_state.update_state(ip, task="車位檢查",
-                           step=f"snap={summary.get('snapshot')} tgt={summary.get('target')}")
-    actions = summary.get("actions") or []
-    if actions:
-        logger.info(f"[{ip}] 車位檢查: {summary.get('snapshot')} → {summary.get('target')}; "
-                    f"actions={actions}")
-    else:
-        logger.info(f"[{ip}] 車位檢查: 已對齊 {summary.get('snapshot')}")
-
-
-def _run_daily_tasks(
-    d,
-    ip: str,
-    Cnn_model,
-    clf,
-    rl_recorder,
-    current_time,
-    enable_dungeon_manager: bool,
-    wheel_manager,
-    mission_manager,
-    family_manager,
-) -> None:
-    """Execute the full per-wake task sequence (20 tasks) for one device."""
-    # Task 0 (experimental): 紅包檢查 — web_h5 + flag-gated, no-op for others
-    _run_redpack_check_if_due(d, ip)
-
-    # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
-    _run_carpark_check_if_due(d, ip)
-
-    # Task 1: 地獄之門
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    record_time = return_time(ip, name="地獄之門")
-    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-    logging.info("地獄之門紀錄: {}".format(record_time))
-    hell_gate_time = 1
-    if record_time is None:
-        hell_gate_time = 0
-        should_execute = True
-    else:
-        should_execute = record_time.get("is_next_day", False) or hell_gate_time == 0
-        logging.info("hell_gate_time: {}, should_execute: {}, record_time: {}".format(hell_gate_time, should_execute, record_time))
-    if should_execute and current_time.tm_min < 20:
-        if stage == "主頁面":
-            bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
-            new_battle.hell_door(d, ip)
-            time_recording(ip, name="地獄之門")
-        else:
-            log_main_page_mismatch(d, ip, stage, "地獄之門", "地獄之門到達執行時間但不在主頁面")
-    else:
-        logger.info("地獄之門: 尚未到達執行時間或已執行過")
-
-    # Task 2: 農場任務
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="農場任務",
-        mismatch_reason="農場任務前不在主頁面",
-        fn=lambda: farm_manager.farm(d, ip, Cnn_model),
-        step="準備進入",
-    )
-
-    # Task 3: 點擊寶箱
-    def _tap_chest():
-        d.tap(random.randint(261, 271), 369)
-        time.sleep(1)
-        reward(d)
-        time.sleep(3)
-    _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="點擊寶箱",
-        mismatch_reason="點擊寶箱前不在主頁面",
-        fn=_tap_chest,
-        step="領取獎勵",
-    )
-
-    # Task 4: 家族任務 — stage reused by Tasks 5+6
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="家族任務",
-        mismatch_reason="家族任務前不在主頁面",
-        fn=family_manager.go_to_family,
-        step="執行中",
-    )
-
-    # Task 5 & 6: 守護靈 + 技能夥伴 (reuse stage from Task 4, matching original)
-    if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
-        if stage == "主頁面":
-            guardian_record = return_time(ip, name="guardian_spirit")
-            should_get_guardian = True
-            if guardian_record is not None:
-                should_get_guardian = guardian_record.get("is_next_day", False)
-            if should_get_guardian:
-                bot_state.update_state(ip, task="領取守護靈", step="領取中")
-                get_Guardian_Spirit(d)
-                time_recording(ip, name="guardian_spirit")
-        else:
-            log_main_page_mismatch(d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面")
-    if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
-        if stage == "主頁面":
-            bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
-            get_skill_and_partner(d)
-            time.sleep(3)
-        else:
-            log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
-
-    # Task 7: 商店購買
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        device_cfg = config_manager.get_device_config(ip)
-        if device_cfg.get("enable_shop_manager", True):
-            store_record = return_time(ip, name="Store")
-            should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
-            if should_check_store:
-                bot_state.update_state(ip, task="商店購買", step="執行中")
-                Store.buy_store(d, Cnn_model)
-                time_recording(ip, name="Store")
-            else:
-                logger.info("商店購買: 尚未過期且非23點，跳過")
-        else:
-            logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
-    else:
-        bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "商店購買前不在主頁面")
-        logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
-
-    # Task 8: 坐騎強化
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="坐騎強化",
-        mismatch_reason="坐騎強化前不在主頁面",
-        fn=lambda: rank_events.park_spring(d, ip),
-    )
-
-    # Task 9: 每日加速 (no main-page guard)
-    bot_state.update_state(ip, task="每日加速", step="領取中")
-    daily_acceleration(d, ip, Cnn_model)
-
-    # Task 10: 競技場挑戰
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="競技場挑戰",
-        mismatch_reason="競技場挑戰前不在主頁面",
-        fn=lambda: click_arena_challenges(d, ip),
-        step="領取中",
-    )
-
-    # Task 11: 挖礦/Oracle (original had duplicate get_stage_with_check — collapsed to one via helper)
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="挖礦/Oracle",
-        mismatch_reason="挖礦/Oracle 前不在主頁面",
-        fn=lambda: oracle(
-            d, None, ip=ip, clf=clf, rl_recorder=rl_recorder,
-            Cnn_model=Cnn_model,
-            max_duration_minutes=config_manager.get_device_config(ip).get("mining_duration_min", 6),
-        ),
-        log="開始執行挖礦任務",
-    )
-
-    # Task 12: 所有日常任務 (20:00–23:00 only)
-    if 20 <= current_time.tm_hour < 23:
-        stage = _run_at_main_page(
-            d, ip, Cnn_model,
-            task_name="所有日常任務",
-            mismatch_reason="所有日常任務執行前不在主頁面",
-            fn=lambda: mission_manager.do_allmission(),
-            step="檢查/執行中",
-        )
-
-    # Task 13: 菇菇武道會
-    _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="菇菇武道會",
-        mismatch_reason="菇菇武道會前不在主頁面",
-        fn=lambda: _run_periodic_cycle(
-            ip,
-            record_name="mushroom_arena_cycle_start",
-            should_execute_fn=should_execute_mushroom_arena,
-            action_fn=mushroom_arena,
-            display_name="菇菇武道會",
-            d=d,
-            daily_limit_name="mushroom_arena_daily",
-        ),
-        step="週期檢查/執行",
-    )
-
-    # Task 14: 航海任務
-    _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="航海任務 (Sea)",
-        mismatch_reason="航海任務前不在主頁面",
-        fn=lambda: _run_periodic_cycle(
-            ip,
-            record_name="sea_last_execution",
-            should_execute_fn=should_execute_sea_with_cooldown,
-            action_fn=sea,
-            display_name="sea",
-            d=d,
-            cycle_record_name="sea_cycle_start",
-        ),
-        step="週期檢查/執行",
-    )
-
-    # Task 15: 萬神試煉
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
-
-    # Task 16: 雲端戰鬥
-    if enable_dungeon_manager:
-        _run_at_main_page(
-            d, ip, Cnn_model,
-            task_name="雲端戰鬥",
-            mismatch_reason="雲端戰鬥前不在主頁面",
-            fn=lambda: new_battle.run_weekly_cloud_fighting_single(d, ip),
-            step="領取中",
-        )
-    else:
-        logger.info(f"[{ip}] 副本管家已停用，跳過雲端戰鬥")
-
-    # Task 17: 雙週副本
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    now_local = time.localtime()
-    _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
-
-    # Task 18: 好友每日禮物 — stage refreshed after run for Task 19 (lamp)
-    stage = _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="好友每日禮物",
-        mismatch_reason="好友每日禮物前不在主頁面",
-        fn=lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
-        step="領取中",
-    )
-    if stage == "主頁面":
-        stage = get_stage_with_check(d, ip, Cnn_model)
-
-    # Task 19: 開神燈
-    _run_lamp_if_due(d, ip, stage)
-
-    # Task 20: 轉盤金幣
-    def _spin_wheel():
-        logger.info(f"[{ip}] 準備執行轉盤金幣")
-        if wheel_manager.spin_and_send_gold():
-            logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
-        else:
-            logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
-    _run_at_main_page(
-        d, ip, Cnn_model,
-        task_name="轉盤金幣",
-        mismatch_reason="轉盤金幣執行前不在主頁面",
-        fn=_spin_wheel,
-        step="執行中",
-    )
-
-    # Device cleanup
-    if ip == "emulator-5558":
-        switch_skill(d, '騙人用')
-    if "fc65396d" in ip:
-        d.app_start("com.android.chrome")
-        time.sleep(2)
-        d.app_stop("com.mxdzz.tw.and")
-        time.sleep(1)
-    else:
-        d.app_stop("com.mxdzz.tw.and")
 
 
 def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
@@ -691,14 +283,18 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 # if red_envelope.check_red_in_pic(img):
                 # red_envelope.open_red_envelope(d)
 
-                _run_daily_tasks(
-                    d, ip, Cnn_model, clf, rl_recorder,
+                daily_pipeline.run(daily_pipeline.DailyContext(
+                    d=d,
+                    ip=ip,
+                    Cnn_model=Cnn_model,
+                    clf=clf,
+                    rl_recorder=rl_recorder,
                     current_time=time.localtime(),
                     enable_dungeon_manager=enable_dungeon_manager,
                     wheel_manager=wheel_manager,
                     mission_manager=mission_manager,
                     family_manager=family_manager,
-                )
+                ))
             except ForceSleepRequested as e:
                 force_sleep_now = True
                 sleep_policy = "force_sleep"
@@ -792,7 +388,6 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
 # (handle_connect_failure → refresh_adb_server) 同時讀寫，必須在
 # `_running_threads_lock` 保護下操作。鎖實際宣告於
 # ``runtime_services.thread_registry`` 以避免循環匯入。
-from runtime_services.thread_registry import running_threads_lock as _running_threads_lock  # noqa: E402
 
 _running_threads = {} # {ip: Thread}
 def temporary_reset_cycles():

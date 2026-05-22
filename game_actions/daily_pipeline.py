@@ -32,10 +32,12 @@ from farm_v2 import manager as farm_manager
 from Sea import sea
 from Skill import get_skill_and_partner
 
+from game_actions.carpark_scheduler import run_carpark_check_if_due
 from game_actions.daily_tasks import click_arena_challenges, daily_acceleration
 from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_dungeon
 from game_actions.lamp_scheduler import _run_lamp_if_due
 from game_actions.miner_action import oracle
+from game_actions.redpack_scheduler import run_redpack_check_if_due
 from game_actions.periodic_tasks import (
     _run_periodic_cycle,
     mushroom_arena,
@@ -118,6 +120,12 @@ def run(ctx: DailyContext) -> None:
         return _track(
             _run_at_main_page(d, ip, Cnn_model, task_name, mismatch_reason, fn, step=step, log=log)
         )
+
+    # Task 0 (experimental): 紅包檢查 — web_h5 + flag-gated, no-op for others
+    run_redpack_check_if_due(d, ip)
+
+    # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
+    run_carpark_check_if_due(d, ip)
 
     # Task 1: 地獄之門
     stage = get_stage_with_check(d, ip, Cnn_model)
