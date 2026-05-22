@@ -124,7 +124,24 @@ from runtime_services.web_session_service import (
     process_online_check_requests,
     shutdown_web_devices,
 )
-from utils.smart_screenshot import SmartScreenshotRecorder
+from utils.screenshot_helpers import (
+    save_error_screenshot,
+    log_main_page_mismatch,
+)
+from game_actions.stage_guard import (
+    LoginConflictError,
+    _run_at_main_page,
+)
+from game_actions.lamp_scheduler import _run_lamp, _run_lamp_if_due
+from game_actions.dungeon_scheduler import (
+    _run_weekly_dungeon,
+    _run_biweekly_dungeon,
+)
+from runtime_services.sleep_service import (
+    StartupBypassError,
+    run_sleep_cycle,
+    stop_runtime_device_for_sleep,
+)
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -134,168 +151,6 @@ _DEVICE_SKIP_GUARDIAN = {
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
-_smart_shot = SmartScreenshotRecorder()
-
-
-def _sanitize_filename_part(value: object) -> str:
-    text = str(value or "unknown").strip()
-    text = re.sub(r'[\\/:*?"<>|\s]+', "_", text)
-    return text[:80] or "unknown"
-
-
-def save_error_screenshot(device_obj, ip: str, stage: str, reason: str) -> Optional[str]:
-    try:
-        image_path = _smart_shot.capture(
-            device_obj=device_obj,
-            ip=ip,
-            stage=stage,
-            reason=reason,
-            task="",
-        )
-        if not image_path:
-            logger.error(f"[{ip}] {reason} 失敗，無法取得截圖，stage={stage}")
-            return None
-        logger.error(f"[{ip}] {reason}，已保存截圖，stage={stage}, path={image_path}")
-        return image_path
-    except Exception as e:
-        logger.error(f"[{ip}] 保存錯誤截圖失敗: reason={reason}, stage={stage}, err={e}", exc_info=True)
-        return None
-
-
-def log_main_page_mismatch(device_obj, ip: str, stage: str, task: str, reason: str) -> Optional[str]:
-    bot_state.update_state(ip, task=task, step=f"未在主頁面: {stage}")
-    screenshot_path = _smart_shot.capture(
-        device_obj=device_obj,
-        ip=ip,
-        stage=stage,
-        reason=reason,
-        task=task,
-    )
-    if not screenshot_path:
-        screenshot_path = save_error_screenshot(device_obj, ip, stage, reason)
-    logger.error(f"[{ip}] {reason}，stage={stage}, screenshot={screenshot_path}")
-    return screenshot_path
-
-
-def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger_obj) -> None:
-    """Stop the current runtime device immediately for force-sleep handling."""
-    if device_obj is None:
-        logger_obj.warning(f"[{ip}] 強制休眠時找不到裝置實例，略過停止動作")
-        return
-
-    try:
-        if backend_kind == "web_h5":
-            close_fn = getattr(device_obj, "close", None)
-            if callable(close_fn):
-                close_fn()
-                logger_obj.info(f"[{ip}] 強制休眠已關閉 web_h5 瀏覽器")
-            else:
-                device_obj.app_stop("com.mxdzz.tw.and")
-                logger_obj.info(f"[{ip}] 強制休眠已停止 web_h5 會話")
-        else:
-            device_obj.app_stop("com.mxdzz.tw.and")
-            logger_obj.info(f"[{ip}] 強制休眠已關閉 adb 應用")
-    except Exception as stop_err:
-        logger_obj.warning(f"[{ip}] 強制休眠停止裝置失敗: backend={backend_kind}, err={stop_err}")
-
-
-def run_sleep_cycle(
-    ip: str,
-    logger_obj,
-    *,
-    forced_wake_ts: Optional[float] = None,
-    force_sleep_now: bool = False,
-    sleep_policy: str = "aligned_window",
-    sleep_reason: str = "常規對齊喚醒",
-    enable_dungeon_manager: bool = False,
-):
-    cur_ts = time.time()
-
-    def calc_aligned_wake_ts(base_ts: float, min_sleep_sec: int, win_min: int = 20) -> float:
-        earliest = base_ts + min_sleep_sec
-        hour_floor = earliest - (earliest % 3600)
-        win_end = hour_floor + win_min * 60
-
-        if earliest <= win_end:
-            return float(random.randint(int(earliest), int(win_end)))
-        next_hour = hour_floor + 3600
-        return float(next_hour + random.randint(0, win_min * 60))
-
-    _cfg = config_manager.get_device_config(ip)
-    _sleep_min = float(_cfg.get("sleep_min_hours", 1.0))
-    _sleep_max = float(_cfg.get("sleep_max_hours", 1.0))
-    min_sleep_sec = int(random.uniform(_sleep_min, max(_sleep_min, _sleep_max)) * 3600)
-
-    if forced_wake_ts is not None:
-        wake_ts = forced_wake_ts
-    else:
-        wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
-
-    wake_ts = adjust_wake_time_for_cars(wake_ts)
-
-    if ip == "emulator-5556" and enable_dungeon_manager:
-        today_wday = time.localtime().tm_wday
-        if today_wday in (5, 6):
-            biweek_record = return_time(ip, name="雙週副本")
-            should_execute_biweek = False
-
-            if biweek_record is None:
-                should_execute_biweek = True
-            else:
-                should_execute_biweek = biweek_record.get("is_next_biweek", False)
-
-            if should_execute_biweek:
-                now = time.time()
-                today_midnight = now - (now % 86400) + 86400
-                biweek_wake_ts = today_midnight - 86400 + 19 * 3600 + 57 * 60
-
-                if biweek_wake_ts > now and biweek_wake_ts < wake_ts:
-                    wake_ts = biweek_wake_ts
-                    logger_obj.info(f"[{ip}] 雙週副本喚醒條件觸發，設定喚醒時間為 19:57")
-
-    sleep_duration = max(0, int(wake_ts - cur_ts))
-    wake_time_str = time.strftime("%H:%M", time.localtime(wake_ts))
-    bot_state.update_state(
-        ip,
-        task="休眠中",
-        step=f"{sleep_reason} | policy={sleep_policy} | 預計休眠 {sleep_duration/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-        next_wake_at=wake_ts,
-    )
-
-    if forced_wake_ts is not None:
-        logger_obj.info(
-            f"[{ip}] 套用強制休眠策略: reason={sleep_reason}, policy={sleep_policy}, "
-            f"預計休眠 {sleep_duration/60:.1f} 分鐘"
-        )
-    elif force_sleep_now:
-        logger_obj.info(f"[{ip}] 已強制中斷當前任務，將直接進入休眠流程，預計休眠 {sleep_duration/60:.1f} 分鐘")
-    elif "7fe98fc6" in ip:
-        logger_obj.info(f"[{ip}] 裝置為 7fe98fc6，設定為每小時喚醒一次，預計休眠 {sleep_duration/60:.1f} 分鐘")
-    else:
-        logger_obj.info(f"[{ip}] 本次喚醒將落在每小時 00~20 分，預計休眠 {sleep_duration/60:.1f} 分鐘")
-
-    interrupted = sleep_until_wake_or_interrupt(ip, wake_ts, logger_obj)
-    return wake_ts, interrupted, time.time()
-
-class LoginConflictError(Exception):
-    """自定義異常：用於處理異地登錄並終止當前喚醒 session"""
-    pass
-
-
-class StartupBypassError(Exception):
-    """遊戲啟動失敗，觸發避讓休眠。"""
-    pass
-
-
-def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
-    """開神燈執行入口；use_opengold_v2=true 時走 LampService，否則走舊版。"""
-    device_cfg = config_manager.get_device_config(ip)
-    duration = lamp_dur + random.randint(-10, 10)
-    if device_cfg.get("use_opengold_v2", False):
-        svc = _LampServiceV2(d, device_ip=ip)
-        svc.run(times=duration, is_compare=is_compare)
-    else:
-        Open_gold_paddle_ocr.open_the_gold(d, times=duration, is_compare=is_compare, device_ip=ip)
 
 
 def get_stage_with_check(d, ip, Cnn_model, img=None):
@@ -404,180 +259,6 @@ def _maybe_resume_sleep(
             return None, "", True
         return None, "", False
     return resume_sleep_until_ts, resume_sleep_reason, False
-
-
-def _run_at_main_page(
-    d,
-    ip: str,
-    Cnn_model,
-    task_name: str,
-    mismatch_reason: str,
-    fn,
-    *,
-    step: str = "執行中",
-    log: Optional[str] = None,
-) -> str:
-    """Fetch stage, run fn() on main page, else log mismatch. Returns stage."""
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    if stage == "主頁面":
-        if log:
-            bot_state.update_state(ip, task=task_name, step=step, log=log)
-        else:
-            bot_state.update_state(ip, task=task_name, step=step)
-        fn()
-    else:
-        log_main_page_mismatch(d, ip, stage, task_name, mismatch_reason)
-    return stage
-
-
-def _run_lamp_if_due(d, ip: str, stage: str) -> None:
-    """Run lamp (神燈) for the appropriate device mode using the given stage."""
-    if use_phone_ocr_lamp_mode(ip):
-        if stage == "主頁面":
-            lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
-            logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
-            _run_lamp(d, ip, lamp_dur, is_compare=True)
-        else:
-            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
-    if 'emulator-5560' in ip:
-        if stage == "主頁面":
-            lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
-            bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
-            logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
-            _run_lamp(d, ip, lamp_dur, is_compare=False)
-        else:
-            log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
-    elif ip != "emulator-5558":
-        if stage == "主頁面":
-            device_cfg = config_manager.get_device_config(ip)
-            lamp_interval = float(device_cfg.get("lamp_check_interval", 2))
-            lamp_dur = int(device_cfg.get("lamp_duration_sec", 300))
-            lamp_record_name = "general_lamp_last_execution"
-            lamp_record = return_time(ip, name=lamp_record_name)
-            now_ts = time.time()
-
-            if lamp_interval <= 0:
-                logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
-                lamp_interval = 2.0
-
-            threshold_sec = lamp_interval * 3600.0
-            last_ts = None
-            last_dt_str = "None"
-            elapsed_sec = None
-            should_run_lamp = False
-            reason = ""
-
-            if lamp_record and lamp_record.get("timestamp"):
-                try:
-                    last_ts = float(lamp_record.get("timestamp"))
-                except (TypeError, ValueError):
-                    last_ts = None
-
-            if last_ts and last_ts > 0:
-                elapsed_sec = max(0.0, now_ts - last_ts)
-                last_dt_str = datetime.datetime.fromtimestamp(last_ts).strftime("%Y-%m-%d %H:%M:%S")
-                should_run_lamp = elapsed_sec >= threshold_sec
-                remaining_sec = max(0.0, threshold_sec - elapsed_sec)
-                reason = (
-                    "elapsed>=threshold"
-                    if should_run_lamp
-                    else f"elapsed<threshold, remaining={remaining_sec/60:.1f}m"
-                )
-            else:
-                should_run_lamp = True
-                reason = "no_valid_last_record"
-
-            elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
-            logger.info(
-                f"[{ip}] 開神燈排程檢查: last={last_dt_str}, elapsed_h={elapsed_h_text}, "
-                f"threshold_h={lamp_interval:.2f}, should_run={should_run_lamp}, reason={reason}"
-            )
-
-            if should_run_lamp:
-                bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
-                logger.info(
-                    f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
-                )
-                _run_lamp(d, ip, lamp_dur)
-                time_recording(ip, name=lamp_record_name)
-                logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
-            else:
-                logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
-        else:
-            logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
-            log_main_page_mismatch(d, ip, stage, "開神燈", "一般開神燈前不在主頁面")
-
-
-def _run_weekly_dungeon(
-    d,
-    ip: str,
-    stage: str,
-    enable_dungeon_manager: bool,
-    current_time,
-) -> None:
-    """Run 萬神試煉 if scheduled for this week and appropriate day/time."""
-    record_time = return_time(ip, name="萬神試煉")
-    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-    logging.info("萬神試煉紀錄: {}".format(record_time))
-    fight_trial_time = 1
-    if record_time is None:
-        fight_trial_time = 0
-        should_execute = True
-    else:
-        should_execute = record_time.get("is_next_week", False) or fight_trial_time == 0
-        logging.info("fight_trial_time: {}, should_execute: {}, record_time: {}".format(fight_trial_time, should_execute, record_time))
-    if enable_dungeon_manager and should_execute and (
-        (current_time.tm_wday == 0 and current_time.tm_hour > 12) or
-        (1 <= current_time.tm_wday <= 5)
-    ):
-        is_not_sunday = current_time.tm_wday != 6
-        is_monday_afternoon = current_time.tm_wday == 0 and current_time.tm_hour > 12
-        is_after_monday = current_time.tm_wday > 0
-        should_run_fight_test = should_execute and is_not_sunday and (is_monday_afternoon or is_after_monday)
-        if should_run_fight_test:
-            if stage == "主頁面":
-                bot_state.update_state(ip, task="萬神試煉", step="執行中")
-                new_battle.fight_test(d)
-                time_recording(ip, name="萬神試煉")
-            else:
-                log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
-
-
-def _run_biweekly_dungeon(
-    d,
-    ip: str,
-    stage: str,
-    enable_dungeon_manager: bool,
-    now_local,
-) -> None:
-    """Run 雙週副本 for emulator-5556 on Sat/Sun at 20:xx if due this biweek."""
-    if ip == "emulator-5556" and enable_dungeon_manager:
-        biweek_record = return_time(ip, name="雙週副本")
-        should_execute_biweek = False
-
-        if biweek_record is None:
-            should_execute_biweek = True
-            logging.info("雙週副本紀錄：無（首次執行）")
-        else:
-            should_execute_biweek = biweek_record.get("is_next_biweek", False)
-            logging.info("雙週副本紀錄：{}, should_execute: {}".format(biweek_record, should_execute_biweek))
-
-        if (now_local.tm_wday in (5, 6)) and (now_local.tm_hour == 20) and now_local.tm_min >= 0:
-            if should_execute_biweek:
-                if stage == "主頁面":
-                    bot_state.update_state(ip, task="雙週副本", step="排程觸發與穩定流程")
-                    new_battle.run_biweekly_bounty_road_single(
-                        d,
-                        ip,
-                        logger_obj=logger,
-                        should_stop=lambda: bot_state.check_pause(ip) or bot_state.check_skip_sleep(ip),
-                    )
-                    time_recording(ip, name="雙週副本")
-                else:
-                    log_main_page_mismatch(d, ip, stage, "雙週副本", "雙週副本到達執行時間但不在主頁面")
-            else:
-                logging.info("[{ip}] 本兩週已執行過雙週副本，跳過本次執行")
 
 
 def _run_redpack_check_if_due(d, ip: str) -> None:
