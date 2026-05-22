@@ -131,6 +131,7 @@ from utils.screenshot_helpers import (
 from game_actions.stage_guard import (
     LoginConflictError,
     _run_at_main_page,
+    get_stage_with_check,
 )
 from game_actions.lamp_scheduler import _run_lamp, _run_lamp_if_due
 from game_actions.dungeon_scheduler import (
@@ -139,9 +140,11 @@ from game_actions.dungeon_scheduler import (
 )
 from runtime_services.sleep_service import (
     StartupBypassError,
+    _maybe_resume_sleep,
     run_sleep_cycle,
     stop_runtime_device_for_sleep,
 )
+from runtime_services.startup_sleep import _handle_startup_sleep
 
 # Devices that should skip guardian spirit / skill partner collection.
 # Keep legacy behavior: emulator-5558 is excluded from these tasks.
@@ -151,114 +154,6 @@ _DEVICE_SKIP_GUARDIAN = {
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
-
-
-def get_stage_with_check(d, ip, Cnn_model, img=None):
-    """
-    使用與啟動流程相同的狀態判斷器。
-    先清掉已知首頁彈窗，再回傳穩定 stage。
-
-    Experimental: web_h5 devices with `experimental_cocos_navigation: true`
-    get a cocos-tree fast-path that confirms "主頁面" in single-digit ms
-    instead of ~1-3s of OCR. Non-main states still go through legacy OCR
-    (so 異地登錄/車位倉庫/家族戰/公告 etc. continue to be detected).
-    """
-    from utils.page_detector import try_detect_main_page_fast
-    fast_stage = try_detect_main_page_fast(d, ip)
-    if fast_stage:
-        logger.info(f"[{ip}] stage via cocos fast-path: {fast_stage}")
-        return fast_stage
-
-    stage = resolve_stage_until_stable(
-        d,
-        ip,
-        Cnn_model=Cnn_model,
-        reward_fn=reward,
-        logger=logger,
-        img=img,
-    )
-    if stage == "異地登錄":
-        logger.warning(f"[{ip}] 全域偵測到異地登錄，強制停止遊戲")
-        d.app_stop("com.mxdzz.tw.and")
-        mark_login_conflict_sleep(ip)
-        raise LoginConflictError("偵測到異地登錄")
-    return stage
-
-
-# ---------------------------------------------------------------------------
-# Helper functions extracted from main() to reduce its size
-# ---------------------------------------------------------------------------
-
-def _handle_startup_sleep(ip: str, device_logger) -> None:
-    startup_sleep_sec = int(_STARTUP_SLEEP_SEC_BY_DEVICE.get(ip, 0) or 0)
-    elapsed_sec = int(time.time() - _PROCESS_START_TS)
-    remaining_startup_sleep = max(0, startup_sleep_sec - elapsed_sec)
-    if remaining_startup_sleep > 0:
-        for remain in range(remaining_startup_sleep, 0, -1):
-            if ip == "emulator-5554":
-                if (
-                    bot_state.has_pending_online_check_request("emulator-5554")
-                    or bot_state.is_online_check_priority_active("emulator-5554")
-                ):
-                    device_logger.info(f"[{ip}] 收到 emulator-5558 上線檢查請求，提前結束啟動休眠")
-                    break
-            if bot_state.has_pending_web_launch_request(ip):
-                device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
-                break
-            bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
-            time.sleep(1)
-
-
-def _maybe_resume_sleep(
-    ip: str,
-    Cnn_model,
-    resume_sleep_until_ts: Optional[float],
-    resume_sleep_reason: str,
-    logger_obj,
-) -> tuple:
-    """Handle resume-sleep gate at top of main while loop.
-
-    Returns (updated_ts, updated_reason, should_continue).
-    Caller does `if should_continue: continue`.
-    """
-    if ip == 'emulator-5554':
-        has_req = bot_state.has_pending_online_check_request('emulator-5554')
-        has_priority = bot_state.is_online_check_priority_active('emulator-5554')
-        if has_req or has_priority:
-            process_online_check_requests(ip, Cnn_model, logger_obj, check_on_line)
-            time.sleep(0.2)
-            return resume_sleep_until_ts, resume_sleep_reason, True
-        if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-            wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-            remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-            detail = resume_sleep_reason or "返回休眠"
-            bot_state.update_state(
-                ip,
-                task="休眠中",
-                step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                next_wake_at=resume_sleep_until_ts,
-            )
-            logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-            interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
-            if interrupted:
-                return None, "", True
-            return None, "", False
-    elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-        wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-        remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-        detail = resume_sleep_reason or "返回休眠"
-        bot_state.update_state(
-            ip,
-            task="休眠中",
-            step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-            next_wake_at=resume_sleep_until_ts,
-        )
-        logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-        interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
-        if interrupted:
-            return None, "", True
-        return None, "", False
-    return resume_sleep_until_ts, resume_sleep_reason, False
 
 
 def _run_redpack_check_if_due(d, ip: str) -> None:
@@ -900,13 +795,6 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
 from runtime_services.thread_registry import running_threads_lock as _running_threads_lock  # noqa: E402
 
 _running_threads = {} # {ip: Thread}
-_PROCESS_START_TS = time.time()
-_STARTUP_SLEEP_SEC_BY_DEVICE = {
-    "emulator-5554": 3 * 60,
-    "emulator-5556": 3 * 60,
-    "emulator-5560": 3 * 60,
-}
-
 def temporary_reset_cycles():
     """臨時重置函數：強制將本週設為活動週期的開始"""
     import os

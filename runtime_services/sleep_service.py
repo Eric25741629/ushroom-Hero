@@ -156,7 +156,9 @@ def _maybe_resume_sleep(
     Caller does `if should_continue: continue`.
     """
     if ip == 'emulator-5554':
-        if bot_state.has_pending_online_check_request('emulator-5554'):
+        has_req = bot_state.has_pending_online_check_request('emulator-5554')
+        has_priority = bot_state.is_online_check_priority_active('emulator-5554')
+        if has_req or has_priority:
             process_online_check_requests(ip, Cnn_model, logger_obj, check_on_line)
             time.sleep(0.2)
             return resume_sleep_until_ts, resume_sleep_reason, True

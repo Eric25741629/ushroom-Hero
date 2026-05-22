@@ -36,7 +36,18 @@ def get_stage_with_check(d, ip, Cnn_model, img=None):
     """
     使用與啟動流程相同的狀態判斷器。
     先清掉已知首頁彈窗，再回傳穩定 stage。
+
+    Experimental: web_h5 devices with `experimental_cocos_navigation: true`
+    get a cocos-tree fast-path that confirms "主頁面" in single-digit ms
+    instead of ~1-3s of OCR. Non-main states still go through legacy OCR
+    (so 異地登錄/車位倉庫/家族戰/公告 etc. continue to be detected).
     """
+    from utils.page_detector import try_detect_main_page_fast
+    fast_stage = try_detect_main_page_fast(d, ip)
+    if fast_stage:
+        logger.info(f"[{ip}] stage via cocos fast-path: {fast_stage}")
+        return fast_stage
+
     from game_actions.reward_manager import reward  # lazy — see module header
     stage = resolve_stage_until_stable(
         d,
