@@ -527,7 +527,16 @@ class PlaywrightGameDevice:
         self._context = None
         self._page = None
         self._closed_by_stop = False
+        self._headless_override: Optional[bool] = None
         self._start()
+
+    def _configured_headless(self) -> bool:
+        return bool(self.cfg.get("web_headless", False))
+
+    def _effective_headless(self) -> bool:
+        if self._headless_override is not None:
+            return bool(self._headless_override)
+        return self._configured_headless()
 
     def _start(self):
         _reset_thread_event_loop()
@@ -590,7 +599,7 @@ class PlaywrightGameDevice:
                 extra_args.append(f"--remote-debugging-port={int(debug_port)}")
             kwargs: Dict[str, Any] = {
                 "user_data_dir": target_profile,
-                "headless": bool(self.cfg.get("web_headless", False)),
+                "headless": self._effective_headless(),
                 "viewport": {
                     "width": self.viewport_width,
                     "height": self.viewport_height,
@@ -793,6 +802,38 @@ class PlaywrightGameDevice:
 
         self._start()
 
+    def restart_with_headful(self, reason: str = "") -> None:
+        """Temporarily force a visible browser window for manual takeover."""
+        if self._effective_headless() is False:
+            return
+        self._headless_override = False
+        try:
+            self._restart_browser_session()
+            suffix = f" ({reason})" if reason else ""
+            self.logger.info(
+                f"[{self.device_id}] web_h5 restarted in headful mode{suffix}"
+            )
+        except Exception:
+            self._headless_override = None
+            raise
+
+    def restore_configured_headless_session(self, reason: str = "") -> None:
+        """Restore browser mode to the device's configured web_headless value."""
+        configured_headless = self._configured_headless()
+        # Only restore if we are currently in an overridden mode.
+        if self._headless_override is None:
+            return
+        # If configured mode is already headful, dropping override is enough.
+        if not configured_headless:
+            self._headless_override = None
+            return
+        self._headless_override = None
+        self._restart_browser_session()
+        suffix = f" ({reason})" if reason else ""
+        self.logger.info(
+            f"[{self.device_id}] web_h5 restored configured headless mode{suffix}"
+        )
+
     def _open_game_url(self) -> bool:
         """Navigate to game URL then force one refresh for stability.
 
@@ -802,7 +843,7 @@ class PlaywrightGameDevice:
         if not self.web_url or self._page is None:
             return False
         nav_timeout_ms = int(self.cfg.get("web_nav_timeout_ms") or 30000)
-        headless_mode = bool(self.cfg.get("web_headless", False))
+        headless_mode = self._effective_headless()
         self.logger.info(
             f"[{self.device_id}] web_h5 opening game url: {self.web_url} "
             f"(headless={headless_mode}, timeout={nav_timeout_ms}ms)"
@@ -1045,6 +1086,9 @@ class PlaywrightGameDevice:
         return {"package": "browser.idle"}
 
     def app_start(self, *args, **kwargs):
+        force_headful = bool(kwargs.pop("force_headful", False))
+        if force_headful:
+            self.restart_with_headful(reason="manual web launch")
         self._ensure_browser_session("app_start")
 
         if self.web_url and self._page is not None:
@@ -1228,6 +1272,31 @@ def get_alive_web_device(ip: str) -> "Optional[PlaywrightGameDevice]":
             existing is not None
             and getattr(existing, "owner_thread_id", None) == current_tid
             and existing.is_alive()
+        ):
+            return existing
+    return None
+
+
+def get_same_thread_web_device(ip: str) -> "Optional[PlaywrightGameDevice]":
+    """Return the same-thread registered web device for ip, or None.
+
+    Unlike get_alive_web_device(), this does NOT call is_alive(), which
+    probes canvas with a 200ms timeout that returns false negatives on tabs
+    throttled by background-tab policies (a tab waking from multi-minute
+    sleep can fail the probe even though the session is structurally fine).
+
+    Returning the device reference (not a boolean) lets callers reuse the
+    session directly and avoid calling create_web_device_if_enabled() —
+    which itself runs is_alive() on the existing entry and would re-trigger
+    the same canvas-probe false-negatives, restarting the session even
+    when the caller knows it owns a usable handle.
+    """
+    current_tid = threading.get_ident()
+    with _WEB_DEVICE_LOCK:
+        existing = _WEB_DEVICE_REGISTRY.get(ip)
+        if (
+            existing is not None
+            and getattr(existing, "owner_thread_id", None) == current_tid
         ):
             return existing
     return None

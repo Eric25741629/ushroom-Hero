@@ -11,6 +11,7 @@ import random
 
 import img_tools
 from game_state.detector import get_stage
+from utils.cocos_navigator import try_cocos_navigate
 from utils.screenshot_helpers import save_error_screenshot
 
 # Inline helpers — avoid importing from farm_v2 to prevent circular imports
@@ -59,6 +60,14 @@ def navigate_to_main_page(
         True 若成功到達主頁面，False 若超時。
     """
     prefix = f"[navigate_to_main{'/' + label if label else ''}]"
+
+    # Experimental: cocos emit-click fast-path, gated per-device.
+    cocos_result = try_cocos_navigate(d, device_ip, "main")
+    if cocos_result is True:
+        logger.info(f"{prefix} cocos fast-path succeeded")
+        return True
+    if cocos_result is False:
+        logger.warning(f"{prefix} cocos fast-path failed, falling back to click-based")
 
     if cnn_model is None:
         # Blind mode -- no OCR available, just send the clicks

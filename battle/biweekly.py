@@ -38,7 +38,11 @@ def run_biweekly_bounty_road_single(
         return False
 
     rec = return_time(ip, name="bounty_road_biweekly_slot") or {}
-    if isinstance(rec, dict) and rec.get("slot_key") == slot_key:
+    if (
+        isinstance(rec, dict)
+        and rec.get("slot_key") == slot_key
+        and rec.get("result") == "success"
+    ):
         lg.info(f"[{ip}] biweekly slot already executed: {slot_key}")
         return False
 

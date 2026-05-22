@@ -33,6 +33,18 @@
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
             "use_opengold_v2": true,
+            "experimental_cocos_navigation": true,
+            "carpark": {
+                "enabled": true,
+                "cross_tier": "silver",
+                "cross_lot_preference": "back",
+                "cluster": true,
+                "avoid_lots": [1, 2, 3, 4],
+                "daytime_total": 6,
+                "daytime_cross": 1,
+                "nighttime_total": 5,
+                "nighttime_cross": 0
+            },
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30
@@ -69,10 +81,11 @@
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
+            "use_opengold_v2": false,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30
+            "online_check_interval_sec": 30,
+            "online_check_interval": 5
         },
         "emulator-5558": {
             "name": "emulator-5558",
@@ -158,13 +171,13 @@
             "web_profile_dir": "playwright_profile/{device_id}",
             "web_state_file": "auth_state/{device_id}.json",
             "web_channel": "chrome",
-            "web_headless": false,
+            "web_headless": true,
             "web_clear_cookies_on_start": false,
             "web_viewport_width": 540,
             "web_viewport_height": 960,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
-            "web_stop_mode": "keep_page",
+            "web_stop_mode": "close_browser",
             "enable_farm": true,
             "enable_arena": true,
             "enable_mining": true,
@@ -180,10 +193,11 @@
             "mining_planner_version": "v4",
             "mining_save_samples": true,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
+            "use_opengold_v2": false,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30
+            "online_check_interval_sec": 30,
+            "online_check_interval": 5
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
             "name": "adb-fc65396d-4LPqmI._adb-tls-connect._tcp",
@@ -270,8 +284,6 @@
                 "master_url": "http://127.0.0.1:5002",
                 "worker_id": "laptop_worker"
             }
-        },
-        "worker_sync_timeout_sec": 10.0,
-        "worker_sync_failure_backoff_sec": 6.0
+        }
     }
 }

@@ -161,6 +161,14 @@ Web H5 特有：
 ## 測試命令
 
 ```bash
+# Codex/代理預設只跑與本次修改相關的目標測試；不要直接跑整包 pytest，
+# 這個 repo 有些測試會載入真裝置 / Playwright / OpenCV / OCR 依賴，
+# 在未完整啟用環境時容易卡住或卡在 import。
+python -m pytest tests/test_carpark_auto.py tests/test_game_initialization.py -q
+
+# 語法檢查也用指定檔案，避免掃到整個專案的重依賴。
+python -m py_compile utils/carpark_auto.py game_initialization.py tests/test_carpark_auto.py tests/test_game_initialization.py
+
 # 單個裝置測試
 test_device.sh <ip>
 
@@ -170,6 +178,14 @@ test_ocr_server.py
 # 挖礦 AI 調試
 python miner/scripts/debug_with_image.py <screenshot.jpg>
 ```
+
+### Pytest 注意事項
+
+- 優先用 `python -m pytest <測試檔> -q`，不要用裸 `pytest` 或整包 `python -m pytest` 當預設驗證。
+- 需要驗證本次 5554 車位倉庫修復時，使用：
+  `python -m pytest tests/test_carpark_auto.py tests/test_game_initialization.py -q`
+- 如果測試報 `.pytest_cache` 權限警告，可以忽略；那只是 NAS/權限造成快取寫入失敗，不代表測試失敗。
+- 如果看到 `ModuleNotFoundError: cv2`，通常是跑到會載入真 `device_wrapper` / 影像依賴的測試了；先改跑目標測試，或在測試內 stub 掉重依賴。
 
 ---
 

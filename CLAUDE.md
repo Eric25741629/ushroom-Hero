@@ -197,15 +197,23 @@ mark_refresh_needed()
 ### Run tests
 
 ```bash
-# Full suite (conftest.py adds repo root to sys.path)
-pytest
+# Default for Codex/agents: run only tests related to the files changed.
+# Do not use bare `pytest` as the default in this repo; some tests import
+# real device / Playwright / OpenCV / OCR dependencies and may hang or fail
+# when the full runtime environment is not active.
+python -m pytest tests/test_carpark_auto.py tests/test_game_initialization.py -q
+
+# Syntax check for the same focused change set.
+python -m py_compile utils/carpark_auto.py game_initialization.py tests/test_carpark_auto.py tests/test_game_initialization.py
 
 # Single file / single test
-pytest tests/test_miner_v2_planner.py
-pytest tests/test_miner_v2_planner.py::test_name -v
+python -m pytest tests/test_miner_v2_planner.py -q
+python -m pytest tests/test_miner_v2_planner.py::test_name -q
 ```
 
 Tests live in `tests/` with fixtures under `tests/fixtures/` and screenshot fixtures under `tests/images/`. Notable areas: miner v2 (`test_miner_v2_*`), MuMu watchdog (`test_mumu_*`), instance-flow guards, biweekly scheduler, OCR utils.
+
+If pytest prints `.pytest_cache` permission warnings on the NAS path, ignore them unless the test result itself failed. If it reports `ModuleNotFoundError: cv2`, the command likely reached tests that import the real `device_wrapper`; narrow the command to the target test files or stub heavy imports inside that test.
 
 ### Standalone lamp (神燈) entry
 

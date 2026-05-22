@@ -32,7 +32,6 @@ from .cloud import (
 )
 from .store import (
     _update_store_record_extra,
-    buy_god_everweek,
     buy_god_everyweek,
 )
 from .weekly_trials import fight_test
@@ -55,7 +54,6 @@ __all__ = [
     "run_saturday_help_single",
     "run_weekly_cloud_fighting_single",
     # store
-    "buy_god_everweek",
     "buy_god_everyweek",
     # weekly trials
     "fight_test",

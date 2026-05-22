@@ -22,6 +22,7 @@ from farm_v2.operations import (
 )
 from game_actions.navigation import navigate_to_main_page
 from game_state.detector import get_stage
+from utils.cocos_navigator import try_cocos_navigate
 from utils.screenshot_helpers import save_error_screenshot
 
 logger = logging.getLogger("farm_v2.manager")
@@ -38,9 +39,21 @@ def _predict_stage(cnn_model, pil_img):
         return None
 
 
-def navigate_to_farm(d: "uiauto.Device", cnn_model=None) -> float:
+def navigate_to_farm(d: "uiauto.Device", cnn_model=None, device_ip: Optional[str] = None) -> float:
     """導航到農場頁面並返回節省的時間"""
     save_time = 0.0
+
+    # Experimental fast-path: cocos emit-click bypasses screenshot+OCR loop.
+    # Only fires when the device has experimental_cocos_navigation=true in
+    # bot_config.json. None means "not applicable" (flag off / not web_h5) —
+    # caller MUST fall back to the click-based logic below.
+    cocos_result = try_cocos_navigate(d, device_ip, "farm")
+    if cocos_result is True:
+        logger.info(f"[farm_v2] cocos fast-path succeeded for {device_ip}")
+        # Saved roughly the full OCR wait + two animations (≈8s) vs blind clicks.
+        return 6.0
+    if cocos_result is False:
+        logger.warning(f"[farm_v2] cocos fast-path failed for {device_ip}, falling back")
 
     click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
     time.sleep(wait_jitter(TIMING["long"]))
@@ -111,7 +124,7 @@ def farm(
     logger.info(f"開始農場流程 - 設備: {device_ip}")
     save_time = 0.0
 
-    save_time += navigate_to_farm(d, cnn_model)
+    save_time += navigate_to_farm(d, cnn_model, device_ip=device_ip)
 
     seed_record = time_manager.get_time_record("farm_seed_purchase")
     should_buy_seed = not seed_record or seed_record.get("is_next_day", True)

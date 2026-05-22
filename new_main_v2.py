@@ -302,7 +302,18 @@ def get_stage_with_check(d, ip, Cnn_model, img=None):
     """
     使用與啟動流程相同的狀態判斷器。
     先清掉已知首頁彈窗，再回傳穩定 stage。
+
+    Experimental: web_h5 devices with `experimental_cocos_navigation: true`
+    get a cocos-tree fast-path that confirms "主頁面" in single-digit ms
+    instead of ~1-3s of OCR. Non-main states still go through legacy OCR
+    (so 異地登錄/車位倉庫/家族戰/公告 etc. continue to be detected).
     """
+    from utils.page_detector import try_detect_main_page_fast
+    fast_stage = try_detect_main_page_fast(d, ip)
+    if fast_stage:
+        logger.info(f"[{ip}] stage via cocos fast-path: {fast_stage}")
+        return fast_stage
+
     stage = resolve_stage_until_stable(
         d,
         ip,
@@ -569,6 +580,97 @@ def _run_biweekly_dungeon(
                 logging.info("[{ip}] 本兩週已執行過雙週副本，跳過本次執行")
 
 
+def _run_redpack_check_if_due(d, ip: str) -> None:
+    """Claim any pending 紅包 via WS API.
+
+    Runs on every device with `backend == web_h5` and a live Playwright
+    page. ADB-backend devices and web_h5 devices without an attached page
+    skip entirely (no cost, no behavior change).
+
+    Two-stage detection (`utils.redpack_detector.claim_all_pending`):
+        1. send 0x2605, parse list (~50-150ms one WS roundtrip)
+        2. try grab on each via 0x2603
+    Failures and "already-claimed" errors are logged but non-fatal.
+    """
+    cfg = config_manager.get_device_config(ip) or {}
+    if str(cfg.get("backend", "")).lower() != "web_h5":
+        return
+    page = getattr(d, "_page", None)
+    if page is None:
+        return
+    try:
+        from utils.redpack_detector import claim_all_pending
+        claimed, results = claim_all_pending(page)
+    except Exception as e:
+        logger.warning(f"[{ip}] 紅包檢查發生例外 (non-fatal): {e}")
+        return
+
+    if not results:
+        logger.info(f"[{ip}] 紅包檢查: gate off (無未讀)")
+        return
+
+    bot_state.update_state(ip, task="紅包檢查", step=f"嘗試 {len(results)} 個")
+    summary = []
+    for r in results:
+        if r.success:
+            summary.append(f"OK#{r.bag_id}")
+        else:
+            ec = r.error_code if r.error_code is not None else "?"
+            summary.append(f"ERR{ec}#{r.bag_id}")
+    logger.info(
+        f"[{ip}] 紅包檢查: claimed={claimed}/{len(results)} | {', '.join(summary)}"
+    )
+
+
+def _run_carpark_check_if_due(d, ip: str) -> None:
+    """Experimental: keep cross-server park deployment aligned to the
+    daytime/nighttime targets via cocos UI clicks.
+
+    Gating (same as redpack check):
+        1. `experimental_cocos_navigation: true`
+        2. `backend == web_h5`
+        3. live Playwright page
+        4. device cfg has `carpark.enabled: true`
+
+    Other devices skip entirely — no cost, no behavior change.
+    """
+    from utils.cocos_navigator import _device_flag_enabled
+    if not _device_flag_enabled(ip):
+        return
+    cfg = config_manager.get_device_config(ip) or {}
+    if str(cfg.get("backend", "")).lower() != "web_h5":
+        return
+    carpark_cfg = cfg.get("carpark") or {}
+    if not carpark_cfg.get("enabled"):
+        return
+    page = getattr(d, "_page", None)
+    if page is None:
+        return
+    try:
+        from utils.carpark_auto import reconcile
+        from utils.carpark_click_recorder import (
+            CarparkClickRecorder, set_recorder, clear_recorder,
+        )
+        rec = CarparkClickRecorder(ip, run_tag="auto")
+        set_recorder(rec)
+        try:
+            summary = reconcile(page, carpark_cfg)
+        finally:
+            rec.close()
+            clear_recorder()
+    except Exception as e:
+        logger.warning(f"[{ip}] 車位檢查 exception (non-fatal): {e}")
+        return
+    bot_state.update_state(ip, task="車位檢查",
+                           step=f"snap={summary.get('snapshot')} tgt={summary.get('target')}")
+    actions = summary.get("actions") or []
+    if actions:
+        logger.info(f"[{ip}] 車位檢查: {summary.get('snapshot')} → {summary.get('target')}; "
+                    f"actions={actions}")
+    else:
+        logger.info(f"[{ip}] 車位檢查: 已對齊 {summary.get('snapshot')}")
+
+
 def _run_daily_tasks(
     d,
     ip: str,
@@ -582,6 +684,12 @@ def _run_daily_tasks(
     family_manager,
 ) -> None:
     """Execute the full per-wake task sequence (20 tasks) for one device."""
+    # Task 0 (experimental): 紅包檢查 — web_h5 + flag-gated, no-op for others
+    _run_redpack_check_if_due(d, ip)
+
+    # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
+    _run_carpark_check_if_due(d, ip)
+
     # Task 1: 地獄之門
     stage = get_stage_with_check(d, ip, Cnn_model)
     record_time = return_time(ip, name="地獄之門")
@@ -869,7 +977,12 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 if backend_kind == "web_h5":
                     device_logger.error(f"[{ip}] web_h5 backend init failed: {e}")
                     device_logger.warning(f"[{ip}] web_h5 init backoff 30s to avoid relaunch storm")
-                    time.sleep(30)
+                    backoff_deadline = time.time() + 30
+                    while time.time() < backoff_deadline:
+                        if bot_state.has_pending_web_launch_request(ip):
+                            device_logger.info(f"[{ip}] 收到手動開啟瀏覽器請求，提前結束 init backoff")
+                            break
+                        time.sleep(0.5)
                     bot_state.set_offline(ip, reason=f"init failed: {e}")
                     return
                 handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
@@ -905,20 +1018,22 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         )
 
         while (1):
-            if bot_state.check_force_sleep(ip):
-                raise ForceSleepRequested("force sleep requested from dashboard")
-            if handle_pending_web_launch(ip, d, backend_kind, logger):
-                continue
-            process_online_check_requests(ip, Cnn_model, logger, check_on_line)
-            resume_sleep_until_ts, resume_sleep_reason, _skip = _maybe_resume_sleep(
-                ip, Cnn_model, resume_sleep_until_ts, resume_sleep_reason, logger
-            )
-            if _skip:
-                continue
+            force_sleep_now = False
             forced_wake_ts = None
             sleep_policy = "aligned_window"
             sleep_reason = "常規對齊喚醒"
             try:
+                if bot_state.check_force_sleep(ip):
+                    raise ForceSleepRequested("force sleep requested from dashboard")
+                if handle_pending_web_launch(ip, d, backend_kind, logger):
+                    continue
+                process_online_check_requests(ip, Cnn_model, logger, check_on_line)
+                resume_sleep_until_ts, resume_sleep_reason, _skip = _maybe_resume_sleep(
+                    ip, Cnn_model, resume_sleep_until_ts, resume_sleep_reason, logger
+                )
+                if _skip:
+                    continue
+
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
                 d = handle_device_wakeup(

@@ -153,6 +153,9 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
         payload = dict(web_launch_req.get("payload") or {})
         clear_cookies_once = bool(payload.get("clear_cookies_once", False))
         manual_hold_until_closed = bool(payload.get("manual_hold_until_closed", False))
+        # 手動開網頁預設強制使用可見視窗，避免裝置設定 web_headless=true 時
+        # 面板「開啟網頁」沒有視窗可接管。
+        force_headful = bool(payload.get("force_headful", True))
 
         bot_state.update_state(ip, task="手動操作", step="正在開啟網頁 / 等待手動操作")
         logger_obj.info(f"[{ip}] start web page for manual control")
@@ -164,7 +167,11 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
             except Exception as clear_err:
                 logger_obj.warning(f"[{ip}] clear_cookies failed: {clear_err}")
 
-        device_obj.app_start(package_name="com.mxdzz.tw.and", use_monkey=True)
+        device_obj.app_start(
+            package_name="com.mxdzz.tw.and",
+            use_monkey=True,
+            force_headful=force_headful,
+        )
         bot_state.complete_web_launch_request(ip, ok=True, message="web page opened")
 
         if manual_hold_until_closed:
@@ -193,6 +200,17 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
 
                 bot_state.update_state(ip, task="手動操作", step="等待手動操作中")
                 time.sleep(1)
+
+        # 手動接管結束後，回到原本裝置設定的 headless 模式，避免改動持續到自動流程。
+        if force_headful and manual_hold_until_closed:
+            restore_fn = getattr(device_obj, "restore_configured_headless_session", None)
+            if callable(restore_fn):
+                try:
+                    restore_fn(reason="manual web launch completed")
+                except Exception as restore_err:
+                    logger_obj.warning(
+                        f"[{ip}] restore configured headless mode failed: {restore_err}"
+                    )
 
         time.sleep(1)
     except ForceSleepRequested:

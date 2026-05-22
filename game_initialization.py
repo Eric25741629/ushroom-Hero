@@ -22,7 +22,10 @@ from utils.logging_utils import logger, default_logger
 import new_cnn.cnn_model as cnn_model_module
 import bot_state
 import config_manager
-from device_wrapper import create_web_device_if_enabled, get_alive_web_device
+from device_wrapper import (
+    create_web_device_if_enabled,
+    get_same_thread_web_device,
+)
 
 
 class StartupLoginConflictError(Exception):
@@ -60,16 +63,64 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
         return True
 
     if stage == "車位倉庫":
-        logger.info(f"[{ip}] 偵測到車位倉庫，嘗試領取後返回主頁")
+        logger.info(f"[{ip}] 偵測到車位倉庫，嘗試領取並關閉彈窗返回主頁")
         img_tools.click_str_by_server(d, '領取', y_range=(697, 737))
         time.sleep(2)
-        click_white(d)
-        time.sleep(1)
+        closed_by_js = False
+        page = getattr(d, "_page", None)
+        if page is not None:
+            try:
+                from utils.carpark_auto import _close_carpark_transient_views, _return_parking_to_main
+                _close_carpark_transient_views(page)
+                time.sleep(0.5)
+                closed_by_js = _return_parking_to_main(page)
+            except Exception as e:
+                logger.debug(f"[{ip}] 車位倉庫 JS 關閉失敗，改用空白點擊: {e}")
+        if not closed_by_js:
+            click_white(d)
+            time.sleep(1)
         return True
 
     if stage in ("購物管家", "神秘商人"):
         logger.info(f"[{ip}] 偵測到 {stage}，點擊空白返回主頁")
         click_white(d)
+        time.sleep(1)
+        return True
+
+    if stage == "家族":
+        # Detector returns "家族" whenever OCR sees "家族商店" or "家族亂鬥" in
+        # the captured frame (game_state/detector.py:54-55). This fires not
+        # only when 5554 is genuinely inside the guild tab, but also when
+        # cocos node residue from a just-closed popup leaves those strings
+        # visible during the transition. Without recovery the task loop
+        # walks every daily task and logs "不在主頁面" for each — 16+ ERRORs
+        # per round, ~180/day on 5554. See logs/emulator-5554/main.log
+        # 2026-05-22 04:14 for the pattern that motivated this case.
+        #
+        # Best-effort: returns True so resolve_stage_until_stable re-probes
+        # stage on the next chain iteration. If recovery genuinely fails
+        # for max_chain rounds, the resolver returns "家族" and the outer
+        # task loop logs the mismatch as before — no worse than before
+        # this patch.
+        logger.info(f"[{ip}] 偵測到 家族 殘留 stage，嘗試返回主頁")
+        cocos_ok = None
+        try:
+            from utils.cocos_navigator import try_cocos_navigate
+            cocos_ok = try_cocos_navigate(d, ip, "main")
+        except Exception as e:
+            logger.debug(f"[{ip}] 家族 cocos goto_main raised: {e}")
+        if cocos_ok is True:
+            time.sleep(1)
+            return True
+        # Fallback (cocos disabled, no _page, or sweep failed): tap the home
+        # tab via the same coordinate navigate_to_main_page uses for the
+        # 家園 → 主頁面 transition. Safe no-op when already on main (the tap
+        # toggles 家園 off and lands on main).
+        try:
+            from game_actions.navigation import _HOME_BTN
+            d.click(*_HOME_BTN)
+        except Exception as e:
+            logger.debug(f"[{ip}] 家族 fallback home tap failed: {e}")
         time.sleep(1)
         return True
 
@@ -290,16 +341,33 @@ def _check_on_line_via_protocol(target_pid: int, threshold_sec: int = 60) -> boo
     if backend_kind != "web_h5":
         raise RuntimeError("protocol path requires emulator-5554 on web_h5 backend")
 
-    # Track whether the browser was already open so we know if we should close it after.
-    # If 5554 is mid-task its device is already alive — don't close it.
-    # If we're opening a fresh session just for this check, close it when done.
-    pre_existing = get_alive_web_device(ip)
-
-    d = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=default_logger)
-    if d is None:
-        raise RuntimeError("create_web_device_if_enabled returned None")
-
-    close_after_check = pre_existing is None
+    # Reuse the 5554 main-loop session directly when it exists, instead of
+    # going through create_web_device_if_enabled(). The latter calls
+    # is_alive() on the existing entry, which probes canvas with a 200ms
+    # timeout — that probe returns false negatives on tabs the browser has
+    # thrown into background throttle (every wake-up from multi-minute
+    # sleep on 5554). A false negative there forces an in-place restart,
+    # and the old version of this function additionally set
+    # close_after_check=True, hard-closing the SAME session the main loop
+    # was about to use and triggering a "web_h5 session unavailable"
+    # restart on the next screenshot. See logs/emulator-5554/main.log
+    # 2026-05-22 for the 19-restarts-per-day pattern that drove this fix.
+    #
+    # This protocol path only runs on the 5554 thread (enforced in
+    # web_session_service.process_online_check_requests). Reusing the
+    # same-thread session is safe: bring_to_front() + wait_until_in_game
+    # below will wake the throttled tab if needed.
+    prior_device = get_same_thread_web_device(ip)
+    if prior_device is not None:
+        d = prior_device
+        close_after_check = False
+    else:
+        d = create_web_device_if_enabled(
+            ip, cfg=device_cfg, logger_obj=default_logger
+        )
+        if d is None:
+            raise RuntimeError("create_web_device_if_enabled returned None")
+        close_after_check = True
 
     try:
         page = getattr(d, "_page", None)
