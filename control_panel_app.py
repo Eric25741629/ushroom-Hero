@@ -1280,10 +1280,17 @@ def get_status():
 
 @app.route("/api/config/<ip>", methods=["GET"])
 def get_device_conf(ip):
-    """獲取指定設備的設定"""
+    """獲取指定設備的設定 (raw dict, includes non-typed keys like `carpark`,
+    `statue_weekly`, `experimental_cocos_navigation`).
+
+    Uses `get_device_config_dict` rather than `get_device_config`: the latter
+    returns a `DeviceConfig` dataclass whose `_extra` field jsonify-leaks as a
+    nested `_extra` object instead of flattening, hiding fields from frontend
+    code that reads `config.<key>` directly.
+    """
     # 處理遠端 IP 設定讀取 (需要從檔名反推)
     real_ip = ip.split(":")[-1] if ":" in ip else ip
-    return jsonify(config_manager.get_device_config(real_ip))
+    return jsonify(config_manager.get_device_config_dict(real_ip))
 
 
 @app.route("/api/bug_feedback", methods=["POST"])

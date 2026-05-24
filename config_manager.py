@@ -455,6 +455,19 @@ def get_device_config(ip: str) -> "DeviceConfig":
     return DeviceConfig.from_dict(_get_raw_device_config(ip))
 
 
+def get_device_config_dict(ip: str) -> Dict[str, Any]:
+    """Return device config as a raw dict (including all keys, even those not
+    in the typed DeviceConfig schema such as `carpark`, `statue_weekly`,
+    `experimental_cocos_navigation`).
+
+    Use this when the caller needs to serialize the full config (e.g. Flask
+    `jsonify`) — `DeviceConfig` puts unknown keys in `_extra`, which jsonify
+    leaks as a nested `_extra` field instead of flattening them, hiding fields
+    from frontend code that reads `config.<key>` directly.
+    """
+    return _get_raw_device_config(ip)
+
+
 def update_device_config(ip: str, new_settings: Dict[str, Any]):
     """Update per-device config with validation/sanitization."""
     # 整段 load + modify + save 必須在同一個 critical section，

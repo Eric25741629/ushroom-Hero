@@ -1104,6 +1104,21 @@
 
           <div>
 
+            <label style="font-size:0.8em; display:flex; align-items:center; gap:6px;">
+              <input type="checkbox" id="chkCarparkEnabled" onchange="onCarparkEnabledChange()">
+              啟用跨服車位（carpark.enabled）
+            </label>
+
+            <select id="editCarparkTier" class="form-control" style="margin-top:4px;">
+              <option value="silver">鉑銀（silver）— 唯一已驗證</option>
+            </select>
+
+            <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">勾選後會自動把 experimental_cocos_navigation 設為 true（scheduler gating 前置條件）。其他 carpark 欄位（avoid_lots / 白夜總數 / cluster / prefer_back）保留 JSON 既有值。</div>
+
+          </div>
+
+          <div>
+
             <label style="font-size:0.8em;">Viewport Width</label>
 
             <input type="number" id="editWebViewportWidth" class="form-control" placeholder="540">
@@ -2331,6 +2346,14 @@
 
 
 
+    let _existingCarpark = {};
+
+    function onCarparkEnabledChange() {
+      const chk = document.getElementById('chkCarparkEnabled');
+      const sel = document.getElementById('editCarparkTier');
+      if (chk && sel) sel.disabled = !chk.checked;
+    }
+
     function toggleBackendInputs() {
 
       const backend = document.getElementById('editBackend').value || 'adb';
@@ -2689,6 +2712,14 @@
 
         document.getElementById('editWebViewportHeight').value = config.web_viewport_height || 960;
 
+        _existingCarpark = (config.carpark && typeof config.carpark === 'object') ? config.carpark : {};
+        document.getElementById('chkCarparkEnabled').checked = _existingCarpark.enabled === true;
+        // Tier select shows silver only (the only verified path in carpark_auto.py).
+        // Non-silver values that already exist in JSON are preserved through the
+        // round-trip in saveConfig — they survive but aren't user-selectable here.
+        document.getElementById('editCarparkTier').value = 'silver';
+        onCarparkEnabledChange();
+
         toggleBackendInputs();
 
         pollWebLoginStatus(ip);
@@ -2764,6 +2795,29 @@
         web_viewport_height: parseInt(document.getElementById('editWebViewportHeight').value || '960', 10)
 
       };
+
+      // Carpark: build merged dict so we don't wipe avoid_lots/cluster/etc.
+      // (backend update_device_config does shallow current.update — see spec)
+      const cpEnabled = document.getElementById('chkCarparkEnabled').checked;
+      const uiTier = document.getElementById('editCarparkTier').value || 'silver';
+      // The UI only offers silver. If JSON already had a non-silver tier, preserve it
+      // (the user has no way to ask for that downgrade through this UI). Consistent
+      // with how avoid_lots / cluster / counts are preserved by the stash-and-spread.
+      const existingTier = _existingCarpark.cross_tier;
+      const cpTier = (existingTier && existingTier !== 'silver') ? existingTier : uiTier;
+      const hasExisting = Object.keys(_existingCarpark).length > 0;
+      if (cpEnabled || hasExisting) {
+        payload.carpark = Object.assign({}, _existingCarpark, {
+          enabled: cpEnabled,
+          cross_tier: cpTier,
+        });
+      }
+      // Enabling carpark requires experimental_cocos_navigation (scheduler gating).
+      // We set it on enable but DON'T clear it on disable — other future cocos
+      // features may depend on it.
+      if (cpEnabled) {
+        payload.experimental_cocos_navigation = true;
+      }
 
       try {
 
