@@ -63,6 +63,10 @@ class FakeSession:
         self.calls.append("repair")
         return True
 
+    def upgrade_repair_station(self):
+        self.calls.append("station")
+        return True
+
     def claim_rewards(self):
         self.calls.append("claim")
         return 3
@@ -96,12 +100,16 @@ def test_run_daily_claims_rewards_and_exits():
     assert report.rewards_claimed == 3
 
 
-def test_run_daily_repairs_last_after_claiming():
-    # Closing the 港口 exits the season to main, so repair must run AFTER reward-claim
-    # (its exit doubles as leaving the season). Locks that ordering decision.
+def test_run_daily_station_upgrade_is_last_before_exit():
+    # Ship repair is a map overlay (stays in-season); the 一鍵修築 station-upgrade dives
+    # into 港口 and closing 港口 exits the season, so it must be the LAST action — its
+    # close doubles as leaving the season. Order: claim < repair < station < exit.
     s = FakeSession(RAW_OBJS)
     tasks.run_daily(s)
-    assert s.calls.index("claim") < s.calls.index("repair")
+    assert s.calls.index("claim") < s.calls.index("repair") < s.calls.index("station")
+    # station is the last real action before exit
+    assert s.calls.index("station") < s.calls.index("exit")
+    assert s.calls[-1] == "exit"
 
 
 def test_run_daily_skips_action_when_tile_cannot_be_brought_on_screen():

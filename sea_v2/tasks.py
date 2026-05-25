@@ -24,6 +24,7 @@ class SeaReport:
     garrisoned: List[Tuple[float, float]] = field(default_factory=list)
     attacked: List[Tuple[float, float]] = field(default_factory=list)
     repaired: bool = False
+    station_built: bool = False
     rewards_claimed: int = 0
     aborted_reason: Optional[str] = None
 
@@ -62,9 +63,13 @@ def run_daily(session, account_id: Optional[str] = None, cache_path=None) -> Sea
 
         report.rewards_claimed = int(session.claim_rewards() or 0)
 
-        # ...repair LAST: it dives into 港口, and closing 港口 exits the season to the
-        # main page, so doing it last means the exit doubles as leaving the season.
+        # Ship repair (使用1次修船套件): bottom 維修 → 維修點; map overlay, stays in-season.
+        # Best-effort — skips if the ship is out (大本營 gate); auto-return-home is 待補.
         report.repaired = bool(session.use_repair_kit())
+
+        # 一鍵修築 (維修站 base-upgrade, 木材) LAST: it dives into 港口, and closing 港口
+        # exits the season to the main page, so its exit doubles as leaving the season.
+        report.station_built = bool(session.upgrade_repair_station())
         return report
     finally:
         session.exit_season()

@@ -24,6 +24,30 @@ Corrections from the user, now baked into `.claude/skills/dual-backend-task-dev/
   introspection (`page.evaluate`), ADB has none → state-derived logic isn't portable →
   H5-scout parses server-global `config*` into a shared cache the ADB account consumes.
 
+### 2026-05-25 航海 階段 B (live mapping on 5560)
+
+- **`worldToScreen→pixel` can SELECT-miss map tiles even with perfect canvas mapping.**
+  Clicking a tile's projected pixel often hit an empty hex (`/SeasonMapScene/unit/select`
+  stayed empty); only an occasional camera alignment registered. Coordinates were exact
+  (canvas 540x960 @ 0,0, scale .75) — the hit-test just doesn't land from the anchor
+  projection. Fix: **OCR-click the rendered label** (資源Lv1 / 遺跡), the legacy method.
+  This is *the* concrete proof that "OCR是必要手段" — world-nav picks the pan *direction*,
+  OCR does the precise tap. (sea_v2 garrison/attack rewritten OCR-first.)
+- **OCR substring traps bite on short Chinese tokens.** `領取` matches `已領取`,
+  `駐守` matches `駐守中`, and `遺跡` frequently OCRs as `遣跡` (dropped stroke). Match with
+  exact-text preference + an `exclude` token, and fall back to a single robust char (`跡`).
+- **Don't fight the live runtime for a device.** 5554 was being driven by the running
+  `new_main_v2.py` (its carpark loop kept closing the season I opened, and relaunched the
+  browser). The control-panel `/api/pause/<ip>` only takes at the loop's next checkpoint
+  (mid-task it won't yield). The clean path is a **manual-hold** device (dashboard
+  "開啟瀏覽器" → `web_session_service: manual hold enabled`) where the auto-loop is
+  suspended — that's what the user meant by "用 5560 驗證". Check `logs/<dev>/main.log`
+  to see if the bot is actively driving before probing.
+- **Read action availability from the cocos menu, not the tooltip.** The bottom
+  `imgTips/textTips` ("駐守中[2,26]") is a STALE leftover (identical across tiles). The
+  real signal is `/SeasonMapScene/unit/select/.../btnItem*/txtName` after a successful
+  select (empty = miss or own tile).
+
 ## 2026-05-19 Consolidation session
 
 ### Audit before delete — find_img/, reward_get/, dataset/ have live writers

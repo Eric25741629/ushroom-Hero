@@ -114,3 +114,32 @@
 - 深夜顯示「深夜無法行動」：可移動視角、可領獎、可點格子，但駐守/進攻動作被禁用 → 階段 B 必須白天做。
 - 拖曳用慢速分段（避免慣性甩動造成過頭）；ADB `d.swipe` 同理需慢。
 - 探測工具：`tools/probe_sea.py`（search/tree/click/text/hook/drain/shot）。
+
+## 10. 階段 B 已驗證 (2026-05-25, 5560 manual-hold)
+
+| 事實 | 內容 |
+|------|------|
+| **選格不可用 worldToScreen 點** | 投影像素常 miss（`/SeasonMapScene/unit/select` 維持空），改 **OCR 點地圖標籤** 才可靠（沿用 legacy） |
+| 動作選單位置 | 選格後在**地圖場景** `/SeasonMapScene/unit/select/SelectInfo/opt/btnItem1/txtName`，文字即動作 |
+| 動作依擁有權 | free→`駐守`；enemy / 遺跡→`進攻`；自家→無選單（只剩 stale `駐守中[..]` tooltip） |
+| 駐守流程（**已實打驗證**） | OCR 點 `資源Lv1` → 選單出 `駐守` → 點 `駐守`(排除`中`) → 點 `開始航行` → `行軍中`；任務「完成1次駐守操作」變可領 |
+| 進攻流程（**已映射**，未實打） | OCR 點 `跡`(遺跡常 OCR 成「遣跡」) → 選單出 `進攻` → 點 `進攻` → `開始航行`；出擊損船耐久故當日已完成時不重打 |
+| 領獎（**已驗證**） | 開任務面板 → 迴圈 OCR 點 `領取`(排除 `已領取`)，以 cocos active `btnGet` 數終止 |
+| **修船真相**（**已修正**） | 「使用1次修船套件」= 地圖底部「維修」(`root4/bottom/di/btnRepair`)→`SeasonRepairView`→「維修」鈕(`root/bot/btnRepair`，用**維修點**)。**不是**港口→維修站→`一鍵修築`(那是用**木材**升級維修站建築，實打 +10500 後任務仍 0/1) |
+| **自動回港**（使用者確認） | **攻略遺跡(進攻)會把船耐久歸零，船隨即自動回大本營** → 無需獨立召回。daily 序：attack→claim→repair；`use_repair_kit` 在『僅位於大本營』gate 上**重試**(預設 6×4s)等船航回。回港時間未 live 量測，retry budget 可能要調 |
+| 修船閘門 | 船在外時點修跳『僅位於大本營時才能維修船隻』；popup 在地圖層，關閉**不離開賽季** |
+| **一鍵修築入流程** | `upgrade_repair_station()`：港口→維修站→`一鍵修築`(木材升級維修站，提維修點上限/速率)。缺木材→`ItemGetWayView`→False。**關港口=離賽季 → 排流程最後** |
+| OCR 子字串地雷 | `領取⊂已領取`、`駐守⊂駐守中`、`遺跡→遣跡`；`_ocr_matches` 用 exact 優先 + `exclude` + 單字 fallback |
+| 任務進度標籤不可信 | `txtProgress` 受 UIList 虛擬化重用（多任務同顯「3/15」）；判完成看 `btnGet.active` |
+| OCR 前需 settle | 鏡頭移動後標籤要時間 render，OCR 前 `sleep(settle)`，否則 0 命中 |
+| 取得獨佔控制 | bot 在跑時用 dashboard「開啟瀏覽器」manual-hold 裝置（auto-loop 暫停），勿與 runtime 搶同一裝置 |
+
+實作：`sea_v2/session.py` 之 `_ocr_results/_ocr_matches/_ocr_tap/_select_menu` +
+`garrison/attack/claim_rewards/use_repair_kit/upgrade_repair_station`；測試
+`tests/test_sea_v2_session.py`（15）。導航(定位/挑格/置中)仍用世界座標決定**滑動方向**（修根因），
+最後一下**點擊用 OCR**。run_daily 序：garrison → attack(船耐久歸零+自動回港) → claim →
+use_repair_kit(retry 等船回再修) → upgrade_repair_station(最後，離賽季) → exit。
+
+**接入 runtime**：`game_actions/daily_pipeline.py` Task 14 改用 `_sea_dispatch`（H5→`sea_v2.sea`、
+adb→legacy `Sea.sea`，受 `sea_v2_enabled` flag 控管）；`bot_config.json` `global.sea_v2_enabled=true`
+（設 false 即回退 legacy）。**生效需重啟 bot**（sys.modules cache）。
