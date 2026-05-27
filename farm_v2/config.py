@@ -42,6 +42,14 @@ COORD = {
     "seed_confirm_page": (384, 428),
     "plant_check_pixel": (231, 437),
     "plant_check_color": (173, 112, 68),
+    # harvest card flow (screen coords verified on 540x960, scale 0.75)
+    "carpark_shop_btn": (376, 914),   # ParkingMainView/bottom/btnShop
+    "carpark_close": (472, 914),      # ParkingMainView/bottom/btnClose
+    "premium_seed_tab": (356, 434),   # SeedSelectView content[2] 特級種子
+    "one_click_plant": (77, 830),     # PlantMainView/OneKeyOprate/btnOneKeyPlant
+    "one_click_plant_confirm": (270, 568),  # SeedSelectView/bg/btnUse
+    "free_fertilizer_btn": (69, 125), # PlantMainView/top/btnFertilizerGet
+    "one_click_fertilize": (334, 830),# PlantMainView/OneKeyOprate/btnOneKeyGrow
 }
 
 TIMING = {
@@ -55,7 +63,11 @@ TIMING = {
 
 SEED_PRICE = 100
 MAX_PLANT_PER_DAY = 2
-WEEKLY_CARD_DAYS = {1, 3, 5}
+WEEKLY_CARD_DAYS = {1, 3, 5}  # deprecated — kept for rollback
+
+HARVEST_CARD_CYCLES = 15
+CROPS_PER_CYCLE = 6
+FERTILIZER_FREE_CLAIMS = 2
 
 TEMPLATE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "farm_templates"

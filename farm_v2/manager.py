@@ -10,15 +10,16 @@ if TYPE_CHECKING:
 
 import img_tools
 import new_cnn.cnn_model as _cnn_module
-from farm_v2.config import COORD, TIMING, MAX_PLANT_PER_DAY, WEEKLY_CARD_DAYS
+from farm_v2.config import COORD, TIMING, MAX_PLANT_PER_DAY
 from farm_v2.states import FarmState, FarmContext
 from farm_v2.operations import (
     click_with_jitter,
     wait_jitter,
     buy_seed,
+    check_if_parttime,
     plant_one,
     plant_cycle,
-    run_weekly_card,
+    run_harvest_card,
 )
 from game_actions.navigation import navigate_to_main_page
 from game_state.detector import get_stage
@@ -26,6 +27,37 @@ from utils.cocos_navigator import try_cocos_navigate
 from utils.screenshot_helpers import save_error_screenshot
 
 logger = logging.getLogger("farm_v2.manager")
+
+
+def _ensure_work_active(d: "uiauto.Device") -> None:
+    """Open work panel, check if 打工 is running. If not, start it."""
+    from farm_v2.config import COORD, TIMING
+    from farm_v2.operations.base import click_with_jitter, wait_jitter
+
+    click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
+    time.sleep(wait_jitter(TIMING["very_long"]))
+
+    started = img_tools.wait_for_any_text(
+        d, ["開始打工", "开始打工"],
+        timeout=3, click_if_found=True,
+    )
+    if started:
+        logger.info("打工未啟動，已自動開始打工")
+        time.sleep(wait_jitter(TIMING["long"]))
+        return
+
+    cancel_visible = img_tools.wait_for_any_text(
+        d, ["取消打工"],
+        timeout=2, click_if_found=False,
+    )
+    if cancel_visible:
+        logger.info("打工已在執行中")
+    else:
+        logger.warning("無法確認打工狀態")
+
+    # close work panel via X button
+    click_with_jitter(d, COORD["close"][0], COORD["close"][1], jitter=5)
+    time.sleep(wait_jitter(TIMING["medium"]))
 
 
 def _predict_stage(cnn_model, pil_img):
@@ -91,14 +123,6 @@ def navigate_to_home(
     return max(0.0, 3.0 - elapsed)
 
 
-def should_do_weekly_card(time_manager) -> bool:
-    """檢查今天是否需要執行每週卡片"""
-    import time
-
-    weekday = time.localtime().tm_wday
-    return weekday in WEEKLY_CARD_DAYS
-
-
 def farm(
     d: "uiauto.Device",
     device_ip: str,
@@ -126,21 +150,30 @@ def farm(
 
     save_time += navigate_to_farm(d, cnn_model, device_ip=device_ip)
 
+    # Daily check: ensure work (打工) is active
+    _ensure_work_active(d)
+
+    # After ensuring work, check current state for planting decisions
+    is_working = check_if_parttime(d)
+    if is_working:
+        logger.info("打工中，跳過種植相關操作，僅收菜")
+
     seed_record = time_manager.get_time_record("farm_seed_purchase")
     should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
 
-    if should_buy_seed:
+    if should_buy_seed and not is_working:
         logger.info("需要購買種子")
         buy_seed(d)
         time_manager.record_time("farm_seed_purchase")
 
-    weekday = time.localtime().tm_wday
-    if weekday in WEEKLY_CARD_DAYS:
-        is_same_week = time_manager.is_same_week("farm_card_weekly")
-        if not is_same_week:
-            logger.info("執行每週卡片")
-            run_weekly_card(d)
-            time_manager.record_time("farm_card_weekly")
+    # Weekly harvest card flow (replaces old Mon/Wed/Fri weekly_card)
+    is_same_week = time_manager.is_same_week("farm_harvest_card")
+    if not is_same_week:
+        logger.info("執行每週豐收卡流程")
+        if run_harvest_card(d, device_ip=device_ip):
+            time_manager.record_time("farm_harvest_card")
+        else:
+            logger.warning("豐收卡流程失敗，下次醒來重試")
 
     start = time.time()
     while time.time() - start < 25:
@@ -154,7 +187,7 @@ def farm(
             time.sleep(7)
 
         current_hour = time.localtime().tm_hour
-        if current_hour >= 8:
+        if current_hour >= 8 and not is_working:
             is_same_day = time_manager.is_same_day("farm_plant_click")
             daily_count = (
                 time_manager.get_numeric_value("farm_plant_click", "count", 0)

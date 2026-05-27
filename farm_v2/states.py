@@ -17,6 +17,7 @@ class FarmState(Enum):
     WEEKLY_CARD = auto()
     HARVESTING = auto()
     RETURNING_HOME = auto()
+    HARVEST_CARD = auto()
     ERROR = auto()
 
 
