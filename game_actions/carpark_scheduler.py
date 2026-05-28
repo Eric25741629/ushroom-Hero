@@ -41,13 +41,19 @@ def run_carpark_check_if_due(d, ip: str) -> None:
         from utils.carpark_click_recorder import (
             CarparkClickRecorder, set_recorder, clear_recorder,
         )
+        from utils import pause_guard
         rec = CarparkClickRecorder(ip, run_tag="auto")
         set_recorder(rec)
+        pause_guard.bind(ip=ip, page=page)
         try:
             summary = reconcile(page, carpark_cfg)
+        except pause_guard.TaskAborted as exc:
+            logger.info(f"[{ip}] 車位檢查 aborted: {exc}")
+            return
         finally:
             rec.close()
             clear_recorder()
+            pause_guard.unbind()
     except Exception as e:
         logger.warning(f"[{ip}] 車位檢查 exception (non-fatal): {e}")
         return
