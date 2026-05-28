@@ -384,7 +384,15 @@ def play_one_game(
     log_every: int = 0,
     starting_inv: Optional[Dict[str, int]] = None,
     planner: str = "v4",
+    action_budget: Optional[int] = None,
 ) -> Dict[str, Any]:
+    """Play one game with the given planner.
+
+    ``action_budget`` (optional) caps the number of *executed actions* (digs +
+    item uses), modelling the real ~6-minute session wall clock where each
+    action costs ~7-8 s (screenshot + classify + execute). ``None`` = uncapped
+    (original behaviour, terminates on shovel/item exhaustion or ``max_iter``).
+    """
     plan_fn = PLANNERS[planner]
     rng = random.Random(seed) if seed is not None else random.Random()
     inv = starting_inv or {"pickaxe": 1000, "bomb": 10, "drill": 10}
@@ -399,9 +407,12 @@ def play_one_game(
     plan_calls = 0
     plan_total_ms = 0.0
     empty_plan_count = 0
+    actions_taken = 0
 
     while iter_count < max_iter:
         if sim.is_over():
+            break
+        if action_budget is not None and actions_taken >= action_budget:
             break
         board = sim.get_board()
         plan_calls += 1
@@ -422,6 +433,9 @@ def play_one_game(
             res = sim.apply_step(step)
             if not res["ok"]:
                 break
+            actions_taken += 1
+            if action_budget is not None and actions_taken >= action_budget:
+                break
             if res["scrolled"]:
                 break
 
@@ -434,14 +448,24 @@ def play_one_game(
                 f"pick={sim.inv['pickaxe']}"
             )
 
+    # Half-clear waste: pit cells dug in clusters still on-screen but never
+    # completed when the session ended (those shovels/items earned NO ore,
+    # because ore is awarded only on FULL cluster clear).
+    wasted_partial = sum(
+        c.total - len(c.cells) for c in sim.clusters if 0 < len(c.cells) < c.total
+    )
+
     return {
         "stats": sim.stats,
         "inv": dict(sim.inv),
         "init_inv": inv,
         "iters": iter_count,
+        "actions": actions_taken,
         "plan_calls": plan_calls,
         "plan_avg_ms": (plan_total_ms / plan_calls) if plan_calls else 0.0,
         "empty_plan": empty_plan_count > 0,
+        "clusters": dict(sim.stats.clusters_completed),
+        "wasted_partial": wasted_partial,
     }
 
 

@@ -55,13 +55,18 @@ SHOVEL_COST = 1.0
 # drills / 10 bombs, so items must out-price shovels (user-clarified
 # 2026-04-29: "炸彈和鑽頭比鎬子稀有很多, 不得犧牲"). Bomb > drill because
 # its 13-cell footprint is best saved for full 2×2/3×3 cluster covers.
-# DRILL=2.5 / BOMB=3.0 emerged from a (drill, bomb) sweep on the simulator —
+# DRILL=2.5 emerged from a (drill, bomb) sweep on the simulator —
 # higher drill cost forces the planner to land drills on multi-pit columns
 # (column-3-of-3×3 plays) rather than spam them on single-pit hits, which
 # improves both score and shovel cost simultaneously (planner-eval sweep
 # 2026-04-29: score 2492→2626, cost 15.6→13.0).
+# BOMB=3.5: raised from 3.0 (2026-05-27) to curb single-pit bomb usage.
+# At 3.0 a bomb on 1 pit netted +7, always profitable.  At 3.5 the
+# planner is more selective — bombs used% drops from ~38% to ~26% while
+# score stays flat (-2%). Shovel cost rises from 10.8→17 (acceptable
+# trade for preserving scarce bombs).
 DRILL_COST = 2.5
-BOMB_COST = 3.0
+BOMB_COST = 3.5
 # Game scrolls when ANY row 6 cell becomes reachable air (user-confirmed
 # 2026-04-29). One air cell is the trigger; clearing more is wasted shovels.
 FLOOR7_OPEN_BONUS = 20.0
