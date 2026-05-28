@@ -70,14 +70,12 @@ if VAPID_PRIVATE_B64 and VAPID_PRIVATE_B64.strip().startswith('-----BEGIN'):
         print(f'⚠️ Failed to convert PEM VAPID private key to base64url: {e}')
         # keep original VAPID_PRIVATE_B64 (may fail later)
 
-# Diagnostic: print info about the private key content/length
+# Diagnostic: print key lengths only (never log private key content)
 try:
     import re
     print(f'ℹ️ VAPID_PRIVATE_B64 length={len(VAPID_PRIVATE_B64)}')
     print(f'ℹ️ VAPID_PUBLIC length={len(VAPID_PUBLIC)}')
-    snippet = (VAPID_PRIVATE_B64[:60] + '...') if len(VAPID_PRIVATE_B64) > 60 else VAPID_PRIVATE_B64
-    print(f'ℹ️ VAPID_PRIVATE_B64 snippet: {repr(snippet)}')
-    if not re.match(r'^[A-Za-z0-9\-_]+$', VAPID_PRIVATE_B64):
+    if not re.match(r'^[A-Za-z0-9\\-_]+$', VAPID_PRIVATE_B64):
         print('⚠️ VAPID_PRIVATE_B64 contains non-base64url characters')
 except Exception:
     pass
@@ -110,10 +108,8 @@ if not VAPID_PUBLIC or not VAPID_PRIVATE:
         
         print('✅ Generated VAPID keys (save these for production):')
         print(f'   VAPID_PUB={VAPID_PUBLIC}')
-        print(f'   VAPID_PRI={VAPID_PRIVATE[:50]}...')
-        print('   Set as environment variables to reuse:')
-        print(f'   $env:VAPID_PUB = "{VAPID_PUBLIC}"')
-        print(f'   $env:VAPID_PRI = "{VAPID_PRIVATE[:50]}..."')
+        print(f'   VAPID_PRI=(hidden, length={len(VAPID_PRIVATE)})')
+        print('   Set VAPID_PUB and VAPID_PRI as environment variables to reuse.')
     except Exception as e:
         print(f'❌ Failed to generate VAPID keys: {e}')
         print('   Using placeholder keys (PUSH WILL NOT WORK)')
@@ -419,4 +415,5 @@ if __name__ == '__main__':
     print(f'📂 Serving web files from: {WEB_DIR}')
     if VAPID_PUBLIC == 'PLACEHOLDER_PUBLIC_KEY':
         print('⚠️  WARNING: Using placeholder VAPID keys. Generate real keys for production!')
-    app.run(host='0.0.0.0', port=PORT, debug=True)
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
+    app.run(host='127.0.0.1', port=PORT, debug=debug)

@@ -24,7 +24,7 @@ class CORSRequestHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
 
-def run(port: int = 8000, bind: str = '0.0.0.0'):
+def run(port: int = 8000, bind: str = '127.0.0.1'):
     server_address = (bind, port)
     httpd = HTTPServer(server_address, CORSRequestHandler)
     print(f"Serving HTTP on {bind} port {port} (http://{bind}:{port}/) ...")

@@ -374,6 +374,12 @@
     <div id="toast">已複製到剪貼簿</div>
 
     <script>
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
         const JSON_URL = 'car_fight.json';
         let parkingData = {};
         
@@ -644,14 +650,18 @@
                 card.style.cursor = 'pointer';
                 card.onclick = () => copyCardInfo(copyStr);
 
+                const safeSpotName = escapeHtml(spot.name);
+                const safeEndTime = escapeHtml(spot.end_time);
+                const safeAttackerShort = escapeHtml(attackerShort);
+                const spotNameForAttr = spot.name.replace(/'/g, "\\'");
                 card.innerHTML = `
-                    <button class="close-btn" onclick="event.stopPropagation(); hideSpot('${spot.name}')" title="隱藏此車位">×</button>
+                    <button class="close-btn" onclick="event.stopPropagation(); hideSpot('${spotNameForAttr}')" title="隱藏此車位">×</button>
                     <div class="spot-name">
-                        ${spot.name}
-                        <span style="font-size:0.6em; opacity:0.7;">ID: ${spot.name.replace(/[^0-9]/g, '')}</span>
+                        ${safeSpotName}
+                        <span style="font-size:0.6em; opacity:0.7;">ID: ${safeSpotName.replace(/[^0-9]/g, '')}</span>
                     </div>
-                    <div class="attacker">搶佔者: <span style="background:${statusClass === 'danger' ? '#ff3333' : '#333'}">s${attackerShort}</span></div>
-                    <div class="time-info">結束: ${spot.end_time}</div>
+                    <div class="attacker">搶佔者: <span style="background:${statusClass === 'danger' ? '#ff3333' : '#333'}">s${safeAttackerShort}</span></div>
+                    <div class="time-info">結束: ${safeEndTime}</div>
                     <div class="countdown">${statusText}</div>
                 `;
                 container.appendChild(card);
