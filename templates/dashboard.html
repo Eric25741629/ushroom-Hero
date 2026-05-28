@@ -755,6 +755,7 @@
     <!-- [暫時隱藏] <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button> -->
     <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📢 <span class="nav-label">更新公告</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
+    <a href="/fly-pet" class="nav-btn" style="text-decoration:none; color:inherit; display:flex; align-items:center;">&#x1F985; <span class="nav-label">飛寵管理</span></a>
 
   </div>
 
@@ -1476,6 +1477,22 @@
       <div class="modal-actions">
         <button class="btn btn-cancel" onclick="closeRegisterModal()">取消</button>
         <button id="regSubmitBtn" class="btn btn-save" onclick="registerAccount()">建立並開啟登入</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="liveViewModal" class="modal-overlay" onclick="if(event.target===this)closeLiveView()">
+    <div class="modal" style="max-width:600px" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        遠端畫面 / 手動接管 <span id="lvDeviceLabel" style="color:var(--text-secondary);font-size:0.8em"></span>
+      </div>
+      <div id="lvStatus" style="margin-bottom:8px;color:var(--text-secondary);font-size:0.85em">連線中…</div>
+      <div style="display:flex;justify-content:center;background:#000;border-radius:8px;overflow:hidden">
+        <canvas id="lvCanvas" width="540" height="960"
+                style="max-width:100%;height:auto;touch-action:none;cursor:crosshair"></canvas>
+      </div>
+      <div class="modal-actions" style="margin-top:14px">
+        <button class="btn btn-cancel" onclick="closeLiveView()">關閉</button>
       </div>
     </div>
   </div>
@@ -2304,7 +2321,9 @@
 
         const showWebLaunch = info.backend === 'web_h5';
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-force`;
+        const showLiveView = !!info.live_view_available;
+
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
@@ -2321,6 +2340,8 @@
             }
 
             ${showWebLaunch ? `<button class="btn btn-skip" onclick="launchWebPage('${ip}')">開啟網頁</button>` : ''}
+
+            ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
 
             <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
 
@@ -2345,8 +2366,6 @@
     }
 
 
-
-    let _existingCarpark = {};
 
     function onCarparkEnabledChange() {
       const chk = document.getElementById('chkCarparkEnabled');
@@ -2640,6 +2659,142 @@
 
     }
 
+
+    // ── 遠端畫面 / 手動接管 (CDP screencast live view) ──────────────
+    let _lvWs = null;
+    let _lvIp = null;
+    let _existingCarpark = {};
+    // Live-view decode pipeline: single-slot pending, dropping older frames if
+    // a newer one arrives before the current decode finishes. Combined with
+    // createImageBitmap (off-main-thread JPEG decode), this caps decode-queue
+    // latency and prevents click-response frames from waiting behind a backlog.
+    let _lvDecoding = false;
+    let _lvPending = null;  // latest unprocessed frame data (base64 string)
+    // Pointer-move coalescing: rAF cap (~60 Hz) so a dragging finger doesn't
+    // flood the server with 100+ events/sec during scroll/swipe.
+    let _lvMovePending = null;
+    let _lvMoveRafScheduled = false;
+
+    function openLiveView(ip) {
+      if (!ip) return;
+      _lvIp = ip;
+      const modal = document.getElementById('liveViewModal');
+      const statusEl = document.getElementById('lvStatus');
+      const label = document.getElementById('lvDeviceLabel');
+      const canvas = document.getElementById('lvCanvas');
+      const ctx = canvas.getContext('2d');
+      if (label) label.innerText = ip;
+      if (statusEl) statusEl.innerText = '連線中…';
+      modal.classList.add('active');
+
+      // 直接連 WS attach 既有 headless 瀏覽器的畫面 (伺服器端會暫停自動化以利手動接管,
+      // 關閉後自動恢復)。不呼叫 web_launch，避免重新導頁造成遊戲重新登入。
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const ws = new WebSocket(`${proto}://${location.host}/ws/live_view/${ip}`);
+      _lvWs = ws;
+      // Binary frames arrive as Blob so createImageBitmap can consume directly.
+      // 'blob' is the default in modern browsers; set explicitly for clarity.
+      ws.binaryType = 'blob';
+      ws.onopen = () => { if (statusEl) statusEl.innerText = '已連線，等待畫面…'; };
+      ws.onclose = () => { if (statusEl && _lvWs === ws) statusEl.innerText = '連線已關閉'; };
+      ws.onerror = () => { if (statusEl) statusEl.innerText = '連線錯誤'; };
+      async function decodeAndDraw(blob) {
+        // blob is already a Blob of JPEG bytes (binary WS frame). No base64
+        // decode needed on the client; createImageBitmap goes straight from
+        // the Blob to a directly-blittable bitmap (off-main-thread decode).
+        const bitmap = await createImageBitmap(blob);
+        try {
+          if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+          }
+          ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        } finally {
+          bitmap.close();
+        }
+      }
+
+      async function drainPending() {
+        // Loop: while there's a pending frame, decode it. New frames arriving
+        // mid-decode replace _lvPending (drop-old). _lvDecoding gates re-entry.
+        try {
+          while (_lvPending !== null) {
+            const blob = _lvPending;
+            _lvPending = null;
+            try {
+              await decodeAndDraw(blob);
+            } catch (e) {
+              // decode error; continue with next pending frame
+            }
+          }
+        } finally {
+          _lvDecoding = false;
+        }
+      }
+
+      ws.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          // Control messages (ready / error) still arrive as JSON text frames.
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch (e) { return; }
+          if (msg.type === 'ready') {
+            if (statusEl) statusEl.innerText = '已就緒，等待畫面…';
+          } else if (msg.type === 'error') {
+            if (statusEl) statusEl.innerText = '錯誤: ' + (msg.message || '');
+          }
+          return;
+        }
+        // Binary frame: ev.data is a Blob (JPEG bytes). Drop-old: overwrite
+        // any prior unprocessed frame; kick off the decode loop if idle.
+        _lvPending = ev.data;
+        if (statusEl && statusEl.innerText !== '直播中') statusEl.innerText = '直播中';
+        if (!_lvDecoding) {
+          _lvDecoding = true;
+          drainPending();  // async, returns promise we don't await
+        }
+      };
+
+      // 3) 滑鼠/觸控輸入轉送 (正規化座標，伺服器換算成 CSS px)
+      function sendMouse(action, e) {
+        if (!_lvWs || _lvWs.readyState !== WebSocket.OPEN) return;
+        const rect = canvas.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const nx = (e.clientX - rect.left) / rect.width;
+        const ny = (e.clientY - rect.top) / rect.height;
+        _lvWs.send(JSON.stringify({ type: 'mouse', action, nx, ny }));
+      }
+      function flushPointerMove() {
+        _lvMoveRafScheduled = false;
+        const ev = _lvMovePending;
+        _lvMovePending = null;
+        if (ev) sendMouse('move', ev);
+      }
+      canvas.onpointerdown = (e) => { e.preventDefault(); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} sendMouse('down', e); };
+      canvas.onpointermove = (e) => {
+        if (!e.buttons) return;
+        // Coalesce to rAF (~60 Hz cap). Native pointer rate is 60-120 Hz and
+        // hi-DPI touch can fire >200 events/sec; without this throttle each
+        // event becomes a CDP Input.dispatchMouseEvent and serializes behind
+        // the screencast ack lock.
+        _lvMovePending = { clientX: e.clientX, clientY: e.clientY };
+        if (!_lvMoveRafScheduled) {
+          _lvMoveRafScheduled = true;
+          requestAnimationFrame(flushPointerMove);
+        }
+      };
+      canvas.onpointerup   = (e) => { e.preventDefault(); sendMouse('up', e); };
+    }
+
+    function closeLiveView() {
+      const modal = document.getElementById('liveViewModal');
+      if (modal) modal.classList.remove('active');
+      const ip = _lvIp;
+      if (_lvWs) { try { _lvWs.close(); } catch (e) {} _lvWs = null; }
+      _lvIp = null;
+      // Belt-and-suspenders: explicitly unset pause via HTTP so the bot resumes
+      // even if the WS close frame is not cleanly detected server-side.
+      if (ip) fetch(`/api/live_view/${ip}/stop`, { method: 'POST' }).catch(() => {});
+    }
 
 
     async function openSettings(ip) {

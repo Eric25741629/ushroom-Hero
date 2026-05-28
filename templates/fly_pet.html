@@ -1,0 +1,1280 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>飛寵管理 - 菇勇者全自動掛機</title>
+  <style>
+    :root {
+      --bg: #0f0f0f;
+      --surface: #1a1a1a;
+      --surface2: #222;
+      --surface3: #2a2a2a;
+      --border: #333;
+      --text: #e0e0e0;
+      --text2: #999;
+      --accent: #66bb6a;
+      --accent-h: #81c784;
+      --danger: #ef5350;
+      --danger-h: #e53935;
+      --warn: #ffa726;
+
+      --eq1: #64b5f6;
+      --eq2: #ffd54f;
+      --eq3: #42a5f5;
+      --eq4: #ef5350;
+      --eq5: #7e57c2;
+      --eq6: #e040fb;
+      --eq7: #26a69a;
+
+      --pq0: #999;
+      --pq1: #64b5f6;
+      --pq2: #ce93d8;
+      --pq3: #ffd54f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+
+    /* Layout */
+    .topbar {
+      position: sticky; top: 0; z-index: 100;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    }
+    .topbar h1 { font-size: 1.15em; font-weight: 600; white-space: nowrap; }
+    .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .topbar a { color: var(--text2); text-decoration: none; font-size: 0.82em; }
+    .topbar a:hover { color: var(--text); }
+    .main { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+
+    /* Controls */
+    select, input[type="text"], input[type="number"] {
+      background: var(--surface3); border: 1px solid var(--border); color: var(--text);
+      padding: 6px 10px; border-radius: 5px; font-size: 0.88em; outline: none;
+    }
+    select:focus, input:focus { border-color: var(--accent); }
+    .btn {
+      padding: 6px 14px; border: none; border-radius: 5px; font-size: 0.85em;
+      cursor: pointer; font-weight: 500; transition: background 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #111; }
+    .btn-primary:hover { background: var(--accent-h); }
+    .btn-danger { background: var(--danger); color: #fff; }
+    .btn-danger:hover { background: var(--danger-h); }
+    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
+    .btn-sm { padding: 4px 10px; font-size: 0.8em; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Preset filter toggles */
+    .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+    .preset-toggle {
+      padding: 5px 14px; border-radius: 20px; font-size: 0.82em; cursor: pointer;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--text2);
+      transition: all 0.15s; user-select: none;
+    }
+    .preset-toggle.active { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+    .preset-toggle:hover:not(.active) { background: var(--surface3); color: var(--text); }
+    .preset-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
+
+    /* Stats */
+    .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+    .stat { font-size: 0.82em; color: var(--text2); }
+    .stat b { color: var(--accent); margin-left: 2px; }
+
+    /* Advanced filter */
+    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 12px; font-size: 0.78em;
+      background: var(--surface3); border: 1px solid var(--border);
+    }
+    .chip-x { cursor: pointer; color: var(--text2); font-weight: bold; margin-left: 2px; }
+    .chip-x:hover { color: var(--danger); }
+
+    /* Table */
+    .tbl-wrap { overflow-x: auto; margin-bottom: 16px; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+    thead { position: sticky; top: 0; z-index: 2; }
+    th { background: var(--surface); padding: 8px 10px; text-align: left; font-weight: 600; font-size: 0.8em; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--text); }
+    th.sortable .sort-arrow { font-size: 0.7em; margin-left: 3px; color: var(--accent); }
+    td { padding: 7px 10px; border-bottom: 1px solid #1f1f1f; vertical-align: middle; }
+    tr:hover td { background: var(--surface2); }
+    tr.selected td { background: rgba(102,187,106,0.08); }
+    .col-ck { width: 32px; text-align: center; }
+    .col-sm { width: 50px; text-align: center; }
+    .col-ops { width: 110px; text-align: center; }
+
+    /* Entry chip */
+    .ec {
+      display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 0.8em;
+      margin: 1px 2px; white-space: nowrap;
+    }
+    .ec-1 { background: rgba(100,181,246,0.12); color: var(--eq1); }
+    .ec-2 { background: rgba(255,213,79,0.15); color: var(--eq2); }
+    .ec-3 {
+      position: relative; font-weight: 600;
+      background: linear-gradient(135deg, #42a5f5, #ce93d8);
+      -webkit-background-clip: text; background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .ec-3::before {
+      content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: -1;
+      background: linear-gradient(135deg, rgba(66,165,245,0.13), rgba(206,147,216,0.13));
+    }
+    .ec-4 { background: rgba(239,83,80,0.15); color: var(--eq4); text-decoration: line-through; }
+    .ec-5 { background: rgba(126,87,194,0.15); color: var(--eq5); }
+    .ec-6 { background: rgba(224,64,251,0.15); color: var(--eq6); font-weight: 600; }
+    .ec-7 { background: rgba(38,166,154,0.15); color: var(--eq7); }
+
+    /* Pet quality badge */
+    .pq { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 0.78em; font-weight: 600; }
+    .pq-0 { background: rgba(153,153,153,0.15); color: var(--pq0); }
+    .pq-1 { background: rgba(100,181,246,0.15); color: var(--pq1); }
+    .pq-2 { background: rgba(206,147,216,0.15); color: var(--pq2); }
+    .pq-3 { background: rgba(255,213,79,0.18); color: var(--pq3); }
+
+    /* Action bar */
+    .action-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .sel-count { font-size: 0.82em; color: var(--text2); }
+
+    /* Section card */
+    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+    .section-title { font-size: 0.95em; font-weight: 600; margin-bottom: 10px; }
+    .section-sub { font-size: 0.82em; color: var(--text2); margin-bottom: 8px; }
+    .collapse-hdr { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+    .collapse-hdr .arrow { color: var(--text2); font-size: 0.75em; transition: transform 0.2s; }
+    .collapse-hdr.open .arrow { transform: rotate(90deg); }
+    .collapse-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
+    .collapse-body.open { max-height: 2000px; }
+
+    /* Breed grid */
+    .breed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
+    .breed-slot { background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.85em; }
+
+    /* Friend pets */
+    .friend-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .friend-card { background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+    .friend-card-hdr { font-weight: 600; font-size: 0.88em; margin-bottom: 6px; }
+
+    /* Toast */
+    .toast-box { position: fixed; top: 16px; right: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 6px; }
+    .toast {
+      padding: 8px 16px; border-radius: 6px; font-size: 0.82em; color: #fff;
+      animation: toastIn 0.2s ease; min-width: 200px;
+    }
+    .toast-ok { background: #2e7d32; }
+    .toast-err { background: #c62828; }
+    .toast-info { background: #37474f; }
+    @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Modal */
+    .modal-bg {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+      z-index: 8000; justify-content: center; align-items: center;
+    }
+    .modal-bg.show { display: flex; }
+    .modal {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 22px; min-width: 340px; max-width: 440px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    }
+    .modal h3 { margin-bottom: 10px; font-size: 1em; }
+    .modal p { color: var(--text2); font-size: 0.88em; margin-bottom: 18px; white-space: pre-line; }
+    .modal-btns { display: flex; justify-content: flex-end; gap: 8px; }
+
+    /* Empty */
+    .empty { text-align: center; padding: 40px 20px; color: var(--text2); font-size: 0.9em; }
+
+    /* Auto-breed */
+    .ab-panel { border-top: 1px solid var(--border); margin-top: 14px; padding-top: 12px; }
+    .ab-slot { background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 8px; }
+    .ab-slot.active { border-color: var(--accent); }
+    .ab-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 0.82em; }
+    .ab-row + .ab-row { margin-top: 6px; }
+    .ab-status { font-size: 0.78em; padding: 2px 8px; border-radius: 10px; }
+    .ab-status-idle { background: rgba(153,153,153,0.15); color: var(--text2); }
+    .ab-status-breeding { background: rgba(255,167,38,0.15); color: var(--warn); }
+    .ab-status-ready { background: rgba(102,187,106,0.15); color: var(--accent); }
+    .ab-status-error { background: rgba(239,83,80,0.15); color: var(--danger); }
+    .ab-status-off { background: transparent; color: #555; }
+    .ab-log { font-size: 0.72em; color: #666; max-height: 60px; overflow-y: auto; margin-top: 4px; line-height: 1.4; }
+    .ab-log div { border-bottom: 1px solid #1a1a1a; padding: 1px 0; }
+    .ab-controls { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+
+    @media (max-width: 768px) {
+      .topbar { padding: 8px 12px; }
+      .main { padding: 10px 12px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="toast-box" id="toasts"></div>
+
+<div class="modal-bg" id="modalBg">
+  <div class="modal">
+    <h3 id="modalTitle"></h3>
+    <p id="modalMsg"></p>
+    <div class="modal-btns">
+      <button class="btn btn-ghost" onclick="hideModal()">取消</button>
+      <button class="btn btn-danger" id="modalOk">確認</button>
+    </div>
+  </div>
+</div>
+
+<!-- Top bar -->
+<div class="topbar">
+  <h1>飛寵管理</h1>
+  <select id="devSel">
+    <option value="emulator-5554">emulator-5554</option>
+    <option value="emulator-5556">emulator-5556</option>
+    <option value="7fe98fc6">7fe98fc6</option>
+  </select>
+  <button class="btn btn-primary" id="loadBtn" onclick="doLoad()">載入</button>
+  <button class="btn btn-ghost btn-sm" id="launchBtn" onclick="doLaunch()" style="display:none;">啟動瀏覽器</button>
+  <span id="loadMsg" style="font-size:0.82em; color:var(--text2);"></span>
+  <div class="topbar-right">
+    <a href="/">返回中控面板</a>
+    <a href="/fly-pet/logout">登出</a>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- Initial -->
+<div class="empty" id="initMsg">選擇裝置後點擊「載入」</div>
+
+<!-- Content (hidden until load) -->
+<div id="content" style="display:none;">
+
+  <!-- Pet list section (collapsible, default collapsed) -->
+  <div class="section">
+    <div class="collapse-hdr" onclick="toggleCollapse('petlist')">
+      <span class="section-title" style="margin:0;">飛寵列表 <span style="font-weight:400;font-size:0.82em;color:var(--text2);" id="petlistSummary"></span></span>
+      <span class="arrow" id="petlistArrow">&#9654;</span>
+    </div>
+    <div class="collapse-body" id="petlistBody">
+      <div style="margin-top:10px;">
+
+  <!-- Stats -->
+  <div class="stats" id="statsRow">
+    <span class="stat">全部 <b id="sTotal">0</b></span>
+    <span class="stat">出戰 <b id="sFight">0</b></span>
+    <span class="stat">鎖定 <b id="sLocked">0</b></span>
+    <span class="stat">篩選 <b id="sFiltered">0</b></span>
+  </div>
+
+  <!-- Preset filters -->
+  <div class="preset-bar">
+    <span style="font-size:0.82em; color:var(--text2); margin-right:4px;">快捷篩選</span>
+    <div class="preset-toggle active" data-preset="4entry" onclick="togglePreset(this)">4詞條</div>
+    <div class="preset-toggle active" data-preset="mutant" onclick="togglePreset(this)">變異詞條</div>
+    <div class="preset-toggle active" data-preset="work" onclick="togglePreset(this)">工作詞條</div>
+    <div class="preset-sep"></div>
+    <div class="preset-toggle" data-preset="epic" onclick="togglePreset(this)">史詩詞條</div>
+    <div class="preset-toggle" data-preset="negative" onclick="togglePreset(this)">負面詞條</div>
+    <div class="preset-toggle" data-preset="all" onclick="togglePreset(this)">全部</div>
+  </div>
+
+  <!-- Advanced filter -->
+  <div class="filter-row">
+    <select id="fType" onchange="updateFVals()">
+      <option value="entry_name">詞條名稱</option>
+      <option value="entry_quality">詞條品質</option>
+      <option value="pet_quality">飛寵品質</option>
+      <option value="min_entries">最少詞條數</option>
+    </select>
+    <select id="fVal"><option value="">--</option></select>
+    <button class="btn btn-ghost btn-sm" onclick="addAdvFilter()">新增</button>
+    <button class="btn btn-ghost btn-sm" onclick="clearAdvFilters()">清除</button>
+    <div id="chips" style="display:inline-flex; gap:4px; flex-wrap:wrap;"></div>
+  </div>
+
+  <!-- Action bar -->
+  <div class="action-row">
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85em;">
+      <input type="checkbox" id="ckAll" onchange="toggleAll()"> 全選
+    </label>
+    <span class="sel-count" id="selCount">已選 0</span>
+    <button class="btn btn-danger btn-sm" onclick="doSell()">分解選中</button>
+  </div>
+
+  <!-- Table -->
+  <div class="tbl-wrap">
+    <table>
+      <thead><tr>
+        <th class="col-ck"><input type="checkbox" id="ckAllH" onchange="toggleAll()"></th>
+        <th class="col-sm">出戰</th>
+        <th>名稱</th>
+        <th class="sortable" onclick="doSort('quality')">品質<span class="sort-arrow" id="sort-quality"></span></th>
+        <th class="sortable" onclick="doSort('generation')">代數<span class="sort-arrow" id="sort-generation"></span></th>
+        <th class="sortable" onclick="doSort('growth')">成長<span class="sort-arrow" id="sort-growth"></span></th>
+        <th class="sortable" onclick="doSort('level')">等級<span class="sort-arrow" id="sort-level"></span></th>
+        <th class="sortable" onclick="doSort('entries')">詞條<span class="sort-arrow" id="sort-entries"></span></th>
+        <th class="col-sm">鎖</th>
+        <th class="col-ops">操作</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="empty" id="emptyMsg" style="display:none;">沒有符合條件的飛寵</div>
+
+      </div><!-- /inner -->
+    </div><!-- /petlistBody -->
+  </div><!-- /pet list section -->
+
+  <!-- Breed section (default expanded) -->
+  <div class="section">
+    <div class="collapse-hdr open" onclick="toggleCollapse('breed')">
+      <span class="section-title" style="margin:0;">交配繁殖</span>
+      <span class="arrow" id="breedArrow">&#9654;</span>
+    </div>
+    <div class="collapse-body open" id="breedBody">
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn btn-ghost btn-sm" onclick="loadBreed()">載入繁殖池</button>
+        <button class="btn btn-ghost btn-sm" onclick="doShelve('place')">上架選中</button>
+        <button class="btn btn-ghost btn-sm" onclick="doShelve('remove')">下架選中</button>
+        <button class="btn btn-ghost btn-sm" onclick="discoverMethods()" style="color:#555;font-size:0.72em;">探索方法</button>
+      </div>
+      <div class="breed-grid" id="breedGrid"><div style="color:var(--text2);font-size:0.85em;padding:8px;">點擊「載入繁殖池」</div></div>
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <div class="section-sub">開始交配</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <label style="font-size:0.8em;color:var(--text2);">巢穴</label>
+          <input type="number" id="bBase" style="width:80px;" placeholder="ID">
+          <label style="font-size:0.8em;color:var(--text2);">飛寵A</label>
+          <input type="number" id="bFlyA" style="width:80px;" placeholder="ID">
+          <label style="font-size:0.8em;color:var(--text2);">飛寵B</label>
+          <input type="number" id="bFlyB" style="width:80px;" placeholder="ID">
+          <button class="btn btn-primary btn-sm" onclick="doBreed()">交配</button>
+        </div>
+      </div>
+      <!-- Auto-breed panel -->
+      <div class="ab-panel">
+        <div class="section-sub" style="margin-bottom:8px;">自動繁殖</div>
+        <div class="ab-controls">
+          <button class="btn btn-primary btn-sm" id="abStartBtn" onclick="startAutoBreed()">啟動自動繁殖</button>
+          <button class="btn btn-danger btn-sm" id="abStopBtn" onclick="stopAutoBreed()" style="display:none;">停止</button>
+          <span id="abGlobalStatus" style="font-size:0.78em;color:var(--text2);"></span>
+        </div>
+        <div id="abSlots"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Friends section -->
+  <div class="section">
+    <div class="collapse-hdr" onclick="toggleCollapse('friends')">
+      <span class="section-title" style="margin:0;">好友飛寵</span>
+      <span class="arrow" id="friendsArrow">&#9654;</span>
+    </div>
+    <div class="collapse-body" id="friendsBody">
+      <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+        <button class="btn btn-ghost btn-sm" id="loadFriendsBtn" onclick="doLoadAllFriends()">載入全部好友飛寵</button>
+        <span id="friendsProgress" style="font-size:0.82em;color:var(--text2);"></span>
+      </div>
+      <div id="friendsResult"></div>
+    </div>
+  </div>
+
+</div><!-- /content -->
+</div><!-- /main -->
+
+<script>
+var EQ = {1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
+var PQ = {0:'白',1:'藍',2:'紫',3:'金'};
+var allPets = [], filtered = [], selected = new Set(), entryNames = new Set();
+var sortCol = null, sortAsc = true;
+var presets = {
+  '4entry': true, 'mutant': true, 'work': true,
+  'epic': false, 'negative': false, 'all': false
+};
+var advFilters = [];
+var confirmFn = null;
+
+function ip() { return document.getElementById('devSel').value; }
+function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// Toast
+function toast(msg, type) {
+  var el = document.createElement('div');
+  el.className = 'toast toast-' + (type || 'info');
+  el.textContent = msg;
+  document.getElementById('toasts').appendChild(el);
+  setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 3500);
+}
+
+// Modal
+function showModal(title, msg, fn) {
+  document.getElementById('modalTitle').textContent = title;
+  document.getElementById('modalMsg').textContent = msg;
+  confirmFn = fn;
+  document.getElementById('modalBg').classList.add('show');
+}
+function hideModal() { document.getElementById('modalBg').classList.remove('show'); confirmFn = null; }
+document.getElementById('modalOk').onclick = function() { if (confirmFn) confirmFn(); hideModal(); };
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') hideModal(); });
+
+// Loading state
+function setLoading(btn, on) {
+  if (on) { btn.disabled = true; btn._h = btn.innerHTML; btn.innerHTML = '<span class="spinner"></span> ...'; }
+  else { btn.disabled = false; if (btn._h) btn.innerHTML = btn._h; }
+}
+
+// Entry chip HTML
+function ecHTML(e) {
+  if (!e) return '<span style="color:#444;">--</span>';
+  var q = e.quality || 1;
+  var tip = e.desc || '';
+  return '<span class="ec ec-' + q + '" title="' + esc(tip) + '">' + esc(e.name) + ' <small>' + (EQ[q]||'') + '</small></span>';
+}
+function pqHTML(q) { return '<span class="pq pq-' + q + '">' + (PQ[q]||'Q'+q) + '</span>'; }
+
+// ---- Preset filters ----
+function togglePreset(el) {
+  var key = el.dataset.preset;
+  if (key === 'all') {
+    var wasAll = presets.all;
+    for (var k in presets) presets[k] = false;
+    if (!wasAll) presets.all = true;
+  } else {
+    presets.all = false;
+    presets[key] = !presets[key];
+  }
+  syncPresetUI();
+  applyFilters();
+}
+
+function syncPresetUI() {
+  document.querySelectorAll('.preset-toggle').forEach(function(el) {
+    var k = el.dataset.preset;
+    el.classList.toggle('active', !!presets[k]);
+  });
+}
+
+function matchesPresets(pet) {
+  if (presets.all) return true;
+  var any = false;
+  for (var k in presets) if (presets[k]) any = true;
+  if (!any) return true;
+
+  var entries = pet.entries || [];
+  if (presets['4entry'] && entries.length >= 4) return true;
+  if (presets['mutant'] && entries.some(function(e) { return e.quality === 6; })) return true;
+  if (presets['work'] && entries.some(function(e) { return e.quality === 7; })) return true;
+  if (presets['epic'] && entries.some(function(e) { return e.quality === 3; })) return true;
+  if (presets['negative'] && entries.some(function(e) { return e.quality === 4; })) return true;
+  return false;
+}
+
+// ---- Advanced filter ----
+function updateFVals() {
+  var t = document.getElementById('fType').value;
+  var sel = document.getElementById('fVal');
+  sel.innerHTML = '';
+  if (t === 'entry_name') {
+    Array.from(entryNames).sort().forEach(function(n) {
+      var o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
+    });
+  } else if (t === 'entry_quality') {
+    for (var i = 1; i <= 7; i++) {
+      var o = document.createElement('option'); o.value = i; o.textContent = i + ' - ' + EQ[i]; sel.appendChild(o);
+    }
+  } else if (t === 'pet_quality') {
+    for (var i = 0; i <= 3; i++) {
+      var o = document.createElement('option'); o.value = i; o.textContent = i + ' - ' + PQ[i]; sel.appendChild(o);
+    }
+  } else if (t === 'min_entries') {
+    [1,2,3,4,5].forEach(function(n) {
+      var o = document.createElement('option'); o.value = n; o.textContent = '>= ' + n; sel.appendChild(o);
+    });
+  }
+}
+
+function addAdvFilter() {
+  var t = document.getElementById('fType').value;
+  var v = document.getElementById('fVal').value;
+  if (!v && v !== '0') return;
+  if (advFilters.some(function(f) { return f.t === t && f.v === v; })) return;
+  advFilters.push({t: t, v: v});
+  renderChips();
+  applyFilters();
+}
+function removeAdvFilter(i) { advFilters.splice(i, 1); renderChips(); applyFilters(); }
+function clearAdvFilters() { advFilters = []; renderChips(); applyFilters(); }
+
+function renderChips() {
+  var c = document.getElementById('chips');
+  c.innerHTML = '';
+  advFilters.forEach(function(f, i) {
+    var label = '';
+    if (f.t === 'entry_name') label = '詞條: ' + f.v;
+    else if (f.t === 'entry_quality') label = '詞條品質: ' + (EQ[f.v] || f.v);
+    else if (f.t === 'pet_quality') label = '飛寵品質: ' + (PQ[f.v] || f.v);
+    else if (f.t === 'min_entries') label = '詞條數 >= ' + f.v;
+    c.innerHTML += '<span class="chip">' + esc(label) + ' <span class="chip-x" onclick="removeAdvFilter('+i+')">&times;</span></span>';
+  });
+}
+
+function matchesAdvanced(pet) {
+  if (advFilters.length === 0) return true;
+  return advFilters.every(function(f) {
+    if (f.t === 'pet_quality') return String(pet.quality) === String(f.v);
+    if (f.t === 'entry_name') return (pet.entries||[]).some(function(e) { return e.name === f.v; });
+    if (f.t === 'entry_quality') return (pet.entries||[]).some(function(e) { return String(e.quality) === String(f.v); });
+    if (f.t === 'min_entries') return (pet.entries||[]).length >= parseInt(f.v);
+    return true;
+  });
+}
+
+// ---- Sort ----
+function doSort(col) {
+  if (sortCol === col) { sortAsc = !sortAsc; }
+  else { sortCol = col; sortAsc = false; }
+  syncSortUI();
+  applyFilters();
+}
+function syncSortUI() {
+  ['quality','generation','growth','level','entries'].forEach(function(c) {
+    var el = document.getElementById('sort-' + c);
+    if (el) el.textContent = (sortCol === c) ? (sortAsc ? '▲' : '▼') : '';
+  });
+}
+function sortFiltered() {
+  if (!sortCol) return;
+  var key = sortCol;
+  filtered.sort(function(a, b) {
+    var va, vb;
+    if (key === 'entries') { va = (a.entries||[]).length; vb = (b.entries||[]).length; }
+    else { va = a[key] || 0; vb = b[key] || 0; }
+    return sortAsc ? (va - vb) : (vb - va);
+  });
+}
+
+// ---- Combined filter ----
+function applyFilters() {
+  filtered = allPets.filter(function(p) { return matchesPresets(p) && matchesAdvanced(p); });
+  sortFiltered();
+  var vis = new Set(filtered.map(function(p) { return p.id; }));
+  selected.forEach(function(id) { if (!vis.has(id)) selected.delete(id); });
+  renderTable();
+  updateStats();
+  updateSelCount();
+}
+
+// ---- Table ----
+function renderTable() {
+  var tbody = document.getElementById('tbody');
+  var empt = document.getElementById('emptyMsg');
+  if (filtered.length === 0) { tbody.innerHTML = ''; empt.style.display = 'block'; return; }
+  empt.style.display = 'none';
+  var html = '';
+  filtered.forEach(function(p) {
+    var ck = selected.has(p.id) ? ' checked' : '';
+    var rc = selected.has(p.id) ? ' class="selected"' : '';
+    var fight = p.fight === 1 ? '<span style="color:var(--warn);" title="出戰中">&#9733;</span>' : '';
+    var lock = p.lock ? '<span title="已鎖定 (lock=' + p.lock + ')" style="color:var(--warn);">&#128274;</span>' : '<span style="color:#444;">&#128275;</span>';
+    var entries = (p.entries || []).map(function(e) { return ecHTML(e); }).join(' ');
+    if (!entries) entries = '<span style="color:#444;">--</span>';
+    var name = p.display_name || p.name || '(?)';
+    var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
+
+    html += '<tr' + rc + ' data-id="' + p.id + '">' +
+      '<td class="col-ck"><input type="checkbox" onchange="toggleSel(' + p.id + ',this)"' + ck + '></td>' +
+      '<td class="col-sm">' + fight + '</td>' +
+      '<td>' + esc(name) + '</td>' +
+      '<td>' + pqHTML(p.quality) + '</td>' +
+      '<td style="text-align:center;">' + (p.generation || 0) + '</td>' +
+      '<td style="text-align:center;">' + growth + '</td>' +
+      '<td style="text-align:center;">' + (p.level || 0) + '</td>' +
+      '<td>' + entries + '</td>' +
+      '<td class="col-sm">' + lock + '</td>' +
+      '<td class="col-ops" style="white-space:nowrap;">' +
+        '<button class="btn btn-ghost btn-sm" onclick="doSellOne(' + p.id + ')" title="分解">X</button> ' +
+        '<button class="btn btn-ghost btn-sm" onclick="setBreedPet(\'A\',' + p.id + ')" title="設為交配A" style="color:var(--eq2);">A</button> ' +
+        '<button class="btn btn-ghost btn-sm" onclick="setBreedPet(\'B\',' + p.id + ')" title="設為交配B" style="color:var(--eq6);">B</button>' +
+      '</td>' +
+      '</tr>';
+  });
+  tbody.innerHTML = html;
+}
+
+// ---- Selection ----
+function toggleSel(id, cb) {
+  if (cb.checked) selected.add(id); else selected.delete(id);
+  var row = cb.closest('tr');
+  if (row) row.classList.toggle('selected', cb.checked);
+  updateSelCount();
+  syncAllCk();
+}
+function toggleAll() {
+  var ck = document.getElementById('ckAll').checked || document.getElementById('ckAllH').checked;
+  document.getElementById('ckAll').checked = ck;
+  document.getElementById('ckAllH').checked = ck;
+  if (ck) filtered.forEach(function(p) { selected.add(p.id); });
+  else filtered.forEach(function(p) { selected.delete(p.id); });
+  renderTable(); updateSelCount();
+}
+function syncAllCk() {
+  var all = filtered.length > 0 && filtered.every(function(p) { return selected.has(p.id); });
+  document.getElementById('ckAll').checked = all;
+  document.getElementById('ckAllH').checked = all;
+}
+function updateSelCount() { document.getElementById('selCount').textContent = '已選 ' + selected.size; }
+function updateStats() {
+  document.getElementById('sTotal').textContent = allPets.length;
+  document.getElementById('sFight').textContent = allPets.filter(function(p) { return p.fight===1; }).length;
+  document.getElementById('sLocked').textContent = allPets.filter(function(p) { return p.lock; }).length;
+  document.getElementById('sFiltered').textContent = filtered.length;
+  var el = document.getElementById('petlistSummary');
+  if (el) el.textContent = '(' + allPets.length + ' 隻, 篩選 ' + filtered.length + ')';
+}
+
+// ---- API helpers ----
+async function apiGet(url) {
+  var r = await fetch(url);
+  if (r.status === 401) { window.location.href = '/fly-pet/login'; throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  var d = await r.json();
+  if (d.status !== 'ok') throw new Error(d.message || 'error');
+  return d;
+}
+async function apiPost(url, body) {
+  var r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  if (r.status === 401) { window.location.href = '/fly-pet/login'; throw new Error('unauthorized'); }
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  var d = await r.json();
+  if (d.status !== 'ok') throw new Error(d.message || 'error');
+  return d;
+}
+
+// ---- Connection check ----
+async function checkConnection() {
+  try {
+    var r = await fetch('/api/fly_pet_check_connection/' + encodeURIComponent(ip()));
+    if (r.status === 404) return {connected: true, _fallback: true};
+    if (r.status === 401) { window.location.href = '/fly-pet/login'; return {connected: false}; }
+    var d = await r.json();
+    if (d.status !== 'ok') return {connected: false, error: d.message};
+    return d.data || {};
+  } catch(e) {
+    return {connected: true, _fallback: true};
+  }
+}
+
+async function checkBotRunning() {
+  try {
+    var r = await fetch('/api/fly_pet_bot_status/' + encodeURIComponent(ip()));
+    if (r.status === 404) return {bot_running: false, _fallback: true};
+    if (r.status === 401) { window.location.href = '/fly-pet/login'; return {bot_running: false}; }
+    var d = await r.json();
+    if (d.status !== 'ok') return {bot_running: false};
+    return d;
+  } catch(e) {
+    return {bot_running: false, _fallback: true};
+  }
+}
+
+// ---- Launch browser ----
+async function doLaunch() {
+  var btn = document.getElementById('launchBtn');
+  setLoading(btn, true);
+  toast('正在啟動瀏覽器...', 'info');
+  try {
+    var r = await fetch('/api/web_launch/' + encodeURIComponent(ip()), {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({})
+    });
+    var d = await r.json();
+    if (d.status === 'ok') {
+      toast('已發送啟動請求，等待遊戲載入...', 'ok');
+      document.getElementById('loadMsg').textContent = '等待遊戲載入 (約 15-30 秒)...';
+      setTimeout(function() { doLoad(); }, 20000);
+    } else {
+      toast('啟動失敗: ' + (d.message||''), 'err');
+    }
+  } catch(e) { toast('啟動失敗: ' + e.message, 'err'); }
+  finally { setLoading(btn, false); }
+}
+
+// ---- Load ----
+async function doLoad() {
+  var btn = document.getElementById('loadBtn');
+  var msg = document.getElementById('loadMsg');
+  var launchBtn = document.getElementById('launchBtn');
+  setLoading(btn, true);
+  msg.textContent = '檢查連線...';
+  msg.style.color = '';
+  launchBtn.style.display = 'none';
+  document.getElementById('initMsg').style.display = 'none';
+  try {
+    var botSt = await checkBotRunning();
+    if (botSt.bot_running) {
+      msg.textContent = '腳本運行中: ' + (botSt.bot_task || '') + ' - ' + (botSt.bot_step || '');
+      msg.style.color = 'var(--warn)';
+      toast('腳本正在運行「' + (botSt.bot_task||'') + '」，操作可能互相干擾', 'err');
+    }
+    var conn = await checkConnection();
+    if (!conn.connected) {
+      msg.textContent = '遊戲未連線';
+      msg.style.color = 'var(--danger)';
+      launchBtn.style.display = 'inline-block';
+      toast('遊戲未連線 -- 請先啟動瀏覽器並等待遊戲載入', 'err');
+      setLoading(btn, false);
+      return;
+    }
+    msg.textContent = '載入寵物列表...';
+    var d = await apiGet('/api/fly_pet_list/' + encodeURIComponent(ip()));
+    var pets = d.pets;
+    if (!Array.isArray(pets)) {
+      throw new Error(pets && pets.error ? pets.error : '回傳資料格式錯誤 (遊戲可能未載入)');
+    }
+    allPets = pets;
+    selected.clear();
+    entryNames.clear();
+    allPets.forEach(function(p) { (p.entries||[]).forEach(function(e) { if (e.name) entryNames.add(e.name); }); });
+    updateFVals();
+    applyFilters();
+    document.getElementById('content').style.display = 'block';
+    msg.textContent = allPets.length + ' 隻';
+    toast('載入 ' + allPets.length + ' 隻飛寵', 'ok');
+  } catch(e) {
+    msg.textContent = '失敗';
+    msg.style.color = 'var(--danger)';
+    launchBtn.style.display = 'inline-block';
+    var hint = e.message;
+    if (hint.indexOf('no CDP target') >= 0 || hint.indexOf('未載入') >= 0 || hint.indexOf('IS is not') >= 0) {
+      hint += ' -- 請先啟動瀏覽器';
+    }
+    toast('載入失敗: ' + hint, 'err');
+  } finally { setLoading(btn, false); }
+}
+
+// ---- Sell ----
+async function doSell() {
+  if (selected.size === 0) { toast('請先選擇飛寵', 'info'); return; }
+  var locked = 0, fighting = 0, safeIds = [];
+  allPets.forEach(function(p) {
+    if (!selected.has(p.id)) return;
+    if (p.lock === 1) { locked++; return; }
+    if (p.fight === 1) fighting++;
+    safeIds.push(p.id);
+  });
+  if (locked > 0) {
+    toast(locked + ' 隻已鎖定的飛寵已自動排除', 'info');
+  }
+  if (safeIds.length === 0) {
+    toast('沒有可分解的飛寵 (全部已鎖定)', 'info');
+    return;
+  }
+  var warn = [];
+  if (fighting) warn.push('包含 ' + fighting + ' 隻出戰中');
+  var extra = warn.length ? '\n' + warn.join(', ') : '';
+  showModal('確認分解', '分解 ' + safeIds.length + ' 隻飛寵？此操作無法復原。' + extra, async function() {
+    try {
+      var botSt = await checkBotRunning();
+      if (botSt.bot_running) { toast('腳本正在運行「' + (botSt.bot_task||'') + '」，請先暫停腳本再操作', 'err'); return; }
+      var d = await apiPost('/api/fly_pet_resolve/' + encodeURIComponent(ip()), {ids: safeIds});
+      var result = d.data || {};
+      if (result.ok === false) {
+        toast('分解失敗: ' + (result.message || '伺服器未回應'), 'err');
+        return;
+      }
+      toast('已分解 ' + safeIds.length + ' 隻 (剩餘 ' + (result.petCount || '?') + ')', 'ok');
+      await doLoad();
+    } catch(e) { toast('分解失敗: ' + e.message, 'err'); }
+  });
+}
+function doSellOne(id) {
+  var pet = allPets.find(function(p) { return p.id === id; });
+  if (!pet) { toast('找不到飛寵', 'err'); return; }
+  if (pet.lock === 1) { toast('此飛寵已鎖定，無法分解', 'info'); return; }
+  var name = pet.display_name || pet.name || 'ID:'+id;
+  var info = name + ' (' + (PQ[pet.quality]||'') + ', ' + (pet.entries||[]).length + '詞條)';
+  showModal('確認分解', '分解「' + info + '」？此操作無法復原。', async function() {
+    try {
+      var botSt = await checkBotRunning();
+      if (botSt.bot_running) { toast('腳本正在運行「' + (botSt.bot_task||'') + '」，請先暫停腳本再操作', 'err'); return; }
+      var d = await apiPost('/api/fly_pet_resolve/' + encodeURIComponent(ip()), {ids: [id]});
+      var result = d.data || {};
+      if (result.ok === false) {
+        toast('分解失敗: ' + (result.message || '伺服器未回應'), 'err');
+        return;
+      }
+      toast('已分解「' + name + '」(剩餘 ' + (result.petCount || '?') + ')', 'ok');
+      await doLoad();
+    } catch(e) { toast('分解失敗: ' + e.message, 'err'); }
+  });
+}
+
+// ---- Breed pet selection from table ----
+function setBreedPet(slot, petId) {
+  var body = document.getElementById('breedBody');
+  var hdr = document.getElementById('breedArrow').parentElement;
+  if (!body.classList.contains('open')) { hdr.classList.add('open'); body.classList.add('open'); }
+  if (slot === 'A') document.getElementById('bFlyA').value = petId;
+  else document.getElementById('bFlyB').value = petId;
+  var pet = allPets.find(function(p) { return p.id === petId; });
+  var name = pet ? (pet.display_name || pet.name || petId) : petId;
+  toast('已設定交配' + slot + ': ' + name + ' (ID:' + petId + ')', 'ok');
+}
+
+// ---- Collapse ----
+function toggleCollapse(key) {
+  var hdr = document.getElementById(key + 'Arrow').parentElement;
+  var body = document.getElementById(key + 'Body');
+  hdr.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+// ---- Breed ----
+async function loadBreed() {
+  var grid = document.getElementById('breedGrid');
+  grid.innerHTML = '<span class="spinner"></span>';
+  try {
+    var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
+    var data = d.data || {};
+    var homes = data.homes || [];
+    var eggs = data.egg_list || [];
+    if (!homes.length && !eggs.length) { grid.innerHTML = '<div style="color:var(--text2);font-size:0.85em;">沒有巢穴</div>'; return; }
+    var html = '';
+    homes.forEach(function(h) {
+      html += '<div class="breed-slot"><b>巢穴 #' + (h.id||'?') + '</b>';
+      var stateMap = {0:'閒置', 1:'孵化中', 2:'可領取', 3:'待孵化'};
+      var stateLabel = stateMap[h.state] || ('state=' + h.state);
+      if (h.state === 0) html += ' <span style="color:var(--text2);">' + stateLabel + '</span>';
+      else if (h.state === 1) {
+        var now = Math.floor(Date.now()/1000);
+        var remain = h.end_time > now ? Math.ceil((h.end_time - now)/60) : 0;
+        html += ' <span style="color:var(--warn);">' + stateLabel + (remain > 0 ? ' (' + remain + ' 分鐘)' : '') + '</span>';
+      }
+      else if (h.state === 2) html += ' <span style="color:var(--accent);">' + stateLabel + '</span> <button class="btn btn-primary btn-sm" onclick="doCollect(' + h.id + ')">領取</button>';
+      else if (h.state === 3) html += ' <span style="color:var(--eq6);">' + stateLabel + '</span> <button class="btn btn-primary btn-sm" onclick="doHatch(' + h.id + ')">孵化</button>';
+      else html += ' <span style="color:var(--text2);">' + stateLabel + '</span> <button class="btn btn-ghost btn-sm" onclick="doHatch(' + h.id + ')">嘗試孵化</button>';
+      var petLabel = function(p) {
+        if (!p) return '(空)';
+        return esc(p.display_name || p.name || 'ID:'+p.id) + ' ' + pqHTML(p.quality);
+      };
+      if (h.fly_a) html += '<div style="font-size:0.82em;margin-top:4px;">A: ' + petLabel(h.fly_a) + '</div>';
+      if (h.fly_b) html += '<div style="font-size:0.82em;">B: ' + petLabel(h.fly_b) + '</div>';
+      if (h.fly_pet) html += '<div style="font-size:0.82em;margin-top:2px;color:var(--accent);">結果: ' + petLabel(h.fly_pet) + '</div>';
+      if (h._raw) {
+        var extra = Object.keys(h._raw).filter(function(k) { return ['id','name','state','end_time'].indexOf(k) < 0; });
+        if (extra.length) {
+          var pairs = extra.map(function(k) { return k + '=' + h._raw[k]; }).join(', ');
+          html += '<div style="font-size:0.72em;color:#555;margin-top:2px;">' + esc(pairs) + '</div>';
+        }
+      }
+      html += '</div>';
+    });
+    if (eggs.length) {
+      html += '<div class="breed-slot" style="border-color:var(--eq6);"><b>蛋列表</b> (' + eggs.length + ')<div style="font-size:0.78em;margin-top:4px;">';
+      eggs.forEach(function(eg) {
+        html += '<div>' + esc(JSON.stringify(eg)) + '</div>';
+      });
+      html += '</div></div>';
+    }
+    grid.innerHTML = html;
+    renderAbSlots(homes);
+    toast('繁殖池已載入', 'ok');
+  } catch(e) { grid.innerHTML = '<span style="color:var(--danger);">' + esc(e.message) + '</span>'; }
+}
+
+async function doHatch(baseId) {
+  try {
+    var d = await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {base_id: baseId});
+    var result = d.data || {};
+    if (result.ok === false) { toast('孵化失敗: ' + (result.message || ''), 'err'); return; }
+    toast('孵化成功', 'ok');
+    await loadBreed();
+  } catch(e) { toast('孵化失敗: ' + e.message, 'err'); }
+}
+
+async function discoverMethods() {
+  try {
+    var d = await apiGet('/api/fly_pet_breed_methods/' + encodeURIComponent(ip()));
+    var methods = d.data || [];
+    toast('FlyPetControl: ' + methods.join(', '), 'info');
+    console.log('FlyPetControl methods:', methods);
+  } catch(e) { toast('探索失敗: ' + e.message, 'err'); }
+}
+
+async function doShelve(action) {
+  if (selected.size === 0) { toast('請先選擇飛寵', 'info'); return; }
+  if (selected.size > 1) { toast('一次只能操作一隻', 'info'); return; }
+  var pid = Array.from(selected)[0];
+  try {
+    await apiPost('/api/fly_pet_shelve/' + encodeURIComponent(ip()), {pet_id: pid, action: action});
+    toast((action==='place'?'上架':'下架') + '成功', 'ok');
+  } catch(e) { toast('失敗: ' + e.message, 'err'); }
+}
+
+async function doBreed() {
+  var base = parseInt(document.getElementById('bBase').value);
+  var a = parseInt(document.getElementById('bFlyA').value);
+  var b = parseInt(document.getElementById('bFlyB').value);
+  if (isNaN(base)||isNaN(a)||isNaN(b)) { toast('請填寫完整', 'info'); return; }
+  showModal('確認交配', '巢穴 #'+base+', A:'+a+', B:'+b, async function() {
+    try {
+      await apiPost('/api/fly_pet_breed_start/' + encodeURIComponent(ip()), {base_id:base, fly_a_id:a, fly_b_id:b});
+      toast('交配已開始', 'ok');
+      await loadBreed();
+    } catch(e) { toast('交配失敗: ' + e.message, 'err'); }
+  });
+}
+
+async function doCollect(baseId) {
+  try {
+    await apiPost('/api/fly_pet_breed_collect/' + encodeURIComponent(ip()), {base_id: baseId});
+    toast('領取成功', 'ok');
+    await loadBreed();
+  } catch(e) { toast('領取失敗: ' + e.message, 'err'); }
+}
+
+// ---- Friends ----
+async function doLoadAllFriends() {
+  var btn = document.getElementById('loadFriendsBtn');
+  var prog = document.getElementById('friendsProgress');
+  var result = document.getElementById('friendsResult');
+  setLoading(btn, true);
+  prog.textContent = '讀取好友列表...';
+  result.innerHTML = '';
+
+  try {
+    var fd = await apiGet('/api/fly_pet_friends/' + encodeURIComponent(ip()));
+    var friends = fd.friends || fd.data || [];
+    if (!Array.isArray(friends)) friends = [];
+    if (!friends.length) { prog.textContent = '沒有好友'; setLoading(btn, false); return; }
+
+    prog.textContent = '0 / ' + friends.length + ' 好友';
+    var loaded = 0;
+    for (var i = 0; i < friends.length; i++) {
+      var f = friends[i];
+      prog.textContent = (i+1) + ' / ' + friends.length + ' (' + esc(f.name) + ')';
+      try {
+        var pd = await apiGet('/api/fly_pet_partner/' + encodeURIComponent(ip()) + '?role_id=' + f.role_id);
+        var pets = pd.data || pd.pets || [];
+        if (!Array.isArray(pets) || pets.length === 0) continue;
+        loaded++;
+        var card = document.createElement('div');
+        card.className = 'friend-card';
+        var hdr = '<div class="friend-card-hdr">' + esc(f.name) + ' (Lv.' + f.level + ') - ' + pets.length + ' 隻上架</div>';
+        var tbl = '<table style="width:100%;font-size:0.82em;border-collapse:collapse;">' +
+          '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th></tr></thead><tbody>';
+        pets.forEach(function(p) {
+          var entries = (p.entries||[]).map(function(e) { return ecHTML(e); }).join(' ');
+          var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
+          var stateLabel = p.state === 0 ? '<span style="color:var(--accent);">可用</span>' : '<span style="color:var(--text2);">冷卻中</span>';
+          tbl += '<tr><td style="padding:3px 6px;">' + esc(p.display_name||p.name||'?') + '</td>' +
+            '<td style="padding:3px 6px;">' + pqHTML(p.quality) + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' + (p.generation||0) + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' + growth + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' + (p.level||0) + '</td>' +
+            '<td style="padding:3px 6px;">' + (entries||'--') + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' + stateLabel + '</td></tr>';
+        });
+        tbl += '</tbody></table>';
+        card.innerHTML = hdr + tbl;
+        result.appendChild(card);
+      } catch(e) { /* skip failed friend */ }
+      await new Promise(function(r) { setTimeout(r, 300); });
+    }
+    prog.textContent = '完成 (' + loaded + '/' + friends.length + ' 好友有上架飛寵)';
+    toast('好友飛寵載入完成', 'ok');
+  } catch(e) {
+    prog.textContent = '失敗';
+    toast('載入好友失敗: ' + e.message, 'err');
+  } finally { setLoading(btn, false); }
+}
+
+// ---- Auto-breed ----
+var abConfig = {};   // per-slot: {enabled, mode, quality, min_count, min_total_entries, prefer_low_gen}
+var abTimer = null;
+var abRunning = false;
+var abLogs = {};     // per-slot: [{time, msg}]
+var abHomes = [];    // cached home list from last loadBreed
+var abErrors = {};   // per-slot consecutive error count
+
+function abStorageKey() { return 'autoBreed_' + ip(); }
+function loadAbConfig() {
+  try { abConfig = JSON.parse(localStorage.getItem(abStorageKey()) || '{}'); } catch(e) { abConfig = {}; }
+}
+function saveAbConfig() { localStorage.setItem(abStorageKey(), JSON.stringify(abConfig)); }
+
+function abLog(homeId, msg) {
+  if (!abLogs[homeId]) abLogs[homeId] = [];
+  var now = new Date();
+  var ts = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+  abLogs[homeId].unshift({time: ts, msg: msg});
+  if (abLogs[homeId].length > 10) abLogs[homeId].length = 10;
+  renderAbLogUI(homeId);
+}
+
+function renderAbLogUI(homeId) {
+  var el = document.getElementById('abLog_' + homeId);
+  if (!el) return;
+  el.innerHTML = abLogs[homeId].map(function(l) { return '<div>[' + l.time + '] ' + esc(l.msg) + '</div>'; }).join('');
+}
+
+function renderAbSlots(homes) {
+  abHomes = homes;
+  var container = document.getElementById('abSlots');
+  if (!container) return;
+  loadAbConfig();
+  var html = '';
+  homes.forEach(function(h) {
+    var cfg = abConfig[h.id] || {};
+    var enabled = cfg.enabled || false;
+    var mode = cfg.mode || 'quality_count';
+    var qual = cfg.quality || 3;
+    var minC = cfg.min_count || 2;
+    var minT = cfg.min_total_entries || 3;
+    var lowGen = cfg.prefer_low_gen !== false;
+
+    html += '<div class="ab-slot' + (enabled && abRunning ? ' active' : '') + '" id="abSlot_' + h.id + '">';
+    html += '<div class="ab-row">';
+    html += '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-weight:600;">';
+    html += '<input type="checkbox" onchange="abToggle(' + h.id + ',this.checked)"' + (enabled ? ' checked' : '') + '> 巢穴 #' + h.id;
+    html += '</label>';
+    html += '<span class="ab-status ab-status-off" id="abSt_' + h.id + '">--</span>';
+    html += '</div>';
+
+    html += '<div class="ab-row">';
+    html += '<select id="abMode_' + h.id + '" onchange="abCfgChange(' + h.id + ')" style="font-size:0.82em;">';
+    html += '<option value="quality_count"' + (mode==='quality_count'?' selected':'') + '>至少 N 個指定品質詞條</option>';
+    html += '<option value="total_count"' + (mode==='total_count'?' selected':'') + '>至少 N 個詞條(不限品質)</option>';
+    html += '</select>';
+
+    html += '<select id="abQual_' + h.id + '" onchange="abCfgChange(' + h.id + ')" style="font-size:0.82em;">';
+    [3,5,6,7,2,1].forEach(function(q) {
+      html += '<option value="' + q + '"' + (qual===q?' selected':'') + '>' + (EQ[q]||q) + '</option>';
+    });
+    html += '</select>';
+
+    html += '<label style="font-size:0.78em;color:var(--text2);">至少</label>';
+    html += '<input type="number" id="abMinC_' + h.id + '" value="' + minC + '" min="1" max="5" style="width:45px;font-size:0.82em;" onchange="abCfgChange(' + h.id + ')">';
+    html += '<label style="font-size:0.78em;color:var(--text2);">個</label>';
+
+    html += '<label style="display:flex;align-items:center;gap:3px;font-size:0.78em;color:var(--text2);cursor:pointer;margin-left:8px;">';
+    html += '<input type="checkbox" id="abLowGen_' + h.id + '" onchange="abCfgChange(' + h.id + ')"' + (lowGen ? ' checked' : '') + '> 優先低代數';
+    html += '</label>';
+    html += '</div>';
+
+    html += '<div class="ab-log" id="abLog_' + h.id + '"></div>';
+    html += '</div>';
+  });
+  container.innerHTML = html;
+
+  homes.forEach(function(h) { if (abLogs[h.id]) renderAbLogUI(h.id); });
+}
+
+function abToggle(homeId, enabled) {
+  if (!abConfig[homeId]) abConfig[homeId] = {};
+  abConfig[homeId].enabled = enabled;
+  saveAbConfig();
+}
+
+function abCfgChange(homeId) {
+  if (!abConfig[homeId]) abConfig[homeId] = {};
+  var c = abConfig[homeId];
+  c.mode = document.getElementById('abMode_' + homeId).value;
+  c.quality = parseInt(document.getElementById('abQual_' + homeId).value) || 3;
+  c.min_count = parseInt(document.getElementById('abMinC_' + homeId).value) || 2;
+  c.min_total_entries = parseInt(document.getElementById('abMinC_' + homeId).value) || 3;
+  c.prefer_low_gen = document.getElementById('abLowGen_' + homeId).checked;
+  c.enabled = true;
+  saveAbConfig();
+  var ck = document.querySelector('#abSlot_' + homeId + ' input[type=checkbox]');
+  if (ck) ck.checked = true;
+}
+
+function abSetStatus(homeId, cls, text) {
+  var el = document.getElementById('abSt_' + homeId);
+  if (!el) return;
+  el.className = 'ab-status ab-status-' + cls;
+  el.textContent = text;
+}
+
+function startAutoBreed() {
+  if (abRunning) return;
+  loadAbConfig();
+  var anyEnabled = Object.values(abConfig).some(function(c) { return c.enabled; });
+  if (!anyEnabled) { toast('請先勾選至少一個巢穴', 'info'); return; }
+  abRunning = true;
+  abErrors = {};
+  document.getElementById('abStartBtn').style.display = 'none';
+  document.getElementById('abStopBtn').style.display = '';
+  document.getElementById('abGlobalStatus').textContent = '運行中';
+  document.getElementById('abGlobalStatus').style.color = 'var(--accent)';
+  document.querySelectorAll('.ab-slot').forEach(function(el) {
+    var id = el.id.replace('abSlot_', '');
+    if (abConfig[id] && abConfig[id].enabled) el.classList.add('active');
+  });
+  toast('自動繁殖已啟動', 'ok');
+  autoBreedTick();
+  abTimer = setInterval(autoBreedTick, 15000);
+}
+
+function stopAutoBreed() {
+  abRunning = false;
+  if (abTimer) { clearInterval(abTimer); abTimer = null; }
+  document.getElementById('abStartBtn').style.display = '';
+  document.getElementById('abStopBtn').style.display = 'none';
+  document.getElementById('abGlobalStatus').textContent = '已停止';
+  document.getElementById('abGlobalStatus').style.color = 'var(--text2)';
+  document.querySelectorAll('.ab-slot').forEach(function(el) { el.classList.remove('active'); });
+  abHomes.forEach(function(h) { abSetStatus(h.id, 'off', '已停止'); });
+  toast('自動繁殖已停止', 'info');
+}
+
+async function autoBreedTick() {
+  if (!abRunning) return;
+  loadAbConfig();
+
+  try {
+    var botSt = await checkBotRunning();
+    if (botSt.bot_running) {
+      document.getElementById('abGlobalStatus').textContent = '暫停 (腳本運行中: ' + (botSt.bot_task || '') + ')';
+      document.getElementById('abGlobalStatus').style.color = 'var(--warn)';
+      return;
+    }
+  } catch(e) {}
+
+  try {
+    await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    });
+  } catch(e) {}
+
+  await new Promise(function(r) { setTimeout(r, 600); });
+
+  var breedData;
+  try {
+    var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
+    breedData = d.data || {};
+  } catch(e) {
+    document.getElementById('abGlobalStatus').textContent = '錯誤: ' + e.message;
+    document.getElementById('abGlobalStatus').style.color = 'var(--danger)';
+    return;
+  }
+
+  var homes = breedData.homes || [];
+  var excludeIds = [];
+
+  for (var i = 0; i < homes.length; i++) {
+    if (homes[i].fly_a) excludeIds.push(homes[i].fly_a.id);
+    if (homes[i].fly_b) excludeIds.push(homes[i].fly_b.id);
+  }
+
+  for (var i = 0; i < homes.length; i++) {
+    var h = homes[i];
+    var cfg = abConfig[h.id];
+    if (!cfg || !cfg.enabled) {
+      abSetStatus(h.id, 'off', '未啟用');
+      continue;
+    }
+
+    try {
+      await processAbSlot(h, cfg, excludeIds);
+      abErrors[h.id] = 0;
+    } catch(e) {
+      abErrors[h.id] = (abErrors[h.id] || 0) + 1;
+      abSetStatus(h.id, 'error', '錯誤: ' + e.message);
+      abLog(h.id, '錯誤: ' + e.message);
+      if (abErrors[h.id] >= 3) {
+        abConfig[h.id].enabled = false;
+        saveAbConfig();
+        abLog(h.id, '連續失敗 3 次，已停用此巢穴');
+        var ck = document.querySelector('#abSlot_' + h.id + ' input[type=checkbox]');
+        if (ck) ck.checked = false;
+      }
+    }
+  }
+
+  var ts = new Date();
+  document.getElementById('abGlobalStatus').textContent = '運行中 (上次: ' +
+    String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0') + ':' + String(ts.getSeconds()).padStart(2,'0') + ')';
+  document.getElementById('abGlobalStatus').style.color = 'var(--accent)';
+}
+
+async function processAbSlot(home, cfg, excludeIds) {
+  var hid = home.id;
+
+  if (home.state === 2) {
+    abSetStatus(hid, 'ready', '領取中...');
+    await apiPost('/api/fly_pet_breed_collect/' + encodeURIComponent(ip()), {base_id: hid});
+    abLog(hid, '已領取繁殖結果');
+    abSetStatus(hid, 'idle', '已領取，等待下一輪');
+    return;
+  }
+
+  if (home.state === 3) {
+    abSetStatus(hid, 'ready', '孵化中...');
+    await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {base_id: hid});
+    abLog(hid, '已送出孵化請求');
+    abSetStatus(hid, 'breeding', '孵化中');
+    return;
+  }
+
+  if (home.state === 1) {
+    var now = Math.floor(Date.now() / 1000);
+    var remain = home.end_time > now ? Math.ceil((home.end_time - now) / 60) : 0;
+    abSetStatus(hid, 'breeding', '繁殖中' + (remain > 0 ? ' (' + remain + ' 分鐘)' : ''));
+    return;
+  }
+
+  if (home.state === 0) {
+    abSetStatus(hid, 'idle', '搜尋配對...');
+    var criteria = {
+      mode: cfg.mode || 'quality_count',
+      quality: cfg.quality || 3,
+      min_count: cfg.min_count || 2,
+      min_total_entries: cfg.min_total_entries || 3,
+      prefer_low_gen: cfg.prefer_low_gen !== false
+    };
+
+    var pd = await apiPost('/api/fly_pet_find_pair/' + encodeURIComponent(ip()), {
+      criteria: criteria,
+      exclude_ids: excludeIds
+    });
+    var result = pd.data || {};
+    if (result.error) {
+      abLog(hid, '搜尋錯誤: ' + result.error);
+      abSetStatus(hid, 'error', '搜尋錯誤');
+      return;
+    }
+    if (!result.pair) {
+      abLog(hid, '找不到配對 (符合 ' + (result.candidates_count || 0) + ', 冷卻 ' + (result.skipped_cooldown || 0) + ')');
+      abSetStatus(hid, 'idle', '無可用配對 (' + (result.candidates_count || 0) + ' 符合, ' + (result.skipped_cooldown || 0) + ' 冷卻)');
+      return;
+    }
+
+    var pa = result.pair.fly_a;
+    var pb = result.pair.fly_b;
+    excludeIds.push(pa.id, pb.id);
+
+    abSetStatus(hid, 'breeding', '開始繁殖...');
+    await apiPost('/api/fly_pet_breed_start/' + encodeURIComponent(ip()), {
+      base_id: hid, fly_a_id: pa.id, fly_b_id: pb.id
+    });
+    abLog(hid, '開始繁殖: ' + (pa.display_name||pa.name) + '(G' + pa.generation + ') + ' + (pb.display_name||pb.name) + '(G' + pb.generation + ')');
+    abSetStatus(hid, 'breeding', '已開始繁殖');
+  }
+}
+
+// ---- Init ----
+document.addEventListener('DOMContentLoaded', function() {
+  syncPresetUI();
+  updateFVals();
+  doLoad();
+});
+</script>
+</body>
+</html>

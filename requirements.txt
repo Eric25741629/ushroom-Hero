@@ -1,2 +1,7 @@
 Flask>=2.0
 flask-cors>=3.0
+# Remote live-view bridge (control panel /ws/live_view): WebSocket to the browser
+# client + raw CDP client to headless Chrome.
+flask-sock>=0.7
+simple-websocket>=1.0
+websocket-client>=1.6

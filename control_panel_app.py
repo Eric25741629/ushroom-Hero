@@ -1,4 +1,6 @@
-from flask import Flask, jsonify, render_template, request, send_from_directory
+from flask import Flask, jsonify, render_template, request, send_from_directory, session, redirect
+import functools
+import hashlib
 import bot_state
 import config_manager  # 新增設定管理器
 import json_manager  # 新增資料管理器
@@ -28,6 +30,37 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
+app.secret_key = hashlib.sha256(b"mushroom-fly-pet-dashboard-key").digest()
+
+_FLY_PET_USERS = {"infinite": "infiniteroot"}
+
+
+def _fly_pet_auth(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if not session.get("fly_pet_auth"):
+            if request.is_json or request.path.startswith("/api/"):
+                return jsonify({"status": "error", "message": "unauthorized"}), 401
+            return redirect("/fly-pet/login")
+        return f(*args, **kwargs)
+    return wrapper
+
+# WebSocket support for the remote live-view bridge (Approach B). Imported
+# defensively: if flask-sock is not installed the dashboard still works, only the
+# /ws/live_view route is unavailable.
+try:
+    from flask_sock import Sock
+
+    sock = Sock(app)
+except Exception as _sock_exc:  # pragma: no cover - optional dep
+    sock = None
+    logger.warning(f"flask-sock unavailable, live-view disabled: {_sock_exc}")
+
+# Registry of active live-view sessions keyed by real device IP.
+# Used by /api/live_view/<ip>/stop to signal teardown when WS close frame
+# is not cleanly received (proxy, half-open TCP, etc.).
+_live_view_sessions: dict = {}
+
 _WAR_ROOM_DIR = Path(__file__).resolve().parent / "push_project" / "web"
 _REPO_ROOT = Path(__file__).resolve().parent
 _README_PATH = _REPO_ROOT / "README.md"
@@ -829,8 +862,10 @@ def _get_program_info():
     # 解碼會 raise UnicodeDecodeError，讓整段資訊全變 fallback。明確指定
     # encoding="utf-8" + errors="replace" 才是穩定做法。
     def _git(args):
+        import shutil
+        git_exe = shutil.which("git") or r"C:\Program Files\Git\mingw64\bin\git.exe"
         return subprocess.run(
-            ["git", "-c", "i18n.logOutputEncoding=UTF-8", *args],
+            [git_exe, "-c", "i18n.logOutputEncoding=UTF-8", *args],
             cwd=str(repo_root),
             capture_output=True,
             check=True,
@@ -943,6 +978,30 @@ def war_room_index():
 @app.route("/war-room/<path:filename>")
 def war_room_static(filename):
     return send_from_directory(str(_WAR_ROOM_DIR), filename)
+
+
+@app.route("/fly-pet/login", methods=["GET", "POST"])
+def fly_pet_login():
+    if request.method == "POST":
+        u = (request.form.get("username") or "").strip()
+        p = request.form.get("password") or ""
+        if _FLY_PET_USERS.get(u) == p:
+            session["fly_pet_auth"] = True
+            return redirect("/fly-pet")
+        return render_template("fly_pet_login.html", error="帳號或密碼錯誤")
+    return render_template("fly_pet_login.html")
+
+
+@app.route("/fly-pet/logout")
+def fly_pet_logout():
+    session.pop("fly_pet_auth", None)
+    return redirect("/fly-pet/login")
+
+
+@app.route("/fly-pet")
+@_fly_pet_auth
+def fly_pet_page():
+    return render_template("fly_pet.html")
 
 
 @app.route("/api/poll_commands", methods=["POST"])
@@ -1265,6 +1324,9 @@ def get_status():
         ocr_runtime = get_ocr_runtime_status()
     except Exception:
         ocr_runtime = {}
+    live_view_enabled = bool(
+        (config_manager.get_global_config().get("live_view") or {}).get("enabled", False)
+    )
     for ip, info in states.items():
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         cfg = config_manager.get_device_config(real_ip)
@@ -1273,6 +1335,12 @@ def get_status():
         info["backend"] = cfg.get("backend", "adb")
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
         info["mining_planner_version"] = cfg.get("mining_planner_version", "v4")
+        info["live_view_available"] = bool(
+            live_view_enabled
+            and info["backend"] == "web_h5"
+            and cfg.get("web_debug_port")
+            and sock is not None
+        )
     return jsonify(
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
     )
@@ -1524,9 +1592,18 @@ def launch_web_page(ip):
         payload = request.json if request.is_json else {}
         clear_once = bool((payload or {}).get("clear_cookies_once", False))
         manual_hold = bool((payload or {}).get("manual_hold_until_closed", True))
+        # On a headless server there is no display, so a headful window is useless;
+        # the live-view bridge streams the headless browser instead. Default comes
+        # from the host's global config (set manual_launch_force_headful=false on the
+        # VPS), but an explicit request payload may still override it.
+        default_force_headful = bool(
+            config_manager.get_global_config().get("manual_launch_force_headful", True)
+        )
+        force_headful = bool((payload or {}).get("force_headful", default_force_headful))
         req_payload = {
             "clear_cookies_once": clear_once,
             "manual_hold_until_closed": manual_hold,
+            "force_headful": force_headful,
         }
         if clear_once:
             req_payload["message"] = "clear cookies once"
@@ -1536,6 +1613,123 @@ def launch_web_page(ip):
         )
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+if sock is not None:
+
+    @sock.route("/ws/live_view/<ip>")
+    def live_view_ws(ws, ip):
+        """Stream a web_h5 device's headless Chrome to the client and forward input.
+
+        Attaches to the device's CDP remote-debugging-port (config web_debug_port)
+        as an independent raw-CDP client; does not touch the bot's Playwright object.
+        """
+        from urllib.parse import urlsplit
+
+        from runtime_services.live_view_bridge import (
+            LiveViewSession,
+            find_game_page_target,
+        )
+
+        real_ip = ip.split(":")[-1] if ":" in ip else ip
+        cfg = config_manager.get_device_config(real_ip)
+        debug_port = cfg.get("web_debug_port")
+        if not debug_port:
+            try:
+                ws.send(json.dumps({"type": "error", "message": "no web_debug_port configured"}))
+            except Exception:
+                pass
+            return
+        url_host = ""
+        try:
+            url_host = urlsplit(str(cfg.get("web_url", ""))).hostname or ""
+        except Exception:
+            url_host = ""
+        try:
+            vw = int(cfg.get("web_viewport_width", 540) or 540)
+            vh = int(cfg.get("web_viewport_height", 960) or 960)
+        except Exception:
+            vw, vh = 540, 960
+        # Pause automation during manual takeover so the bot does not fight the
+        # user's clicks. Resumes when the live-view WS disconnects (also covers the
+        # browser tab being closed). set_pause does NOT touch the browser, so unlike
+        # the old web_launch path it cannot trigger a game reload / re-login.
+        paused_by_live_view = False
+        try:
+            bot_state.set_pause(real_ip, True)
+            paused_by_live_view = True
+        except Exception as pause_exc:
+            logger.warning(f"[live_view] pause {real_ip} failed: {pause_exc}")
+
+        # Auto-launch fallback: if no browser is currently running on the debug port,
+        # request a headless launch so the user doesn't have to press 開啟網頁 first.
+        # Probe quickly — when a page target already exists we must NOT request a launch
+        # (app_start would re-navigate the loaded game and force a re-login). The probe
+        # preserves the no-relogin path; only the "nothing running" case auto-launches.
+        # force_headful=False keeps it headless (fine on a VPS); manual_hold=False lets
+        # the device thread open the browser and return immediately — live-view's
+        # set_pause already holds automation during the manual takeover. The pending
+        # launch request breaks through the pause via bot_state.check_pause's carve-out.
+        try:
+            existing_target = find_game_page_target(
+                int(debug_port), url_host, timeout_sec=1.5, poll_interval=0.3
+            )
+            if not existing_target:
+                logger.info(
+                    f"[live_view] {real_ip} no live page on port {debug_port}; "
+                    "auto-launching headless browser"
+                )
+                bot_state.request_web_launch(
+                    real_ip,
+                    payload={"force_headful": False, "manual_hold_until_closed": False},
+                )
+        except Exception as launch_exc:
+            logger.warning(f"[live_view] {real_ip} auto-launch probe failed: {launch_exc}")
+
+        try:
+            session = LiveViewSession(
+                ws,
+                int(debug_port),
+                url_host,
+                viewport_width=vw,
+                viewport_height=vh,
+                logger=logger,
+            )
+            _live_view_sessions[real_ip] = session
+            try:
+                session.run()
+            finally:
+                _live_view_sessions.pop(real_ip, None)
+        finally:
+            if paused_by_live_view:
+                try:
+                    bot_state.set_pause(real_ip, False)
+                except Exception as resume_exc:
+                    logger.warning(f"[live_view] resume {real_ip} failed: {resume_exc}")
+
+
+@app.route("/api/live_view/<ip>/stop", methods=["POST"])
+def stop_live_view(ip):
+    """Explicitly stop a live-view session and unpause the device.
+
+    Called by the frontend's closeLiveView() as a belt-and-suspenders fallback
+    in case the WebSocket close frame is not cleanly received server-side (e.g.
+    proxy timeout, half-open TCP, Werkzeug threading edge cases). The WS session
+    will also call set_pause(False) in its own finally block once it exits; the
+    calls are idempotent.
+    """
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    session = _live_view_sessions.get(real_ip)
+    if session is not None:
+        try:
+            session.stop()
+        except Exception as exc:
+            logger.warning(f"[live_view] stop API: session.stop() failed for {real_ip}: {exc}")
+    try:
+        bot_state.set_pause(real_ip, False)
+    except Exception as exc:
+        logger.warning(f"[live_view] stop API: set_pause(False) failed for {real_ip}: {exc}")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/labeler/config", methods=["GET"])
@@ -1720,10 +1914,614 @@ def recover_screen(ip):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _cdp_evaluate(ip, expression, await_promise=False):
+    """Execute JS on a web_h5 device via CDP. Returns (result_dict, error_str)."""
+    import websocket as _ws
+    from runtime_services.live_view_bridge import find_game_page_target
+
+    cfg = config_manager.get_device_config(ip)
+    debug_port = cfg.get("web_debug_port")
+    if not debug_port:
+        return None, "no web_debug_port"
+
+    ws_url = find_game_page_target(
+        debug_port, "mushroomh5.acenetgame.com", timeout_sec=5.0
+    )
+    if not ws_url:
+        return None, f"no CDP target on port {debug_port}"
+
+    try:
+        ws = _ws.create_connection(ws_url, timeout=15, suppress_origin=True)
+        payload = json.dumps({
+            "id": 1,
+            "method": "Runtime.evaluate",
+            "params": {
+                "expression": expression,
+                "returnByValue": True,
+                "awaitPromise": await_promise,
+            },
+        })
+        ws.send(payload)
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            raw = ws.recv()
+            msg = json.loads(raw)
+            if msg.get("id") == 1:
+                ws.close()
+                return msg.get("result", {}), None
+        ws.close()
+        return None, "timeout"
+    except Exception as exc:
+        return None, str(exc)
+
+
+def _cdp_json_response(ip, expression, await_promise=False, data_key="data"):
+    """Helper: evaluate JS, parse JSON string result, return Flask response."""
+    result, err = _cdp_evaluate(ip, expression, await_promise=await_promise)
+    if err:
+        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
+        return jsonify({"status": "error", "message": err}), code
+    inner = result.get("result", {})
+    exc_detail = result.get("exceptionDetails")
+    if exc_detail:
+        return jsonify({"status": "error", "message": str(exc_detail)}), 500
+    if inner.get("type") == "string":
+        try:
+            parsed = json.loads(inner["value"])
+            if isinstance(parsed, dict) and "error" in parsed:
+                return jsonify({"status": "error", "message": parsed["error"]}), 500
+            return jsonify({"status": "ok", data_key: parsed})
+        except Exception:
+            return jsonify({"status": "ok", "raw": inner["value"]})
+    return jsonify({"status": "ok", data_key: inner.get("value", inner)})
+
+
+@app.route("/api/cdp_evaluate/<ip>", methods=["GET", "POST"])
+def cdp_evaluate(ip):
+    """Execute JS on a web_h5 device via CDP Runtime.evaluate.
+
+    POST: {"expression": "..."}
+    GET:  ?expr=...  (URL-encoded JS expression)
+    """
+    if request.method == "POST":
+        expression = (request.json or {}).get("expression", "")
+    else:
+        expression = request.args.get("expr", "")
+    if not expression:
+        return jsonify({"status": "error", "message": "no expression"}), 400
+
+    await_promise = False
+    if request.method == "POST":
+        await_promise = bool((request.json or {}).get("awaitPromise", False))
+
+    return _cdp_json_response(ip, expression, await_promise=await_promise)
+
+
+@app.route("/api/fly_pet_list/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_list(ip):
+    """Dump all fly pets + entries for a device (convenience wrapper)."""
+    js = r"""(() => {
+        try {
+            const cache = IS(ISInclude.FlyPetDataCache);
+            const pets = cache.pet_list;
+            const result = [];
+            for (const key in pets) {
+                const pet = pets[key];
+                if (!pet) continue;
+                const cfg = configFly.getDataByKey(pet.config_id);
+                const entries = [];
+                for (const e of (pet.entry_list || [])) {
+                    try {
+                        const ec = configFly_entry.getDataByKeys("id", e.k, "level", e.v);
+                        entries.push({
+                            id: e.k, level: e.v,
+                            name: ec ? ec.name : "?",
+                            quality: ec ? ec.quality : 0,
+                            desc: ec ? String(ec.desc || "") : "",
+                            desc_parm: ec ? ec.desc_parm : [],
+                            belong_talent: ec ? ec.belong_talent : 0,
+                            special_effect: ec ? (ec.special_effect || 0) : 0
+                        });
+                    } catch(ex) {
+                        entries.push({id: e.k, level: e.v, name: "parse_err", quality: 0});
+                    }
+                }
+                let lock = 0;
+                let star = 0;
+                const ext = pet.ext || [];
+                if (Array.isArray(ext)) {
+                    for (const x of ext) {
+                        if (x && x.k === 2) lock = x.v;
+                        if (x && x.k === 1) star = x.v;
+                    }
+                } else if (typeof ext === 'object') {
+                    for (const ek in ext) {
+                        const x = ext[ek];
+                        if (x && x.k === 2) lock = x.v;
+                        if (x && x.k === 1) star = x.v;
+                    }
+                }
+                if (!lock && pet.lock !== undefined) lock = pet.lock;
+                result.push({
+                    id: pet.id,
+                    config_id: pet.config_id,
+                    name: pet.name || "",
+                    display_name: cfg ? cfg.name : "?",
+                    quality: pet.quality,
+                    level: pet.level,
+                    fight: pet.fight || 0,
+                    generation: pet.generation || 0,
+                    growth: pet.growth || 0,
+                    step: pet.step || 0,
+                    lock: lock,
+                    star: star,
+                    entries: entries
+                });
+            }
+            result.sort((a,b) => b.quality - a.quality || b.level - a.level);
+            return JSON.stringify(result);
+        } catch(err) {
+            return JSON.stringify({error: err.message, stack: err.stack});
+        }
+    })()"""
+    return _cdp_json_response(ip, js, data_key="pets")
+
+
+@app.route("/api/fly_pet_check_connection/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_check_connection(ip):
+    """Check if the game WebSocket is connected."""
+    js = r"""(() => {
+        try {
+            const cnet = netManager._cnet;
+            const sock = cnet._socket;
+            const connected = sock && sock.readyState === 1;
+            return JSON.stringify({connected});
+        } catch(e) {
+            return JSON.stringify({connected: false, error: e.message});
+        }
+    })()"""
+    return _cdp_json_response(ip, js)
+
+
+@app.route("/api/fly_pet_bot_status/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_bot_status(ip):
+    """Check if bot script is actively running on this device."""
+    states = bot_state.get_all_states()
+    st = states.get(ip, {})
+    status = st.get("status", "OFFLINE")
+    task = st.get("task", "")
+    step = st.get("step", "")
+    running = status not in ("OFFLINE", "") and task not in ("待命", "初始化", "休眠中", "強制休眠", "手動操作", "")
+    return jsonify({
+        "status": "ok",
+        "bot_running": running,
+        "bot_status": status,
+        "bot_task": task,
+        "bot_step": step,
+    })
+
+
+@app.route("/api/fly_pet_resolve/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_resolve(ip):
+    """Sell/decompose selected pets. Waits for server ack via OnInfoUpdate event."""
+    data = request.json or {}
+    ids = data.get("ids", [])
+    if not ids or not isinstance(ids, list):
+        return jsonify({"status": "error", "message": "ids must be a non-empty list"}), 400
+    ids_js = json.dumps([int(i) for i in ids])
+    js = f"""new Promise((resolve) => {{
+    let done = false;
+    const timeout = setTimeout(() => {{
+        if (done) return;
+        done = true;
+        normalEvent.off('OnInfoUpdate', handler);
+        const count = Object.keys(IS(ISInclude.FlyPetDataCache).pet_list).length;
+        resolve(JSON.stringify({{ok: false, message: 'timeout', petCount: count}}));
+    }}, 8000);
+    function handler() {{
+        if (done) return;
+        done = true;
+        clearTimeout(timeout);
+        normalEvent.off('OnInfoUpdate', handler);
+        const count = Object.keys(IS(ISInclude.FlyPetDataCache).pet_list).length;
+        resolve(JSON.stringify({{ok: true, petCount: count}}));
+    }}
+    normalEvent.on('OnInfoUpdate', handler);
+    IS(ISInclude.FlyPetControl).send_66_8({ids_js});
+}})"""
+    return _cdp_json_response(ip, js, await_promise=True)
+
+
+@app.route("/api/fly_pet_breed_info/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_breed_info(ip):
+    """Get breeding pool status and shelf info."""
+    js = r"""(() => {
+        const cache = IS(ISInclude.FlyPetDataCache);
+        const homes = [];
+        for (const k in cache.home_list) {
+            const h = cache.home_list[k];
+            if (!h) continue;
+            const raw = {};
+            for (const fk in h) {
+                const v = h[fk];
+                if (v === null || v === undefined) { raw[fk] = v; continue; }
+                if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') raw[fk] = v;
+            }
+            const petInfo = (p) => {
+                if (!p) return null;
+                const cfg = configFly.getDataByKey(p.config_id);
+                return {id: p.id, config_id: p.config_id, name: p.name || '', display_name: cfg ? cfg.name : '?', quality: p.quality || 0, role_id: p.role_id || 0};
+            };
+            homes.push({
+                id: h.id, name: h.name || '', state: h.state,
+                end_time: h.end_time || 0,
+                fly_a: petInfo(h.fly_a),
+                fly_b: petInfo(h.fly_b),
+                fly_pet: petInfo(h.fly_pet),
+                _raw: raw
+            });
+        }
+        const shelved = [];
+        for (const k in cache.use_pet_list) {
+            const s = cache.use_pet_list[k];
+            if (!s || !s.info) continue;
+            const cfg = configFly.getDataByKey(s.info.config_id);
+            shelved.push({id: s.info.id, config_id: s.info.config_id, display_name: cfg ? cfg.name : '?', quality: s.info.quality || 0, state: s.state || 0});
+        }
+        const egg_list = [];
+        if (cache.egg_list) {
+            for (const ek in cache.egg_list) {
+                const eg = cache.egg_list[ek];
+                if (!eg) continue;
+                const raw = {};
+                for (const fk in eg) {
+                    const v = eg[fk];
+                    if (v === null || v === undefined) { raw[fk] = v; continue; }
+                    if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') raw[fk] = v;
+                }
+                egg_list.push(raw);
+            }
+        }
+        return JSON.stringify({homes, shelved, egg_list});
+    })()"""
+    return _cdp_json_response(ip, js)
+
+
+@app.route("/api/fly_pet_breed_methods/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_breed_methods(ip):
+    """Discover FlyPetControl send_* methods for debugging."""
+    js = r"""(() => {
+        const ctrl = IS(ISInclude.FlyPetControl);
+        const proto = Object.getPrototypeOf(ctrl);
+        const methods = Object.getOwnPropertyNames(proto).filter(n => n.startsWith('send_66'));
+        return JSON.stringify(methods.sort());
+    })()"""
+    return _cdp_json_response(ip, js)
+
+
+@app.route("/api/fly_pet_shelve/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_shelve(ip):
+    """Put a pet on or remove from the breeding shelf."""
+    data = request.json or {}
+    pet_id = data.get("pet_id")
+    action = data.get("action")
+    if pet_id is None or action not in ("place", "remove"):
+        return jsonify({"status": "error", "message": "pet_id required, action must be 'place' or 'remove'"}), 400
+    type_val = 0 if action == "place" else 1
+    js = f"IS(ISInclude.FlyPetControl).send_66_23({int(pet_id)}, {type_val}, 0)"
+    result, err = _cdp_evaluate(ip, js)
+    if err:
+        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
+        return jsonify({"status": "error", "message": err}), code
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/fly_pet_partner/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_partner(ip):
+    """Get a friend's available pets for breeding (async)."""
+    role_id = request.args.get("role_id")
+    if not role_id:
+        return jsonify({"status": "error", "message": "role_id query param required"}), 400
+    try:
+        role_id_int = int(role_id)
+    except (ValueError, TypeError):
+        return jsonify({"status": "error", "message": "role_id must be an integer"}), 400
+    js = f"""new Promise((resolve) => {{
+    const tmr = setTimeout(() => {{
+        normalEvent.off('RolePetListBack', handler);
+        resolve(JSON.stringify([]));
+    }}, 8000);
+    function handler(data) {{
+        normalEvent.off('RolePetListBack', handler);
+        clearTimeout(tmr);
+        const pets = [];
+        for (const p of (data.pet_list || [])) {{
+            if (!p || !p.info) continue;
+            const cfg = configFly.getDataByKey(p.info.config_id);
+            const entries = [];
+            for (const e of (p.info.entry_list || [])) {{
+                try {{
+                    const ec = configFly_entry.getDataByKeys("id", e.k, "level", e.v);
+                    entries.push({{
+                        id: e.k, level: e.v,
+                        name: ec ? ec.name : "?",
+                        quality: ec ? ec.quality : 0
+                    }});
+                }} catch(ex) {{
+                    entries.push({{id: e.k, level: e.v, name: "?", quality: 0}});
+                }}
+            }}
+            pets.push({{
+                id: p.info.id, config_id: p.info.config_id,
+                name: p.info.name || '', display_name: cfg ? cfg.name : '?',
+                quality: p.info.quality, level: p.info.level,
+                generation: p.info.generation || 0,
+                growth: p.info.growth || 0,
+                state: p.state || 0,
+                entries: entries
+            }});
+        }}
+        resolve(JSON.stringify(pets));
+    }}
+    normalEvent.on('RolePetListBack', handler);
+    IS(ISInclude.FlyPetControl).send_66_24({role_id_int});
+}})"""
+    return _cdp_json_response(ip, js, await_promise=True)
+
+
+@app.route("/api/fly_pet_breed_start/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_breed_start(ip):
+    """Start breeding."""
+    data = request.json or {}
+    base_id = data.get("base_id")
+    fly_a_id = data.get("fly_a_id")
+    fly_b_id = data.get("fly_b_id")
+    if base_id is None or fly_a_id is None or fly_b_id is None:
+        return jsonify({"status": "error", "message": "base_id, fly_a_id, fly_b_id required"}), 400
+    js = f"IS(ISInclude.FlyPetControl).send_66_27({int(base_id)}, {int(fly_a_id)}, {int(fly_b_id)})"
+    result, err = _cdp_evaluate(ip, js)
+    if err:
+        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
+        return jsonify({"status": "error", "message": err}), code
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/fly_pet_breed_collect/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_breed_collect(ip):
+    """Collect breeding result."""
+    data = request.json or {}
+    base_id = data.get("base_id")
+    if base_id is None:
+        return jsonify({"status": "error", "message": "base_id required"}), 400
+    js = f"IS(ISInclude.FlyPetControl).send_66_28({int(base_id)})"
+    result, err = _cdp_evaluate(ip, js)
+    if err:
+        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
+        return jsonify({"status": "error", "message": err}), code
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/fly_pet_hatch/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_hatch(ip):
+    """Hatch an egg in a breeding nest."""
+    data = request.json or {}
+    base_id = data.get("base_id")
+    if base_id is None:
+        return jsonify({"status": "error", "message": "base_id required"}), 400
+    js = f"""new Promise((resolve) => {{
+    let done = false;
+    const tmr = setTimeout(() => {{
+        if (done) return; done = true;
+        normalEvent.off('OnInfoUpdate', handler);
+        resolve(JSON.stringify({{ok: false, message: 'timeout'}}));
+    }}, 8000);
+    function handler() {{
+        if (done) return; done = true;
+        clearTimeout(tmr);
+        normalEvent.off('OnInfoUpdate', handler);
+        resolve(JSON.stringify({{ok: true}}));
+    }}
+    normalEvent.on('OnInfoUpdate', handler);
+    IS(ISInclude.FlyPetControl).send_66_29({int(base_id)});
+}})"""
+    return _cdp_json_response(ip, js, await_promise=True)
+
+
+@app.route("/api/fly_pet_friends/<ip>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_friends(ip):
+    """Get the friend list. Requests from server if not cached."""
+    js = r"""new Promise((resolve) => {
+        try {
+            const model = IS(ISInclude.FriendModel);
+            function collect() {
+                const friends = [];
+                try {
+                    const flist = model.friendList;
+                    if (flist && flist.length > 0) {
+                        for (let gi = 0; gi < flist.length; gi++) {
+                            const group = flist[gi];
+                            if (!group || group.type !== 1) continue;
+                            const fl = group.friendList || [];
+                            for (let fi = 0; fi < fl.length; fi++) {
+                                const f = fl[fi];
+                                if (!f) continue;
+                                friends.push({
+                                    role_id: Number(f.role_id) || 0,
+                                    name: String(f.name || ""),
+                                    level: Number(f.level) || 0,
+                                    head: Number(f.head) || 0
+                                });
+                            }
+                        }
+                    }
+                } catch(ex) {}
+                return friends;
+            }
+            const cached = collect();
+            if (cached.length > 0) {
+                return resolve(JSON.stringify(cached));
+            }
+            const handler = () => {
+                normalEvent.off('FriendInfoBack', handler);
+                clearTimeout(tmr);
+                resolve(JSON.stringify(collect()));
+            };
+            normalEvent.on('FriendInfoBack', handler);
+            IS(ISInclude.FriendControl).reqFriendList(1, 1);
+            const tmr = setTimeout(() => {
+                normalEvent.off('FriendInfoBack', handler);
+                resolve(JSON.stringify(collect()));
+            }, 8000);
+        } catch(err) {
+            resolve(JSON.stringify({error: err.message}));
+        }
+    })"""
+    return _cdp_json_response(ip, js, await_promise=True, data_key="friends")
+
+
+@app.route("/api/fly_pet_refresh_breed/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_refresh_breed(ip):
+    """Trigger breed info refresh (send_66_21 + send_66_22)."""
+    js = "(() => { IS(ISInclude.FlyPetControl).send_66_21(); IS(ISInclude.FlyPetControl).send_66_22(); return 'ok'; })()"
+    result, err = _cdp_evaluate(ip, js)
+    if err:
+        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
+        return jsonify({"status": "error", "message": err}), code
+    return jsonify({"status": "ok"})
+
+
+@app.route("/api/fly_pet_find_pair/<ip>", methods=["POST"])
+@_fly_pet_auth
+def fly_pet_find_pair(ip):
+    """Find best breeding pair matching criteria from available pets."""
+    data = request.json or {}
+    criteria = data.get("criteria", {})
+    exclude_ids = data.get("exclude_ids", [])
+
+    mode = criteria.get("mode", "quality_count")
+    quality = int(criteria.get("quality", 3))
+    min_count = int(criteria.get("min_count", 2))
+    min_total = int(criteria.get("min_total_entries", 3))
+    prefer_low_gen = bool(criteria.get("prefer_low_gen", True))
+    exclude_js = json.dumps([int(i) for i in exclude_ids])
+
+    js = f"""(() => {{
+    try {{
+        const cache = IS(ISInclude.FlyPetDataCache);
+        const excludeIds = new Set({exclude_js}.map(String));
+        const mode = '{mode}';
+        const quality = {quality};
+        const minCount = {min_count};
+        const minTotal = {min_total};
+        const preferLowGen = {str(prefer_low_gen).lower()};
+
+        const cooldownIds = new Set();
+        for (const k in cache.use_pet_list) {{
+            const s = cache.use_pet_list[k];
+            if (s && s.state > 0 && s.info) cooldownIds.add(String(s.info.id));
+        }}
+
+        const breedingIds = new Set();
+        for (const k in cache.home_list) {{
+            const h = cache.home_list[k];
+            if (!h) continue;
+            if (h.fly_a) breedingIds.add(String(h.fly_a.id));
+            if (h.fly_b) breedingIds.add(String(h.fly_b.id));
+        }}
+
+        const candidates = [];
+        for (const key in cache.pet_list) {{
+            const pet = cache.pet_list[key];
+            if (!pet) continue;
+            const pid = String(pet.id);
+            if (excludeIds.has(pid) || cooldownIds.has(pid) || breedingIds.has(pid)) continue;
+
+            let locked = 0;
+            const ext = pet.ext || [];
+            if (Array.isArray(ext)) {{
+                for (const x of ext) {{ if (x && x.k === 2) locked = x.v; }}
+            }} else {{
+                for (const ek in ext) {{ const x = ext[ek]; if (x && x.k === 2) locked = x.v; }}
+            }}
+            if (locked || pet.lock) continue;
+            if (pet.fight === 1) continue;
+
+            const entries = [];
+            for (const e of (pet.entry_list || [])) {{
+                try {{
+                    const ec = configFly_entry.getDataByKeys("id", e.k, "level", e.v);
+                    entries.push({{id: e.k, level: e.v, name: ec ? ec.name : '?', quality: ec ? ec.quality : 0}});
+                }} catch(ex) {{
+                    entries.push({{id: e.k, level: e.v, name: '?', quality: 0}});
+                }}
+            }}
+
+            let matches = false;
+            let matchingCount = 0;
+            if (mode === 'quality_count') {{
+                matchingCount = entries.filter(e => e.quality === quality).length;
+                matches = matchingCount >= minCount;
+            }} else {{
+                matches = entries.length >= minTotal;
+                matchingCount = entries.length;
+            }}
+            if (!matches) continue;
+
+            const cfg = configFly.getDataByKey(pet.config_id);
+            candidates.push({{
+                id: pet.id, config_id: pet.config_id,
+                name: pet.name || '',
+                display_name: cfg ? cfg.name : '?',
+                generation: pet.generation || 0,
+                quality: pet.quality || 0,
+                entry_count: entries.length,
+                matching_count: matchingCount,
+                entries: entries.map(e => ({{name: e.name, quality: e.quality}}))
+            }});
+        }}
+
+        if (preferLowGen) {{
+            candidates.sort((a, b) => a.generation - b.generation || b.matching_count - a.matching_count || b.entry_count - a.entry_count);
+        }} else {{
+            candidates.sort((a, b) => b.matching_count - a.matching_count || b.entry_count - a.entry_count || a.generation - b.generation);
+        }}
+
+        const pair = candidates.length >= 2
+            ? {{fly_a: candidates[0], fly_b: candidates[1]}}
+            : null;
+
+        return JSON.stringify({{
+            pair: pair,
+            candidates_count: candidates.length,
+            skipped_cooldown: cooldownIds.size,
+            skipped_breeding: breedingIds.size
+        }});
+    }} catch(err) {{
+        return JSON.stringify({{error: err.message, stack: err.stack}});
+    }}
+}})()"""
+    return _cdp_json_response(ip, js)
+
+
 def run_server(port=5002):
 
     print(f"🚀 中控台網頁伺服器啟動: http://127.0.0.1:{port}")
 
     # 在 Thread 中運行時必須關閉 debug 和 reloader，否則會觸發訊號錯誤
+    # threaded=True：let WebSocket (live-view) connections coexist with the
+    # status-polling endpoints instead of blocking the single WSGI worker.
 
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
