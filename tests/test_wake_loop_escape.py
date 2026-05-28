@@ -41,7 +41,7 @@ for name in (
             m.connect_u2_with_retries = lambda *a, **k: None
             m.get_battery_level = lambda *a, **k: 100
         if name == "device":
-            m.close_nofication = lambda *a, **k: None
+            m.close_notification = lambda *a, **k: None
         if name == "game_initialization":
             m.check_on_line = lambda *a, **k: False
         if name == "config_manager":

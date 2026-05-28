@@ -5,7 +5,7 @@ import random
 from adb_operations import connect_u2_with_retries, get_battery_level
 
 logger = logging.getLogger(__name__)
-from device import close_nofication
+from device import close_notification
 from game_initialization import check_on_line
 import bot_state # 引入狀態管理
 import config_manager # 引入設定管理
@@ -345,10 +345,7 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     
     time.sleep(2)
     
-    if 'fc65396d' in ip or '192.168' in ip:
-        close_nofication(d)
-    
-    d.app_stop("com.mxdzz.tw.and")    
+    d.app_stop("com.mxdzz.tw.and")
     
     if 'emulator-5560' in ip:
         time.sleep(30)
@@ -365,5 +362,11 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     d.press("home")
     d.press("home")
     d.press("home")
-    
+
+    try:
+        d.app_stop("com.facebook.orca")
+    except Exception:
+        pass
+    close_notification(d)
+
     return d

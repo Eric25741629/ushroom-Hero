@@ -64,16 +64,18 @@ def get_adb_devices():
                 devices.append(parts[0])
         return devices
     except FileNotFoundError:
-        print("ADB not found. Please ensure ADB is installed and in your system's PATH.")
+        logger.error("ADB not found. Please ensure ADB is installed and in your system's PATH.")
         return []
     except subprocess.CalledProcessError as e:
-        print(f"ADB command failed with error: {e}")
+        logger.error(f"ADB command failed with error: {e}")
         return []
     
-def close_nofication(d):
+def close_notification(d):
     """
     清理通知與 Messenger 氣泡等遮擋物
     """
+    if not hasattr(d, 'open_quick_settings'):
+        return
     try:
         # 1. 處理系統設定 (方向鎖定/勿擾)
         try:
@@ -97,7 +99,7 @@ def close_nofication(d):
         # 嘗試尋找 Messenger 相關元件 (模糊匹配包名)
         fb_elements = d(packageNameMatches=r".*facebook\.orca.*")
         if fb_elements.exists:
-            print("偵測到 Messenger 相關氣泡/視窗")
+            logger.info("偵測到 Messenger 相關氣泡/視窗")
             for el in fb_elements:
                 try:
                     bounds = el.info.get("bounds")
@@ -106,7 +108,7 @@ def close_nofication(d):
                         mid_y = (bounds['top'] + bounds['bottom']) / 2
                         
                         # 往螢幕底部中央滑動 (關閉氣泡)
-                        print(f"掃除氣泡於: ({mid_x}, {mid_y}) -> 底部")
+                        logger.debug(f"掃除氣泡於: ({mid_x}, {mid_y}) -> 底部")
                         d.swipe(mid_x, mid_y, screen_w / 2, screen_h - 10, duration=0.2)
                         time.sleep(0.5)
                 except Exception as e:
@@ -114,8 +116,10 @@ def close_nofication(d):
                     continue
                     
     except Exception as e:
-        print(f"清理遮擋物時發生錯誤: {e}")
-def open_nofication(d):
+        logger.error(f"清理遮擋物時發生錯誤: {e}")
+def open_notification(d):
+    if not hasattr(d, 'open_quick_settings'):
+        return
     try:
         d.open_quick_settings()
         if not d.xpath('//*[@content-desc="方向鎖定"]').info.get("checked"):
@@ -125,4 +129,8 @@ def open_nofication(d):
         d.click(0.71, 0.016)
         time.sleep(1)
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logger.error(f"An error occurred: {e}")
+
+# Backward-compatible aliases
+close_nofication = close_notification
+open_nofication = open_notification

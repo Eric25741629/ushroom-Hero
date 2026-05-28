@@ -118,14 +118,14 @@ def _try_restart_emulator(serial: str, logger: logging.Logger = None) -> bool:
 def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
     """
     在終端執行 adb 指令並返回輸出。
-    
+
     Args:
         cmd: 可以是完整的 shell 命令字符串 (shlex 語法) 或已拆好的參數列表 (List[str])
         device_serial: 設備序號，如果指定則用 -s 參數鎖定設備
-        
+
     Returns:
         命令執行的標準輸出
-        
+
     Raises:
         RuntimeError: 當 ADB 命令執行失敗時
     """
@@ -133,7 +133,6 @@ def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
     if device_serial:
         base += ['-s', device_serial]
 
-    # 如果 cmd 是字符串，用 shlex.split 處理引號；若已是列表，直接用
     if isinstance(cmd, str):
         args = shlex.split(cmd)
     else:
@@ -141,16 +140,24 @@ def run_adb(cmd: Union[str, List[str]], device_serial: str = None) -> str:
 
     full_cmd = base + args
 
-    result = subprocess.run(
-        full_cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False
-    )
+    try:
+        result = subprocess.run(
+            full_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            check=False
+        )
+    except FileNotFoundError:
+        raise RuntimeError("ADB command not found. Ensure 'adb' is in your system PATH.")
+
     if result.returncode != 0:
-        raise RuntimeError(f"ADB Error: {result.stderr.strip()}")
-    return result.stdout.strip()
+        error_message = result.stderr.strip() if result.stderr else "Unknown ADB error"
+        raise RuntimeError(f"ADB Error (code {result.returncode}): {error_message}")
+
+    return result.stdout.strip() if result.stdout is not None else ""
 
 
 def safe_log(logger: logging.Logger, level: str, msg: str, *args, **kwargs):

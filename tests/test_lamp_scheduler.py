@@ -71,8 +71,8 @@ if "opengold_v2.lamp_service" not in sys.modules:
 if "device" not in sys.modules:
     _dev = types.ModuleType("device")
     _dev.get_adb_devices = lambda *a, **k: []
-    _dev.close_nofication = lambda *a, **k: None
-    _dev.open_nofication = lambda *a, **k: None
+    _dev.close_notification = lambda *a, **k: None
+    _dev.open_notification = lambda *a, **k: None
     sys.modules["device"] = _dev
 
 
