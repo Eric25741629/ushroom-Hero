@@ -101,12 +101,12 @@ def test_run_daily_claims_rewards_and_exits():
 
 
 def test_run_daily_station_upgrade_is_last_before_exit():
-    # Ship repair is a map overlay (stays in-season); the 一鍵修築 station-upgrade dives
-    # into 港口 and closing 港口 exits the season, so it must be the LAST action — its
-    # close doubles as leaving the season. Order: claim < repair < station < exit.
+    # Repair runs FIRST (ship at 大本營 from yesterday); 一鍵修築 station-upgrade dives
+    # into 港口 and closing 港口 exits the season, so it must be the LAST action -- its
+    # close doubles as leaving the season. Order: repair < claim < station < exit.
     s = FakeSession(RAW_OBJS)
     tasks.run_daily(s)
-    assert s.calls.index("claim") < s.calls.index("repair") < s.calls.index("station")
+    assert s.calls.index("repair") < s.calls.index("claim") < s.calls.index("station")
     # station is the last real action before exit
     assert s.calls.index("station") < s.calls.index("exit")
     assert s.calls[-1] == "exit"

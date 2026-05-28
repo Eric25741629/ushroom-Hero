@@ -117,6 +117,8 @@ class H5SeaSession:
 
     def _tap(self, path: str, wait: float = None) -> bool:
         """Real pixel tap on a UI node by its worldPosition. False if node missing."""
+        from utils import pause_guard
+        pause_guard.check()
         n = self._node(path)
         if not n:
             logger.debug("[sea] node not found: %s", path)
@@ -127,6 +129,8 @@ class H5SeaSession:
         return True
 
     def _drag(self, a, b, steps: int = 16) -> None:
+        from utils import pause_guard
+        pause_guard.check()
         self.page.mouse.move(a[0], a[1])
         self.page.mouse.down()
         for i in range(1, steps + 1):
@@ -177,6 +181,8 @@ class H5SeaSession:
                  near: Optional[Tuple[float, float]] = None, wait: float = 1.3) -> bool:
         """Tap the OCR match for ``target``. When ``near`` is given, tap the closest box
         to that point (used to pick the centred tile among several same-typed labels)."""
+        from utils import pause_guard
+        pause_guard.check()
         hits = self._ocr_matches(self._ocr_results(), target, exclude=exclude)
         if not hits:
             return False
@@ -230,10 +236,10 @@ class H5SeaSession:
         """修船 (daily 使用1次修船套件): 底部「維修」→ SeasonRepairView → 「維修」鈕(維修點)。
 
         Ship can only be repaired at 大本營 (else the game toasts 『僅位於大本營時才能維修
-        船隻』). Per the game flow, **攻略遺跡 (attack) zeroes the ship's durability and the
-        ship then auto-returns to 大本營** — so the daily order is attack → … → repair, and
-        here we retry through the gate while the ship sails home (the return takes a few
-        seconds). The repair popup is a map overlay, so closing it does NOT exit the season."""
+        船隻』). Repair runs FIRST each day because the ship auto-returned to 大本營 from
+        yesterday's attack, so it should already be docked when today's flow starts.
+        Retries are kept in case of timing edge cases. The repair popup is a map overlay,
+        so closing it does NOT exit the season."""
         try:
             if not self._tap(P_REPAIR_OPEN):
                 return False

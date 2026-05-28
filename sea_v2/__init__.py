@@ -46,4 +46,12 @@ def sea(ip: str, d, cache_path=None) -> SeaReport:
     if cache_path is None:
         from sea_v2.map_cache import default_cache_path
         cache_path = default_cache_path()
-    return run_daily(session, account_id=ip, cache_path=cache_path)
+    from utils import pause_guard
+    pause_guard.bind(ip=ip, page=session.page)
+    try:
+        return run_daily(session, account_id=ip, cache_path=cache_path)
+    except pause_guard.TaskAborted as exc:
+        logger.info("[sea] aborted ip=%s: %s", ip, exc)
+        return SeaReport(aborted_reason=f"pause-state-diverged: {exc}")
+    finally:
+        pause_guard.unbind()

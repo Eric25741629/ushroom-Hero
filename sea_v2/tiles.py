@@ -77,8 +77,14 @@ def nearest(tiles: Sequence[Tile], type_name: str, origin: Point, n: int = 1) ->
 
 
 def pick_daily_targets(tiles: Sequence[Tile], home: Tile) -> DailyTargets:
-    """Choose the tiles for today's quota: 2 nearest resource_1 + nearest relic."""
+    """Choose the tiles for today's quota: 2 bottom-most resource_1 + nearest relic.
+
+    Resources are sorted by ``wy`` ascending (cocos Y-up, so lowest wy = bottom of map)
+    to reach the furthest resource_1 tiles first.
+    """
     origin = home.wp
-    resources = nearest(tiles, RESOURCE_LV1, origin=origin, n=2)
+    res_candidates = [t for t in tiles if t.name == RESOURCE_LV1]
+    res_candidates.sort(key=lambda t: t.wy)  # lowest wy = bottom of map first
+    resources = res_candidates[:2]
     relics = nearest(tiles, RELIC, origin=origin, n=1)
     return DailyTargets(resources=resources, relic=relics[0] if relics else None)

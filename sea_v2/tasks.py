@@ -46,7 +46,11 @@ def run_daily(session, account_id: Optional[str] = None, cache_path=None) -> Sea
         plan = T.pick_daily_targets(tiles, home)
         _record_cache(account_id, cache_path, home, plan)
 
-        # Map actions first (we stay on the map for these and for reward-claim)...
+        # Repair FIRST: ship auto-returned to 大本營 from yesterday's attack, so it
+        # can be repaired before we dispatch new garrison/attack missions today.
+        report.repaired = bool(session.use_repair_kit())
+
+        # Map actions (garrison + attack, then reward-claim)...
         for res in plan.resources:
             if session.bring_on_screen(res):
                 if session.garrison(res):
@@ -62,10 +66,6 @@ def run_daily(session, account_id: Optional[str] = None, cache_path=None) -> Sea
                 logger.warning("[sea] relic off-screen, skipped: %s", plan.relic.wp)
 
         report.rewards_claimed = int(session.claim_rewards() or 0)
-
-        # Ship repair (使用1次修船套件): bottom 維修 → 維修點; map overlay, stays in-season.
-        # Best-effort — skips if the ship is out (大本營 gate); auto-return-home is 待補.
-        report.repaired = bool(session.use_repair_kit())
 
         # 一鍵修築 (維修站 base-upgrade, 木材) LAST: it dives into 港口, and closing 港口
         # exits the season to the main page, so its exit doubles as leaving the season.
