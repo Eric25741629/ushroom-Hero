@@ -11,7 +11,7 @@ from adb_operations import (
     start_game_by_icon, check_in_game, set_screen_for_game, reset_screen_settings,
 )
 import time
-from device import open_nofication
+from device import open_notification
 from adb_devices import launch_clone
 from Skill import *
 from park import *
@@ -93,7 +93,7 @@ atexit.register(lambda: shutdown_web_devices(logger))
 
 
 
-def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
+def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
     # 初始化狀態監控
     bot_state.init_device(ip)
     device_logger = logger
@@ -174,7 +174,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
         family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
         state_manager = state(device=d, cnn_model=Cnn_model)
         # assistant_manager = assistant(d=d, cnn_model=Cnn_model)
-        clf = ClassifierCNN(model=oralce_cnn_model, classes=oralce_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
+        clf = ClassifierCNN(model=oracle_cnn_model, classes=oracle_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
 
         # 建立 RL 記錄器（記錄但不自動訓練）
         rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))
@@ -225,11 +225,30 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                         continue
 
                 start = time.time()
-                img = d.screenshot(format='opencv')
-                # 進行ocr
-                if state_manager.get_state() == "滑動解除節電模式'":
-                    unlock_screen(d)
-                if check_in_game(d) :
+
+                # web_h5 主動關閉瀏覽器時，screenshot() 會在 _ensure_browser_session
+                # 內冷啟瀏覽器（2-3 秒）並被標成「slow screenshot」warning，但這是
+                # web_stop_mode=close_browser 下我們自己關的、不是異常。先用 is_alive
+                # 判斷，跳過喚醒截圖直接走啟動分支，讓 cold-start 算在「啟動遊戲」
+                # step 上才符合語義。
+                skip_wakeup_screenshot = False
+                if backend_kind == "web_h5":
+                    alive_fn = getattr(d, "is_alive", None)
+                    if callable(alive_fn) and not alive_fn():
+                        skip_wakeup_screenshot = True
+                        logger.info(f"[{ip}] web_h5 瀏覽器已關閉，跳過喚醒截圖，直接啟動")
+
+                if skip_wakeup_screenshot:
+                    img = None
+                    in_game = False
+                else:
+                    img = d.screenshot(format='opencv')
+                    # 進行ocr
+                    if state_manager.get_state() == "滑動解除節電模式'":
+                        unlock_screen(d)
+                    in_game = check_in_game(d)
+
+                if in_game:
                     logger.debug(f"[{ip}] 已確認在遊戲中")
                     # 即使在遊戲中，也要檢查是否有「放置獎勵」或「領取」彈窗阻擋
                     stage_check = get_stage_with_check(d, ip, Cnn_model, img=img)
@@ -240,7 +259,14 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                 else:
                     logger.debug(f"[{ip}] 未確認在遊戲中，準備啟動")
                     bot_state.update_state(ip, task="啟動遊戲", step="正在啟動 APP")
-                    if 'fc65396d' in ip or '192.168' in ip:
+                    if backend_kind == "web_h5":
+                        logger.info(f"[{ip}] web_h5 backend，呼叫 app_start 開啟遊戲頁面")
+                        try:
+                            d.app_start("com.mxdzz.tw.and")
+                        except Exception as e:
+                            logger.exception(f"[{ip}] web_h5 app_start 失敗: {e}")
+                            raise StartupBypassError("web_h5 app_start 失敗")
+                    elif 'fc65396d' in ip or '192.168' in ip:
                         
                         time.sleep(1)
                         try:
@@ -344,7 +370,7 @@ def main(ip, Cnn_model, oralce_cnn_model, oralce_classes, ocr):
                     except Exception as e2:
                         handle_connect_failure(ip, e2, device_logger, _running_threads, logger, refresh_adb_server)
                         logger.error(f"[{ip}] 重連失敗: {e2}")
-                open_nofication(d)
+                open_notification(d)
                 d.screen_off()
             release_wakeup_lock(ip)
             wake_ts, interrupted, wake_up_time = run_sleep_cycle(
@@ -436,7 +462,7 @@ if __name__ == "__main__":
     from utils.model_sync import ensure_local_model
     local_pth = ensure_local_model("cnn_model.pth")
     Cnn_model = cnn_model.load_cnn_model(local_pth)
-    oralce_cnn_model, oralce_classes, resolved_device = load_miner_cnn_model()
+    oracle_cnn_model, oracle_classes, resolved_device = load_miner_cnn_model()
     ocr = 1
     logger.info("[System] 核心已就緒，開始循環掃描 ADB 設備... (按 Ctrl+C 可退出)")
     try:
@@ -445,8 +471,8 @@ if __name__ == "__main__":
                 main,
                 _running_threads,
                 Cnn_model,
-                oralce_cnn_model,
-                oralce_classes,
+                oracle_cnn_model,
+                oracle_classes,
                 ocr,
                 logger,
             )

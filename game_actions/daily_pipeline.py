@@ -38,6 +38,7 @@ from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_du
 from game_actions.lamp_scheduler import _run_lamp_if_due
 from game_actions.miner_action import oracle
 from game_actions.redpack_scheduler import run_redpack_check_if_due
+from game_actions.statue_weekly import run_statue_weekly_if_due
 from game_actions.periodic_tasks import (
     _run_periodic_cycle,
     mushroom_arena,
@@ -52,6 +53,7 @@ from json_manager import (
     should_execute_sea_with_cooldown,
     time_recording,
 )
+from tools import click_white
 from utils.logging_utils import logger
 from utils.screenshot_helpers import log_main_page_mismatch, save_error_screenshot
 
@@ -60,6 +62,18 @@ from utils.screenshot_helpers import log_main_page_mismatch, save_error_screensh
 _DEVICE_SKIP_GUARDIAN = {
     "emulator-5558": True,
 }
+
+
+def _sea_dispatch(ip, d, **kwargs):
+    """航海 router. H5 backend → sea_v2 (deterministic nav + OCR 駐守/進攻/領獎; 修船
+    best-effort, 待補 auto-return-to-base). adb backend → legacy ``Sea.sea`` (sea_v2 is
+    H5-only for now). Gated by the ``sea_v2_enabled`` flag (per-device or global);
+    default off keeps legacy until enabled in bot_config.json."""
+    if getattr(d, "_page", None) is not None:
+        from sea_v2 import sea as sea_v2_sea, use_sea_v2
+        if use_sea_v2(ip, config_manager.load_config()):
+            return sea_v2_sea(ip, d)
+    return sea(ip, d)
 
 
 class _ConsecutiveMismatchAbort(Exception):
@@ -126,6 +140,7 @@ def run(ctx: DailyContext) -> None:
 
     # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
     run_carpark_check_if_due(d, ip)
+    click_white(d)  # dismiss any popup triggered during carpark (e.g. car-attacked notification)
 
     # Task 1: 地獄之門
     stage = get_stage_with_check(d, ip, Cnn_model)
@@ -277,6 +292,14 @@ def run(ctx: DailyContext) -> None:
         step="週期檢查/執行",
     )
 
+    # Task 13.5: 菇菇雕像每週五一鍵消耗 (gated by cfg.statue_weekly.enabled)
+    _guarded_run(
+        task_name="菇菇雕像每週",
+        mismatch_reason="菇菇雕像每週執行前不在主頁面",
+        fn=lambda: run_statue_weekly_if_due(d, ip),
+        step="週五檢查/執行",
+    )
+
     # Task 14: 航海任務
     _guarded_run(
         task_name="航海任務 (Sea)",
@@ -285,7 +308,7 @@ def run(ctx: DailyContext) -> None:
             ip,
             record_name="sea_last_execution",
             should_execute_fn=should_execute_sea_with_cooldown,
-            action_fn=sea,
+            action_fn=_sea_dispatch,
             display_name="sea",
             d=d,
             cycle_record_name="sea_cycle_start",

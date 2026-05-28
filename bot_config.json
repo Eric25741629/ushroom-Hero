@@ -39,12 +39,24 @@
                 "cross_tier": "silver",
                 "cross_lot_preference": "back",
                 "cluster": true,
-                "avoid_lots": [1, 2, 3, 4],
+                "avoid_lots": [
+                    1,
+                    2,
+                    3,
+                    4
+                ],
                 "daytime_total": 6,
                 "daytime_cross": 1,
                 "nighttime_total": 5,
                 "nighttime_cross": 0
             },
+            "statue_weekly": {
+                "enabled": true,
+                "amount": 1,
+                "_comment": "amount 暫設 1 為測試值，驗證穩定後改 7000"
+            },
+            "enable_mount_sprint": true,
+            "mount_sprint_quantity": 7000,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30
@@ -88,7 +100,12 @@
                 "cross_tier": "silver",
                 "cross_lot_preference": "back",
                 "cluster": true,
-                "avoid_lots": [1, 2, 3, 4],
+                "avoid_lots": [
+                    1,
+                    2,
+                    3,
+                    4
+                ],
                 "daytime_total": 6,
                 "daytime_cross": 1,
                 "nighttime_total": 5,
@@ -177,13 +194,14 @@
         "7fe98fc6": {
             "name": "7fe98fc6",
             "backend": "web_h5",
+            "web_debug_port": 9226,
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
             "web_canvas_selector": "canvas",
             "web_profile_dir": "playwright_profile/{device_id}",
             "web_state_file": "auth_state/{device_id}.json",
             "web_channel": "chrome",
-            "web_headless": true,
+            "web_headless": false,
             "web_clear_cookies_on_start": false,
             "web_viewport_width": 540,
             "web_viewport_height": 960,
@@ -208,15 +226,20 @@
             "use_opengold_v2": false,
             "experimental_cocos_navigation": true,
             "carpark": {
-                "enabled": true,
-                "cross_tier": "silver",
-                "cross_lot_preference": "back",
+                "avoid_lots": [
+                    1,
+                    2,
+                    3,
+                    4
+                ],
                 "cluster": true,
-                "avoid_lots": [1, 2, 3, 4],
-                "daytime_total": 6,
+                "cross_lot_preference": "back",
+                "cross_tier": "silver",
                 "daytime_cross": 1,
-                "nighttime_total": 5,
-                "nighttime_cross": 0
+                "daytime_total": 6,
+                "enabled": true,
+                "nighttime_cross": 0,
+                "nighttime_total": 5
             },
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
@@ -255,6 +278,11 @@
             "mining_planner_version": "v4",
             "mining_save_samples": false,
             "use_opengold_v2": true,
+            "statue_weekly": {
+                "enabled": true,
+                "amount": 1,
+                "_comment": "ADB device — flow uses OCR. amount=1 for first weeks until verified live."
+            },
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30
@@ -262,10 +290,14 @@
     },
     "global": {
         "mode": "master",
+        "sea_v2_enabled": true,
         "master_url": "http://127.0.0.1:5002",
         "worker_id": "unknown_worker",
         "worker_sync_timeout_sec": 10.0,
         "worker_sync_failure_backoff_sec": 6.0,
+        "live_view": {
+            "enabled": true
+        },
         "ocr": {
             "servers": [
                 "http://100.64.0.5:5001",
