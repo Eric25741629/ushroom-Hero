@@ -150,18 +150,23 @@ def farm(
 
     save_time += navigate_to_farm(d, cnn_model, device_ip=device_ip)
 
-    # Daily check: ensure work (打工) is active
-    _ensure_work_active(d)
-
-    # After ensuring work, check current state for planting decisions
+    # Read the *current* work state before changing anything. 打工 auto-plants
+    # AND auto-harvests but never buys seeds, so we run the manual steps (seed
+    # restock, harvest card, leftover collection) first and only (re-)enable 打工
+    # at the very end. Enabling it up front (the old order) forced the harvest
+    # card flow to cancel it again, and made `is_working` always True — which
+    # silently gated out seed buying so 打工 eventually ran out of seeds.
     is_working = check_if_parttime(d)
     if is_working:
-        logger.info("打工中，跳過種植相關操作，僅收菜")
+        logger.info("打工中，種植交給打工，本輪只補種子/收散落獎勵")
 
     seed_record = time_manager.get_time_record("farm_seed_purchase")
     should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
 
-    if should_buy_seed and not is_working:
+    # Restock seeds regardless of work state — 打工 consumes them but won't buy
+    # them, so the old `and not is_working` guard meant seeds were never bought
+    # while 打工 ran and planting eventually stalled.
+    if should_buy_seed:
         logger.info("需要購買種子")
         buy_seed(d)
         time_manager.record_time("farm_seed_purchase")
@@ -170,7 +175,7 @@ def farm(
     is_same_week = time_manager.is_same_week("farm_harvest_card")
     if not is_same_week:
         logger.info("執行每週豐收卡流程")
-        if run_harvest_card(d, device_ip=device_ip):
+        if run_harvest_card(d, device_ip=device_ip, cnn_model=cnn_model):
             time_manager.record_time("farm_harvest_card")
         else:
             logger.warning("豐收卡流程失敗，下次醒來重試")
@@ -215,6 +220,12 @@ def farm(
 
                     if find_and_click(d, r"put.jpg"):
                         time.sleep(5)
+
+    # (Re-)enable 打工 last, so it keeps the auto plant/harvest cycle running
+    # while the device sleeps. Done after seed restock + harvest card + leftover
+    # collection so none of those steps fight an already-running worker (the
+    # harvest card flow in particular needs 打工 off while it plants 特級種子).
+    _ensure_work_active(d)
 
     save_time += navigate_to_home(d, cnn_model, device_ip=device_ip)
 

@@ -45,11 +45,18 @@ COORD = {
     # harvest card flow (screen coords verified on 540x960, scale 0.75)
     "carpark_shop_btn": (376, 914),   # ParkingMainView/bottom/btnShop
     "carpark_close": (472, 914),      # ParkingMainView/bottom/btnClose
-    "premium_seed_tab": (356, 434),   # SeedSelectView content[2] 特級種子
+    # premium_seed_tab is the adb-only fallback; web_h5 selects 特級種子 by Label
+    # text via farm_v2.web_farm (the SeedSelectView ScrollView order is not stable).
+    "premium_seed_tab": (356, 434),   # SeedSelectView 特級種子 (adb fallback)
     "one_click_plant": (77, 830),     # PlantMainView/OneKeyOprate/btnOneKeyPlant
     "one_click_plant_confirm": (270, 568),  # SeedSelectView/bg/btnUse
     "free_fertilizer_btn": (69, 125), # PlantMainView/top/btnFertilizerGet
     "one_click_fertilize": (334, 830),# PlantMainView/OneKeyOprate/btnOneKeyGrow
+    # FertilizeSelectView (一鍵施肥 對話框) — adb fallback coords; web_h5 selects by
+    # Label text. 普通肥料=btnFertilizeGet, 高產肥料=btnFertilizeBuy, btnUse=confirm.
+    "fertilizer_putong": (201, 431),       # FertilizeSelectView 普通肥料
+    "fertilizer_gaochan": (356, 431),      # FertilizeSelectView 高產肥料
+    "fertilize_select_confirm": (270, 604),  # FertilizeSelectView btnUse 一鍵施肥
 }
 
 TIMING = {
@@ -65,9 +72,12 @@ SEED_PRICE = 100
 MAX_PLANT_PER_DAY = 2
 WEEKLY_CARD_DAYS = {1, 3, 5}  # deprecated — kept for rollback
 
-HARVEST_CARD_CYCLES = 15
 CROPS_PER_CYCLE = 6
 FERTILIZER_FREE_CLAIMS = 2
+HARVEST_CARD_BUY_COUNT = 3  # 菜園豐收卡每週購買上限（達上限會提前停止）
+PLANTS_PER_CARD = 30        # 一張豐收卡加成的株數（2 倍產量）
+# 種植輪數依「實際買到的張數」動態計算：bought * (PLANTS_PER_CARD // CROPS_PER_CYCLE)
+# 例：3 張 × 30 株 ÷ 6 株/輪 = 15 輪。舊的固定 HARVEST_CARD_CYCLES=15 已移除。
 
 TEMPLATE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(__file__)), "farm_templates"
