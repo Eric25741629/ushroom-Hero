@@ -304,11 +304,11 @@ def load_config() -> Dict[str, Any]:
                         json.dump(data, f, ensure_ascii=False, indent=4)
                     logger.info("[Config] 已自動補全缺失的設定欄位")
                 except Exception as e:
-                    print(f"[Config] 寫回設定失敗: {e}")
+                    logger.error(f"[Config] 寫回設定失敗: {e}")
 
             return data
         except Exception as e:
-            print(f"[Config] 讀取失敗: {e}")
+            logger.error(f"[Config] 讀取失敗: {e}")
             return {"devices": {}, "global": copy.deepcopy(DEFAULT_GLOBAL_CONFIG)}
 
 
@@ -415,7 +415,7 @@ def update_ocr_config(new_settings: Dict[str, Any]):
 
         config["global"]["ocr"] = current
         save_config(config)
-        print("[Config] 已更新 OCR 全域設定")
+        logger.info("[Config] 已更新 OCR 全域設定")
 
 
 def save_config(config: Dict[str, Any]):
@@ -425,7 +425,7 @@ def save_config(config: Dict[str, Any]):
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
         except Exception as e:
-            print(f"[Config] 寫入失敗: {e}")
+            logger.error(f"[Config] 寫入失敗: {e}")
 
 
 def _get_raw_device_config(ip: str) -> Dict[str, Any]:
@@ -571,7 +571,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
 
         config["devices"][ip] = current
         save_config(config)
-        print(f"[Config] Updated device config: {ip} ({current.get('name')})")
+        logger.info(f"[Config] Updated device config: {ip} ({current.get('name')})")
 
 
 def get_flag(ip: str, key: str, default=False) -> bool:

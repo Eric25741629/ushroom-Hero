@@ -4,13 +4,6 @@
 
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Tuple
-from enum import Enum
-
-
-class ComparisonDecision(Enum):
-    """比較決策結果"""
-    REPLACE = True      # 建議換裝
-    KEEP = False        # 建議保留原有
 
 
 @dataclass
