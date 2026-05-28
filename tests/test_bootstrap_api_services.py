@@ -7,7 +7,7 @@ Tests written BEFORE extraction (expected RED until bootstrap/api_services.py ex
     - worker: calls ensure_push_server_started + webhook + sync
     - master does NOT call ensure_worker_webhook_started or ensure_worker_sync_started
 
-  scan_loop(main_fn, running_threads, Cnn_model, oralce_cnn_model, oralce_classes, ocr, log):
+  scan_loop(main_fn, running_threads, Cnn_model, oracle_cnn_model, oracle_classes, ocr, log):
     - calls scan_and_start_devices each iteration
     - exits cleanly on KeyboardInterrupt
 """
@@ -39,8 +39,8 @@ if "uiautomator2" not in sys.modules:
 if "device" not in sys.modules:
     _dev = types.ModuleType("device")
     _dev.get_adb_devices = lambda *a, **k: []
-    _dev.open_nofication = lambda *a, **k: None
-    _dev.close_nofication = lambda *a, **k: None
+    _dev.open_notification = lambda *a, **k: None
+    _dev.close_notification = lambda *a, **k: None
     sys.modules["device"] = _dev
 
 # control_panel_app: lazily imported inside start_all (master branch).

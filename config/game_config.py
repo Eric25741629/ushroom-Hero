@@ -49,7 +49,7 @@ class GameConfig:
     SCREENSHOT_DIRS = [
         "announcement", "main", "reward", "family", "boss",
         "homeland", "homeplace", "farm", "find_img", "other_stage",
-        "other_str", "other_login", "reward_get", "oralce"
+        "other_str", "other_login", "reward_get", "oracle"
     ]
     
     # 像素檢測點配置 (用於主頁面檢測)

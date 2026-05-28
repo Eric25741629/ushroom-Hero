@@ -91,7 +91,7 @@ def _is_infinite_host() -> bool:
     return host == "infinite" or host.startswith("infinite.")
 
 
-def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oralce_cnn_model, oralce_classes, ocr, logger_obj):
+def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn_model, oracle_classes, ocr, logger_obj):
     """掃描 ADB 設備並啟動新執行緒。"""
     global _monitored_devices, _missing_devices, _dynamic_optional_devices
 
@@ -200,7 +200,7 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oralce_cnn
                 print(f"[System] 發現新設備或重連設備: {ip}，正在啟動掛機執行緒...")
                 t = threading.Thread(
                     target=main_fn,
-                    args=(ip, cnn_model, oralce_cnn_model, oralce_classes, ocr),
+                    args=(ip, cnn_model, oracle_cnn_model, oracle_classes, ocr),
                     name=f"Bot-{ip}",
                     daemon=True,
                 )

@@ -21,7 +21,7 @@ import uiautomator2 as u2
 import random
 import cnn_model
 
-def oralce(d: u2.Device, Cnn_model, easyocr_reader, ip):
+def oracle(d: u2.Device, Cnn_model, easyocr_reader, ip):
     d.click(321, 919)
     retry = 0
     while (retry < 5):
@@ -53,6 +53,10 @@ def oralce(d: u2.Device, Cnn_model, easyocr_reader, ip):
     time.sleep(3)
     d.click(321, 919)
     time.sleep(3)
+
+# Backward-compatible alias
+oralce = oracle
+
 # def oralce(d, easyocr_reader):
 #     d.click(321, 919)
 #     retry = 0

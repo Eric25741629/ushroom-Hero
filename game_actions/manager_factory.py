@@ -21,8 +21,8 @@ def _init_runtime_managers(
     d: Any,
     ip: str,
     Cnn_model: Any,
-    oralce_cnn_model: Any,
-    oralce_classes: Any,
+    oracle_cnn_model: Any,
+    oracle_classes: Any,
 ) -> Tuple[Any, Any, Any, Any, Any, Any]:
     """Create all per-device manager objects.
 
@@ -34,8 +34,8 @@ def _init_runtime_managers(
     family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
     state_manager = state(device=d, cnn_model=Cnn_model)
     clf = ClassifierCNN(
-        model=oralce_cnn_model,
-        classes=oralce_classes,
+        model=oracle_cnn_model,
+        classes=oracle_classes,
         dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR,
     )
     rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))

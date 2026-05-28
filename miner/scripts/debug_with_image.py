@@ -16,7 +16,7 @@ def debug_image(image_path: str):
     # 1. 載入模型 (模擬 new_main 的行為)
     # 注意：這裡假設您的模型在 miner/models/checkpoints/best.pth
     # 如果 new_main 用的是根目錄的 model，這裡可能要改
-    # new_main: oralce_cnn_model, oralce_classes, resolved_device = load_miner_cnn_model()
+    # new_main: oracle_cnn_model, oracle_classes, resolved_device = load_miner_cnn_model()
     # load_miner_cnn_model 其實就是 miner.models.classifier.load_cnn_model
     
     model, classes, device = load_cnn_model() # 使用預設路徑

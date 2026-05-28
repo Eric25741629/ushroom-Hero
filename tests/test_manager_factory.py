@@ -4,7 +4,7 @@ Phase 9: extract per-device manager creation from main() into its own module.
 
 Tests written BEFORE extraction (expected RED until manager_factory.py exists).
 
-  _init_runtime_managers(d, ip, Cnn_model, oralce_cnn_model, oralce_classes):
+  _init_runtime_managers(d, ip, Cnn_model, oracle_cnn_model, oracle_classes):
     - Returns a 6-tuple of manager objects
     - Creates miner/rl_logs/{ip} directory as a side effect
     - IP containing a colon → colon replaced with underscore in directory name

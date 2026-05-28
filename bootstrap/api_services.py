@@ -5,8 +5,8 @@ Extracted from new_main_v2.__main__ as Phase 10 of the slim-down plan.
   start_all(mode, base_dir):
     Start all runtime services for the given mode.
 
-  scan_loop(main_fn, running_threads, Cnn_model, oralce_cnn_model,
-            oralce_classes, ocr, log):
+  scan_loop(main_fn, running_threads, Cnn_model, oracle_cnn_model,
+            oracle_classes, ocr, log):
     Run the device scan loop until KeyboardInterrupt.
 """
 from __future__ import annotations
@@ -43,8 +43,8 @@ def scan_loop(
     main_fn: Any,
     running_threads: dict,
     Cnn_model: Any,
-    oralce_cnn_model: Any,
-    oralce_classes: Any,
+    oracle_cnn_model: Any,
+    oracle_classes: Any,
     ocr: Any,
     log: Any,
 ) -> None:
@@ -55,8 +55,8 @@ def scan_loop(
                 main_fn,
                 running_threads,
                 Cnn_model,
-                oralce_cnn_model,
-                oralce_classes,
+                oracle_cnn_model,
+                oracle_classes,
                 ocr,
                 log,
             )
