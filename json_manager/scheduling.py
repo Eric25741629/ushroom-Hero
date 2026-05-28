@@ -165,13 +165,34 @@ def _should_execute_cycle(
     return should_execute, False
 
 
+# sea 只在台灣時間此視窗內執行（end 為 exclusive hour，等同 10:00~24:00）。
+# legacy Sea.sea 的中段航海操作本就限制在這個時段，但結尾的盲點返回 tap
+# 不論時段都會跑；若在視窗外被排程呼叫，會跳過中段、結尾 tap 落錯位置，
+# 把遊戲卡在未知頁並級聯跳過後續任務。因此在排程器這層就擋掉視窗外的呼叫。
+SEA_WINDOW_START_HOUR = 10
+SEA_WINDOW_END_HOUR = 24
+
+
 def should_execute_sea_with_cooldown(
     ip: str,
     cycle_weeks: int = 4,
     cooldown_hours: int = 4,
     logger=None,
+    now: Optional[datetime.datetime] = None,
 ) -> Tuple[bool, bool]:
-    """判斷是否該執行 sea（每 N 週中的1週，且該週內每 X 小時執行一次）。"""
+    """判斷是否該執行 sea（每 N 週中的1週，且該週內每 X 小時執行一次，
+    且限制在台灣時間 10:00~24:00 視窗內）。"""
+    _tpe = datetime.timezone(datetime.timedelta(hours=8))
+    if now is None:
+        now = datetime.datetime.now(_tpe)
+    if not (SEA_WINDOW_START_HOUR <= now.hour < SEA_WINDOW_END_HOUR):
+        if logger:
+            logger.info(
+                f"[{ip}] sea: 非執行時段 (hour={now.hour}, "
+                f"視窗={SEA_WINDOW_START_HOUR}:00~{SEA_WINDOW_END_HOUR}:00) → 跳過"
+            )
+        return False, False
+
     in_correct_week, need_week_record = _should_execute_cycle(
         ip, "sea_cycle_start", cycle_weeks=cycle_weeks, logger=logger
     )

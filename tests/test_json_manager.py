@@ -571,6 +571,54 @@ class TestShouldExecuteCycleFromRecord:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# should_execute_sea_with_cooldown — Taiwan-time 10:00-24:00 window gate
+#
+# Regression: legacy Sea.sea is invoked by the scheduler with no time-of-day
+# gate, so it fired in the early-morning hours. At hour<10 it skipped its inner
+# 航海 block but still ran the trailing blind-tap "return to main" sequence,
+# leaving the game on an unknown page and cascading every later task to skip.
+# The scheduler must refuse to run sea outside 10:00-24:00 (Taiwan time).
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestShouldExecuteSeaWindow:
+    @pytest.fixture(autouse=True)
+    def isolated_dir(self, tmp_path, monkeypatch):
+        # No record files → cycle/cooldown gates would otherwise say "run".
+        monkeypatch.chdir(tmp_path)
+
+    def setup_method(self):
+        from json_manager import should_execute_sea_with_cooldown
+        self.fn = should_execute_sea_with_cooldown
+
+    def _at(self, hour):
+        tpe = datetime.timezone(datetime.timedelta(hours=8))
+        return datetime.datetime(2026, 5, 29, hour, 30, tzinfo=tpe)
+
+    def test_before_window_blocked(self):
+        # 02:30 凌晨 → blocked regardless of cycle/cooldown
+        assert self.fn("emulator-5560", now=self._at(2)) == (False, False)
+
+    def test_just_before_open_blocked(self):
+        # 09:30 → still blocked
+        assert self.fn("emulator-5560", now=self._at(9)) == (False, False)
+
+    def test_window_open_lower_bound_not_blocked_by_window(self):
+        # 10:00 boundary is inclusive → window does not block; with no record
+        # the cycle/cooldown path then says run.
+        should, _ = self.fn("emulator-5560", now=self._at(10))
+        assert should is True
+
+    def test_inside_window_not_blocked_by_window(self):
+        should, _ = self.fn("emulator-5560", now=self._at(15))
+        assert should is True
+
+    def test_last_hour_inside_window(self):
+        # 23:xx is the last allowed hour (window end 24 is exclusive on hour)
+        should, _ = self.fn("emulator-5560", now=self._at(23))
+        assert should is True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Backward compatibility wrappers
 # ──────────────────────────────────────────────────────────────────────────────
 
