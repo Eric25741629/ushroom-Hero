@@ -129,8 +129,9 @@ class LampService:
             stage_result = self.analyze_stage_fn(stage_img)
             return self.device_detector.detect_lian_shan_from_ocr_result(stage_result)
         except Exception as e:
-            logger.warning(f"[LampService] 偵測連閃裝備失敗: {e}，預設為 True")
-            return True
+            fallback = self.has_lian_shan_equip if self.has_lian_shan_equip is not None else False
+            logger.warning(f"[LampService] 偵測連閃裝備失敗: {e}，使用上次結果: {fallback}")
+            return fallback
 
     def _log_screenshot(self, prefix: str = "lamp", suffix: str = ""):
         try:

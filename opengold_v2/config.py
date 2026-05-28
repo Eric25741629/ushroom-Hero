@@ -8,6 +8,17 @@ import json
 import os
 
 
+class _ConfigEncoder(json.JSONEncoder):
+    """Handle frozenset / set / tuple for JSON serialisation."""
+
+    def default(self, obj):
+        if isinstance(obj, frozenset):
+            return sorted(obj)
+        if isinstance(obj, set):
+            return [sorted(item) if isinstance(item, frozenset) else item for item in obj]
+        return super().default(obj)
+
+
 @dataclass
 class OpenGoldConfig:
     """神燈開裝備配置"""
@@ -222,18 +233,66 @@ class OpenGoldConfig:
         """從 JSON 檔案載入配置"""
         if not os.path.exists(filepath):
             return cls()
-        
+
         with open(filepath, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        
+
         # 過濾掉不存在的欄位
         valid_fields = {f.name for f in cls.__dataclass_fields__.values()}
         filtered_data = {k: v for k, v in data.items() if k in valid_fields}
-        
+
+        # Reverse conversion: restore types that save_to_file serialised
+        import typing
+        for fname, fobj in cls.__dataclass_fields__.items():
+            if fname not in filtered_data:
+                continue
+            ftype = fobj.type
+            origin = getattr(ftype, '__origin__', None)
+
+            # Set[FrozenSet[str]] → convert list-of-lists back
+            if origin is set:
+                args = getattr(ftype, '__args__', ())
+                if args and getattr(args[0], '__origin__', None) is frozenset:
+                    filtered_data[fname] = {frozenset(item) for item in filtered_data[fname]}
+
+            # Dict with FrozenSet keys → convert comma-joined string keys back
+            elif origin is dict:
+                args = getattr(ftype, '__args__', ())
+                if args and getattr(args[0], '__origin__', None) is frozenset:
+                    filtered_data[fname] = {
+                        frozenset(k.split(',')): v
+                        for k, v in filtered_data[fname].items()
+                    }
+
+            # Tuple fields → convert lists back to tuples (recursively for nested)
+            elif ftype is tuple or origin is tuple or (isinstance(ftype, str) and 'Tuple' in ftype):
+                def _to_tuple(obj):
+                    if isinstance(obj, list):
+                        return tuple(_to_tuple(item) for item in obj)
+                    return obj
+                filtered_data[fname] = _to_tuple(filtered_data[fname])
+
         return cls(**filtered_data)
     
     def save_to_file(self, filepath: str):
         """儲存配置到 JSON 檔案"""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        data = {}
+        for k, v in self.__dict__.items():
+            if isinstance(v, dict):
+                # Convert frozenset keys to sorted-tuple strings for JSON
+                new_dict = {}
+                for dk, dv in v.items():
+                    if isinstance(dk, frozenset):
+                        new_dict[','.join(sorted(dk))] = dv
+                    else:
+                        new_dict[dk] = dv
+                data[k] = new_dict
+            elif isinstance(v, set):
+                data[k] = [sorted(item) if isinstance(item, frozenset) else item for item in v]
+            elif isinstance(v, tuple):
+                data[k] = list(v)
+            else:
+                data[k] = v
         with open(filepath, 'w', encoding='utf-8') as f:
-            json.dump(self.__dict__, f, ensure_ascii=False, indent=2)
+            json.dump(data, f, ensure_ascii=False, indent=2, cls=_ConfigEncoder)
