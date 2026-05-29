@@ -188,6 +188,44 @@ def get_hostname() -> str:
     return socket.gethostname()
 
 
+def _backup_file() -> str:
+    """Host-specific last-known-good backup path.
+
+    Per-host filename so the backup itself never produces Syncthing
+    conflicts across machines sharing the synced repo.
+    """
+    safe_host = "".join(c if c.isalnum() or c in "-_." else "_" for c in get_hostname())
+    return str(Path(CONFIG_FILE).with_name(f"bot_config.{safe_host}.bak"))
+
+
+def _write_backup(data: Dict[str, Any]) -> None:
+    """Persist a last-known-good snapshot. Only back up *non-empty* configs so a
+    transient empty/default state can never become the recovery anchor."""
+    try:
+        if not data or not data.get("devices"):
+            return
+        with open(_backup_file(), "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:  # backup is best-effort, never fatal
+        logger.warning(f"[Config] 寫入備份失敗: {e}")
+
+
+def _load_backup() -> "Dict[str, Any] | None":
+    """Return last-known-good config from the host backup, or None."""
+    path = _backup_file()
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if data and data.get("devices"):
+            return data
+    except Exception as e:
+        logger.warning(f"[Config] 讀取備份失敗: {e}")
+    return None
+
+
+
 # -- type-coercion helpers shared by update_ocr_config / update_device_config --
 
 def _to_int(v: Any, d: int) -> int:
@@ -306,9 +344,17 @@ def load_config() -> Dict[str, Any]:
                 except Exception as e:
                     logger.error(f"[Config] 寫回設定失敗: {e}")
 
+            # 成功讀到有效（非空）設定才更新 last-known-good 備份。
+            _write_backup(data)
             return data
         except Exception as e:
             logger.error(f"[Config] 讀取失敗: {e}")
+            # 自癒：解析失敗（例如同步中途/衝突檔）時，回復上次成功的設定，
+            # 絕不回傳空預設——否則後續 save 會把整份設定清空。
+            recovered = _load_backup()
+            if recovered is not None:
+                logger.warning("[Config] 已從 host 備份自癒回復設定，未使用空預設")
+                return recovered
             return {"devices": {}, "global": copy.deepcopy(DEFAULT_GLOBAL_CONFIG)}
 
 
@@ -418,12 +464,33 @@ def update_ocr_config(new_settings: Dict[str, Any]):
         logger.info("[Config] 已更新 OCR 全域設定")
 
 
-def save_config(config: Dict[str, Any]):
-    """寫入設定檔"""
+def save_config(config: Dict[str, Any], *, allow_empty_devices: bool = False):
+    """寫入設定檔。
+
+    Safety guard: 若傳入的 config 的 devices 為空，但磁碟上既有檔案有裝置，
+    預設拒絕寫入（避免一次解析失敗/同步衝突就清空整份設定）。
+    確需清空時請明確傳入 ``allow_empty_devices=True``。
+    """
     with _config_lock:
         try:
+            incoming_devices = (config or {}).get("devices") or {}
+            if not incoming_devices and not allow_empty_devices:
+                existing_has_devices = False
+                if os.path.exists(CONFIG_FILE):
+                    try:
+                        with open(CONFIG_FILE, "r", encoding="utf-8-sig") as f:
+                            existing_has_devices = bool(json.load(f).get("devices"))
+                    except Exception:
+                        existing_has_devices = False
+                if existing_has_devices:
+                    logger.error(
+                        "[Config] 已拒絕以空 devices 覆蓋既有非空設定 (safety guard)。"
+                        "如確需清空請呼叫 save_config(config, allow_empty_devices=True)"
+                    )
+                    return
             with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                 json.dump(config, f, ensure_ascii=False, indent=4)
+            _write_backup(config)
         except Exception as e:
             logger.error(f"[Config] 寫入失敗: {e}")
 

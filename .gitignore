@@ -66,3 +66,8 @@ runs/
 # Persistent web session token (Codex review H3 — must not be committed)
 mushroom_session*.json
 .gitnexus
+
+# config backups / recovery anchors (host-specific, not for version control)
+bot_config.*.bak
+bot_config.broken-*.json.bak
+bot_config.sync-conflict-*.json
