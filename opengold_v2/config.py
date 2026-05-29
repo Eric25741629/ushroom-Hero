@@ -45,7 +45,12 @@ class OpenGoldConfig:
     skill_crit_threshold: float = 3.6
     # 比較浮點誤差
     eps: float = 1e-6
-    
+
+    # ========== 要的品質門檻（封包偵測）==========
+    # 開神燈封包(0x0504)偵測：裝備 rarity ≥ 此值視為「要的品質」。
+    # 11 = 永恆（遊戲自動賣只保留這階）。
+    wanted_rarity: int = 11
+
     # ========== ROI 座標配置 ==========
     # 開出詞條 ROI (相對座標，適用所有裝置)
     rolled_roi_coords: List[Tuple[int, int, int, int]] = field(default_factory=lambda: [
@@ -175,6 +180,12 @@ class OpenGoldConfig:
         ("學", "擊"),
         ("舉", "擊"),
         ("量", "暈"),
+        # OCR 偶爾吐簡體字 → 轉繁體，否則 alias 比對不到（例:晕→暈 害 combo 漏「暈」）
+        ("晕", "暈"),
+        ("复", "復"),
+        ("击", "擊"),
+        ("连", "連"),
+        ("伤", "傷"),
     ])
     
     # ========== 詞條字典 ==========

@@ -198,13 +198,26 @@ class LampService:
                 f"(before={before_count}, after={after_count}) — 可能 click 沒到位 / 流程卡住"
             )
 
-    def process_single_lamp(self, is_compare: bool = True) -> bool:
-        """處理單次開神燈。回傳 True=正常完成；False=因 OCR 不完整而跳過。"""
+    def process_single_lamp(
+        self,
+        is_compare: bool = True,
+        skip_batch_check: bool = False,
+        packet_combo: Optional[str] = None,
+    ) -> bool:
+        """處理單次開神燈。回傳 True=正常完成；False=因 OCR 不完整而跳過。
+
+        skip_batch_check=True：封包已確認開到要的品質(遊戲已停住、留 1 顆)，直接開比較頁
+        判斷，不要被 _check_batch_in_flight 的「批次動畫中 → sleep 10s 後 bail」拖延
+        （否則永恆要等 ~30s 才走慢路徑處理）。
+
+        packet_combo：封包為主 — 直接給正規化 combo(由封包詞條算)，略過 skill_roi OCR。
+        OCR 會把「暈」讀成簡體「晕」而漏字 → combo 出錯找不到階段；封包不會。
+        """
         self._log_screenshot(prefix="lamp", suffix="start")
 
         if self._handle_sell_page_if_present("當前在全部出售頁面"):
             return True
-        if self._check_batch_in_flight():
+        if not skip_batch_check and self._check_batch_in_flight():
             return True
 
         before_count = self.ui.get_gold_num()
@@ -217,22 +230,28 @@ class LampService:
             if self._handle_sell_page_if_present("開燈後出現全部出售頁面，執行全部出售"):
                 return True
 
-            skill_roi = self.ui.get_skill_roi()
-            self._log_roi(skill_roi, "skill_roi")
-            skill_result = self.analyze_skill_fn(skill_roi)
+            if packet_combo:
+                combo_norm = packet_combo
+                unwanted = self.parser.is_unwanted_combo(combo_norm)
+                logger.info(f"[LampService] 技能組合(封包為主): {combo_norm} ; 不要? {unwanted}")
+            else:
+                skill_roi = self.ui.get_skill_roi()
+                self._log_roi(skill_roi, "skill_roi")
+                skill_result = self.analyze_skill_fn(skill_roi)
 
-            if not skill_result or not skill_result.get('success'):
-                logger.warning("[LampService] 技能 OCR 失敗")
-                self._log_screenshot(prefix="lamp", suffix="ocr_fail")
-                return True
+                if not skill_result or not skill_result.get('success'):
+                    logger.warning("[LampService] 技能 OCR 失敗")
+                    self._log_screenshot(prefix="lamp", suffix="ocr_fail")
+                    return True
 
-            parsed = self.parser.parse_ocr(skill_result.get('ocr_results', []))
-            logger.info(
-                f"[LampService] 技能組合: {parsed.combo_raw} => {parsed.combo_norm} "
-                f"; 不要? {parsed.unwanted}"
-            )
+                parsed = self.parser.parse_ocr(skill_result.get('ocr_results', []))
+                combo_norm = parsed.combo_norm
+                unwanted = parsed.unwanted
+                logger.info(
+                    f"[LampService] 技能組合: {parsed.combo_raw} => {combo_norm} ; 不要? {unwanted}"
+                )
 
-            if parsed.unwanted:
+            if unwanted:
                 logger.info("[LampService] 不需要的組合，執行出售")
                 self._log_screenshot(prefix="lamp", suffix="sold_unwanted")
                 self.ui.click_sell_button()
@@ -240,7 +259,7 @@ class LampService:
                 return True
 
             logger.info("[LampService] 需要的組合，進入比較流程")
-            skipped = self._process_wanted_combo(parsed.combo_norm, is_compare)
+            skipped = self._process_wanted_combo(combo_norm, is_compare)
             return not skipped
         finally:
             self._record_lamp_consumption(before_count)
@@ -370,9 +389,9 @@ class LampService:
 
     def _return_to_original_equipment(self, original_stage_texts: List[str]):
         """切換回原始裝備"""
-        self.ui.click_and_wait(419, 720, 3)
-        self.ui.click_and_wait(272, 796, 1)
-        self.ui.click_and_wait(281, 350, 1)
+        self.ui.click_and_wait(419, 720, 3, reason="切回原裝:切到方案頁籤")
+        self.ui.click_and_wait(272, 796, 1, reason="切回原裝:關閉浮窗")
+        self.ui.click_and_wait(281, 350, 1, reason="切回原裝:展開階段列表")
 
         stage_img = self.ui.get_stage_roi_recheck()
         stage_result = self.analyze_stage_fn(stage_img)
@@ -494,6 +513,96 @@ class LampService:
         except Exception as exc:
             logger.warning(f"[LampService] reengage 失敗: {exc}")
 
+    def _enter_lamp_and_clear(self, is_compare: bool) -> bool:
+        """進燈介面(自動點燈設定窗)並清掉殘留，回到可按「開始」的就緒態。
+
+        H5：用 cocos lamp_ui_state() 精確分類(快、不亂猜)；ADB：OCR/pixel fallback。
+        殘留：賣場 grid→全部出售；單件/未知 modal→同一套規則(process_single_lamp)；
+        誤入神器頁→關閉。回傳 True=就緒(H5:已在 auto_config 設定窗); False=清不掉。
+        """
+        if getattr(self.device, "_page", None) is not None:
+            return self._enter_and_clear_cocos(is_compare)
+        return self._enter_and_clear_adb(is_compare)
+
+    def _enter_and_clear_cocos(self, is_compare: bool) -> bool:
+        """H5：依 cocos 狀態清殘留並進入自動點燈設定窗。"""
+        from .lamp_startup import StartupAction, StartupResolver, classify_entry_state
+
+        resolver = StartupResolver(max_iters=14, max_stall=3)
+        while True:
+            ui = self.ui.lamp_ui_state() or {"state": "unknown"}
+            st = ui.get("state") or "unknown"
+
+            if st == "auto_config":
+                logger.info("[LampService] 已在自動點燈設定窗 → 就緒")
+                return True
+            if st == "artifact":
+                logger.warning("[LampService] 誤入神器頁(ArtifactView) → 關閉")
+                self.ui.close_artifact_view()
+                time.sleep(0.6)
+                continue
+
+            sell_all = (st == "sell_grid")
+            comparison = (st == "comparison")          # EquipEditView 單件 → 走規則
+            popup = st.startswith("other")             # 未知 modal → 嘗試關閉(不亂點)
+            on_main = (st == "main")
+            state = classify_entry_state(
+                sell_all=sell_all, comparison=comparison, blocking_popup=popup, main=on_main
+            )
+            action = resolver.next_action(state)
+            logger.info(f"[LampService] 清殘留(cocos): ui={st} -> {action.value} iter={resolver.iters}")
+
+            if action == StartupAction.DONE:
+                return True
+            if action == StartupAction.ABORT:
+                logger.warning("[LampService] 清殘留 ABORT")
+                self._log_screenshot(prefix="lamp", suffix="clear_abort")
+                return False
+            if action == StartupAction.SELL_ALL:
+                self.ui.click_all_sell_and_verify()
+            elif action == StartupAction.PROCESS_OPENED_EQUIP:
+                self.process_single_lamp(is_compare)
+            elif action == StartupAction.ENTER_LAMP:
+                self.ui.click_and_wait(447, 801, 2, reason="清殘留:點熔爐入口進設定窗")
+            time.sleep(0.4)
+
+    def _enter_and_clear_adb(self, is_compare: bool) -> bool:
+        """ADB(無 cocos)：OCR/pixel 清殘留後進入設定窗。"""
+        try:
+            if self.ui.is_blocking_popup():
+                self.ui.dismiss_blocking_popup()
+        except Exception:
+            pass
+        self.ui.click_and_wait(447, 801, 2, reason="ADB清殘留:進自動點燈設定窗")
+        for _ in range(6):
+            try:
+                if self.ui.is_lamp_sell_page():
+                    self.ui.click_all_sell_and_verify()
+                    self.ui.click_and_wait(447, 801, 2, reason="ADB清殘留:賣場後重進設定窗")
+                    continue
+                if self.ui.is_comparison_dialog():
+                    self.process_single_lamp(is_compare)
+                    self.ui.click_and_wait(447, 801, 2, reason="ADB清殘留:單件後重進設定窗")
+                    continue
+            except Exception as exc:
+                logger.warning(f"[LampService] ADB 清殘留失敗: {exc}")
+            break
+        return True
+
+    def _finish_clean(self, is_compare: bool) -> None:
+        """收尾前清掉開著的 全部出售 / 單件比較窗，避免殘留到下一輪(根因防護)。"""
+        for _ in range(4):
+            try:
+                if self.ui.is_lamp_sell_page():
+                    self.ui.click_all_sell_and_verify()
+                    continue
+                if self.ui.is_comparison_dialog():
+                    self.process_single_lamp(is_compare)
+                    continue
+            except Exception as exc:
+                logger.warning(f"[LampService] _finish_clean 失敗: {exc}")
+            break
+
     def run(self, times: int = 1000, is_compare: bool = True):
         """執行開神燈主流程。times=-1 表示無限。
 
@@ -507,126 +616,320 @@ class LampService:
             times = float('inf')
 
         logger.info(f"[LampService] 開始開神燈，設定: times={times}, is_compare={is_compare}")
-        self.ui.navigate_to_lamp()
+        self._last_is_compare = is_compare
+
+        # 開燈前先讀剩餘神燈(魔法熔爐)數量 — 沒燈就不硬開(仍會清殘留)
+        try:
+            pre_count = self.ui.get_remaining_lamp_count()
+        except Exception:
+            pre_count = None
+        logger.info(f"[LampService] 開燈前剩餘神燈: {pre_count}")
+
+        # 進燈介面 + 清三種殘留狀態(全部出售 / 單件比較 / 一般彈窗) → 就緒
+        if not self._enter_lamp_and_clear(is_compare):
+            logger.warning("[LampService] 無法清乾淨殘留/未就緒，結束本輪")
+            try:
+                self._finish_clean(is_compare)
+                self.ui.exit_lamp()
+            except Exception as exc:
+                logger.warning(f"[LampService] 收尾失敗: {exc}")
+            return
+
+        if pre_count == 0:
+            logger.info("[LampService] 剩餘神燈為 0，已清乾淨殘留，不啟動自動開裝")
+            try:
+                self.ui.exit_lamp()
+            except Exception as exc:
+                logger.warning(f"[LampService] exit_lamp 失敗: {exc}")
+            return
+
+        # 就緒(自動點燈設定窗) → 按「開始」啟動連續自動開燈
+        # (live 驗證: 按一次開始即連續自動開+自動賣, ~1批/秒, 不需逐件處理)
+        self.ui.click_and_wait(281, 636, 2, reason="按開始:啟動連續自動開燈")
         self.state.is_running = True
 
-        # Track consecutive REENGAGE_AUTO firings that didn't move the count.
-        # Symptom on 7fe98fc6: an event banner overlays the lamp button →
-        # auto/start clicks land on the banner → count never drops → infinite
-        # reengage loop. As soon as a reengage tick observes the same count as
-        # the previous reengage, escalate to a full navigate.
-        failed_reengage_streak = 0
-        last_reengage_count: Optional[int] = None
-
-        # Suppress REENGAGE while count is actively dropping. Auto-mode
-        # naturally pauses 1-3s between batches; firing reengage during those
-        # gaps clicks the screen center while the game is happily working.
-        # Track the last time we observed a real count decrease.
-        last_drop_ts: float = 0.0
-        last_seen_count: Optional[int] = None
-
         try:
-            while time.time() - start_time < times and self.state.is_running:
-                # Sell-page intercept must come BEFORE tick: gold ROI on this page
-                # returns the sell-all-gold total, not lamp count (validated on
-                # 7fe98fc6 — see tools/lamp_loop_validate.py).
-                if self.ui.is_lamp_sell_page():
-                    logger.info("[LampService] 全部出售頁面，執行 click_all_sell")
-                    self.ui.click_all_sell()
-                    time.sleep(2)
-                    continue
-
-                lamp_count = self._read_lamp_count_robust()
-                has_popup = self._detect_popup()
-
-                # Mark recent progress so REENGAGE doesn't fire during normal
-                # inter-batch gaps.
-                if (
-                    lamp_count is not None
-                    and last_seen_count is not None
-                    and lamp_count < last_seen_count
-                ):
-                    last_drop_ts = time.time()
-                if lamp_count is not None:
-                    last_seen_count = lamp_count
-
-                action = self.loop_state.tick(lamp_count, has_popup)
-
-                if action == LampLoopAction.RENAVIGATE:
-                    logger.warning(
-                        f"[LampService] count 連續 {self.loop_state.unreadable_renav_threshold} "
-                        f"次讀不到 → renavigate"
-                    )
-                    try:
-                        self.ui.navigate_to_lamp()
-                    except Exception as exc:
-                        logger.warning(f"[LampService] renavigate 失敗: {exc}")
-                    time.sleep(1.5)
-                    continue
-
-                if action == LampLoopAction.WAIT:
-                    self._adaptive_wait(lamp_count)
-                    continue
-
-                if action == LampLoopAction.REENGAGE_AUTO:
-                    # Suppress reengage if the count dropped within the recent
-                    # grace window — auto-mode is just between batches, no
-                    # need to interrupt with a center click.
-                    secs_since_drop = time.time() - last_drop_ts if last_drop_ts else float("inf")
-                    if secs_since_drop < self._REENGAGE_PROGRESS_GRACE_SEC:
-                        logger.info(
-                            f"[LampService] count {lamp_count} 在最近 "
-                            f"{secs_since_drop:.0f}s 內有下降 → 跳過 reengage（auto 仍在跑）"
-                        )
-                        self._adaptive_wait(lamp_count)
-                        continue
-
-                    if lamp_count is not None and lamp_count == last_reengage_count:
-                        failed_reengage_streak += 1
-                    else:
-                        failed_reengage_streak = 0
-                    last_reengage_count = lamp_count
-
-                    if failed_reengage_streak >= 1:
-                        logger.warning(
-                            f"[LampService] 上次 reengage 後 count 仍 {lamp_count} 未動 "
-                            f"→ 強制 renavigate（疑似 banner 蓋住按鈕）"
-                        )
-                        self._log_screenshot(prefix="lamp", suffix="before_forced_renav")
-                        try:
-                            self.ui.navigate_to_lamp()
-                        except Exception as exc:
-                            logger.warning(f"[LampService] forced renavigate 失敗: {exc}")
-                        failed_reengage_streak = 0
-                        last_reengage_count = None
-                        time.sleep(1.5)
-                        continue
-
-                    logger.info(
-                        f"[LampService] count 穩定 {self.loop_state.reengage_after_stable} "
-                        f"次無彈窗 → reengage auto (count={lamp_count})"
-                    )
-                    self._reengage_auto()
-                    continue
-
-                # action == HANDLE_POPUP
-                if self.state.should_stop_for_incomplete_ocr(self.config.skip_incomplete_limit):
-                    if self._try_recover_or_stop():
-                        continue
-                    break
-
-                skipped = not self.process_single_lamp(is_compare)
-                if skipped:
-                    self._record_skip_and_maybe_reengage()
-                else:
-                    self.state.record_ocr_success()
+            if getattr(self.device, "_page", None) is not None:
+                self._run_open_loop_cocos(start_time, times, is_compare)
+            else:
+                self._run_open_loop_legacy(start_time, times, is_compare)
         finally:
             logger.info("[LampService] 結束開神燈流程")
+            try:
+                self._finish_clean(is_compare)
+            except Exception as exc:
+                logger.warning(f"[LampService] _finish_clean 失敗: {exc}")
             try:
                 self.ui.exit_lamp()
             except Exception as exc:
                 logger.warning(f"[LampService] exit_lamp 失敗: {exc}")
             self.state.is_running = False
+
+    _STALL_RESTART_SEC = 8.0
+
+    def _run_open_loop_cocos(self, start_time: float, times: float, is_compare: bool) -> None:
+        """H5 cocos 監控迴圈(快、精確):
+          - 封包為主：0x0504 出現要的品質(預設永恆) → 立刻點開判斷
+          - count 下降 = 開燈中 → 等
+          - count 停滯 ≥ _STALL_RESTART_SEC → 重新啟動自動開燈(備援，封包漏接時)
+          - 出現賣場 grid(matching items 累積) → 全部出售
+          - 誤入神器頁 → 關閉
+          - 其他未知 modal → 走同一套規則處理
+        """
+        self._arm_wanted_capture()
+        seen_uids: set = set()
+        last_count: Optional[int] = None
+        last_drop_ts = time.time()
+        while time.time() - start_time < times and self.state.is_running:
+            # 封包為主：開到要的品質(預設永恆)時遊戲會停住(賣19留1)，0x0504 一到就確定，
+            # 不必等數量停滯。process_single_lamp 會點 (271,576) 開比較頁並依 combo 規則判斷賣/留。
+            # 用 uid 去重：同一件掉落（可能跨 frame / 跨 tick 重複出現）只觸發一次。
+            wanted = self._drain_wanted_drops()
+            # 依 uid 去重：同一件掉落可能在同一次 drain 出現多個 frame，也可能跨 tick 重複。
+            # 都只算一件，避免「同一件 → len(fresh)>1 → 誤退回 OCR」害封包 combo 沒用上。
+            fresh = []
+            batch_uids: set = set()
+            for w in wanted:
+                uid = w.get("uid")
+                if uid in seen_uids or uid in batch_uids:
+                    continue
+                batch_uids.add(uid)
+                fresh.append(w)
+            if fresh:
+                for entry in fresh:
+                    seen_uids.add(entry.get("uid"))
+                    self._notify_wanted_drop(entry)
+                # 封包為主：1 件時用封包詞條算 combo（OCR 會把「暈」讀成簡體「晕」漏字）；
+                # 多件無法確定比較頁顯示哪件 → 退回 OCR。
+                packet_combo = (
+                    self._combo_from_packet_entry(fresh[0]) if len(fresh) == 1 else None
+                )
+                # 遊戲已停住(賣19留1)。立刻開比較頁判斷，略過 batch-in-flight 守衛
+                # (它會因賣19的數量變動 sleep 10s 後 bail → 害永恆等 ~30s 才被處理)。
+                time.sleep(1.5)  # 等賣19動畫收尾，比較頁就緒
+                self.process_single_lamp(
+                    is_compare, skip_batch_check=True, packet_combo=packet_combo
+                )
+                last_drop_ts = time.time()
+                continue
+
+            ui = self.ui.lamp_ui_state() or {}
+            st = ui.get("state") or "unknown"
+            cnt_s = ui.get("count")
+            cnt = None
+            if cnt_s:
+                digits = "".join(c for c in str(cnt_s) if c.isdigit())
+                cnt = int(digits) if digits else None
+
+            if st == "sell_grid":
+                logger.info("[LampService] 開燈中出現賣場 grid → 全部出售")
+                self.ui.click_all_sell_and_verify()
+                last_drop_ts = time.time()
+                continue
+            if st == "artifact":
+                logger.warning("[LampService] 開燈中誤入神器頁 → 關閉")
+                self.ui.close_artifact_view()
+                continue
+            if st == "comparison":
+                logger.info("[LampService] 開燈中出現單件比較(EquipEditView) → 走同一套規則")
+                self.process_single_lamp(is_compare)
+                continue
+            if st.startswith("other"):
+                logger.info(f"[LampService] 開燈中未知 modal: {st} → 嘗試關閉")
+                self.ui.dismiss_blocking_popup()
+                continue
+
+            if cnt is not None and last_count is not None and cnt < last_count:
+                last_drop_ts = time.time()
+            if cnt is not None:
+                last_count = cnt
+
+            if time.time() - last_drop_ts >= self._STALL_RESTART_SEC:
+                logger.info(f"[LampService] count={cnt} 停滯 ≥{self._STALL_RESTART_SEC}s → 重新啟動自動開燈")
+                self._restart_auto_open()
+                last_drop_ts = time.time()
+            else:
+                time.sleep(1.0)
+
+    def _restart_auto_open(self) -> None:
+        """count 停滯時復原：確保在自動點燈設定窗，再按「開始」。"""
+        ui = self.ui.lamp_ui_state() or {}
+        if (ui.get("state") or "") != "auto_config":
+            self.ui.click_and_wait(447, 801, 2, reason="停滯復原:進自動點燈設定窗")
+        self.ui.click_and_wait(281, 636, 2, reason="停滯復原:重按開始")
+
+    def _wanted_rarity(self) -> int:
+        """要的品質門檻（封包偵測），預設 11 永恆。"""
+        return int(getattr(self.config, "wanted_rarity", 11) or 11)
+
+    def _arm_wanted_capture(self) -> None:
+        """H5：安裝 WS hook 並 arm 0x0504 body 擷取，供開燈時即時偵測要的品質。
+
+        非 H5(無 _page)或失敗時靜默跳過 — 退回數量停滯備援。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return
+        try:
+            from utils.ws_listener import (
+                drain_captured_bodies,
+                install_ws_listener,
+                set_body_capture,
+            )
+            from utils.lamp_drop_watch import LAMP_DROP_CMD
+            install_ws_listener(page)
+            set_body_capture(page, [LAMP_DROP_CMD], max_per_cmd=100000, max_bytes=65536)
+            # 清掉 arm 之前 buffer 內的舊 0x0504（上一輪殘留 / 已處理掉落），只認「開始」
+            # 之後的新掉落 — 否則已賣掉的永恆舊封包會被誤判成新偵測（假觸發）。
+            drain_captured_bodies(page)
+        except Exception as exc:
+            logger.warning(f"[LampService] arm 0x0504 擷取失敗（退回數量停滯偵測）: {exc}")
+
+    def _drain_wanted_drops(self) -> list:
+        """H5：drain 0x0504 body → 回傳 rarity ≥ 門檻的掉落（封包為主）。
+
+        非 H5 / 未擷取到 / 失敗一律回 []（交由數量停滯備援處理）。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return []
+        try:
+            from utils.ws_listener import drain_captured_bodies
+            from utils.lamp_drop_watch import find_high_rarity_drops_in_frames
+            frames = drain_captured_bodies(page)
+        except Exception as exc:
+            logger.warning(f"[LampService] drain 0x0504 失敗: {exc}")
+            return []
+        return find_high_rarity_drops_in_frames(frames, self._wanted_rarity())
+
+    def _notify_wanted_drop(self, entry: dict) -> None:
+        """開到要的品質：log + bot_state，讓腳本 / 儀表板知道（OCR 看不到的事）。"""
+        try:
+            from utils.lamp_drop_watch import format_drop
+            desc = format_drop(entry)
+        except Exception:
+            desc = str(entry)
+        logger.info(f"[LampService] [要的品質] 封包偵測開到: {desc}")
+        if self.device_ip:
+            try:
+                import bot_state
+                bot_state.update_state(
+                    self.device_ip, task="開神燈", step=f"開到要的品質: {desc}"
+                )
+            except Exception as exc:
+                logger.warning(f"[LampService] bot_state 更新失敗: {exc}")
+
+    def _combo_from_packet_entry(self, entry: dict) -> Optional[str]:
+        """封包為主：用封包詞條(affix_id→名稱→code)算正規化 combo，不靠 OCR。
+
+        取前 2 個可對應到技能 code 的詞條(暈/回/連/爆/閃/技/反)；非技能詞條
+        (如同伴爆擊)會被略過。回傳如 '暈回'；算不出來回 None(讓上層退回 OCR)。
+        """
+        try:
+            from utils.web_game_api import EQUIP_AFFIX
+        except Exception:
+            return None
+        codes: list = []
+        for aid in (entry.get("affixes") or {}):
+            try:
+                name = EQUIP_AFFIX.get(int(aid))
+            except (TypeError, ValueError):
+                name = None
+            if not name:
+                continue
+            code = self.parser.text_to_skill_code(name)
+            if code and code not in codes:
+                codes.append(code)
+            if len(codes) == 2:
+                break
+        if not codes:
+            return None
+        return self.parser.normalize_combo("".join(codes))
+
+    def _run_open_loop_legacy(self, start_time: float, times: float, is_compare: bool) -> None:
+        """ADB(無 cocos)：沿用 LampLoopState + OCR 的舊監控迴圈。"""
+        failed_reengage_streak = 0
+        last_reengage_count: Optional[int] = None
+        last_drop_ts: float = 0.0
+        last_seen_count: Optional[int] = None
+
+        while time.time() - start_time < times and self.state.is_running:
+            # Sell-page intercept must come BEFORE tick: gold ROI on this page
+            # returns the sell-all-gold total, not lamp count.
+            if self.ui.is_lamp_sell_page():
+                logger.info("[LampService] 全部出售頁面，執行 click_all_sell_and_verify")
+                self.ui.click_all_sell_and_verify()
+                time.sleep(1)
+                continue
+
+            lamp_count = self._read_lamp_count_robust()
+            has_popup = self._detect_popup()
+
+            if (
+                lamp_count is not None
+                and last_seen_count is not None
+                and lamp_count < last_seen_count
+            ):
+                last_drop_ts = time.time()
+            if lamp_count is not None:
+                last_seen_count = lamp_count
+
+            action = self.loop_state.tick(lamp_count, has_popup)
+
+            if action == LampLoopAction.RENAVIGATE:
+                logger.warning(
+                    f"[LampService] count 連續 {self.loop_state.unreadable_renav_threshold} 次讀不到 → renavigate"
+                )
+                try:
+                    self.navigate_to_lamp_adb()
+                except Exception as exc:
+                    logger.warning(f"[LampService] renavigate 失敗: {exc}")
+                time.sleep(1.5)
+                continue
+
+            if action == LampLoopAction.WAIT:
+                self._adaptive_wait(lamp_count)
+                continue
+
+            if action == LampLoopAction.REENGAGE_AUTO:
+                secs_since_drop = time.time() - last_drop_ts if last_drop_ts else float("inf")
+                if secs_since_drop < self._REENGAGE_PROGRESS_GRACE_SEC:
+                    self._adaptive_wait(lamp_count)
+                    continue
+                if lamp_count is not None and lamp_count == last_reengage_count:
+                    failed_reengage_streak += 1
+                else:
+                    failed_reengage_streak = 0
+                last_reengage_count = lamp_count
+                if failed_reengage_streak >= 1:
+                    logger.warning(f"[LampService] reengage 後 count 仍 {lamp_count} 未動 → 強制重進")
+                    try:
+                        self.navigate_to_lamp_adb()
+                    except Exception as exc:
+                        logger.warning(f"[LampService] forced renavigate 失敗: {exc}")
+                    failed_reengage_streak = 0
+                    last_reengage_count = None
+                    time.sleep(1.5)
+                    continue
+                self._reengage_auto()
+                continue
+
+            # action == HANDLE_POPUP
+            if self.state.should_stop_for_incomplete_ocr(self.config.skip_incomplete_limit):
+                if self._try_recover_or_stop():
+                    continue
+                break
+
+            skipped = not self.process_single_lamp(is_compare)
+            if skipped:
+                self._record_skip_and_maybe_reengage()
+            else:
+                self.state.record_ocr_success()
+
+    def navigate_to_lamp_adb(self) -> None:
+        """ADB 重進燈介面 + 清殘留 + 按開始。"""
+        self._enter_and_clear_adb(self._last_is_compare)
+        self.ui.click_and_wait(281, 636, 2)
 
     def stop(self):
         """停止開神燈流程"""

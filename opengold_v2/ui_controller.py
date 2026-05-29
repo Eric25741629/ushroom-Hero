@@ -22,12 +22,16 @@ class UIController:
         """印出每次 click 的座標／原因，方便人工核對是否該點。"""
         print(f"[CLICK] ({x:3d},{y:3d}) wait={wait_time}s  reason={reason}", flush=True)
 
-    def click_and_wait(self, x: int, y: int, wait_time: float = 1.0):
-        """點擊並等待。Reason 自動由呼叫者函式名取得，方便追蹤。"""
-        try:
-            reason = inspect.currentframe().f_back.f_code.co_name
-        except Exception:
-            reason = "?"
+    def click_and_wait(self, x: int, y: int, wait_time: float = 1.0, reason: Optional[str] = None):
+        """點擊並等待。每個點擊都要記錄『為什麼點這裡』。
+
+        呼叫端應明確傳 reason 說明這一下的用途；未傳時退回呼叫者函式名(粗略)。
+        """
+        if reason is None:
+            try:
+                reason = inspect.currentframe().f_back.f_code.co_name
+            except Exception:
+                reason = "?"
         self._log_click(x, y, wait_time, reason)
         self.device.click(x, y)
         time.sleep(wait_time)
@@ -59,11 +63,49 @@ class UIController:
             for (x, y), expected_bgr in pixel_profile
         )
     
+    _NODE_ACTIVE_JS = r"""(p) => {
+      try {
+        const sc = cc.director.getScene();
+        if (!sc) return null;
+        let cur = null; const parts = p.split('/');
+        for (const r of sc.children) { if (r.name === parts[0]) { cur = r; break; } }
+        for (let i = 1; i < parts.length && cur; i++) {
+          cur = (cur.children || []).find(c => c.name === parts[i]);
+        }
+        if (!cur) return false;
+        return !!cur.activeInHierarchy;
+      } catch (e) { return null; }
+    }"""
+
+    def _cocos_node_active(self, path: str) -> Optional[bool]:
+        """H5 專用：用 cocos 場景樹查 node 是否 activeInHierarchy。
+
+        回傳 True/False；非 web_h5（無 _page）或查詢失敗回 None，呼叫者據此 fallback。
+        這是 H5 取得精確遊戲狀態的首選，勝過 pixel/OCR 推測。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return None
+        try:
+            return page.evaluate(self._NODE_ACTIVE_JS, path)
+        except Exception:
+            return None
+
+    # 全部出售 grid 在 cocos 對應的 view（校準自 7fe98fc6 場景樹）
+    SELL_ALL_NODE = "UIRoot/NormalView/EquipTempBagView"
+
     def is_lamp_sell_page(self, img: Optional[np.ndarray] = None) -> bool:
-        """判斷是否為全部出售頁面"""
+        """判斷是否為全部出售頁面（20 件待賣 grid）。
+
+        H5：精確讀 cocos `EquipTempBagView` 是否 active（已 live 驗證）。
+        ADB / cocos 查詢失敗：退回原本的像素特徵比對。
+        """
+        active = self._cocos_node_active(self.SELL_ALL_NODE)
+        if active is not None:
+            return bool(active)
+
         if img is None:
             img = self.capture_screenshot()
-        
         return any(
             self._match_pixel_profile(img, profile)
             for profile in self.config.lamp_sell_page_profiles
@@ -205,18 +247,17 @@ class UIController:
 
     def navigate_to_lamp(self):
         """導航到神燈頁面，並啟用自動模式"""
-        # 初始點擊進入神燈介面
-        self.click_and_wait(447, 801, 2)
-        self.click_and_wait(281, 636, 1)
+        self.click_and_wait(447, 801, 2, reason="導航:點魔法熔爐入口")
+        self.click_and_wait(281, 636, 1, reason="導航:開自動點燈設定窗")
         # 點擊「自動」按鈕啟用自動開裝模式
         self.click_auto_mode_button()
         # 點擊彈出的「開始」確認視窗
         self.click_start_confirm()
-    
+
     def exit_lamp(self):
         """退出神燈頁面"""
-        self.click_and_wait(447, 801, 2)
-        self.click_and_wait(273, 560, 2)
+        self.click_and_wait(447, 801, 2, reason="退出:開熔爐選單(準備離開)")
+        self.click_and_wait(273, 560, 2, reason="退出:點關閉離開神燈頁")
     
     def click_all_sell(self) -> bool:
         """點擊全部出售（OCR 字串定位）。"""
@@ -230,6 +271,88 @@ class UIController:
             print(f"[UIController] 點擊全部出售失敗: {e}")
             return False
     
+    def _ocr_texts(self, y1: int, y2: int, x1: int, x2: int) -> list:
+        """OCR 指定 ROI，回傳文字 list；任何錯誤回 []（前置判斷用，不寫 log）。"""
+        try:
+            from img_tools import get_all_text
+            img = self.capture_screenshot()
+            roi = img[y1:y2, x1:x2]
+            if roi.size == 0:
+                return []
+            return list(get_all_text(roi) or [])
+        except Exception:
+            return []
+
+    def is_comparison_dialog(self, img: Optional[np.ndarray] = None) -> bool:
+        """單件「當前裝備 vs NEW」待處理窗：底部同時有 出售 + 裝備 兩顆按鈕。
+
+        與全部出售 grid 區分：grid 只有「全部出售」一顆（含「出售」但無獨立「裝備」）。
+        故判斷：按鈕列 OCR 出現「裝備」且非全部出售頁。校準自 7fe98fc6 殘留窗。
+        """
+        if self.is_lamp_sell_page(img):
+            return False
+        texts = self._ocr_texts(775, 815, 60, 470)
+        joined = "".join(texts)
+        return ("裝備" in joined) and ("全部出售" not in joined)
+
+    def is_blocking_popup(self, img: Optional[np.ndarray] = None) -> bool:
+        """主頁一般彈窗（離線獎勵 / 恭喜獲得 領取）會擋住導航；用關鍵字偵測。"""
+        texts = self._ocr_texts(140, 360, 70, 470)
+        joined = "".join(texts)
+        return any(kw in joined for kw in ("離線", "恭喜", "點擊空白", "領取獎勵"))
+
+    def dismiss_blocking_popup(self) -> bool:
+        """關閉主頁一般彈窗：有「領取」就點領取，否則點空白處關閉。回傳是否有動作。"""
+        texts = self._ocr_texts(120, 760, 40, 500)
+        joined = "".join(texts)
+        try:
+            from img_tools import click_str_by_server
+            if "領取" in joined:
+                print("[CLICK?] dismiss_blocking_popup — 領取", flush=True)
+                click_str_by_server(self.device, "領取", wait_timeout=0)
+                time.sleep(1.5)
+                # 領取後常接「恭喜獲得」獎勵窗，點空白關閉
+                self.click_and_wait(140, 300, 1.0)
+                return True
+            if any(kw in joined for kw in ("恭喜", "點擊空白", "離線")):
+                print("[CLICK?] dismiss_blocking_popup — 點擊空白處關閉", flush=True)
+                self.click_and_wait(140, 300, 1.0)
+                return True
+        except Exception as e:
+            print(f"[UIController] dismiss_blocking_popup 失敗: {e}")
+        return False
+
+    def click_all_sell_and_verify(self, retries: int = 2) -> bool:
+        """點全部出售 → 處理確認窗 → 驗證 grid 真的清空。回傳是否清空。
+
+        修正舊版「點了就 return、沒驗證真的賣掉」導致 20 件卡住沒賣的問題。
+        """
+        from img_tools import click_str_by_server
+        for attempt in range(retries + 1):
+            if not self.is_lamp_sell_page():
+                return True
+            print(f"[CLICK?] click_all_sell_and_verify attempt={attempt}", flush=True)
+            try:
+                click_str_by_server(self.device, "全部出售")
+            except Exception as e:
+                print(f"[UIController] 全部出售 點擊失敗: {e}")
+            time.sleep(1.0)
+            # 可能跳出確認窗：像素法 + OCR「確定/確認」雙保險
+            self.click_confirm_if_needed()
+            try:
+                if any("確" in t for t in self._ocr_texts(520, 600, 60, 480)):
+                    for kw in ("確定", "確認"):
+                        if click_str_by_server(self.device, kw, y_range=(520, 600), wait_timeout=0):
+                            break
+            except Exception:
+                pass
+            time.sleep(1.5)
+            if not self.is_lamp_sell_page():
+                print("[CLICK ] click_all_sell_and_verify cleared", flush=True)
+                return True
+        print("[UIController] 全部出售 後仍偵測到 sell page（未清空）", flush=True)
+        return False
+
     def _read_int_from_roi(self, y1: int, y2: int, x1: int, x2: int) -> Optional[int]:
         """擷取畫面 ROI 並 OCR 解析為 int；失敗回 None。"""
         try:
@@ -249,56 +372,177 @@ class UIController:
             print(f"[UIController] _read_int_from_roi 失敗: {e}")
             return None
 
+    # 神燈剩餘數量的 cocos Label（魔法熔爐 btnBox 上的數字，已 live 驗證）
+    LAMP_COUNT_NODE = "UIRoot/NormalView/MainView/subRoots/boxRoot/btnBox/txtNum"
+
+    _LABEL_TEXT_JS = r"""(p) => {
+      try {
+        const sc = cc.director.getScene(); if (!sc) return null;
+        let cur = null; const parts = p.split('/');
+        for (const r of sc.children) { if (r.name === parts[0]) { cur = r; break; } }
+        for (let i = 1; i < parts.length && cur; i++) cur = (cur.children || []).find(c => c.name === parts[i]);
+        if (!cur) return null;
+        const l = cur.getComponent(cc.Label);
+        return l ? l.string : null;
+      } catch (e) { return null; }
+    }"""
+
+    def _cocos_lamp_count(self) -> Optional[int]:
+        """H5：直接讀 cocos Label 取得剩餘神燈數量（瞬間、精確，且不受彈窗遮擋影響）。
+
+        非 web_h5（無 _page）或失敗回 None，呼叫者 fallback OCR。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return None
+        try:
+            s = page.evaluate(self._LABEL_TEXT_JS, self.LAMP_COUNT_NODE)
+        except Exception:
+            return None
+        if not s:
+            return None
+        digits = "".join(c for c in str(s) if c.isdigit())
+        return int(digits) if digits else None
+
     def get_gold_num(self) -> Optional[int]:
-        """取得神燈剩餘數量（變數名稱沿用歷史；ROI 為魔法熔爐下方數字）。"""
+        """取得神燈剩餘數量。H5 走 cocos Label（瞬間）；ADB / 失敗退回 OCR ROI。"""
+        n = self._cocos_lamp_count()
+        if n is not None:
+            return n
         return self._read_int_from_roi(*self.config.gold_num_roi)
 
     def get_remaining_lamp_count(self) -> Optional[int]:
-        """讀取神燈剩餘數量；與 get_gold_num 為同一個 ROI，命名僅為語意明確。"""
-        return self._read_int_from_roi(*self.config.gold_num_roi)
+        """讀取神燈剩餘數量；與 get_gold_num 同來源（cocos 優先），命名僅為語意明確。"""
+        return self.get_gold_num()
+
+    _LAMP_STATE_JS = r"""() => {
+      try {
+        const sc = cc.director.getScene(); if (!sc) return {state:'unknown', count:null};
+        function bp(p){ let c=null; const a=p.split('/');
+          for (const r of sc.children){ if(r.name===a[0]){c=r;break;} }
+          for (let i=1;i<a.length&&c;i++) c=(c.children||[]).find(x=>x.name===a[i]);
+          return c; }
+        function act(p){ const n=bp(p); return !!(n&&n.activeInHierarchy); }
+        function lbl(p){ const n=bp(p); if(!n) return null; const l=n.getComponent(cc.Label); return l?l.string:null; }
+        const B='UIRoot/NormalView/MainView';
+        const count = lbl(B+'/subRoots/boxRoot/btnBox/txtNum');
+        let state='unknown';
+        if (act('UIRoot/NormalView/EquipTempBagView')) state='sell_grid';
+        else if (act(B+'/ArtifactView')) state='artifact';
+        else if (act('UIRoot/NormalView/EquipAutoOpenView')) state='auto_config';
+        else if (act('UIRoot/NormalView/EquipEditView')) state='comparison';
+        else {
+          const nv=bp('UIRoot/NormalView');
+          const extra = nv ? nv.children.filter(c=>c.activeInHierarchy && c.name!=='MainView').map(c=>c.name) : [];
+          const mv=bp(B);
+          const mvx = mv ? mv.children.filter(c=>c.activeInHierarchy && /View$/.test(c.name)).map(c=>c.name) : [];
+          state = (extra.length===0 && mvx.length===0) ? 'main' : ('other:'+extra.concat(mvx).join(','));
+        }
+        return {state, count};
+      } catch (e) { return {state:'unknown', count:null}; }
+    }"""
+
+    def lamp_ui_state(self) -> Optional[dict]:
+        """H5 專用：一次 cocos 查詢取得 {state, count}（快、精確）。
+
+        state ∈ sell_grid / artifact / auto_config / main / other:<names> / unknown。
+        非 web_h5 回 None，呼叫者用 OCR/pixel 偵測。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return None
+        try:
+            return page.evaluate(self._LAMP_STATE_JS)
+        except Exception:
+            return None
+
+    _WORLD_POS_JS = r"""(p) => {
+      try {
+        const sc = cc.director.getScene(); if (!sc) return null;
+        let cur=null; const a=p.split('/');
+        for (const r of sc.children){ if(r.name===a[0]){cur=r;break;} }
+        for (let i=1;i<a.length&&cur;i++) cur=(cur.children||[]).find(x=>x.name===a[i]);
+        if (!cur) return null;
+        const w = cur.worldPosition || (cur.convertToWorldSpaceAR ? cur.convertToWorldSpaceAR(cc.v2(0,0)) : null);
+        if (!w) return null;
+        let ds = null; try { const d = cc.view.getVisibleSize(); ds = {w:d.width, h:d.height}; } catch(e){ ds = {w:720, h:1280}; }
+        return {x:w.x, y:w.y, dw:ds.w, dh:ds.h};
+      } catch (e) { return null; }
+    }"""
+
+    def click_cocos_node(self, path: str) -> bool:
+        """H5：依 cocos node 的 worldPosition 換算 viewport 像素並精準點擊。
+
+        UI 設計座標換算：px = wx*540/dw, py = (dh-wy)*960/dh（dw/dh 通常 720x1280）。
+        非 web_h5 或找不到 node 回 False。
+        """
+        page = getattr(self.device, "_page", None)
+        if page is None:
+            return False
+        try:
+            wp = page.evaluate(self._WORLD_POS_JS, path)
+        except Exception:
+            wp = None
+        if not wp:
+            return False
+        px = round(wp["x"] * 540.0 / wp["dw"])
+        py = round((wp["dh"] - wp["y"]) * 960.0 / wp["dh"])
+        self._log_click(px, py, 0, f"cocos:{path.split('/')[-1]}")
+        self.device.click(px, py)
+        time.sleep(1.0)
+        return True
+
+    ARTIFACT_CLOSE_NODE = "UIRoot/NormalView/MainView/ArtifactView/btnClose"
+
+    def close_artifact_view(self) -> bool:
+        """關閉誤入的神器頁（ArtifactView）。H5 用 btnClose；失敗退回固定座標 (270,899)。"""
+        if self.click_cocos_node(self.ARTIFACT_CLOSE_NODE):
+            return True
+        self.click_and_wait(270, 899, 1.0, reason="關神器頁:fallback 固定座標")
+        return True
     
     def click_lamp_button(self):
-        """點擊開神燈按鈕"""
-        self.click_and_wait(271, 576, 5)
-    
+        """點擊開神燈按鈕（中間偏下→打開單件比較頁）"""
+        self.click_and_wait(271, 576, 5, reason="開神燈:點中間偏下打開比較頁")
+
     def click_sell_button(self):
         """點擊出售按鈕（不需要的組合）"""
-        self.click_and_wait(227, 798, 1)
+        self.click_and_wait(227, 798, 1, reason="判斷後:出售此裝備")
         self.click_confirm_if_needed()
-    
+
     def click_keep_button(self):
         """點擊保留/換裝按鈕"""
-        self.click_and_wait(376, 798, 0.3)
-        self.click_and_wait(227, 798, 1)
+        self.click_and_wait(376, 798, 0.3, reason="保留:切到換裝/保留方案")
+        self.click_and_wait(227, 798, 1, reason="保留:確認換裝")
         self.click_confirm_if_needed()
-    
+
     def open_stage_menu(self):
         """開啟階段選單"""
-        self.click_and_wait(518, 16, 1)
-        self.click_and_wait(419, 720, 3)
-        self.click_and_wait(272, 796, 1)
-        self.click_and_wait(281, 350, 2)
-    
+        self.click_and_wait(518, 16, 1, reason="開方案選單:點右上設定齒輪")
+        self.click_and_wait(419, 720, 3, reason="開方案選單:切到方案頁籤")
+        self.click_and_wait(272, 796, 1, reason="開方案選單:關閉浮窗")
+        self.click_and_wait(281, 350, 2, reason="開方案選單:展開階段列表")
+
     def select_stage(self, index: int):
         """選擇階段"""
         if index == 0:
-            self.click_and_wait(281, 350, 1)
+            self.click_and_wait(281, 350, 1, reason="選方案:第 0 個(列表頂)")
         else:
             click_y = 412 + (index - 1) * 49
-            self.click_and_wait(266, click_y, 1)
-    
+            self.click_and_wait(266, click_y, 1, reason=f"選方案:第 {index} 個")
+
     def open_upgrade_panel(self):
         """開啟升級面板"""
-        self.click_and_wait(378, 721, 1)  # 切換按鈕
-        self.click_and_wait(268, 869, 1)  # 關閉方案選單
-        self.click_and_wait(282, 584, 1)  # 點開開到裝備
-    
+        self.click_and_wait(378, 721, 1, reason="升級面板:切換按鈕")
+        self.click_and_wait(268, 869, 1, reason="升級面板:關閉方案選單")
+        self.click_and_wait(282, 584, 1, reason="升級面板:點開開到的裝備")
+
     def close_upgrade_panel(self):
         """關閉升級面板"""
-        self.click_and_wait(347, 721, 1)
-        self.click_and_wait(268, 869, 1)
-        self.click_and_wait(441, 805, 1)
-        self.click_and_wait(271, 634, 1)
+        self.click_and_wait(347, 721, 1, reason="關升級面板:切換按鈕復位")
+        self.click_and_wait(268, 869, 1, reason="關升級面板:關方案選單")
+        self.click_and_wait(441, 805, 1, reason="關升級面板:關閉面板")
+        self.click_and_wait(271, 634, 1, reason="關升級面板:回神燈主畫面")
         time.sleep(3)
     
     def get_skill_roi(self) -> np.ndarray:
