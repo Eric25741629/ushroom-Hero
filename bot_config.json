@@ -1,6 +1,8 @@
 {
     "devices": {
         "emulator-5554": {
+            "wake_hour_parity": "even",
+            "wake_minute_offset": 0,
             "name": "閃電",
             "web_debug_port": 9230,
             "backend": "web_h5",
@@ -63,6 +65,8 @@
             "online_check_interval": 5
         },
         "emulator-5556": {
+            "wake_hour_parity": "even",
+            "wake_minute_offset": 15,
             "name": "菜雞",
             "web_debug_port": 9223,
             "backend": "web_h5",
@@ -118,6 +122,8 @@
             "online_check_interval": 5
         },
         "emulator-5558": {
+            "wake_hour_parity": "even",
+            "wake_minute_offset": 5,
             "name": "修哥帳號",
             "online_check_target_pid": 89565100511322,
             "web_debug_port": 9224,
@@ -157,6 +163,8 @@
             "online_check_interval": 5
         },
         "emulator-5560": {
+            "wake_hour_parity": "odd",
+            "wake_minute_offset": 0,
             "name": "夜路",
             "web_debug_port": 9225,
             "backend": "web_h5",
@@ -195,6 +203,8 @@
             "online_check_interval": 5
         },
         "7fe98fc6": {
+            "wake_hour_parity": "odd",
+            "wake_minute_offset": 5,
             "name": "小寶帳號",
             "backend": "web_h5",
             "web_debug_port": 9226,
@@ -250,6 +260,8 @@
             "online_check_interval": 5
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
+            "wake_hour_parity": "odd",
+            "wake_minute_offset": 15,
             "name": "adb-fc65396d-4LPqmI._adb-tls-connect._tcp",
             "backend": "adb",
             "backend_display_id": "",

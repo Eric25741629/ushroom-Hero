@@ -48,9 +48,9 @@ def predict_image(model, image) -> ClassName_cnn_model:
         ]
 
     image = img_loader(image)
-    # 將模型設置為
-
-    result = model(image)
+    # 推論不需梯度：inference_mode 比 no_grad 更省，避免建構 autograd graph
+    with torch.inference_mode():
+        result = model(image)
     # 使用softmax獲取預測結果
     _, predicted = torch.max(result, 1)
 

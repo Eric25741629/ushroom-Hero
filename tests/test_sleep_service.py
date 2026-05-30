@@ -106,6 +106,112 @@ def test_calc_aligned_wake_ts_min_sleep_zero(sleep_mod, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# calc_aligned_wake_ts — even/odd hour parity (load distribution / 分流)
+# ---------------------------------------------------------------------------
+
+def test_calc_aligned_wake_ts_even_parity_lands_on_even_hour(sleep_mod, monkeypatch):
+    # parity=0 must produce a wake whose LOCAL hour is even, still within
+    # the 00~20-min window (so 深淵之門 is still reachable).
+    monkeypatch.setattr(sleep_mod.random, "randint", lambda a, b: a)
+    for base in (1_700_000_000, 1_700_003_600, 1_700_001_800):
+        result = sleep_mod.calc_aligned_wake_ts(base, 600, 20, hour_parity=0)
+        lt = time.localtime(result)
+        assert lt.tm_hour % 2 == 0
+        assert 0 <= lt.tm_min <= 20
+        assert result >= base + 600  # never scheduled in the past
+
+
+def test_calc_aligned_wake_ts_odd_parity_lands_on_odd_hour(sleep_mod, monkeypatch):
+    monkeypatch.setattr(sleep_mod.random, "randint", lambda a, b: a)
+    for base in (1_700_000_000, 1_700_003_600, 1_700_001_800):
+        result = sleep_mod.calc_aligned_wake_ts(base, 600, 20, hour_parity=1)
+        lt = time.localtime(result)
+        assert lt.tm_hour % 2 == 1
+        assert 0 <= lt.tm_min <= 20
+        assert result >= base + 600
+
+
+def test_calc_aligned_wake_ts_parity_none_is_backward_compatible(sleep_mod, monkeypatch):
+    # Explicit: parity=None reproduces the original inside-window behavior.
+    base = 1_700_000_000 + 1800
+    monkeypatch.setattr(sleep_mod.random, "randint", lambda a, b: a)
+    assert sleep_mod.calc_aligned_wake_ts(base, 2100, 20, hour_parity=None) == float(base + 2100)
+
+
+def test_parse_hour_parity_maps_config_values(sleep_mod):
+    assert sleep_mod._parse_hour_parity("even") == 0
+    assert sleep_mod._parse_hour_parity("odd") == 1
+    assert sleep_mod._parse_hour_parity("EVEN") == 0
+    assert sleep_mod._parse_hour_parity(0) == 0
+    assert sleep_mod._parse_hour_parity(1) == 1
+    assert sleep_mod._parse_hour_parity(None) is None
+    assert sleep_mod._parse_hour_parity("whatever") is None
+    assert sleep_mod._parse_hour_parity(5) is None
+
+
+def test_run_sleep_cycle_applies_even_hour_parity(sleep_mod, sleep_cycle_env, monkeypatch):
+    monkeypatch.setattr(
+        sleep_mod.config_manager,
+        "get_device_config",
+        lambda ip: {"sleep_min_hours": 1, "sleep_max_hours": 1, "wake_hour_parity": "even"},
+    )
+    monkeypatch.setattr(sleep_mod.random, "randint", lambda a, b: a)
+    monkeypatch.setattr(sleep_mod.random, "uniform", lambda a, b: a)
+    wake_ts, _, _ = sleep_mod.run_sleep_cycle("emu-x", logging.getLogger("t"))
+    assert time.localtime(wake_ts).tm_hour % 2 == 0
+
+
+# ---------------------------------------------------------------------------
+# calc_aligned_wake_ts — fixed per-device minute offset (intra-group 分流)
+# ---------------------------------------------------------------------------
+
+def test_calc_aligned_wake_ts_minute_offset_is_deterministic(sleep_mod):
+    # Deterministic minute path uses no RNG: wake lands exactly on the offset
+    # minute, on the minute (sec=0), and never before earliest.
+    base = 1_700_000_000
+    result = sleep_mod.calc_aligned_wake_ts(base, 3600, 20, wake_minute_offset=5)
+    lt = time.localtime(result)
+    assert lt.tm_min == 5
+    assert lt.tm_sec == 0
+    assert result >= base + 3600
+
+
+def test_calc_aligned_wake_ts_minute_offset_clamped_to_window(sleep_mod):
+    base = 1_700_000_000
+    result = sleep_mod.calc_aligned_wake_ts(base, 3600, 20, wake_minute_offset=99)
+    assert time.localtime(result).tm_min == 20  # clamped to win_min
+
+
+def test_calc_aligned_wake_ts_minute_offset_combines_with_parity(sleep_mod):
+    base = 1_700_000_000
+    result = sleep_mod.calc_aligned_wake_ts(
+        base, 3600, 20, hour_parity=0, wake_minute_offset=15
+    )
+    lt = time.localtime(result)
+    assert lt.tm_hour % 2 == 0
+    assert lt.tm_min == 15
+    assert result >= base + 3600
+
+
+def test_run_sleep_cycle_applies_minute_offset(sleep_mod, sleep_cycle_env, monkeypatch):
+    monkeypatch.setattr(
+        sleep_mod.config_manager,
+        "get_device_config",
+        lambda ip: {
+            "sleep_min_hours": 1,
+            "sleep_max_hours": 1,
+            "wake_hour_parity": "even",
+            "wake_minute_offset": 5,
+        },
+    )
+    monkeypatch.setattr(sleep_mod.random, "uniform", lambda a, b: a)
+    wake_ts, _, _ = sleep_mod.run_sleep_cycle("emu-x", logging.getLogger("t"))
+    lt = time.localtime(wake_ts)
+    assert lt.tm_hour % 2 == 0
+    assert lt.tm_min == 5
+
+
+# ---------------------------------------------------------------------------
 # stop_runtime_device_for_sleep
 # ---------------------------------------------------------------------------
 

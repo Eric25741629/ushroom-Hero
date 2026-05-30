@@ -35,21 +35,99 @@ class StartupBypassError(Exception):
     pass
 
 
-def calc_aligned_wake_ts(base_ts: float, min_sleep_sec: int, win_min: int = 20) -> float:
+def _parse_hour_parity(value) -> Optional[int]:
+    """Map a device-config value to an hour-parity constraint.
+
+    ``'even'`` / ``0`` -> 0, ``'odd'`` / ``1`` -> 1; anything else
+    (including ``None``) -> ``None`` (no constraint, keep legacy hourly
+    behavior). ``bool`` is rejected so ``True``/``False`` don't sneak in
+    as 1/0.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v == "even":
+            return 0
+        if v == "odd":
+            return 1
+        return None
+    if isinstance(value, int) and value in (0, 1):
+        return value
+    return None
+
+
+def _hour_parity_ok(hour_start_ts: float, hour_parity: Optional[int]) -> bool:
+    """True if the LOCAL hour of ``hour_start_ts`` matches ``hour_parity``.
+
+    ``hour_parity`` of ``None`` always matches (no constraint).
+    """
+    if hour_parity is None:
+        return True
+    return time.localtime(hour_start_ts).tm_hour % 2 == hour_parity
+
+
+def _parse_minute_offset(value) -> Optional[int]:
+    """Map a device-config value to a fixed wake-minute offset.
+
+    A non-negative int (e.g. 0, 5, 15) -> that minute within the window;
+    anything else (incl. ``None``, ``bool``) -> ``None`` (random minute,
+    legacy behavior).
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and value >= 0:
+        return value
+    return None
+
+
+def calc_aligned_wake_ts(
+    base_ts: float,
+    min_sleep_sec: int,
+    win_min: int = 20,
+    hour_parity: Optional[int] = None,
+    wake_minute_offset: Optional[int] = None,
+) -> float:
     """Align wake-up to the next 00~win_min window of an hour.
 
     If the earliest legal wake time already lies inside the window,
     randomize within [earliest, win_end]; otherwise, roll to the next
     hour and randomize within 00~win_min minutes of it.
+
+    When ``hour_parity`` is 0 (even) or 1 (odd), the wake hour is further
+    constrained to that local-hour parity — splitting devices across
+    even/odd hours so only half are active in any given hour (load
+    distribution / 分流). The 00~win_min window is preserved either way,
+    so the 深淵之門 window (only the first 20 min of an hour) stays
+    reachable. ``None`` keeps the legacy hourly behavior.
+
+    When ``wake_minute_offset`` is given, the device wakes at exactly that
+    minute within the window (clamped to ``win_min``) instead of a random
+    minute — so devices sharing the same hour can be staggered (one at
+    :00, one at :05, the rest at :15, …). Combines with ``hour_parity``.
     """
     earliest = base_ts + min_sleep_sec
     hour_floor = earliest - (earliest % 3600)
     win_end = hour_floor + win_min * 60
 
-    if earliest <= win_end:
+    if wake_minute_offset is not None:
+        # Deterministic per-device minute: roll to the next parity-matching
+        # hour whose :MM target is not in the past, then wake exactly there.
+        off_sec = max(0, min(int(wake_minute_offset), win_min)) * 60
+        candidate = hour_floor
+        while not (_hour_parity_ok(candidate, hour_parity) and candidate + off_sec >= earliest):
+            candidate += 3600
+        return float(candidate + off_sec)
+
+    if earliest <= win_end and _hour_parity_ok(hour_floor, hour_parity):
         return float(random.randint(int(earliest), int(win_end)))
-    next_hour = hour_floor + 3600
-    return float(next_hour + random.randint(0, win_min * 60))
+
+    # Roll forward hour-by-hour to the next window whose hour matches the
+    # requested parity (parity None matches the very next hour = legacy).
+    candidate = hour_floor + 3600
+    while not _hour_parity_ok(candidate, hour_parity):
+        candidate += 3600
+    return float(candidate + random.randint(0, win_min * 60))
 
 
 def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger_obj) -> None:
@@ -94,7 +172,13 @@ def run_sleep_cycle(
     if forced_wake_ts is not None:
         wake_ts = forced_wake_ts
     else:
-        wake_ts = calc_aligned_wake_ts(cur_ts, min_sleep_sec, win_min=20)
+        wake_ts = calc_aligned_wake_ts(
+            cur_ts,
+            min_sleep_sec,
+            win_min=20,
+            hour_parity=_parse_hour_parity(_cfg.get("wake_hour_parity")),
+            wake_minute_offset=_parse_minute_offset(_cfg.get("wake_minute_offset")),
+        )
 
     wake_ts = adjust_wake_time_for_cars(wake_ts)
 

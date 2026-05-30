@@ -13,6 +13,7 @@ from PIL import Image
 from torchvision import transforms
 
 from miner.core.config import DEFAULT_CLASSES, DEFAULT_CNN_MODEL, GRID_CFG
+from utils.torch_runtime import inference_slot
 from .simplecnn import SimpleCNN, resize_size
 
 Board = List[List[str]]
@@ -120,56 +121,71 @@ class ClassifierCNN:
         cell_w = int(round((x1 - x0) / W))
         cell_h = int(round((y1 - y0) / H))
 
+        # 預處理所有格子，再以「單次批次 forward」推論整個盤面。
+        # SimpleCNN 無 BatchNorm/Dropout，eval 下逐格與批次數學等價，
+        # 但只跑一次 forward 大幅省去每格的 kernel launch / 呼叫開銷。
+        cells: List[np.ndarray] = []
+        cell_tensors: List[torch.Tensor] = []
+        for r in range(H):
+            for c in range(W):
+                cx0 = x0 + c * cell_w
+                cy0 = y0 + r * cell_h
+                cell = img[cy0 : cy0 + cell_h, cx0 : cx0 + cell_w]
+
+                cell_rgb = cv2.cvtColor(cell, cv2.COLOR_BGR2RGB)
+                cell_pil = Image.fromarray(cell_rgb)
+
+                cells.append(cell)
+                cell_tensors.append(self.transform(cell_pil))
+
+        # inference_slot() 序列化共用模型的 forward，讓多裝置同時推論時排隊
+        # 而非一起擠爆 GPU（分流）。
+        with inference_slot(), torch.inference_mode():
+            batch = torch.stack(cell_tensors).to(self.device)
+            outputs = self.model(batch)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            conf_t, pred_t = torch.max(probs, dim=1)
+        conf_flat: List[float] = conf_t.tolist()
+        pred_flat: List[int] = pred_t.tolist()
+
         board: Board = []
         confidences: ConfidenceGrid = []
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        with torch.no_grad():
-            for r in range(H):
-                row: List[str] = []
-                conf_row: List[float] = []
-                for c in range(W):
-                    cx0 = x0 + c * cell_w
-                    cy0 = y0 + r * cell_h
-                    cell = img[cy0 : cy0 + cell_h, cx0 : cx0 + cell_w]
+        for r in range(H):
+            row: List[str] = []
+            conf_row: List[float] = []
+            for c in range(W):
+                idx = r * W + c
+                label = self.classes[pred_flat[idx]]
+                confidence = conf_flat[idx]
 
-                    cell_rgb = cv2.cvtColor(cell, cv2.COLOR_BGR2RGB)
-                    cell_pil = Image.fromarray(cell_rgb)
+                row.append(label)
+                conf_row.append(confidence)
 
-                    cell_tensor = self.transform(cell_pil).unsqueeze(0).to(self.device)
-                    output = self.model(cell_tensor)
-                    probs = torch.nn.functional.softmax(output, dim=1)
-                    conf, pred_idx = torch.max(probs, dim=1)
+                # 修改儲存樣本的條件：除了原本的 0.95-0.99，也儲存 0.6-0.8 的低信心度樣本
+                # 這主要用於收集難以辨識的樣本，以便重新訓練
+                should_save = False
+                if save_samples and self.dataset_root:
+                     # 條件 1: 既有的高信心度樣本收集
+                     if 0.95 <= confidence <= 0.99:
+                         should_save = True
+                     # 條件 2: 使用者要求的高價值低信心度區間
+                     elif 0.6 <= confidence <= 0.8:
+                         should_save = True
 
-                    label = self.classes[pred_idx.item()]
-                    confidence = conf.item()
+                if should_save and self.skipped_samples.get(label, 0) == 0:
+                    label_dir = os.path.join(self.dataset_root, label)
+                    os.makedirs(label_dir, exist_ok=True)
+                    # 針對低信心度樣本，可以考慮放寬數量限制或放入不同資料夾，這裡暫時共用
+                    if len(os.listdir(label_dir)) >= 1000:
+                        self.skipped_samples[label] = self.skipped_samples.get(label, 0) + 1
+                        continue
+                    fname = f"{timestamp}_r{r}_c{c}_{label}_conf{confidence:.4f}.png"
+                    cv2.imwrite(os.path.join(label_dir, fname), cells[idx])
 
-                    row.append(label)
-                    conf_row.append(confidence)
-
-                    # 修改儲存樣本的條件：除了原本的 0.95-0.99，也儲存 0.6-0.8 的低信心度樣本
-                    # 這主要用於收集難以辨識的樣本，以便重新訓練
-                    should_save = False
-                    if save_samples and self.dataset_root:
-                         # 條件 1: 既有的高信心度樣本收集
-                         if 0.95 <= confidence <= 0.99:
-                             should_save = True
-                         # 條件 2: 使用者要求的高價值低信心度區間
-                         elif 0.6 <= confidence <= 0.8:
-                             should_save = True
-                    
-                    if should_save and self.skipped_samples.get(label, 0) == 0:
-                        label_dir = os.path.join(self.dataset_root, label)
-                        os.makedirs(label_dir, exist_ok=True)
-                        # 針對低信心度樣本，可以考慮放寬數量限制或放入不同資料夾，這裡暫時共用
-                        if len(os.listdir(label_dir)) >= 1000:
-                            self.skipped_samples[label] = self.skipped_samples.get(label, 0) + 1
-                            continue
-                        fname = f"{timestamp}_r{r}_c{c}_{label}_conf{confidence:.4f}.png"
-                        cv2.imwrite(os.path.join(label_dir, fname), cell)
-
-                board.append(row)
-                confidences.append(conf_row)
+            board.append(row)
+            confidences.append(conf_row)
 
         return board, confidences
 

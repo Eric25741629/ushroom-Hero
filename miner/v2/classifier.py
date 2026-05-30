@@ -14,6 +14,7 @@ from torchvision import transforms
 from miner.core.config import DEFAULT_CLASSES, DEFAULT_CNN_MODEL, GRID_CFG
 from miner.core.vision_utils import check_points, to_bgr_np
 from miner.models.simplecnn import SimpleCNN, resize_size
+from utils.torch_runtime import inference_slot
 from .types import Board, BoardSnapshot, ConfidenceGrid, ScreenCheckResult
 
 
@@ -90,33 +91,56 @@ class BoardClassifierV2:
         cell_w = int(round((x1 - x0) / width))
         cell_h = int(round((y1 - y0) / height))
 
-        board: Board = []
-        confidences: ConfidenceGrid = []
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-        with torch.no_grad():
-            for row_index in range(height):
-                board_row: list[str] = []
-                confidence_row: list[float] = []
-                for col_index in range(width):
-                    crop_x0 = x0 + col_index * cell_w
-                    crop_y0 = y0 + row_index * cell_h
-                    crop_x1 = min(crop_x0 + cell_w, frame.shape[1])
-                    crop_y1 = min(crop_y0 + cell_h, frame.shape[0])
-                    if crop_x1 <= crop_x0 or crop_y1 <= crop_y0:
-                        raise ValueError(
-                            f"invalid crop for cell ({row_index}, {col_index}) with image shape {frame.shape}"
-                        )
+        # 預處理所有格子，再以「單次批次 forward」推論整個盤面。
+        # SimpleCNN 無 BatchNorm/Dropout，eval 下逐格與批次數學等價。
+        cells: list[np.ndarray] = []
+        cell_tensors: list[torch.Tensor] = []
+        for row_index in range(height):
+            for col_index in range(width):
+                crop_x0 = x0 + col_index * cell_w
+                crop_y0 = y0 + row_index * cell_h
+                crop_x1 = min(crop_x0 + cell_w, frame.shape[1])
+                crop_y1 = min(crop_y0 + cell_h, frame.shape[0])
+                if crop_x1 <= crop_x0 or crop_y1 <= crop_y0:
+                    raise ValueError(
+                        f"invalid crop for cell ({row_index}, {col_index}) with image shape {frame.shape}"
+                    )
 
-                    cell = frame[crop_y0:crop_y1, crop_x0:crop_x1]
-                    label, confidence = self._predict_cell(cell)
-                    board_row.append(label)
-                    confidence_row.append(confidence)
-                    if save_samples and self.dataset_root and confidence <= save_conf_threshold:
-                        self._save_sample(cell, timestamp, row_index, col_index, label, confidence)
+                cell = frame[crop_y0:crop_y1, crop_x0:crop_x1]
+                cell_rgb = cv2.cvtColor(cell, cv2.COLOR_BGR2RGB)
+                cell_pil = Image.fromarray(cell_rgb)
+                cells.append(cell)
+                cell_tensors.append(self.transform(cell_pil))
 
-                board.append(board_row)
-                confidences.append(confidence_row)
+        # inference_slot() 序列化共用模型的 forward（分流，見 v1 classifier）。
+        with inference_slot(), torch.inference_mode():
+            batch = torch.stack(cell_tensors).to(self.device)
+            outputs = self.model(batch)
+            probs = torch.nn.functional.softmax(outputs, dim=1)
+            conf_t, pred_t = torch.max(probs, dim=1)
+        conf_flat = conf_t.tolist()
+        pred_flat = pred_t.tolist()
+
+        board: Board = []
+        confidences: ConfidenceGrid = []
+        for row_index in range(height):
+            board_row: list[str] = []
+            confidence_row: list[float] = []
+            for col_index in range(width):
+                idx = row_index * width + col_index
+                label = self.classes[pred_flat[idx]]
+                confidence = conf_flat[idx]
+                board_row.append(label)
+                confidence_row.append(confidence)
+                if save_samples and self.dataset_root and confidence <= save_conf_threshold:
+                    self._save_sample(
+                        cells[idx], timestamp, row_index, col_index, label, confidence
+                    )
+
+            board.append(board_row)
+            confidences.append(confidence_row)
 
         return board, confidences
 
@@ -147,16 +171,6 @@ class BoardClassifierV2:
             grid_config=dict(self.grid_config),
             screen_check=screen_check,
         )
-
-    def _predict_cell(self, cell: np.ndarray) -> Tuple[str, float]:
-        cell_rgb = cv2.cvtColor(cell, cv2.COLOR_BGR2RGB)
-        cell_pil = Image.fromarray(cell_rgb)
-        cell_tensor = self.transform(cell_pil).unsqueeze(0).to(self.device)
-        output = self.model(cell_tensor)
-        probs = torch.nn.functional.softmax(output, dim=1)
-        confidence, predicted_index = torch.max(probs, dim=1)
-        label = self.classes[predicted_index.item()]
-        return label, confidence.item()
 
     def _save_sample(
         self,

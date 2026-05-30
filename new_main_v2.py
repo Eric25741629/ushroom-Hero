@@ -458,6 +458,17 @@ if __name__ == "__main__":
         logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
         ensure_worker_webhook_started()
         ensure_worker_sync_started()
+    # 分流：限制 torch intra-op 執行緒 + 共用模型推論併發上限，
+    # 避免多裝置同時挖礦時 GPU/CPU 擠在一起。皆可由 bot_config global.compute 覆寫。
+    from utils.torch_runtime import configure_torch_runtime, set_inference_concurrency
+    _compute_cfg = config_manager.get_global_config().get("compute", {}) or {}
+    _resolved_threads = configure_torch_runtime(_compute_cfg.get("torch_num_threads"))
+    _inference_concurrency = int(_compute_cfg.get("inference_concurrency", 1))
+    set_inference_concurrency(_inference_concurrency)
+    logger.info(
+        f"[System] 分流設定 torch_threads={_resolved_threads} "
+        f"inference_concurrency={_inference_concurrency}"
+    )
     # 確保模型在本機 SSD
     from utils.model_sync import ensure_local_model
     local_pth = ensure_local_model("cnn_model.pth")
