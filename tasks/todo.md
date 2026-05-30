@@ -38,6 +38,9 @@
 
   - 測試:`tests/test_sleep_service.py` 新增 9 個(even/odd 落點、:00–:20 不變、parity=None 向後相容、`_parse_hour_parity`、固定分鐘 deterministic/clamp/與 parity 組合、run_sleep_cycle parity+minute integration);**23 pass**。
   - **上線互檢不受 parity 影響(關鍵)**:5558 的互檢是**中斷驅動**,5554 在 `sleep_until_wake_or_interrupt` 每秒輪詢,偵測到 `has_pending_online_check_request('emulator-5554')` 就 `return True` **≤1 秒立即喚醒**(`device_runtime_service.py:133-136`),與 parity/`wake_ts` 無關。先前「延遲 2h」的說法是錯的,已用 `tests/test_online_check_immediate_wake.py`(2 pass)鎖死此保證。
+- [x] **F4 啟動層分流(2026-05-31)**:啟動瞬間 6 台不再一起湧入。`runtime_services/startup_sleep.py` 的硬編碼 `STARTUP_SLEEP_SEC_BY_DEVICE`(5554/5556/5560 各 3 分,其餘 0 → 兩團一起醒)改為**由 F2/F3 的 `wake_hour_parity`+`wake_minute_offset` 推導**:`compute_stagger_order` 依 even→odd、組內 :00→:05→:15 排序,`resolve_startup_stagger_sec` = rank × gap;gap 由 `global.compute.startup_stagger_sec` 覆寫(預設 **120s**)。實際排程:5554=0:00 / 5558=2:00 / 5556=4:00 / 5560=6:00 / 7fe98fc6=8:00 / adb=10:00。保留 5554↔5558 互檢與手動「開啟瀏覽器」提前結束。`tests/test_startup_sleep.py` +7(共 12 pass)。
+  - **⚠️ 殘留重疊(待用戶決定)**:`utils/wake_up_handler.py:322` 還有舊的「分流延遲」(5554/5556 每次喚醒等 5 分,且與 5558 互檢 mailbox 回返邏輯纏在一起)。會與 F4 的首輪啟動延遲疊加(5556 ≈ 4 分啟動 + 再等 5 分)。未動以免動到跨裝置互檢時序;若要全清需小心保留 5554 的 online-check 提前 return。
+- [x] **B1 開神燈 callable 崩錯(2026-05-31,順手)**:`device.close_notification`/`open_notification` 對 web_h5 後端會在 `d(packageNameMatches=...)` 觸發 `'PlaywrightGameDevice' object is not callable`(舊 `hasattr('open_quick_settings')` guard 被 Playwright stub 騙過)。改加 `backend_kind=="web_h5"` 早退(沿用 `device_wrapper.py:195` 既有 idiom)。`tests/test_close_notification.py`(3 pass)。
 
 ## Review (after execution)
 
