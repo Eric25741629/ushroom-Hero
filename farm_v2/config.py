@@ -70,6 +70,14 @@ TIMING = {
 
 SEED_PRICE = 100
 MAX_PLANT_PER_DAY = 2
+# 進場節流：距上次農場進場未滿這個時數就略過(滑動視窗)。打工會自動用免費種子
+# 持續種+收，所以農場不必每小時進；每 8h 進一次足以保活打工、補種子、收散落。
+FARM_VISIT_INTERVAL_HOURS = 8
+
+# 看廣告補初級種子：免廣告卡=按下直接發種子無影片。每日上限 2 次(遊戲端 (N/2))，
+# 我們另外持久化當日次數，跨多次 8h 進場也不會超看、看過就不再看。只在 8 點後做。
+DAILY_AD_SEED_LIMIT = 2
+FARM_AD_SEED_MIN_HOUR = 8
 WEEKLY_CARD_DAYS = {1, 3, 5}  # deprecated — kept for rollback
 
 CROPS_PER_CYCLE = 6

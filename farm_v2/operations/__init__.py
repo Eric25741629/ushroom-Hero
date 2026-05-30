@@ -17,6 +17,7 @@ from .weekly_card import (
     run_weekly_card,
 )
 from .harvest_card import run_harvest_card
+from .ad_seed import claim_ad_seeds
 
 __all__ = [
     "click_with_jitter",
@@ -34,4 +35,5 @@ __all__ = [
     "buy_shop_items",
     "run_weekly_card",
     "run_harvest_card",
+    "claim_ad_seeds",
 ]

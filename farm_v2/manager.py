@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 import img_tools
 import new_cnn.cnn_model as _cnn_module
-from farm_v2.config import COORD, TIMING, MAX_PLANT_PER_DAY
+from farm_v2.config import COORD, TIMING, MAX_PLANT_PER_DAY, FARM_VISIT_INTERVAL_HOURS
 from farm_v2.states import FarmState, FarmContext
 from farm_v2.operations import (
     click_with_jitter,
@@ -20,6 +20,7 @@ from farm_v2.operations import (
     plant_one,
     plant_cycle,
     run_harvest_card,
+    claim_ad_seeds,
 )
 from game_actions.navigation import navigate_to_main_page
 from game_state.detector import get_stage
@@ -141,9 +142,24 @@ def farm(
         節省的時間（秒）
     """
     from json_manager import create_time_manager
+    import config_manager
+
+    # Config gate 1: 農場停用 → 連切頁都不做。farm() 是所有呼叫端的單一入口
+    # (daily_pipeline / quick_farm)，在這裡擋掉比在 pipeline 擋更穩。
+    if not config_manager.get_device_config(device_ip).get("enable_farm", True):
+        logger.info(f"[farm_v2] enable_farm=false，跳過農場 - {device_ip}")
+        return 0.0
 
     if time_manager is None:
         time_manager = create_time_manager(device_ip)
+
+    # Config gate 2: 進場節流(滑動視窗)。距上次進場未滿 8h 就不切頁。打工會自動
+    # 用免費種子持續種+收，所以農場不必每小時進；每 8h 進一次就夠保活打工、補
+    # 種子、收散落。買種子(每日)/豐收卡(每週) 由各自子任務內部判斷，8h<每日<每週
+    # 所以該做的會在某次 8h 進場時自然輪到。farm_visit 在本輪結束前記一筆。
+    if not time_manager.is_expired("farm_visit", FARM_VISIT_INTERVAL_HOURS * 3600):
+        logger.info(f"[farm_v2] 距上次進場未滿 {FARM_VISIT_INTERVAL_HOURS}h，略過 - {device_ip}")
+        return 0.0
 
     logger.info(f"開始農場流程 - 設備: {device_ip}")
     save_time = 0.0
@@ -160,8 +176,11 @@ def farm(
     if is_working:
         logger.info("打工中，種植交給打工，本輪只補種子/收散落獎勵")
 
+    # Sub-task cadence is independent of the 8h visit throttle: seeds are bought
+    # at most once per day, the harvest card at most once per week.
     seed_record = time_manager.get_time_record("farm_seed_purchase")
     should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
+    should_run_card = not time_manager.is_same_week("farm_harvest_card")
 
     # Restock seeds regardless of work state — 打工 consumes them but won't buy
     # them, so the old `and not is_working` guard meant seeds were never bought
@@ -171,9 +190,12 @@ def farm(
         buy_seed(d)
         time_manager.record_time("farm_seed_purchase")
 
+    # 看廣告補初級種子（免廣告卡=直接發、8 點後、每日上限 2 次、看過不再看）。
+    # 打工會自動把補到的種子種掉，所以這裡只領+關窗，不手動種。
+    claim_ad_seeds(d, device_ip, time_manager)
+
     # Weekly harvest card flow (replaces old Mon/Wed/Fri weekly_card)
-    is_same_week = time_manager.is_same_week("farm_harvest_card")
-    if not is_same_week:
+    if should_run_card:
         logger.info("執行每週豐收卡流程")
         if run_harvest_card(d, device_ip=device_ip, cnn_model=cnn_model):
             time_manager.record_time("farm_harvest_card")
@@ -228,6 +250,11 @@ def farm(
     _ensure_work_active(d)
 
     save_time += navigate_to_home(d, cnn_model, device_ip=device_ip)
+
+    # Stamp the visit so the 8h throttle trips for the next ~8h. Recorded on a
+    # completed run only — a mid-run failure leaves no stamp so the next wake
+    # retries instead of waiting a full window.
+    time_manager.record_time("farm_visit")
 
     logger.info(f"農場流程完成，節省時間: {save_time:.2f}秒")
     return save_time

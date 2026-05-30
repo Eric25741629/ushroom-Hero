@@ -231,3 +231,110 @@ def select_fertilizer_by_name(page: Any, name: str) -> bool:
 
 def tap_fert_confirm(page: Any) -> bool:
     return _tap_view_btn(page, "FertilizeSelectView", "btnUse")
+
+
+# ---------------------------------------------------------------------------
+# Watch-ad seed top-up (初級種子). Verified live on 7fe98fc6 (2026-05-31):
+# SeedSelectView row 0 = 初級種子; when exhausted its btnSeed hides and
+# btnSeedAd shows "種子×3 (N/2)" (N = watches left today). Tapping it grants
+# seeds instantly with the no-ad card (no video) and opens GoodsGetView
+# (恭喜獲得) — the reliable "reward granted" signal. Gotcha: btnSeedAd stays
+# active even at (0/2), so the (N) count (or GoodsGetView appearing) is the
+# real stop condition, NOT activeInHierarchy alone.
+# ---------------------------------------------------------------------------
+
+_JS_SEED_AD_STATUS = r"""
+() => {
+  const sc = cc.director.getScene();
+  function findActive(name){ const st=[sc]; while(st.length){const n=st.pop(); if(!n)continue;
+    if(n.name===name && n.activeInHierarchy) return n; (n.children||[]).forEach(c=>st.push(c));} return null; }
+  const ss = findActive("SeedSelectView");
+  if (!ss) return {open:false};
+  function byPath(root, path){ let c=root; for(const s of path){ if(!c)return null;
+    c=(c.children||[]).find(k=>k.name===s)||null;} return c; }
+  const row0 = byPath(ss, ["view","ScrollView","view","content","0"]);
+  let ad = null;
+  if (row0) {
+    const adNode = (row0.children||[]).find(k=>k.name==="btnSeedAd");
+    if (adNode) {
+      const labs=[]; const st=[adNode];
+      while(st.length){const n=st.pop(); if(!n)continue;
+        const l=n.getComponent?n.getComponent(cc.Label):null; if(l&&l.string)labs.push(String(l.string));
+        (n.children||[]).forEach(c=>st.push(c));}
+      let remaining=null;
+      for(const s of labs){ const m=String(s).match(/\((\d+)\s*\/\s*\d+\)/); if(m){remaining=parseInt(m[1],10); break;} }
+      const w=adNode.worldPosition;
+      ad={active:adNode.activeInHierarchy, remaining:remaining, wx:w?w.x:null, wy:w?w.y:null};
+    }
+  }
+  const um=window.uiMgr;
+  const rewardOpen = !!(um && um.getView && um.getView("GoodsGetView"));
+  return {open:true, ad:ad, rewardOpen:rewardOpen};
+}
+"""
+
+_JS_UIMGR_CLOSE = r"""
+(viewName) => { const um=window.uiMgr;
+  if (um && um.close) { try { um.close(viewName); return true; } catch(e){ return false; } }
+  return false; }
+"""
+
+_JS_UIMGR_HAS = r"""
+(viewName) => { const um=window.uiMgr;
+  return !!(um && um.getView && um.getView(viewName)); }
+"""
+
+
+def open_seed_select(page: Any) -> bool:
+    """Open SeedSelectView (種植選擇) by tapping 一鍵種植; verify it opened."""
+    if seed_dialog_open(page):
+        return True
+    tap_onekey(page, "btnOneKeyPlant")
+    time.sleep(0.8)
+    return seed_dialog_open(page)
+
+
+def seed_ad_status(page: Any) -> Dict[str, Any]:
+    """Row-0 (初級種子) watch-ad button state:
+    {open, ad:{active, remaining, wx, wy}, rewardOpen}. remaining = N from the
+    "(N/2)" label (watches left today); None if it couldn't be parsed."""
+    try:
+        return page.evaluate(_JS_SEED_AD_STATUS) or {"open": False}
+    except Exception as e:  # pragma: no cover
+        logger.warning("seed_ad_status failed: %s", e)
+        return {"open": False}
+
+
+def tap_seed_ad(page: Any, ad: Dict[str, Any]) -> bool:
+    """Pixel-tap the row-0 btnSeedAd at its current worldPosition."""
+    if not ad or ad.get("wx") is None:
+        return False
+    _click_world(page, ad["wx"], ad["wy"])
+    return True
+
+
+def reward_open(page: Any) -> bool:
+    """True iff GoodsGetView (恭喜獲得) is open — the reward-granted signal."""
+    try:
+        return bool(page.evaluate(_JS_UIMGR_HAS, "GoodsGetView"))
+    except Exception as e:  # pragma: no cover
+        logger.warning("reward_open failed: %s", e)
+        return False
+
+
+def close_reward(page: Any) -> bool:
+    """Close the 恭喜獲得 reward popup via uiMgr (verified)."""
+    return _uimgr_close(page, "GoodsGetView")
+
+
+def close_seed_select(page: Any) -> bool:
+    """Close the 種植選擇 dialog via uiMgr (verified)."""
+    return _uimgr_close(page, "SeedSelectView")
+
+
+def _uimgr_close(page: Any, view_name: str) -> bool:
+    try:
+        return bool(page.evaluate(_JS_UIMGR_CLOSE, view_name))
+    except Exception as e:  # pragma: no cover
+        logger.warning("_uimgr_close(%s) failed: %s", view_name, e)
+        return False
