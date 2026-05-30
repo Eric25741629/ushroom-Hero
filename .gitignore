@@ -71,3 +71,28 @@ mushroom_session*.json
 bot_config.*.bak
 bot_config.broken-*.json.bak
 bot_config.sync-conflict-*.json
+
+# --- transient capture / scratch (not for version control, 2026-05-31) ---
+tmp_ws_capture/
+.playwright-mcp/
+everything-claude-code/
+
+# one-off tools probes + device dumps (scratch; tracked legit tools untouched)
+tools/_*
+tools/adb-*.json
+tools/emulator-*.json
+
+# accidental script-output dumps at repo root
+/127.0.0.1
+/250
+/300
+/5555.json
+/dungeon_cells.json
+/scene_all.json
+/family_analyze.json
+/family_buttons.json
+/family_dungeon.json
+/family_dungeon.err
+/family_labels.json
+/family_labels.err
+/family_tree.json
