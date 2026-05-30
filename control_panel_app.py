@@ -2142,6 +2142,7 @@ def fly_pet_breed_info(ip):
     """Get breeding pool status and shelf info."""
     js = r"""(() => {
         const cache = IS(ISInclude.FlyPetDataCache);
+        const isRealPet = (p) => p && Number(p.id || 0) > 0;
         const homes = [];
         for (const k in cache.home_list) {
             const h = cache.home_list[k];
@@ -2153,7 +2154,7 @@ def fly_pet_breed_info(ip):
                 if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') raw[fk] = v;
             }
             const petInfo = (p) => {
-                if (!p) return null;
+                if (!isRealPet(p)) return null;
                 const cfg = configFly.getDataByKey(p.config_id);
                 return {id: p.id, config_id: p.config_id, name: p.name || '', display_name: cfg ? cfg.name : '?', quality: p.quality || 0, role_id: p.role_id || 0};
             };
@@ -2316,24 +2317,25 @@ def fly_pet_breed_collect(ip):
 def fly_pet_hatch(ip):
     """Hatch an egg in a breeding nest."""
     data = request.json or {}
-    base_id = data.get("base_id")
-    if base_id is None:
-        return jsonify({"status": "error", "message": "base_id required"}), 400
+    egg_id = data.get("egg_id")
+    if egg_id is None:
+        return jsonify({"status": "error", "message": "egg_id required"}), 400
+    egg_ids_js = json.dumps([int(egg_id)])
     js = f"""new Promise((resolve) => {{
     let done = false;
     const tmr = setTimeout(() => {{
         if (done) return; done = true;
-        normalEvent.off('OnInfoUpdate', handler);
+        normalEvent.off('EggListBack', handler);
         resolve(JSON.stringify({{ok: false, message: 'timeout'}}));
     }}, 8000);
     function handler() {{
         if (done) return; done = true;
         clearTimeout(tmr);
-        normalEvent.off('OnInfoUpdate', handler);
+        normalEvent.off('EggListBack', handler);
         resolve(JSON.stringify({{ok: true}}));
     }}
-    normalEvent.on('OnInfoUpdate', handler);
-    IS(ISInclude.FlyPetControl).send_66_29({int(base_id)});
+    normalEvent.on('EggListBack', handler);
+    IS(ISInclude.FlyPetControl).send_66_3({egg_ids_js});
 }})"""
     return _cdp_json_response(ip, js, await_promise=True)
 
@@ -2394,8 +2396,8 @@ def fly_pet_friends(ip):
 @app.route("/api/fly_pet_refresh_breed/<ip>", methods=["POST"])
 @_fly_pet_auth
 def fly_pet_refresh_breed(ip):
-    """Trigger breed info refresh (send_66_21 + send_66_22)."""
-    js = "(() => { IS(ISInclude.FlyPetControl).send_66_21(); IS(ISInclude.FlyPetControl).send_66_22(); return 'ok'; })()"
+    """Trigger breed info refresh (egg list + hybrid base + shelves)."""
+    js = "(() => { const c = IS(ISInclude.FlyPetControl); c.send_66_1(); c.send_66_21(); c.send_66_22(); return 'ok'; })()"
     result, err = _cdp_evaluate(ip, js)
     if err:
         code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500

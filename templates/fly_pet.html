@@ -839,6 +839,10 @@ async function loadBreed() {
   var grid = document.getElementById('breedGrid');
   grid.innerHTML = '<span class="spinner"></span>';
   try {
+    await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
+      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+    });
+    await new Promise(function(r) { setTimeout(r, 600); });
     var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
     var data = d.data || {};
     var homes = data.homes || [];
@@ -856,8 +860,8 @@ async function loadBreed() {
         html += ' <span style="color:var(--warn);">' + stateLabel + (remain > 0 ? ' (' + remain + ' 分鐘)' : '') + '</span>';
       }
       else if (h.state === 2) html += ' <span style="color:var(--accent);">' + stateLabel + '</span> <button class="btn btn-primary btn-sm" onclick="doCollect(' + h.id + ')">領取</button>';
-      else if (h.state === 3) html += ' <span style="color:var(--eq6);">' + stateLabel + '</span> <button class="btn btn-primary btn-sm" onclick="doHatch(' + h.id + ')">孵化</button>';
-      else html += ' <span style="color:var(--text2);">' + stateLabel + '</span> <button class="btn btn-ghost btn-sm" onclick="doHatch(' + h.id + ')">嘗試孵化</button>';
+      else if (h.state === 3) html += ' <span style="color:var(--eq6);">' + stateLabel + '</span>';
+      else html += ' <span style="color:var(--text2);">' + stateLabel + '</span>';
       var petLabel = function(p) {
         if (!p) return '(空)';
         return esc(p.display_name || p.name || 'ID:'+p.id) + ' ' + pqHTML(p.quality);
@@ -877,7 +881,9 @@ async function loadBreed() {
     if (eggs.length) {
       html += '<div class="breed-slot" style="border-color:var(--eq6);"><b>蛋列表</b> (' + eggs.length + ')<div style="font-size:0.78em;margin-top:4px;">';
       eggs.forEach(function(eg) {
-        html += '<div>' + esc(JSON.stringify(eg)) + '</div>';
+        html += '<div style="margin-top:4px;">蛋 #' + esc(eg.id || '?') +
+          ' <button class="btn btn-primary btn-sm" onclick="doHatch(' + Number(eg.id || 0) + ')">孵化</button>' +
+          '<div style="color:var(--text2);word-break:break-all;">' + esc(JSON.stringify(eg)) + '</div></div>';
       });
       html += '</div></div>';
     }
@@ -887,9 +893,11 @@ async function loadBreed() {
   } catch(e) { grid.innerHTML = '<span style="color:var(--danger);">' + esc(e.message) + '</span>'; }
 }
 
-async function doHatch(baseId) {
+async function doHatch(eggId) {
+  eggId = Number(eggId || 0);
+  if (!eggId) { toast('找不到蛋 ID', 'err'); return; }
   try {
-    var d = await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {base_id: baseId});
+    var d = await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {egg_id: eggId});
     var result = d.data || {};
     if (result.ok === false) { toast('孵化失敗: ' + (result.message || ''), 'err'); return; }
     toast('孵化成功', 'ok');
@@ -998,6 +1006,7 @@ async function doLoadAllFriends() {
 var abConfig = {};   // per-slot: {enabled, mode, quality, min_count, min_total_entries, prefer_low_gen}
 var abTimer = null;
 var abRunning = false;
+var abTicking = false;
 var abLogs = {};     // per-slot: [{time, msg}]
 var abHomes = [];    // cached home list from last loadBreed
 var abErrors = {};   // per-slot consecutive error count
@@ -1124,6 +1133,7 @@ function startAutoBreed() {
 
 function stopAutoBreed() {
   abRunning = false;
+  abTicking = false;
   if (abTimer) { clearInterval(abTimer); abTimer = null; }
   document.getElementById('abStartBtn').style.display = '';
   document.getElementById('abStopBtn').style.display = 'none';
@@ -1136,75 +1146,82 @@ function stopAutoBreed() {
 
 async function autoBreedTick() {
   if (!abRunning) return;
+  if (abTicking) return;
+  abTicking = true;
   loadAbConfig();
 
   try {
-    var botSt = await checkBotRunning();
-    if (botSt.bot_running) {
-      document.getElementById('abGlobalStatus').textContent = '暫停 (腳本運行中: ' + (botSt.bot_task || '') + ')';
-      document.getElementById('abGlobalStatus').style.color = 'var(--warn)';
-      return;
-    }
-  } catch(e) {}
-
-  try {
-    await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
-      method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
-    });
-  } catch(e) {}
-
-  await new Promise(function(r) { setTimeout(r, 600); });
-
-  var breedData;
-  try {
-    var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
-    breedData = d.data || {};
-  } catch(e) {
-    document.getElementById('abGlobalStatus').textContent = '錯誤: ' + e.message;
-    document.getElementById('abGlobalStatus').style.color = 'var(--danger)';
-    return;
-  }
-
-  var homes = breedData.homes || [];
-  var excludeIds = [];
-
-  for (var i = 0; i < homes.length; i++) {
-    if (homes[i].fly_a) excludeIds.push(homes[i].fly_a.id);
-    if (homes[i].fly_b) excludeIds.push(homes[i].fly_b.id);
-  }
-
-  for (var i = 0; i < homes.length; i++) {
-    var h = homes[i];
-    var cfg = abConfig[h.id];
-    if (!cfg || !cfg.enabled) {
-      abSetStatus(h.id, 'off', '未啟用');
-      continue;
-    }
+    try {
+      var botSt = await checkBotRunning();
+      if (botSt.bot_running) {
+        document.getElementById('abGlobalStatus').textContent = '暫停 (腳本運行中: ' + (botSt.bot_task || '') + ')';
+        document.getElementById('abGlobalStatus').style.color = 'var(--warn)';
+        return;
+      }
+    } catch(e) {}
 
     try {
-      await processAbSlot(h, cfg, excludeIds);
-      abErrors[h.id] = 0;
+      await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
+        method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+      });
+    } catch(e) {}
+
+    await new Promise(function(r) { setTimeout(r, 600); });
+
+    var breedData;
+    try {
+      var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
+      breedData = d.data || {};
     } catch(e) {
-      abErrors[h.id] = (abErrors[h.id] || 0) + 1;
-      abSetStatus(h.id, 'error', '錯誤: ' + e.message);
-      abLog(h.id, '錯誤: ' + e.message);
-      if (abErrors[h.id] >= 3) {
-        abConfig[h.id].enabled = false;
-        saveAbConfig();
-        abLog(h.id, '連續失敗 3 次，已停用此巢穴');
-        var ck = document.querySelector('#abSlot_' + h.id + ' input[type=checkbox]');
-        if (ck) ck.checked = false;
+      document.getElementById('abGlobalStatus').textContent = '錯誤: ' + e.message;
+      document.getElementById('abGlobalStatus').style.color = 'var(--danger)';
+      return;
+    }
+
+    var homes = breedData.homes || [];
+    var eggs = breedData.egg_list || [];
+    var excludeIds = [];
+
+    for (var i = 0; i < homes.length; i++) {
+      if (homes[i].fly_a) excludeIds.push(homes[i].fly_a.id);
+      if (homes[i].fly_b) excludeIds.push(homes[i].fly_b.id);
+    }
+
+    for (var i = 0; i < homes.length; i++) {
+      var h = homes[i];
+      var cfg = abConfig[h.id];
+      if (!cfg || !cfg.enabled) {
+        abSetStatus(h.id, 'off', '未啟用');
+        continue;
+      }
+
+      try {
+        await processAbSlot(h, cfg, excludeIds, eggs);
+        abErrors[h.id] = 0;
+      } catch(e) {
+        abErrors[h.id] = (abErrors[h.id] || 0) + 1;
+        abSetStatus(h.id, 'error', '錯誤: ' + e.message);
+        abLog(h.id, '錯誤: ' + e.message);
+        if (abErrors[h.id] >= 3) {
+          abConfig[h.id].enabled = false;
+          saveAbConfig();
+          abLog(h.id, '連續失敗 3 次，已停用此巢穴');
+          var ck = document.querySelector('#abSlot_' + h.id + ' input[type=checkbox]');
+          if (ck) ck.checked = false;
+        }
       }
     }
-  }
 
-  var ts = new Date();
-  document.getElementById('abGlobalStatus').textContent = '運行中 (上次: ' +
-    String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0') + ':' + String(ts.getSeconds()).padStart(2,'0') + ')';
-  document.getElementById('abGlobalStatus').style.color = 'var(--accent)';
+    var ts = new Date();
+    document.getElementById('abGlobalStatus').textContent = '運行中 (上次: ' +
+      String(ts.getHours()).padStart(2,'0') + ':' + String(ts.getMinutes()).padStart(2,'0') + ':' + String(ts.getSeconds()).padStart(2,'0') + ')';
+    document.getElementById('abGlobalStatus').style.color = 'var(--accent)';
+  } finally {
+    abTicking = false;
+  }
 }
 
-async function processAbSlot(home, cfg, excludeIds) {
+async function processAbSlot(home, cfg, excludeIds, eggs) {
   var hid = home.id;
 
   if (home.state === 2) {
@@ -1216,8 +1233,13 @@ async function processAbSlot(home, cfg, excludeIds) {
   }
 
   if (home.state === 3) {
+    if (!eggs || eggs.length === 0) {
+      abSetStatus(hid, 'ready', '待孵化，沒有蛋');
+      return;
+    }
+    var egg = eggs.shift();
     abSetStatus(hid, 'ready', '孵化中...');
-    await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {base_id: hid});
+    await apiPost('/api/fly_pet_hatch/' + encodeURIComponent(ip()), {egg_id: egg.id});
     abLog(hid, '已送出孵化請求');
     abSetStatus(hid, 'breeding', '孵化中');
     return;
