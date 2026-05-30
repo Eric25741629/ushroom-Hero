@@ -72,8 +72,13 @@ def get_adb_devices():
     
 def close_notification(d):
     """
-    清理通知與 Messenger 氣泡等遮擋物
+    清理通知與 Messenger 氣泡等遮擋物 (僅適用於 Android/ADB 後端)
     """
+    # web_h5 (Playwright) 後端沒有系統通知欄/Messenger 氣泡，且 PlaywrightGameDevice
+    # 沒有 __call__，會在 d(packageNameMatches=...) 觸發 'object is not callable'。
+    # 注意：不能只靠 hasattr('open_quick_settings')，因為 PlaywrightGameDevice 有同名 stub。
+    if getattr(d, "backend_kind", None) == "web_h5":
+        return
     if not hasattr(d, 'open_quick_settings'):
         return
     try:
@@ -118,6 +123,9 @@ def close_notification(d):
     except Exception as e:
         logger.error(f"清理遮擋物時發生錯誤: {e}")
 def open_notification(d):
+    # Android/ADB 專用；web_h5 後端直接略過 (同 close_notification)。
+    if getattr(d, "backend_kind", None) == "web_h5":
+        return
     if not hasattr(d, 'open_quick_settings'):
         return
     try:
