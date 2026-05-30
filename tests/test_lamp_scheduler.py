@@ -53,7 +53,12 @@ if "Open_gold_paddle_ocr" not in sys.modules:
     sys.modules["Open_gold_paddle_ocr"] = _gp
 
 if "opengold_v2" not in sys.modules:
-    sys.modules["opengold_v2"] = types.ModuleType("opengold_v2")
+    # Make it a real *package* (set __path__) so sibling real submodules like
+    # opengold_v2.lamp_startup still import, while we stub the heavy lamp_service.
+    import os as _os
+    _og = types.ModuleType("opengold_v2")
+    _og.__path__ = [_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "opengold_v2")]
+    sys.modules["opengold_v2"] = _og
 if "opengold_v2.lamp_service" not in sys.modules:
     _ls = types.ModuleType("opengold_v2.lamp_service")
     class _FakeLampSvc:
@@ -157,19 +162,23 @@ def test_run_lamp_routes_to_opengold_v2_when_flag_set(lamp_mod, fake_config, mon
     assert v2_calls == [{"init_ip": "emu"}, {"run_times": 300, "is_compare": True}]
 
 
-def test_run_lamp_defaults_to_paddle_ocr(lamp_mod, fake_config, monkeypatch):
-    fake_config["emu"] = {}  # use_opengold_v2 default False
-    paddle_calls: list[dict] = []
-    fake_paddle = SimpleNamespace(
-        open_the_gold=lambda d, times, is_compare, device_ip: paddle_calls.append({
-            "times": times, "is_compare": is_compare, "device_ip": device_ip,
-        })
-    )
-    monkeypatch.setattr(lamp_mod, "Open_gold_paddle_ocr", fake_paddle)
+def test_run_lamp_always_routes_to_v2_even_without_flag(lamp_mod, fake_config, monkeypatch):
+    """V1(Open_gold_paddle_ocr)已廢棄：即使 config 沒有 use_opengold_v2，也一律走 V2。"""
+    fake_config["emu"] = {}  # 無 use_opengold_v2 旗標
+    v2_calls: list[dict] = []
+
+    class FakeSvc:
+        def __init__(self, d, device_ip):
+            v2_calls.append({"init_ip": device_ip})
+
+        def run(self, times, is_compare):
+            v2_calls.append({"run_times": times, "is_compare": is_compare})
+
+    monkeypatch.setattr(lamp_mod, "_LampServiceV2", FakeSvc)
     monkeypatch.setattr(lamp_mod.random, "randint", lambda a, b: 0)
 
     lamp_mod._run_lamp(SimpleNamespace(), "emu", 300, is_compare=False)
-    assert paddle_calls == [{"times": 300, "is_compare": False, "device_ip": "emu"}]
+    assert v2_calls == [{"init_ip": "emu"}, {"run_times": 300, "is_compare": False}]
 
 
 # ---------------------------------------------------------------------------

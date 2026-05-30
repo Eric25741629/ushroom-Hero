@@ -1086,6 +1086,10 @@ def open_the_gold(d, times=1000, is_compare=IS_COMPARE_DEFAULT, has_lian_shan_eq
     - has_lian_shan_equip: 是否擁有連閃裝備（連閃 & 爆閃組合），
                           若為 True，則在比較詞條時將 `連` 與 `爆` 視為一個整體
     """
+    _lamp_logger.warning(
+        "[DEPRECATED] Open_gold_paddle_ocr.open_the_gold 已廢棄，請改用 opengold_v2.LampService。"
+        " lamp_scheduler 已一律走 V2；此函式僅為相容保留。"
+    )
     start_time = time.time()
     if times == -1:
         times = float('inf')

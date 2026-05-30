@@ -14,7 +14,6 @@ import time
 
 import bot_state
 import config_manager
-import Open_gold_paddle_ocr
 from json_manager import return_time, time_recording
 from opengold_v2.lamp_service import LampService as _LampServiceV2
 from runtime_services.device_scan_service import use_phone_ocr_lamp_mode
@@ -23,14 +22,13 @@ from utils.screenshot_helpers import log_main_page_mismatch
 
 
 def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
-    """開神燈執行入口；use_opengold_v2=true 時走 LampService，否則走舊版。"""
-    device_cfg = config_manager.get_device_config(ip)
+    """開神燈執行入口。V1(Open_gold_paddle_ocr)已廢棄，一律走 V2 LampService。
+
+    （use_opengold_v2 旗標保留於 config 僅供文件/相容，路由已不再讀取它。）
+    """
     duration = lamp_dur + random.randint(-10, 10)
-    if device_cfg.get("use_opengold_v2", False):
-        svc = _LampServiceV2(d, device_ip=ip)
-        svc.run(times=duration, is_compare=is_compare)
-    else:
-        Open_gold_paddle_ocr.open_the_gold(d, times=duration, is_compare=is_compare, device_ip=ip)
+    svc = _LampServiceV2(d, device_ip=ip)
+    svc.run(times=duration, is_compare=is_compare)
 
 
 def _run_phone_ocr_lamp(d, ip: str, stage: str) -> None:
