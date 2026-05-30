@@ -357,62 +357,59 @@ def _check_on_line_via_protocol(target_pid: int, threshold_sec: int = 60) -> boo
     # web_session_service.process_online_check_requests). Reusing the
     # same-thread session is safe: bring_to_front() + wait_until_in_game
     # below will wake the throttled tab if needed.
+    # Reuse the same-thread session if present; otherwise create one. Either way
+    # we DO NOT close it here. create_web_device_if_enabled() registers the device
+    # in _WEB_DEVICE_REGISTRY under this (5554 main-loop) thread, so the main loop
+    # adopts/reuses the very same handle. Hard-closing it after the check was the
+    # cause of the churn: "closed temporary browser for 5554" → next main-loop tap
+    # finds no session → "web_h5 session unavailable (tap), restarting" — repeated
+    # every wake cycle (14 restarts / 40 min). See logs/emulator-5554 2026-05-29.
     prior_device = get_same_thread_web_device(ip)
     if prior_device is not None:
         d = prior_device
-        close_after_check = False
     else:
         d = create_web_device_if_enabled(
             ip, cfg=device_cfg, logger_obj=default_logger
         )
         if d is None:
             raise RuntimeError("create_web_device_if_enabled returned None")
-        close_after_check = True
+
+    page = getattr(d, "_page", None)
+    if page is None or page.is_closed():
+        raise RuntimeError("5554 page is not available / closed")
 
     try:
-        page = getattr(d, "_page", None)
-        if page is None or page.is_closed():
-            raise RuntimeError("5554 page is not available / closed")
+        page.bring_to_front()
+    except Exception:
+        pass
 
+    # Honor dashboard pause/force-sleep on this device. Protocol path
+    # bypasses MonitoredDevice (which usually does this in _pause_guard),
+    # so we have to call check_pause manually here AND inside the wait
+    # loop so a 25s wait doesn't ignore a mid-flight pause.
+    bot_state.check_pause(ip)
+    pause_poll = lambda: bot_state.check_pause(ip)
+
+    api = WebGameAPI(page)
+    if not api.wait_until_in_game(timeout_sec=25.0, on_poll=pause_poll):
+        st = {}
         try:
-            page.bring_to_front()
+            st = api.game_state()
         except Exception:
             pass
-
-        # Honor dashboard pause/force-sleep on this device. Protocol path
-        # bypasses MonitoredDevice (which usually does this in _pause_guard),
-        # so we have to call check_pause manually here AND inside the wait
-        # loop so a 25s wait doesn't ignore a mid-flight pause.
-        bot_state.check_pause(ip)
-        pause_poll = lambda: bot_state.check_pause(ip)
-
-        api = WebGameAPI(page)
-        if not api.wait_until_in_game(timeout_sec=25.0, on_poll=pause_poll):
-            st = {}
-            try:
-                st = api.game_state()
-            except Exception:
-                pass
-            raise RuntimeError(
-                f"5554 not in game after 25s: ws_ready={st.get('ws_ready_state')}"
-                f" sock_state={st.get('sock_state')} scene={st.get('scene_name')}"
-            )
-
-        bot_state.check_pause(ip)
-        is_online = api.is_player_online(
-            target_pid, threshold_sec=threshold_sec, net_wait_ms=5000,
+        raise RuntimeError(
+            f"5554 not in game after 25s: ws_ready={st.get('ws_ready_state')}"
+            f" sock_state={st.get('sock_state')} scene={st.get('scene_name')}"
         )
-        logger.info(
-            f"[check_on_line/protocol] target_pid={target_pid} online={is_online}"
-        )
-        return is_online
-    finally:
-        if close_after_check:
-            try:
-                d.close()
-                logger.info(f"[check_on_line/protocol] closed temporary browser for {ip}")
-            except Exception as close_err:
-                logger.warning(f"[check_on_line/protocol] device close failed: {close_err}")
+
+    bot_state.check_pause(ip)
+    is_online = api.is_player_online(
+        target_pid, threshold_sec=threshold_sec, net_wait_ms=5000,
+    )
+    logger.info(
+        f"[check_on_line/protocol] target_pid={target_pid} online={is_online}"
+    )
+    return is_online
 
 
 def _check_on_line_via_ocr_legacy(Cnn_model):

@@ -644,6 +644,87 @@
 
     .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
 
+    /* 遠端畫面 (live view) — 自動縮放、不滾動，整框塞進視窗 */
+    /* 手機板側欄會變成頂部橫條 (.side-rail z-index:1200) 蓋住彈窗標題列/關閉鈕，
+       把遠端畫面拉到 1300 蓋過側欄；並用 dvh 對齊「可見」視窗高度（扣掉手機網址列），
+       避免置中後標題列被推到網址列/瀏海後面。dvh 不支援時自動回退 vh。 */
+    #liveViewModal.modal-overlay {
+      z-index: 1300;
+      height: 100vh;
+      height: 100dvh;
+      bottom: auto;
+    }
+    .lv-modal {
+      display: flex;
+      flex-direction: column;
+      width: min(98vw, 560px);     /* 盡量寬：手機吃滿視窗寬，桌機封頂 560 */
+      max-width: 98vw;
+      max-height: 98vh;
+      max-height: 98dvh;
+      padding: 12px 12px 14px;
+      overflow: hidden;            /* 不滾動：靠 canvas 自動縮放，不靠捲軸 */
+    }
+    .lv-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 1.05em;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+    }
+    .lv-header .lv-title { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* 關閉瀏覽器：標題列內小按鈕，flex:0 0 auto 不被壓縮；裝置續跑、下次自動重開 */
+    .lv-btn-closebrowser {
+      flex: 0 0 auto;
+      height: 32px;
+      padding: 0 10px;
+      border: none;
+      border-radius: 6px;
+      background: var(--warn-color);
+      color: #222;
+      font-size: 0.78em;
+      font-weight: 600;
+      white-space: nowrap;
+      cursor: pointer;
+    }
+    .lv-btn-closebrowser:hover { filter: brightness(1.08); }
+    .lv-close {
+      flex: 0 0 auto;
+      width: 32px;
+      height: 32px;
+      line-height: 30px;
+      text-align: center;
+      border: none;
+      border-radius: 6px;
+      background: #555;
+      color: #fff;
+      font-size: 20px;
+      cursor: pointer;
+    }
+    .lv-close:hover { background: #666; }
+    .lv-stage {
+      flex: 1 1 auto;
+      min-height: 0;               /* 允許在 flex 欄裡縮到小於內容 */
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    /* 同時受寬(100%)與高(視窗高 - 邊框)夾擊，width/height:auto 保持比例 → contain 縮放 */
+    .lv-stage canvas {
+      display: block;
+      max-width: 100%;
+      max-height: calc(98vh - 100px);   /* 標題列以外整片給畫面，盡量放大 */
+      max-height: calc(98dvh - 100px);  /* 手機可見高度（扣網址列），不支援時回退上一行 */
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      touch-action: none;
+      cursor: crosshair;
+    }
+
     .btn-cancel { background: #555; color: white; }
 
     .btn-save { background: var(--safe-color); color: white; }
@@ -1482,17 +1563,15 @@
   </div>
 
   <div id="liveViewModal" class="modal-overlay" onclick="if(event.target===this)closeLiveView()">
-    <div class="modal" style="max-width:600px" onclick="event.stopPropagation()">
-      <div class="modal-header">
-        遠端畫面 / 手動接管 <span id="lvDeviceLabel" style="color:var(--text-secondary);font-size:0.8em"></span>
+    <div class="modal lv-modal" onclick="event.stopPropagation()">
+      <div class="modal-header lv-header">
+        <span class="lv-title">遠端畫面 / 手動接管 <span id="lvDeviceLabel" style="color:var(--text-secondary);font-size:0.8em"></span></span>
+        <button class="lv-btn-closebrowser" onclick="closeBrowserFromLiveView()" title="關閉無頭瀏覽器（裝置續跑，下次自動重開）">關閉瀏覽器</button>
+        <button class="lv-close" onclick="closeLiveView()" title="關閉" aria-label="關閉">&times;</button>
       </div>
-      <div id="lvStatus" style="margin-bottom:8px;color:var(--text-secondary);font-size:0.85em">連線中…</div>
-      <div style="display:flex;justify-content:center;background:#000;border-radius:8px;overflow:hidden">
-        <canvas id="lvCanvas" width="540" height="960"
-                style="max-width:100%;height:auto;touch-action:none;cursor:crosshair"></canvas>
-      </div>
-      <div class="modal-actions" style="margin-top:14px">
-        <button class="btn btn-cancel" onclick="closeLiveView()">關閉</button>
+      <div id="lvStatus" style="margin-bottom:6px;color:var(--text-secondary);font-size:0.8em">連線中…</div>
+      <div class="lv-stage">
+        <canvas id="lvCanvas" width="540" height="960"></canvas>
       </div>
     </div>
   </div>
@@ -2739,6 +2818,10 @@
           try { msg = JSON.parse(ev.data); } catch (e) { return; }
           if (msg.type === 'ready') {
             if (statusEl) statusEl.innerText = '已就緒，等待畫面…';
+          } else if (msg.type === 'closed') {
+            // Server-initiated graceful close (e.g. 閒置逾時自動中斷). Show the
+            // reason; the socket close that follows resumes automation server-side.
+            if (statusEl) statusEl.innerText = msg.message || '已中斷';
           } else if (msg.type === 'error') {
             if (statusEl) statusEl.innerText = '錯誤: ' + (msg.message || '');
           }
@@ -2794,6 +2877,16 @@
       // Belt-and-suspenders: explicitly unset pause via HTTP so the bot resumes
       // even if the WS close frame is not cleanly detected server-side.
       if (ip) fetch(`/api/live_view/${ip}/stop`, { method: 'POST' }).catch(() => {});
+    }
+
+    function closeBrowserFromLiveView() {
+      // Close the live view first (this unpauses the device so its thread reaches
+      // the top of its loop and can consume the close-browser flag), then request
+      // the headless browser to close. Device keeps running and cold-restarts the
+      // browser next cycle — a browser "restart", distinct from 強制休眠.
+      const ip = _lvIp;
+      closeLiveView();
+      if (ip) fetch(`/api/web_close/${ip}`, { method: 'POST' }).catch(() => {});
     }
 
 

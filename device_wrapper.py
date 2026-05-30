@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, Optional
 from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
 from utils.ws_listener import WSFrameTracker
-from runtime_services.device_runtime_service import ForceSleepRequested
+from runtime_services.device_runtime_service import ForceSleepRequested, WakeLoopInterrupted
 
 logger = logging.getLogger(__name__)
 _WEB_DEVICE_LOCK = threading.RLock()
@@ -244,7 +244,19 @@ class MonitoredDevice:
             raise ForceSleepRequested(
                 f"[{self._ip}] force sleep requested before device action"
             )
-        bot_state.check_pause(self._ip)
+        # check_pause() blocks while paused, but returns truthy (instead of
+        # blocking) when a manual web-launch request is pending — its carve-out
+        # so live-view takeover can break through a paused device. That request
+        # is only consumed at the top of the wake loop, which is unreachable
+        # mid-pipeline. If we merely let the action through here, pause is
+        # silently defeated (dashboard says "paused" but the bot keeps acting).
+        # Instead, unwind to the wake-loop top so handle_pending_web_launch()
+        # consumes it; the device then re-blocks on the still-paused state.
+        if bot_state.check_pause(self._ip):
+            raise WakeLoopInterrupted(
+                f"[{self._ip}] web-launch request received while paused; "
+                "unwinding to wake loop"
+            )
         if bot_state.check_force_sleep(self._ip):
             raise ForceSleepRequested(
                 f"[{self._ip}] force sleep requested after pause check"

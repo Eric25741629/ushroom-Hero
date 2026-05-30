@@ -1290,9 +1290,25 @@ def report_status():
 # --- 控制 API (修改以支援遠端) ---
 
 
+def _is_local_command_target(ip: str) -> bool:
+    """Decide whether a control command targets a local device thread.
+
+    Must NOT use ``":" in ip``: a TCP-attached local emulator (e.g.
+    ``127.0.0.1:5555``) has a colon yet is local, and the old heuristic
+    misrouted its pause / force-sleep commands to the remote-worker queue
+    where nothing consumed them. Remote worker devices are keyed
+    ``worker_id:ip`` and never register as a local thread, so the local
+    registry is the reliable discriminator. The colon check survives only as
+    a fallback for a local device whose thread has not registered yet.
+    """
+    if bot_state.is_local_device(ip):
+        return True
+    return ":" not in ip
+
+
 def queue_command(ip, cmd_key, cmd_val):
     """將指令加入佇列 (針對遠端) 或直接執行 (針對本地)"""
-    if ":" in ip:
+    if not _is_local_command_target(ip):
         with _commands_lock:
             if ip not in _remote_commands:
                 _remote_commands[ip] = {}
@@ -1686,6 +1702,16 @@ if sock is not None:
         except Exception as launch_exc:
             logger.warning(f"[live_view] {real_ip} auto-launch probe failed: {launch_exc}")
 
+        # Idle auto-disconnect window (default 60 min). Keeps a forgotten manual
+        # takeover from pausing the device forever; configurable via global config
+        # global.live_view.idle_timeout_sec (seconds; <= 0 disables).
+        idle_timeout = 3600
+        try:
+            lv_cfg = config_manager.get_global_config().get("live_view", {}) or {}
+            idle_timeout = int(lv_cfg.get("idle_timeout_sec", 3600))
+        except Exception:
+            idle_timeout = 3600
+
         try:
             session = LiveViewSession(
                 ws,
@@ -1693,6 +1719,7 @@ if sock is not None:
                 url_host,
                 viewport_width=vw,
                 viewport_height=vh,
+                idle_timeout_sec=idle_timeout,
                 logger=logger,
             )
             _live_view_sessions[real_ip] = session
@@ -1730,6 +1757,26 @@ def stop_live_view(ip):
     except Exception as exc:
         logger.warning(f"[live_view] stop API: set_pause(False) failed for {real_ip}: {exc}")
     return jsonify({"ok": True})
+
+
+@app.route("/api/web_close/<ip>", methods=["POST"])
+def web_close(ip):
+    """Request the (web_h5) device thread to close its headless browser now.
+
+    Unlike force-sleep, the device keeps running and cold-restarts the browser on
+    its next loop/wake (a browser "restart"). The Flask thread only sets a flag;
+    the owning device thread performs the Playwright close on its own thread (the
+    Playwright objects are thread-affine). The caller (live-view 關閉瀏覽器 button)
+    closes the live view first so automation is no longer paused and the device
+    thread reaches the top of its loop to consume the flag.
+    """
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    try:
+        bot_state.request_web_close(real_ip)
+    except Exception as exc:
+        logger.warning(f"[web_close] request_web_close failed for {real_ip}: {exc}")
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    return jsonify({"status": "ok", "action": "web_close", "ip": real_ip})
 
 
 @app.route("/api/labeler/config", methods=["GET"])
@@ -1897,8 +1944,8 @@ def force_sleep(ip):
 
 @app.route("/api/recover/<ip>", methods=["POST"])
 def recover_screen(ip):
-    # 遠端設備
-    if ":" in ip:
+    # 遠端設備（本機 TCP 模擬器同樣帶冒號，必須走 _is_local_command_target 判斷）
+    if not _is_local_command_target(ip):
         queue_command(ip, "recover", True)
         return jsonify({"status": "ok", "action": "queued_recover", "ip": ip})
 

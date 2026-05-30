@@ -128,6 +128,33 @@ def test_run_daily_aborts_cleanly_when_no_home_base():
     assert s.garrisoned == []
 
 
+def test_run_daily_collects_rewards_after_claim_before_station(monkeypatch):
+    # reward collection (地圖收益/碼頭補給/成就/目標) needs the season HUD, so it must run
+    # AFTER claim but BEFORE 一鍵修築 (which exits the season by closing 港口).
+    s = FakeSession(RAW_OBJS)
+    from sea_v2 import rewards
+    seen = {}
+
+    def fake_collect(dev):
+        s.calls.append("rewards")
+        seen["d"] = dev
+        return rewards.RewardResult(map_income=True, achievements=2)
+
+    monkeypatch.setattr(rewards, "collect_all_rewards", fake_collect)
+    sentinel = object()
+    report = tasks.run_daily(s, d=sentinel)
+    assert seen["d"] is sentinel
+    assert s.calls.index("claim") < s.calls.index("rewards") < s.calls.index("station")
+    assert report.rewards_extra.achievements == 2
+
+
+def test_run_daily_skips_rewards_without_device():
+    s = FakeSession(RAW_OBJS)
+    report = tasks.run_daily(s)            # d defaults to None
+    assert "rewards" not in s.calls
+    assert report.rewards_extra is None
+
+
 def test_run_daily_writes_shared_map_cache(tmp_path):
     s = FakeSession(RAW_OBJS)
     p = tmp_path / "shared_map.json"

@@ -35,6 +35,26 @@ _refresh_needed = False
 _SCREENSHOT_WINDOW = 50
 _screenshot_windows: Dict[str, deque] = {}
 
+# Devices whose automation thread runs in THIS process (local). Remote worker
+# devices are keyed "worker_id:ip" and are aggregated via report_status — they
+# never run a local thread, so they never register here. This is the reliable
+# local/remote discriminator: a TCP-attached emulator like "127.0.0.1:5555"
+# contains a colon yet is local, so the legacy `":" in ip` heuristic misroutes
+# its control commands (pause / force-sleep) to the remote queue.
+_local_device_ids: set = set()
+
+
+def register_local_device(ip: str) -> None:
+    """Mark ``ip`` as a locally-managed device thread."""
+    with _global_lock:
+        _local_device_ids.add(ip)
+
+
+def is_local_device(ip: str) -> bool:
+    """Return True when ``ip`` is handled by a local thread in this process."""
+    with _global_lock:
+        return ip in _local_device_ids
+
 
 def get_device_lock(ip: str) -> threading.Lock:
     """獲取指定設備的鎖，如果不存在則創建"""
@@ -51,7 +71,7 @@ def init_device(ip: str):
     with get_device_lock(ip):
         _pause_events[ip] = threading.Event()
         _pause_events[ip].set() # 預設為 True (不暫停，直接執行)
-        
+
         _states[ip] = {
             "status": "ONLINE",
             "task": "初始化",
@@ -60,6 +80,9 @@ def init_device(ip: str):
             "paused": False,
             "logs": []
         }
+    # init_device() is only ever called by a local device thread (and the local
+    # MuMu watchdog), so this is the canonical "local device came online" hook.
+    register_local_device(ip)
     logger.debug(f"[BotState] 設備 {ip} 已上線並註冊狀態監控。")
 
 
@@ -293,6 +316,9 @@ _skip_sleep_flags: Dict[str, bool] = {}
 _manual_release_flags: Dict[str, bool] = {}
 # force-sleep one-shot flags
 _force_sleep_flags: Dict[str, bool] = {}
+# close-browser one-shot flags (web_h5 only): close the headless browser now,
+# device keeps running and cold-restarts the browser on its next loop/wake.
+_web_close_flags: Dict[str, bool] = {}
 
 # Web login / launch request mailbox.
 _web_launch_requests: Dict[str, Dict[str, Any]] = {}
@@ -339,6 +365,24 @@ def check_force_sleep(ip: str) -> bool:
     """Atomically check and consume the force-sleep flag for `ip`."""
     with _global_lock:
         return bool(_force_sleep_flags.pop(ip, False))
+
+
+def request_web_close(ip: str) -> None:
+    """Request the (web_h5) device thread to close its headless browser now.
+
+    Unlike `request_force_sleep`, this does NOT sleep the device or change pause
+    state: the device keeps running and will cold-restart the browser on its next
+    loop iteration / wake. Used by the live-view "關閉瀏覽器" button to restart a
+    browser. The owning device thread consumes it via `check_web_close(ip)`.
+    """
+    with _global_lock:
+        _web_close_flags[ip] = True
+
+
+def check_web_close(ip: str) -> bool:
+    """Atomically check and consume the close-browser flag for `ip`."""
+    with _global_lock:
+        return bool(_web_close_flags.pop(ip, False))
 
 
 def clear_skip_sleep(ip: str):
@@ -626,8 +670,11 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
                 st["status"] = "OFFLINE"
                 st["step"] = f"心跳逾時 {int(age)} 秒"
 
-            # 僅自動清理遠端裝置，避免誤刪本地機台
-            if ":" in ip and age >= remove_remote_after_sec:
+            # 僅自動清理遠端裝置，避免誤刪本地機台。
+            # 注意：本機 TCP 模擬器 (如 127.0.0.1:5555) 也帶冒號，必須用
+            # is_local_device() 排除，否則心跳一逾時就被當遠端清掉，連帶移除
+            # _pause_events 讓暫停/休眠路由失效。
+            if ":" in ip and not is_local_device(ip) and age >= remove_remote_after_sec:
                 _states.pop(ip, None)
                 _pause_events.pop(ip, None)
                 _skip_sleep_flags.pop(ip, None)

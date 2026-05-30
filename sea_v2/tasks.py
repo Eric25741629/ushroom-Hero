@@ -26,11 +26,15 @@ class SeaReport:
     repaired: bool = False
     station_built: bool = False
     rewards_claimed: int = 0
+    rewards_extra: Optional[object] = None  # rewards.RewardResult (地圖收益/碼頭補給/成就/目標)
     aborted_reason: Optional[str] = None
 
 
-def run_daily(session, account_id: Optional[str] = None, cache_path=None) -> SeaReport:
-    """Run one daily sea pass. Always leaves the view tidy via ``exit_season``."""
+def run_daily(session, account_id: Optional[str] = None, cache_path=None, d=None) -> SeaReport:
+    """Run one daily sea pass. Always leaves the view tidy via ``exit_season``.
+
+    ``d`` (the device wrapper) enables the backend-agnostic reward-collection pass
+    (:mod:`sea_v2.rewards`); pass it for both H5 and adb. None skips those claims."""
     report = SeaReport()
     session.enter_season()
     try:
@@ -66,6 +70,13 @@ def run_daily(session, account_id: Optional[str] = None, cache_path=None) -> Sea
                 logger.warning("[sea] relic off-screen, skipped: %s", plan.relic.wp)
 
         report.rewards_claimed = int(session.claim_rewards() or 0)
+
+        # Season daily claims (地圖收益/碼頭補給/成就/任務目標) — backend-agnostic, drives the
+        # device wrapper directly. MUST run before upgrade_repair_station, which exits the
+        # season (closing 港口); these collectors assume they start on the SeasonMapScene HUD.
+        if d is not None:
+            from sea_v2 import rewards as _rewards
+            report.rewards_extra = _rewards.collect_all_rewards(d)
 
         # 一鍵修築 (維修站 base-upgrade, 木材) LAST: it dives into 港口, and closing 港口
         # exits the season to the main page, so its exit doubles as leaving the season.

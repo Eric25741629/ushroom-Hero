@@ -111,6 +111,7 @@ class LiveViewSession:
         viewport_width: int = 540,
         viewport_height: int = 960,
         jpeg_quality: int = 60,
+        idle_timeout_sec: float = 3600.0,
         logger: Any = None,
     ) -> None:
         self.client_ws = client_ws
@@ -119,10 +120,21 @@ class LiveViewSession:
         self.viewport_width = int(viewport_width)
         self.viewport_height = int(viewport_height)
         self.jpeg_quality = int(jpeg_quality)
+        # Idle auto-disconnect: if no client INPUT (mouse/key) arrives within this
+        # many seconds, the session disconnects itself so the device does not stay
+        # paused indefinitely. <= 0 disables. Stamped in _dispatch_input, enforced
+        # by the 1 Hz tick in _read_client_loop.
+        self.idle_timeout_sec = float(idle_timeout_sec)
+        self._last_input_ts = time.monotonic()
         self.logger = logger
 
         self._cdp: Any = None
         self._cdp_send_lock = threading.Lock()
+        # Serializes ALL writes to the client WS. The writer thread sends binary
+        # frames while _read_client_loop/run may send control JSON (ready/error/
+        # closed) concurrently; simple_websocket.send is not internally locked, so
+        # without this two threads can interleave bytes and corrupt WS framing.
+        self._client_send_lock = threading.Lock()
         self._msg_id = 0
         self._stop = threading.Event()
         self._reader: Optional[threading.Thread] = None
@@ -153,7 +165,8 @@ class LiveViewSession:
 
     def _client_send_json(self, obj: Dict[str, Any]) -> bool:
         try:
-            self.client_ws.send(json.dumps(obj))
+            with self._client_send_lock:
+                self.client_ws.send(json.dumps(obj))
             return True
         except Exception:
             self._stop.set()
@@ -282,7 +295,8 @@ class LiveViewSession:
             # Binary WS send: flask-sock / simple-websocket treats bytes as a
             # binary opcode frame. Client distinguishes by typeof event.data.
             try:
-                self.client_ws.send(frame)
+                with self._client_send_lock:
+                    self.client_ws.send(frame)
             except Exception:
                 # Client gone or send failure -> stop. The reader will also see
                 # this via subsequent _client_send_json failures for ready/error.
@@ -292,6 +306,21 @@ class LiveViewSession:
     # -- client -> CDP ------------------------------------------------------
     def _read_client_loop(self) -> None:
         while not self._stop.is_set():
+            # Idle auto-disconnect. receive() below already ticks ~1 Hz even when
+            # fully idle (1 s timeout), so this check fires promptly. We only set
+            # the stop flag + notify the client here; the actual CDP teardown and
+            # the route's set_pause(False) resume happen in run()'s finally ->
+            # _teardown, off any CDP lock. (See _client_send_json: no CDP lock.)
+            if self.idle_timeout_sec > 0 and (
+                time.monotonic() - self._last_input_ts > self.idle_timeout_sec
+            ):
+                mins = int(self.idle_timeout_sec // 60)
+                self._log("info", f"[live_view] idle > {mins} min, auto-disconnecting")
+                self._client_send_json(
+                    {"type": "closed", "reason": "idle_timeout", "message": f"閒置超過 {mins} 分鐘，已自動中斷"}
+                )
+                self._stop.set()
+                break
             try:
                 raw = self.client_ws.receive(timeout=1.0)
             except Exception:
@@ -318,6 +347,10 @@ class LiveViewSession:
         return nx * self._dev_w, ny * self._dev_h
 
     def _dispatch_input(self, msg: Dict[str, Any]) -> None:
+        # Any client->server message counts as user activity (resets idle timer).
+        # Outgoing screencast frames never pass through here, so frame traffic
+        # alone will not keep an unattended session alive.
+        self._last_input_ts = time.monotonic()
         kind = msg.get("type")
         if kind == "mouse":
             action = msg.get("action")  # "down" | "up" | "move"

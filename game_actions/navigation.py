@@ -31,6 +31,15 @@ _FARM_TAB = (480, 929)   # 農場頁右下「返回」鈕 / 家園 tab
 _HOME_BTN = (321, 920)   # 家園 -> 主頁面 home 按鈕
 
 
+# Fault tolerance: OCR reads taken right after a task exits frequently catch a
+# transition frame and return 未知/None for the first attempt or two. Saving an
+# ERROR screenshot for those transient misses spams the log (the page recovers on
+# the next loop). Only record a per-attempt error screenshot once we have failed
+# at least this many attempts; genuine failures are still caught by the
+# nav_main_timeout screenshot at the end.
+_NAV_MAIN_ERROR_AFTER_ATTEMPTS = 3
+
+
 def navigate_to_main_page(
     d,
     cnn_model=None,
@@ -95,7 +104,11 @@ def navigate_to_main_page(
         if stage != last_stage:
             elapsed = time.time() - exit_start
             logger.info(f"{prefix} 嘗試 #{attempt}, OCR={stage}, elapsed={elapsed:.1f}s")
-            if device_ip and stage != "主頁面":
+            if (
+                device_ip
+                and stage != "主頁面"
+                and attempt >= _NAV_MAIN_ERROR_AFTER_ATTEMPTS
+            ):
                 try:
                     save_error_screenshot(d, device_ip, str(stage), f"nav_main_{attempt}")
                 except Exception:

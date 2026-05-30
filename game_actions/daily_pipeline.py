@@ -142,6 +142,10 @@ def run(ctx: DailyContext) -> None:
     run_carpark_check_if_due(d, ip)
     click_white(d)  # dismiss any popup triggered during carpark (e.g. car-attacked notification)
 
+    # Device startup: 5558 啟動切換到「戰士推圖」方案 (cleanup 時切回「騙人用」)
+    if ip == "emulator-5558":
+        switch_skill(d, '戰士推圖')
+
     # Task 1: 地獄之門
     stage = get_stage_with_check(d, ip, Cnn_model)
     record_time = return_time(ip, name="地獄之門")

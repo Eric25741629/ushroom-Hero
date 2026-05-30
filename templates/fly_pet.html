@@ -6,18 +6,23 @@
   <title>飛寵管理 - 菇勇者全自動掛機</title>
   <style>
     :root {
-      --bg: #0f0f0f;
-      --surface: #1a1a1a;
-      --surface2: #222;
-      --surface3: #2a2a2a;
-      --border: #333;
-      --text: #e0e0e0;
-      --text2: #999;
-      --accent: #66bb6a;
-      --accent-h: #81c784;
-      --danger: #ef5350;
-      --danger-h: #e53935;
-      --warn: #ffa726;
+      --bg: #0f1218;
+      --surface: #171c24;
+      --surface2: #202734;
+      --surface3: #28313f;
+      --surface4: #121720;
+      --border: #334052;
+      --border2: #475569;
+      --text: #edf2f7;
+      --text2: #9aa6b2;
+      --muted: #6f7b89;
+      --accent: #6ee7b7;
+      --accent-h: #a7f3d0;
+      --accent-soft: rgba(110, 231, 183, 0.12);
+      --danger: #f87171;
+      --danger-h: #ef4444;
+      --warn: #fbbf24;
+      --blue: #60a5fa;
 
       --eq1: #64b5f6;
       --eq2: #ffd54f;
@@ -33,7 +38,12 @@
       --pq3: #ffd54f;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #131923 0, var(--bg) 300px);
+      color: var(--text);
+      line-height: 1.5;
+    }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
@@ -41,127 +51,174 @@
     /* Layout */
     .topbar {
       position: sticky; top: 0; z-index: 100;
-      background: var(--surface); border-bottom: 1px solid var(--border);
-      padding: 10px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      background: rgba(18, 23, 32, 0.96); border-bottom: 1px solid var(--border);
+      padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.22);
     }
-    .topbar h1 { font-size: 1.15em; font-weight: 600; white-space: nowrap; }
+    .topbar h1 { font-size: 1.15em; font-weight: 700; white-space: nowrap; letter-spacing: 0; }
     .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
     .topbar a { color: var(--text2); text-decoration: none; font-size: 0.82em; }
     .topbar a:hover { color: var(--text); }
-    .main { padding: 16px 20px; max-width: 1400px; margin: 0 auto; }
+    .main { padding: 18px 20px 28px; max-width: 1480px; margin: 0 auto; }
 
     /* Controls */
     select, input[type="text"], input[type="number"] {
       background: var(--surface3); border: 1px solid var(--border); color: var(--text);
-      padding: 6px 10px; border-radius: 5px; font-size: 0.88em; outline: none;
+      padding: 7px 10px; border-radius: 6px; font-size: 0.88em; outline: none;
+      min-height: 32px;
     }
-    select:focus, input:focus { border-color: var(--accent); }
+    select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(110,231,183,0.14); }
     .btn {
-      padding: 6px 14px; border: none; border-radius: 5px; font-size: 0.85em;
-      cursor: pointer; font-weight: 500; transition: background 0.15s;
+      padding: 7px 14px; border: 1px solid transparent; border-radius: 6px; font-size: 0.85em;
+      cursor: pointer; font-weight: 650; transition: background 0.15s, border-color 0.15s, color 0.15s;
+      min-height: 32px;
     }
-    .btn-primary { background: var(--accent); color: #111; }
+    .btn-primary { background: var(--accent); color: #0b1713; }
     .btn-primary:hover { background: var(--accent-h); }
     .btn-danger { background: var(--danger); color: #fff; }
     .btn-danger:hover { background: var(--danger-h); }
-    .btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
-    .btn-ghost:hover { background: var(--surface2); color: var(--text); }
-    .btn-sm { padding: 4px 10px; font-size: 0.8em; }
+    .btn-ghost { background: rgba(255,255,255,0.02); color: var(--text2); border: 1px solid var(--border); }
+    .btn-ghost:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
+    .btn-sm { padding: 5px 10px; font-size: 0.8em; min-height: 28px; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     /* Preset filter toggles */
-    .preset-bar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+    .preset-bar {
+      display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center;
+      background: rgba(18,23,32,0.72); border: 1px solid rgba(51,64,82,0.8);
+      border-radius: 8px; padding: 10px;
+    }
     .preset-toggle {
-      padding: 5px 14px; border-radius: 20px; font-size: 0.82em; cursor: pointer;
+      padding: 5px 12px; border-radius: 6px; font-size: 0.82em; cursor: pointer;
       border: 1px solid var(--border); background: var(--surface2); color: var(--text2);
       transition: all 0.15s; user-select: none;
     }
-    .preset-toggle.active { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 600; }
+    .preset-toggle.active { background: var(--accent-soft); color: var(--accent-h); border-color: rgba(110,231,183,0.55); font-weight: 700; }
     .preset-toggle:hover:not(.active) { background: var(--surface3); color: var(--text); }
     .preset-sep { width: 1px; height: 20px; background: var(--border); margin: 0 4px; }
 
     /* Stats */
-    .stats { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
-    .stat { font-size: 0.82em; color: var(--text2); }
-    .stat b { color: var(--accent); margin-left: 2px; }
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 12px; }
+    .stat {
+      font-size: 0.82em; color: var(--text2); background: rgba(18,23,32,0.68);
+      border: 1px solid rgba(51,64,82,0.78); border-radius: 8px; padding: 8px 10px;
+    }
+    .stat b { color: var(--accent-h); margin-left: 4px; font-size: 1.08em; }
 
     /* Advanced filter */
-    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+    .filter-row {
+      display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px;
+      background: rgba(18,23,32,0.56); border: 1px solid rgba(51,64,82,0.65);
+      border-radius: 8px; padding: 10px;
+    }
     .chip {
       display: inline-flex; align-items: center; gap: 4px;
-      padding: 3px 10px; border-radius: 12px; font-size: 0.78em;
+      padding: 3px 8px; border-radius: 6px; font-size: 0.78em;
       background: var(--surface3); border: 1px solid var(--border);
     }
     .chip-x { cursor: pointer; color: var(--text2); font-weight: bold; margin-left: 2px; }
     .chip-x:hover { color: var(--danger); }
 
     /* Table */
-    .tbl-wrap { overflow-x: auto; margin-bottom: 16px; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+    .tbl-wrap {
+      overflow-x: auto; margin-bottom: 16px; border: 1px solid var(--border);
+      border-radius: 8px; background: var(--surface4);
+    }
+    table { width: 100%; min-width: 1120px; border-collapse: collapse; font-size: 0.85em; }
     thead { position: sticky; top: 0; z-index: 2; }
-    th { background: var(--surface); padding: 8px 10px; text-align: left; font-weight: 600; font-size: 0.8em; color: var(--text2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    th {
+      background: #151b24; padding: 9px 10px; text-align: left; font-weight: 700;
+      font-size: 0.8em; color: var(--text2); border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
     th.sortable { cursor: pointer; user-select: none; }
     th.sortable:hover { color: var(--text); }
     th.sortable .sort-arrow { font-size: 0.7em; margin-left: 3px; color: var(--accent); }
-    td { padding: 7px 10px; border-bottom: 1px solid #1f1f1f; vertical-align: middle; }
-    tr:hover td { background: var(--surface2); }
-    tr.selected td { background: rgba(102,187,106,0.08); }
+    td { padding: 8px 10px; border-bottom: 1px solid rgba(51,64,82,0.42); vertical-align: middle; }
+    tbody tr:nth-child(even) td { background: rgba(255,255,255,0.015); }
+    tr:hover td { background: rgba(96,165,250,0.07); }
+    tr.selected td { background: rgba(110,231,183,0.10); }
     .col-ck { width: 32px; text-align: center; }
     .col-sm { width: 50px; text-align: center; }
     .col-ops { width: 110px; text-align: center; }
+    .pet-name { font-weight: 700; color: var(--text); }
+    .pet-id { color: var(--muted); font-size: 0.74em; margin-left: 6px; }
+    .entry-quality-cell { min-width: 92px; text-align: center; }
+    .entry-quality-pill {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 54px; padding: 2px 8px; border-radius: 6px;
+      background: rgba(110,231,183,0.12); border: 1px solid rgba(110,231,183,0.35);
+      color: var(--accent-h); font-weight: 800;
+    }
+    .entry-quality-sub { display: block; color: var(--muted); font-size: 0.72em; margin-top: 2px; }
+    .entry-quality-none { display: inline-block; min-width: 54px; color: #5b6675; font-weight: 700; }
+    .eq-tags { display: block; margin-top: 3px; line-height: 1; }
+    .eq-tag {
+      display: inline-block; min-width: 18px; padding: 1px 5px; border-radius: 4px;
+      font-size: 0.7em; font-weight: 800; margin: 0 1px; border: 1px solid transparent;
+    }
+    .eq-tag-6 { background: rgba(224,64,251,0.18); color: #f0abfc; border-color: rgba(224,64,251,0.4); }
+    .eq-tag-7 { background: rgba(38,166,154,0.18); color: #5eead4; border-color: rgba(38,166,154,0.4); }
 
     /* Entry chip */
     .ec {
-      display: inline-block; padding: 1px 7px; border-radius: 3px; font-size: 0.8em;
-      margin: 1px 2px; white-space: nowrap;
+      display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px;
+      border-radius: 5px; font-size: 0.8em; margin: 2px 2px; white-space: nowrap;
+      border: 1px solid transparent; min-height: 23px;
     }
-    .ec-1 { background: rgba(100,181,246,0.12); color: var(--eq1); }
-    .ec-2 { background: rgba(255,213,79,0.15); color: var(--eq2); }
+    .ec-1 { background: rgba(100,181,246,0.13); color: var(--eq1); border-color: rgba(100,181,246,0.22); }
+    .ec-2 { background: rgba(255,213,79,0.16); color: var(--eq2); border-color: rgba(255,213,79,0.25); }
     .ec-3 {
-      position: relative; font-weight: 600;
-      background: linear-gradient(135deg, #42a5f5, #ce93d8);
-      -webkit-background-clip: text; background-clip: text;
-      -webkit-text-fill-color: transparent;
+      font-weight: 800; color: #ffe08a;
+      background: linear-gradient(135deg, rgba(96,165,250,0.24), rgba(246,196,83,0.22));
+      border: 1px solid rgba(246,196,83,0.48);
+      box-shadow: inset 0 0 0 1px rgba(96,165,250,0.10);
     }
-    .ec-3::before {
-      content: ''; position: absolute; inset: 0; border-radius: inherit; z-index: -1;
-      background: linear-gradient(135deg, rgba(66,165,245,0.13), rgba(206,147,216,0.13));
-    }
-    .ec-4 { background: rgba(239,83,80,0.15); color: var(--eq4); text-decoration: line-through; }
-    .ec-5 { background: rgba(126,87,194,0.15); color: var(--eq5); }
-    .ec-6 { background: rgba(224,64,251,0.15); color: var(--eq6); font-weight: 600; }
-    .ec-7 { background: rgba(38,166,154,0.15); color: var(--eq7); }
+    .ec-4 { background: rgba(239,83,80,0.16); color: var(--eq4); border-color: rgba(239,83,80,0.30); text-decoration: line-through; }
+    .ec-5 { background: rgba(126,87,194,0.18); color: #b9a4ff; border-color: rgba(126,87,194,0.34); }
+    .ec-6 { background: rgba(224,64,251,0.18); color: #f0abfc; border-color: rgba(224,64,251,0.36); font-weight: 800; }
+    .ec-7 { background: rgba(38,166,154,0.18); color: #5eead4; border-color: rgba(38,166,154,0.36); font-weight: 700; }
 
     /* Pet quality badge */
-    .pq { display: inline-block; padding: 1px 8px; border-radius: 3px; font-size: 0.78em; font-weight: 600; }
-    .pq-0 { background: rgba(153,153,153,0.15); color: var(--pq0); }
-    .pq-1 { background: rgba(100,181,246,0.15); color: var(--pq1); }
-    .pq-2 { background: rgba(206,147,216,0.15); color: var(--pq2); }
-    .pq-3 { background: rgba(255,213,79,0.18); color: var(--pq3); }
+    .pq {
+      display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 0.78em;
+      font-weight: 800; border: 1px solid transparent; min-width: 34px; text-align: center;
+    }
+    .pq-0 { background: rgba(153,153,153,0.15); color: var(--pq0); border-color: rgba(153,153,153,0.24); }
+    .pq-1 { background: rgba(100,181,246,0.16); color: var(--pq1); border-color: rgba(100,181,246,0.28); }
+    .pq-2 { background: rgba(206,147,216,0.18); color: var(--pq2); border-color: rgba(206,147,216,0.30); }
+    .pq-3 { background: rgba(255,213,79,0.20); color: var(--pq3); border-color: rgba(255,213,79,0.38); }
 
     /* Action bar */
-    .action-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    .action-row {
+      display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;
+      background: rgba(18,23,32,0.50); border: 1px solid rgba(51,64,82,0.62);
+      border-radius: 8px; padding: 10px;
+    }
     .sel-count { font-size: 0.82em; color: var(--text2); }
 
     /* Section card */
-    .section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-    .section-title { font-size: 0.95em; font-weight: 600; margin-bottom: 10px; }
+    .section {
+      background: rgba(23,28,36,0.96); border: 1px solid var(--border); border-radius: 8px;
+      padding: 16px; margin-bottom: 16px; box-shadow: 0 14px 34px rgba(0,0,0,0.18);
+    }
+    .section-title { font-size: 0.95em; font-weight: 800; margin-bottom: 10px; }
     .section-sub { font-size: 0.82em; color: var(--text2); margin-bottom: 8px; }
     .collapse-hdr { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
     .collapse-hdr .arrow { color: var(--text2); font-size: 0.75em; transition: transform 0.2s; }
     .collapse-hdr.open .arrow { transform: rotate(90deg); }
     .collapse-body { max-height: 0; overflow: hidden; transition: max-height 0.3s ease; }
-    .collapse-body.open { max-height: 2000px; }
+    .collapse-body.open { max-height: none; overflow: visible; }
 
     /* Breed grid */
     .breed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; margin-top: 10px; }
-    .breed-slot { background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 10px; font-size: 0.85em; }
+    .breed-slot { background: var(--surface3); border: 1px solid var(--border); border-radius: 8px; padding: 10px; font-size: 0.85em; }
 
     /* Friend pets */
     .friend-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-    .friend-card { background: var(--surface3); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+    .friend-card { background: var(--surface3); border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin-bottom: 8px; }
     .friend-card-hdr { font-weight: 600; font-size: 0.88em; margin-bottom: 6px; }
 
     /* Toast */
@@ -254,13 +311,13 @@
 <!-- Content (hidden until load) -->
 <div id="content" style="display:none;">
 
-  <!-- Pet list section (collapsible, default collapsed) -->
+  <!-- Pet list section (collapsible, default expanded) -->
   <div class="section">
-    <div class="collapse-hdr" onclick="toggleCollapse('petlist')">
+    <div class="collapse-hdr open" onclick="toggleCollapse('petlist')">
       <span class="section-title" style="margin:0;">飛寵列表 <span style="font-weight:400;font-size:0.82em;color:var(--text2);" id="petlistSummary"></span></span>
       <span class="arrow" id="petlistArrow">&#9654;</span>
     </div>
-    <div class="collapse-body" id="petlistBody">
+    <div class="collapse-body open" id="petlistBody">
       <div style="margin-top:10px;">
 
   <!-- Stats -->
@@ -317,6 +374,7 @@
         <th class="sortable" onclick="doSort('generation')">代數<span class="sort-arrow" id="sort-generation"></span></th>
         <th class="sortable" onclick="doSort('growth')">成長<span class="sort-arrow" id="sort-growth"></span></th>
         <th class="sortable" onclick="doSort('level')">等級<span class="sort-arrow" id="sort-level"></span></th>
+        <th class="sortable" onclick="doSort('entry_quality')">詞條品質<span class="sort-arrow" id="sort-entry_quality"></span></th>
         <th class="sortable" onclick="doSort('entries')">詞條<span class="sort-arrow" id="sort-entries"></span></th>
         <th class="col-sm">鎖</th>
         <th class="col-ops">操作</th>
@@ -389,9 +447,16 @@
 
 <script>
 var EQ = {1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
+// 正向品質排名:只用於「詞條品質」頭條與排序。史詩>卓越>稀有>普通。
+// 變異(6)/工作(7) 為獨立標記、負面(4) 為缺點,皆不列入品質排名。
+var POSITIVE_QUALITY_RANK = {3: 40, 2: 30, 5: 20, 1: 10};
+// 同一列詞條的顯示順序(數字小=排前面):史詩→卓越→稀有→變異→工作→普通→負面(最後)。
+var QUALITY_DISPLAY_ORDER = {3: 0, 2: 1, 5: 2, 6: 3, 7: 4, 1: 5, 4: 6};
+// 獨立標記(不參與品質排名):變異 / 工作
+var TAG_QUALITIES = {6: '變', 7: '工'};
 var PQ = {0:'白',1:'藍',2:'紫',3:'金'};
 var allPets = [], filtered = [], selected = new Set(), entryNames = new Set();
-var sortCol = null, sortAsc = true;
+var sortCol = 'entry_quality', sortAsc = false;
 var presets = {
   '4entry': true, 'mutant': true, 'work': true,
   'epic': false, 'negative': false, 'all': false
@@ -429,11 +494,67 @@ function setLoading(btn, on) {
 }
 
 // Entry chip HTML
+function entryQuality(e) {
+  if (!e) return 0;
+  var q = Number(e.quality);
+  return isNaN(q) ? 0 : q;
+}
+// 正向品質排名(變異/工作/負面 -> 0,不列入)
+function positiveRank(e) {
+  var q = entryQuality(e);
+  return POSITIVE_QUALITY_RANK[q] || 0;
+}
+function bestPositiveRank(pet) {
+  return Math.max.apply(null, (pet.entries || []).map(positiveRank).concat([0]));
+}
+// 該寵最高的正向品質(史詩/卓越/稀有/普通);沒有正向品質回傳 0
+function bestPositiveQuality(pet) {
+  var best = 0, bestRank = 0;
+  (pet.entries || []).forEach(function(e) {
+    var r = positiveRank(e);
+    if (r > bestRank) { bestRank = r; best = entryQuality(e); }
+  });
+  return best;
+}
+function totalPositiveRank(pet) {
+  return (pet.entries || []).reduce(function(sum, e) { return sum + positiveRank(e); }, 0);
+}
+// 獨立標記:回傳該寵擁有的標記品質碼(6 變異 / 7 工作)
+function petTags(pet) {
+  var qs = (pet.entries || []).map(entryQuality);
+  return Object.keys(TAG_QUALITIES).map(Number).filter(function(q) { return qs.indexOf(q) >= 0; });
+}
+// 同一列詞條依顯示順序排序(史詩→…→負面最後)
+function sortedEntries(pet) {
+  var ord = function(e) {
+    var o = QUALITY_DISPLAY_ORDER[entryQuality(e)];
+    return o === undefined ? 99 : o;
+  };
+  return (pet.entries || []).slice().sort(function(a, b) { return ord(a) - ord(b); });
+}
+function entryQualityHTML(pet) {
+  var best = bestPositiveQuality(pet);
+  var html;
+  if (best) {
+    var count = (pet.entries || []).filter(function(e) { return entryQuality(e) === best; }).length;
+    html = '<span class="entry-quality-pill">' + (EQ[best] || 'Q' + best) + '</span>' +
+      '<span class="entry-quality-sub">' + count + ' 條</span>';
+  } else {
+    html = '<span class="entry-quality-none">--</span>';
+  }
+  var tags = petTags(pet);
+  if (tags.length) {
+    html += '<span class="eq-tags">' + tags.map(function(q) {
+      return '<span class="eq-tag eq-tag-' + q + '" title="' + esc((EQ[q] || '') + '詞條') + '">' + TAG_QUALITIES[q] + '</span>';
+    }).join('') + '</span>';
+  }
+  return html;
+}
 function ecHTML(e) {
   if (!e) return '<span style="color:#444;">--</span>';
   var q = e.quality || 1;
-  var tip = e.desc || '';
-  return '<span class="ec ec-' + q + '" title="' + esc(tip) + '">' + esc(e.name) + ' <small>' + (EQ[q]||'') + '</small></span>';
+  var tip = (EQ[q] || '') + (e.desc ? ' — ' + e.desc : '');
+  return '<span class="ec ec-' + q + '" title="' + esc(tip) + '">' + esc(e.name) + '</span>';
 }
 function pqHTML(q) { return '<span class="pq pq-' + q + '">' + (PQ[q]||'Q'+q) + '</span>'; }
 
@@ -542,7 +663,7 @@ function doSort(col) {
   applyFilters();
 }
 function syncSortUI() {
-  ['quality','generation','growth','level','entries'].forEach(function(c) {
+  ['quality','generation','growth','level','entry_quality','entries'].forEach(function(c) {
     var el = document.getElementById('sort-' + c);
     if (el) el.textContent = (sortCol === c) ? (sortAsc ? '▲' : '▼') : '';
   });
@@ -553,6 +674,19 @@ function sortFiltered() {
   filtered.sort(function(a, b) {
     var va, vb;
     if (key === 'entries') { va = (a.entries||[]).length; vb = (b.entries||[]).length; }
+    else if (key === 'entry_quality') {
+      va = bestPositiveRank(a);
+      vb = bestPositiveRank(b);
+      if (va !== vb) return sortAsc ? (va - vb) : (vb - va);
+      va = totalPositiveRank(a);
+      vb = totalPositiveRank(b);
+      if (va !== vb) return sortAsc ? (va - vb) : (vb - va);
+      va = (a.entries||[]).length;
+      vb = (b.entries||[]).length;
+      if (va !== vb) return sortAsc ? (va - vb) : (vb - va);
+      va = a.quality || 0;
+      vb = b.quality || 0;
+    }
     else { va = a[key] || 0; vb = b[key] || 0; }
     return sortAsc ? (va - vb) : (vb - va);
   });
@@ -581,19 +715,21 @@ function renderTable() {
     var rc = selected.has(p.id) ? ' class="selected"' : '';
     var fight = p.fight === 1 ? '<span style="color:var(--warn);" title="出戰中">&#9733;</span>' : '';
     var lock = p.lock ? '<span title="已鎖定 (lock=' + p.lock + ')" style="color:var(--warn);">&#128274;</span>' : '<span style="color:#444;">&#128275;</span>';
-    var entries = (p.entries || []).map(function(e) { return ecHTML(e); }).join(' ');
+    var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
     if (!entries) entries = '<span style="color:#444;">--</span>';
     var name = p.display_name || p.name || '(?)';
     var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
+    var entryQualityBadge = entryQualityHTML(p);
 
     html += '<tr' + rc + ' data-id="' + p.id + '">' +
       '<td class="col-ck"><input type="checkbox" onchange="toggleSel(' + p.id + ',this)"' + ck + '></td>' +
       '<td class="col-sm">' + fight + '</td>' +
-      '<td>' + esc(name) + '</td>' +
+      '<td><span class="pet-name">' + esc(name) + '</span><span class="pet-id">#' + p.id + '</span></td>' +
       '<td>' + pqHTML(p.quality) + '</td>' +
       '<td style="text-align:center;">' + (p.generation || 0) + '</td>' +
       '<td style="text-align:center;">' + growth + '</td>' +
       '<td style="text-align:center;">' + (p.level || 0) + '</td>' +
+      '<td class="entry-quality-cell">' + entryQualityBadge + '</td>' +
       '<td>' + entries + '</td>' +
       '<td class="col-sm">' + lock + '</td>' +
       '<td class="col-ops" style="white-space:nowrap;">' +
@@ -977,7 +1113,7 @@ async function doLoadAllFriends() {
         var tbl = '<table style="width:100%;font-size:0.82em;border-collapse:collapse;">' +
           '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th></tr></thead><tbody>';
         pets.forEach(function(p) {
-          var entries = (p.entries||[]).map(function(e) { return ecHTML(e); }).join(' ');
+          var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
           var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
           var stateLabel = p.state === 0 ? '<span style="color:var(--accent);">可用</span>' : '<span style="color:var(--text2);">冷卻中</span>';
           tbl += '<tr><td style="padding:3px 6px;">' + esc(p.display_name||p.name||'?') + '</td>' +

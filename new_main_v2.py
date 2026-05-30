@@ -60,6 +60,7 @@ from runtime_services.device_scan_service import (
 )
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
+    WakeLoopInterrupted,
     handle_connect_failure,
     is_emulator_serial,
     is_recoverable_connect_error,
@@ -193,6 +194,18 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             try:
                 if bot_state.check_force_sleep(ip):
                     raise ForceSleepRequested("force sleep requested from dashboard")
+                # 關閉瀏覽器請求（web_h5）：在自己的 thread 上關閉 Playwright 瀏覽器
+                # （Playwright 物件 thread-affine，不可從 Flask thread 關），裝置續跑，
+                # 下一輪 handle_device_wakeup 會自動冷啟動重開。
+                if backend_kind == "web_h5" and bot_state.check_web_close(ip):
+                    close_fn = getattr(d, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                            logger.info(f"[{ip}] 收到關閉瀏覽器請求，已關閉無頭瀏覽器（裝置續跑，下次喚醒自動重開）")
+                        except Exception as close_err:
+                            logger.warning(f"[{ip}] 關閉瀏覽器失敗: {close_err}")
+                    continue
                 if handle_pending_web_launch(ip, d, backend_kind, logger):
                     continue
                 process_online_check_requests(ip, Cnn_model, logger, check_on_line)
@@ -321,6 +334,16 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     mission_manager=mission_manager,
                     family_manager=family_manager,
                 ))
+            except WakeLoopInterrupted as e:
+                # A manual web-launch request arrived mid-flow (typically a
+                # live-view takeover, which pauses the device then requests the
+                # browser). Don't sleep: jump back to the top of the loop where
+                # handle_pending_web_launch() consumes the request and opens the
+                # page. The device stays paused afterwards (set_pause by the
+                # caller), so automation is held — not silently resumed.
+                logger.info(f"[{ip}] 偵測到手動開網頁請求，返回迴圈頂端處理: {e}")
+                continue
+
             except ForceSleepRequested as e:
                 force_sleep_now = True
                 sleep_policy = "force_sleep"

@@ -6,6 +6,7 @@ CDP Input.dispatch* translation. No real browser / CDP socket required.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 
@@ -123,3 +124,65 @@ def test_key_up_omits_text():
     p = s._cdp.sent[-1]["params"]
     assert p["type"] == "keyUp"
     assert "text" not in p
+
+
+# ── idle auto-disconnect ────────────────────────────────────────────────
+
+class _FakeClient:
+    """Minimal flask-sock-like client socket. Idle by default (receive -> None)."""
+
+    def __init__(self):
+        self.sent = []
+        self.closed = False
+
+    def receive(self, timeout=1.0):
+        return None  # simulate a 1 s timeout tick with no client input
+
+    def send(self, raw):
+        self.sent.append(raw)
+
+    def close(self):
+        self.closed = True
+
+
+def _idle_session(idle_timeout_sec):
+    fc = _FakeClient()
+    s = lvb.LiveViewSession(client_ws=fc, debug_port=9230, idle_timeout_sec=idle_timeout_sec)
+    return s, fc
+
+
+def test_idle_timeout_auto_disconnects_and_notifies_client():
+    s, fc = _idle_session(idle_timeout_sec=0.05)
+    # Pretend the last input was long ago -> immediately idle on the first tick.
+    s._last_input_ts = time.monotonic() - 100
+    s._read_client_loop()
+    assert s._stop.is_set()
+    msgs = [json.loads(x) for x in fc.sent]
+    assert any(m.get("type") == "closed" and m.get("reason") == "idle_timeout" for m in msgs)
+
+
+def test_idle_disabled_does_not_auto_disconnect():
+    s, fc = _idle_session(idle_timeout_sec=0)
+    s._last_input_ts = time.monotonic() - 10_000
+
+    # Break out of the otherwise-infinite idle loop after the first tick by making
+    # receive() raise (treated as connection end). The loop must exit via THAT path,
+    # not via an idle disconnect (idle is disabled), so no 'closed' frame is sent.
+    calls = {"n": 0}
+
+    def _recv(timeout=1.0):
+        calls["n"] += 1
+        raise RuntimeError("client gone")
+
+    fc.receive = _recv
+    s._read_client_loop()
+    assert calls["n"] == 1
+    assert all(json.loads(x).get("type") != "closed" for x in fc.sent)
+
+
+def test_dispatch_input_resets_idle_timestamp():
+    s = _session()
+    s._last_input_ts = time.monotonic() - 50
+    before = s._last_input_ts
+    s._dispatch_input({"type": "mouse", "action": "move", "nx": 0.1, "ny": 0.1})
+    assert s._last_input_ts > before
