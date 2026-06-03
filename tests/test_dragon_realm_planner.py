@@ -28,7 +28,9 @@ def _state(**over):
 
 # --- 探索 / 體力 ---
 def test_no_event_with_stamina_explores():
-    assert decide(_state(hp=30), Cfg, PREFS).kind == C.A_EXPLORE
+    a = decide(_state(hp=30), Cfg, PREFS)
+    assert a.kind == C.A_EXPLORE
+    assert a.choice == 0   # field default no longer shadowed by the factory staticmethod
 
 def test_out_of_stamina_stops_without_using_item():
     a = decide(_state(hp=4, bag={1521: 99}), Cfg, PREFS)   # 體力<5 但有體力道具

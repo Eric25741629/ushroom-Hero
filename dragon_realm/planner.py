@@ -16,7 +16,7 @@ from dragon_realm.state import DragonState
 
 @dataclass(frozen=True)
 class Prefs:
-    my_role_id: int
+    my_role_id: int  # reserved: from_raw() uses role_id for is_mine; kept for callers/future use
     assist_teammates: bool = True
     auto_open_box: bool = True
 
@@ -36,7 +36,7 @@ class Action:
         return Action(C.A_EXPLORE)
 
     @staticmethod
-    def choice(choice: int, uid: int = 0) -> "Action":
+    def from_choice(choice: int, uid: int = 0) -> "Action":
         return Action(C.A_CHOICE, choice=choice, uid=uid)
 
     @staticmethod
@@ -69,10 +69,11 @@ def decide(state: DragonState, config, prefs: Prefs) -> Action:
         return Action.stop("activity_closed")
 
     # 1. 再次擊殺（列表）：我方 PVE/PVP 事件冷卻已過
+    # NB(live-verify): faithful port of client. If event_list can contain the CURRENT challenge event with back_kill_time<=now-cooldown, this path could shadow the trap/monster ASK_HELP override. Confirm during live recon (DRAGON_REALM_SCHEMA.md) whether event_list excludes the active event.
     for ev in state.event_list:
         if ev.is_mine and ev.event_type in C.MONSTER_TYPES and ev.event_id:
             if _cooldown_passed(state, ev.back_kill_time, config.back_kill_cooldown):
-                return Action.choice(C.CHOICE_ADVANCE, uid=ev.uid)
+                return Action.from_choice(C.CHOICE_ADVANCE, uid=ev.uid)
 
     # 2. 協助隊友（有 help_hp 時）
     if prefs.assist_teammates and state.help_hp > 0:
@@ -105,25 +106,25 @@ def decide(state: DragonState, config, prefs: Prefs) -> Action:
     if et in C.MONSTER_TYPES:
         if state.is_challenge:
             if not state.is_ask_help:
-                return Action.choice(C.CHOICE_ASK_HELP)
+                return Action.from_choice(C.CHOICE_ASK_HELP)
             if _cooldown_passed(state, state.back_kill_time, config.back_kill_cooldown):
-                return Action.choice(C.CHOICE_ADVANCE, uid=state.event_uid)
+                return Action.from_choice(C.CHOICE_ADVANCE, uid=state.event_uid)
             return Action.wait()
-        return Action.choice(C.CHOICE_ADVANCE)
+        return Action.from_choice(C.CHOICE_ADVANCE)
 
     if et == C.TRAP:
         if state.is_challenge:
-            return Action.choice(C.CHOICE_ASK_HELP)   # 覆寫：永不掙扎
-        return Action.choice(C.CHOICE_ADVANCE)
+            return Action.from_choice(C.CHOICE_ASK_HELP)   # 覆寫：永不掙扎
+        return Action.from_choice(C.CHOICE_ADVANCE)
 
     if et == C.BOX:
         if prefs.auto_open_box:
             gtid = config.chest_key.get(state.event_id)
             if gtid and state.bag_count(gtid) > 0:
-                return Action.choice(C.CHOICE_ADVANCE)
-        return Action.choice(C.CHOICE_DETOUR)
+                return Action.from_choice(C.CHOICE_ADVANCE)
+        return Action.from_choice(C.CHOICE_DETOUR)
 
     if et in (C.BUFF, C.CAVE):
-        return Action.choice(C.CHOICE_ADVANCE)
+        return Action.from_choice(C.CHOICE_ADVANCE)
 
     return Action.wait()
