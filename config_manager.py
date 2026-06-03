@@ -14,6 +14,17 @@ CONFIG_FILE = str(Path(__file__).resolve().parent / "bot_config.json")
 # RLock 因 update_* 會在持有鎖時呼叫 load/save，需可重入。
 _config_lock = threading.RLock()
 
+# Process-wide mtime cache for load_config(). This is the hottest config path
+# (OCR resolves config 2-4x per call through here, ~68 call sites funnel in),
+# and the repo lives on a NAS/SMB share — so a naive load_config() does a NAS
+# read + (auto-complete) write on EVERY call. The cache turns steady-state into
+# a single os.stat(): if the file's st_mtime_ns is unchanged we return a deep
+# copy of the last parsed+completed config without touching the file.
+# All access is guarded by _config_lock.
+_config_cache = None           # last parsed+auto-completed config dict
+_config_cache_mtime_ns = None  # st_mtime_ns of CONFIG_FILE when cached
+_config_cache_path = None      # CONFIG_FILE the cache was built for (path can change in tests)
+
 # 預設的設備設定模板
 DEFAULT_DEVICE_CONFIG = {
     "name": "",  # 自定義別名 (例如: 主力機)
@@ -275,18 +286,57 @@ def _enum_str(v: Any, allowed: set, default: str) -> str:
     return s if s in allowed else default
 
 
+def _invalidate_config_cache() -> None:
+    """Force the next load_config() to re-read from disk.
+
+    Called by every in-process writer of bot_config.json so that a fresh
+    save is reflected immediately instead of being masked by a stale cache.
+    """
+    global _config_cache_mtime_ns
+    _config_cache_mtime_ns = None
+
+
 def load_config() -> Dict[str, Any]:
-    """讀取完整設定檔，並自動補全缺失的欄位"""
+    """讀取完整設定檔，並自動補全缺失的欄位。
+
+    Process-wide mtime cache: on a cache hit (file unchanged since last load)
+    returns a deep copy of the cached config without any file I/O. The
+    auto-complete rewrite and last-known-good backup only run on a cache miss.
+    """
+    global _config_cache, _config_cache_mtime_ns, _config_cache_path
     with _config_lock:
+        # --- Fast path: mtime cache hit ---
+        # Always re-resolve CONFIG_FILE (tests reassign it) and compare both the
+        # path and st_mtime_ns so a cache built for a different file can't leak.
+        try:
+            st = os.stat(CONFIG_FILE)
+            current_mtime_ns = st.st_mtime_ns
+        except OSError:
+            current_mtime_ns = None
+
+        if (
+            _config_cache is not None
+            and current_mtime_ns is not None
+            and _config_cache_mtime_ns == current_mtime_ns
+            and _config_cache_path == CONFIG_FILE
+        ):
+            # MUST deepcopy: callers do .update()/.copy() and mutate the result.
+            return copy.deepcopy(_config_cache)
+
         if not os.path.exists(CONFIG_FILE):
             # 初始化預設設定
             default = {"devices": {}, "global": copy.deepcopy(DEFAULT_GLOBAL_CONFIG)}
             try:
                 with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                     json.dump(default, f, ensure_ascii=False, indent=4)
+                # Cache the freshly written default so the next call is a hit.
+                _config_cache = copy.deepcopy(default)
+                _config_cache_mtime_ns = os.stat(CONFIG_FILE).st_mtime_ns
+                _config_cache_path = CONFIG_FILE
             except Exception as e:
                 logger.error(f"[Config] Failed to create default config: {e}")
-            return default
+                _invalidate_config_cache()
+            return copy.deepcopy(default)
 
         try:
             # Accept UTF-8 with or without BOM to avoid parser failures after external edits.
@@ -341,16 +391,34 @@ def load_config() -> Dict[str, Any]:
                     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
                         json.dump(data, f, ensure_ascii=False, indent=4)
                     logger.info("[Config] 已自動補全缺失的設定欄位")
+                    # The rewrite bumped the file mtime. Re-stat AFTER the write so
+                    # the cached mtime matches disk — otherwise the next call would
+                    # see a mismatch and re-read + re-auto-complete forever.
+                    current_mtime_ns = os.stat(CONFIG_FILE).st_mtime_ns
                 except Exception as e:
                     logger.error(f"[Config] 寫回設定失敗: {e}")
+                    # Rewrite failed: don't trust current_mtime_ns; skip caching by
+                    # leaving it None so the next call re-reads.
+                    current_mtime_ns = None
 
             # 成功讀到有效（非空）設定才更新 last-known-good 備份。
             _write_backup(data)
-            return data
+
+            # Populate the cache only on this happy path. We cache a deep copy so
+            # mutations to the returned dict can't corrupt the cached state.
+            if current_mtime_ns is not None:
+                _config_cache = copy.deepcopy(data)
+                _config_cache_mtime_ns = current_mtime_ns
+                _config_cache_path = CONFIG_FILE
+            else:
+                _invalidate_config_cache()
+            return copy.deepcopy(data)
         except Exception as e:
             logger.error(f"[Config] 讀取失敗: {e}")
             # 自癒：解析失敗（例如同步中途/衝突檔）時，回復上次成功的設定，
             # 絕不回傳空預設——否則後續 save 會把整份設定清空。
+            # Do NOT populate the cache on this self-heal path.
+            _invalidate_config_cache()
             recovered = _load_backup()
             if recovered is not None:
                 logger.warning("[Config] 已從 host 備份自癒回復設定，未使用空預設")
@@ -472,6 +540,10 @@ def save_config(config: Dict[str, Any], *, allow_empty_devices: bool = False):
     確需清空時請明確傳入 ``allow_empty_devices=True``。
     """
     with _config_lock:
+        # Any disk write here makes the mtime cache stale. Invalidate so the next
+        # load_config() re-reads. (update_ocr_config / update_device_config both
+        # route their writes through here, so this one site covers all writers.)
+        _invalidate_config_cache()
         try:
             incoming_devices = (config or {}).get("devices") or {}
             if not incoming_devices and not allow_empty_devices:

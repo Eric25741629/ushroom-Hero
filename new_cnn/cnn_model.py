@@ -6,6 +6,8 @@ import torchvision.transforms as transforms
 from torchvision import datasets, models
 from typing_extensions import Literal
 
+from utils.torch_runtime import inference_slot
+
 ClassName_cnn_model = Literal[
     'announcement',
     'family',
@@ -49,9 +51,15 @@ def predict_image(model, image) -> ClassName_cnn_model:
         ]
 
     image = img_loader(image)
-    # 將模型設置為
 
-    result = model(image)
+    # 將輸入張量移到模型所在裝置（與 miner/models/classifier.py 同一寫法）。
+    dev = next(model.parameters()).device
+    image = image.to(dev)
+
+    # inference_slot() 序列化共用模型的 forward，讓多裝置同時推論時排隊而非
+    # 一起擠爆 GPU（分流）；inference_mode 省去 autograd graph 開銷。
+    with inference_slot(), torch.inference_mode():
+        result = model(image)
     # 使用softmax獲取預測結果
     _, predicted = torch.max(result, 1)
 
@@ -74,7 +82,10 @@ class SimpleCNN(nn.Module):
         return x
 def load_cnn_model(model_path, num_classes=10):
     # 載入模型
+    # 預設 CPU：此分支目標是降低 GPU 使用量，故不預設 cuda。
+    device = "cpu"
     model = SimpleCNN(num_classes=num_classes)
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
     model.eval()  # 設定為評估模式
     return model

@@ -431,6 +431,7 @@ class ParkingManager:
                 self.cnn_model, self.device.screenshot(format='pillow'))
             if cnn_result == 'homeplace':
                 break
+            time.sleep(1.0)
         self.device.click(451, 451)
         time.sleep(3)
     def goto_home(self):        
