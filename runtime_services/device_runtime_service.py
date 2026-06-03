@@ -1,3 +1,4 @@
+import threading
 import time
 
 import bot_state
@@ -21,12 +22,14 @@ class WakeLoopInterrupted(Exception):
 
 
 CONNECT_FAILURE_COUNTS = {}
+_connect_failure_lock = threading.Lock()
 NON_RESTARTABLE_DEVICE_KEYWORDS = ("7fe98fc6", "fc65396d")
 EMULATOR_RESTART_THRESHOLD = 1
 EMU_RESTART_MARKERS = ("not online", "offline", "device offline", "cannot connect", "connection", "timeout", "closed")
 DISABLE_EMULATOR_RESTART = True
 
 _mumu_controller = None
+_mumu_controller_lock = threading.Lock()
 
 
 def is_non_restartable_device(ip: str) -> bool:
@@ -46,16 +49,20 @@ def get_mumu_controller(logger_obj):
     global _mumu_controller
     if _mumu_controller is not None:
         return _mumu_controller
-    exe = discover_control_exe()
-    if not exe:
-        logger_obj.warning("[Watchdog] 找不到 MuMuManager.exe，無法執行模擬器重啟")
-        return None
-    _mumu_controller = MuMuController(exe)
-    return _mumu_controller
+    with _mumu_controller_lock:
+        if _mumu_controller is not None:
+            return _mumu_controller
+        exe = discover_control_exe()
+        if not exe:
+            logger_obj.warning("[Watchdog] 找不到 MuMuManager.exe，無法執行模擬器重啟")
+            return None
+        _mumu_controller = MuMuController(exe)
+        return _mumu_controller
 
 
 def reset_connect_failure(ip: str):
-    CONNECT_FAILURE_COUNTS[ip] = 0
+    with _connect_failure_lock:
+        CONNECT_FAILURE_COUNTS[ip] = 0
 
 
 def handle_connect_failure(
@@ -67,8 +74,9 @@ def handle_connect_failure(
     refresh_adb_server_fn,
 ):
     msg = str(exc)
-    fail_count = int(CONNECT_FAILURE_COUNTS.get(ip, 0)) + 1
-    CONNECT_FAILURE_COUNTS[ip] = fail_count
+    with _connect_failure_lock:
+        fail_count = int(CONNECT_FAILURE_COUNTS.get(ip, 0)) + 1
+        CONNECT_FAILURE_COUNTS[ip] = fail_count
     if DISABLE_EMULATOR_RESTART:
         device_logger.warning(f"[{ip}] emulator restart disabled, connect failure: {msg}")
         return
@@ -86,7 +94,8 @@ def handle_connect_failure(
         device_logger.warning(f"[{ip}] 連線異常連續 {fail_count} 次，嘗試重啟模擬器")
         action = controller.restart(ip)
         if action.ok:
-            CONNECT_FAILURE_COUNTS[ip] = 0
+            with _connect_failure_lock:
+                CONNECT_FAILURE_COUNTS[ip] = 0
             bot_state.record_emulator_restart(ip, reason="connect_failure")
             refresh_adb_server_fn(running_threads, logger_obj, hard_reset=True, exclude_device=ip)
             device_logger.info(f"[{ip}] 模擬器重啟成功: rc={action.returncode}, cost={action.duration_sec:.2f}s")

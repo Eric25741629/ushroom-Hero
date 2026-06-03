@@ -31,8 +31,7 @@ def _cleanup(ip: str) -> None:
     with bot_state._global_lock:
         bot_state._states.pop(ip, None)
         bot_state._pause_events.pop(ip, None)
-        bot_state._force_sleep_flags.pop(ip, None)
-        bot_state._skip_sleep_flags.pop(ip, None)
+        bot_state._signals.pop(ip, None)
         bot_state._locks.pop(ip, None)
         bot_state._web_launch_requests.pop(ip, None)
         local_ids = getattr(bot_state, "_local_device_ids", None)

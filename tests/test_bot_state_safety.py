@@ -33,8 +33,7 @@ def test_request_force_sleep_sets_pause_event():
     with bot_state._global_lock:
         bot_state._states.pop(ip, None)
         bot_state._pause_events.pop(ip, None)
-        bot_state._force_sleep_flags.pop(ip, None)
-        bot_state._skip_sleep_flags.pop(ip, None)
+        bot_state._signals.pop(ip, None)
         bot_state._locks.pop(ip, None)
 
 

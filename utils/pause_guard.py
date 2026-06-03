@@ -101,7 +101,7 @@ def check() -> None:
     if ip is None:
         return
     # Fast path: not paused -> no work, no page.evaluate, no logging.
-    event = bot_state._pause_events.get(ip)  # noqa: SLF001 - private attr by design
+    event = bot_state.get_pause_event(ip)
     if event is None or event.is_set():
         return
 

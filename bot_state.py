@@ -3,9 +3,37 @@ import time
 import uuid
 import logging
 from collections import deque
+from enum import Enum, auto
 from typing import Dict, Optional, Any
 
 logger = logging.getLogger(__name__)
+
+
+class Signal(Enum):
+    SKIP_SLEEP = auto()
+    FORCE_SLEEP = auto()
+    WEB_CLOSE = auto()
+    MANUAL_RELEASE = auto()
+
+
+# Per-device one-shot signal set. Guarded by _global_lock. Replaces the 4 legacy
+# *_flags dicts so device teardown clears every channel in one pop (no per-channel
+# forgetting — see clear_offline_devices / sweep_stale_states).
+_signals: Dict[str, set[Signal]] = {}
+
+
+def raise_signal(ip: str, sig: Signal) -> None:
+    with _global_lock:
+        _signals.setdefault(ip, set()).add(sig)
+
+
+def consume_signal(ip: str, sig: Signal) -> bool:
+    with _global_lock:
+        s = _signals.get(ip)
+        if s and sig in s:
+            s.discard(sig)
+            return True
+        return False
 
 # 存放所有設備狀態的字典
 # 結構範例:
@@ -113,10 +141,22 @@ def set_offline(ip: str, reason: str = "正常結束"):
     """
     with get_device_lock(ip):
         if ip in _states:
+            # 只在首次轉入 OFFLINE 時記錄時間，避免重複 set_offline 刷新計時
+            if _states[ip].get("status") != "OFFLINE":
+                _states[ip]["offline_since"] = time.time()
             _states[ip]["status"] = "OFFLINE"
             _states[ip]["step"] = reason
             _states[ip]["last_update"] = time.time()
     logger.info(f"[BotState] 設備 {ip} 已離線：{reason}")
+
+
+def get_offline_since(ip: str) -> float | None:
+    """回傳設備首次進入 OFFLINE 的時間戳，尚未離線或無紀錄則回傳 None。"""
+    with get_device_lock(ip):
+        st = _states.get(ip)
+        if st is None or st.get("status") != "OFFLINE":
+            return None
+        return st.get("offline_since")
 
 def update_state(
     ip: str,
@@ -216,6 +256,13 @@ def set_pause(ip: str, paused: bool):
         _pause_events[ip].set()   # 設為 True，解除 wait
         logger.info(f"[BotState] 已發送恢復信號給 {ip}")
 
+
+def get_pause_event(ip: str) -> Optional[threading.Event]:
+    """Return the per-device pause Event (or None). Source of truth for pause state."""
+    with _global_lock:
+        return _pause_events.get(ip)
+
+
 def record_screenshot_time(ip: str, duration_ms: float) -> None:
     """Record one screenshot duration sample for rolling-average tracking."""
     with _global_lock:
@@ -224,6 +271,22 @@ def record_screenshot_time(ip: str, duration_ms: float) -> None:
         if ip not in _screenshot_windows:
             _screenshot_windows[ip] = deque(maxlen=_SCREENSHOT_WINDOW)
         _screenshot_windows[ip].append(duration_ms)
+
+
+def update_remote_metrics(ip: str, logs=None, avg_screenshot_ms=None) -> None:
+    """Update display-only fields for a (remote) device from a worker sync.
+
+    Lock-guarded replacement for control_panel writing bot_state._states directly.
+    Behaviour mirrors the old direct writes: no-op if the device is absent;
+    does NOT touch last_update (heartbeat is driven elsewhere)."""
+    with get_device_lock(ip):
+        st = _states.get(ip)
+        if st is None:
+            return
+        if logs is not None:
+            st["logs"] = logs
+        if avg_screenshot_ms is not None:
+            st["avg_screenshot_ms"] = avg_screenshot_ms
 
 
 def get_all_states() -> Dict[str, Dict[str, Any]]:
@@ -310,16 +373,6 @@ def check_refresh_needed() -> bool:
         return False
 
 
-# skip_sleep one-shot flags
-_skip_sleep_flags: Dict[str, bool] = {}
-# manual-hold one-shot release flags
-_manual_release_flags: Dict[str, bool] = {}
-# force-sleep one-shot flags
-_force_sleep_flags: Dict[str, bool] = {}
-# close-browser one-shot flags (web_h5 only): close the headless browser now,
-# device keeps running and cold-restarts the browser on its next loop/wake.
-_web_close_flags: Dict[str, bool] = {}
-
 # Web login / launch request mailbox.
 _web_launch_requests: Dict[str, Dict[str, Any]] = {}
 
@@ -334,16 +387,16 @@ def set_skip_sleep(ip: str):
     Called by the control panel or remote command. Workers should call
     `check_skip_sleep(ip)` to consume the flag.
     """
-    with _global_lock:
-        _skip_sleep_flags[ip] = True
+    raise_signal(ip, Signal.SKIP_SLEEP)
 
 
 def request_force_sleep(ip: str, reason: str = "強制休眠"):
     """Request the device to stop current work and enter sleep as soon as possible."""
     with _global_lock:
-        _force_sleep_flags[ip] = True
-        _skip_sleep_flags.pop(ip, None)
-        _manual_release_flags.pop(ip, None)
+        sigs = _signals.setdefault(ip, set())
+        sigs.add(Signal.FORCE_SLEEP)
+        sigs.discard(Signal.SKIP_SLEEP)
+        sigs.discard(Signal.MANUAL_RELEASE)
         req = _web_launch_requests.get(ip)
         if req and req.get("status") == "pending":
             req["status"] = "cancelled"
@@ -363,8 +416,7 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
 
 def check_force_sleep(ip: str) -> bool:
     """Atomically check and consume the force-sleep flag for `ip`."""
-    with _global_lock:
-        return bool(_force_sleep_flags.pop(ip, False))
+    return consume_signal(ip, Signal.FORCE_SLEEP)
 
 
 def request_web_close(ip: str) -> None:
@@ -375,21 +427,20 @@ def request_web_close(ip: str) -> None:
     loop iteration / wake. Used by the live-view "關閉瀏覽器" button to restart a
     browser. The owning device thread consumes it via `check_web_close(ip)`.
     """
-    with _global_lock:
-        _web_close_flags[ip] = True
+    raise_signal(ip, Signal.WEB_CLOSE)
 
 
 def check_web_close(ip: str) -> bool:
     """Atomically check and consume the close-browser flag for `ip`."""
-    with _global_lock:
-        return bool(_web_close_flags.pop(ip, False))
+    return consume_signal(ip, Signal.WEB_CLOSE)
 
 
 def clear_skip_sleep(ip: str):
     """Clear skip_sleep flag for device without consuming it."""
     with _global_lock:
-        if ip in _skip_sleep_flags:
-            del _skip_sleep_flags[ip]
+        s = _signals.get(ip)
+        if s:
+            s.discard(Signal.SKIP_SLEEP)
 
 
 def check_skip_sleep(ip: str) -> bool:
@@ -397,24 +448,17 @@ def check_skip_sleep(ip: str) -> bool:
 
     Returns True if a skip was requested, otherwise False.
     """
-    with _global_lock:
-        if _skip_sleep_flags.pop(ip, False):
-            return True
-        return False
+    return consume_signal(ip, Signal.SKIP_SLEEP)
 
 
 def set_manual_release(ip: str):
     """Request manual-hold mode to end on next poll."""
-    with _global_lock:
-        _manual_release_flags[ip] = True
+    raise_signal(ip, Signal.MANUAL_RELEASE)
 
 
 def check_manual_release(ip: str) -> bool:
     """Atomically check and consume the manual-hold release flag."""
-    with _global_lock:
-        if _manual_release_flags.pop(ip, False):
-            return True
-        return False
+    return consume_signal(ip, Signal.MANUAL_RELEASE)
 
 
 def request_web_launch(ip: str, payload: Optional[Dict[str, Any]] = None) -> None:
@@ -496,7 +540,7 @@ def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
                 and existing.get("status") in ("pending", "processing")
             ):
                 existing["updated_at"] = now
-                _skip_sleep_flags[checker_ip] = True
+                _signals.setdefault(checker_ip, set()).add(Signal.SKIP_SLEEP)
                 return existing_id
 
         req_id = str(uuid.uuid4())
@@ -515,7 +559,7 @@ def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
         _online_check_requests[req_id] = payload
         _online_check_queue_by_checker.setdefault(checker_ip, []).append(req_id)
         # Hint checker thread to break long sleep and process mailbox ASAP.
-        _skip_sleep_flags[checker_ip] = True
+        _signals.setdefault(checker_ip, set()).add(Signal.SKIP_SLEEP)
         # Also request an immediate device rescan so a cold-start-delayed checker
         # thread can be started right away instead of waiting for the next 30s loop.
         global _refresh_needed
@@ -622,7 +666,7 @@ def clear_offline_devices():
 
     H7 fix: 兩段 lock 中間 device 可能已上線，必須在 per-device lock 內
     重新驗證 status 仍為 OFFLINE 才能刪除，避免清掉活躍 device 的狀態。
-    同步清理之前漏掉的 per-device 結構（_manual_release_flags、_screenshot_windows）。
+    同步清理 per-device 結構（_signals、_screenshot_windows）。
     """
     with _global_lock:
         to_remove = [ip for ip, st in _states.items() if str(st.get("status")) == "OFFLINE"]
@@ -633,16 +677,15 @@ def clear_offline_devices():
             if st is None or str(st.get("status")) != "OFFLINE":
                 # device 已重新上線或被別處刪除，跳過
                 continue
-            # per-device 結構（pause_events / *_flags）由 per-device lock 護衛
+            # per-device 結構（pause_events）由 per-device lock 護衛
             _states.pop(ip, None)
             _pause_events.pop(ip, None)
-            _skip_sleep_flags.pop(ip, None)
-            _force_sleep_flags.pop(ip, None)
-        # _manual_release_flags / _screenshot_windows / _locks 在他處皆以
-        # _global_lock 保護（見 record_screenshot_time、set_manual_release 等），
-        # 結構變更也走 _global_lock 才不會與其他 reader/writer 競態。
+        # _signals / _screenshot_windows / _locks 在他處皆以 _global_lock 保護
+        # （見 raise_signal/consume_signal、record_screenshot_time 等），結構變更
+        # 也走 _global_lock 才不會與其他 reader/writer 競態。一次 pop _signals
+        # 即清掉所有 one-shot 通道（skip/force/web_close/manual_release），不會漏。
         with _global_lock:
-            _manual_release_flags.pop(ip, None)
+            _signals.pop(ip, None)
             _screenshot_windows.pop(ip, None)
             _locks.pop(ip, None)
 
@@ -677,7 +720,8 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
             if ":" in ip and not is_local_device(ip) and age >= remove_remote_after_sec:
                 _states.pop(ip, None)
                 _pause_events.pop(ip, None)
-                _skip_sleep_flags.pop(ip, None)
-                _force_sleep_flags.pop(ip, None)
+                # _signals / _locks 由 _global_lock 護衛；一次 pop _signals 即清掉
+                # 所有 one-shot 通道（skip/force/web_close/manual_release）。
                 with _global_lock:
+                    _signals.pop(ip, None)
                     _locks.pop(ip, None)
