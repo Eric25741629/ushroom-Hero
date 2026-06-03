@@ -81,6 +81,9 @@
     .btn-ghost:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
     .btn-sm { padding: 5px 10px; font-size: 0.8em; min-height: 28px; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* 未連線時 highlight 「啟動瀏覽器」按鈕：accent 邊框 + 柔和呼吸光暈 */
+    .btn-attention { border-color: var(--accent); color: var(--accent-h); animation: attentionPulse 1.6s ease-in-out infinite; }
+    @keyframes attentionPulse { 0%,100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -422,20 +425,28 @@
           <button class="btn btn-danger btn-sm" id="abStopBtn" onclick="stopAutoBreed()" style="display:none;">停止</button>
           <span id="abGlobalStatus" style="font-size:0.78em;color:var(--text2);"></span>
         </div>
+        <div class="ab-presets" style="margin:8px 0;border:1px solid var(--border,#333);border-radius:6px;padding:8px;">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+            <strong style="font-size:0.85em;">配種方案</strong>
+            <button class="btn btn-ghost btn-sm" onclick="presetNew()">+ 新增方案</button>
+          </div>
+          <div id="abPresetList"></div>
+          <div id="abPresetEditor" style="display:none;"></div>
+        </div>
         <div id="abSlots"></div>
       </div>
     </div>
   </div>
 
-  <!-- Friends section -->
+  <!-- Partners (搭檔) section -->
   <div class="section">
     <div class="collapse-hdr" onclick="toggleCollapse('friends')">
-      <span class="section-title" style="margin:0;">好友飛寵</span>
+      <span class="section-title" style="margin:0;">搭檔飛寵</span>
       <span class="arrow" id="friendsArrow">&#9654;</span>
     </div>
     <div class="collapse-body" id="friendsBody">
       <div style="margin-top:12px; display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-        <button class="btn btn-ghost btn-sm" id="loadFriendsBtn" onclick="doLoadAllFriends()">載入全部好友飛寵</button>
+        <button class="btn btn-ghost btn-sm" id="loadFriendsBtn" onclick="doLoadAllPartners()">載入全部搭檔飛寵</button>
         <span id="friendsProgress" style="font-size:0.82em;color:var(--text2);"></span>
       </div>
       <div id="friendsResult"></div>
@@ -703,14 +714,66 @@ function applyFilters() {
   updateSelCount();
 }
 
+// ---- Grouping (by species / config_id) ----
+var COLLAPSE_KEY = 'flypet_collapsed_groups';
+var collapsedGroups = (function() {
+  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]').map(String)); }
+  catch(e) { return new Set(); }
+})();
+function saveCollapsed() {
+  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(collapsedGroups))); } catch(e) {}
+}
+function groupKeyOf(p) { return String(p.config_id != null ? p.config_id : ('n:' + (p.display_name || p.name || '?'))); }
+// Group `filtered` by config_id, preserving intra-group order. Groups are
+// ordered by the group's strongest pet quality (desc), then species name.
+function groupFiltered() {
+  var map = {};
+  var order = [];
+  filtered.forEach(function(p) {
+    var k = groupKeyOf(p);
+    if (!map[k]) {
+      map[k] = { key: k, name: p.display_name || p.name || '(?)', maxQ: -1, pets: [] };
+      order.push(k);
+    }
+    var g = map[k];
+    g.pets.push(p);
+    if ((p.quality || 0) > g.maxQ) g.maxQ = (p.quality || 0);
+  });
+  return order.map(function(k) { return map[k]; }).sort(function(a, b) {
+    return (b.maxQ - a.maxQ) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+  });
+}
+function toggleGroup(key) {
+  key = String(key);
+  if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
+  saveCollapsed();
+  renderTable();
+}
+
 // ---- Table ----
+var TABLE_COL_COUNT = 11;
 function renderTable() {
   var tbody = document.getElementById('tbody');
   var empt = document.getElementById('emptyMsg');
   if (filtered.length === 0) { tbody.innerHTML = ''; empt.style.display = 'block'; return; }
   empt.style.display = 'none';
   var html = '';
-  filtered.forEach(function(p) {
+  groupFiltered().forEach(function(g) {
+    var collapsed = collapsedGroups.has(g.key);
+    var arrow = collapsed ? '&#9654;' : '&#9660;'; // ▶ / ▼
+    html += '<tr class="grp-header" onclick="toggleGroup(\'' + esc(g.key) + '\')" ' +
+      'style="cursor:pointer;background:var(--bg2,#1c1c1c);">' +
+      '<td colspan="' + TABLE_COL_COUNT + '" style="padding:5px 8px;font-weight:600;">' +
+      '<span style="display:inline-block;width:1em;">' + arrow + '</span> ' +
+      esc(g.name) + ' <span style="color:var(--text2);font-weight:400;">(' + g.pets.length + ')</span>' +
+      '</td></tr>';
+    if (collapsed) return;
+    g.pets.forEach(function(p) { html += renderPetRow(p); });
+  });
+  tbody.innerHTML = html;
+}
+
+function renderPetRow(p) {
     var ck = selected.has(p.id) ? ' checked' : '';
     var rc = selected.has(p.id) ? ' class="selected"' : '';
     var fight = p.fight === 1 ? '<span style="color:var(--warn);" title="出戰中">&#9733;</span>' : '';
@@ -721,7 +784,7 @@ function renderTable() {
     var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
     var entryQualityBadge = entryQualityHTML(p);
 
-    html += '<tr' + rc + ' data-id="' + p.id + '">' +
+    return '<tr' + rc + ' data-id="' + p.id + '">' +
       '<td class="col-ck"><input type="checkbox" onchange="toggleSel(' + p.id + ',this)"' + ck + '></td>' +
       '<td class="col-sm">' + fight + '</td>' +
       '<td><span class="pet-name">' + esc(name) + '</span><span class="pet-id">#' + p.id + '</span></td>' +
@@ -738,8 +801,6 @@ function renderTable() {
         '<button class="btn btn-ghost btn-sm" onclick="setBreedPet(\'B\',' + p.id + ')" title="設為交配B" style="color:var(--eq6);">B</button>' +
       '</td>' +
       '</tr>';
-  });
-  tbody.innerHTML = html;
 }
 
 // ---- Selection ----
@@ -791,17 +852,19 @@ async function apiPost(url, body) {
   return d;
 }
 
-// ---- Connection check ----
-async function checkConnection() {
+// ---- 輕量瀏覽器在線偵測 ----
+// 直接問中控台「這台有沒有啟動瀏覽器」(CDP /json/list)，不注入遊戲 JS。
+// 比 fly_pet_check_connection(評估遊戲 WS) 快很多, 且能分辨「沒開瀏覽器」與「已開、遊戲載入中」。
+async function checkBrowserUp() {
   try {
-    var r = await fetch('/api/fly_pet_check_connection/' + encodeURIComponent(ip()));
-    if (r.status === 404) return {connected: true, _fallback: true};
-    if (r.status === 401) { window.location.href = '/fly-pet/login'; return {connected: false}; }
+    var r = await fetch('/api/fly_pet_browser_status/' + encodeURIComponent(ip()));
+    if (r.status === 404) return {browser_up: true, _fallback: true};   // 端點不存在 → 不阻擋
+    if (r.status === 401) { window.location.href = '/fly-pet/login'; return {browser_up: false}; }
     var d = await r.json();
-    if (d.status !== 'ok') return {connected: false, error: d.message};
+    if (d.status !== 'ok') return {browser_up: false};
     return d.data || {};
   } catch(e) {
-    return {connected: true, _fallback: true};
+    return {browser_up: true, _fallback: true};   // 偵測失敗 → 不阻擋, 交給實際載入判斷
   }
 }
 
@@ -816,6 +879,54 @@ async function checkBotRunning() {
   } catch(e) {
     return {bot_running: false, _fallback: true};
   }
+}
+
+// ---- Shared bot-running guard ----
+// 統一破壞性 vs 唯讀操作在腳本運行中的行為:
+//   block: true  -> 破壞性操作(分解),腳本運行中阻擋,回傳 {blocked:true}
+//   block: false -> 唯讀操作(載入),只警示,允許繼續,回傳 {blocked:false}
+// 回傳 bot 狀態 (botSt) 供呼叫端顯示細節。
+async function botRunningGuard(opts) {
+  opts = opts || {};
+  var block = !!opts.block;
+  var silent = !!opts.silent;   // 靜默: 不跳 toast(供開頁自動載入用), 仍回傳狀態
+  var botSt = await checkBotRunning();
+  if (!botSt.bot_running) {
+    return {blocked: false, bot_running: false, botSt: botSt};
+  }
+  var task = botSt.bot_task || '';
+  if (block) {
+    toast('腳本正在運行「' + task + '」，請先暫停腳本再操作', 'err');
+    return {blocked: true, bot_running: true, botSt: botSt};
+  }
+  if (!silent) toast('腳本正在運行「' + task + '」，操作可能互相干擾', 'err');
+  return {blocked: false, bot_running: true, botSt: botSt};
+}
+
+// ---- 未連線溫和提示 (不預設瀏覽器已開) ----
+// 灰字提示, 不跳紅色錯誤。kind:
+//   'launch'  → 沒開瀏覽器: highlight「啟動瀏覽器」按鈕
+//   'loading' → 瀏覽器已開但遊戲還在載入: 不亮啟動按鈕, 提示稍候再載入
+function showNotConnectedHint(kind) {
+  var msg = document.getElementById('loadMsg');
+  var launchBtn = document.getElementById('launchBtn');
+  var initMsg = document.getElementById('initMsg');
+  if (kind === 'loading') {
+    if (msg) { msg.textContent = '瀏覽器已開，遊戲載入中… 請稍候再按「載入」'; msg.style.color = 'var(--text2)'; }
+    if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
+    if (initMsg) { initMsg.textContent = '瀏覽器已開，遊戲載入中…'; initMsg.style.display = ''; }
+    return;
+  }
+  if (msg) { msg.textContent = '尚未連線，請先「啟動瀏覽器」'; msg.style.color = 'var(--text2)'; }
+  if (launchBtn) { launchBtn.style.display = 'inline-block'; launchBtn.classList.add('btn-attention'); }
+  if (initMsg) { initMsg.textContent = '尚未連線 — 請先「啟動瀏覽器」，或在遊戲已開時點「載入」'; initMsg.style.display = ''; }
+}
+
+// ---- 開頁靜默偵測: 先問中控台有沒有瀏覽器, 有就載入, 沒有安靜提示, 全程不跳 toast ----
+async function initAutoLoad() {
+  var br = await checkBrowserUp();
+  if (br.browser_up) { doLoad({silent: true}); return; }
+  showNotConnectedHint('launch');
 }
 
 // ---- Launch browser ----
@@ -841,7 +952,8 @@ async function doLaunch() {
 }
 
 // ---- Load ----
-async function doLoad() {
+async function doLoad(opts) {
+  opts = opts || {};
   var btn = document.getElementById('loadBtn');
   var msg = document.getElementById('loadMsg');
   var launchBtn = document.getElementById('launchBtn');
@@ -849,20 +961,21 @@ async function doLoad() {
   msg.textContent = '檢查連線...';
   msg.style.color = '';
   launchBtn.style.display = 'none';
+  launchBtn.classList.remove('btn-attention');
   document.getElementById('initMsg').style.display = 'none';
   try {
-    var botSt = await checkBotRunning();
-    if (botSt.bot_running) {
+    // 唯讀操作: 只警示,不阻擋(使用者仍須能在腳本運行中查看寵物列表)
+    // opts.silent: 開頁自動載入時不跳 toast
+    var guard = await botRunningGuard({block: false, silent: opts.silent});
+    if (guard.bot_running) {
+      var botSt = guard.botSt;
       msg.textContent = '腳本運行中: ' + (botSt.bot_task || '') + ' - ' + (botSt.bot_step || '');
       msg.style.color = 'var(--warn)';
-      toast('腳本正在運行「' + (botSt.bot_task||'') + '」，操作可能互相干擾', 'err');
     }
-    var conn = await checkConnection();
-    if (!conn.connected) {
-      msg.textContent = '遊戲未連線';
-      msg.style.color = 'var(--danger)';
-      launchBtn.style.display = 'inline-block';
-      toast('遊戲未連線 -- 請先啟動瀏覽器並等待遊戲載入', 'err');
+    // 輕量門檻: 先問中控台有沒有瀏覽器(不注入遊戲 JS), 沒開就立即溫和提示, 不等 5s 重探
+    var br = await checkBrowserUp();
+    if (!br.browser_up) {
+      showNotConnectedHint('launch');
       setLoading(btn, false);
       return;
     }
@@ -882,14 +995,16 @@ async function doLoad() {
     msg.textContent = allPets.length + ' 隻';
     toast('載入 ' + allPets.length + ' 隻飛寵', 'ok');
   } catch(e) {
-    msg.textContent = '失敗';
-    msg.style.color = 'var(--danger)';
-    launchBtn.style.display = 'inline-block';
-    var hint = e.message;
-    if (hint.indexOf('no CDP target') >= 0 || hint.indexOf('未載入') >= 0 || hint.indexOf('IS is not') >= 0) {
-      hint += ' -- 請先啟動瀏覽器';
+    var emsg = e.message || '';
+    // 已過 checkBrowserUp 門檻(瀏覽器在線)卻載入失敗 = 遊戲還在載入: 溫和提示稍候, 不跳紅色錯誤
+    if (emsg.indexOf('no CDP target') >= 0 || emsg.indexOf('未載入') >= 0 || emsg.indexOf('IS is not') >= 0) {
+      showNotConnectedHint('loading');
+    } else {
+      msg.textContent = '失敗';
+      msg.style.color = 'var(--danger)';
+      launchBtn.style.display = 'inline-block';
+      toast('載入失敗: ' + emsg, 'err');
     }
-    toast('載入失敗: ' + hint, 'err');
   } finally { setLoading(btn, false); }
 }
 
@@ -915,8 +1030,9 @@ async function doSell() {
   var extra = warn.length ? '\n' + warn.join(', ') : '';
   showModal('確認分解', '分解 ' + safeIds.length + ' 隻飛寵？此操作無法復原。' + extra, async function() {
     try {
-      var botSt = await checkBotRunning();
-      if (botSt.bot_running) { toast('腳本正在運行「' + (botSt.bot_task||'') + '」，請先暫停腳本再操作', 'err'); return; }
+      // 破壞性操作: 腳本運行中一律阻擋
+      var guard = await botRunningGuard({block: true});
+      if (guard.blocked) return;
       var d = await apiPost('/api/fly_pet_resolve/' + encodeURIComponent(ip()), {ids: safeIds});
       var result = d.data || {};
       if (result.ok === false) {
@@ -936,8 +1052,9 @@ function doSellOne(id) {
   var info = name + ' (' + (PQ[pet.quality]||'') + ', ' + (pet.entries||[]).length + '詞條)';
   showModal('確認分解', '分解「' + info + '」？此操作無法復原。', async function() {
     try {
-      var botSt = await checkBotRunning();
-      if (botSt.bot_running) { toast('腳本正在運行「' + (botSt.bot_task||'') + '」，請先暫停腳本再操作', 'err'); return; }
+      // 破壞性操作: 腳本運行中一律阻擋
+      var guard = await botRunningGuard({block: true});
+      if (guard.blocked) return;
       var d = await apiPost('/api/fly_pet_resolve/' + encodeURIComponent(ip()), {ids: [id]});
       var result = d.data || {};
       if (result.ok === false) {
@@ -975,10 +1092,10 @@ async function loadBreed() {
   var grid = document.getElementById('breedGrid');
   grid.innerHTML = '<span class="spinner"></span>';
   try {
+    // 後端 refresh 會阻塞到 EggListBack 確認資料就緒,不需固定延遲
     await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
       method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
     });
-    await new Promise(function(r) { setTimeout(r, 600); });
     var d = await apiGet('/api/fly_pet_breed_info/' + encodeURIComponent(ip()));
     var data = d.data || {};
     var homes = data.homes || [];
@@ -1082,22 +1199,41 @@ async function doCollect(baseId) {
   } catch(e) { toast('領取失敗: ' + e.message, 'err'); }
 }
 
-// ---- Friends ----
-async function doLoadAllFriends() {
+// 把剩餘冷卻秒數格式化成 "3h12m" / "12m" / "<1m".
+function fmtRemain(sec) {
+  if (sec <= 0) return '';
+  var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  if (h > 0) return h + 'h' + m + 'm';
+  if (m > 0) return m + 'm';
+  return '<1m';
+}
+// 搭檔飛寵借用狀態標籤. state: 0=可用(可借來配), 1=繁殖中, 2=冷卻中.
+// state>0 代表該飛寵正被占用/冷卻, 無法借過來配, end_time 為結束的 unix 秒.
+function partnerStateLabel(state, endTime) {
+  if (state === 0) return '<span style="color:var(--accent);">可用</span>';
+  var name = state === 1 ? '繁殖中' : '冷卻中';
+  var remain = endTime ? fmtRemain(endTime - Math.floor(Date.now() / 1000)) : '';
+  return '<span style="color:var(--text2);">' + name + (remain ? ' ' + remain : '') + '</span>';
+}
+
+// ---- Partners (搭檔) ----
+// 搭檔 = 繁殖搭檔 (FlyPetDataCache.role_list, 遊戲上限 30), 非好友列表.
+// 每位搭檔的上架飛寵透過 /api/fly_pet_partner (send_66_24 -> RolePetListBack) 取得.
+async function doLoadAllPartners() {
   var btn = document.getElementById('loadFriendsBtn');
   var prog = document.getElementById('friendsProgress');
   var result = document.getElementById('friendsResult');
   setLoading(btn, true);
-  prog.textContent = '讀取好友列表...';
+  prog.textContent = '讀取搭檔列表...';
   result.innerHTML = '';
 
   try {
-    var fd = await apiGet('/api/fly_pet_friends/' + encodeURIComponent(ip()));
-    var friends = fd.friends || fd.data || [];
+    var fd = await apiGet('/api/fly_pet_partners/' + encodeURIComponent(ip()));
+    var friends = fd.partners || fd.data || [];
     if (!Array.isArray(friends)) friends = [];
-    if (!friends.length) { prog.textContent = '沒有好友'; setLoading(btn, false); return; }
+    if (!friends.length) { prog.textContent = '沒有搭檔'; setLoading(btn, false); return; }
 
-    prog.textContent = '0 / ' + friends.length + ' 好友';
+    prog.textContent = '0 / ' + friends.length + ' 搭檔';
     var loaded = 0;
     for (var i = 0; i < friends.length; i++) {
       var f = friends[i];
@@ -1109,13 +1245,14 @@ async function doLoadAllFriends() {
         loaded++;
         var card = document.createElement('div');
         card.className = 'friend-card';
-        var hdr = '<div class="friend-card-hdr">' + esc(f.name) + ' (Lv.' + f.level + ') - ' + pets.length + ' 隻上架</div>';
+        var hdr = '<div class="friend-card-hdr">' + esc(f.name) + ' - ' + pets.length + ' 隻上架</div>';
         var tbl = '<table style="width:100%;font-size:0.82em;border-collapse:collapse;">' +
           '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th></tr></thead><tbody>';
         pets.forEach(function(p) {
           var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
           var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
-          var stateLabel = p.state === 0 ? '<span style="color:var(--accent);">可用</span>' : '<span style="color:var(--text2);">冷卻中</span>';
+          // 冷卻偵測: state 0=可用(可借來配), 1=繁殖中, 2=冷卻中. state>0 一律無法借過來配.
+          var stateLabel = partnerStateLabel(p.state, p.end_time);
           tbl += '<tr><td style="padding:3px 6px;">' + esc(p.display_name||p.name||'?') + '</td>' +
             '<td style="padding:3px 6px;">' + pqHTML(p.quality) + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + (p.generation||0) + '</td>' +
@@ -1127,14 +1264,14 @@ async function doLoadAllFriends() {
         tbl += '</tbody></table>';
         card.innerHTML = hdr + tbl;
         result.appendChild(card);
-      } catch(e) { /* skip failed friend */ }
+      } catch(e) { /* skip failed partner */ }
       await new Promise(function(r) { setTimeout(r, 300); });
     }
-    prog.textContent = '完成 (' + loaded + '/' + friends.length + ' 好友有上架飛寵)';
-    toast('好友飛寵載入完成', 'ok');
+    prog.textContent = '完成 (' + loaded + '/' + friends.length + ' 搭檔有上架飛寵)';
+    toast('搭檔飛寵載入完成', 'ok');
   } catch(e) {
     prog.textContent = '失敗';
-    toast('載入好友失敗: ' + e.message, 'err');
+    toast('載入搭檔失敗: ' + e.message, 'err');
   } finally { setLoading(btn, false); }
 }
 
@@ -1152,6 +1289,180 @@ function loadAbConfig() {
   try { abConfig = JSON.parse(localStorage.getItem(abStorageKey()) || '{}'); } catch(e) { abConfig = {}; }
 }
 function saveAbConfig() { localStorage.setItem(abStorageKey(), JSON.stringify(abConfig)); }
+
+// ---- Breeding presets (方案) ----
+var abPresets = [];
+var flypetCatalog = null;   // {species:[{id,name}], entries:[{id,name,quality}]}
+function presetStorageKey() { return 'flypetPresets_' + ip(); }
+function loadPresets() {
+  try { abPresets = JSON.parse(localStorage.getItem(presetStorageKey()) || '[]'); }
+  catch(e) { abPresets = []; }
+  if (!Array.isArray(abPresets)) abPresets = [];
+}
+function savePresets() { localStorage.setItem(presetStorageKey(), JSON.stringify(abPresets)); }
+function genPresetId() { return 'p' + Date.now() + '_' + Math.floor(Math.random() * 1000); }
+function getPreset(id) {
+  for (var i = 0; i < abPresets.length; i++) if (abPresets[i].id === id) return abPresets[i];
+  return null;
+}
+
+async function ensureCatalog() {
+  if (flypetCatalog) return flypetCatalog;
+  try {
+    var d = await apiGet('/api/fly_pet_catalog/' + encodeURIComponent(ip()));
+    flypetCatalog = (d && d.data) ? d.data : { species: [], entries: [] };
+  } catch(e) {
+    // Degrade: derive from currently owned pets if the live catalog is unreachable.
+    var spMap = {}, enMap = {};
+    (allPets || []).forEach(function(p) {
+      if (p.config_id != null) spMap[p.config_id] = p.display_name || p.name || ('#' + p.config_id);
+      (p.entries || []).forEach(function(e) { if (e.id != null) enMap[e.id] = {name: e.name, quality: e.quality}; });
+    });
+    flypetCatalog = {
+      species: Object.keys(spMap).map(function(k) { return {id: Number(k), name: spMap[k]}; }),
+      entries: Object.keys(enMap).map(function(k) { return {id: Number(k), name: enMap[k].name, quality: enMap[k].quality}; })
+    };
+  }
+  return flypetCatalog;
+}
+
+// Convert a 1.x inline-criteria abConfig into named presets so existing
+// per-slot settings survive the migration to the preset model.
+function migrateLegacyAbConfig() {
+  if (abPresets.length > 0) return;
+  var made = false;
+  Object.keys(abConfig).forEach(function(hid) {
+    var c = abConfig[hid];
+    if (!c || c.preset_id) return;
+    if (c.mode || c.quality || c.min_count) {
+      var pid = genPresetId();
+      abPresets.push({
+        id: pid, name: '舊設定 #' + hid,
+        species_whitelist: [], entry_whitelist: [],
+        mode: c.mode || 'quality_count',
+        quality: c.quality || 3,
+        min_count: c.min_count || 2,
+        min_total_entries: c.min_total_entries || 3,
+        prefer_low_gen: c.prefer_low_gen !== false
+      });
+      c.preset_id = pid;
+      made = true;
+    }
+  });
+  if (made) { savePresets(); saveAbConfig(); }
+}
+
+function presetCriteria(presetId) {
+  var p = getPreset(presetId);
+  if (!p) return null;
+  return {
+    mode: p.mode || 'quality_count',
+    quality: p.quality || 3,
+    min_count: p.min_count || 2,
+    min_total_entries: p.min_total_entries || 3,
+    prefer_low_gen: p.prefer_low_gen !== false,
+    species_whitelist: p.species_whitelist || [],
+    entry_whitelist: p.entry_whitelist || []
+  };
+}
+
+function renderPresetList() {
+  var el = document.getElementById('abPresetList');
+  if (!el) return;
+  if (abPresets.length === 0) {
+    el.innerHTML = '<div style="font-size:0.78em;color:var(--text2);">尚無方案，點「新增方案」建立。</div>';
+    return;
+  }
+  el.innerHTML = abPresets.map(function(p) {
+    var sp = (p.species_whitelist || []).length;
+    var en = (p.entry_whitelist || []).length;
+    var desc = (sp ? sp + ' 種類' : '不限種類') + ' / ' + (en ? en + ' 詞條(全包含)' : '不限詞條');
+    return '<div style="display:flex;align-items:center;gap:6px;font-size:0.8em;padding:2px 0;">' +
+      '<span style="flex:1;">' + esc(p.name) + ' <span style="color:var(--text2);">(' + desc + ')</span></span>' +
+      '<button class="btn btn-ghost btn-sm" onclick="presetEdit(\'' + p.id + '\')">編輯</button> ' +
+      '<button class="btn btn-ghost btn-sm" onclick="presetDelete(\'' + p.id + '\')">刪除</button>' +
+      '</div>';
+  }).join('');
+}
+
+async function presetNew() {
+  await ensureCatalog();
+  presetEditForm({ id: genPresetId(), name: '新方案', species_whitelist: [], entry_whitelist: [],
+    mode: 'quality_count', quality: 3, min_count: 2, min_total_entries: 3, prefer_low_gen: true }, true);
+}
+async function presetEdit(id) {
+  await ensureCatalog();
+  var p = getPreset(id);
+  if (!p) return;
+  presetEditForm(JSON.parse(JSON.stringify(p)), false);
+}
+function presetDelete(id) {
+  if (!confirm('刪除此方案？使用它的巢穴會變成未選方案。')) return;
+  abPresets = abPresets.filter(function(p) { return p.id !== id; });
+  savePresets();
+  Object.keys(abConfig).forEach(function(hid) { if (abConfig[hid] && abConfig[hid].preset_id === id) abConfig[hid].preset_id = ''; });
+  saveAbConfig();
+  renderPresetList();
+  renderAbSlots(abHomes);
+}
+function presetCancel() {
+  var ed = document.getElementById('abPresetEditor');
+  if (ed) { ed.style.display = 'none'; ed.innerHTML = ''; }
+}
+function _multiVals(id) {
+  var el = document.getElementById(id);
+  if (!el) return [];
+  return Array.from(el.selectedOptions).map(function(o) { return parseInt(o.value); }).filter(function(n) { return !isNaN(n); });
+}
+function presetEditForm(p, isNew) {
+  var ed = document.getElementById('abPresetEditor');
+  if (!ed) return;
+  var cat = flypetCatalog || { species: [], entries: [] };
+  function opts(list, sel, labelFn) {
+    var s = new Set((sel || []).map(String));
+    return list.map(function(it) {
+      return '<option value="' + it.id + '"' + (s.has(String(it.id)) ? ' selected' : '') + '>' + esc(labelFn(it)) + '</option>';
+    }).join('');
+  }
+  var html = '<div style="border-top:1px solid var(--border,#333);margin-top:6px;padding-top:6px;">';
+  html += '<div style="font-size:0.8em;margin-bottom:4px;">名稱 <input id="pfName" type="text" value="' + esc(p.name) + '" style="width:140px;"></div>';
+  html += '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+  html += '<div><div style="font-size:0.75em;">限種類 (空=不限)</div><select id="pfSpecies" multiple size="6" style="min-width:130px;">' +
+    opts(cat.species, p.species_whitelist, function(it) { return it.name; }) + '</select></div>';
+  html += '<div><div style="font-size:0.75em;">限詞條 (全包含, 空=不限)</div><select id="pfEntries" multiple size="6" style="min-width:160px;">' +
+    opts(cat.entries, p.entry_whitelist, function(it) { return it.name + (it.quality ? (' [' + (EQ[it.quality] || it.quality) + ']') : ''); }) + '</select></div>';
+  html += '</div>';
+  html += '<div class="ab-row" style="margin-top:6px;">';
+  html += '<select id="pfMode" style="font-size:0.82em;"><option value="quality_count"' + (p.mode === 'quality_count' ? ' selected' : '') + '>至少 N 個指定品質詞條</option><option value="total_count"' + (p.mode === 'total_count' ? ' selected' : '') + '>至少 N 個詞條(不限品質)</option></select>';
+  html += '<select id="pfQual" style="font-size:0.82em;">' + [3,5,6,7,2,1].map(function(q) { return '<option value="' + q + '"' + (p.quality === q ? ' selected' : '') + '>' + (EQ[q] || q) + '</option>'; }).join('') + '</select>';
+  html += '<label style="font-size:0.78em;">至少</label><input id="pfMinC" type="number" value="' + (p.min_count || 2) + '" min="1" max="5" style="width:45px;font-size:0.82em;"><label style="font-size:0.78em;">個</label>';
+  html += '<label style="margin-left:8px;font-size:0.78em;cursor:pointer;"><input id="pfLowGen" type="checkbox"' + (p.prefer_low_gen !== false ? ' checked' : '') + '> 優先低代數</label>';
+  html += '</div>';
+  html += '<div style="margin-top:6px;"><button class="btn btn-primary btn-sm" onclick="presetSave(\'' + p.id + '\',' + (isNew ? 'true' : 'false') + ')">儲存</button> <button class="btn btn-ghost btn-sm" onclick="presetCancel()">取消</button></div>';
+  html += '</div>';
+  ed.innerHTML = html;
+  ed.style.display = '';
+}
+function presetSave(id, isNew) {
+  var rec = {
+    id: id,
+    name: (document.getElementById('pfName').value || '未命名').trim(),
+    species_whitelist: _multiVals('pfSpecies'),
+    entry_whitelist: _multiVals('pfEntries'),
+    mode: document.getElementById('pfMode').value,
+    quality: parseInt(document.getElementById('pfQual').value) || 3,
+    min_count: parseInt(document.getElementById('pfMinC').value) || 2,
+    min_total_entries: parseInt(document.getElementById('pfMinC').value) || 3,
+    prefer_low_gen: document.getElementById('pfLowGen').checked
+  };
+  var existing = getPreset(id);
+  if (existing) { Object.keys(rec).forEach(function(k) { existing[k] = rec[k]; }); }
+  else { abPresets.push(rec); }
+  savePresets();
+  presetCancel();
+  renderPresetList();
+  renderAbSlots(abHomes);
+}
 
 function abLog(homeId, msg) {
   if (!abLogs[homeId]) abLogs[homeId] = [];
@@ -1173,15 +1484,14 @@ function renderAbSlots(homes) {
   var container = document.getElementById('abSlots');
   if (!container) return;
   loadAbConfig();
+  loadPresets();
+  migrateLegacyAbConfig();
+  renderPresetList();
   var html = '';
   homes.forEach(function(h) {
     var cfg = abConfig[h.id] || {};
     var enabled = cfg.enabled || false;
-    var mode = cfg.mode || 'quality_count';
-    var qual = cfg.quality || 3;
-    var minC = cfg.min_count || 2;
-    var minT = cfg.min_total_entries || 3;
-    var lowGen = cfg.prefer_low_gen !== false;
+    var presetId = cfg.preset_id || '';
 
     html += '<div class="ab-slot' + (enabled && abRunning ? ' active' : '') + '" id="abSlot_' + h.id + '">';
     html += '<div class="ab-row">';
@@ -1192,24 +1502,13 @@ function renderAbSlots(homes) {
     html += '</div>';
 
     html += '<div class="ab-row">';
-    html += '<select id="abMode_' + h.id + '" onchange="abCfgChange(' + h.id + ')" style="font-size:0.82em;">';
-    html += '<option value="quality_count"' + (mode==='quality_count'?' selected':'') + '>至少 N 個指定品質詞條</option>';
-    html += '<option value="total_count"' + (mode==='total_count'?' selected':'') + '>至少 N 個詞條(不限品質)</option>';
-    html += '</select>';
-
-    html += '<select id="abQual_' + h.id + '" onchange="abCfgChange(' + h.id + ')" style="font-size:0.82em;">';
-    [3,5,6,7,2,1].forEach(function(q) {
-      html += '<option value="' + q + '"' + (qual===q?' selected':'') + '>' + (EQ[q]||q) + '</option>';
+    html += '<label style="font-size:0.78em;color:var(--text2);">方案</label>';
+    html += '<select id="abPreset_' + h.id + '" onchange="abSlotPresetChange(' + h.id + ')" style="font-size:0.82em;min-width:140px;">';
+    html += '<option value="">-- 未選方案 --</option>';
+    abPresets.forEach(function(p) {
+      html += '<option value="' + p.id + '"' + (presetId === p.id ? ' selected' : '') + '>' + esc(p.name) + '</option>';
     });
     html += '</select>';
-
-    html += '<label style="font-size:0.78em;color:var(--text2);">至少</label>';
-    html += '<input type="number" id="abMinC_' + h.id + '" value="' + minC + '" min="1" max="5" style="width:45px;font-size:0.82em;" onchange="abCfgChange(' + h.id + ')">';
-    html += '<label style="font-size:0.78em;color:var(--text2);">個</label>';
-
-    html += '<label style="display:flex;align-items:center;gap:3px;font-size:0.78em;color:var(--text2);cursor:pointer;margin-left:8px;">';
-    html += '<input type="checkbox" id="abLowGen_' + h.id + '" onchange="abCfgChange(' + h.id + ')"' + (lowGen ? ' checked' : '') + '> 優先低代數';
-    html += '</label>';
     html += '</div>';
 
     html += '<div class="ab-log" id="abLog_' + h.id + '"></div>';
@@ -1226,18 +1525,11 @@ function abToggle(homeId, enabled) {
   saveAbConfig();
 }
 
-function abCfgChange(homeId) {
+function abSlotPresetChange(homeId) {
   if (!abConfig[homeId]) abConfig[homeId] = {};
-  var c = abConfig[homeId];
-  c.mode = document.getElementById('abMode_' + homeId).value;
-  c.quality = parseInt(document.getElementById('abQual_' + homeId).value) || 3;
-  c.min_count = parseInt(document.getElementById('abMinC_' + homeId).value) || 2;
-  c.min_total_entries = parseInt(document.getElementById('abMinC_' + homeId).value) || 3;
-  c.prefer_low_gen = document.getElementById('abLowGen_' + homeId).checked;
-  c.enabled = true;
+  abConfig[homeId].preset_id = document.getElementById('abPreset_' + homeId).value || '';
+  // 選方案不改變 enabled 狀態；只有 abToggle() 能翻 enabled。
   saveAbConfig();
-  var ck = document.querySelector('#abSlot_' + homeId + ' input[type=checkbox]');
-  if (ck) ck.checked = true;
 }
 
 function abSetStatus(homeId, cls, text) {
@@ -1250,6 +1542,7 @@ function abSetStatus(homeId, cls, text) {
 function startAutoBreed() {
   if (abRunning) return;
   loadAbConfig();
+  loadPresets();
   var anyEnabled = Object.values(abConfig).some(function(c) { return c.enabled; });
   if (!anyEnabled) { toast('請先勾選至少一個巢穴', 'info'); return; }
   abRunning = true;
@@ -1285,6 +1578,7 @@ async function autoBreedTick() {
   if (abTicking) return;
   abTicking = true;
   loadAbConfig();
+  loadPresets();
 
   try {
     try {
@@ -1296,13 +1590,12 @@ async function autoBreedTick() {
       }
     } catch(e) {}
 
+    // 後端 refresh 會阻塞到 EggListBack 確認資料就緒,不需固定延遲
     try {
       await fetch('/api/fly_pet_refresh_breed/' + encodeURIComponent(ip()), {
         method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
       });
     } catch(e) {}
-
-    await new Promise(function(r) { setTimeout(r, 600); });
 
     var breedData;
     try {
@@ -1315,7 +1608,8 @@ async function autoBreedTick() {
     }
 
     var homes = breedData.homes || [];
-    var eggs = breedData.egg_list || [];
+    // 每輪用丟棄式副本: processAbSlot 會 .shift() 取蛋,不可汙染 breedData.egg_list
+    var eggs = (breedData.egg_list || []).slice();
     var excludeIds = [];
 
     for (var i = 0; i < homes.length; i++) {
@@ -1389,14 +1683,12 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
   }
 
   if (home.state === 0) {
+    var criteria = presetCriteria(cfg.preset_id);
+    if (!criteria) {
+      abSetStatus(hid, 'idle', '未選方案');
+      return;
+    }
     abSetStatus(hid, 'idle', '搜尋配對...');
-    var criteria = {
-      mode: cfg.mode || 'quality_count',
-      quality: cfg.quality || 3,
-      min_count: cfg.min_count || 2,
-      min_total_entries: cfg.min_total_entries || 3,
-      prefer_low_gen: cfg.prefer_low_gen !== false
-    };
 
     var pd = await apiPost('/api/fly_pet_find_pair/' + encodeURIComponent(ip()), {
       criteria: criteria,
@@ -1431,7 +1723,7 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
 document.addEventListener('DOMContentLoaded', function() {
   syncPresetUI();
   updateFVals();
-  doLoad();
+  initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)
 });
 </script>
 </body>
