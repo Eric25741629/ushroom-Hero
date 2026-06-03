@@ -56,7 +56,10 @@ _pause_events: Dict[str, threading.Event] = {}
 # 全域鎖，用於操作 _states 字典本身 (例如新增/刪除 key)
 _global_lock = threading.Lock()
 
-# refresh flag for prompting immediate ADB rescan
+# Local in-process refresh trigger: the scan loop calls check_refresh_needed()
+# to consume it. This is the LOCAL layer. The separate master->worker WIRE
+# signal lives in control_panel_app._global_commands["refresh_needed"] — do not
+# conflate the two; they are different layers (in-process vs cross-machine).
 _refresh_needed = False
 
 # Rolling window of screenshot durations (ms) per device — last 50 samples
@@ -245,10 +248,8 @@ def set_pause(ip: str, paused: bool):
         logger.warning(f"[BotState] 無法設定暫停，找不到設備 {ip}")
         return
 
-    with get_device_lock(ip):
-        if ip in _states:
-            _states[ip]["paused"] = paused
-
+    # paused is now derived from the pause Event in get_all_states() (single
+    # source of truth for local devices) — no stored bool write here.
     if paused:
         _pause_events[ip].clear() # 設為 False，觸發 wait
         logger.info(f"[BotState] 已發送暫停信號給 {ip}")
@@ -303,6 +304,15 @@ def get_all_states() -> Dict[str, Dict[str, Any]]:
                 state["avg_screenshot_ms"] = sum(window) / len(window)
             else:
                 state["avg_screenshot_ms"] = None
+            # paused is derived from the pause Event (single source of truth) for
+            # LOCAL devices. Remote/worker devices (worker_id:ip) keep the value
+            # reported via update_state(paused=...) — their local Event is only a
+            # placeholder. Inline the _local_device_ids membership test: we already
+            # hold _global_lock and is_local_device() would re-acquire it (plain Lock).
+            if ip in _local_device_ids:
+                ev = _pause_events.get(ip)
+                if ev is not None:
+                    state["paused"] = not ev.is_set()
         return snapshot
 
 
@@ -341,6 +351,18 @@ def get_heartbeat_age_sec(ip: str, now_ts: Optional[float] = None) -> float:
     return max(0.0, now - last)
 
 
+def _set_refresh_needed_locked() -> None:
+    """Set the local refresh flag. Caller MUST already hold _global_lock.
+
+    Single source of the write. request_web_launch / submit_online_check_request
+    are already inside the _global_lock critical section, so they call THIS (not
+    the public set_refresh_needed) — _global_lock is a plain Lock, not an RLock,
+    so re-acquiring it from within would self-deadlock.
+    """
+    global _refresh_needed
+    _refresh_needed = True
+
+
 def set_refresh_needed():
     """Set a global one-shot flag indicating workers should refresh device list.
 
@@ -348,9 +370,8 @@ def set_refresh_needed():
     the main loop to perform an immediate scan. The flag is cleared when a
     worker calls `check_refresh_needed()`.
     """
-    global _refresh_needed
     with _global_lock:
-        _refresh_needed = True
+        _set_refresh_needed_locked()
 
 
 def clear_refresh_needed():
@@ -404,7 +425,6 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
             req["last_message"] = reason
         if ip in _states:
             st = _states[ip]
-            st["paused"] = False
             st["task"] = "強制休眠"
             st["step"] = reason
             st.pop("next_wake_at", None)
@@ -474,8 +494,7 @@ def request_web_launch(ip: str, payload: Optional[Dict[str, Any]] = None) -> Non
             "last_error": "",
             "payload": req_payload,
         }
-        global _refresh_needed
-        _refresh_needed = True
+        _set_refresh_needed_locked()  # already holding _global_lock
 
 
 def consume_web_launch_request(ip: str) -> Optional[Dict[str, Any]]:
@@ -562,8 +581,7 @@ def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
         _signals.setdefault(checker_ip, set()).add(Signal.SKIP_SLEEP)
         # Also request an immediate device rescan so a cold-start-delayed checker
         # thread can be started right away instead of waiting for the next 30s loop.
-        global _refresh_needed
-        _refresh_needed = True
+        _set_refresh_needed_locked()  # already holding _global_lock
     return req_id
 
 
