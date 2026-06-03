@@ -9,6 +9,19 @@
 
 ---
 
+## 進度（更新 2026-06-04）
+
+- ✅ **Phase 0**（安全網特徵化測試）— commit `a603ab41`
+- ✅ **Phase 1**（清理漏 channel 修復 + accessor 封死直寫 + 裸全域加鎖）— commit `a603ab41`
+- ✅ **Phase 3**（4 個 one-shot flag 收斂成 `DeviceSignals`）— commit `a603ab41`
+- ✅ **Phase 2**（`paused` 衍生值 local-only + `refresh_needed` 單一設旗入口 `_set_refresh_needed_locked` + 兩層顯性化）— 工作區，未 commit（`tests/test_bot_state_phase2.py` 7 測試）
+- ⬜ **Phase 4**（抽 web_launch / online_check mailbox）— 可選，未做；~25 call site／7 模組，建議獨立一輪、勿併入 perf 分支
+- ⬜ **Phase 5**（包成 `DeviceStateStore` 類）— 暫不做（見 §6 YAGNI 護欄）
+
+> 在中央 backlog 的對照追蹤見 [REFACTORING_OPPORTUNITIES.md](REFACTORING_OPPORTUNITIES.md) 的「已完成進度」段。
+
+---
+
 ## 0. TL;DR
 
 `bot_state.py` 的並發 primitive 寫得用心(兩層鎖、deepcopy 快照、atomic check-and-consume、
