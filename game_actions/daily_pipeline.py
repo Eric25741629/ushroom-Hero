@@ -33,6 +33,7 @@ from Sea import sea
 from Skill import get_skill_and_partner
 
 from game_actions.carpark_scheduler import run_carpark_check_if_due
+from game_actions.dragon_realm_scheduler import run_dragon_realm_if_due
 from game_actions.daily_tasks import click_arena_challenges, daily_acceleration
 from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_dungeon
 from game_actions.lamp_scheduler import _run_lamp_if_due
@@ -77,7 +78,13 @@ def _sea_dispatch(ip, d, **kwargs):
 
 
 class _ConsecutiveMismatchAbort(Exception):
-    """連續 N 個任務不在主頁面時中止本輪 pipeline，讓上層 loop 重新喚醒。"""
+    """連續 N 個任務不在主頁面時中止本輪 pipeline。
+
+    由 ``_run_tasks`` 內部丟出、並在 ``run`` 邊界被攔下：app 已被強制關閉，
+    ``run`` 直接返回，讓上層 wake loop 走正常休眠週期、於下次對齊喚醒以全新
+    啟動重試（而非讓未攔截的例外冒泡到 new_main_v2 外層 handler 被當成
+    「未預期錯誤」，把整條 device thread 拆掉）。
+    """
 
 
 @dataclass
@@ -97,6 +104,26 @@ class DailyContext:
 
 
 def run(ctx: DailyContext) -> None:
+    """Execute the per-wake task sequence; recover from consecutive-mismatch abort.
+
+    Thin wrapper around :func:`_run_tasks`. When too many consecutive tasks land
+    off the main page, ``_run_tasks`` force-stops the game app and raises
+    ``_ConsecutiveMismatchAbort``. We swallow it here and return normally so the
+    caller's wake loop sleeps and re-wakes at the next aligned window — instead of
+    the abort escaping to new_main_v2's outer ``except Exception`` (which logged it
+    as 「未預期錯誤」 and tore the device thread down → set_offline + scanner
+    respawn → immediate re-run with no sleep).
+    """
+    try:
+        _run_tasks(ctx)
+    except _ConsecutiveMismatchAbort as exc:
+        logger.info(
+            f"[{ctx.ip}] 本輪 pipeline 已中止並關閉 app（{exc}）；"
+            "等待下次對齊喚醒重新啟動"
+        )
+
+
+def _run_tasks(ctx: DailyContext) -> None:
     """Execute the full per-wake task sequence (20 tasks) for one device."""
     d = ctx.d
     ip = ctx.ip
@@ -118,8 +145,9 @@ def run(ctx: DailyContext) -> None:
         else:
             _streak[0] += 1
             if _streak[0] >= 4:
+                count = _streak[0]
                 logger.error(
-                    f"[{ip}] 連續 {_streak[0]} 個任務不在主頁面，"
+                    f"[{ip}] 連續 {count} 個任務不在主頁面，"
                     "中止本輪 pipeline，強制關閉 app"
                 )
                 _streak[0] = 0
@@ -127,7 +155,7 @@ def run(ctx: DailyContext) -> None:
                     d.app_stop("com.mxdzz.tw.and")
                 except Exception:
                     pass
-                raise _ConsecutiveMismatchAbort()
+                raise _ConsecutiveMismatchAbort(f"連續 {count} 個任務不在主頁面")
         return stage
 
     def _guarded_run(task_name, mismatch_reason, fn, *, step="執行中", log=None) -> str:
@@ -319,6 +347,12 @@ def run(ctx: DailyContext) -> None:
         ),
         step="週期檢查/執行",
     )
+
+    # Task 14.5: 龍骸聖域（flag 預設 off；H5 only，adb 會自行 abort）
+    try:
+        run_dragon_realm_if_due(ip, d)
+    except Exception:
+        logger.exception("[%s] 龍骸聖域 任務異常", ip)
 
     # Task 15: 萬神試煉
     stage = get_stage_with_check(d, ip, Cnn_model)
