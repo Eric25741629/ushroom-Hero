@@ -356,14 +356,17 @@ def analyze_skill_via_http(img_roi, OCR_SERVER_URL=None, max_servers=None):
     )
 
 
-def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
-    """Return a list of detected text strings (converted to traditional Chinese).
+def get_all_text_with_results(img, OCR_SERVER_URL=None, max_servers=None):
+    """One OCR call returning ``(texts, raw_response)``.
 
-    Args:
-        img: OpenCV image (ndarray) or file path.
-        OCR_SERVER_URL: optional explicit server URL to prefer.
-    Returns:
-        list of strings (texts). Empty list on failure.
+    texts: opencc s2t-converted list, identical to :func:`get_all_text`.
+    raw_response: the full server json (with bbox), or ``None`` on failure/empty.
+
+    Lets callers that need BOTH the converted text AND the bbox data avoid a
+    second OCR round-trip on the same frame. Error semantics mirror
+    :func:`get_all_text`: OCR-pipeline failures (``OCRError``) propagate so
+    callers can distinguish 「OCR 壞了」 from 「OCR 正常但畫面沒文字」; any other
+    unexpected error degrades to ``([], None)``.
     """
     try:
         if isinstance(img, str) and os.path.exists(img):
@@ -371,7 +374,7 @@ def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
         else:
             img_cv = img
         if img_cv is None:
-            return []
+            return [], None
 
         try:
             res = analyze_skill_via_http(img_cv, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
@@ -382,17 +385,30 @@ def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
             raise
         if not res or res.get('success') is False:
             # 成功但無結果（理論上不會走到，因為失敗已 raise）
-            logger.warning("get_all_text: response indicates no success but no exception raised")
-            return []
+            logger.warning("get_all_text_with_results: response indicates no success but no exception raised")
+            return [], None
         ocr_results = res.get('ocr_results', [])
         converter = opencc.OpenCC('s2t')
         texts = [converter.convert(item.get('text', '')) for item in ocr_results]
-        return texts
+        return texts, res
     except OCRError:
         raise
     except Exception as e:
-        logger.exception(f"get_all_text error: {e}")
-        return []
+        logger.exception(f"get_all_text_with_results error: {e}")
+        return [], None
+
+
+def get_all_text(img, OCR_SERVER_URL=None, max_servers=None):
+    """Return a list of detected text strings (converted to traditional Chinese).
+
+    Args:
+        img: OpenCV image (ndarray) or file path.
+        OCR_SERVER_URL: optional explicit server URL to prefer.
+    Returns:
+        list of strings (texts). Empty list on failure.
+    """
+    texts, _ = get_all_text_with_results(img, OCR_SERVER_URL=OCR_SERVER_URL, max_servers=max_servers)
+    return texts
 
 
 def analyze_stage_via_server(img, OCR_SERVER_URL=None):

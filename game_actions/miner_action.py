@@ -26,12 +26,11 @@ def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, 
     d.click(321, 919)
     retry = 0
     while (retry < 5):
-        img = d.screenshot(format='opencv')
-        # 顏色檢測 - 家園
-        # color check - homeland
+        # color check - homeland: one screenshot + one CNN forward per iteration
         if Cnn_model is not None:
-            print(cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')))
-            if cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow')) == "homeplace":
+            prediction = cnn_model.predict_image(Cnn_model, d.screenshot(format='pillow'))
+            logger.info(f"[{ip}] oracle 主頁偵測: {prediction}")
+            if prediction == "homeplace":
                 break
         else:
             # 如果沒有提供模型，使用點擊等待

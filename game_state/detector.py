@@ -8,9 +8,52 @@ def new_stage_check(img):
         return True
     return False
 
-def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
+def _announcement_is_actionable(ocr_full) -> bool:
+    """True iff some OCR result whose (raw) text contains 「公告」 has an x-coord > 155.
+
+    Operates on the raw server json (``analyze_skill_via_http`` shape) so the
+    text comparison matches the un-converted server text exactly as the legacy
+    inline check did. Tolerates the common bbox formats:
+    ``[[x0,y0], ...]`` (polygon), ``[x, y, w, h]``, or a scalar x.
+    """
+    if not ocr_full or not ocr_full.get('success') or not ocr_full.get('ocr_results'):
+        return False
+    for item in ocr_full.get('ocr_results', []):
+        text = item.get('text', '')
+        if '公告' not in text:
+            continue
+        bbox = item.get('bbox')
+        x_coord = None
+        # 常見格式：[[x0,y0], [x1,y1], ...] 或 [x, y, w, h] 或 直接 x
+        if isinstance(bbox, (list, tuple)) and len(bbox) > 0:
+            first = bbox[0]
+            if isinstance(first, (list, tuple)) and len(first) > 0:
+                x_coord = int(first[0])
+            elif isinstance(first, (int, float)):
+                x_coord = int(first)
+        elif isinstance(bbox, (int, float)):
+            x_coord = int(bbox)
+
+        if x_coord is None:
+            logger.debug(f"無法解析公告座標格式: {bbox}")
+            continue
+
+        if x_coord > 155:
+            logger.info(f"偵測到公告（X={x_coord} > 155），視為可關閉公告")
+            return True
+        else:
+            logger.debug(f"公告座標 X={x_coord} ≤ 155，視為不可操作公告，忽略")
+    return False
+
+
+def stage_by_str(d, ocr_str: list, img: np.ndarray, ocr_full=None) -> str:
     """
     Determines the current game stage based on OCR text.
+
+    ocr_full: optional pre-fetched raw OCR response (analyze_skill_via_http
+    shape). When provided, the 公告 bbox branch reuses it instead of issuing a
+    second OCR call. Standalone callers that omit it keep the legacy behavior of
+    fetching bbox data on demand.
     """
     full_text = "".join(ocr_str)
 
@@ -61,34 +104,10 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
     if "公告" in full_text:
         has_valid_announcement = False
         try:
-            ocr_full = img_tools.analyze_skill_via_http(img)
-            if ocr_full.get('success') and ocr_full.get('ocr_results'):
-                for item in ocr_full.get('ocr_results', []):
-                    text = item.get('text', '')
-                    if '公告' not in text:
-                        continue
-                    bbox = item.get('bbox')
-                    x_coord = None
-                    # 常見格式：[[x0,y0], [x1,y1], ...] 或 [x, y, w, h] 或 直接 x
-                    if isinstance(bbox, (list, tuple)) and len(bbox) > 0:
-                        first = bbox[0]
-                        if isinstance(first, (list, tuple)) and len(first) > 0:
-                            x_coord = int(first[0])
-                        elif isinstance(first, (int, float)):
-                            x_coord = int(first)
-                    elif isinstance(bbox, (int, float)):
-                        x_coord = int(bbox)
-
-                    if x_coord is None:
-                        logger.debug(f"無法解析公告座標格式: {bbox}")
-                        continue
-
-                    if x_coord > 155:
-                        has_valid_announcement = True
-                        logger.info(f"偵測到公告（X={x_coord} > 155），視為可關閉公告")
-                        break
-                    else:
-                        logger.debug(f"公告座標 X={x_coord} ≤ 155，視為不可操作公告，忽略")
+            # 重用呼叫端傳入的 OCR 結果；僅在未提供時才再打一次 OCR（保留獨立呼叫端行為）。
+            if ocr_full is None:
+                ocr_full = img_tools.analyze_skill_via_http(img)
+            has_valid_announcement = _announcement_is_actionable(ocr_full)
         except Exception as e:
             logger.debug(f"遠端公告 bbox 判定失敗: {e}")
 
@@ -112,27 +131,35 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray) -> str:
 import img_tools
 
 def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = None):
-    """截圖並透過 OCR 文字判斷目前所在的頁面。"""
+    """截圖並透過 OCR 文字判斷目前所在的頁面。
+
+    單次 OCR：整幀只打一次 OCR endpoint，texts 與 bbox 同源重用，取代過去同一幀
+    重複 3-4 次的 ROI / 全幀 OCR 呼叫。優先序與舊版一致：
+    公告(可操作) > 車位倉庫 > 異地登錄 > 主頁面 > ... > 未知。
+    """
     if img is None:
         img = d.screenshot(format='opencv')
 
-    roi_announcement = img[170:220, 210:350]
-    if any("公告" in t for t in img_tools.get_all_text(roi_announcement)):
-        logger.info("偵測到公告彈窗 (ROI 判定)")
-        return "公告"
-
-    roi_parking = img[250:300, 200:350]
-    if any("車位倉庫" in t for t in img_tools.get_all_text(roi_parking)):
-        logger.info("偵測到車位倉庫 (ROI 判定)")
-        return "車位倉庫"
-
     try:
-        local_texts = img_tools.get_all_text(img)
+        local_texts, ocr_full = img_tools.get_all_text_with_results(img)
     except Exception as e:
         logger.warning(f"OCR 發生例外: {e}")
-        local_texts = []
+        local_texts, ocr_full = [], None
 
-    stage_withocr = stage_by_str(d, local_texts, img)
+    full_text = "".join(local_texts)
+
+    # 公告 優先（取代原 roi_announcement 的獨立 OCR）：同一幀、bbox x>155 守門
+    if "公告" in full_text and _announcement_is_actionable(ocr_full):
+        logger.info("偵測到公告彈窗")
+        return "公告"
+
+    # 車位倉庫 優先（取代原 roi_parking 的獨立 OCR）：此頁疊在主頁元素上，
+    # 故在 full_text 上即早判定以維持其對主頁面的優先序。
+    if "車位倉庫" in full_text:
+        logger.info("偵測到車位倉庫")
+        return "車位倉庫"
+
+    stage_withocr = stage_by_str(d, local_texts, img, ocr_full=ocr_full)
     if stage_withocr == "異地登錄":
         logger.error("異地登錄，請檢查帳號密碼安全性")
         return "異地登錄"
