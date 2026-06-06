@@ -18,15 +18,26 @@ def _style_block_for(selector: str, text: str) -> str:
     return text[start : text.index("}", start) + 1]
 
 
-def test_fly_pet_table_has_entry_quality_sorting():
+def test_fly_pet_entry_quality_sort_logic_retained():
+    """詞條品質欄已移除,但 entry_quality 排序邏輯(預設排序)仍保留。"""
     html = _template_text()
 
-    assert "doSort('entry_quality')" in html
-    assert 'id="sort-entry_quality"' in html
     assert "function bestPositiveRank" in html
     assert "key === 'entry_quality'" in html
     assert "doSort('entry_level')" not in html
     assert "function bestEntryLevel" not in html
+
+
+def test_entry_quality_column_removed():
+    """「詞條品質」表格欄(表頭、cell、badge)已移除。"""
+    html = _template_text()
+
+    assert "doSort('entry_quality')" not in html
+    assert 'id="sort-entry_quality"' not in html
+    assert "entry-quality-cell" not in html
+    assert "function entryQualityHTML" not in html
+    assert "entry-quality-pill" not in html
+    assert "eq-tag" not in html
 
 
 def test_entry_quality_rank_excludes_mutant_work_and_negative():
@@ -83,26 +94,6 @@ def test_entries_sorted_by_quality_within_row():
     assert "function sortedEntries" in html
     # renderTable must use the sorted view, not the raw entries array
     assert "sortedEntries(p)" in html
-
-
-def test_entry_quality_headline_excludes_negative_and_shows_dash_when_none():
-    """詞條品質頭條只顯示正向品質;沒有正向品質時顯示 --,絕不顯示負面當頭條。"""
-    html = _template_text()
-
-    assert "function bestPositiveQuality" in html
-    assert "entry-quality-none" in html
-    assert ".entry-quality-none" in html  # css rule exists
-
-
-def test_mutant_and_work_render_as_independent_tags():
-    """變異(6)/工作(7) 以獨立標記呈現於詞條品質欄。"""
-    html = _template_text()
-
-    assert "TAG_QUALITIES" in html
-    assert "function petTags" in html
-    assert "eq-tag eq-tag-" in html  # rendered markup
-    assert ".eq-tag-6" in html        # css for 變異
-    assert ".eq-tag-7" in html        # css for 工作
 
 
 def test_breed_refresh_and_hatch_use_egg_protocols():
