@@ -28,6 +28,7 @@ _config_cache_path = None      # CONFIG_FILE the cache was built for (path can c
 # 預設的設備設定模板
 DEFAULT_DEVICE_CONFIG = {
     "name": "",  # 自定義別名 (例如: 主力機)
+    "enabled": True,  # 自動掛機總開關 (新裝置註冊時設 False, 登入+設定完成後手動啟用)
     "backend": "adb",  # adb / web_h5
     "backend_display_id": "",  # display/config binding id (empty => use device key)
     "web_url": "",
@@ -74,6 +75,10 @@ class DeviceConfig:
     # Identity
     name: str = ""
     device_id: str = ""
+
+    # Lifecycle — auto-start master switch (False until the user enables it;
+    # missing key in legacy config reads as True via from_dict default).
+    enabled: bool = True
 
     # Backend
     backend: str = "adb"
@@ -692,6 +697,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["sleep_min_hours"] = _sleep_min
         current["sleep_max_hours"] = max(_sleep_min, _sleep_max)
         for k in [
+            "enabled",
             "enable_farm",
             "enable_arena",
             "enable_mining",
@@ -720,3 +726,12 @@ def get_flag(ip: str, key: str, default=False) -> bool:
     """
     cfg = get_device_config(ip)
     return cfg.get(key, default)
+
+
+def is_device_enabled(ip: str) -> bool:
+    """裝置是否允許被掃描自動啟動掛機 thread。
+
+    缺 `enabled` 鍵的舊設定一律視為已啟用 (向後相容)；只有明確 `enabled: false`
+    (新裝置註冊後的預設) 才會回 False，讓掃描器在使用者手動啟用前先別開這台。
+    """
+    return bool(_get_raw_device_config(ip).get("enabled", True))

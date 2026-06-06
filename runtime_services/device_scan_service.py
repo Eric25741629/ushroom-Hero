@@ -16,6 +16,9 @@ _dynamic_optional_devices = set()
 _monitored_devices = list(dict.fromkeys(_FIXED_EMULATORS + _FIXED_PHONES))
 _missing_devices = set()
 
+# 裝置連續斷線超過此秒數後，自動停止嘗試重啟 thread（直到下次掃描偵測到設備恢復）
+_DEAD_DEVICE_TIMEOUT_SEC = 3 * 3600
+
 
 def refresh_adb_server(running_threads: dict, logger_obj, hard_reset: bool = False, exclude_device: Optional[str] = None):
     """刷新 ADB devices；hard_reset=True 時會先暫停其他裝置，再 kill-server，最後恢復。"""
@@ -60,8 +63,13 @@ def get_web_backend_devices(logger_obj) -> list[str]:
         devices = cfg.get("devices", {}) if isinstance(cfg, dict) else {}
         result = []
         for serial, dcfg in devices.items():
-            if str((dcfg or {}).get("backend", "adb")).strip().lower() == "web_h5":
-                result.append(serial)
+            if str((dcfg or {}).get("backend", "adb")).strip().lower() != "web_h5":
+                continue
+            # 停用的裝置 (新註冊後預設 enabled=false) 先別納入監控/啟動。
+            # 缺鍵的舊設定視為已啟用。
+            if not bool((dcfg or {}).get("enabled", True)):
+                continue
+            result.append(serial)
         return sorted(set(result))
     except Exception as e:
         logger_obj.warning(f"[System] Failed to load web_h5 devices from config: {e}")
@@ -197,6 +205,24 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
                 should_start = True
 
             if should_start:
+                # 手動開關:停用的裝置 (新裝置設定未完成 / 使用者關閉) 不自動啟動。
+                # 缺鍵的舊設定一律視為已啟用。covers all backends at the real
+                # start-decision point (web devices are also pre-filtered out of
+                # current_devices by get_web_backend_devices).
+                if not config_manager.is_device_enabled(ip):
+                    continue
+
+                offline_since = bot_state.get_offline_since(ip)
+                if offline_since is not None:
+                    dead_sec = time.time() - offline_since
+                    if dead_sec >= _DEAD_DEVICE_TIMEOUT_SEC:
+                        logger_obj.warning(
+                            f"[Watchdog] [{ip}] 已持續斷線 {dead_sec/3600:.1f} 小時"
+                            f"（超過 {_DEAD_DEVICE_TIMEOUT_SEC//3600} 小時門檻），"
+                            f"跳過重啟。裝置恢復連線後將自動重新啟動。"
+                        )
+                        continue
+
                 print(f"[System] 發現新設備或重連設備: {ip}，正在啟動掛機執行緒...")
                 t = threading.Thread(
                     target=main_fn,

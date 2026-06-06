@@ -130,6 +130,10 @@
 
       width: 100%;
 
+      box-sizing: border-box;
+
+      text-decoration: none;
+
     }
 
     .nav-btn.active {
@@ -419,6 +423,8 @@
     .card.PAUSED { border-top-color: var(--warn-color); }
 
     .card.OFFLINE { opacity: 0.6; filter: grayscale(0.8); }
+    /* 開啟/關閉網頁 toggle: 點擊後鎖 3 秒時的外觀 */
+    .btn-locked, .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
 
 
 
@@ -836,7 +842,7 @@
     <!-- [暫時隱藏] <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button> -->
     <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📢 <span class="nav-label">更新公告</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
-    <a href="/fly-pet" class="nav-btn" style="text-decoration:none; color:inherit; display:flex; align-items:center;">&#x1F985; <span class="nav-label">飛寵管理</span></a>
+    <a href="/fly-pet" class="nav-btn">&#x1F985; <span class="nav-label">飛寵管理</span></a>
 
   </div>
 
@@ -1083,6 +1089,13 @@
         <label>裝置名稱</label>
 
         <input type="text" id="editName" class="form-control" placeholder="例如：主力號">
+
+      </div>
+
+
+      <div class="form-group">
+
+        <label class="checkbox-item"><input type="checkbox" id="chkEnabled">啟用此裝置（自動掛機總開關；新裝置預設停用，登入+設定完成後再勾選）</label>
 
       </div>
 
@@ -2225,11 +2238,17 @@
 
         const isPaused = !!info.paused;
 
+        const isDisabled = info.enabled === false;
+
         let statusClass = info.status || 'OFFLINE';
 
         if (isPaused && statusClass === 'ONLINE') statusClass = 'PAUSED';
 
-        const statusText = isPaused ? '已暫停 (PAUSED)' : statusClass;
+        if (isDisabled) statusClass = 'DISABLED';
+
+        const statusText = isDisabled
+          ? '🚫 已停用 (未啟用掛機)'
+          : (isPaused ? '已暫停 (PAUSED)' : statusClass);
 
         const logs = (info.logs || []).slice().reverse().slice(0, 3);
 
@@ -2322,15 +2341,17 @@
 
         let stepText = info.step || '--';
 
-        const m = stepText.match(/\((\d+)s\)/);
+        // 倒數從後端給的絕對截止時間戳 step_deadline 算起 (fixed epoch)，用本機時鐘倒數。
+        // 不要拿 last_update 當錨點：它會被背景心跳 (watchdog probe 等) 刷新成 now，
+        // 害倒數卡住；整數秒處理也避免整數-浮點時間戳相減印出 2399.8699s 那種小數。
 
-        if (m && info.last_update) {
+        if (info.step_deadline) {
 
-          const total = parseInt(m[1], 10);
+          const remain = Math.max(0, Math.round(info.step_deadline - Date.now() / 1000));
 
-          const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - (info.last_update || 0));
+          const mm = Math.floor(remain / 60), ss = remain % 60;
 
-          stepText = `等待中(${Math.max(0, total - elapsed)}s)`;
+          stepText = `${stepText} (剩 ${mm > 0 ? mm + '分' : ''}${ss}秒)`;
 
         }
 
@@ -2402,11 +2423,25 @@
 
         const showLiveView = !!info.live_view_available;
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-force`;
+        const webOpen = _webOpenState[ip] === true;
+
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
           card.dataset.actionKey = actionKey;
+
+          if (isDisabled) {
+
+            // 停用的裝置 (新註冊後尚未啟用) 只提供「啟用掛機」入口，避免在登入/設定
+            // 還沒完成時就被掃描器開起來。
+            actionBar.innerHTML = `
+
+              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用掛機</button>
+
+            `;
+
+          } else {
 
           actionBar.innerHTML = `
 
@@ -2418,7 +2453,11 @@
 
             }
 
-            ${showWebLaunch ? `<button class="btn btn-skip" onclick="launchWebPage('${ip}')">開啟網頁</button>` : ''}
+            ${showWebLaunch
+              ? (webOpen
+                  ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
+                  : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
+              : ''}
 
             ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
 
@@ -2429,6 +2468,8 @@
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
           `;
+
+          }
 
         }
 
@@ -2685,7 +2726,7 @@
             _showRegStatus('❌ 登入失敗: ' + data.last_error);
             document.getElementById('regSubmitBtn').disabled = false;
           } else {
-            _showRegStatus('✅ 登入完成！裝置「' + deviceId + '」已建立，cookies 已儲存。');
+            _showRegStatus('✅ 登入完成！裝置「' + deviceId + '」已建立 (預設停用)。請在卡片上確認設定後按「啟用掛機」才會開始自動掛機。');
             fetchStatus();
           }
         } else if (data.running) {
@@ -2696,9 +2737,94 @@
     // ── 新增帳號流程結束 ──────────────────────────────────
 
 
-    async function launchWebPage(ip) {
+    async function toggleDeviceEnabled(ip, enabled) {
 
       if (!ip) return;
+
+      if (!enabled && !confirm(`確定要停用「${ip}」嗎?\n停用後掃描器不會再自動啟動這台 (已在跑的執行緒會在下次結束後不再被重啟)。`)) return;
+
+      try {
+
+        const resp = await fetch(`/api/config/${ip}`, {
+
+          method: 'POST',
+
+          headers: { 'Content-Type': 'application/json' },
+
+          body: JSON.stringify({ enabled: !!enabled })
+
+        });
+
+        const result = await resp.json().catch(() => ({}));
+
+        if (!resp.ok || result.status === 'error') {
+
+          alert('切換啟用狀態失敗: ' + (result.message || resp.status));
+
+          return;
+
+        }
+
+        fetchStatus();
+
+      } catch (e) {
+
+        alert('切換啟用狀態失敗: ' + e.message);
+
+      }
+
+    }
+
+
+    // ── 開啟/關閉網頁 toggle + 3 秒防連點鎖 ──────────────────────────
+    // 樂觀切換: 按「開啟網頁」立即視為已開 (顯示「關閉網頁」), 按「關閉網頁」反之; 重整後還原。
+    // 後端開/關瀏覽器是非同步的 (裝置 thread 下一輪才真正執行), 3 秒鎖避免使用者連點重複送請求。
+    const _webOpenState = {};      // ip -> true 表示已按開啟 (顯示關閉鈕)
+    const _webBtnLockUntil = {};   // ip -> 鎖定到期時間戳 (ms)
+
+    function webBtnLocked(ip) {
+      return (_webBtnLockUntil[ip] || 0) > Date.now();
+    }
+
+    function lockWebBtn(ip) {
+      _webBtnLockUntil[ip] = Date.now() + 3000;
+      document.querySelectorAll(`[data-webbtn="${ip}"]`).forEach(b => {
+        b.disabled = true; b.classList.add('btn-locked');
+      });
+      setTimeout(() => {
+        if (!webBtnLocked(ip)) {
+          document.querySelectorAll(`[data-webbtn="${ip}"]`).forEach(b => {
+            b.disabled = false; b.classList.remove('btn-locked');
+          });
+        }
+      }, 3000);
+    }
+
+    async function closeWebPage(ip) {
+      if (!ip || webBtnLocked(ip)) return;
+      lockWebBtn(ip);
+      _webOpenState[ip] = false;   // 樂觀: 立即切回「開啟網頁」
+      const statusEl = document.getElementById('webLoginStatusText');
+      try {
+        const resp = await fetch(`/api/web_close/${ip}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok && resp.status !== 409) throw new Error(result.message || 'close failed');
+        if (statusEl) statusEl.innerText = `已送出 [${ip}] 關閉網頁請求`;
+        fetchStatus();
+      } catch (e) {
+        if (statusEl) statusEl.innerText = '關閉網頁失敗: ' + e;
+      }
+    }
+
+    async function launchWebPage(ip) {
+
+      if (!ip || webBtnLocked(ip)) return;
+
+      lockWebBtn(ip);
+
+      _webOpenState[ip] = true;   // 樂觀: 立即顯示「關閉網頁」
 
       const statusEl = document.getElementById('webLoginStatusText');
 
@@ -2732,7 +2858,11 @@
 
       } catch (e) {
 
+        _webOpenState[ip] = false;   // 啟動失敗: 還原成「開啟網頁」
+
         if (statusEl) statusEl.innerText = '啟動網頁失敗: ' + e;
+
+        fetchStatus();
 
       }
 
@@ -2902,6 +3032,8 @@
 
         document.getElementById('editName').value = config.name || ip;
 
+        document.getElementById('chkEnabled').checked = config.enabled !== false;
+
         document.getElementById('chkFarm').checked = config.enable_farm !== false;
 
         document.getElementById('chkArena').checked = config.enable_arena !== false;
@@ -2991,6 +3123,8 @@
       const payload = {
 
         name: document.getElementById('editName').value,
+
+        enabled: document.getElementById('chkEnabled').checked,
 
         enable_farm: document.getElementById('chkFarm').checked,
 

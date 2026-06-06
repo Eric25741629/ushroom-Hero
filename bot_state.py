@@ -168,9 +168,15 @@ def update_state(
     log: Optional[str] = None,
     next_wake_at: Optional[float] = None,
     paused: Optional[bool] = None,
+    step_deadline: Optional[float] = None,
 ):
     """
     更新設備的當前狀態。
+
+    `step_deadline` 是「這個步驟」的倒數截止時間戳 (epoch seconds)。前端從它
+    倒數即可，不必拿會被背景心跳刷新的 `last_update` 當錨點。它的生命週期綁在
+    step 上：設了新的 step 卻沒帶 deadline，就清掉舊的，避免儀表板繼續倒數一個
+    已結束的任務 (例如開神燈跑完後)。
     """
     with get_device_lock(ip):
         # 允許遠端 worker 首次回報時自動建立狀態
@@ -199,7 +205,14 @@ def update_state(
         
         if step is not None:
             state["step"] = step
-            
+            # 倒數錨點綁在 step 上：新 step 沒帶自己的 deadline -> 清掉殘留的，
+            # 否則前端會繼續對著上一個任務 (例如開神燈) 的截止時間倒數。
+            if step_deadline is None:
+                state.pop("step_deadline", None)
+
+        if step_deadline is not None:
+            state["step_deadline"] = float(step_deadline)
+
         if log is not None:
             # 只保留最近 10 筆 logs
             state["logs"].append(f"{time.strftime('%H:%M:%S')} - {log}")

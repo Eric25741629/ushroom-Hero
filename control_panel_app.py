@@ -1342,6 +1342,7 @@ def get_status():
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         cfg = config_manager.get_device_config(real_ip)
         info["name"] = cfg.get("name") or real_ip
+        info["enabled"] = bool(cfg.get("enabled", True))
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
@@ -1352,6 +1353,33 @@ def get_status():
             and cfg.get("web_debug_port")
             and sock is not None
         )
+
+    # 把「已停用且還沒跑起來」的裝置 (剛註冊、尚未啟用) 也補進來，否則它沒有
+    # runtime state → 不會出現在儀表板 → 使用者找不到卡片去按「啟用」。
+    # 缺 enabled 鍵的舊裝置視為已啟用,不在此補 (僅在實際有 thread 時才顯示)。
+    try:
+        all_devices = config_manager.load_config().get("devices", {}) or {}
+    except Exception:
+        all_devices = {}
+    seen_ids = set(states.keys())
+    seen_ids |= {k.split(":")[-1] if ":" in k else k for k in states.keys()}
+    for dev_id, dcfg in all_devices.items():
+        if dev_id in seen_ids:
+            continue
+        if bool((dcfg or {}).get("enabled", True)):
+            continue  # 只補明確停用的
+        states[dev_id] = {
+            "name": (dcfg or {}).get("name") or dev_id,
+            "enabled": False,
+            "backend": (dcfg or {}).get("backend", "adb"),
+            "is_real_phone": bool((dcfg or {}).get("is_real_phone", False)),
+            "status": "DISABLED",
+            "task": "未啟用",
+            "step": "登入並設定完成後,按「啟用掛機」才會開始",
+            "logs": [],
+            "live_view_available": False,
+        }
+
     return jsonify(
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
     )
@@ -1510,10 +1538,14 @@ def register_device():
 
         web_url = str(data.get("web_url", "")).strip() or "https://mushroomh5.acenetgame.com/"
 
+        # 新裝置一律以「停用」建立:登入瀏覽器開著時若掃描器又開一條掛機 thread，
+        # 兩個 Playwright session 會互搶。使用者登入完、把設定填好後，再到儀表板
+        # 卡片手動「啟用」才會被掃描啟動。
         config_manager.update_device_config(device_id, {
             "name": device_id,
             "backend": "web_h5",
             "web_url": web_url,
+            "enabled": False,
         })
 
         with _web_login_lock:
