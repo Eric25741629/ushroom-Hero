@@ -6,9 +6,9 @@ to fail until game_actions/lamp_scheduler.py exists with the expected API.
 API under test:
 
   _run_lamp(d, ip, lamp_dur, is_compare=True)
-    - routes to opengold_v2 LampService when device config sets
-      use_opengold_v2=True
-    - otherwise routes to Open_gold_paddle_ocr.open_the_gold
+    - always routes to opengold_v2 LampService (V1 Open_gold_paddle_ocr is
+      deprecated; the legacy use_opengold_v2 flag has been removed from config
+      and is never read — a leftover flag in an old config is ignored)
     - duration has ±10s jitter (via random.randint(-10, 10))
 
   _run_lamp_if_due(d, ip, stage)
@@ -337,3 +337,52 @@ def test_emulator_5558_skipped_from_general_and_5560_branches(
     lamp_mod._run_lamp_if_due(SimpleNamespace(), "emulator-5558", "主頁面")
 
     assert captured_lamp_calls == []
+
+
+# ---------------------------------------------------------------------------
+# step_deadline: dashboard counts down from an absolute epoch, not the digits
+# baked into the step string. The step push must carry step_deadline ~ now +
+# lamp_dur and must NOT embed a "(Ns)" label any more.
+# ---------------------------------------------------------------------------
+
+def test_general_branch_pushes_step_deadline_for_countdown(
+    lamp_mod, fake_config, fake_bot_state, captured_lamp_calls, monkeypatch,
+):
+    import time
+
+    fake_config["emulator-5554"] = {"lamp_check_interval": 1, "lamp_duration_sec": 2400}
+    monkeypatch.setattr(lamp_mod, "use_phone_ocr_lamp_mode", lambda ip: False)
+    monkeypatch.setattr(lamp_mod, "return_time", lambda ip, name: None)
+    monkeypatch.setattr(lamp_mod, "time_recording", lambda ip, name: None)
+
+    before = time.time()
+    lamp_mod._run_lamp_if_due(SimpleNamespace(), "emulator-5554", "主頁面")
+    after = time.time()
+
+    pushes = [c for c in fake_bot_state if c.get("task") == "開神燈"]
+    assert pushes, "expected a 開神燈 state push at lamp start"
+    push = pushes[-1]
+    assert "step_deadline" in push
+    assert before + 2400 <= push["step_deadline"] <= after + 2400
+    # the brittle embedded-seconds label is gone (frontend counts down from deadline)
+    assert "s)" not in (push.get("step") or "")
+
+
+def test_phone_ocr_branch_pushes_step_deadline(
+    lamp_mod, fake_config, fake_bot_state, captured_lamp_calls, monkeypatch,
+):
+    import time
+
+    fake_config["phone-ip"] = {"lamp_duration_sec": 200}
+    monkeypatch.setattr(lamp_mod, "use_phone_ocr_lamp_mode", lambda ip: ip == "phone-ip")
+
+    before = time.time()
+    lamp_mod._run_lamp_if_due(SimpleNamespace(), "phone-ip", "主頁面")
+    after = time.time()
+
+    pushes = [c for c in fake_bot_state if c.get("task") == "開神燈 (OCR)"]
+    assert pushes, "expected a 開神燈 (OCR) state push at lamp start"
+    push = pushes[-1]
+    assert "step_deadline" in push
+    assert before + 200 <= push["step_deadline"] <= after + 200
+    assert "s)" not in (push.get("step") or "")

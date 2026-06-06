@@ -17,7 +17,7 @@
 |---|---|
 | 改任務流程（順序 / 新增每日任務 / 主頁守衛） | `game_actions/daily_pipeline.py`（單一任務排序真相）+ `game_actions/stage_guard.py`（`_run_at_main_page` / `get_stage_with_check`） |
 | 改辨識 / OCR | `img_tools.py`（核心 OCR 管線 + 多 server fallback + circuit breaker）；本地推理權重 `OCR_model/`；訓練/廠商源 `OCR/`（離線）；分析見 [../OPTIMIZE_ocr_system.md](../OPTIMIZE_ocr_system.md) |
-| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v4**（`miner/v4/`），可切 v1/v2/v3；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py` |
+| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v4**（`miner/v4/`），可切 v1/v3（**v2 已移除 2026-06-05**）；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py`；分析+礦物出現率校正 [protocol 外的 `../docs/MINING_ALGORITHM_ANALYSIS.md`](MINING_ALGORITHM_ANALYSIS.md) |
 | 改神燈（開裝備） | `opengold_v2/`（`lamp_service.py` 的 `LampService` 為唯一 live 實作）；排程 `game_actions/lamp_scheduler.py`；V1 `Open_gold_paddle_ocr.py` 已廢棄 |
 | 改農場（打工） | `farm_v2/`（狀態機 `states.py` + `manager.py` + `operations/`）；H5 變體 `farm_v2/web_farm.py` |
 | 改航海（Sea） | web_h5 走 `sea_v2/`（flag `use_sea_v2` 預設 OFF）；adb 走 `Sea.py`；路由在 `game_actions/daily_pipeline.py` 的 `_sea_dispatch` |
@@ -92,9 +92,9 @@
 | 子系統 | 路徑 | 用途 | 狀態 |
 |---|---|---|---|
 | 挖礦引擎 | `miner/` | screenshot → CNN 分類 → plan → execute；orchestrator `mining_service.py`，入口 `game_actions/miner_action.py` | **runtime** |
-| 挖礦 planner v2 | `miner/v2/` | dry-run planner + `BoardClassifierV2`；has_pit / no_pit 策略，炸彈/鑽頭為一等動作 | **runtime**（可切，非預設）⚠️ CLAUDE.md 稱「未接線」已過時，`mining_service` 確有 import 並 dispatch |
-| 挖礦 planner v3 | `miner/v3/` | cluster-aware 動作模型（clusters/actions/board）；v4 直接 reuse `v3.actions` | **runtime**（可切，v4 基礎層） |
-| 挖礦 planner v4 | `miner/v4/` | **現行預設**：bounded 5-step rolling-horizon DFS + branch-and-bound；reuse `core.mechanics` + `v3.actions` | **runtime（預設）** `mining_planner_version='v4'` |
+| 挖礦 v2 套件 | `miner/v2/` | **plan_v2 演算法已移除 2026-06-05**（真實 board 18.8% 破 0.3s）；保留 `BoardClassifierV2` + `service`/`types`/`visualization` 為 v3/v4 共用 CNN 分類層 | **runtime（共用層，非 planner）** |
+| 挖礦 planner v3 | `miner/v3/` | cluster-aware 動作模型（clusters/actions/board）；v4 直接 reuse `v3.actions`；有 230ms wall-clock deadline | **runtime**（可切，v4 基礎層） |
+| 挖礦 planner v4 | `miner/v4/` | **現行預設**：bounded 3-step rolling-horizon DFS + branch-and-bound（250ms deadline）；reuse `core.mechanics` + `v3.actions` | **runtime（預設）** `mining_planner_version='v4'` |
 | 挖礦 RL | `miner/rl/` | SB3 PPO / replay；logging/訓練用，不在 live 決策路徑 | logging-only |
 | 農場 | `farm_v2/` | 打工種/收狀態機（`manager.farm`）；`operations/base.py` 的 `click_with_jitter`/`wait_jitter` 通用 | **runtime**（雙後端：manager.py adb / web_farm.py web_h5） |
 | 神燈 | `opengold_v2/` | 8 模組重構，`LampService` 編排 OCR→技能評估→比較/賣/裝；自動偵測連閃裝備 | **runtime（唯一 live 路徑）**；V1 `Open_gold_paddle_ocr.py` 已廢 |
@@ -224,11 +224,12 @@
   - [../OPTIMIZE_utilities.md](../OPTIMIZE_utilities.md) — 工具/基礎：img_tools 上帝模組、control_panel(:5002)、legacy 像素模組、scheduling 統一、多 HTTP server 生命週期。
   - [../OPTIMIZE_push_project.md](../OPTIMIZE_push_project.md) — 推播：Flask debug/bind 安全、API 鑑權、VAPID 金鑰、PWA/SW、前端 XSS。
 - **重構機會清單**：[REFACTORING_OPPORTUNITIES.md](REFACTORING_OPPORTUNITIES.md) — 與本 INDEX 一同產出的新報告，彙整跨子系統重複（`_walk_pb` ×3、分流 parity/offset parser 重複、web profile 路徑解析 ×3、command dispatch ×2、`device` base class ×2、cocos 場景樹 walker 重複、device-id sanitizer ×4、cycle 常數 week_events vs periodic_tasks）、dead-code（oralce_manger/gold_mananer/park.ParkingManager/Assistant/main.py 空 stub/bootstrap.api_services 未接線）、cruft（sync-conflict、committed `__pycache__`、檔名 typo oralce/mananer/manger）與安全面（auth_state/VAPID 外洩、control_panel 無鑑權）。
+- **狀態管理重構展開**：[REFACTOR_STATE_MANAGEMENT.md](REFACTOR_STATE_MANAGEMENT.md) — `bot_state` 結構級重構的可執行分階段設計（5 phase；Phase 0–3 已完成、Phase 2 在工作區，Phase 4 可選、Phase 5 YAGNI 暫不做），補上「重構機會清單」line ~320「bot_state 套件多未做」的展開版。
 - **協議文件**（`docs/protocol/`）：見第 6 節「協議反推」表，為所有 WS/protobuf 反推與 cocos 節點對照的真相來源。
 
 ### ⚠️ 已知 CLAUDE.md 過時點（依本次審計）
-- **挖礦**：CLAUDE.md 稱「v1 為現行 runtime、v2 experimental flag off」，實際 `miner/mining_service.py`（line 425）預設 `mining_planner_version='v4'`，v1/v2/v3/v4 皆可切；v2 已 import 並 dispatch。v3/v4 在 CLAUDE.md 完全未提。
-- **神燈**：entry-points 仍列 V1 `Open_gold_paddle_ocr.py`，但 `lamp_scheduler.py` 一律路由 `opengold_v2.LampService`（「一律走 V2」）；`use_opengold_v2` flag 在 router 已不讀。
+- **挖礦**（2026-06-05 更新）：`miner/mining_service.py` 預設 `mining_planner_version='v4'`，可切 **v1/v3**（v2 已移除：真實 board 18.8% 破 0.3s、max 1841ms）。CLAUDE.md 挖礦段落已同步修正。完整分析與礦物出現率校正見 `docs/MINING_ALGORITHM_ANALYSIS.md`。
+- **神燈**：entry-points 仍列 V1 `Open_gold_paddle_ocr.py`，但 `lamp_scheduler.py` 一律路由 `opengold_v2.LampService`（「一律走 V2」）；舊的 `use_opengold_v2` 切換旗標已於 2026-06-07 從 config schema / 儀表板移除（router 本來就不讀）。
 - **潛在 bug**：`game_state/detector.new_stage_check` 用 `if [ ...list... ]:`（非空 list 恆 True），疑似應為 `all()`/`any()`，值得查證。
 
 ---

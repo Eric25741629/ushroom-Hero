@@ -34,7 +34,6 @@
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
             "experimental_cocos_navigation": true,
             "carpark": {
                 "avoid_lots": [
@@ -58,7 +57,7 @@
                 "_comment": "amount 暫設 1 為測試值，驗證穩定後改 7000"
             },
             "enable_mount_sprint": true,
-            "mount_sprint_quantity": 7000,
+            "mount_sprint_quantity": 3200,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30,
@@ -98,7 +97,6 @@
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
             "experimental_cocos_navigation": true,
             "carpark": {
                 "avoid_lots": [
@@ -156,7 +154,6 @@
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 2.75,
             "online_check_interval_sec": 30,
@@ -195,7 +192,6 @@
             "mining_save_samples": true,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
-            "use_opengold_v2": true,
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "web_screenshot_method": "playwright",
@@ -236,7 +232,6 @@
             "mining_planner_version": "v4",
             "mining_save_samples": true,
             "web_screenshot_method": "playwright",
-            "use_opengold_v2": true,
             "experimental_cocos_navigation": true,
             "carpark": {
                 "avoid_lots": [
@@ -292,7 +287,6 @@
             "mining_duration_min": 6,
             "mining_planner_version": "v4",
             "mining_save_samples": false,
-            "use_opengold_v2": true,
             "statue_weekly": {
                 "enabled": true,
                 "amount": 1,
@@ -301,6 +295,44 @@
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30
+        },
+        "web-001": {
+            "name": "寶兒",
+            "enabled": false,
+            "backend": "web_h5",
+            "backend_display_id": "",
+            "web_url": "https://mushroomh5.acenetgame.com/",
+            "web_canvas_selector": "canvas",
+            "web_profile_dir": "playwright_profile/{device_id}",
+            "web_state_file": "auth_state/{device_id}.json",
+            "web_channel": "chrome",
+            "web_headless": false,
+            "web_clear_cookies_on_start": false,
+            "web_viewport_width": 540,
+            "web_viewport_height": 960,
+            "web_manual_viewport_width": 0,
+            "web_manual_viewport_height": 0,
+            "web_stop_mode": "keep_page",
+            "web_screenshot_method": "playwright",
+            "web_screenshot_jpeg_quality": null,
+            "enable_farm": false,
+            "enable_arena": false,
+            "enable_mining": false,
+            "enable_dungeon": false,
+            "enable_shop_manager": true,
+            "enable_dungeon_manager": true,
+            "is_real_phone": false,
+            "keep_screen_on": false,
+            "screenshot_debug": false,
+            "online_check_interval_sec": 30,
+            "lamp_check_interval": 2,
+            "lamp_duration_sec": 300,
+            "mining_duration_min": 6,
+            "mining_planner_version": "v4",
+            "mining_save_samples": false,
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0,
+            "online_check_interval": 5
         }
     },
     "global": {

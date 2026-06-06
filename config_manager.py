@@ -5,7 +5,7 @@ import socket
 import copy
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ DEFAULT_DEVICE_CONFIG = {
     "web_manual_viewport_height": 0,  # 手動開啟視窗高度 (0=使用 web_viewport_height)
     "web_stop_mode": "keep_page",  # keep_page / blank / close_browser
     "web_screenshot_method": "playwright",  # playwright / canvas_capture
+    "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
     "enable_farm": True,  # 啟用農場
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
@@ -57,7 +58,7 @@ DEFAULT_DEVICE_CONFIG = {
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v4",  # v1 / v2 / v3 / v4 (v4 default — planner-eval 2026-04-29)
+    "mining_planner_version": "v4",  # v1 / v3 / v4 (v4 default — planner-eval 2026-06-05; v2 removed)
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
@@ -98,6 +99,7 @@ class DeviceConfig:
     web_manual_viewport_height: int = 0
     web_stop_mode: str = "keep_page"
     web_screenshot_method: str = "playwright"
+    web_screenshot_jpeg_quality: Optional[int] = None
 
     # Feature flags
     enable_farm: bool = True
@@ -681,7 +683,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         )
         current["mining_planner_version"] = _enum_str(
             current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
-            {"v1", "v2", "v3", "v4"},
+            {"v1", "v3", "v4"},
             "v1",
         )
         current["mining_save_samples"] = _to_bool(
@@ -707,7 +709,6 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             "is_real_phone",
             "keep_screen_on",
             "screenshot_debug",
-            "use_opengold_v2",
         ]:
             if k in current:
                 current[k] = bool(current[k])

@@ -2,14 +2,10 @@
 # DEPRECATED — V1 神燈實作（monolithic Open_gold_paddle_ocr）
 #
 # 標準實作已遷至 `opengold_v2/lamp_service.py`（V2，模組化 + OpenGoldConfig）。
-# 本檔僅因下列裝置尚未切換而保留，請勿在此加新功能、修 bug 也優先導向 V2：
-#
-#   - emulator-5554 / 5558 / 5560 (bot_config.json: use_opengold_v2=false)
-#   - standalone CLI: `python Open_gold_paddle_ocr.py`
-#
-# Migration path: 翻 use_opengold_v2 → true 並驗證 → 全綠後刪本檔的
-# `open_the_gold` 與 lamp_scheduler 的 V1 branch。
-# V2 目前狀態：beta（3/6 裝置在跑）。
+# runtime 開神燈一律走 V2（`game_actions/lamp_scheduler.py` 無條件用 LampService），
+# 舊的 use_opengold_v2 切換旗標已從 config / 儀表板移除。
+# 本檔僅保留作獨立除錯 CLI：`python Open_gold_paddle_ocr.py`。
+# 請勿在此加新功能、修 bug 也優先導向 V2；`open_the_gold` 等 V1 流程屬待刪死碼。
 # =====================================================================
 from sympy import N, det
 import device as D

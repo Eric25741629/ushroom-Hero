@@ -11,7 +11,7 @@ import numpy as np
 from utils.logging_utils import logger
 
 from .config import OpenGoldConfig
-from .lamp_loop_state import LampLoopAction, LampLoopState
+from .lamp_loop_state import LampExhaustionTracker, LampLoopAction, LampLoopState
 from .models import Equipment, LampState, ComparisonResult
 from .ocr_parser import OCRParser
 from .skill_evaluator import SkillEvaluator
@@ -666,6 +666,7 @@ class LampService:
             self.state.is_running = False
 
     _STALL_RESTART_SEC = 8.0
+    _EXHAUSTED_STOP_TICKS = 2  # 連續讀到剩餘神燈為 0 幾次後判定開完並停止本輪
 
     def _run_open_loop_cocos(self, start_time: float, times: float, is_compare: bool) -> None:
         """H5 cocos 監控迴圈(快、精確):
@@ -680,6 +681,7 @@ class LampService:
         seen_uids: set = set()
         last_count: Optional[int] = None
         last_drop_ts = time.time()
+        exhaustion = LampExhaustionTracker(stop_after=self._EXHAUSTED_STOP_TICKS)
         while time.time() - start_time < times and self.state.is_running:
             # 封包為主：開到要的品質(預設永恆)時遊戲會停住(賣19留1)，0x0504 一到就確定，
             # 不必等數量停滯。process_single_lamp 會點 (271,576) 開比較頁並依 combo 規則判斷賣/留。
@@ -738,6 +740,12 @@ class LampService:
                 logger.info(f"[LampService] 開燈中未知 modal: {st} → 嘗試關閉")
                 self.ui.dismiss_blocking_popup()
                 continue
+
+            # 剩餘神燈歸零 → 開燈完成，停止本輪。否則空爐會被當「停滯」一直
+            # _restart_auto_open()(重按開始)空轉到 times 逾時(~300s)。
+            if exhaustion.is_exhausted(cnt):
+                logger.info("[LampService] 剩餘神燈為 0，開燈完成 → 停止本輪")
+                break
 
             if cnt is not None and last_count is not None and cnt < last_count:
                 last_drop_ts = time.time()
@@ -852,6 +860,7 @@ class LampService:
         last_reengage_count: Optional[int] = None
         last_drop_ts: float = 0.0
         last_seen_count: Optional[int] = None
+        exhaustion = LampExhaustionTracker(stop_after=self._EXHAUSTED_STOP_TICKS)
 
         while time.time() - start_time < times and self.state.is_running:
             # Sell-page intercept must come BEFORE tick: gold ROI on this page
@@ -864,6 +873,12 @@ class LampService:
 
             lamp_count = self._read_lamp_count_robust()
             has_popup = self._detect_popup()
+
+            # 剩餘神燈歸零 → 開燈完成，停止本輪。沒有待處理彈窗時才停，避免
+            # 彈窗覆蓋 count ROI 時的誤判(此時 robust read 多半回 None，本就不會觸發)。
+            if not has_popup and exhaustion.is_exhausted(lamp_count):
+                logger.info("[LampService] 剩餘神燈為 0，開燈完成 → 停止本輪")
+                break
 
             if (
                 lamp_count is not None

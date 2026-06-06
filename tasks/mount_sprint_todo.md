@@ -17,7 +17,7 @@
 | 關閉 | (270,896) `btnClose` | |
 
 ## 需求 (使用者確認 2026-05-25)
-- 數量: 7000 (config `mount_sprint_quantity`,程式預設 7000)
+- 數量: 3200 (config `mount_sprint_quantity`;程式預設仍 7000,實際以 config 為準,2026-06-04 使用者調降)
 - 排程: 4 週週期 + 週二~週四 (`allowed_weekdays=[1,2,3]`);現有 5554 record 2026-05-05
   → 6/2 (28天=4週) 正確觸發,不需重 seed
 - 後端: web_h5 + ADB 皆支援
@@ -26,7 +26,7 @@
 ## TODO — DONE
 - [x] tests/test_rank_events.py — 16 tests (排程 gate + flow + 數量輸入),全綠
 - [x] rank_events.py — 重寫 park_spring + helpers (跨後端 + OCR 驗證)
-- [x] bot_config.json — 5554 加 enable_mount_sprint:true / mount_sprint_quantity:7000
+- [x] bot_config.json — 5554 加 enable_mount_sprint:true / mount_sprint_quantity:3200 (原 7000,2026-06-04 調降)
 - [x] docs/protocol/MOUNT_SPRINT.md — 驗證流程紀錄
 - [x] pytest (20 pass: rank_events 16 + daily_pipeline 4) + py_compile OK
 - [x] 清理 tools/_probe_*.py 暫存腳本

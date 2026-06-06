@@ -8,6 +8,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `adb`: Direct device/emulator control via `uiautomator2`
 - `web_h5`: Playwright-based browser automation for H5 game
 
+## 導覽索引 (Navigation Index)
+
+> **先看這裡再開工。** 完整程式碼地圖 + 文件總覽 + 「我想做 X → 看這裡」快查表：[`docs/INDEX.md`](docs/INDEX.md)。
+> 跨子系統重構/優化待辦（已驗證）：[`docs/REFACTORING_OPPORTUNITIES.md`](docs/REFACTORING_OPPORTUNITIES.md)。
+> 狀態管理（bot_state）重構展開與進度：[`docs/REFACTOR_STATE_MANAGEMENT.md`](docs/REFACTOR_STATE_MANAGEMENT.md)。
+> 每子系統優化分析：根目錄 `OPTIMIZE_*.md`（6 份，2026-05）。
+
+### 本機 Hooks（`.claude/hooks`，已 gitignore，不進版控）
+| Hook | 時機 | 作用 |
+|------|------|------|
+| `.claude/hooks/py_check.py` | PostToolUse (`Edit\|Write\|MultiEdit`) | 編輯 `.py` 後跑 `py_compile`（語法錯 exit 2 擋下）+ 非阻塞 ruff 報告 |
+| `.claude/hooks/check_pytest.py` | PreToolUse (`Bash`) | 擋裸 `pytest`（無 file/`::`/path/`-k` target），避免 import 真實 device/Playwright/OCR 而 hang |
+
+### 常用可復用工具（動手前先確認有沒有現成 helper，勿重造輪子）
+| 用途 | 用這個 |
+|------|--------|
+| per-device logger | `utils/logging_utils.setup_logger_for_device` / `logger` proxy |
+| log 路徑 | `utils/log_paths.LogPaths`（勿硬編 `logs/<device>/...`，`with_root()` 給測試沙箱） |
+| 出事抓圖 | `utils/screenshot_helpers.save_error_screenshot` → `utils/smart_screenshot.SmartScreenshotRecorder` |
+| 直接驅動 Playwright 的任務 | `utils/pause_guard`（bind/check/unbind，否則 live-view 手動接管無法中斷） |
+| 共用 CNN forward | `utils/torch_runtime.inference_slot()`（序列化 GPU）+ `configure_torch_runtime()` |
+| NAS 權重載入 | `utils/model_sync.ensure_local_model()`（`torch.load` 前先呼叫） |
+| web_h5 遊戲 RPC / protobuf | `utils/web_game_api.WebGameAPI.call_raw` / `_walk_pb` |
+| 裝置狀態路由 key | `bot_state.is_local_device`（勿用 `':' in ip`） |
+
 ## Entry Points
 
 | File | Purpose |
@@ -47,9 +72,9 @@ Each device thread runs an independent automation loop with:
 | State tracking | `bot_state.py` | Per-device state, pause/skip flags, web launch requests |
 | Wake-up handler | `utils/wake_up_handler.py` | Screen wake/ unlock, connection locking |
 | OCR | `img_tools.py` | Multi-server fallback with circuit breaker |
-| OCR (开神灯) | `Open_gold_paddle_ocr.py` | 神灯 OCR，已改用 `img_tools` 共用 fallback |
-| Mining AI (v1) | `miner/` | A* planner, CNN classifier, RL logging (current runtime) |
-| Mining AI (v2) | `miner/v2/` | Fresh rewrite — dry-run planner + classifier, switchable behind flag |
+| Lamp (開神燈) | `opengold_v2/` | 唯一 live 路徑：`game_actions/lamp_scheduler.py` → `opengold_v2.LampService`。V1 `Open_gold_paddle_ocr.py` 已廢棄 |
+| Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v4**，v1/v3/v4 可切（config `mining_planner_version`）。v2 已移除 (2026-06-05，真實 board 18.8% 破 0.3s)。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
+| Mining planner v3/v4 | `miner/v3,v4/` | v3 cluster-aware actions (有 230ms deadline)、v4（預設）bounded 3-step DFS + branch-and-bound (250ms deadline) |
 | OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
 | Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
 | Task sandbox | `task_sandbox/` | 通用任務開發/驗證框架，以神燈為第一個實作，基於 NavTarget 導航 |
@@ -68,11 +93,12 @@ Each device thread runs an independent automation loop with:
 
 ## Mining Module (`miner/`)
 
-A* search-based automation with:
+Search-based automation (planner default **v4** = bounded DFS; v1 = A*). Shared mechanics:
 - 7-row viewport, scroll-triggered when row 6 cleared
 - Props: bomb (3x3 + cross), drill (vertical + bottom row)
-- Cost model: pickaxe=1.0, props=2.99 (use if saves ≥3 pickaxes)
+- Cost model: pickaxe=1.0；v1 props=2.99；v4 rarity weights drill=2.5 / bomb=3.5 (源頭 `miner/v4/planner.py`)
 - Dead-loop detection, auto-aborts after 3 identical states
+- 真實 regime (礦脈**時間追蹤** `tools/track_pits_replay.py`)：cluster 是正方 1x1/2x2/3x3 (數量 66/18/17%，但 3x3 占 ~52% 礦格)；spawn 密度 ~3.6%；每回合 75% no_pit。⚠ 單張快照連通分量會**漏判 3x3** (跨 row 被逐步收集)。planner 比較與礦物出現率校正見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md)
 
 Key files:
 - `miner/mining_service.py` - orchestrates screenshot → classify → plan → execute
@@ -80,14 +106,21 @@ Key files:
 - `miner/models/classifier.py` - CNN block classifier
 - `miner/core/mechanics.py` - prop effect calculations (source of truth)
 
-### Miner V2 (experimental, not wired into runtime)
+### Miner planners v1 / v3 / v4 (wired; v4 is the default)
 
-Rewrite under `miner/v2/`: new top-level strategy `has_pit` vs `no_pit`, bombs/drill as first-class search actions (not side evaluators), `dug_pit` treated as air. Classifier + dry-run planner only — no executor. Switchable in runtime via feature flag (see `a36c505` commit), but defaults off.
+`mining_service.py` dispatches on `mining_planner_version` (default **v4**, see `config_manager.py` `DEFAULT_DEVICE_CONFIG`). Selectable per device:
+- `miner/v3/` — cluster-aware action model (`clusters`/`actions`/`board`); v4 reuses `v3.actions`. 有 230ms wall-clock deadline。
+- `miner/v4/` — **current default**: bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。真實 board 最快 (mean 1.1ms / max 46ms)。
+- v1 (`miner/planning/smart_planner.py`, A*) — 最省鏟、看得最遠的效率替代，`mining_planner_version='v1'` 可切。
 
-Debug CLIs (run on a single screenshot):
+> **v2 已移除** (2026-06-05)：真實 board 重放 18.8% 超過 0.3s、max 1841ms、歷史會 stuck。
+> `miner/v2/` 套件保留，因 `classifier.py / service.py / types.py / visualization.py` 是 v3/v4
+> 共用的 CNN 分類層；只刪了 `plan_v2` 演算法。
+
+Debug CLIs (run on a single screenshot)：
 ```bash
-python -m miner.v2.debug_with_image <screenshot.png>
-python -m miner.v2.debug_with_image_plan <screenshot.png> --shovels 100 --drill 1 --bomb 1
+python -m miner.v2.debug_with_image <screenshot.png>            # 純分類 (共用 classifier)
+python -m miner.v3.debug_with_image_plan <screenshot.png>       # v3 規劃
 python -m miner.v2.debug_with_image_llm <screenshot.png> [--with-image]
 ```
 
@@ -216,6 +249,8 @@ Tests live in `tests/` with fixtures under `tests/fixtures/` and screenshot fixt
 If pytest prints `.pytest_cache` permission warnings on the NAS path, ignore them unless the test result itself failed. If it reports `ModuleNotFoundError: cv2`, the command likely reached tests that import the real `device_wrapper`; narrow the command to the target test files or stub heavy imports inside that test.
 
 ### Standalone lamp (神燈) entry
+
+> 注意：runtime 開神燈一律走 `opengold_v2.LampService`（`game_actions/lamp_scheduler.py`）。下方 V1 CLI 已廢棄，僅保留作獨立除錯參考。
 
 ```bash
 python Open_gold_paddle_ocr.py            # 連閃裝備模式預設啟用

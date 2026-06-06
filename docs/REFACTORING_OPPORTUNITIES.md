@@ -14,7 +14,7 @@
 ### 已釐清的事實基準（與 stale 文件相反，請以此為準）
 
 1. **挖礦 planner 預設是 v4**（`miner/mining_service.py:425`、`config_manager.py:48`，`mining_planner_version` 可切 v1/v2/v3/v4）。CLAUDE.md 稱「v1 為 current runtime」已過時。
-2. **神燈一律走 V2**：`game_actions/lamp_scheduler.py:25` 把所有 lamp run 路由到 `opengold_v2.LampService`；V1 `Open_gold_paddle_ocr.py` 已棄用；`use_opengold_v2` flag router 已不再讀。
+2. **神燈一律走 V2**：`game_actions/lamp_scheduler.py:25` 把所有 lamp run 路由到 `opengold_v2.LampService`；V1 `Open_gold_paddle_ocr.py` 已棄用。`use_opengold_v2` flag router 本來就不讀，**已於 2026-06-07 從 config schema / bot_config.json / 儀表板 checkbox 全面移除**（見下方原死碼清理項，現已執行）。
 3. `game_state/detector.py:7` `new_stage_check()` 用 `if [list_of_bools]:`（非空 list 恆為 truthy → 永遠回 True）。但**全 repo 零呼叫者**，屬「含潛在 bug 的死碼」，非 active bug（低風險，刪或修皆可）。
 4. 確切有 **4 個被追蹤的 `.pyc`**：`tests/__pycache__/conftest.cpython-*.pyc.NNNNN`（數字後綴繞過 `*.pyc` 規則）。`git rm --cached` 安全。
 
@@ -213,7 +213,9 @@
 
 ### 13. V1 神燈 `open_the_gold` 等深巢 god-flow（已棄用但 finding 誤判仍 live）（cx-3）
 
-> **重新定性**：原 finding 把這當「live 路徑的複雜度重構」，**前提錯誤**。實際 `lamp_scheduler.py:30` 無條件用 `opengold_v2.LampService`，`bot_config.json` 6 台裝置全 `use_opengold_v2:true`，router 已不讀 flag。此項實為**死碼清理 + 修 stale doc**。
+> **重新定性**：原 finding 把這當「live 路徑的複雜度重構」，**前提錯誤**。實際 `lamp_scheduler.py:30` 無條件用 `opengold_v2.LampService`，router 已不讀 flag。此項實為**死碼清理 + 修 stale doc**。
+>
+> **進度（2026-06-07，已做）**：`use_opengold_v2` flag 已從 config schema (`config_manager.py` bool 清單)、`bot_config.json`（7 台）、儀表板 checkbox + load/save 全面移除；`Open_gold_paddle_ocr.py:1-13` stale banner 與 `tests/test_lamp_scheduler.py` 模組 docstring 已更新。**剩餘待辦**：V2 prod log 確認穩定後刪 4 個 V1 函式 + `__main__`、退休 `lian_shan_example.py`。
 
 - **位置**：`Open_gold_paddle_ocr.py:1080-1153`（`open_the_gold`）/`1155-1199`/`1286-1320`/`1322-1362`；**stale banner** `1-13`（仍寫 `use_opengold_v2=false`/`3/6 裝置`——即誤導來源）；stale test docstring `tests/test_lamp_scheduler.py:9-11`。
 - **建議**：（1）**勿**翻任何 flag。（2）修 `Open_gold_paddle_ocr.py:1-13` stale banner。（3）確認 V2 prod log 穩定後，刪 4 個 V1 函式 + `__main__`，更新 stale test docstring，退休 `lian_shan_example.py`。

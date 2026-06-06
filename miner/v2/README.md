@@ -1,36 +1,30 @@
 # Miner V2
 
-This directory is the fresh start for mining logic.
+> **The V2 PLANNER (`plan_v2`) was removed 2026-06-05.** Real-board replay showed
+> it breached the <300ms per-step budget on 18.8% of live boards (max 1841ms),
+> so only the best 3 planners are kept (v1/v3/v4, default v4). See
+> [`docs/MINING_ALGORITHM_ANALYSIS.md`](../../docs/MINING_ALGORITHM_ANALYSIS.md).
+>
+> **This directory is retained as the shared CNN board-classification layer**
+> that `miner/v3` and `miner/v4` depend on. It is no longer a planner.
 
-Current scope:
+Current scope (shared infrastructure):
 
-- board classification
-- dry-run planner
-- no executor yet
-- not wired into `new_main_v2.py`
-- not wired into `miner/mining_service.py`
+- board classification (`BoardClassifierV2`)
+- board capture + screenshot classification
+- board snapshot DTOs + text rendering
 
-Planner rules in the current V2 draft:
+Files (retained):
 
-- top-level strategy is `has_pit` vs `no_pit`
-- only `reachable_pit` and `unreachable_pit` count as remaining pits
-- `dug_pit` is treated as air
-- `bomb` and `drill` are part of the main search, not a side evaluator
-- `drill` only affects the visible board footprint
-- `bomb` can contribute beyond the bottom of the visible board and may open floor7 from an edge placement
-- action ordering prefers digging lower before using items when that improves placement value
-
-Files:
-
-- `classifier.py`: CNN-based board classifier for V2
-- `planner.py`: rule-based dry-run planner for V2
-- `service.py`: helpers to capture and classify a device screenshot
+- `classifier.py`: CNN-based board classifier — **used live by v3/v4**
+- `service.py`: helpers to capture and classify a device screenshot — used by v3
 - `types.py`: board snapshot dataclasses
-- `llm_judge.py`: OpenAI-compatible LLM review client for board snapshots
+- `llm_judge.py`: OpenAI-compatible LLM review client for board snapshots (debug)
 - `visualization.py`: text rendering for board output
-- `debug_with_image.py`: standalone image debug entrypoint
+- `debug_with_image.py`: standalone image classify entrypoint
 - `debug_with_image_llm.py`: classify one image and send the snapshot to an LLM judge
-- `debug_with_image_plan.py`: classify one image and generate a dry-run plan
+
+Removed: `planner.py` (`plan_v2`), `debug_with_image_plan.py`.
 
 Quick check:
 
@@ -50,14 +44,8 @@ If the model is vision-capable:
 python -m miner.v2.debug_with_image_llm <screenshot.png> --with-image
 ```
 
-Planner check:
+For planner debugging, use the kept planners (v3/v4):
 
 ```bash
-python -m miner.v2.debug_with_image_plan <screenshot.png> --shovels 100 --drill 1 --bomb 1
+python -m miner.v3.debug_with_image_plan <screenshot.png>
 ```
-
-Next intended work:
-
-1. improve planner scoring and node pruning on complex pit boards
-2. add replay/debug tools for side-by-side comparison with the old miner
-3. evaluate when V2 is stable enough to connect to runtime behind a feature flag

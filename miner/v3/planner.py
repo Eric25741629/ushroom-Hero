@@ -46,6 +46,13 @@ from .types import Board, Coordinate, PlanResult, PlanStats
 
 
 PLAN_NODE_BUDGET = 6000
+# Hard wall-clock deadline so a single plan call can never exceed the 300 ms
+# per-step budget. Without it the 6000-node best-first search peaked at ~453 ms
+# on 2/1062 real boards (planner-eval 2026-06-05). The clock is sampled every
+# 32 nodes; when it trips the loop exits and the best partial plan found so far
+# is returned (the same graceful-degradation path used when the node budget is
+# hit). 230 ms leaves margin for the in-flight node before the next check.
+TIME_BUDGET_MS = 230.0
 ITEM_NO_PIT_PENALTY = 400.0
 FLOOR7_PIT_LOSS_PENALTY = 100000.0  # effectively forbids the action
 
@@ -293,6 +300,8 @@ def plan_v3(
     seen: Dict[Tuple[Any, ...], float] = {_state_signature(work, item_state): 0.0}
     explored = 0
     seq = 1
+    deadline = started_at + TIME_BUDGET_MS / 1000.0
+    deadline_hit = False
 
     best_goal: Optional[_Node] = None
     best_partial: Optional[Tuple[Tuple[float, ...], _Node]] = None
@@ -310,6 +319,13 @@ def plan_v3(
     while pq and explored < max_nodes:
         current = heapq.heappop(pq)
         explored += 1
+
+        # Sample the wall clock every 32 nodes — checking every node would
+        # itself dominate runtime on large searches. On trip, fall through to
+        # the best_goal/best_partial return below.
+        if (explored & 0x1F) == 0 and time.perf_counter() >= deadline:
+            deadline_hit = True
+            break
 
         if strategy == "has_pit":
             goal = count_remaining_pits(current.board) == 0
@@ -392,10 +408,11 @@ def plan_v3(
     )
     is_partial = best_goal is None
     label = "v3 partial" if is_partial else "v3 plan"
+    deadline_note = " deadline" if deadline_hit else ""
     return PlanResult(
         ok=True,
         message=(
-            f"{label} (nodes={explored}, pits {stats.pits_collected}/{initial_pits}, "
+            f"{label}{deadline_note} (nodes={explored}, pits {stats.pits_collected}/{initial_pits}, "
             f"shovels={stats.shovel_cost:.1f}, drill={stats.drills_used}, bomb={stats.bombs_used})"
         ),
         steps=final.history,

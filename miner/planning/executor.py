@@ -261,7 +261,7 @@ def verify_cell_empty(
         if passed:
             d.click(444 + random.randint(-10, 10), 107 + random.randint(-10, 10))
             continue
-        img2 = d.screenshot()
+        img2 = d.screenshot(format="opencv")
         board2, confidences2 = clf.classify_board(img2, save_samples=False)
         confidence = confidences2[r][c]
         if confidence < error_threshold:
@@ -503,7 +503,7 @@ def execute_plan_steps(
                     acc.steps_completed += 1
                     acc.terminated_reason = "floor7"
                     return acc
-                img_after_dig = d.screenshot()
+                img_after_dig = d.screenshot(format="opencv")
                 board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
                 if board_after_dig == step_board_before:
                     acc.terminated_reason = "no_board_change"

@@ -21,6 +21,7 @@ for _k in list(sys.modules):
         del sys.modules[_k]
 
 from opengold_v2.lamp_loop_state import (
+    LampExhaustionTracker,
     LampLoopAction,
     LampLoopState,
 )
@@ -273,3 +274,47 @@ def test_popup_short_circuits_before_unreadable_renavigate():
     action = state.tick(None, has_popup=True)
 
     assert action == LampLoopAction.HANDLE_POPUP
+
+
+# ----- 剩餘神燈歸零 → 停止（耗盡偵測） -----
+#
+# 神燈開完(剩餘數量 count==0)時，開燈迴圈必須停止，而不是把空爐當「停滯」
+# 一直 reengage / 重按「開始」空轉到 times 逾時(實測 lamp_duration_sec ~300s)。
+# 與 LampService.run() 開頭的 `pre_count == 0` 早退同一意圖。
+# 為避免單次誤讀(轉場/動畫)就停，需連續 stop_after 次讀到 0 才確認耗盡。
+
+def test_exhaustion_single_zero_below_threshold_is_not_exhausted():
+    tracker = LampExhaustionTracker(stop_after=2)
+
+    assert tracker.is_exhausted(0) is False
+
+
+def test_exhaustion_consecutive_zeros_reaching_threshold_is_exhausted():
+    tracker = LampExhaustionTracker(stop_after=2)
+    tracker.is_exhausted(0)  # streak == 1, below threshold
+
+    assert tracker.is_exhausted(0) is True
+
+
+def test_exhaustion_none_does_not_confirm():
+    tracker = LampExhaustionTracker(stop_after=2)
+
+    assert tracker.is_exhausted(None) is False
+
+
+def test_exhaustion_none_does_not_reset_streak():
+    """讀不到(轉場/動畫)只是暫時，不該清掉已累積的歸零計數。"""
+    tracker = LampExhaustionTracker(stop_after=2)
+    tracker.is_exhausted(0)     # streak == 1
+    tracker.is_exhausted(None)  # 不確認、也不重置
+
+    assert tracker.is_exhausted(0) is True  # streak == 2 → 耗盡
+
+
+def test_exhaustion_positive_count_resets_streak():
+    """還有燈(count>0，含魔法熔爐被動補燈)就重置，不應誤判耗盡。"""
+    tracker = LampExhaustionTracker(stop_after=2)
+    tracker.is_exhausted(0)   # streak == 1
+    tracker.is_exhausted(27)  # 被動生成 → reset
+
+    assert tracker.is_exhausted(0) is False  # streak 回到 1，未達門檻

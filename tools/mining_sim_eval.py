@@ -45,19 +45,18 @@ from miner.v3.board import (
     promote_after_dig,
 )
 from miner.planning.smart_planner import plan_smart
-from miner.v2.planner import plan_v2
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 
 
 def _call_smart(board, shovels, items):
-    # plan_smart returns 'steps' as a list of action dicts; same shape as v2-v4.
+    # plan_smart returns 'steps' as a list of action dicts; same shape as v3/v4.
     return plan_smart(board, shovels=shovels, items=items)
 
 
+# v2 removed 2026-06-05 (violated the <300ms budget on 18.8% of real boards).
 PLANNERS = {
     "v1": _call_smart,
-    "v2": plan_v2,
     "v3": plan_v3,
     "v4": plan_v4,
 }
@@ -66,6 +65,26 @@ ROWS = 7
 COLS = 6
 TAPE_INITIAL = 60
 TAPE_EXTEND = 30
+
+# --- Empirical mineral model (calibrated via tools/track_pits_replay.py) ---
+# CRITICAL: clusters must be measured by TRACKING pits across the scroll/dig
+# timeline, NOT by counting connected components in isolated snapshots. A 3x3
+# cluster spans 3 tape rows and is collected incrementally as the viewport
+# descends, so it never appears as 9 intact pit cells in any single frame --
+# per-frame counting wrongly concludes "no 3x3 exist". Time-tracked
+# reconstruction over the real logs (59 sessions) shows:
+#   - SPAWN pit density = 3.64% of tape cells (single-snapshot standing density
+#     is only ~0.99% because pits are collected quickly -- that is NOT the spawn
+#     rate). PIT_DENSITY targets the spawn rate; the sim's standing density then
+#     lands near the real ~1% (validated by --report in compare_planners).
+#   - Clusters are SQUARES 1x1/2x2/3x3 (the original sim's shape design was
+#     right). Mix by cluster count: 1x1 66%, 2x2 18%, 3x3 17%. 3x3 are only 17%
+#     of clusters but ~52% of pit CELLS, so cluster-aware planning genuinely
+#     matters. The original generator's only error was density (~33% spawn, ~9x
+#     too high) -- not shape.
+PIT_DENSITY = 0.036
+# Cluster side-length PMF (square side: 1=1x1, 2=2x2, 3=3x3), by cluster count.
+CLUSTER_SIDE_PMF = {1: 0.66, 2: 0.17, 3: 0.17}
 
 
 @dataclass
@@ -85,9 +104,8 @@ class SimStats:
     drills_used: int = 0
     bombs_earned: int = 0
     drills_earned: int = 0
-    clusters_completed: Dict[int, int] = field(
-        default_factory=lambda: {1: 0, 4: 0, 9: 0}
-    )
+    # Keyed by completed vein size (1..5), not square area -- veins are irregular.
+    clusters_completed: Dict[int, int] = field(default_factory=dict)
 
 
 class MiningSim:
@@ -123,6 +141,32 @@ class MiningSim:
 
     def is_over(self) -> bool:
         return all(self.inv[k] <= 0 for k in self.inv)
+
+    def fallback_step(self) -> Optional[Dict[str, Any]]:
+        """Cheapest-progress fallback when a planner returns no steps.
+
+        Digs the lowest-cost reachable frontier cell, preferring pits (collect
+        minerals) then deeper rows (drives toward a scroll). This mirrors the
+        no_pit behaviour any robust production planner must always provide --
+        live, an empty plan is re-planned rather than being fatal, so the sim
+        must not treat a single empty plan as game-over. Returns None only when
+        the board is genuinely stuck (no diggable frontier cell at all).
+        """
+        view = self._board_view()
+        best: Optional[Tuple[int, int]] = None
+        best_key: Optional[Tuple[int, float, int]] = None
+        for r in range(ROWS):
+            for c in range(COLS):
+                if is_frontier_diggable(view, r, c):
+                    cell = view[r][c]
+                    pit_bonus = 0 if is_pit(cell) else 1  # pits first
+                    key = (pit_bonus, dig_cost(cell), -r)  # cheap, then deep
+                    if best_key is None or key < best_key:
+                        best_key = key
+                        best = (r, c)
+        if best is None:
+            return None
+        return {"type": "dig", "pos": best}
 
     def apply_step(self, step: Dict[str, Any]) -> Dict[str, Any]:
         """Apply a v4 plan step. Returns {'ok', 'scrolled'}."""
@@ -169,66 +213,88 @@ class MiningSim:
         return "unreachable_dirt"
 
     def _place_clusters_in_range(self, r_min: int, r_max: int) -> None:
+        """Seed SQUARE mineral clusters (1x1/2x2/3x3) at the empirical density
+        and size mix (time-tracked from real logs via track_pits_replay.py).
+
+        Draws each cluster's side from ``CLUSTER_SIDE_PMF`` and places it as an
+        isolated square (1-cell ring clear of other pits) until ~``PIT_DENSITY``
+        of the row range is pit. 3x3 are only 17% of clusters but ~52% of pit
+        cells, so this regime is genuinely cluster-rich -- unlike the per-frame
+        illusion that "no 3x3 exist".
+        """
         from_row = max(r_min, 1)  # tape row 0 reserved for player foothold
         span = max(0, r_max - from_row)
-        n3 = max(1, span // 8)
-        for _ in range(n3):
-            self._try_place_cluster(3, (from_row, r_max - 3), (0, COLS - 3), 80)
-        n2 = max(2, span // 5)
-        for _ in range(n2):
-            self._try_place_cluster(2, (from_row, r_max - 2), (0, COLS - 2), 50)
-        n1 = max(2, span // 5)
-        for _ in range(n1):
-            self._try_place_cluster(1, (from_row, r_max - 1), (0, COLS - 1), 50)
+        if span <= 0:
+            return
+        target_pits = round(PIT_DENSITY * span * COLS)
+        placed = 0
+        guard = 0
+        guard_max = target_pits * 25 + 50
+        while placed < target_pits and guard < guard_max:
+            guard += 1
+            side = self._draw_cluster_side()
+            cells = self._try_place_square(side, from_row, r_max)
+            if cells is not None:
+                placed += len(cells)
 
-    def _try_place_cluster(
-        self,
-        size: int,
-        r_range: Tuple[int, int],
-        c_range: Tuple[int, int],
-        attempts: int,
-    ) -> bool:
-        if r_range[1] < r_range[0] or c_range[1] < c_range[0]:
-            return False
+    def _draw_cluster_side(self) -> int:
+        x = self.rng.random()
+        acc = 0.0
+        for side, p in CLUSTER_SIDE_PMF.items():
+            acc += p
+            if x < acc:
+                return side
+        return 1
+
+    def _try_place_square(
+        self, side: int, r_min: int, r_max: int, attempts: int = 60
+    ) -> Optional[Set[Tuple[int, int]]]:
+        hi = max(r_min, r_max - side)
+        if hi < r_min or side > COLS:
+            return None
         for _ in range(attempts):
-            r = self.rng.randint(r_range[0], r_range[1])
-            c = self.rng.randint(c_range[0], c_range[1])
-            if self._can_place_cluster(r, c, size):
-                self._paint_cluster(r, c, size)
-                return True
-        return False
+            r = self.rng.randint(r_min, hi)
+            c = self.rng.randint(0, COLS - side)
+            if self._can_place_square(r, c, side):
+                return self._paint_square(r, c, side)
+        return None
 
-    def _can_place_cluster(self, r: int, c: int, size: int) -> bool:
-        # Footprint must fit, be free of air and pits.
-        for dr in range(size):
-            for dc in range(size):
+    def _can_place_square(self, r: int, c: int, side: int) -> bool:
+        # Footprint must fit and be free of air / existing pits, and stay off
+        # tape row 0 (reserved for the player's foothold).
+        if r < 1:
+            return False
+        for dr in range(side):
+            for dc in range(side):
                 nr, nc = r + dr, c + dc
                 if nr >= len(self.tape) or nc < 0 or nc >= COLS:
                     return False
                 cell = self.tape[nr][nc]
                 if is_air(cell) or "pit" in cell:
                     return False
-        # 1-cell ring around the footprint must contain no other pits.
-        for dr in range(-1, size + 1):
-            for dc in range(-1, size + 1):
-                if 0 <= dr < size and 0 <= dc < size:
+        # 1-cell isolation ring: no other pit may touch the footprint.
+        for dr in range(-1, side + 1):
+            for dc in range(-1, side + 1):
+                if 0 <= dr < side and 0 <= dc < side:
                     continue
                 nr, nc = r + dr, c + dc
-                if nr < 0 or nr >= len(self.tape) or nc < 0 or nc >= COLS:
-                    continue
-                if "pit" in self.tape[nr][nc]:
-                    return False
+                if 0 <= nr < len(self.tape) and 0 <= nc < COLS:
+                    if "pit" in self.tape[nr][nc]:
+                        return False
         return True
 
-    def _paint_cluster(self, r: int, c: int, size: int) -> None:
-        cluster = Cluster(cells=set(), total=size * size)
-        for dr in range(size):
-            for dc in range(size):
+    def _paint_square(self, r: int, c: int, side: int) -> Set[Tuple[int, int]]:
+        cells: Set[Tuple[int, int]] = set()
+        cluster = Cluster(cells=set(), total=side * side)
+        for dr in range(side):
+            for dc in range(side):
                 nr, nc = r + dr, c + dc
                 self.tape[nr][nc] = "unreachable_pit"
                 cluster.cells.add((nr, nc))
                 self.cell_to_cluster[(nr, nc)] = cluster
+                cells.add((nr, nc))
         self.clusters.append(cluster)
+        return cells
 
     # ------------------------------------------------------------------
     # Action helpers
@@ -407,7 +473,9 @@ def play_one_game(
     plan_calls = 0
     plan_total_ms = 0.0
     empty_plan_count = 0
+    fallback_count = 0
     actions_taken = 0
+    pit_density_samples: List[float] = []
 
     while iter_count < max_iter:
         if sim.is_over():
@@ -415,6 +483,9 @@ def play_one_game(
         if action_budget is not None and actions_taken >= action_budget:
             break
         board = sim.get_board()
+        # Standing pit density in the visible viewport (calibration check).
+        pit_in_view = sum(1 for row in board for cell in row if is_pit(cell))
+        pit_density_samples.append(pit_in_view / (ROWS * COLS))
         plan_calls += 1
         t0 = time.perf_counter()
         plan = plan_fn(
@@ -426,8 +497,22 @@ def play_one_game(
 
         steps = plan.get("steps") or []
         if not steps:
-            empty_plan_count += 1
-            break
+            # Production-realistic fallback: an empty plan is not fatal live
+            # (the bot re-plans). Dig the cheapest reachable frontier cell so
+            # the session continues; only a board with no diggable frontier at
+            # all is genuinely stuck.
+            fb = sim.fallback_step()
+            if fb is None:
+                empty_plan_count += 1
+                break
+            res = sim.apply_step(fb)
+            if not res["ok"]:
+                empty_plan_count += 1
+                break
+            fallback_count += 1
+            actions_taken += 1
+            iter_count += 1
+            continue
 
         for step in steps:
             res = sim.apply_step(step)
@@ -464,8 +549,12 @@ def play_one_game(
         "plan_calls": plan_calls,
         "plan_avg_ms": (plan_total_ms / plan_calls) if plan_calls else 0.0,
         "empty_plan": empty_plan_count > 0,
+        "fallbacks": fallback_count,
         "clusters": dict(sim.stats.clusters_completed),
         "wasted_partial": wasted_partial,
+        "standing_pit_density": (
+            statistics.mean(pit_density_samples) if pit_density_samples else 0.0
+        ),
     }
 
 
@@ -477,7 +566,7 @@ def main():
     parser.add_argument("--log-every", type=int, default=0)
     parser.add_argument(
         "--planner",
-        choices=["v1", "v2", "v3", "v4"],
+        choices=["v1", "v3", "v4"],
         default="v4",
         help="which planner to evaluate (v1=plan_smart)",
     )
@@ -549,15 +638,20 @@ def main():
         f"({100 * drills_used / drills_avail if drills_avail else 0:.1f}%)"
     )
 
-    # Cluster completion breakdown
-    cluster_counts = {1: 0, 4: 0, 9: 0}
+    # Vein completion breakdown (by vein size 1..5)
+    vein_counts: Dict[int, int] = {}
     for r in results:
         for k, v in r["stats"].clusters_completed.items():
-            cluster_counts[k] = cluster_counts.get(k, 0) + v
-    total = sum(cluster_counts.values())
+            vein_counts[k] = vein_counts.get(k, 0) + v
+    total = sum(vein_counts.values())
+    parts = "  ".join(f"size{k}={vein_counts[k]}" for k in sorted(vein_counts))
+    print(f"  veins:       {parts}  total={total}")
+
+    # Standing pit density (calibration vs real-game 0.99%)
+    dens = [r["standing_pit_density"] for r in results]
     print(
-        f"  clusters:    1x1={cluster_counts.get(1,0)}  "
-        f"2x2={cluster_counts.get(4,0)}  3x3={cluster_counts.get(9,0)}  total={total}"
+        f"  standing pit density: avg={100*statistics.mean(dens):.3f}%  "
+        f"(real-game target ~0.99%)"
     )
 
     stuck_count = sum(1 for r in results if r["empty_plan"])

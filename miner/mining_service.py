@@ -30,7 +30,6 @@ from miner.planning.planner import (
     plan_min_cost_to_floor7,
 )
 from miner.planning.smart_planner import plan_smart
-from miner.v2.planner import plan_v2
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 from miner.rl.rl_recorder import RLRecorder
@@ -299,14 +298,11 @@ def _dispatch_planner(
     """Route to the correct planner version and return (plan, plan_title)."""
     if planner_version == "v4":
         plan = plan_v4(board, shovels=shovels, items=items, blocked_actions={sig[:3] for sig in blocked_actions})
-        return plan, "V4 規劃 (Miner V4, 5-step bounded)"
+        return plan, "V4 規劃 (Miner V4, 3-step bounded)"
     if planner_version == "v3":
         plan = plan_v3(board, shovels=shovels, items=items, blocked_actions={sig[:3] for sig in blocked_actions})
         return plan, "V3 規劃 (Miner V3)"
-    if planner_version == "v2":
-        plan = plan_v2(board, shovels=shovels, items=items, blocked_actions=blocked_actions)
-        return plan, "V2 規劃 (Miner V2)"
-    # v1 default
+    # v1 default (v2 removed 2026-06-05: violated <300ms on 18.8% of real boards)
     tool_candidate = find_tool_candidate(board, items_available=items) if USE_ITEMS else None
     if tool_candidate:
         miner_logger.info(
@@ -326,7 +322,7 @@ def _log_planner_stats(
     blocked_count: int,
     miner_logger,
 ) -> None:
-    if planner_version not in {"v2", "v3", "v4"}:
+    if planner_version not in {"v3", "v4"}:
         return
     miner_logger.info(
         "[MiningService] planner=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
@@ -419,12 +415,15 @@ def run(
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     miner_logger = setup_miner_logger(ip)
     device_cfg = config_manager.get_device_config(ip)
-    # Default planner is v4 (planner-eval skill 2026-04-29 — v4 leads v1/v3
-    # on every cluster-completion metric while staying under the 300 ms wall
-    # budget). Override per-device with `mining_planner_version` in config.
+    # Default planner is v4 (planner-eval 2026-06-05 real-board replay: v4 is
+    # fastest at mean 1.1 ms / max 46 ms with 0 budget violations, and carries
+    # the unseal-corridor fallback for buried pits). v1 is the most shovel-
+    # efficient alternative; v3 is cluster-aware. v2 was removed (violated the
+    # <300 ms budget on 18.8% of real boards). Override per-device with
+    # `mining_planner_version` in config.
     planner_version = str(device_cfg.get("mining_planner_version", "v4")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
-    if planner_version not in {"v1", "v2", "v3", "v4"}:
+    if planner_version not in {"v1", "v3", "v4"}:
         planner_version = "v4"
 
     start_time = time.time()

@@ -43,6 +43,34 @@ def test_dashboard_has_device_enable_toggle():
     assert "toggleDeviceEnabled" in html
 
 
+def test_disabled_web_device_opens_web_via_login_worker():
+    """A disabled web_h5 device must still be able to open the browser for
+    login/setup before it is enabled.
+
+    The normal "開啟網頁" button posts to /api/web_launch, which only writes the
+    `_web_launch_requests` mailbox; every consumer of that mailbox runs inside the
+    per-device automation thread. A disabled device is skipped by the scanner and
+    has no thread, so a web_launch request is never consumed. The disabled card
+    therefore routes through the standalone login worker (/api/web_login), the same
+    path device registration uses, which drives its own Playwright session.
+    """
+    html = _html()
+    assert "openWebForSetup" in html
+    start = html.index("function openWebForSetup")
+    body = html[start:start + 700]
+    assert "/api/web_login/" in body
+    assert "/api/web_launch/" not in body
+
+
+def test_opengold_v2_dead_flag_toggle_removed():
+    """The lamp always routes to opengold_v2 (lamp_scheduler ignores the flag), so
+    the settings checkbox that toggled `use_opengold_v2` is dead UI and must be gone.
+    """
+    html = _html()
+    assert "chkOpenGoldV2" not in html
+    assert "use_opengold_v2" not in html
+
+
 def _fly_pet_nav_tag(html: str) -> str:
     """Return the opening <a ...> tag of the 飛寵管理 side-rail entry."""
     match = re.search(r'<a[^>]*href="/fly-pet"[^>]*>', html)

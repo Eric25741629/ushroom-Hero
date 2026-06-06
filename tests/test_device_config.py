@@ -61,6 +61,20 @@ def test_device_config_known_field_via_get():
     assert cfg.get("lamp_check_interval") == 3
 
 
+def test_default_device_config_has_jpeg_quality_none():
+    """web_screenshot_jpeg_quality defaults to None (PNG) so OCR/CNN input is unchanged."""
+    from config_manager import DEFAULT_DEVICE_CONFIG
+    assert DEFAULT_DEVICE_CONFIG["web_screenshot_jpeg_quality"] is None
+
+
+def test_device_config_jpeg_quality_is_typed_field():
+    """The flag must be a first-class DeviceConfig field, not just an _extra key."""
+    from config_manager import DeviceConfig
+    assert "web_screenshot_jpeg_quality" in DeviceConfig.__dataclass_fields__
+    assert DeviceConfig().web_screenshot_jpeg_quality is None
+    assert DeviceConfig(web_screenshot_jpeg_quality=85).get("web_screenshot_jpeg_quality") == 85
+
+
 def test_device_config_all_defaults_match_default_dict():
     """DeviceConfig defaults must match DEFAULT_DEVICE_CONFIG for the fields it covers."""
     from config_manager import DeviceConfig, DEFAULT_DEVICE_CONFIG

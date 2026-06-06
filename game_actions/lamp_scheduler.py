@@ -24,7 +24,8 @@ from utils.screenshot_helpers import log_main_page_mismatch
 def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
     """開神燈執行入口。V1(Open_gold_paddle_ocr)已廢棄，一律走 V2 LampService。
 
-    （use_opengold_v2 旗標保留於 config 僅供文件/相容，路由已不再讀取它。）
+    （舊的 use_opengold_v2 旗標已從 config schema / 儀表板移除；舊 config 殘留此鍵也無妨，
+    路由不讀它。）
     """
     duration = lamp_dur + random.randint(-10, 10)
     svc = _LampServiceV2(d, device_ip=ip)
@@ -36,7 +37,7 @@ def _run_phone_ocr_lamp(d, ip: str, stage: str) -> None:
         log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "手機 OCR 開神燈前不在主頁面")
         return
     lamp_dur = config_manager.get_device_config(ip).get("lamp_duration_sec", 300)
-    bot_state.update_state(ip, task="開神燈 (OCR)", step=f"執行中 ({lamp_dur}s)")
+    bot_state.update_state(ip, task="開神燈 (OCR)", step="執行中", step_deadline=time.time() + lamp_dur)
     logger.info(f"[{ip}] 使用手機 OCR 開神燈模式，持續 {lamp_dur}s")
     _run_lamp(d, ip, lamp_dur, is_compare=True)
 
@@ -46,7 +47,7 @@ def _run_5560_lamp(d, ip: str, stage: str) -> None:
         log_main_page_mismatch(d, ip, stage, "開神燈 (OCR)", "5560 OCR 開神燈前不在主頁面")
         return
     lamp_dur = int(config_manager.get_device_config(ip).get("lamp_duration_sec", 300))
-    bot_state.update_state(ip, task="開神燈 (OCR)", step=f"5560 執行中 ({lamp_dur}s)")
+    bot_state.update_state(ip, task="開神燈 (OCR)", step="5560 執行中", step_deadline=time.time() + lamp_dur)
     logger.info(f"[{ip}] 使用 5560 OCR 開神燈模式，持續 {lamp_dur}s")
     _run_lamp(d, ip, lamp_dur, is_compare=False)
 
@@ -104,7 +105,7 @@ def _run_general_lamp(d, ip: str, stage: str) -> None:
         logger.info(f"[{ip}] 本輪跳過一般開神燈: {reason}")
         return
 
-    bot_state.update_state(ip, task="開神燈", step=f"執行中 ({lamp_dur}s)")
+    bot_state.update_state(ip, task="開神燈", step="執行中", step_deadline=time.time() + lamp_dur)
     logger.info(
         f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
     )

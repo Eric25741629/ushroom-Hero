@@ -2,6 +2,16 @@
 
 本文檔根據 `miner_env.py` 和 `config.json` 的實際程式邏輯進行了更新，並納入了 **SmartPlanner 演算法優化經驗**。
 
+> **礦物出現率 (實證 2026-06-05，礦脈時間追蹤)**：礦 (pit / 礦洞) 以**正方形 cluster** 出現：
+> 1x1 / 2x2 / 3x3，數量占比約 **66% / 18% / 17%**；3x3 雖只占 17% cluster，卻是 **~52% 的礦格**。
+> SPAWN 密度約 **3.6%** 的格子 (單張快照只看到 ~0.99% standing，因為礦被快速收集)。
+> 每回合視野約 **75% 沒可達礦** (no_pit，只需挖最便宜格推進捲動)，分數主要來自 25% has_pit 回合的 cluster。
+> ⚠ **量 cluster 一定要沿時間追蹤 pit** (`tools/track_pits_replay.py`)：3x3 跨 3 個 tape row、隨畫面下捲被
+> 逐步收集，**從不在單一 frame 完整出現** → 用單張快照算連通分量會誤判「沒有 3x3」。
+> 完整分析、planner 比較、模擬器校正：[`docs/MINING_ALGORITHM_ANALYSIS.md`](../docs/MINING_ALGORITHM_ANALYSIS.md)。
+> 現行預設 planner 為 **v4** (bounded DFS，250ms 硬時限)；v1 (本文所述 A* SmartPlanner) 與
+> v3 為可切替代。
+
 ## 1. 核心機制
 *   **目標**：透過挖掘不斷獲取積分（金幣）與道具，並管理資源（鎬子、鑽頭、炸藥）。
 *   **盤面**：寬度固定為 **6 格** (`COLS=6`)，可視深度為 **7 格** (`VISIBLE_ROWS=7`)。
@@ -49,7 +59,7 @@
     *   如果一個動作會導致第 7 層打通，但 Row 0 或 Row 1 還有礦物未收集，該動作將被視為**非法 (Prune)**，除非無路可走。
 
 ## 5. SmartPlanner 演算法原則
-基於上述規則，我們的 AI (`SmartPlanner`) 採用 **Beam Search** 進行多步規劃：
+基於上述規則，v1 `SmartPlanner` 採用 **加權 A\*** (ε=1.5) 進行多步規劃 (`solve()` 中的 `heapq` 優先佇列，非 beam search)：
 
 1.  **優先級**：
     1.  **全收集**：剩餘礦物越少越好 (必須拿完)。

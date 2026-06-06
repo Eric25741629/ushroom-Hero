@@ -1344,10 +1344,6 @@
 
           <div style="border-top:1px solid #444; margin:4px 0;"></div>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkOpenGoldV2">使用新版開神燈（opengold_v2）</label>
-
-          <div style="border-top:1px solid #444; margin:4px 0;"></div>
-
           <label class="checkbox-item"><input type="checkbox" id="chkRealPhone"><b>實機模式（顯示恢復按鈕）</b></label>
 
         </div>
@@ -2433,9 +2429,17 @@
 
           if (isDisabled) {
 
-            // 停用的裝置 (新註冊後尚未啟用) 只提供「啟用掛機」入口，避免在登入/設定
-            // 還沒完成時就被掃描器開起來。
+            // 停用的裝置 (新註冊後尚未啟用) 預設只提供「啟用掛機」入口，避免在登入/設定
+            // 還沒完成時就被掃描器開起來。web_h5 裝置額外給「開啟網頁(登入/設定)」，走
+            // /api/web_login 手動登入 worker (獨立 Playwright，不需掛機 thread)，讓使用者
+            // 能先登入並填好設定再啟用。一般卡片的「開啟網頁」走 /api/web_launch 信箱，
+            // 需要運行中的 thread 消費；停用裝置沒有 thread → 那條路按了不會有反應。
+            const webSetupBtn = info.backend === 'web_h5'
+              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁(登入/設定)</button>`
+              : '';
             actionBar.innerHTML = `
+
+              ${webSetupBtn}
 
               <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用掛機</button>
 
@@ -2818,6 +2822,32 @@
       }
     }
 
+    // 停用 (未啟用掛機) 的 web_h5 裝置開網頁登入/設定。走 /api/web_login 手動登入
+    // worker (獨立 Playwright session)，不依賴掛機 thread；/api/web_launch 那條信箱
+    // 路徑需要運行中的 device thread 來消費，停用裝置沒有 thread 會按了沒反應。
+    async function openWebForSetup(ip) {
+      if (!ip) return;
+      const statusEl = document.getElementById('webLoginStatusText');
+      if (statusEl) statusEl.innerText = `正在開啟 [${ip}] 登入/設定視窗…`;
+      try {
+        const resp = await fetch(`/api/web_login/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ persist_settings: false })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (resp.status === 409) {
+          if (statusEl) statusEl.innerText = '登入流程已在執行中';
+        } else if (!resp.ok || result.status === 'error') {
+          throw new Error(result.message || 'web login failed');
+        } else if (statusEl) {
+          statusEl.innerText = `已開啟 [${ip}] 登入/設定視窗，登入並設定完成後關閉視窗，再按「✅ 啟用掛機」`;
+        }
+      } catch (e) {
+        if (statusEl) statusEl.innerText = '開啟網頁失敗: ' + e;
+      }
+    }
+
     async function launchWebPage(ip) {
 
       if (!ip || webBtnLocked(ip)) return;
@@ -3042,8 +3072,6 @@
 
         document.getElementById('chkDungeon').checked = config.enable_dungeon !== false;
 
-        document.getElementById('chkOpenGoldV2').checked = config.use_opengold_v2 === true;
-
         document.getElementById('chkRealPhone').checked = config.is_real_phone === true;
 
         document.getElementById('editOnlineInterval').value = config.online_check_interval || 5;
@@ -3133,8 +3161,6 @@
         enable_mining: document.getElementById('chkMining').checked,
 
         enable_dungeon: document.getElementById('chkDungeon').checked,
-
-        use_opengold_v2: document.getElementById('chkOpenGoldV2').checked,
 
         is_real_phone: document.getElementById('chkRealPhone').checked,
 

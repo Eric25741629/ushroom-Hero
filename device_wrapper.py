@@ -498,6 +498,23 @@ class _NoopXPathQuery:
         return False
 
 
+def _coerce_jpeg_quality(value: Any) -> Optional[int]:
+    """Normalize ``web_screenshot_jpeg_quality`` to an int in [1,100], or None.
+
+    None / 0 / unparseable => None, meaning "keep PNG" (the lossless default).
+    Out-of-range values are clamped into [1,100].
+    """
+    if value is None:
+        return None
+    try:
+        q = int(value)
+    except (TypeError, ValueError):
+        return None
+    if q <= 0:
+        return None
+    return max(1, min(100, q))
+
+
 class PlaywrightGameDevice:
     """Sync Playwright wrapper that mimics the minimal uiautomator2 API used by this project."""
 
@@ -526,6 +543,11 @@ class PlaywrightGameDevice:
         )
         if self.screenshot_method not in {"playwright", "canvas_capture"}:
             self.screenshot_method = "playwright"
+        # 截圖格式: web_screenshot_jpeg_quality 設 1..100 時改用 JPEG 擷取
+        # (較快較小), None/0/未設定維持 PNG 預設, 不改變 OCR/CNN 輸入。
+        self.screenshot_jpeg_quality = _coerce_jpeg_quality(
+            self.cfg.get("web_screenshot_jpeg_quality")
+        )
         self.info = {
             "displayWidth": self.viewport_width,
             "displayHeight": self.viewport_height,
@@ -1017,6 +1039,22 @@ class PlaywrightGameDevice:
             self.logger.debug(f"[{self.device_id}] Canvas capture failed: {exc}")
             return None
 
+    def _playwright_screenshot_kwargs(self) -> Dict[str, Any]:
+        """Extra kwargs for Playwright screenshot: JPEG when configured, else PNG default."""
+        if self.screenshot_jpeg_quality:
+            return {"type": "jpeg", "quality": int(self.screenshot_jpeg_quality)}
+        return {}
+
+    def _capture_via_playwright(self) -> Optional[bytes]:
+        """Capture the canvas via Playwright, falling back to full-page on locator failure."""
+        shot_kwargs = self._playwright_screenshot_kwargs()
+        try:
+            return self._page.locator(self.canvas_selector).first.screenshot(
+                timeout=5000, **shot_kwargs
+            )
+        except Exception:
+            return self._page.screenshot(**shot_kwargs)
+
     def screenshot(self, format=None, *args, **kwargs):
         data: Optional[bytes] = None
         last_exc: Optional[Exception] = None
@@ -1041,20 +1079,10 @@ class PlaywrightGameDevice:
                             f"[{self.device_id}] Canvas capture returned None, falling back to playwright screenshot"
                         )
                         # 回退到 Playwright 原生截圖
-                        try:
-                            data = self._page.locator(
-                                self.canvas_selector
-                            ).first.screenshot(timeout=5000)
-                        except Exception:
-                            data = self._page.screenshot()
+                        data = self._capture_via_playwright()
                 else:
                     # 預設使用 Playwright 原生截圖
-                    try:
-                        data = self._page.locator(
-                            self.canvas_selector
-                        ).first.screenshot(timeout=5000)
-                    except Exception:
-                        data = self._page.screenshot()
+                    data = self._capture_via_playwright()
                 break
             except Exception as exc:
                 last_exc = exc

@@ -105,3 +105,30 @@ class LampLoopState:
             return LampLoopAction.REENGAGE_AUTO
 
         return LampLoopAction.WAIT
+
+
+class LampExhaustionTracker:
+    """確認剩餘神燈是否已耗盡（剩餘數量歸零）。
+
+    與 LampService.run() 開頭的 `pre_count == 0` 早退同一意圖：神燈開完就停止，
+    不要把空爐當「停滯」一直 reengage / 重按「開始」空轉到 times 逾時。
+    為避免單次誤讀（轉場/動畫）就停，需連續 `stop_after` 次讀到 0 才確認。
+
+    判斷規則（與 `_try_recover_or_stop` 對 remaining 的處理一致）：
+    - count is None（轉場/動畫讀不到）→ 不確認、也不重置 streak（暫時性）。
+    - count > 0（還有燈，含魔法熔爐被動補燈）→ 重置 streak。
+    - count <= 0 → streak += 1；達 stop_after 回傳 True（該停止）。
+    """
+
+    def __init__(self, stop_after: int = 2) -> None:
+        self.stop_after = stop_after
+        self.zero_streak = 0
+
+    def is_exhausted(self, count: Optional[int]) -> bool:
+        if count is None:
+            return False
+        if count > 0:
+            self.zero_streak = 0
+            return False
+        self.zero_streak += 1
+        return self.zero_streak >= self.stop_after

@@ -308,3 +308,47 @@ def test_run_triggers_fc65396d_chrome_branch(pipeline_mod, fake_all, monkeypatch
     assert "com.android.chrome" in started
     # It also stops the game app in the cleanup branch.
     assert "com.mxdzz.tw.and" in stopped
+
+
+def test_run_recovers_from_consecutive_mismatch_abort(pipeline_mod, fake_all, monkeypatch):
+    """When 4+ consecutive tasks land off the main page, run() must force-stop
+    the game app and return *cleanly* — never let the abort escape.
+
+    Regression: the consecutive-mismatch abort raised inside _run_tasks used to
+    propagate out of run() (nothing caught it), so new_main_v2's outer handler
+    logged it as '未預期錯誤' and tore the device thread down (set_offline +
+    scanner respawn → immediate re-run, no sleep). The contract is the opposite:
+    run() swallows the abort so the caller's wake loop sleeps and re-wakes at the
+    next aligned window.
+    """
+    # Force every stage probe off the main page so the streak reaches the
+    # abort threshold (4) at Task 7 (商店).
+    monkeypatch.setattr(
+        pipeline_mod, "get_stage_with_check",
+        lambda d, ip, Cnn_model, **kw: "未知",
+    )
+
+    def _off_page(d, ip, Cnn_model, task_name, mismatch_reason, fn, *, step="執行中", log=None):
+        # Real _run_at_main_page skips fn() when off the main page; mirror that.
+        fake_all["at_main_page"].append({"task": task_name})
+        return "未知"
+    monkeypatch.setattr(pipeline_mod, "_run_at_main_page", _off_page)
+
+    stopped: list[str] = []
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    ctx.d.app_stop = lambda pkg: stopped.append(pkg)
+
+    try:
+        pipeline_mod.run(ctx)
+    except Exception as exc:  # noqa: BLE001 — the bug is precisely an escaping exception
+        pytest.fail(
+            "run() must recover from the consecutive-mismatch abort and return, "
+            f"but it raised {type(exc).__name__}: {exc}"
+        )
+
+    # Recovery action: the game app was force-stopped before bailing out.
+    assert "com.mxdzz.tw.and" in stopped, "abort must force-stop the game app"
+    # The pipeline aborted early — tail tasks never ran.
+    assert fake_all["lamp_if_due"] == [], "lamp (Task 19) must not run after abort"
+    assert fake_all["weekly_dungeon"] == [], "weekly dungeon (Task 15) must not run after abort"
+    assert fake_all["biweekly_dungeon"] == [], "biweekly dungeon (Task 17) must not run after abort"

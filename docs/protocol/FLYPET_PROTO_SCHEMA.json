@@ -1,0 +1,952 @@
+{
+ "fly": {
+  "nested": {
+   "fly_egg_info_c2s": {
+    "fields": {}
+   },
+   "fly_egg_info_s2c": {
+    "fields": {
+     "eggs": {
+      "rule": "repeated",
+      "type": "type.p_fly_egg",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_info_c2s": {
+    "fields": {}
+   },
+   "fly_pet_info_s2c": {
+    "fields": {
+     "pets": {
+      "rule": "repeated",
+      "type": "type.p_fly_pet",
+      "id": 1
+     }
+    }
+   },
+   "fly_egg_incubate_c2s": {
+    "fields": {
+     "id": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     }
+    }
+   },
+   "fly_egg_incubate_s2c": {
+    "fields": {
+     "id": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     },
+     "pet_ids": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 2,
+      "options": {
+       "packed": false
+      }
+     },
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     }
+    }
+   },
+   "fly_pet_level_up_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "cost": {
+      "rule": "repeated",
+      "type": "type.p_key_value",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_level_up_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_advance_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_advance_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_fight_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_fight_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_reset_c2s": {
+    "fields": {
+     "goods_id": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_reset_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_resolve_c2s": {
+    "fields": {
+     "id": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     }
+    }
+   },
+   "fly_pet_resolve_s2c": {
+    "fields": {
+     "id": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     },
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_rename_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "name": {
+      "rule": "required",
+      "type": "string",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_rename_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_base_info_c2s": {
+    "fields": {}
+   },
+   "fly_hybrid_base_info_s2c": {
+    "fields": {
+     "base_list": {
+      "rule": "repeated",
+      "type": "type.p_fly_base",
+      "id": 1
+     },
+     "use_list": {
+      "rule": "repeated",
+      "type": "type.p_fly_use",
+      "id": 2
+     }
+    }
+   },
+   "fly_hybrid_shelves_info_c2s": {
+    "fields": {}
+   },
+   "fly_hybrid_shelves_info_s2c": {
+    "fields": {
+     "setting": {
+      "rule": "required",
+      "type": "type.p_key_value",
+      "id": 1
+     },
+     "partner_list": {
+      "rule": "repeated",
+      "type": "type.p_fly_hybrid_role",
+      "id": 2
+     },
+     "shelves_list": {
+      "rule": "repeated",
+      "type": "type.p_fly_shelves",
+      "id": 3
+     }
+    }
+   },
+   "fly_hybrid_set_shelves_info_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "type": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 2
+     },
+     "is_save": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     }
+    }
+   },
+   "fly_hybrid_set_shelves_info_s2c": {
+    "fields": {
+     "type": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "info": {
+      "rule": "required",
+      "type": "type.p_fly_shelves",
+      "id": 2
+     }
+    }
+   },
+   "fly_hybrid_partner_shelves_c2s": {
+    "fields": {
+     "role_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_partner_shelves_s2c": {
+    "fields": {
+     "list": {
+      "rule": "repeated",
+      "type": "type.p_fly_shelves",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_resp_c2s": {
+    "fields": {
+     "target_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "resp": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 2
+     },
+     "type": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     },
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 4
+     }
+    }
+   },
+   "fly_hybrid_resp_s2c": {
+    "fields": {
+     "code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "target_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "resp": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     },
+     "type": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 4
+     },
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 5
+     }
+    }
+   },
+   "fly_hybrid_kick_c2s": {
+    "fields": {
+     "target_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_start_c2s": {
+    "fields": {
+     "base_id": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "fly_a_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "fly_b_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 3
+     }
+    }
+   },
+   "fly_hybrid_start_s2c": {
+    "fields": {
+     "base_info": {
+      "rule": "required",
+      "type": "type.p_fly_base",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_get_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_get_s2c": {
+    "fields": {
+     "base_info": {
+      "rule": "required",
+      "type": "type.p_fly_base",
+      "id": 1
+     },
+     "egg": {
+      "rule": "repeated",
+      "type": "type.p_fly_egg",
+      "id": 2
+     }
+    }
+   },
+   "fly_hybrid_change_base_name_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "name": {
+      "rule": "required",
+      "type": "string",
+      "id": 2
+     }
+    }
+   },
+   "fly_hybrid_change_base_name_s2c": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "name": {
+      "rule": "required",
+      "type": "string",
+      "id": 2
+     }
+    }
+   },
+   "fly_hybrid_save_setting_c2s": {
+    "fields": {
+     "setting": {
+      "rule": "required",
+      "type": "type.p_key_value",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_save_setting_s2c": {
+    "fields": {
+     "setting": {
+      "rule": "required",
+      "type": "type.p_key_value",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_pet_info_c2s": {
+    "fields": {
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_hybrid_pet_info_s2c": {
+    "fields": {
+     "pet": {
+      "rule": "required",
+      "type": "type.p_fly_pet",
+      "id": 1
+     },
+     "other_times": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_collection_c2s": {
+    "fields": {}
+   },
+   "fly_pet_collection_s2c": {
+    "fields": {
+     "pet_ids": {
+      "rule": "repeated",
+      "type": "uint32",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     }
+    }
+   },
+   "fly_pet_star_c2s": {
+    "fields": {
+     "target_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "opt": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     }
+    }
+   },
+   "fly_pet_star_s2c": {
+    "fields": {
+     "target_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "opt": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     }
+    }
+   },
+   "fly_pet_lock_c2s": {
+    "fields": {
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_lock_s2c": {
+    "fields": {
+     "pet_id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     },
+     "lock": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 2
+     }
+    }
+   },
+   "fly_pet_resolve_reward_c2s": {
+    "fields": {
+     "id": {
+      "rule": "repeated",
+      "type": "uint64",
+      "id": 1,
+      "options": {
+       "packed": false
+      }
+     }
+    }
+   },
+   "fly_pet_resolve_reward_s2c": {
+    "fields": {
+     "reward_list": {
+      "rule": "repeated",
+      "type": "type.p_reward",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_reborn_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_reborn_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "old_growth": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 3
+     },
+     "new_growth": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 4
+     },
+     "old_attr": {
+      "rule": "repeated",
+      "type": "type.p_key_value",
+      "id": 5
+     },
+     "new_attr": {
+      "rule": "repeated",
+      "type": "type.p_key_value",
+      "id": 6
+     }
+    }
+   },
+   "fly_pet_upgrade_quality_c2s": {
+    "fields": {
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 1
+     }
+    }
+   },
+   "fly_pet_upgrade_quality_s2c": {
+    "fields": {
+     "error_code": {
+      "rule": "required",
+      "type": "uint32",
+      "id": 1
+     },
+     "id": {
+      "rule": "required",
+      "type": "uint64",
+      "id": 2
+     },
+     "old_attr": {
+      "rule": "repeated",
+      "type": "type.p_key_value",
+      "id": 3
+     },
+     "new_attr": {
+      "rule": "repeated",
+      "type": "type.p_key_value",
+      "id": 4
+     }
+    }
+   },
+   "fly_egg_update_s2c": {
+    "fields": {
+     "eggs": {
+      "rule": "repeated",
+      "type": "type.p_fly_egg",
+      "id": 1
+     }
+    }
+   }
+  }
+ },
+ "shared_types": {
+  "type.p_fly_egg": {
+   "fields": {
+    "id": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 1
+    },
+    "config_id": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 2
+    },
+    "ext": {
+     "rule": "repeated",
+     "type": "p_key_value",
+     "id": 3
+    }
+   }
+  },
+  "type.p_fly_pet": {
+   "fields": {
+    "id": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 1
+    },
+    "role_id": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 2
+    },
+    "config_id": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 3
+    },
+    "level": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 4
+    },
+    "step": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 5
+    },
+    "exp": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 6
+    },
+    "name": {
+     "rule": "required",
+     "type": "string",
+     "id": 7
+    },
+    "generation": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 8
+    },
+    "fight": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 9
+    },
+    "growth": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 10
+    },
+    "rename_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 11
+    },
+    "reborn": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 12
+    },
+    "quality": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 13
+    },
+    "attr_list": {
+     "rule": "repeated",
+     "type": "p_key_value",
+     "id": 14
+    },
+    "entry_list": {
+     "rule": "repeated",
+     "type": "p_key_value",
+     "id": 15
+    },
+    "ext": {
+     "rule": "repeated",
+     "type": "p_key_value",
+     "id": 16
+    },
+    "work_team_cfg_id": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 17
+    }
+   }
+  },
+  "type.p_key_value": {
+   "fields": {
+    "k": {
+     "rule": "required",
+     "type": "int64",
+     "id": 1
+    },
+    "v": {
+     "rule": "required",
+     "type": "int64",
+     "id": 2
+    }
+   }
+  },
+  "type.p_fly_base": {
+   "fields": {
+    "id": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 1
+    },
+    "name": {
+     "rule": "required",
+     "type": "string",
+     "id": 2
+    },
+    "state": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 3
+    },
+    "fly_a": {
+     "rule": "required",
+     "type": "p_fly_base_pet",
+     "id": 4
+    },
+    "fly_b": {
+     "rule": "required",
+     "type": "p_fly_base_pet",
+     "id": 5
+    },
+    "start_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 6
+    },
+    "end_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 7
+    }
+   }
+  },
+  "type.p_fly_use": {
+   "fields": {
+    "id": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 1
+    },
+    "times": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 2
+    },
+    "state": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 3
+    },
+    "start_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 4
+    },
+    "end_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 5
+    },
+    "other_times": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 6
+    },
+    "other_state": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 7
+    },
+    "other_start_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 8
+    },
+    "other_end_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 9
+    }
+   }
+  },
+  "type.p_fly_hybrid_role": {
+   "fields": {
+    "role_id": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 1
+    },
+    "head": {
+     "rule": "required",
+     "type": "p_head",
+     "id": 2
+    },
+    "name": {
+     "rule": "required",
+     "type": "string",
+     "id": 3
+    }
+   }
+  },
+  "type.p_fly_shelves": {
+   "fields": {
+    "info": {
+     "rule": "required",
+     "type": "p_fly_pet",
+     "id": 1
+    },
+    "is_save": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 2
+    },
+    "state": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 3
+    },
+    "start_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 4
+    },
+    "end_time": {
+     "rule": "required",
+     "type": "uint32",
+     "id": 5
+    },
+    "use_role": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 6
+    },
+    "other_times": {
+     "rule": "required",
+     "type": "uint64",
+     "id": 7
+    },
+    "can_list": {
+     "rule": "repeated",
+     "type": "uint64",
+     "id": 8,
+     "options": {
+      "packed": false
+     }
+    },
+    "ask_list": {
+     "rule": "repeated",
+     "type": "p_key_value",
+     "id": 9
+    }
+   }
+  },
+  "type.p_reward": {
+   "fields": {
+    "gtid": {
+     "rule": "required",
+     "type": "int32",
+     "id": 1
+    },
+    "num": {
+     "rule": "required",
+     "type": "int64",
+     "id": 2
+    }
+   }
+  }
+ }
+}

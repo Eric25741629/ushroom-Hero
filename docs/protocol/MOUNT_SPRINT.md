@@ -79,9 +79,9 @@ OCR 常漏字 (「一鍵餵養」→「一鍵餐」、「一鍵#餐」)。驗證
 `bot_config.json` 裝置層級:
 ```json
 "enable_mount_sprint": true,
-"mount_sprint_quantity": 7000
+"mount_sprint_quantity": 3200
 ```
-程式預設 7000 (`rank_events.DEFAULT_QUANTITY`)。
+程式預設 7000 (`rank_events.DEFAULT_QUANTITY`),但實際以 config 為準;5554 於 2026-06-04 調降為 3200。
 
 ## 驗證紀錄 (2026-05-25)
 
