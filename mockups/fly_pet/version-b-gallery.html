@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>飛寵圖鑑 · 版本 B 圖鑑卡片牆</title>
+<style>
+/* ===================== 設計語言 ===================== */
+:root{
+  --bg:#0c0f15;
+  --bg-2:#11151d;
+  --panel:#161b25;
+  --panel-2:#1c2230;
+  --line:#262d3b;
+  --line-soft:#1e2531;
+  --txt:#e7ecf3;
+  --txt-dim:#9aa6b6;
+  --txt-faint:#6c7787;
+  /* 版本 B 專屬主色：青翠琥珀漸層，配合圖鑑質感 */
+  --accent:#34e0c4;
+  --accent-2:#9b8cff;
+  --amber:#ffc14d;
+  --danger:#ef5350;
+  --radius:14px;
+  --shadow:0 8px 28px rgba(0,0,0,.45);
+  --rail-h:120px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+html,body{margin:0;padding:0;}
+body{
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(52,224,196,.10), transparent 60%),
+    radial-gradient(900px 500px at -5% 0%, rgba(155,140,255,.10), transparent 55%),
+    var(--bg);
+  color:var(--txt);
+  font-family:"Segoe UI Variable","Segoe UI","PingFang TC","Microsoft JhengHei",system-ui,-apple-system,sans-serif;
+  font-size:14px;
+  line-height:1.5;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+input{font-family:inherit;}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:#2a3140;border-radius:8px;border:2px solid var(--bg);}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ===================== 頂部標頭 ===================== */
+.app-head{
+  position:sticky;top:0;z-index:40;
+  background:linear-gradient(180deg, rgba(12,15,21,.96), rgba(12,15,21,.86));
+  backdrop-filter:blur(12px);
+  border-bottom:1px solid var(--line-soft);
+}
+.head-row{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 18px 10px;
+  max-width:1680px;margin:0 auto;
+}
+.brand{display:flex;align-items:center;gap:11px;min-width:0;}
+.brand-mark{
+  width:38px;height:38px;border-radius:11px;flex:0 0 auto;
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));
+  display:grid;place-items:center;font-size:20px;font-weight:800;color:#0c0f15;
+  box-shadow:0 4px 14px rgba(52,224,196,.4);
+}
+.brand-txt h1{font-size:16px;margin:0;font-weight:800;letter-spacing:.5px;white-space:nowrap;}
+.brand-txt .ver{
+  font-size:11px;color:var(--accent);font-weight:700;letter-spacing:1px;
+  display:inline-flex;align-items:center;gap:5px;
+}
+.brand-txt .ver::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 8px var(--accent);}
+.head-spacer{flex:1;}
+.count-chip{
+  display:flex;align-items:baseline;gap:6px;
+  background:var(--panel);border:1px solid var(--line);
+  padding:7px 13px;border-radius:11px;white-space:nowrap;
+}
+.count-chip b{font-size:18px;color:var(--accent);font-variant-numeric:tabular-nums;}
+.count-chip .of{color:var(--txt-faint);font-size:12px;}
+.count-chip .lbl{color:var(--txt-dim);font-size:12px;}
+.icon-btn{
+  width:40px;height:40px;border-radius:11px;flex:0 0 auto;
+  background:var(--panel);border:1px solid var(--line);
+  display:grid;place-items:center;font-size:18px;transition:.15s;
+}
+.icon-btn:hover{border-color:var(--accent);color:var(--accent);}
+.icon-btn.help-toggle{display:none;}
+
+/* 說明條 */
+.note{
+  max-width:1680px;margin:0 auto;
+  padding:0 18px;
+  overflow:hidden;max-height:0;transition:max-height .25s ease;
+}
+.note.open{max-height:240px;}
+.note-inner{
+  background:linear-gradient(135deg, rgba(52,224,196,.08), rgba(155,140,255,.06));
+  border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:10px;padding:10px 14px;margin-bottom:8px;
+  color:var(--txt-dim);font-size:12.5px;line-height:1.6;
+}
+.note-inner b{color:var(--accent);}
+
+/* ===================== 篩選 RAIL ===================== */
+.rail{
+  max-width:1680px;margin:0 auto;
+  padding:10px 18px 4px;
+  display:flex;flex-direction:column;gap:10px;
+}
+.rail-top{display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
+.search-box{
+  flex:1;min-width:220px;position:relative;
+  display:flex;align-items:center;
+}
+.search-box .si{position:absolute;left:13px;font-size:15px;color:var(--txt-faint);pointer-events:none;}
+.search-box input{
+  width:100%;height:44px;
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  color:var(--txt);font-size:14px;
+  padding:0 40px 0 38px;outline:none;transition:.15s;
+}
+.search-box input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(52,224,196,.15);}
+.search-box input::placeholder{color:var(--txt-faint);}
+.search-clear{
+  position:absolute;right:8px;width:28px;height:28px;border-radius:8px;
+  display:none;place-items:center;color:var(--txt-faint);font-size:15px;
+}
+.search-clear.show{display:grid;}
+.search-clear:hover{background:var(--panel-2);color:var(--txt);}
+
+.view-toggle{
+  display:flex;background:var(--panel);border:1px solid var(--line);
+  border-radius:12px;padding:3px;gap:2px;flex:0 0 auto;height:46px;
+}
+.view-toggle button{
+  padding:0 14px;border-radius:9px;font-size:13px;font-weight:600;color:var(--txt-dim);
+  display:flex;align-items:center;gap:6px;transition:.15s;min-height:40px;
+}
+.view-toggle button.on{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0c0f15;}
+.view-toggle button:not(.on):hover{color:var(--txt);}
+
+.filter-btn{
+  height:44px;padding:0 15px;border-radius:12px;flex:0 0 auto;
+  background:var(--panel);border:1px solid var(--line);
+  display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:var(--txt-dim);
+  transition:.15s;position:relative;
+}
+.filter-btn:hover{border-color:var(--accent);color:var(--txt);}
+.filter-btn .badge{
+  background:var(--accent);color:#0c0f15;font-size:11px;font-weight:800;
+  border-radius:20px;padding:1px 7px;min-width:18px;text-align:center;
+}
+.mobile-filter-btn{display:none;}
+
+/* 品質快捷 + 旗標快捷 */
+.quick-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.quick-grp{display:flex;gap:6px;align-items:center;}
+.quick-grp .glabel{font-size:11px;color:var(--txt-faint);margin-right:2px;white-space:nowrap;}
+.pq-chip{
+  height:34px;padding:0 12px;border-radius:9px;
+  border:1px solid var(--line);background:var(--panel);
+  display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;color:var(--txt-dim);
+  transition:.15s;
+}
+.pq-chip .dot{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
+.pq-chip:hover{border-color:var(--txt-faint);color:var(--txt);}
+.pq-chip.on{color:var(--txt);box-shadow:inset 0 0 0 1.5px currentColor;}
+.flag-chip{
+  height:34px;padding:0 12px;border-radius:9px;
+  border:1px solid var(--line);background:var(--panel);
+  font-size:12.5px;font-weight:600;color:var(--txt-dim);transition:.15s;
+  display:flex;align-items:center;gap:6px;
+}
+.flag-chip:hover{border-color:var(--txt-faint);color:var(--txt);}
+.flag-chip.on{border-color:var(--amber);color:var(--amber);background:rgba(255,193,77,.08);}
+
+/* 種類藥丸 橫向捲動 */
+.species-rail-wrap{position:relative;}
+.species-rail{
+  display:flex;gap:7px;overflow-x:auto;padding:2px 2px 8px;
+  scrollbar-width:thin;scroll-behavior:smooth;
+  -webkit-overflow-scrolling:touch;
+}
+.species-rail::-webkit-scrollbar{height:6px;}
+.sp-pill{
+  flex:0 0 auto;height:38px;padding:0 13px;border-radius:20px;
+  border:1px solid var(--line);background:var(--panel);
+  display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:var(--txt-dim);
+  transition:.15s;white-space:nowrap;
+}
+.sp-pill .mini{
+  width:20px;height:20px;border-radius:6px;display:grid;place-items:center;
+  font-size:11px;font-weight:800;color:#0c0f15;flex:0 0 auto;
+}
+.sp-pill .cnt{font-size:11px;color:var(--txt-faint);font-variant-numeric:tabular-nums;}
+.sp-pill:hover{border-color:var(--txt-faint);color:var(--txt);}
+.sp-pill.on{border-color:var(--accent);color:var(--txt);background:rgba(52,224,196,.1);box-shadow:0 0 0 1px var(--accent) inset;}
+.sp-pill.all .mini{background:linear-gradient(135deg,var(--accent),var(--accent-2));}
+
+/* ===================== 卡片牆 ===================== */
+.stage{
+  max-width:1680px;margin:0 auto;
+  padding:6px 18px 140px;
+}
+.group-head{
+  display:flex;align-items:center;gap:11px;
+  margin:18px 0 12px;padding-bottom:8px;
+  border-bottom:1px solid var(--line-soft);
+  position:sticky;top:0;background:transparent;
+}
+.group-head .ico{
+  width:30px;height:30px;border-radius:9px;display:grid;place-items:center;
+  font-size:15px;font-weight:800;color:#0c0f15;flex:0 0 auto;
+}
+.group-head h2{margin:0;font-size:15px;font-weight:800;}
+.group-head .gcount{
+  font-size:12px;color:var(--txt-faint);background:var(--panel);
+  padding:2px 9px;border-radius:20px;font-variant-numeric:tabular-nums;
+}
+.group-head .gsel-all{
+  margin-left:auto;font-size:12px;color:var(--accent);font-weight:600;
+  padding:5px 10px;border-radius:8px;transition:.15s;
+}
+.group-head .gsel-all:hover{background:rgba(52,224,196,.12);}
+
+.grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(168px, 1fr));
+  gap:13px;
+}
+.grid.flat{margin-top:6px;}
+
+/* 卡片 — 圖標主角 */
+.card{
+  background:linear-gradient(180deg,var(--panel),var(--bg-2));
+  border:1px solid var(--line);border-radius:var(--radius);
+  padding:12px 12px 10px;position:relative;
+  transition:transform .14s ease, border-color .14s, box-shadow .14s;
+  cursor:pointer;overflow:hidden;
+  content-visibility:auto;contain-intrinsic-size:248px;
+}
+.card::before{
+  content:"";position:absolute;inset:0;border-radius:var(--radius);
+  background:radial-gradient(120px 70px at 50% -10%, var(--qglow,transparent), transparent 70%);
+  opacity:.5;pointer-events:none;
+}
+.card:hover{transform:translateY(-3px);border-color:var(--qedge,var(--accent));box-shadow:var(--shadow);}
+.card.sel{border-color:var(--accent);box-shadow:0 0 0 1.5px var(--accent), var(--shadow);}
+.card.sel::after{
+  content:"✓";position:absolute;top:9px;left:9px;z-index:3;
+  width:24px;height:24px;border-radius:7px;background:var(--accent);color:#0c0f15;
+  display:grid;place-items:center;font-weight:800;font-size:14px;
+  box-shadow:0 2px 8px rgba(0,0,0,.4);
+}
+
+/* 高品質卡片放大強調 (層次對比) */
+.card.q3{
+  grid-column:span 1;
+  border-color:rgba(255,193,77,.5);
+  background:linear-gradient(180deg, rgba(255,193,77,.07), var(--bg-2));
+}
+.card.feat{outline:1px solid rgba(255,193,77,.25);}
+
+.card-top{display:flex;align-items:flex-start;gap:10px;}
+.icon-slot{
+  width:64px;height:64px;border-radius:14px;flex:0 0 auto;position:relative;
+  display:grid;place-items:center;
+}
+.icon-slot .av{
+  width:100%;height:100%;border-radius:14px;display:grid;place-items:center;
+  font-size:26px;font-weight:800;color:#fff;position:relative;overflow:hidden;
+  text-shadow:0 2px 6px rgba(0,0,0,.5);
+}
+.icon-slot .av::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(255,255,255,.22),transparent 55%);
+}
+.icon-slot .ring{
+  position:absolute;inset:-3px;border-radius:16px;
+  border:2.5px solid var(--qedge);pointer-events:none;
+}
+.q3 .icon-slot{width:72px;height:72px;}
+.q3 .icon-slot .av{font-size:30px;}
+
+.card-id{flex:1;min-width:0;padding-top:2px;}
+.card-name{
+  font-size:15px;font-weight:800;display:flex;align-items:center;gap:6px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.pq-tag{
+  font-size:10px;font-weight:800;padding:1px 6px;border-radius:5px;flex:0 0 auto;
+  color:#0c0f15;
+}
+.card-meta{
+  display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;
+}
+.mbadge{
+  font-size:10.5px;color:var(--txt-dim);background:var(--panel-2);
+  border:1px solid var(--line-soft);border-radius:6px;padding:1px 7px;
+  font-variant-numeric:tabular-nums;display:inline-flex;align-items:center;gap:3px;
+}
+.mbadge.lv{color:var(--accent);}
+.mbadge.gen{color:var(--accent-2);}
+.lockmark{position:absolute;top:9px;right:10px;font-size:13px;z-index:3;color:var(--amber);}
+.fightmark{position:absolute;top:9px;right:10px;font-size:12px;z-index:3;
+  background:var(--danger);color:#fff;border-radius:6px;padding:1px 6px;font-weight:700;}
+.has-lock.has-fight .lockmark{right:48px;}
+
+.star-row{display:flex;gap:1px;margin-top:5px;}
+.star-row .st{font-size:11px;color:var(--amber);}
+.star-row .st.off{color:#384152;}
+
+/* 詞條 chip */
+.entries{display:flex;flex-wrap:wrap;gap:5px;margin-top:10px;}
+.eq{
+  font-size:11px;font-weight:600;padding:3px 8px;border-radius:7px;
+  display:inline-flex;align-items:center;gap:5px;max-width:100%;
+  border:1px solid transparent;
+}
+.eq .ed{width:6px;height:6px;border-radius:50%;flex:0 0 auto;}
+.eq .en{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.eq.neg{text-decoration:line-through;opacity:.85;}     /* 品質4 負面：劃線弱化 */
+.eq.shine{box-shadow:0 0 0 1px currentColor inset;font-weight:700;} /* 3/6/7 強調 */
+
+/* 卡片底部選取 */
+.card-foot{
+  display:flex;align-items:center;justify-content:space-between;margin-top:10px;
+  padding-top:9px;border-top:1px solid var(--line-soft);
+}
+.sel-pill{
+  font-size:11.5px;font-weight:600;color:var(--txt-faint);
+  display:flex;align-items:center;gap:6px;transition:.15s;
+}
+.sel-pill .box{
+  width:18px;height:18px;border-radius:6px;border:1.5px solid var(--line);
+  display:grid;place-items:center;font-size:11px;transition:.15s;
+}
+.card.sel .sel-pill{color:var(--accent);}
+.card.sel .sel-pill .box{background:var(--accent);border-color:var(--accent);color:#0c0f15;}
+.detail-link{font-size:11.5px;color:var(--txt-faint);}
+.detail-link:hover{color:var(--accent);}
+
+/* sentinel + empty */
+#sentinel{height:40px;}
+.loading-more{text-align:center;color:var(--txt-faint);font-size:12px;padding:14px;}
+.empty{
+  text-align:center;padding:70px 20px;color:var(--txt-faint);
+}
+.empty .big{font-size:46px;margin-bottom:12px;opacity:.5;}
+.empty button{
+  margin-top:14px;color:var(--accent);border:1px solid var(--line);
+  padding:8px 16px;border-radius:10px;font-weight:600;
+}
+
+/* ===================== 批次操作列 ===================== */
+.batchbar{
+  position:fixed;left:50%;bottom:18px;transform:translate(-50%,150%);
+  z-index:60;width:min(720px, calc(100% - 28px));
+  background:linear-gradient(135deg,var(--panel-2),var(--panel));
+  border:1px solid var(--line);border-radius:16px;
+  box-shadow:0 -2px 40px rgba(0,0,0,.6);
+  padding:11px 14px;display:flex;align-items:center;gap:12px;
+  transition:transform .28s cubic-bezier(.2,.9,.3,1.2);
+}
+.batchbar.show{transform:translate(-50%,0);}
+.batch-info{display:flex;align-items:center;gap:11px;min-width:0;}
+.batch-count{
+  background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0c0f15;
+  font-weight:800;border-radius:11px;padding:6px 12px;font-size:15px;white-space:nowrap;
+}
+.batch-sub{color:var(--txt-dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.batch-actions{margin-left:auto;display:flex;gap:8px;flex:0 0 auto;}
+.batch-actions button{
+  height:42px;padding:0 16px;border-radius:11px;font-weight:700;font-size:13px;
+  display:flex;align-items:center;gap:7px;transition:.15s;
+}
+.b-clear{background:var(--panel);border:1px solid var(--line);color:var(--txt-dim);}
+.b-clear:hover{color:var(--txt);border-color:var(--txt-faint);}
+.b-junk{background:var(--bg-2);border:1px solid var(--line);color:var(--txt-dim);}
+.b-junk:hover{border-color:var(--amber);color:var(--amber);}
+.b-dissolve{background:linear-gradient(135deg,#ff6b6b,#ef4444);color:#fff;box-shadow:0 4px 16px rgba(239,68,68,.4);}
+.b-dissolve:hover{filter:brightness(1.1);}
+
+/* ===================== 抽屜 / bottom sheet ===================== */
+.scrim{
+  position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:70;
+  opacity:0;pointer-events:none;transition:.2s;backdrop-filter:blur(2px);
+}
+.scrim.show{opacity:1;pointer-events:auto;}
+.sheet{
+  position:fixed;z-index:80;background:var(--panel);
+  border:1px solid var(--line);
+  display:flex;flex-direction:column;
+  transition:transform .28s cubic-bezier(.2,.9,.3,1);
+}
+/* 桌機：右側抽屜 */
+.sheet{
+  top:0;right:0;height:100vh;width:380px;max-width:90vw;
+  border-radius:18px 0 0 18px;transform:translateX(110%);
+  box-shadow:-10px 0 50px rgba(0,0,0,.55);
+}
+.sheet.show{transform:translateX(0);}
+.sheet-head{
+  display:flex;align-items:center;gap:10px;padding:16px 18px;
+  border-bottom:1px solid var(--line-soft);
+}
+.sheet-head h3{margin:0;font-size:16px;font-weight:800;flex:1;}
+.sheet-head .reset{font-size:12.5px;color:var(--accent);font-weight:600;padding:6px 10px;border-radius:8px;}
+.sheet-head .reset:hover{background:rgba(52,224,196,.12);}
+.sheet-head .close{width:40px;height:40px;border-radius:10px;display:grid;place-items:center;font-size:18px;background:var(--panel-2);}
+.sheet-body{flex:1;overflow-y:auto;padding:16px 18px 30px;}
+.sheet-sec{margin-bottom:22px;}
+.sheet-sec h4{
+  margin:0 0 11px;font-size:12px;font-weight:700;color:var(--txt-dim);
+  text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:7px;
+}
+.sheet-sec h4 .c{color:var(--accent);}
+.sp-search{
+  width:100%;height:40px;background:var(--bg-2);border:1px solid var(--line);
+  border-radius:10px;color:var(--txt);padding:0 12px;outline:none;margin-bottom:10px;font-size:13px;
+}
+.sp-search:focus{border-color:var(--accent);}
+.sp-list{display:flex;flex-direction:column;gap:4px;max-height:300px;overflow-y:auto;}
+.sp-item{
+  display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:9px;
+  transition:.12s;min-height:42px;
+}
+.sp-item:hover{background:var(--panel-2);}
+.sp-item.on{background:rgba(52,224,196,.12);box-shadow:inset 0 0 0 1px var(--accent);}
+.sp-item .mini{width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-size:13px;font-weight:800;color:#0c0f15;flex:0 0 auto;}
+.sp-item .nm{flex:1;font-size:13.5px;font-weight:600;}
+.sp-item .ct{font-size:11px;color:var(--txt-faint);font-variant-numeric:tabular-nums;}
+.sp-item .chk{width:18px;height:18px;border-radius:5px;border:1.5px solid var(--line);display:grid;place-items:center;font-size:11px;}
+.sp-item.on .chk{background:var(--accent);border-color:var(--accent);color:#0c0f15;}
+
+.chipset{display:flex;flex-wrap:wrap;gap:7px;}
+.chipset .c{
+  padding:8px 12px;border-radius:9px;border:1px solid var(--line);background:var(--bg-2);
+  font-size:12.5px;font-weight:600;color:var(--txt-dim);display:flex;align-items:center;gap:7px;
+  min-height:40px;transition:.12s;
+}
+.chipset .c .dot{width:9px;height:9px;border-radius:50%;}
+.chipset .c.on{color:var(--txt);box-shadow:inset 0 0 0 1.5px currentColor;}
+.chipset .c:hover{color:var(--txt);}
+
+.sort-row{display:flex;flex-direction:column;gap:6px;}
+.sort-row .o{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:9px;
+  border:1px solid var(--line);background:var(--bg-2);min-height:42px;
+  font-size:13px;font-weight:600;color:var(--txt-dim);transition:.12s;
+}
+.sort-row .o.on{border-color:var(--accent);color:var(--txt);background:rgba(52,224,196,.08);}
+.sort-row .o .rd{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--line);flex:0 0 auto;}
+.sort-row .o.on .rd{border-color:var(--accent);background:radial-gradient(circle at center,var(--accent) 40%,transparent 45%);}
+
+.sheet-foot{
+  padding:13px 18px;border-top:1px solid var(--line-soft);
+  display:flex;gap:10px;
+}
+.sheet-foot button{flex:1;height:46px;border-radius:12px;font-weight:700;font-size:14px;}
+.sf-apply{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0c0f15;}
+
+/* ===================== 詳細 modal ===================== */
+.modal-scrim{
+  position:fixed;inset:0;z-index:90;background:rgba(0,0,0,.7);
+  display:grid;place-items:center;padding:18px;
+  opacity:0;pointer-events:none;transition:.2s;backdrop-filter:blur(3px);
+}
+.modal-scrim.show{opacity:1;pointer-events:auto;}
+.modal{
+  width:min(420px,100%);background:var(--panel);border:1px solid var(--line);
+  border-radius:18px;overflow:hidden;transform:scale(.94);transition:.2s;
+  box-shadow:var(--shadow);
+}
+.modal-scrim.show .modal{transform:scale(1);}
+.modal-hero{padding:22px 22px 16px;display:flex;gap:16px;align-items:center;position:relative;}
+.modal-hero .big-av{width:84px;height:84px;border-radius:18px;display:grid;place-items:center;font-size:36px;font-weight:800;color:#fff;position:relative;flex:0 0 auto;text-shadow:0 2px 6px rgba(0,0,0,.5);}
+.modal-hero .big-ring{position:absolute;inset:-3px;border-radius:21px;border:3px solid var(--qedge);}
+.modal-hero .mh-txt h3{margin:0 0 6px;font-size:22px;font-weight:800;}
+.modal-close{position:absolute;top:14px;right:14px;width:40px;height:40px;border-radius:10px;background:var(--panel-2);display:grid;place-items:center;font-size:18px;}
+.modal-body{padding:0 22px 22px;}
+.mb-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:18px;}
+.mb-cell{background:var(--bg-2);border:1px solid var(--line-soft);border-radius:10px;padding:9px 12px;}
+.mb-cell .k{font-size:11px;color:var(--txt-faint);}
+.mb-cell .v{font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;}
+.mb-entries{display:flex;flex-direction:column;gap:7px;}
+.mb-entry{display:flex;align-items:center;gap:10px;background:var(--bg-2);border:1px solid var(--line-soft);border-radius:10px;padding:9px 12px;}
+.mb-entry .ed{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
+.mb-entry .enm{font-weight:700;}
+.mb-entry .eqn{margin-left:auto;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;}
+
+/* ===================== toast ===================== */
+.toast-wrap{position:fixed;bottom:96px;left:50%;transform:translateX(-50%);z-index:100;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;}
+.toast{
+  background:var(--panel-2);border:1px solid var(--line);color:var(--txt);
+  padding:11px 18px;border-radius:12px;font-size:13.5px;font-weight:600;
+  box-shadow:var(--shadow);display:flex;align-items:center;gap:9px;
+  animation:tin .25s ease, tout .25s ease 2.4s forwards;
+}
+.toast .ti{font-size:16px;}
+@keyframes tin{from{opacity:0;transform:translateY(14px);}to{opacity:1;transform:none;}}
+@keyframes tout{to{opacity:0;transform:translateY(-10px);}}
+
+/* ===================== 響應式 ===================== */
+@media (max-width:1023px){
+  .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:11px;}
+}
+@media (max-width:767px){
+  .quick-row{display:none;}            /* 平板以下品質快捷收進抽屜 */
+  .species-rail-wrap{display:none;}    /* 種類藥丸收進抽屜 */
+  .mobile-filter-btn{display:flex;}
+  .filter-btn.desktop-only{display:none;}
+  .count-chip .lbl{display:none;}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+}
+@media (max-width:560px){
+  .head-row{padding:10px 13px 8px;gap:9px;}
+  .brand-txt h1{font-size:15px;}
+  .rail{padding:9px 13px 4px;}
+  .stage{padding:6px 13px 150px;}
+  .icon-btn.help-toggle{display:grid;}
+  .note{padding:0 13px;}
+  .grid{grid-template-columns:repeat(2,1fr);gap:10px;}
+  .card{padding:11px 10px 9px;}
+  .icon-slot{width:56px;height:56px;}
+  .q3 .icon-slot{width:60px;height:60px;}
+  .card-name{font-size:14px;}
+  /* 手機抽屜變 bottom sheet */
+  .sheet{
+    top:auto;bottom:0;right:0;left:0;width:100%;max-width:100%;height:auto;max-height:88vh;
+    border-radius:20px 20px 0 0;transform:translateY(110%);
+    box-shadow:0 -10px 50px rgba(0,0,0,.6);
+  }
+  .sheet.show{transform:translateY(0);}
+  .batchbar{bottom:12px;width:calc(100% - 20px);padding:10px 11px;gap:9px;flex-wrap:wrap;}
+  .batch-actions{width:100%;margin-left:0;}
+  .batch-actions button{flex:1;justify-content:center;}
+  .batch-actions .b-junk span{display:none;}
+}
+@media (max-width:380px){
+  .grid{grid-template-columns:1fr 1fr;gap:9px;}
+}
+</style>
+</head>
+<body>
+
+<!-- ===== 共用 mock 資料 (VERBATIM, 勿改 generatePets) ===== -->
+<script>
+/* === 共用 mock 資料 (3 版一致, 請勿改動 generatePets) === */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const SPECIES = ['炎角龍','碧水靈','疾風隼','岩甲獸','雷紋豹','幽影貓','晨曦鹿','熔火蠍','霜羽鶴','藤蔓妖','沙鱗蜥','星紋蝶','怒濤鯨','枯骨蛛','金鬃獅','夜瞳梟','珊瑚馬','烈陽鷹','寒月狐','毒霧蟾','翠玉龜','風暴鷲','焦土犀','銀絲蠶','深淵鰻','花靈兔','赤煉犬','冰晶鹿','雲端龍','迅雷鼠','磐石熊','溪語蛙','榴火雀','墨羽鴉','晶背龜','綠鬃馬','灼心蛾','霜牙狼','潮汐獺','虹彩魚'];
+const ENTRIES = [
+ {id:101,name:'攻擊強化',q:1},{id:102,name:'生命強化',q:1},{id:103,name:'防禦強化',q:1},
+ {id:201,name:'暴擊提升',q:2},{id:202,name:'閃避提升',q:2},{id:203,name:'命中提升',q:2},{id:204,name:'速度提升',q:2},
+ {id:301,name:'神聖庇護',q:3},{id:302,name:'狂暴之力',q:3},{id:303,name:'不滅意志',q:3},{id:304,name:'致命一擊',q:3},
+ {id:401,name:'易碎',q:4},{id:402,name:'遲緩',q:4},{id:403,name:'虛弱',q:4},
+ {id:501,name:'吸血',q:5},{id:502,name:'反傷',q:5},{id:503,name:'格擋',q:5},{id:504,name:'急救',q:5},
+ {id:601,name:'變異·雙生',q:6},{id:602,name:'變異·狂亂',q:6},{id:603,name:'變異·永續',q:6},
+ {id:701,name:'採礦工',q:7},{id:702,name:'農夫',q:7},{id:703,name:'漁夫',q:7},{id:704,name:'守衛',q:7}
+];
+function generatePets(){
+ const rnd=mulberry32(20260605); const pets=[]; const N=312;
+ for(let i=0;i<N;i++){
+  const sp=Math.floor(rnd()*SPECIES.length);
+  const q=rnd()<0.05?3:rnd()<0.2?2:rnd()<0.55?1:0;
+  const nEntry=1+Math.floor(rnd()*4);
+  const chosen={}; const entries=[];
+  let guard=0;
+  while(entries.length<nEntry && guard++<40){
+   const e=ENTRIES[Math.floor(rnd()*ENTRIES.length)];
+   if(chosen[e.id])continue; chosen[e.id]=1;
+   entries.push({id:e.id,name:e.name,quality:e.q,desc:e.name+' 效果'});
+  }
+  pets.push({
+   id:10000+i, config_id:1000+sp, display_name:SPECIES[sp], name:'',
+   quality:q, level:1+Math.floor(rnd()*100), generation:1+Math.floor(rnd()*20),
+   growth:Math.floor(rnd()*30000), step:Math.floor(rnd()*5),
+   fight:i<6?1:0, lock:rnd()<0.08?1:0, star:Math.floor(rnd()*6), entries:entries
+  });
+ }
+ return pets;
+}
+/* 品質色語言 (寵物 PQ / 詞條 EQ) */
+const PQ_NAME={0:'白',1:'藍',2:'紫',3:'金'};
+const PQ_COLOR={0:'#9aa6b2',1:'#64b5f6',2:'#ce93d8',3:'#ffd54f'};
+const EQ_NAME={1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
+const EQ_COLOR={1:'#64b5f6',2:'#ffd54f',3:'#ffe08a',4:'#ef5350',5:'#b9a4ff',6:'#f0abfc',7:'#5eead4'};
+</script>
+
+<!-- ===== 結構 ===== -->
+<header class="app-head">
+  <div class="head-row">
+    <div class="brand">
+      <div class="brand-mark">圖</div>
+      <div class="brand-txt">
+        <h1>飛寵圖鑑</h1>
+        <span class="ver">版本 B · 圖鑑卡片牆</span>
+      </div>
+    </div>
+    <div class="head-spacer"></div>
+    <div class="count-chip">
+      <span class="lbl">顯示</span>
+      <b id="cnt-filtered">0</b>
+      <span class="of">/ <span id="cnt-total">0</span></span>
+    </div>
+    <button class="icon-btn help-toggle" id="help-btn" title="說明">?</button>
+    <button class="icon-btn" id="open-sheet-top" title="進階篩選">☰</button>
+  </div>
+
+  <div class="note" id="note">
+    <div class="note-inner">
+      <b>版本 B · 圖鑑卡片牆</b>：以「圖標」為主角的卡片牆，靠外觀辨識飛寵。頂部即時篩選＋種類藥丸，一鍵切換「依種類分組／平鋪全部」，勾選卡片即可批次分解。
+    </div>
+  </div>
+
+  <div class="rail">
+    <div class="rail-top">
+      <div class="search-box">
+        <span class="si">🔍</span>
+        <input id="search" type="text" placeholder="搜尋種類名稱或詞條名稱…（例如：炎角龍、致命一擊）" autocomplete="off">
+        <button class="search-clear" id="search-clear">✕</button>
+      </div>
+      <div class="view-toggle" id="view-toggle">
+        <button data-view="flat" class="on">▦ 平鋪</button>
+        <button data-view="group">▤ 依種類</button>
+      </div>
+      <button class="filter-btn desktop-only" id="open-sheet">
+        <span>⚙ 進階</span>
+        <span class="badge" id="filter-badge" style="display:none">0</span>
+      </button>
+      <button class="filter-btn mobile-filter-btn" id="open-sheet-mobile">
+        <span>⚙ 篩選</span>
+        <span class="badge" id="filter-badge-m" style="display:none">0</span>
+      </button>
+    </div>
+
+    <div class="quick-row" id="quick-row">
+      <div class="quick-grp" id="pq-quick">
+        <span class="glabel">品質</span>
+        <!-- pq chips injected -->
+      </div>
+      <div class="quick-grp" id="flag-quick">
+        <span class="glabel">旗標</span>
+        <button class="flag-chip" data-flag="lock">🔒 鎖定</button>
+        <button class="flag-chip" data-flag="fight">⚔ 出戰</button>
+        <button class="flag-chip" data-flag="hasNeg">⚠ 含負面</button>
+        <button class="flag-chip" data-flag="hasShine">★ 含史詩/變異</button>
+      </div>
+    </div>
+
+    <div class="species-rail-wrap">
+      <div class="species-rail" id="species-rail"><!-- species pills injected --></div>
+    </div>
+  </div>
+</header>
+
+<main class="stage" id="stage"><!-- cards injected --></main>
+<div id="sentinel"></div>
+
+<!-- 批次列 -->
+<div class="batchbar" id="batchbar">
+  <div class="batch-info">
+    <span class="batch-count"><span id="batch-n">0</span> 隻</span>
+    <span class="batch-sub" id="batch-sub">已選取</span>
+  </div>
+  <div class="batch-actions">
+    <button class="b-clear" id="b-clear">取消</button>
+    <button class="b-junk" id="b-junk">🗑 <span>選白色低星</span></button>
+    <button class="b-dissolve" id="b-dissolve">⚡ 分解</button>
+  </div>
+</div>
+
+<!-- 抽屜 / bottom sheet -->
+<div class="scrim" id="scrim"></div>
+<aside class="sheet" id="sheet">
+  <div class="sheet-head">
+    <h3>進階篩選</h3>
+    <button class="reset" id="sheet-reset">重設</button>
+    <button class="close" id="sheet-close">✕</button>
+  </div>
+  <div class="sheet-body">
+    <div class="sheet-sec">
+      <h4>指定種類 <span class="c" id="sp-sel-count"></span></h4>
+      <input class="sp-search" id="sp-search" type="text" placeholder="搜尋種類…" autocomplete="off">
+      <div class="sp-list" id="sp-list"><!-- species rows injected --></div>
+    </div>
+    <div class="sheet-sec">
+      <h4>寵物品質</h4>
+      <div class="chipset" id="pq-chipset"><!-- injected --></div>
+    </div>
+    <div class="sheet-sec">
+      <h4>詞條品質</h4>
+      <div class="chipset" id="eq-chipset"><!-- injected --></div>
+    </div>
+    <div class="sheet-sec">
+      <h4>旗標</h4>
+      <div class="chipset" id="flag-chipset">
+        <button class="c" data-flag="lock">🔒 鎖定</button>
+        <button class="c" data-flag="fight">⚔ 出戰中</button>
+        <button class="c" data-flag="hasNeg">⚠ 含負面詞條</button>
+        <button class="c" data-flag="hasShine">★ 含史詩/變異</button>
+      </div>
+    </div>
+    <div class="sheet-sec">
+      <h4>排序</h4>
+      <div class="sort-row" id="sort-row">
+        <button class="o on" data-sort="default"><span class="rd"></span>預設（出戰→品質）</button>
+        <button class="o" data-sort="quality"><span class="rd"></span>品質高→低</button>
+        <button class="o" data-sort="level"><span class="rd"></span>等級高→低</button>
+        <button class="o" data-sort="gen"><span class="rd"></span>代數高→低</button>
+        <button class="o" data-sort="species"><span class="rd"></span>種類名稱</button>
+      </div>
+    </div>
+  </div>
+  <div class="sheet-foot">
+    <button class="sf-apply" id="sheet-apply">查看結果</button>
+  </div>
+</aside>
+
+<!-- 詳細 modal -->
+<div class="modal-scrim" id="modal-scrim">
+  <div class="modal" id="modal"><!-- injected --></div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
+
+<script>
+/* ===================== HTML 跳脫 helper ===================== */
+/* 所有插入 innerHTML 的「使用者可控字串」(display_name / name / 詞條 name / desc) 都要包 esc()。
+   目前 mock 資料無 <>&，但資料模型已預留玩家可命名的 name 欄位，接真實後端前必修，避免儲存型 XSS。 */
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g, c=>(
+    {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+  ));
+}
+
+/* ===================== 圖標 helper (痛點 2 · 設計主體) ===================== */
+/* 之後換真 sprite：把 .av 內容換成 <img src> 即可，外框 ring 不變 */
+function speciesHue(config_id){ return (config_id*37)%360; }
+function petIcon(pet, size){
+  size = size || 64;
+  const hue = speciesHue(pet.config_id);
+  const edge = PQ_COLOR[pet.quality];
+  const ch = esc((pet.display_name||'?').charAt(0));
+  const bg = `linear-gradient(140deg, hsl(${hue} 62% 46%), hsl(${(hue+38)%360} 64% 32%))`;
+  // 回傳 HTML 字串；icon-slot 尺寸由外層 class 控制
+  return `<span class="icon-slot" style="--qedge:${edge}">
+    <span class="av" style="background:${bg}">${ch}</span>
+    <span class="ring" style="--qedge:${edge}"></span>
+  </span>`;
+}
+
+/* ===================== 狀態 ===================== */
+const ALL = generatePets();
+const TOTAL = ALL.length;
+
+// 種類統計
+const speciesStat = {};
+ALL.forEach(p=>{
+  if(!speciesStat[p.config_id]) speciesStat[p.config_id]={config_id:p.config_id,name:p.display_name,count:0};
+  speciesStat[p.config_id].count++;
+});
+const speciesList = Object.values(speciesStat).sort((a,b)=>b.count-a.count);
+
+const state = {
+  search:'',
+  view:'flat',                 // flat | group
+  species:new Set(),           // config_id 多選；空=全部
+  pq:new Set(),                // 寵物品質 0..3
+  eq:new Set(),                // 詞條品質 1..7
+  flags:new Set(),             // lock fight hasNeg hasShine
+  sort:'default',
+  selected:new Set()           // pet.id
+};
+
+/* ===================== 衍生：詞條快取 ===================== */
+ALL.forEach(p=>{
+  p._eqset = new Set(p.entries.map(e=>e.quality));
+  p._hasNeg = p._eqset.has(4);
+  p._hasShine = p._eqset.has(3)||p._eqset.has(6)||p._eqset.has(7);
+  p._entryNames = p.entries.map(e=>e.name).join(' ');
+});
+
+/* ===================== 篩選引擎 ===================== */
+function matches(p){
+  if(state.species.size && !state.species.has(p.config_id)) return false;
+  if(state.pq.size && !state.pq.has(p.quality)) return false;
+  if(state.eq.size){
+    let ok=false; for(const q of state.eq){ if(p._eqset.has(q)){ok=true;break;} }
+    if(!ok) return false;
+  }
+  if(state.flags.has('lock') && !p.lock) return false;
+  if(state.flags.has('fight') && !p.fight) return false;
+  if(state.flags.has('hasNeg') && !p._hasNeg) return false;
+  if(state.flags.has('hasShine') && !p._hasShine) return false;
+  if(state.search){
+    const s=state.search;
+    if(!(p.display_name.includes(s) || p._entryNames.includes(s))) return false;
+  }
+  return true;
+}
+function sortPets(arr){
+  const s=state.sort;
+  const cp=[...arr];
+  if(s==='quality') cp.sort((a,b)=> b.quality-a.quality || b.level-a.level);
+  else if(s==='level') cp.sort((a,b)=> b.level-a.level);
+  else if(s==='gen') cp.sort((a,b)=> b.generation-a.generation);
+  else if(s==='species') cp.sort((a,b)=> a.display_name.localeCompare(b.display_name,'zh-Hant') || b.quality-a.quality);
+  else cp.sort((a,b)=> b.fight-a.fight || b.quality-a.quality || b.star-a.star); // default
+  return cp;
+}
+function getFiltered(){ return sortPets(ALL.filter(matches)); }
+
+/* ===================== 卡片渲染 (視窗化：分批 append) ===================== */
+const PAGE = 60;
+let _filtered = [];
+let _rendered = 0;
+let _groups = null;       // 群組視圖：預先算好的分組順序（供分批 append 用）
+const stage = document.getElementById('stage');
+
+function cardHTML(p){
+  const sel = state.selected.has(p.id);
+  const pqColor = PQ_COLOR[p.quality];
+  const pqName = PQ_NAME[p.quality];
+  const isHi = p.quality===3;
+  const cls = ['card','q'+p.quality];
+  if(sel) cls.push('sel');
+  if(isHi) cls.push('feat');
+  if(p.lock) cls.push('has-lock');
+  if(p.fight) cls.push('has-fight');
+
+  // 詞條 chip：負面劃線弱化；史詩(3)/變異(6)/工作(7) 高亮
+  const entryHTML = p.entries.map(e=>{
+    const col = EQ_COLOR[e.quality];
+    const ec = ['eq'];
+    if(e.quality===4) ec.push('neg');
+    if(e.quality===3||e.quality===6||e.quality===7) ec.push('shine');
+    return `<span class="${ec.join(' ')}" style="color:${col};background:${col}1a;border-color:${col}55;" title="${esc(EQ_NAME[e.quality])}">
+      <span class="ed" style="background:${col}"></span><span class="en">${esc(e.name)}</span></span>`;
+  }).join('');
+
+  const stars = Array.from({length:5},(_,i)=>`<span class="st ${i<p.star?'':'off'}">★</span>`).join('');
+  const flagMark = p.fight ? `<span class="fightmark">出戰</span>`
+                 : (p.lock ? `<span class="lockmark">🔒</span>` : '');
+
+  return `<article class="${cls.join(' ')}" data-id="${p.id}" style="--qedge:${pqColor};--qglow:${pqColor}22;">
+    ${flagMark}
+    <div class="card-top">
+      ${petIcon(p)}
+      <div class="card-id">
+        <div class="card-name">${esc(p.display_name)}
+          <span class="pq-tag" style="background:${pqColor}">${esc(pqName)}</span>
+        </div>
+        <div class="card-meta">
+          <span class="mbadge lv">Lv ${p.level}</span>
+          <span class="mbadge gen">${p.generation}代</span>
+          <span class="mbadge">階${p.step}</span>
+        </div>
+        <div class="star-row">${stars}</div>
+      </div>
+    </div>
+    <div class="entries">${entryHTML}</div>
+    <div class="card-foot">
+      <span class="sel-pill"><span class="box">${sel?'✓':''}</span>${sel?'已選':'選取'}</span>
+      <span class="detail-link" data-detail="1">詳情 ›</span>
+    </div>
+  </article>`;
+}
+
+function renderReset(){
+  _filtered = getFiltered();
+  _rendered = 0;
+  stage.innerHTML='';
+  document.getElementById('cnt-filtered').textContent=_filtered.length;
+  if(_filtered.length===0){
+    stage.innerHTML=`<div class="empty"><div class="big">🐾</div>
+      <div>沒有符合條件的飛寵</div>
+      <button id="empty-reset">清除所有篩選</button></div>`;
+    const er=document.getElementById('empty-reset');
+    if(er) er.addEventListener('click',resetFilters);
+    return;
+  }
+  // 群組視圖先把分組順序算好（依此順序分批 append，痛點4：兩種視圖皆視窗化）
+  _groups = (state.view==='group') ? computeGroups() : null;
+  appendNext();
+  // 重渲後 sentinel 可能已在視窗內（內容不足以推開它），IO 不一定立即回呼，主動補滿首屏
+  topUpUntilSentinelOffscreen();
+}
+
+/* 分組：依種類分區並排序（含高品質的種類優先，再依數量） */
+function computeGroups(){
+  const bySp={};
+  _filtered.forEach(p=>{ (bySp[p.config_id]=bySp[p.config_id]||[]).push(p); });
+  return Object.values(bySp).sort((a,b)=>{
+    const ma=Math.max(...a.map(x=>x.quality)), mb=Math.max(...b.map(x=>x.quality));
+    return mb-ma || b.length-a.length || a[0].display_name.localeCompare(b[0].display_name,'zh-Hant');
+  });
+}
+
+function appendFlat(){
+  let grid = stage.querySelector('.grid.flat');
+  if(!grid){ grid=document.createElement('div'); grid.className='grid flat'; stage.appendChild(grid); }
+  const slice=_filtered.slice(_rendered,_rendered+PAGE);
+  grid.insertAdjacentHTML('beforeend', slice.map(cardHTML).join(''));
+  _rendered+=slice.length;
+}
+
+function groupHeadHTML(g){
+  const sample=g[0];
+  const hue=speciesHue(sample.config_id);
+  const ch=esc(sample.display_name.charAt(0));
+  const ids=g.map(p=>p.id);
+  return `<div class="group-head">
+        <span class="ico" style="background:linear-gradient(140deg,hsl(${hue} 60% 46%),hsl(${(hue+38)%360} 62% 32%))">${ch}</span>
+        <h2>${esc(sample.display_name)}</h2>
+        <span class="gcount">${g.length} 隻</span>
+        <button class="gsel-all" data-grp-ids='${esc(JSON.stringify(ids))}'>＋全選此種類</button>
+      </div>`;
+}
+
+/* 群組視圖分批 append：累積卡片數達 PAGE 即停，續捲再補（痛點4：群組視圖也視窗化，不一次注入 312 節點） */
+function appendGroups(){
+  if(!_groups) return;
+  let budget=PAGE;
+  let cursor=_rendered;   // 已渲染的「卡片」總數（跨群組累積）
+  let seen=0;             // 走訪到目前群組起始的累積卡片數
+  let html='';
+  for(let gi=0; gi<_groups.length && budget>0; gi++){
+    const g=_groups[gi];
+    const gStart=seen, gEnd=seen+g.length;
+    seen=gEnd;
+    if(gEnd<=cursor){ continue; }          // 整組已渲染過
+    const localStart=Math.max(0, cursor-gStart);   // 此組內從第幾張接續
+    const take=Math.min(g.length-localStart, budget);
+    const slice=g.slice(localStart, localStart+take);
+    if(localStart===0){
+      html+=`<section class="grp" data-grp="${g[0].config_id}">${groupHeadHTML(g)}`
+          + `<div class="grid">${slice.map(cardHTML).join('')}</div></section>`;
+    }else{
+      // 接續同一組剩餘卡片：補進該組已存在的 .grid
+      const sec=stage.querySelector(`section.grp[data-grp="${g[0].config_id}"] .grid`);
+      if(sec) sec.insertAdjacentHTML('beforeend', slice.map(cardHTML).join(''));
+    }
+    cursor+=take; budget-=take;
+  }
+  if(html) stage.insertAdjacentHTML('beforeend', html);
+  _rendered=cursor;
+}
+
+function appendNext(){
+  if(state.view==='group') appendGroups();
+  else appendFlat();
+}
+
+/* 補滿直到 sentinel 被推出視窗或全部渲染完，避免首屏停在第一批 */
+function topUpUntilSentinelOffscreen(){
+  let guard=0;
+  while(_rendered<_filtered.length && guard++<200){
+    const r=sentinel.getBoundingClientRect();
+    if(r.top > window.innerHeight + 600) break;  // 已被推到視窗+緩衝外
+    appendNext();
+  }
+}
+
+/* 無限捲動：平鋪與群組視圖共用 */
+const sentinel=document.getElementById('sentinel');
+const io=new IntersectionObserver((es)=>{
+  es.forEach(e=>{
+    if(e.isIntersecting && _rendered<_filtered.length){
+      appendNext();
+    }
+  });
+},{rootMargin:'600px'});
+io.observe(sentinel);
+
+/* ===================== 篩選 UI 注入 ===================== */
+// 品質快捷 (rail) + chipset (sheet)
+function buildPQ(){
+  const railHTML=[0,1,2,3].map(q=>
+    `<button class="pq-chip" data-pq="${q}" style="--c:${PQ_COLOR[q]}">
+      <span class="dot" style="background:${PQ_COLOR[q]}"></span>${PQ_NAME[q]}</button>`).join('');
+  document.getElementById('pq-quick').insertAdjacentHTML('beforeend', railHTML);
+
+  const chip=[0,1,2,3].map(q=>
+    `<button class="c" data-pq="${q}" style="color:${PQ_COLOR[q]}">
+      <span class="dot" style="background:${PQ_COLOR[q]}"></span>${PQ_NAME[q]}色</button>`).join('');
+  document.getElementById('pq-chipset').innerHTML=chip;
+}
+function buildEQ(){
+  const chip=[1,2,3,5,6,7,4].map(q=>
+    `<button class="c" data-eq="${q}" style="color:${EQ_COLOR[q]}">
+      <span class="dot" style="background:${EQ_COLOR[q]}"></span>${EQ_NAME[q]}</button>`).join('');
+  document.getElementById('eq-chipset').innerHTML=chip;
+}
+function buildSpeciesRail(){
+  let html=`<button class="sp-pill all on" data-sp="all">
+    <span class="mini">全</span>全部種類 <span class="cnt">${TOTAL}</span></button>`;
+  speciesList.forEach(s=>{
+    const hue=speciesHue(s.config_id);
+    html+=`<button class="sp-pill" data-sp="${s.config_id}">
+      <span class="mini" style="background:linear-gradient(140deg,hsl(${hue} 60% 46%),hsl(${(hue+38)%360} 62% 32%))">${esc(s.name.charAt(0))}</span>
+      ${esc(s.name)} <span class="cnt">${s.count}</span></button>`;
+  });
+  document.getElementById('species-rail').innerHTML=html;
+}
+function buildSpeciesList(filter){
+  filter=(filter||'').trim();
+  const rows=speciesList
+    .filter(s=>!filter || s.name.includes(filter))
+    .map(s=>{
+      const on=state.species.has(s.config_id);
+      const hue=speciesHue(s.config_id);
+      return `<div class="sp-item ${on?'on':''}" data-sp="${s.config_id}">
+        <span class="mini" style="background:linear-gradient(140deg,hsl(${hue} 60% 46%),hsl(${(hue+38)%360} 62% 32%))">${esc(s.name.charAt(0))}</span>
+        <span class="nm">${esc(s.name)}</span>
+        <span class="ct">${s.count}</span>
+        <span class="chk">${on?'✓':''}</span>
+      </div>`;
+    }).join('');
+  document.getElementById('sp-list').innerHTML = rows || `<div style="color:var(--txt-faint);padding:14px;text-align:center;">查無此種類</div>`;
+  document.getElementById('sp-sel-count').textContent = state.species.size?`(已選 ${state.species.size})`:'';
+}
+
+/* ===================== 同步 UI 狀態 ===================== */
+function syncChips(){
+  // rail pq
+  document.querySelectorAll('#pq-quick .pq-chip').forEach(b=>{
+    b.classList.toggle('on', state.pq.has(+b.dataset.pq));
+  });
+  // rail flag
+  document.querySelectorAll('#flag-quick .flag-chip').forEach(b=>{
+    b.classList.toggle('on', state.flags.has(b.dataset.flag));
+  });
+  // species rail
+  document.querySelectorAll('#species-rail .sp-pill').forEach(b=>{
+    if(b.dataset.sp==='all') b.classList.toggle('on', state.species.size===0);
+    else b.classList.toggle('on', state.species.has(+b.dataset.sp));
+  });
+  // sheet pq/eq/flag
+  document.querySelectorAll('#pq-chipset .c').forEach(b=> b.classList.toggle('on', state.pq.has(+b.dataset.pq)));
+  document.querySelectorAll('#eq-chipset .c').forEach(b=> b.classList.toggle('on', state.eq.has(+b.dataset.eq)));
+  document.querySelectorAll('#flag-chipset .c').forEach(b=> b.classList.toggle('on', state.flags.has(b.dataset.flag)));
+  // sort
+  document.querySelectorAll('#sort-row .o').forEach(b=> b.classList.toggle('on', state.sort===b.dataset.sort));
+  // filter badge
+  const active = state.species.size + state.pq.size + state.eq.size + state.flags.size;
+  ['filter-badge','filter-badge-m'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(active>0){ el.style.display='inline-block'; el.textContent=active; }
+    else el.style.display='none';
+  });
+}
+
+/* ===================== 互動：篩選 ===================== */
+function rerender(){ syncChips(); renderReset(); updateBatchbar(); }
+
+// 搜尋
+const searchEl=document.getElementById('search');
+const searchClear=document.getElementById('search-clear');
+let _st;
+searchEl.addEventListener('input',()=>{
+  state.search=searchEl.value.trim();
+  searchClear.classList.toggle('show', !!state.search);
+  clearTimeout(_st); _st=setTimeout(rerender,140);
+});
+searchClear.addEventListener('click',()=>{
+  searchEl.value=''; state.search=''; searchClear.classList.remove('show'); rerender();
+});
+
+// 視圖切換
+document.getElementById('view-toggle').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  if(state.view===b.dataset.view)return;
+  state.view=b.dataset.view;
+  document.querySelectorAll('#view-toggle button').forEach(x=>x.classList.toggle('on',x===b));
+  toast(state.view==='group'?'已切換：依種類分組':'已切換：平鋪全部','▤');
+  renderReset();
+});
+
+// 種類藥丸 (rail)
+document.getElementById('species-rail').addEventListener('click',e=>{
+  const b=e.target.closest('.sp-pill'); if(!b)return;
+  if(b.dataset.sp==='all'){ state.species.clear(); }
+  else{
+    const id=+b.dataset.sp;
+    // rail 行為：單點＝聚焦該種類 (痛點1 精準隔離)；再點同一個＝取消
+    if(state.species.size===1 && state.species.has(id)) state.species.clear();
+    else { state.species.clear(); state.species.add(id); }
+  }
+  buildSpeciesList(document.getElementById('sp-search').value);
+  rerender();
+});
+
+// 品質快捷 (rail)
+document.getElementById('pq-quick').addEventListener('click',e=>{
+  const b=e.target.closest('.pq-chip'); if(!b)return;
+  const q=+b.dataset.pq;
+  state.pq.has(q)?state.pq.delete(q):state.pq.add(q);
+  rerender();
+});
+// 旗標快捷 (rail)
+document.getElementById('flag-quick').addEventListener('click',e=>{
+  const b=e.target.closest('.flag-chip'); if(!b)return;
+  const f=b.dataset.flag;
+  state.flags.has(f)?state.flags.delete(f):state.flags.add(f);
+  rerender();
+});
+
+/* ===================== 抽屜 ===================== */
+const scrim=document.getElementById('scrim');
+const sheet=document.getElementById('sheet');
+function openSheet(){ buildSpeciesList(document.getElementById('sp-search').value); syncChips(); scrim.classList.add('show'); sheet.classList.add('show'); }
+function closeSheet(){ scrim.classList.remove('show'); sheet.classList.remove('show'); }
+['open-sheet','open-sheet-mobile','open-sheet-top'].forEach(id=>{
+  document.getElementById(id).addEventListener('click',openSheet);
+});
+document.getElementById('sheet-close').addEventListener('click',closeSheet);
+document.getElementById('sheet-apply').addEventListener('click',closeSheet);
+scrim.addEventListener('click',closeSheet);
+
+// 抽屜種類搜尋
+document.getElementById('sp-search').addEventListener('input',e=>{
+  buildSpeciesList(e.target.value);
+});
+// 抽屜種類點選 (多選)
+document.getElementById('sp-list').addEventListener('click',e=>{
+  const it=e.target.closest('.sp-item'); if(!it)return;
+  const id=+it.dataset.sp;
+  state.species.has(id)?state.species.delete(id):state.species.add(id);
+  buildSpeciesList(document.getElementById('sp-search').value);
+  rerender();
+});
+// 抽屜 pq/eq/flag/sort
+document.getElementById('pq-chipset').addEventListener('click',e=>{
+  const b=e.target.closest('.c'); if(!b)return;
+  const q=+b.dataset.pq; state.pq.has(q)?state.pq.delete(q):state.pq.add(q); rerender();
+});
+document.getElementById('eq-chipset').addEventListener('click',e=>{
+  const b=e.target.closest('.c'); if(!b)return;
+  const q=+b.dataset.eq; state.eq.has(q)?state.eq.delete(q):state.eq.add(q); rerender();
+});
+document.getElementById('flag-chipset').addEventListener('click',e=>{
+  const b=e.target.closest('.c'); if(!b)return;
+  const f=b.dataset.flag; state.flags.has(f)?state.flags.delete(f):state.flags.add(f); rerender();
+});
+document.getElementById('sort-row').addEventListener('click',e=>{
+  const b=e.target.closest('.o'); if(!b)return;
+  state.sort=b.dataset.sort; rerender();
+});
+document.getElementById('sheet-reset').addEventListener('click',()=>{ resetFilters(); buildSpeciesList(''); });
+document.getElementById('sp-search').value='';
+
+function resetFilters(){
+  state.search=''; searchEl.value=''; searchClear.classList.remove('show');
+  state.species.clear(); state.pq.clear(); state.eq.clear(); state.flags.clear();
+  state.sort='default';
+  rerender(); toast('已清除所有篩選','↺');
+}
+
+/* ===================== 卡片點擊：選取 / 詳情 ===================== */
+stage.addEventListener('click',e=>{
+  const detail=e.target.closest('[data-detail]');
+  const card=e.target.closest('.card');
+  const gsel=e.target.closest('.gsel-all');
+  if(gsel){
+    const ids=JSON.parse(gsel.dataset.grpIds);
+    ids.forEach(id=>state.selected.add(id));
+    markSelectedDOM(); updateBatchbar();
+    toast(`已加入 ${ids.length} 隻到選取`,'＋');
+    return;
+  }
+  if(!card) return;
+  if(detail){ openDetail(+card.dataset.id); return; }
+  // 點卡片本體 = 切換選取
+  const id=+card.dataset.id;
+  if(state.selected.has(id)) state.selected.delete(id); else state.selected.add(id);
+  card.classList.toggle('sel', state.selected.has(id));
+  const box=card.querySelector('.sel-pill .box');
+  const lbl=card.querySelector('.sel-pill');
+  if(box){ box.textContent=state.selected.has(id)?'✓':''; }
+  if(lbl){ lbl.lastChild.textContent=state.selected.has(id)?'已選':'選取'; }
+  updateBatchbar();
+});
+
+// 重渲後同步選取樣式
+function markSelectedDOM(){
+  stage.querySelectorAll('.card').forEach(c=>{
+    const sel=state.selected.has(+c.dataset.id);
+    c.classList.toggle('sel',sel);
+    const box=c.querySelector('.sel-pill .box');
+    const lbl=c.querySelector('.sel-pill');
+    if(box) box.textContent=sel?'✓':'';
+    if(lbl) lbl.lastChild.textContent=sel?'已選':'選取';
+  });
+}
+
+/* ===================== 批次列 ===================== */
+const batchbar=document.getElementById('batchbar');
+function updateBatchbar(){
+  const n=state.selected.size;
+  document.getElementById('batch-n').textContent=n;
+  if(n>0){
+    batchbar.classList.add('show');
+    // 估算分解收益描述
+    let locked=0; [...state.selected].forEach(id=>{ const p=ALL.find(x=>x.id===id); if(p&&p.lock)locked++; });
+    document.getElementById('batch-sub').textContent = locked?`已選取（含 ${locked} 隻鎖定，將略過）`:'已選取，待分解';
+  }else{
+    batchbar.classList.remove('show');
+  }
+}
+document.getElementById('b-clear').addEventListener('click',()=>{
+  state.selected.clear(); markSelectedDOM(); updateBatchbar();
+});
+// 一鍵選白色低星 (junk 預選, 痛點4 批次)
+document.getElementById('b-junk').addEventListener('click',()=>{
+  let added=0;
+  _filtered.forEach(p=>{
+    if(p.quality===0 && p.star<=1 && !p.lock && !p.fight && !p._hasShine){
+      if(!state.selected.has(p.id)){ state.selected.add(p.id); added++; }
+    }
+  });
+  markSelectedDOM(); updateBatchbar();
+  toast(added?`已挑出 ${added} 隻白色低星垃圾`:'目前篩選下找不到可選的垃圾寵','🗑');
+});
+document.getElementById('b-dissolve').addEventListener('click',()=>{
+  const n=state.selected.size; if(!n)return;
+  let locked=0; [...state.selected].forEach(id=>{ const p=ALL.find(x=>x.id===id); if(p&&p.lock)locked++; });
+  const real=n-locked;
+  // 原型：no-op，只 toast + console
+  console.log('[prototype] 分解請求 (no-op)：', [...state.selected]);
+  toast(`原型示意：將分解 ${real} 隻${locked?`（略過 ${locked} 隻鎖定）`:''}`,'⚡');
+  // 原型不真的移除資料，僅清空選取，方便繼續評估介面
+  state.selected.clear(); markSelectedDOM(); updateBatchbar();
+});
+
+/* ===================== 詳細 modal ===================== */
+const modalScrim=document.getElementById('modal-scrim');
+const modal=document.getElementById('modal');
+function openDetail(id){
+  const p=ALL.find(x=>x.id===id); if(!p)return;
+  const hue=speciesHue(p.config_id);
+  const edge=PQ_COLOR[p.quality];
+  const bg=`linear-gradient(140deg,hsl(${hue} 62% 46%),hsl(${(hue+38)%360} 64% 32%))`;
+  const entryHTML=p.entries.map(e=>{
+    const col=EQ_COLOR[e.quality];
+    const neg=e.quality===4?'text-decoration:line-through;opacity:.85;':'';
+    return `<div class="mb-entry">
+      <span class="ed" style="background:${col}"></span>
+      <span class="enm" style="${neg}">${esc(e.name)}</span>
+      <span class="eqn" style="color:${col};background:${col}1f;">${esc(EQ_NAME[e.quality])}</span>
+    </div>`;
+  }).join('');
+  modal.innerHTML=`
+    <div class="modal-hero">
+      <span class="big-av" style="background:${bg}">${esc(p.display_name.charAt(0))}
+        <span class="big-ring" style="--qedge:${edge}"></span></span>
+      <div class="mh-txt">
+        <h3>${esc(p.display_name)}</h3>
+        <span class="pq-tag" style="background:${edge};font-size:12px;padding:3px 9px;">${PQ_NAME[p.quality]}色 · ${p.lock?'🔒鎖定':''} ${p.fight?'⚔出戰':''}</span>
+      </div>
+      <button class="modal-close" id="modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="mb-grid">
+        <div class="mb-cell"><div class="k">等級</div><div class="v">Lv ${p.level}</div></div>
+        <div class="mb-cell"><div class="k">代數</div><div class="v">${p.generation} 代</div></div>
+        <div class="mb-cell"><div class="k">星數</div><div class="v">${'★'.repeat(p.star)||'—'}</div></div>
+        <div class="mb-cell"><div class="k">成長 / 階</div><div class="v">${p.growth} · 階${p.step}</div></div>
+      </div>
+      <h4 style="margin:0 0 10px;font-size:12px;color:var(--txt-dim);letter-spacing:1px;">詞條（${p.entries.length}）</h4>
+      <div class="mb-entries">${entryHTML}</div>
+      <div style="display:flex;gap:9px;margin-top:18px;">
+        <button id="md-sel" style="flex:1;height:44px;border-radius:11px;background:var(--panel-2);border:1px solid var(--line);font-weight:700;">${state.selected.has(p.id)?'✓ 已選取':'＋ 加入選取'}</button>
+        <button id="md-lock" style="flex:1;height:44px;border-radius:11px;background:var(--bg-2);border:1px solid var(--line);font-weight:700;color:var(--amber);">${p.lock?'🔒 已鎖定':'🔓 切換鎖定'}</button>
+      </div>
+    </div>`;
+  modalScrim.classList.add('show');
+  document.getElementById('modal-close').addEventListener('click',closeModal);
+  document.getElementById('md-sel').addEventListener('click',()=>{
+    if(state.selected.has(p.id))state.selected.delete(p.id); else state.selected.add(p.id);
+    markSelectedDOM(); updateBatchbar(); closeModal();
+  });
+  document.getElementById('md-lock').addEventListener('click',()=>{
+    console.log('[prototype] 切換鎖定 (no-op)',p.id);
+    toast('原型示意：切換鎖定','🔒'); closeModal();
+  });
+}
+function closeModal(){ modalScrim.classList.remove('show'); }
+modalScrim.addEventListener('click',e=>{ if(e.target===modalScrim)closeModal(); });
+
+/* ===================== 說明 + toast ===================== */
+document.getElementById('help-btn').addEventListener('click',()=>{
+  document.getElementById('note').classList.toggle('open');
+});
+const toastWrap=document.getElementById('toast-wrap');
+function toast(msg,ico){
+  const t=document.createElement('div'); t.className='toast';
+  t.innerHTML=`<span class="ti">${ico||'✓'}</span>${msg}`;
+  toastWrap.appendChild(t);
+  setTimeout(()=>t.remove(),2700);
+}
+
+// Esc 關閉
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){ closeModal(); closeSheet(); }
+});
+
+/* ===================== 啟動 ===================== */
+document.getElementById('cnt-total').textContent=TOTAL;
+buildPQ(); buildEQ(); buildSpeciesRail(); buildSpeciesList('');
+rerender();
+console.log(`[版本B] 飛寵圖鑑載入 ${TOTAL} 隻，種類 ${speciesList.length} 種`);
+</script>
+</body>
+</html>

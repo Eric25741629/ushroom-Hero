@@ -1405,7 +1405,9 @@ def get_frontend_version():
 
 @app.after_request
 def add_no_cache_headers(response):
-    if request.method == "GET":
+    # Fly-pet icons are immutable real-sprite PNGs keyed by config_id — let the
+    # browser cache them so the card wall doesn't re-fetch ~38 URLs on every scroll.
+    if request.method == "GET" and not request.path.startswith("/api/fly_pet_icon/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
@@ -2121,6 +2123,28 @@ def fly_pet_list(ip):
         }
     })()"""
     return _cdp_json_response(ip, js, data_key="pets")
+
+
+# Real in-game fly-pet icons dumped from the live game by tools/dump_flypet_icons.py
+# (one PNG per species config_id). Served to the dashboard card wall.
+_FLY_PET_ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static", "flypet_icons")
+
+
+@app.route("/api/fly_pet_icon/<int:config_id>", methods=["GET"])
+@_fly_pet_auth
+def fly_pet_icon(config_id):
+    """Serve the cached real in-game icon for a fly-pet species.
+
+    Returns the dumped ``static/flypet_icons/<config_id>.png``. A missing icon is a
+    404 (not an error) so the dashboard falls back to its placeholder avatar. The
+    ``<int:config_id>`` route converter blocks path traversal / arbitrary filenames.
+    """
+    filename = f"{config_id}.png"
+    if not os.path.isfile(os.path.join(_FLY_PET_ICON_DIR, filename)):
+        return ("", 404)
+    resp = send_from_directory(_FLY_PET_ICON_DIR, filename, mimetype="image/png")
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 @app.route("/api/fly_pet_check_connection/<ip>", methods=["GET"])

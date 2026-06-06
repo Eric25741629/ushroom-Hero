@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>飛寵 UI 原型比較 · 挑一個方向</title>
+<style>
+  :root{
+    --bg:#0c0e14;
+    --bg-soft:#12151f;
+    --surface:#171b27;
+    --surface-2:#1d2231;
+    --border:#272d3d;
+    --border-soft:#1f2433;
+    --text:#e8ebf2;
+    --text-dim:#9aa3b8;
+    --text-faint:#6b7488;
+    --accent:#6d8bff;
+    --accent-soft:#2a3358;
+    --a:#ff8a5c;   /* version A hue */
+    --b:#5cc2ff;   /* version B hue */
+    --c:#7ee08a;   /* version C hue */
+    --pass:#5cd987;
+    --partial:#f0c75e;
+    --fail:#e06a6a;
+    --radius:16px;
+    --shadow:0 10px 40px -12px rgba(0,0,0,.7);
+    --space:clamp(1.1rem,.7rem+1.6vw,2rem);
+  }
+  *{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:
+      radial-gradient(1200px 600px at 18% -10%, #1a2138 0%, transparent 55%),
+      radial-gradient(1000px 500px at 95% 0%, #1c1730 0%, transparent 50%),
+      var(--bg);
+    color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:clamp(1.6rem,1rem+3vw,3.4rem) var(--space) 4rem}
+
+  /* ---- hero ---- */
+  header.hero{margin-bottom:clamp(1.8rem,1rem+2.5vw,3rem)}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:.5em;
+    font-size:.72rem;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--text-faint);font-weight:600;
+    padding:.3em .85em;border:1px solid var(--border);border-radius:99px;
+    background:var(--bg-soft);
+  }
+  .eyebrow::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  h1{
+    font-size:clamp(1.9rem,1.2rem+3.2vw,3.4rem);
+    line-height:1.08;margin:.7rem 0 .5rem;font-weight:800;letter-spacing:-.01em;
+  }
+  h1 .grad{
+    background:linear-gradient(100deg,var(--a),var(--b) 50%,var(--c));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+  }
+  .lede{color:var(--text-dim);font-size:clamp(.98rem,.9rem+.3vw,1.12rem);max-width:62ch}
+
+  /* ---- pain point legend ---- */
+  .pains{
+    margin-top:1.6rem;display:grid;gap:.55rem;
+    grid-template-columns:repeat(auto-fit,minmax(250px,1fr));
+  }
+  .pain{
+    display:flex;gap:.7rem;align-items:flex-start;
+    background:var(--bg-soft);border:1px solid var(--border-soft);
+    border-radius:12px;padding:.7rem .85rem;
+  }
+  .pain .n{
+    flex:0 0 auto;width:24px;height:24px;border-radius:7px;
+    display:grid;place-items:center;font-weight:800;font-size:.8rem;
+    background:var(--accent-soft);color:#c5d1ff;border:1px solid #36417a;
+  }
+  .pain .t{font-size:.86rem;color:var(--text-dim)}
+  .pain .t b{color:var(--text);font-weight:600}
+
+  /* ---- section heading ---- */
+  .sec-h{
+    display:flex;align-items:baseline;gap:.75rem;margin:3rem 0 1.2rem;flex-wrap:wrap;
+  }
+  .sec-h h2{font-size:clamp(1.2rem,1rem+1vw,1.6rem);margin:0;font-weight:700;letter-spacing:-.01em}
+  .sec-h .hint{color:var(--text-faint);font-size:.85rem}
+
+  /* ---- version cards ---- */
+  .cards{display:grid;gap:1.1rem;grid-template-columns:repeat(auto-fit,minmax(290px,1fr))}
+  .card{
+    position:relative;display:flex;flex-direction:column;
+    background:linear-gradient(180deg,var(--surface),var(--bg-soft));
+    border:1px solid var(--border);border-radius:var(--radius);
+    padding:1.3rem 1.3rem 1.1rem;overflow:hidden;
+    transition:transform .25s cubic-bezier(.16,1,.3,1),border-color .25s,box-shadow .25s;
+  }
+  .card::before{
+    content:"";position:absolute;inset:0 0 auto 0;height:3px;
+    background:var(--vc);opacity:.9;
+  }
+  .card::after{
+    content:"";position:absolute;top:-60px;right:-60px;width:160px;height:160px;border-radius:50%;
+    background:radial-gradient(circle,var(--vc),transparent 70%);opacity:.12;pointer-events:none;
+  }
+  .card:hover{transform:translateY(-4px);border-color:var(--vc);box-shadow:var(--shadow)}
+  .card.a{--vc:var(--a)}
+  .card.b{--vc:var(--b)}
+  .card.c{--vc:var(--c)}
+
+  .card .badge{
+    display:inline-flex;align-items:center;gap:.5em;align-self:flex-start;
+    font-size:.7rem;font-weight:800;letter-spacing:.05em;
+    color:#0c0e14;background:var(--vc);border-radius:7px;padding:.25em .6em;margin-bottom:.85rem;
+  }
+  .card h3{font-size:1.22rem;margin:0 0 .35rem;font-weight:750;letter-spacing:-.01em}
+  .card .best{color:var(--text-dim);font-size:.92rem;margin:0 0 1rem;min-height:2.5em}
+  .card .best b{color:var(--text);font-weight:650}
+
+  .solves{
+    margin:0 0 1.1rem;padding:.75rem .85rem;border-radius:11px;
+    background:var(--bg);border:1px solid var(--border-soft);
+  }
+  .solves .lab{font-size:.7rem;letter-spacing:.1em;text-transform:uppercase;color:var(--text-faint);font-weight:700;margin-bottom:.45rem}
+  .solves ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:.35rem}
+  .solves li{display:flex;gap:.55rem;align-items:flex-start;font-size:.86rem;color:var(--text)}
+  .solves li .dot{flex:0 0 auto;color:var(--vc);font-weight:800;margin-top:.05em}
+  .solves li .pp{flex:0 0 auto;font-variant-numeric:tabular-nums;font-weight:700;color:var(--vc);
+    background:color-mix(in srgb,var(--vc) 16%,transparent);border-radius:6px;padding:0 .42em;font-size:.78rem;line-height:1.5}
+
+  .card .open{
+    margin-top:auto;display:inline-flex;align-items:center;justify-content:center;gap:.5em;
+    min-height:46px;padding:0 1.2em;border-radius:11px;font-weight:700;font-size:.95rem;
+    text-decoration:none;color:#0c0e14;background:var(--vc);
+    transition:filter .2s,transform .2s;
+  }
+  .card .open:hover{filter:brightness(1.08)}
+  .card .open:active{transform:translateY(1px)}
+  .card .open .arr{transition:transform .2s}
+  .card .open:hover .arr{transform:translateX(3px)}
+  .card .fname{display:block;margin-top:.55rem;font-size:.74rem;color:var(--text-faint);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all}
+
+  /* ---- comparison table ---- */
+  .table-wrap{
+    border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;
+    background:var(--surface);box-shadow:var(--shadow);
+  }
+  table{width:100%;border-collapse:collapse;font-size:.92rem}
+  thead th{
+    background:var(--surface-2);text-align:center;padding:.95rem .7rem;font-weight:700;
+    border-bottom:1px solid var(--border);position:sticky;top:0;
+  }
+  thead th:first-child{text-align:left}
+  thead th .vt{display:block;font-size:1rem}
+  thead th.cA .vt{color:var(--a)} thead th.cB .vt{color:var(--b)} thead th.cC .vt{color:var(--c)}
+  thead th .vs{display:block;font-size:.72rem;font-weight:500;color:var(--text-faint);margin-top:.15rem}
+  tbody td{padding:.85rem .7rem;border-bottom:1px solid var(--border-soft);text-align:center;vertical-align:top}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover td{background:rgba(109,139,255,.04)}
+  tbody td.req{text-align:left;max-width:340px}
+  td.req .pp{
+    display:inline-grid;place-items:center;width:22px;height:22px;border-radius:6px;margin-right:.55em;
+    font-size:.76rem;font-weight:800;background:var(--accent-soft);color:#c5d1ff;border:1px solid #36417a;
+    vertical-align:middle;
+  }
+  td.req .txt{font-size:.86rem;color:var(--text);vertical-align:middle}
+  td.req .sub{display:block;margin:.2rem 0 0 calc(22px + .55em);font-size:.76rem;color:var(--text-faint)}
+
+  .mark{display:inline-grid;place-items:center;width:30px;height:30px;border-radius:9px;font-weight:800;font-size:1rem;margin:0 auto}
+  .mark.pass{color:var(--pass);background:color-mix(in srgb,var(--pass) 14%,transparent)}
+  .mark.partial{color:var(--partial);background:color-mix(in srgb,var(--partial) 14%,transparent)}
+  .mark.fail{color:var(--fail);background:color-mix(in srgb,var(--fail) 14%,transparent)}
+  .mark sup{font-size:.6rem;font-weight:800;margin-left:1px;opacity:.85}
+
+  .legend{
+    display:flex;flex-wrap:wrap;gap:.5rem 1.2rem;margin:1rem 0 0;font-size:.83rem;color:var(--text-dim);
+  }
+  .legend .li{display:inline-flex;align-items:center;gap:.45em}
+  .legend .mark{width:22px;height:22px;font-size:.82rem}
+
+  /* ---- footnotes ---- */
+  .notes{margin-top:2.2rem}
+  .notes h2{font-size:1.05rem;margin:0 0 .8rem;font-weight:700}
+  .notes ol{margin:0;padding-left:1.3rem;display:flex;flex-direction:column;gap:.7rem}
+  .notes li{color:var(--text-dim);font-size:.88rem}
+  .notes li b{color:var(--text)}
+  .notes .tag{
+    display:inline-block;font-size:.68rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;
+    padding:.1em .5em;border-radius:5px;margin-right:.5em;vertical-align:middle;
+  }
+  .tag.A{color:var(--a);background:color-mix(in srgb,var(--a) 15%,transparent)}
+  .tag.B{color:var(--b);background:color-mix(in srgb,var(--b) 15%,transparent)}
+  .tag.C{color:var(--c);background:color-mix(in srgb,var(--c) 15%,transparent)}
+
+  footer{margin-top:3rem;padding-top:1.4rem;border-top:1px solid var(--border-soft);color:var(--text-faint);font-size:.82rem}
+  footer code{background:var(--bg-soft);border:1px solid var(--border-soft);border-radius:5px;padding:.1em .45em;font-size:.85em}
+
+  /* mobile: table -> horizontal scroll wrapper kept, but ensure tap targets */
+  @media (max-width:680px){
+    .table-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+    table{min-width:560px}
+    td.req .sub{display:none}
+    .card .best{min-height:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <span class="eyebrow">飛寵管理 UI · 三個方向</span>
+    <h1>三個原型，挑一個<span class="grad">最像你會用的</span></h1>
+    <p class="lede">同一份需求（6 個痛點）做出三種不同取向的飛寵管理介面。先看下面三張卡片各自最適合誰、最強解掉哪個痛點，再用對照表逐項比較，點卡片裡的按鈕即可開啟原型實際操作。</p>
+
+    <div class="pains">
+      <div class="pain"><span class="n">1</span><span class="t"><b>抓指定類別</b>　可搜尋的單一種類精準篩選</span></div>
+      <div class="pain"><span class="n">2</span><span class="t"><b>看到圖標</b>　每隻可見頭像，設計主體</span></div>
+      <div class="pain"><span class="n">3</span><span class="t"><b>過濾更細但更簡單</b>　即時、一鍵、單一搜尋框</span></div>
+      <div class="pain"><span class="n">4</span><span class="t"><b>300+ 隻流暢</b>　視窗化、總數/篩選數、批次分解</span></div>
+      <div class="pain"><span class="n">5</span><span class="t"><b>種類視圖開關</b>　分組 ↔ 平鋪 一鍵切換</span></div>
+      <div class="pain"><span class="n">6</span><span class="t"><b>手機自適應</b>　不橫捲、觸控、篩選收抽屜</span></div>
+    </div>
+  </header>
+
+  <!-- ===== version cards ===== -->
+  <div class="sec-h">
+    <h2>三個方向</h2>
+    <span class="hint">點「開啟原型」用同資料夾的 .html 直接操作</span>
+  </div>
+
+  <div class="cards">
+
+    <!-- A -->
+    <article class="card a">
+      <span class="badge">A</span>
+      <h3>密集戰情表</h3>
+      <p class="best">為「<b>我有 300 隻、要快速管理與分解</b>」的進階使用者設計。資訊密度最高、批次操作最順。</p>
+      <div class="solves">
+        <div class="lab">最強解掉</div>
+        <ul>
+          <li><span class="pp">3</span><span>單一搜尋框同比對種類名＋詞條名，所有條件一鍵即時切換，零多步驟。</span></li>
+          <li><span class="pp">1</span><span>可搜尋的種類多選下拉，鎖定單一 config_id 精準隔離。</span></li>
+        </ul>
+      </div>
+      <a class="open" href="version-a-ops-table.html">開啟原型 <span class="arr">→</span></a>
+      <code class="fname">version-a-ops-table.html</code>
+    </article>
+
+    <!-- B -->
+    <article class="card b">
+      <span class="badge">B</span>
+      <h3>圖鑑卡片牆</h3>
+      <p class="best">為「<b>想用看的、靠外觀辨識</b>」的使用者設計，讓「圖標」需求發光。</p>
+      <div class="solves">
+        <div class="lab">最強解掉</div>
+        <ul>
+          <li><span class="pp">2</span><span>圖標是卡片主角（64–72px 含品質色環/星級），辨識度最高。</span></li>
+          <li><span class="pp">5</span><span>平鋪 ↔ 依種類一鍵切換，種類藥丸單點即精準隔離。</span></li>
+        </ul>
+      </div>
+      <a class="open" href="version-b-gallery.html">開啟原型 <span class="arr">→</span></a>
+      <code class="fname">version-b-gallery.html</code>
+    </article>
+
+    <!-- C -->
+    <article class="card c">
+      <span class="badge">C</span>
+      <h3>種類瀏覽器</h3>
+      <p class="best">直接打中「<b>我要抓指定類別</b>」。左側種類索引下鑽，類別導向最直覺。</p>
+      <div class="solves">
+        <div class="lab">最強解掉</div>
+        <ul>
+          <li><span class="pp">1</span><span>左側「種類索引」一點即鎖定單一種類，可即時搜尋收斂清單。</span></li>
+          <li><span class="pp">4</span><span>唯一兩項規模/手機都過關：每組卡片視窗化＋增量載入。</span></li>
+        </ul>
+      </div>
+      <a class="open" href="version-c-species-browser.html">開啟原型 <span class="arr">→</span></a>
+      <code class="fname">version-c-species-browser.html</code>
+    </article>
+
+  </div>
+
+  <!-- ===== comparison table ===== -->
+  <div class="sec-h">
+    <h2>逐項對照</h2>
+    <span class="hint">依各版本 review 的 requirement_coverage 結果整理</span>
+  </div>
+
+  <div class="table-wrap">
+    <div class="table-scroll">
+    <table>
+      <thead>
+        <tr>
+          <th>痛點</th>
+          <th class="cA"><span class="vt">A</span><span class="vs">密集戰情表</span></th>
+          <th class="cB"><span class="vt">B</span><span class="vs">圖鑑卡片牆</span></th>
+          <th class="cC"><span class="vt">C</span><span class="vs">種類瀏覽器</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="req"><span class="pp">1</span><span class="txt">抓指定飛寵類別</span><span class="sub">可搜尋的單一種類精準篩選</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+        </tr>
+        <tr>
+          <td class="req"><span class="pp">2</span><span class="txt">看到圖標</span><span class="sub">每隻可見頭像，設計主體</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+        </tr>
+        <tr>
+          <td class="req"><span class="pp">3</span><span class="txt">過濾更精細但更簡單</span><span class="sub">即時／一鍵／單一搜尋框同比對種類名＋詞條名</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+        </tr>
+        <tr>
+          <td class="req"><span class="pp">4</span><span class="txt">300+ 隻流暢顯示與管理</span><span class="sub">視窗化／總數＋篩選數／批次分解／sticky 批次列</span></td>
+          <td><span class="mark partial" title="部分達標">◐<sup>1</sup></span></td>
+          <td><span class="mark partial" title="部分達標">◐<sup>2</sup></span></td>
+          <td><span class="mark pass" title="達標（refine 後）">✓<sup>3</sup></span></td>
+        </tr>
+        <tr>
+          <td class="req"><span class="pp">5</span><span class="txt">種類視圖開關</span><span class="sub">依種類分組 ↔ 平鋪全部 一鍵切換</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+          <td><span class="mark pass" title="達標">✓</span></td>
+        </tr>
+        <tr>
+          <td class="req"><span class="pp">6</span><span class="txt">手機自適應</span><span class="sub">不橫捲／觸控 ≥40px／篩選收抽屜／版面重排</span></td>
+          <td><span class="mark partial" title="部分達標">◐<sup>4</sup></span></td>
+          <td><span class="mark pass" title="達標">✓<sup>5</sup></span></td>
+          <td><span class="mark pass" title="達標">✓<sup>5</sup></span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span class="li"><span class="mark pass">✓</span> 達標 (pass)</span>
+    <span class="li"><span class="mark partial">◐</span> 部分達標 (partial)</span>
+    <span class="li"><span class="mark fail">○</span> 未達標 (fail)</span>
+    <span class="li" style="color:var(--text-faint)">上標數字 = 下方註解</span>
+  </div>
+
+  <!-- ===== footnotes ===== -->
+  <section class="notes">
+    <h2>註解與已知保留</h2>
+    <ol>
+      <li><span class="tag A">A</span><b>痛點4（partial）：</b>桌面已視窗化（312 筆僅渲染約 20–26 列），但 review 指出手機端是一次渲染全部 312 張重卡。refine 已用 <code>content-visibility:auto</code> 低成本緩解（不改 JS 渲染路徑），並修掉「篩選後留白空屏」的 high bug；本表沿用 review 的 partial 評級。</li>
+      <li><span class="tag B">B</span><b>痛點4（partial）：</b>平鋪視圖有 60/批無限捲動，但 review 標 scale_ok=false，因「依種類」群組視圖未視窗化。refine 已替群組視圖補上分批渲染並加 <code>esc()</code> 防 XSS；本表沿用 review 的 partial 評級（refine 後實質改善）。</li>
+      <li><span class="tag C">C</span><b>痛點4（✓）：</b>三版中唯一 review 給 scale_ok=true。refine 進一步加每組卡片上限＋增量 append，首屏卡片由 224 降到 95，是規模面最穩的版本。</li>
+      <li><span class="tag A">A</span><b>痛點6（partial）：</b>版面重排與抽屜達標，但部分觸控目標（chip 34px、icon-btn 30px、checkbox 24px）小於 40px。refine 已在 ≤760px 放大主要控件，桌面密度不變；本表沿用 review 評級。</li>
+      <li><span class="tag B">B</span><span class="tag C">C</span><b>痛點6（✓）：</b>review 給 mobile_ok=true（抽屜→bottom sheet、版面重排、viewport meta 齊備），少數小於 40px 的次要控件已於 refine 放大。</li>
+      <li><b>整體：</b>三個檔案皆為單一離線 HTML，直接用瀏覽器開啟即可運作，無任何外部資源載入。所有 ◐/✓ 取自各版本 review 的 <code>requirement_coverage.status</code>；refine 階段的修正只縮小差距，未提升原始評級，故表格保守沿用 review 結果。</li>
+    </ol>
+  </section>
+
+  <footer>
+    開啟方式：直接雙擊任一 <code>.html</code>，或用瀏覽器開啟本頁後點卡片按鈕（連結為相對路徑，需與三個原型放在同一資料夾）。手機測試請用同一個檔案，或透過區網開啟。
+  </footer>
+
+</div>
+</body>
+</html>

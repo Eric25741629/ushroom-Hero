@@ -6,6 +6,10 @@ __pycache__/*
 *.jpg
 *.png
 *.gif
+
+# 真實飛寵圖標 (從遊戲 atlas dump, 由 /api/fly_pet_icon 服務) — 例外納入版控
+!static/flypet_icons/
+!static/flypet_icons/*.png
 *.zip
 *.txt
 playwright_profile/*

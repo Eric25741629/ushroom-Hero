@@ -148,22 +148,6 @@
     .col-ops { width: 110px; text-align: center; }
     .pet-name { font-weight: 700; color: var(--text); }
     .pet-id { color: var(--muted); font-size: 0.74em; margin-left: 6px; }
-    .entry-quality-cell { min-width: 92px; text-align: center; }
-    .entry-quality-pill {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 54px; padding: 2px 8px; border-radius: 6px;
-      background: rgba(110,231,183,0.12); border: 1px solid rgba(110,231,183,0.35);
-      color: var(--accent-h); font-weight: 800;
-    }
-    .entry-quality-sub { display: block; color: var(--muted); font-size: 0.72em; margin-top: 2px; }
-    .entry-quality-none { display: inline-block; min-width: 54px; color: #5b6675; font-weight: 700; }
-    .eq-tags { display: block; margin-top: 3px; line-height: 1; }
-    .eq-tag {
-      display: inline-block; min-width: 18px; padding: 1px 5px; border-radius: 4px;
-      font-size: 0.7em; font-weight: 800; margin: 0 1px; border: 1px solid transparent;
-    }
-    .eq-tag-6 { background: rgba(224,64,251,0.18); color: #f0abfc; border-color: rgba(224,64,251,0.4); }
-    .eq-tag-7 { background: rgba(38,166,154,0.18); color: #5eead4; border-color: rgba(38,166,154,0.4); }
 
     /* Entry chip */
     .ec {
@@ -272,6 +256,230 @@
       .topbar { padding: 8px 12px; }
       .main { padding: 10px 12px; }
     }
+
+    /* =======================================================================
+       飛寵列表重設計 (B 卡片牆 + C 種類欄)
+       所有 token / 規則都 scope 在 .flypet-gallery 與 #gallery* 容器內,
+       不污染既有 :root 變數,也不影響繁殖/搭檔區。
+       ======================================================================= */
+    .flypet-gallery {
+      --fg-accent: #34e0c4;
+      --fg-accent-2: #9b8cff;
+      --fg-amber: #ffc14d;
+      --fg-panel: #161b25;
+      --fg-panel-2: #1c2230;
+      --fg-bg-2: #11151d;
+      --fg-line: #262d3b;
+      --fg-line-soft: #1e2531;
+      --fg-txt: #e7ecf3;
+      --fg-txt-dim: #9aa6b6;
+      --fg-txt-faint: #6c7787;
+      --fg-radius: 14px;
+      --pqc-0: #9aa6b2; --pqc-1: #64b5f6; --pqc-2: #ce93d8; --pqc-3: #ffd54f;
+      --eqc-1: #64b5f6; --eqc-2: #ffd54f; --eqc-3: #ffe08a; --eqc-4: #ef5350;
+      --eqc-5: #b9a4ff; --eqc-6: #f0abfc; --eqc-7: #5eead4;
+      position: relative;
+    }
+
+    /* Stats */
+    .flypet-gallery .fg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 10px 0 12px; }
+    .flypet-gallery .fg-stat { font-size: 0.82em; color: var(--fg-txt-dim); background: var(--fg-bg-2); border: 1px solid var(--fg-line); border-radius: 10px; padding: 8px 11px; }
+    .flypet-gallery .fg-stat b { color: var(--fg-accent); margin-left: 4px; font-size: 1.1em; }
+
+    /* Rail (search + view toggle + advanced) */
+    .flypet-gallery .fg-rail { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+    .flypet-gallery .fg-search { flex: 1; min-width: 220px; position: relative; display: flex; align-items: center; }
+    .flypet-gallery .fg-si { position: absolute; left: 13px; font-size: 14px; color: var(--fg-txt-faint); pointer-events: none; }
+    .flypet-gallery .fg-search input { width: 100%; height: 42px; background: var(--fg-panel); border: 1px solid var(--fg-line); border-radius: 12px; color: var(--fg-txt); font-size: 14px; padding: 0 38px 0 36px; outline: none; transition: .15s; }
+    .flypet-gallery .fg-search input:focus { border-color: var(--fg-accent); box-shadow: 0 0 0 3px rgba(52,224,196,.15); }
+    .flypet-gallery .fg-search-clear { position: absolute; right: 8px; width: 26px; height: 26px; border: none; background: transparent; color: var(--fg-txt-faint); border-radius: 8px; font-size: 16px; cursor: pointer; display: none; }
+    .flypet-gallery .fg-search-clear.show { display: grid; place-items: center; }
+    .flypet-gallery .fg-search-clear:hover { background: var(--fg-panel-2); color: var(--fg-txt); }
+    .flypet-gallery .fg-view-toggle { display: flex; background: var(--fg-panel); border: 1px solid var(--fg-line); border-radius: 12px; padding: 3px; gap: 2px; height: 44px; }
+    .flypet-gallery .fg-view-toggle button { padding: 0 14px; border-radius: 9px; font-size: 13px; font-weight: 600; color: var(--fg-txt-dim); background: none; border: none; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+    .flypet-gallery .fg-view-toggle button.on { background: linear-gradient(135deg, var(--fg-accent), var(--fg-accent-2)); color: #0c0f15; }
+    .flypet-gallery .fg-view-toggle button:not(.on):hover { color: var(--fg-txt); }
+    .flypet-gallery .fg-filter-btn { height: 42px; padding: 0 15px; border-radius: 12px; background: var(--fg-panel); border: 1px solid var(--fg-line); cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--fg-txt-dim); }
+    .flypet-gallery .fg-filter-btn:hover { border-color: var(--fg-accent); color: var(--fg-txt); }
+    .flypet-gallery .fg-filter-btn .badge { background: var(--fg-accent); color: #0c0f15; font-size: 11px; font-weight: 800; border-radius: 20px; padding: 1px 7px; min-width: 18px; text-align: center; }
+
+    /* Quick chips */
+    .flypet-gallery .fg-quick { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+    .flypet-gallery .fg-quick-grp { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+    .flypet-gallery .fg-glabel { font-size: 11px; color: var(--fg-txt-faint); margin-right: 2px; }
+    .flypet-gallery .pq-chip, .flypet-gallery .eq-chip { height: 32px; padding: 0 11px; border-radius: 9px; border: 1px solid var(--fg-line); background: var(--fg-panel); cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--fg-txt-dim); }
+    .flypet-gallery .pq-chip .dot, .flypet-gallery .eq-chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto; }
+    .flypet-gallery .pq-chip:hover, .flypet-gallery .eq-chip:hover { color: var(--fg-txt); border-color: var(--fg-txt-faint); }
+    .flypet-gallery .pq-chip.on, .flypet-gallery .eq-chip.on { color: var(--fg-txt); box-shadow: inset 0 0 0 1.5px currentColor; }
+
+    /* Body: species pane + result pane */
+    .flypet-gallery .fg-body { display: flex; gap: 12px; min-height: 360px; }
+    .flypet-gallery .species-pane { flex: 0 0 240px; width: 240px; background: var(--fg-panel); border: 1px solid var(--fg-line); border-radius: var(--fg-radius); display: flex; flex-direction: column; min-height: 0; max-height: 70vh; transition: margin-left .25s ease; }
+    .flypet-gallery.flat .species-pane { margin-left: -252px; opacity: 0; pointer-events: none; }
+    .flypet-gallery .species-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px 6px; }
+    .flypet-gallery .sh-title { font-size: 12px; font-weight: 700; color: var(--fg-txt-dim); letter-spacing: 1px; }
+    .flypet-gallery .sh-count { font-size: 11px; color: var(--fg-txt-faint); margin-left: auto; }
+    .flypet-gallery .species-search { padding: 0 12px 8px; }
+    .flypet-gallery .species-search input { width: 100%; height: 34px; background: var(--fg-bg-2); border: 1px solid var(--fg-line); border-radius: 9px; color: var(--fg-txt); padding: 0 12px; font-size: 13px; outline: none; }
+    .flypet-gallery .species-search input:focus { border-color: var(--fg-accent); }
+    .flypet-gallery .species-list { flex: 1 1 auto; overflow-y: auto; padding: 2px 8px 12px; min-height: 0; }
+    .flypet-gallery .sp-all { display: flex; align-items: center; gap: 10px; padding: 9px 10px; margin: 2px 0 6px; border-radius: 9px; cursor: pointer; border: 1px dashed var(--fg-line); min-height: 44px; }
+    .flypet-gallery .sp-all:hover { border-color: var(--fg-accent); background: var(--fg-panel-2); }
+    .flypet-gallery .sp-all.on { background: rgba(52,224,196,.1); border-color: var(--fg-accent); border-style: solid; }
+    .flypet-gallery .sp-all .nm { font-size: 13.5px; font-weight: 700; }
+    .flypet-gallery .sp-all.on .nm { color: var(--fg-accent); }
+    .flypet-gallery .sp-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; cursor: pointer; position: relative; min-height: 44px; }
+    .flypet-gallery .sp-item:hover { background: var(--fg-panel-2); }
+    .flypet-gallery .sp-item.on { background: linear-gradient(90deg, rgba(52,224,196,.14), rgba(52,224,196,.03)); }
+    .flypet-gallery .sp-item.on::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--fg-accent); }
+    .flypet-gallery .sp-item .sp-name { flex: 1 1 auto; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .flypet-gallery .sp-item.on .sp-name { color: var(--fg-accent); }
+    .flypet-gallery .sp-meta { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+    .flypet-gallery .sp-best { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+    .flypet-gallery .sp-cnt { font-size: 11.5px; font-weight: 700; color: var(--fg-txt-dim); background: var(--fg-bg-2); border: 1px solid var(--fg-line); border-radius: 11px; min-width: 26px; height: 21px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; }
+    .flypet-gallery .sp-item.on .sp-cnt { background: var(--fg-accent); color: #0c0f15; border-color: var(--fg-accent); }
+
+    /* Result pane */
+    .flypet-gallery .result-pane { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+    .flypet-gallery .result-head { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; padding: 4px 2px 10px; border-bottom: 1px solid var(--fg-line-soft); margin-bottom: 8px; }
+    .flypet-gallery .fg-back-btn { display: none; height: 34px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--fg-line); background: var(--fg-bg-2); color: var(--fg-txt); font-size: 13px; cursor: pointer; }
+    .flypet-gallery .rh-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+    .flypet-gallery .rh-title .ttl { font-size: 16px; font-weight: 700; white-space: nowrap; }
+    .flypet-gallery .rh-title .sub { font-size: 12px; color: var(--fg-txt-faint); }
+    .flypet-gallery .rh-title .sub b { color: var(--fg-accent); }
+    .flypet-gallery .fg-selall-btn { margin-left: auto; height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--fg-line); background: var(--fg-bg-2); color: var(--fg-txt-dim); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+    .flypet-gallery .fg-selall-btn:hover { border-color: var(--fg-accent); color: var(--fg-accent); }
+
+    /* Stage + grid + cards */
+    .flypet-gallery .stage { max-height: 70vh; overflow-y: auto; padding: 2px 2px 10px; }
+    .flypet-gallery .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 13px; }
+    .flypet-gallery .grid.flat { margin-top: 4px; }
+    .flypet-gallery .group-head { display: flex; align-items: center; gap: 11px; margin: 16px 0 10px; padding-bottom: 8px; border-bottom: 1px solid var(--fg-line-soft); }
+    .flypet-gallery .group-head .ico-wrap { flex: 0 0 auto; }
+    .flypet-gallery .group-head h2 { margin: 0; font-size: 15px; font-weight: 800; }
+    .flypet-gallery .group-head .gcount { font-size: 12px; color: var(--fg-txt-faint); background: var(--fg-panel); padding: 2px 9px; border-radius: 20px; }
+    .flypet-gallery .group-head .gsel-all { margin-left: auto; font-size: 12px; color: var(--fg-accent); font-weight: 600; padding: 5px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
+    .flypet-gallery .group-head .gsel-all:hover { background: rgba(52,224,196,.12); }
+
+    .flypet-gallery .card { background: linear-gradient(180deg, var(--fg-panel), var(--fg-bg-2)); border: 1px solid var(--fg-line); border-radius: var(--fg-radius); padding: 12px 12px 10px; position: relative; transition: transform .14s ease, border-color .14s, box-shadow .14s; cursor: pointer; overflow: hidden; }
+    .flypet-gallery .card:hover { transform: translateY(-3px); border-color: var(--qedge, var(--fg-accent)); box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+    .flypet-gallery .card.sel { border-color: var(--fg-accent); box-shadow: 0 0 0 1.5px var(--fg-accent), 0 8px 28px rgba(0,0,0,.45); }
+    .flypet-gallery .card.sel::after { content: "\2713"; position: absolute; top: 9px; left: 9px; z-index: 3; width: 24px; height: 24px; border-radius: 7px; background: var(--fg-accent); color: #0c0f15; display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+    .flypet-gallery .card-top { display: flex; align-items: flex-start; gap: 10px; }
+    .flypet-gallery .card-id { flex: 1; min-width: 0; padding-top: 2px; }
+    .flypet-gallery .card-name { font-size: 15px; font-weight: 800; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .flypet-gallery .pq-tag { font-size: 10px; font-weight: 800; padding: 1px 6px; border-radius: 5px; flex: 0 0 auto; color: #0c0f15; }
+    .flypet-gallery .card-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+    .flypet-gallery .mbadge { font-size: 10.5px; color: var(--fg-txt-dim); background: var(--fg-panel-2); border: 1px solid var(--fg-line-soft); border-radius: 6px; padding: 1px 7px; display: inline-flex; align-items: center; gap: 3px; }
+    .flypet-gallery .mbadge.lv { color: var(--fg-accent); }
+    .flypet-gallery .mbadge.gen { color: var(--fg-accent-2); }
+    .flypet-gallery .star-row { display: flex; gap: 1px; margin-top: 5px; }
+    .flypet-gallery .star-row .st { font-size: 11px; color: var(--fg-amber); }
+    .flypet-gallery .star-row .st.off { color: #384152; }
+    .flypet-gallery .lockmark { position: absolute; top: 9px; right: 10px; font-size: 13px; z-index: 3; color: var(--fg-amber); }
+    .flypet-gallery .fightmark { position: absolute; top: 9px; right: 10px; font-size: 11px; z-index: 3; background: #ef5350; color: #fff; border-radius: 6px; padding: 1px 6px; font-weight: 700; }
+    .flypet-gallery .card.has-lock.has-fight .lockmark { right: 50px; }
+    .flypet-gallery .card .entries { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
+    .flypet-gallery .card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--fg-line-soft); }
+    .flypet-gallery .sel-pill { font-size: 11.5px; font-weight: 600; color: var(--fg-txt-faint); display: flex; align-items: center; gap: 6px; }
+    .flypet-gallery .sel-pill .box { width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid var(--fg-line); display: grid; place-items: center; font-size: 11px; }
+    .flypet-gallery .card.sel .sel-pill { color: var(--fg-accent); }
+    .flypet-gallery .card.sel .sel-pill .box { background: var(--fg-accent); border-color: var(--fg-accent); color: #0c0f15; }
+    .flypet-gallery .detail-link { font-size: 11.5px; color: var(--fg-txt-faint); cursor: pointer; }
+    .flypet-gallery .detail-link:hover { color: var(--fg-accent); }
+    .flypet-gallery #gallerySentinel { height: 36px; }
+    .flypet-gallery .loading-more { text-align: center; color: var(--fg-txt-faint); font-size: 12px; padding: 12px; }
+
+    /* petIcon slot (port from B): img real icon, fallback colored avatar */
+    .flypet-gallery .icon-slot { width: 64px; height: 64px; border-radius: 14px; flex: 0 0 auto; position: relative; display: grid; place-items: center; }
+    .flypet-gallery .icon-slot .icon-img { width: 100%; height: 100%; border-radius: 14px; object-fit: cover; display: block; }
+    .flypet-gallery .icon-slot .av { width: 100%; height: 100%; border-radius: 14px; display: grid; place-items: center; font-size: 26px; font-weight: 800; color: #fff; position: relative; overflow: hidden; text-shadow: 0 2px 6px rgba(0,0,0,.5); }
+    .flypet-gallery .icon-slot .av::after { content: ""; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(255,255,255,.22), transparent 55%); }
+    .flypet-gallery .icon-slot .ring { position: absolute; inset: -3px; border-radius: 16px; border: 2.5px solid var(--qedge); pointer-events: none; }
+
+    /* gallery entry chip (reuse .ec-N coloring from base, just spacing) */
+    .flypet-gallery .entries .ec { font-size: 11px; }
+
+    /* Batch bar */
+    .flypet-gallery + .fg-batchbar, .fg-batchbar { position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 160%); z-index: 60; width: min(680px, calc(100% - 28px)); background: linear-gradient(135deg, #1c2230, #161b25); border: 1px solid #262d3b; border-radius: 16px; box-shadow: 0 -2px 40px rgba(0,0,0,.6); padding: 11px 14px; display: flex; align-items: center; gap: 12px; transition: transform .28s cubic-bezier(.2,.9,.3,1.2); }
+    .fg-batchbar.show { transform: translate(-50%, 0); }
+    .fg-batch-count { background: linear-gradient(135deg, #34e0c4, #9b8cff); color: #0c0f15; font-weight: 800; border-radius: 11px; padding: 6px 12px; font-size: 15px; white-space: nowrap; }
+    .fg-batch-sub { color: #9aa6b6; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .fg-batch-actions { margin-left: auto; display: flex; gap: 8px; flex: 0 0 auto; }
+    .fg-batch-actions button { height: 40px; padding: 0 16px; border-radius: 11px; font-weight: 700; font-size: 13px; cursor: pointer; border: none; }
+    .fg-b-clear { background: #161b25; border: 1px solid #262d3b !important; color: #9aa6b6; }
+    .fg-b-clear:hover { color: #e7ecf3; }
+    .fg-b-dissolve { background: linear-gradient(135deg, #ff6b6b, #ef4444); color: #fff; box-shadow: 0 4px 16px rgba(239,68,68,.4); }
+    .fg-b-dissolve:hover { filter: brightness(1.1); }
+
+    /* Filter sheet / bottom sheet */
+    .fg-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 70; opacity: 0; pointer-events: none; transition: .2s; }
+    .fg-scrim.show { opacity: 1; pointer-events: auto; }
+    .fg-sheet { position: fixed; z-index: 80; top: 0; right: 0; height: 100vh; width: 360px; max-width: 90vw; background: #161b25; border: 1px solid #262d3b; border-radius: 18px 0 0 18px; transform: translateX(110%); transition: transform .28s cubic-bezier(.2,.9,.3,1); box-shadow: -10px 0 50px rgba(0,0,0,.55); display: flex; flex-direction: column; }
+    .fg-sheet.show { transform: translateX(0); }
+    .fg-sheet-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid #1e2531; }
+    .fg-sheet-head h3 { margin: 0; font-size: 16px; font-weight: 800; flex: 1; }
+    .fg-sheet-head .reset { font-size: 12.5px; color: #34e0c4; font-weight: 600; padding: 6px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
+    .fg-sheet-head .close { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; background: #1c2230; border: none; color: #e7ecf3; cursor: pointer; }
+    .fg-sheet-body { flex: 1; overflow-y: auto; padding: 16px 18px 30px; }
+    .fg-sheet-sec { margin-bottom: 22px; }
+    .fg-sheet-sec h4 { margin: 0 0 11px; font-size: 12px; font-weight: 700; color: #9aa6b6; text-transform: uppercase; letter-spacing: 1px; }
+    .fg-chipset { display: flex; flex-wrap: wrap; gap: 7px; }
+    .fg-chipset .c { padding: 8px 12px; border-radius: 9px; border: 1px solid #262d3b; background: #11151d; font-size: 12.5px; font-weight: 600; color: #9aa6b6; display: flex; align-items: center; gap: 7px; min-height: 40px; cursor: pointer; }
+    .fg-chipset .c .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .fg-chipset .c.on { color: #e7ecf3; box-shadow: inset 0 0 0 1.5px currentColor; }
+    .fg-chipset .c:hover { color: #e7ecf3; }
+    .fg-sort-row { display: flex; flex-direction: column; gap: 6px; }
+    .fg-sort-row .o { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 9px; border: 1px solid #262d3b; background: #11151d; min-height: 42px; font-size: 13px; font-weight: 600; color: #9aa6b6; cursor: pointer; }
+    .fg-sort-row .o.on { border-color: #34e0c4; color: #e7ecf3; background: rgba(52,224,196,.08); }
+    .fg-sort-row .o .rd { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid #262d3b; flex: 0 0 auto; }
+    .fg-sort-row .o.on .rd { border-color: #34e0c4; background: radial-gradient(circle at center, #34e0c4 40%, transparent 45%); }
+    .fg-sheet-foot { padding: 13px 18px; border-top: 1px solid #1e2531; display: flex; gap: 10px; }
+    .fg-sheet-foot button { flex: 1; height: 46px; border-radius: 12px; font-weight: 700; font-size: 14px; cursor: pointer; border: none; }
+    .fg-sheet-foot .sf-apply { background: linear-gradient(135deg, #34e0c4, #9b8cff); color: #0c0f15; }
+
+    /* Detail drawer */
+    .fg-modal-scrim { position: fixed; inset: 0; z-index: 90; background: rgba(0,0,0,.7); display: none; place-items: center; padding: 18px; }
+    .fg-modal-scrim.show { display: grid; }
+    .fg-modal { width: min(420px, 100%); background: #161b25; border: 1px solid #262d3b; border-radius: 18px; overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.45); }
+    .fg-modal .mh { padding: 20px 22px 16px; display: flex; gap: 16px; align-items: center; position: relative; }
+    .fg-modal .mh h3 { margin: 0 0 6px; font-size: 20px; font-weight: 800; }
+    .fg-modal .mh .close { position: absolute; top: 14px; right: 14px; width: 36px; height: 36px; border-radius: 10px; background: #1c2230; border: none; color: #e7ecf3; display: grid; place-items: center; font-size: 18px; cursor: pointer; }
+    .fg-modal .mb { padding: 0 22px 22px; }
+    .fg-modal .mb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 16px; }
+    .fg-modal .mb-cell { background: #11151d; border: 1px solid #1e2531; border-radius: 10px; padding: 9px 12px; }
+    .fg-modal .mb-cell .k { font-size: 11px; color: #6c7787; }
+    .fg-modal .mb-cell .v { font-size: 15px; font-weight: 700; }
+    .fg-modal .mb-entries { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+    .fg-modal .mb-acts { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+    .fg-modal .mb-acts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .fg-modal .mb-acts button, .fg-modal .mb-acts2 button { height: 42px; border-radius: 11px; font-weight: 700; font-size: 13px; cursor: pointer; background: #1c2230; border: 1px solid #262d3b; color: #e7ecf3; }
+    .fg-modal .mb-acts button:hover, .fg-modal .mb-acts2 button:hover { border-color: var(--fg-accent); }
+    .fg-modal .mb-acts2 .dis { background: rgba(239,83,80,.12); border-color: rgba(239,83,80,.4); color: #ff8a87; }
+
+    /* Responsive */
+    @media (max-width: 1023px) {
+      .flypet-gallery .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 11px; }
+    }
+    @media (max-width: 767px) {
+      .flypet-gallery .fg-quick { display: none; }
+      .flypet-gallery .fg-body { position: relative; }
+      .flypet-gallery .species-pane { position: absolute; inset: 0; width: 100%; flex-basis: auto; z-index: 10; max-height: none; transform: translateX(0); transition: transform .26s ease; margin-left: 0 !important; opacity: 1; pointer-events: auto; }
+      .flypet-gallery .result-pane { position: absolute; inset: 0; z-index: 11; transform: translateX(100%); transition: transform .26s ease; background: var(--fg-bg-2); }
+      .flypet-gallery.flat .species-pane { transform: translateX(-100%); }
+      .flypet-gallery.flat .result-pane { transform: translateX(0); }
+      .flypet-gallery.detail-open .species-pane { transform: translateX(-100%); }
+      .flypet-gallery.detail-open .result-pane { transform: translateX(0); }
+      .flypet-gallery .fg-back-btn { display: inline-block; }
+      .flypet-gallery.flat .fg-back-btn { display: none; }
+      .flypet-gallery .stage, .flypet-gallery .species-pane { max-height: 64vh; }
+      .fg-sheet { top: auto; bottom: 0; right: 0; left: 0; width: 100%; max-width: 100%; height: auto; max-height: 86vh; border-radius: 20px 20px 0 0; transform: translateY(110%); }
+      .fg-sheet.show { transform: translateY(0); }
+    }
+    @media (max-width: 480px) {
+      .flypet-gallery .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+      .flypet-gallery .icon-slot { width: 56px; height: 56px; }
+    }
   </style>
 </head>
 <body>
@@ -321,73 +529,127 @@
       <span class="arrow" id="petlistArrow">&#9654;</span>
     </div>
     <div class="collapse-body open" id="petlistBody">
-      <div style="margin-top:10px;">
+      <!-- ===== 飛寵列表重設計：B 卡片牆 + C 左側種類欄 (全部 scope 在 .flypet-gallery) ===== -->
+      <div class="flypet-gallery" id="flypetGallery">
 
-  <!-- Stats -->
-  <div class="stats" id="statsRow">
-    <span class="stat">全部 <b id="sTotal">0</b></span>
-    <span class="stat">出戰 <b id="sFight">0</b></span>
-    <span class="stat">鎖定 <b id="sLocked">0</b></span>
-    <span class="stat">篩選 <b id="sFiltered">0</b></span>
-  </div>
+        <!-- Stats row (reuse ids: sTotal/sFight/sLocked/sFiltered) -->
+        <div class="fg-stats" id="statsRow">
+          <span class="fg-stat">全部 <b id="sTotal">0</b></span>
+          <span class="fg-stat">出戰 <b id="sFight">0</b></span>
+          <span class="fg-stat">鎖定 <b id="sLocked">0</b></span>
+          <span class="fg-stat">篩選後 <b id="sFiltered">0</b></span>
+        </div>
 
-  <!-- Preset filters -->
-  <div class="preset-bar">
-    <span style="font-size:0.82em; color:var(--text2); margin-right:4px;">快捷篩選</span>
-    <div class="preset-toggle active" data-preset="4entry" onclick="togglePreset(this)">4詞條</div>
-    <div class="preset-toggle active" data-preset="mutant" onclick="togglePreset(this)">變異詞條</div>
-    <div class="preset-toggle active" data-preset="work" onclick="togglePreset(this)">工作詞條</div>
-    <div class="preset-sep"></div>
-    <div class="preset-toggle" data-preset="epic" onclick="togglePreset(this)">史詩詞條</div>
-    <div class="preset-toggle" data-preset="negative" onclick="togglePreset(this)">負面詞條</div>
-    <div class="preset-toggle" data-preset="all" onclick="togglePreset(this)">全部</div>
-  </div>
+        <!-- 搜尋 + 視圖切換 + 進階篩選 -->
+        <div class="fg-rail">
+          <div class="fg-search">
+            <span class="fg-si">&#128269;</span>
+            <input id="gallerySearch" type="text" autocomplete="off"
+              placeholder="搜尋種類名稱或詞條名稱…（例如：炎角龍、致命一擊）">
+            <button class="fg-search-clear" id="gallerySearchClear" aria-label="清除">&times;</button>
+          </div>
+          <div class="fg-view-toggle" id="galleryViewToggle">
+            <button data-view="group" class="on">&#9636; 依種類</button>
+            <button data-view="flat">&#9776; 平鋪</button>
+          </div>
+          <button class="fg-filter-btn" id="galleryFilterBtn">
+            &#9881; 進階 <span class="badge" id="galleryFilterBadge" style="display:none">0</span>
+          </button>
+        </div>
 
-  <!-- Advanced filter -->
-  <div class="filter-row">
-    <select id="fType" onchange="updateFVals()">
-      <option value="entry_name">詞條名稱</option>
-      <option value="entry_quality">詞條品質</option>
-      <option value="pet_quality">飛寵品質</option>
-      <option value="min_entries">最少詞條數</option>
-    </select>
-    <select id="fVal"><option value="">--</option></select>
-    <button class="btn btn-ghost btn-sm" onclick="addAdvFilter()">新增</button>
-    <button class="btn btn-ghost btn-sm" onclick="clearAdvFilters()">清除</button>
-    <div id="chips" style="display:inline-flex; gap:4px; flex-wrap:wrap;"></div>
-  </div>
+        <!-- 寵物品質 + 詞條品質快捷 (桌機) -->
+        <div class="fg-quick" id="galleryQuick">
+          <div class="fg-quick-grp" id="galleryPqQuick"><span class="fg-glabel">寵物品質</span></div>
+          <div class="fg-quick-grp" id="galleryEqQuick"><span class="fg-glabel">詞條品質</span></div>
+        </div>
 
-  <!-- Action bar -->
-  <div class="action-row">
-    <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.85em;">
-      <input type="checkbox" id="ckAll" onchange="toggleAll()"> 全選
-    </label>
-    <span class="sel-count" id="selCount">已選 0</span>
-    <button class="btn btn-danger btn-sm" onclick="doSell()">分解選中</button>
-  </div>
+        <!-- 主體：左種類欄 + 右卡片牆 -->
+        <div class="fg-body" id="galleryBody">
+          <aside class="species-pane" id="speciesPane">
+            <div class="species-head">
+              <span class="sh-title">種類索引</span>
+              <span class="sh-count" id="speciesCount"></span>
+            </div>
+            <div class="species-search">
+              <input id="speciesFilter" type="text" autocomplete="off" placeholder="篩選種類…">
+            </div>
+            <div class="species-list" id="speciesList"></div>
+          </aside>
 
-  <!-- Table -->
-  <div class="tbl-wrap">
-    <table>
-      <thead><tr>
-        <th class="col-ck"><input type="checkbox" id="ckAllH" onchange="toggleAll()"></th>
-        <th class="col-sm">出戰</th>
-        <th>名稱</th>
-        <th class="sortable" onclick="doSort('quality')">品質<span class="sort-arrow" id="sort-quality"></span></th>
-        <th class="sortable" onclick="doSort('generation')">代數<span class="sort-arrow" id="sort-generation"></span></th>
-        <th class="sortable" onclick="doSort('growth')">成長<span class="sort-arrow" id="sort-growth"></span></th>
-        <th class="sortable" onclick="doSort('level')">等級<span class="sort-arrow" id="sort-level"></span></th>
-        <th class="sortable" onclick="doSort('entry_quality')">詞條品質<span class="sort-arrow" id="sort-entry_quality"></span></th>
-        <th class="sortable" onclick="doSort('entries')">詞條<span class="sort-arrow" id="sort-entries"></span></th>
-        <th class="col-sm">鎖</th>
-        <th class="col-ops">操作</th>
-      </tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </div>
-  <div class="empty" id="emptyMsg" style="display:none;">沒有符合條件的飛寵</div>
+          <section class="result-pane" id="resultPane">
+            <div class="result-head">
+              <button class="fg-back-btn" id="galleryBackBtn" aria-label="返回種類清單">&#8592; 返回</button>
+              <div class="rh-title">
+                <span class="ttl" id="rhTitle">全部飛寵</span>
+                <span class="sub" id="rhSub"></span>
+              </div>
+              <button class="fg-selall-btn" id="gallerySelAll">全選結果</button>
+            </div>
+            <div class="stage" id="galleryStage"><!-- cards injected --></div>
+            <div id="gallerySentinel"></div>
+            <div class="empty" id="emptyMsg" style="display:none;">沒有符合條件的飛寵</div>
+          </section>
+        </div>
 
-      </div><!-- /inner -->
+      </div><!-- /.flypet-gallery -->
+
+      <!-- 批次操作列 (sticky) -->
+      <div class="fg-batchbar" id="galleryBatchbar">
+        <span class="fg-batch-count"><b id="galleryBatchN">0</b> 隻</span>
+        <span class="fg-batch-sub" id="galleryBatchSub">已選取</span>
+        <div class="fg-batch-actions">
+          <button class="fg-b-clear" id="galleryBatchClear">取消</button>
+          <button class="fg-b-dissolve" id="galleryBatchDissolve">&#9889; 分解</button>
+        </div>
+      </div>
+
+      <!-- 進階篩選抽屜 / bottom sheet -->
+      <div class="fg-scrim" id="galleryScrim"></div>
+      <aside class="fg-sheet" id="gallerySheet">
+        <div class="fg-sheet-head">
+          <h3>進階篩選</h3>
+          <button class="reset" id="gallerySheetReset">重設</button>
+          <button class="close" id="gallerySheetClose">&times;</button>
+        </div>
+        <div class="fg-sheet-body">
+          <div class="fg-sheet-sec">
+            <h4>寵物品質</h4>
+            <div class="fg-chipset" id="galleryPqChipset"></div>
+          </div>
+          <div class="fg-sheet-sec">
+            <h4>詞條品質</h4>
+            <div class="fg-chipset" id="galleryEqChipset"></div>
+          </div>
+          <div class="fg-sheet-sec">
+            <h4>旗標</h4>
+            <div class="fg-chipset" id="galleryFlagChipset">
+              <button class="c" data-flag="lock">&#128274; 鎖定</button>
+              <button class="c" data-flag="fight">&#9876; 出戰中</button>
+              <button class="c" data-flag="hasNeg">&#9888; 含負面詞條</button>
+              <button class="c" data-flag="hasShine">&#9733; 含史詩/變異</button>
+            </div>
+          </div>
+          <div class="fg-sheet-sec">
+            <h4>排序</h4>
+            <div class="fg-sort-row" id="gallerySortRow">
+              <button class="o on" data-sort="entry_quality"><span class="rd"></span>預設（詞條品質）</button>
+              <button class="o" data-sort="quality"><span class="rd"></span>飛寵品質高→低</button>
+              <button class="o" data-sort="level"><span class="rd"></span>等級高→低</button>
+              <button class="o" data-sort="generation"><span class="rd"></span>代數高→低</button>
+              <button class="o" data-sort="growth"><span class="rd"></span>成長高→低</button>
+              <button class="o" data-sort="entries"><span class="rd"></span>詞條數高→低</button>
+            </div>
+          </div>
+        </div>
+        <div class="fg-sheet-foot">
+          <button class="sf-apply" id="gallerySheetApply">查看結果</button>
+        </div>
+      </aside>
+
+      <!-- 單隻詳情抽屜 (含 設為基底/A/B + 分解 + 鎖狀態) -->
+      <div class="fg-modal-scrim" id="galleryDetailScrim">
+        <div class="fg-modal" id="galleryDetail"></div>
+      </div>
     </div><!-- /petlistBody -->
   </div><!-- /pet list section -->
 
@@ -458,21 +720,14 @@
 
 <script>
 var EQ = {1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
-// 正向品質排名:只用於「詞條品質」頭條與排序。史詩>卓越>稀有>普通。
+// 正向品質排名:用於「詞條品質」排序。史詩>卓越>稀有>普通。
 // 變異(6)/工作(7) 為獨立標記、負面(4) 為缺點,皆不列入品質排名。
 var POSITIVE_QUALITY_RANK = {3: 40, 2: 30, 5: 20, 1: 10};
 // 同一列詞條的顯示順序(數字小=排前面):史詩→卓越→稀有→變異→工作→普通→負面(最後)。
 var QUALITY_DISPLAY_ORDER = {3: 0, 2: 1, 5: 2, 6: 3, 7: 4, 1: 5, 4: 6};
-// 獨立標記(不參與品質排名):變異 / 工作
-var TAG_QUALITIES = {6: '變', 7: '工'};
 var PQ = {0:'白',1:'藍',2:'紫',3:'金'};
 var allPets = [], filtered = [], selected = new Set(), entryNames = new Set();
 var sortCol = 'entry_quality', sortAsc = false;
-var presets = {
-  '4entry': true, 'mutant': true, 'work': true,
-  'epic': false, 'negative': false, 'all': false
-};
-var advFilters = [];
 var confirmFn = null;
 
 function ip() { return document.getElementById('devSel').value; }
@@ -518,22 +773,8 @@ function positiveRank(e) {
 function bestPositiveRank(pet) {
   return Math.max.apply(null, (pet.entries || []).map(positiveRank).concat([0]));
 }
-// 該寵最高的正向品質(史詩/卓越/稀有/普通);沒有正向品質回傳 0
-function bestPositiveQuality(pet) {
-  var best = 0, bestRank = 0;
-  (pet.entries || []).forEach(function(e) {
-    var r = positiveRank(e);
-    if (r > bestRank) { bestRank = r; best = entryQuality(e); }
-  });
-  return best;
-}
 function totalPositiveRank(pet) {
   return (pet.entries || []).reduce(function(sum, e) { return sum + positiveRank(e); }, 0);
-}
-// 獨立標記:回傳該寵擁有的標記品質碼(6 變異 / 7 工作)
-function petTags(pet) {
-  var qs = (pet.entries || []).map(entryQuality);
-  return Object.keys(TAG_QUALITIES).map(Number).filter(function(q) { return qs.indexOf(q) >= 0; });
 }
 // 同一列詞條依顯示順序排序(史詩→…→負面最後)
 function sortedEntries(pet) {
@@ -543,24 +784,6 @@ function sortedEntries(pet) {
   };
   return (pet.entries || []).slice().sort(function(a, b) { return ord(a) - ord(b); });
 }
-function entryQualityHTML(pet) {
-  var best = bestPositiveQuality(pet);
-  var html;
-  if (best) {
-    var count = (pet.entries || []).filter(function(e) { return entryQuality(e) === best; }).length;
-    html = '<span class="entry-quality-pill">' + (EQ[best] || 'Q' + best) + '</span>' +
-      '<span class="entry-quality-sub">' + count + ' 條</span>';
-  } else {
-    html = '<span class="entry-quality-none">--</span>';
-  }
-  var tags = petTags(pet);
-  if (tags.length) {
-    html += '<span class="eq-tags">' + tags.map(function(q) {
-      return '<span class="eq-tag eq-tag-' + q + '" title="' + esc((EQ[q] || '') + '詞條') + '">' + TAG_QUALITIES[q] + '</span>';
-    }).join('') + '</span>';
-  }
-  return html;
-}
 function ecHTML(e) {
   if (!e) return '<span style="color:#444;">--</span>';
   var q = e.quality || 1;
@@ -569,115 +792,74 @@ function ecHTML(e) {
 }
 function pqHTML(q) { return '<span class="pq pq-' + q + '">' + (PQ[q]||'Q'+q) + '</span>'; }
 
-// ---- Preset filters ----
-function togglePreset(el) {
-  var key = el.dataset.preset;
-  if (key === 'all') {
-    var wasAll = presets.all;
-    for (var k in presets) presets[k] = false;
-    if (!wasAll) presets.all = true;
-  } else {
-    presets.all = false;
-    presets[key] = !presets[key];
-  }
-  syncPresetUI();
-  applyFilters();
-}
+// =====================================================================
+// 飛寵列表重設計 — B 卡片牆 + C 種類欄 (取代舊表格/preset/advanced)
+// 沿用既有 helper: esc / sortedEntries / ecHTML / pqHTML / bestPositiveRank /
+//   totalPositiveRank / EQ / PQ / POSITIVE_QUALITY_RANK / QUALITY_DISPLAY_ORDER
+// =====================================================================
 
-function syncPresetUI() {
-  document.querySelectorAll('.preset-toggle').forEach(function(el) {
-    var k = el.dataset.preset;
-    el.classList.toggle('active', !!presets[k]);
+// 品質色語言 (與既有 --eqN / --pqN token 對齊)
+var PQ_COLOR = {0:'#9aa6b2', 1:'#64b5f6', 2:'#ce93d8', 3:'#ffd54f'};
+var EQ_COLOR = {1:'#64b5f6', 2:'#ffd54f', 3:'#ffe08a', 4:'#ef5350', 5:'#b9a4ff', 6:'#f0abfc', 7:'#5eead4'};
+
+// 篩選狀態
+var gState = {
+  search: '',
+  view: 'group',             // group | flat
+  species: null,             // 選定 config_id (null = 全部)
+  pq: new Set(),             // 寵物品質 0..3
+  eq: new Set(),             // 詞條品質 1..7
+  flags: new Set()           // lock fight hasNeg hasShine
+};
+
+// ---- 種類索引 (含每種類數量與最高品質) ----
+function speciesIndex() {
+  var map = {};
+  allPets.forEach(function(p) {
+    var k = groupKeyOf(p);
+    if (!map[k]) map[k] = {key: k, config_id: p.config_id, name: p.display_name || p.name || '(?)', count: 0, best: 0};
+    map[k].count++;
+    if ((p.quality || 0) > map[k].best) map[k].best = (p.quality || 0);
+  });
+  return Object.keys(map).map(function(k) { return map[k]; }).sort(function(a, b) {
+    return (b.best - a.best) || (b.count - a.count) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   });
 }
 
-function matchesPresets(pet) {
-  if (presets.all) return true;
-  var any = false;
-  for (var k in presets) if (presets[k]) any = true;
-  if (!any) return true;
+// ---- 衍生詞條快取 (供旗標/搜尋) ----
+function petEqSet(p) { return (p.entries || []).map(function(e) { return entryQuality(e); }); }
+function petHasNeg(p) { return petEqSet(p).indexOf(4) >= 0; }
+function petHasShine(p) {
+  var s = petEqSet(p);
+  return s.indexOf(3) >= 0 || s.indexOf(6) >= 0 || s.indexOf(7) >= 0;
+}
+function petEntryNames(p) { return (p.entries || []).map(function(e) { return e.name || ''; }).join(' '); }
 
-  var entries = pet.entries || [];
-  if (presets['4entry'] && entries.length >= 4) return true;
-  if (presets['mutant'] && entries.some(function(e) { return e.quality === 6; })) return true;
-  if (presets['work'] && entries.some(function(e) { return e.quality === 7; })) return true;
-  if (presets['epic'] && entries.some(function(e) { return e.quality === 3; })) return true;
-  if (presets['negative'] && entries.some(function(e) { return e.quality === 4; })) return true;
-  return false;
+// ---- petIcon: 真實遊戲圖示 (/api/fly_pet_icon/<config_id>) + 失敗退回彩色佔位頭像 ----
+// 日後只要 endpoint 解析成功,<img> 就會顯示真圖;404 時 onerror 隱藏 img、露出 .av 佔位。
+function petIcon(p, size) {
+  size = size || 64;
+  var cid = (p.config_id != null) ? p.config_id : 0;
+  var hue = (cid * 37) % 360;
+  var edge = PQ_COLOR[p.quality] || PQ_COLOR[0];
+  var ch = esc((p.display_name || p.name || '?').charAt(0));
+  var bg = 'linear-gradient(140deg, hsl(' + hue + ' 62% 46%), hsl(' + ((hue + 38) % 360) + ' 64% 32%))';
+  var iconUrl = '/api/fly_pet_icon/' + encodeURIComponent(cid);
+  var sty = 'width:' + size + 'px;height:' + size + 'px;';
+  // onerror: 隱藏破圖、露出同槽佔位頭像 (slot 在 endpoint 404 時仍乾淨)
+  var onerr = "this.style.display='none';var a=this.parentNode.querySelector('.av');if(a)a.style.display='grid';";
+  return '<span class="icon-slot" style="--qedge:' + edge + ';' + sty + '">' +
+    '<img class="icon-img" src="' + iconUrl + '" alt="" loading="lazy" onerror="' + onerr + '">' +
+    '<span class="av" style="display:none;background:' + bg + '">' + ch + '</span>' +
+    '<span class="ring" style="--qedge:' + edge + '"></span>' +
+    '</span>';
 }
 
-// ---- Advanced filter ----
-function updateFVals() {
-  var t = document.getElementById('fType').value;
-  var sel = document.getElementById('fVal');
-  sel.innerHTML = '';
-  if (t === 'entry_name') {
-    Array.from(entryNames).sort().forEach(function(n) {
-      var o = document.createElement('option'); o.value = n; o.textContent = n; sel.appendChild(o);
-    });
-  } else if (t === 'entry_quality') {
-    for (var i = 1; i <= 7; i++) {
-      var o = document.createElement('option'); o.value = i; o.textContent = i + ' - ' + EQ[i]; sel.appendChild(o);
-    }
-  } else if (t === 'pet_quality') {
-    for (var i = 0; i <= 3; i++) {
-      var o = document.createElement('option'); o.value = i; o.textContent = i + ' - ' + PQ[i]; sel.appendChild(o);
-    }
-  } else if (t === 'min_entries') {
-    [1,2,3,4,5].forEach(function(n) {
-      var o = document.createElement('option'); o.value = n; o.textContent = '>= ' + n; sel.appendChild(o);
-    });
-  }
-}
-
-function addAdvFilter() {
-  var t = document.getElementById('fType').value;
-  var v = document.getElementById('fVal').value;
-  if (!v && v !== '0') return;
-  if (advFilters.some(function(f) { return f.t === t && f.v === v; })) return;
-  advFilters.push({t: t, v: v});
-  renderChips();
-  applyFilters();
-}
-function removeAdvFilter(i) { advFilters.splice(i, 1); renderChips(); applyFilters(); }
-function clearAdvFilters() { advFilters = []; renderChips(); applyFilters(); }
-
-function renderChips() {
-  var c = document.getElementById('chips');
-  c.innerHTML = '';
-  advFilters.forEach(function(f, i) {
-    var label = '';
-    if (f.t === 'entry_name') label = '詞條: ' + f.v;
-    else if (f.t === 'entry_quality') label = '詞條品質: ' + (EQ[f.v] || f.v);
-    else if (f.t === 'pet_quality') label = '飛寵品質: ' + (PQ[f.v] || f.v);
-    else if (f.t === 'min_entries') label = '詞條數 >= ' + f.v;
-    c.innerHTML += '<span class="chip">' + esc(label) + ' <span class="chip-x" onclick="removeAdvFilter('+i+')">&times;</span></span>';
-  });
-}
-
-function matchesAdvanced(pet) {
-  if (advFilters.length === 0) return true;
-  return advFilters.every(function(f) {
-    if (f.t === 'pet_quality') return String(pet.quality) === String(f.v);
-    if (f.t === 'entry_name') return (pet.entries||[]).some(function(e) { return e.name === f.v; });
-    if (f.t === 'entry_quality') return (pet.entries||[]).some(function(e) { return String(e.quality) === String(f.v); });
-    if (f.t === 'min_entries') return (pet.entries||[]).length >= parseInt(f.v);
-    return true;
-  });
-}
-
-// ---- Sort ----
+// ---- Sort (保留 entry_quality 預設排序邏輯) ----
 function doSort(col) {
   if (sortCol === col) { sortAsc = !sortAsc; }
   else { sortCol = col; sortAsc = false; }
-  syncSortUI();
   applyFilters();
-}
-function syncSortUI() {
-  ['quality','generation','growth','level','entry_quality','entries'].forEach(function(c) {
-    var el = document.getElementById('sort-' + c);
-    if (el) el.textContent = (sortCol === c) ? (sortAsc ? '▲' : '▼') : '';
-  });
 }
 function sortFiltered() {
   if (!sortCol) return;
@@ -703,29 +885,46 @@ function sortFiltered() {
   });
 }
 
-// ---- Combined filter ----
+// ---- 篩選判定 ----
+function matchesGallery(p) {
+  if (gState.species !== null && groupKeyOf(p) !== String(gState.species)) return false;
+  if (gState.pq.size && !gState.pq.has(p.quality)) return false;
+  if (gState.eq.size) {
+    var ok = false, qs = petEqSet(p);
+    gState.eq.forEach(function(q) { if (qs.indexOf(q) >= 0) ok = true; });
+    if (!ok) return false;
+  }
+  if (gState.flags.has('lock') && !p.lock) return false;
+  if (gState.flags.has('fight') && p.fight !== 1) return false;
+  if (gState.flags.has('hasNeg') && !petHasNeg(p)) return false;
+  if (gState.flags.has('hasShine') && !petHasShine(p)) return false;
+  if (gState.search) {
+    var s = gState.search;
+    if ((p.display_name || p.name || '').indexOf(s) < 0 && petEntryNames(p).indexOf(s) < 0) return false;
+  }
+  return true;
+}
+
+// ---- Combined filter → 驅動新渲染 ----
 function applyFilters() {
-  filtered = allPets.filter(function(p) { return matchesPresets(p) && matchesAdvanced(p); });
+  filtered = allPets.filter(matchesGallery);
   sortFiltered();
   var vis = new Set(filtered.map(function(p) { return p.id; }));
   selected.forEach(function(id) { if (!vis.has(id)) selected.delete(id); });
   renderTable();
   updateStats();
-  updateSelCount();
+  updateBatchbar();
+  syncGalleryChips();
+  renderSpeciesPane();
 }
 
+// updateFVals / syncPresetUI 為相容入口 (doLoad / 開頁 init 仍會呼叫):
+// 重建快捷 chip 並同步狀態,等同舊版「重置篩選 UI」。
+function updateFVals() { buildGalleryChips(); }
+function syncPresetUI() { syncGalleryChips(); }
+
 // ---- Grouping (by species / config_id) ----
-var COLLAPSE_KEY = 'flypet_collapsed_groups';
-var collapsedGroups = (function() {
-  try { return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '[]').map(String)); }
-  catch(e) { return new Set(); }
-})();
-function saveCollapsed() {
-  try { localStorage.setItem(COLLAPSE_KEY, JSON.stringify(Array.from(collapsedGroups))); } catch(e) {}
-}
 function groupKeyOf(p) { return String(p.config_id != null ? p.config_id : ('n:' + (p.display_name || p.name || '?'))); }
-// Group `filtered` by config_id, preserving intra-group order. Groups are
-// ordered by the group's strongest pet quality (desc), then species name.
 function groupFiltered() {
   var map = {};
   var order = [];
@@ -743,88 +942,315 @@ function groupFiltered() {
     return (b.maxQ - a.maxQ) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
   });
 }
-function toggleGroup(key) {
-  key = String(key);
-  if (collapsedGroups.has(key)) collapsedGroups.delete(key); else collapsedGroups.add(key);
-  saveCollapsed();
-  renderTable();
+// 點種類分組標頭 = 聚焦該 config_id (與左欄一致)
+function toggleGroup(key) { selectSpecies(key); }
+
+// ---- 卡片 HTML ----
+function cardHTML(p) {
+  var sel = selected.has(p.id);
+  var pqc = PQ_COLOR[p.quality] || PQ_COLOR[0];
+  var pqName = PQ[p.quality] || ('Q' + p.quality);
+  var name = esc(p.display_name || p.name || '(?)');
+  var cls = 'card';
+  if (sel) cls += ' sel';
+  if (p.lock) cls += ' has-lock';
+  if (p.fight === 1) cls += ' has-fight';
+  var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join('');
+  if (!entries) entries = '<span style="color:#444;font-size:11px;">無詞條</span>';
+  var star = Math.max(0, Math.min(5, p.star || 0));
+  var stars = '';
+  for (var i = 0; i < 5; i++) stars += '<span class="st ' + (i < star ? '' : 'off') + '">&#9733;</span>';
+  var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
+  var flagMark = p.fight === 1 ? '<span class="fightmark">出戰</span>'
+               : (p.lock ? '<span class="lockmark">&#128274;</span>' : '');
+  return '<article class="' + cls + '" data-id="' + p.id + '" style="--qedge:' + pqc + '">' +
+      flagMark +
+      '<div class="card-top">' + petIcon(p, 64) +
+        '<div class="card-id">' +
+          '<div class="card-name">' + name +
+            '<span class="pq-tag" style="background:' + pqc + '">' + esc(pqName) + '</span>' +
+          '</div>' +
+          '<div class="card-meta">' +
+            '<span class="mbadge lv">Lv ' + (p.level || 0) + '</span>' +
+            '<span class="mbadge gen">' + (p.generation || 0) + '代</span>' +
+            '<span class="mbadge">階' + (p.step || 0) + '</span>' +
+            '<span class="mbadge">成長 ' + growth + '</span>' +
+          '</div>' +
+          '<div class="star-row">' + stars + '</div>' +
+        '</div>' +
+      '</div>' +
+      '<div class="entries">' + entries + '</div>' +
+      '<div class="card-foot">' +
+        '<span class="sel-pill"><span class="box">' + (sel ? '&#10003;' : '') + '</span>' + (sel ? '已選' : '選取') + '</span>' +
+        '<span class="detail-link" data-detail="1">詳情 &rsaquo;</span>' +
+      '</div>' +
+    '</article>';
 }
 
-// ---- Table ----
-var TABLE_COL_COUNT = 11;
+function groupHeadHTML(g) {
+  var sample = g.pets[0];
+  return '<div class="group-head">' +
+      '<span class="ico-wrap">' + petIcon({config_id: sample.config_id, display_name: g.name, quality: g.maxQ}, 30) + '</span>' +
+      '<h2>' + esc(g.name) + '</h2>' +
+      '<span class="gcount">' + g.pets.length + ' 隻</span>' +
+      '<button class="gsel-all" data-grp-key="' + esc(g.key) + '">＋全選此種類</button>' +
+    '</div>';
+}
+
+// ---- 視窗化: 60/批 IntersectionObserver (平鋪 + 群組皆視窗化) ----
+var GPAGE = 60;
+var _gRendered = 0;
+var _gGroups = null;
+var gStage = null, sentinel = null, gIO = null;
+
+function appendFlat() {
+  var grid = gStage.querySelector('.grid.flat');
+  if (!grid) { grid = document.createElement('div'); grid.className = 'grid flat'; gStage.appendChild(grid); }
+  var slice = filtered.slice(_gRendered, _gRendered + GPAGE);
+  grid.insertAdjacentHTML('beforeend', slice.map(cardHTML).join(''));
+  _gRendered += slice.length;
+}
+function appendGroups() {
+  if (!_gGroups) return;
+  var budget = GPAGE, cursor = _gRendered, seen = 0, html = '';
+  for (var gi = 0; gi < _gGroups.length && budget > 0; gi++) {
+    var g = _gGroups[gi];
+    var gStart = seen, gEnd = seen + g.pets.length;
+    seen = gEnd;
+    if (gEnd <= cursor) continue;
+    var localStart = Math.max(0, cursor - gStart);
+    var take = Math.min(g.pets.length - localStart, budget);
+    var slice = g.pets.slice(localStart, localStart + take);
+    if (localStart === 0) {
+      html += '<section class="grp" data-grp="' + esc(g.key) + '">' + groupHeadHTML(g) +
+        '<div class="grid">' + slice.map(cardHTML).join('') + '</div></section>';
+    } else {
+      var sec = gStage.querySelector('section.grp[data-grp="' + cssEsc(g.key) + '"] .grid');
+      if (sec) sec.insertAdjacentHTML('beforeend', slice.map(cardHTML).join(''));
+    }
+    cursor += take; budget -= take;
+  }
+  if (html) gStage.insertAdjacentHTML('beforeend', html);
+  _gRendered = cursor;
+}
+function cssEsc(s) { return String(s).replace(/"/g, '\\"'); }
+function appendNext() {
+  if (gState.view === 'group' && gState.species === null) appendGroups();
+  else appendFlat();
+}
+function topUpSentinel() {
+  var guard = 0;
+  while (_gRendered < filtered.length && guard++ < 200) {
+    if (!sentinel) break;
+    var r = sentinel.getBoundingClientRect();
+    if (r.top > window.innerHeight + 600) break;
+    appendNext();
+  }
+}
+
+// renderTable(): 保留名稱供任何既有 caller;委派到卡片牆渲染。
 function renderTable() {
-  var tbody = document.getElementById('tbody');
+  gStage = document.getElementById('galleryStage');
+  sentinel = document.getElementById('gallerySentinel');
   var empt = document.getElementById('emptyMsg');
-  if (filtered.length === 0) { tbody.innerHTML = ''; empt.style.display = 'block'; return; }
-  empt.style.display = 'none';
-  var html = '';
-  groupFiltered().forEach(function(g) {
-    var collapsed = collapsedGroups.has(g.key);
-    var arrow = collapsed ? '&#9654;' : '&#9660;'; // ▶ / ▼
-    html += '<tr class="grp-header" onclick="toggleGroup(\'' + esc(g.key) + '\')" ' +
-      'style="cursor:pointer;background:var(--bg2,#1c1c1c);">' +
-      '<td colspan="' + TABLE_COL_COUNT + '" style="padding:5px 8px;font-weight:600;">' +
-      '<span style="display:inline-block;width:1em;">' + arrow + '</span> ' +
-      esc(g.name) + ' <span style="color:var(--text2);font-weight:400;">(' + g.pets.length + ')</span>' +
-      '</td></tr>';
-    if (collapsed) return;
-    g.pets.forEach(function(p) { html += renderPetRow(p); });
-  });
-  tbody.innerHTML = html;
+  if (!gStage) return;
+  ensureGalleryObserver();
+  _gRendered = 0;
+  gStage.innerHTML = '';
+  if (filtered.length === 0) { if (empt) empt.style.display = 'block'; updateResultHead(); return; }
+  if (empt) empt.style.display = 'none';
+  _gGroups = (gState.view === 'group' && gState.species === null) ? groupFiltered() : null;
+  appendNext();
+  updateResultHead();
+  topUpSentinel();
+}
+function ensureGalleryObserver() {
+  if (gIO || !sentinel) return;
+  gIO = new IntersectionObserver(function(es) {
+    es.forEach(function(e) {
+      if (e.isIntersecting && _gRendered < filtered.length) appendNext();
+    });
+  }, {rootMargin: '600px'});
+  gIO.observe(sentinel);
 }
 
-function renderPetRow(p) {
-    var ck = selected.has(p.id) ? ' checked' : '';
-    var rc = selected.has(p.id) ? ' class="selected"' : '';
-    var fight = p.fight === 1 ? '<span style="color:var(--warn);" title="出戰中">&#9733;</span>' : '';
-    var lock = p.lock ? '<span title="已鎖定 (lock=' + p.lock + ')" style="color:var(--warn);">&#128274;</span>' : '<span style="color:#444;">&#128275;</span>';
-    var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
-    if (!entries) entries = '<span style="color:#444;">--</span>';
-    var name = p.display_name || p.name || '(?)';
-    var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
-    var entryQualityBadge = entryQualityHTML(p);
+// ---- 結果頭部 ----
+function updateResultHead() {
+  var ttl = document.getElementById('rhTitle');
+  var sub = document.getElementById('rhSub');
+  if (!ttl || !sub) return;
+  if (gState.species !== null) {
+    var sp = speciesIndex().filter(function(s) { return s.key === String(gState.species); })[0];
+    ttl.textContent = sp ? sp.name : '種類';
+    sub.innerHTML = '此種類 ' + (sp ? sp.count : 0) + ' 隻 · 篩出 <b>' + filtered.length + '</b> 隻';
+  } else {
+    ttl.textContent = gState.view === 'flat' ? '平鋪 · 全部飛寵' : '全部飛寵（依種類）';
+    sub.innerHTML = '共 ' + allPets.length + ' 隻 · 篩出 <b>' + filtered.length + '</b> 隻';
+  }
+}
 
-    return '<tr' + rc + ' data-id="' + p.id + '">' +
-      '<td class="col-ck"><input type="checkbox" onchange="toggleSel(' + p.id + ',this)"' + ck + '></td>' +
-      '<td class="col-sm">' + fight + '</td>' +
-      '<td><span class="pet-name">' + esc(name) + '</span><span class="pet-id">#' + p.id + '</span></td>' +
-      '<td>' + pqHTML(p.quality) + '</td>' +
-      '<td style="text-align:center;">' + (p.generation || 0) + '</td>' +
-      '<td style="text-align:center;">' + growth + '</td>' +
-      '<td style="text-align:center;">' + (p.level || 0) + '</td>' +
-      '<td class="entry-quality-cell">' + entryQualityBadge + '</td>' +
-      '<td>' + entries + '</td>' +
-      '<td class="col-sm">' + lock + '</td>' +
-      '<td class="col-ops" style="white-space:nowrap;">' +
-        '<button class="btn btn-ghost btn-sm" onclick="doSellOne(' + p.id + ')" title="分解">X</button> ' +
-        '<button class="btn btn-ghost btn-sm" onclick="setBreedPet(\'A\',' + p.id + ')" title="設為交配A" style="color:var(--eq2);">A</button> ' +
-        '<button class="btn btn-ghost btn-sm" onclick="setBreedPet(\'B\',' + p.id + ')" title="設為交配B" style="color:var(--eq6);">B</button>' +
-      '</td>' +
-      '</tr>';
+// ---- 種類欄 ----
+function speciesMatchesSearch(s) {
+  if (!gState.search) return true;
+  if (s.name.indexOf(gState.search) >= 0) return true;
+  for (var i = 0; i < allPets.length; i++) {
+    if (groupKeyOf(allPets[i]) !== s.key) continue;
+    if (petEntryNames(allPets[i]).indexOf(gState.search) >= 0) return true;
+  }
+  return false;
+}
+function renderSpeciesPane() {
+  var wrap = document.getElementById('speciesList');
+  if (!wrap) return;
+  var spq = (document.getElementById('speciesFilter').value || '').trim();
+  var idx = speciesIndex().filter(function(s) {
+    if (spq && s.name.indexOf(spq) < 0) return false;
+    return speciesMatchesSearch(s);
+  });
+  var cntEl = document.getElementById('speciesCount');
+  if (cntEl) cntEl.textContent = idx.length + ' 種 / ' + allPets.length + ' 隻';
+  var html = '<div class="sp-all ' + (gState.species === null ? 'on' : '') + '" data-sp="all">' +
+      '<div class="nm">全部種類</div>' +
+      '<span class="sp-cnt" style="margin-left:auto;">' + allPets.length + '</span>' +
+    '</div>';
+  idx.forEach(function(s) {
+    var on = (gState.species !== null && String(gState.species) === s.key);
+    var dot = PQ_COLOR[s.best] || PQ_COLOR[0];
+    html += '<div class="sp-item ' + (on ? 'on' : '') + '" data-sp="' + esc(s.key) + '">' +
+        petIcon({config_id: s.config_id, display_name: s.name, quality: s.best}, 32) +
+        '<span class="sp-name">' + esc(s.name) + '</span>' +
+        '<span class="sp-meta">' +
+          '<span class="sp-best" style="background:' + dot + '" title="最高品質"></span>' +
+          '<span class="sp-cnt">' + s.count + '</span>' +
+        '</span>' +
+      '</div>';
+  });
+  if (idx.length === 0) html += '<div class="empty" style="padding:24px;">查無種類</div>';
+  wrap.innerHTML = html;
+}
+
+// 點種類 (key 是 groupKeyOf 字串);null = 全部;收合左欄 == 平鋪/全部
+function selectSpecies(key) {
+  gState.species = (key === 'all' || key === null) ? null : key;
+  // 進入單一種類時手機切到結果屏
+  var g = document.getElementById('flypetGallery');
+  if (g) g.classList.toggle('detail-open', gState.species !== null);
+  applyFilters();
+  renderSpeciesPane();
+}
+
+// ---- 視圖切換 (與種類欄收合一致) ----
+function setView(view) {
+  if (gState.view === view) return;
+  gState.view = view;
+  var g = document.getElementById('flypetGallery');
+  if (g) g.classList.toggle('flat', view === 'flat');
+  document.querySelectorAll('#galleryViewToggle button').forEach(function(b) {
+    b.classList.toggle('on', b.dataset.view === view);
+  });
+  // 平鋪 = 攤平不分組 (左欄收掉);切回依種類時若有聚焦則保留
+  applyFilters();
+}
+
+// ---- 快捷/抽屜 chip 建構 + 同步 ----
+function buildGalleryChips() {
+  var pqRail = document.getElementById('galleryPqQuick');
+  var pqSheet = document.getElementById('galleryPqChipset');
+  var eqRail = document.getElementById('galleryEqQuick');
+  var eqSheet = document.getElementById('galleryEqChipset');
+  if (pqRail && pqRail.querySelectorAll('.pq-chip').length === 0) {
+    var ph = '';
+    [0,1,2,3].forEach(function(q) {
+      ph += '<button class="pq-chip" data-pq="' + q + '"><span class="dot" style="background:' + PQ_COLOR[q] + '"></span>' + (PQ[q] || q) + '</button>';
+    });
+    pqRail.insertAdjacentHTML('beforeend', ph);
+  }
+  if (pqSheet && pqSheet.children.length === 0) {
+    pqSheet.innerHTML = [0,1,2,3].map(function(q) {
+      return '<button class="c" data-pq="' + q + '" style="color:' + PQ_COLOR[q] + '"><span class="dot" style="background:' + PQ_COLOR[q] + '"></span>' + (PQ[q] || q) + '色</button>';
+    }).join('');
+  }
+  // 詞條品質順序: 1,2,3,5,6,7,4
+  var eqOrder = [1,2,3,5,6,7,4];
+  if (eqRail && eqRail.querySelectorAll('.eq-chip').length === 0) {
+    var eh = '';
+    eqOrder.forEach(function(q) {
+      eh += '<button class="eq-chip" data-eq="' + q + '"><span class="dot" style="background:' + EQ_COLOR[q] + '"></span>' + (EQ[q] || q) + '</button>';
+    });
+    eqRail.insertAdjacentHTML('beforeend', eh);
+  }
+  if (eqSheet && eqSheet.children.length === 0) {
+    eqSheet.innerHTML = eqOrder.map(function(q) {
+      return '<button class="c" data-eq="' + q + '" style="color:' + EQ_COLOR[q] + '"><span class="dot" style="background:' + EQ_COLOR[q] + '"></span>' + (EQ[q] || q) + '</button>';
+    }).join('');
+  }
+}
+function syncGalleryChips() {
+  document.querySelectorAll('#galleryPqQuick .pq-chip, #galleryPqChipset .c').forEach(function(b) {
+    b.classList.toggle('on', gState.pq.has(+b.dataset.pq));
+  });
+  document.querySelectorAll('#galleryEqQuick .eq-chip, #galleryEqChipset .c').forEach(function(b) {
+    b.classList.toggle('on', gState.eq.has(+b.dataset.eq));
+  });
+  document.querySelectorAll('#galleryFlagChipset .c').forEach(function(b) {
+    b.classList.toggle('on', gState.flags.has(b.dataset.flag));
+  });
+  document.querySelectorAll('#gallerySortRow .o').forEach(function(b) {
+    b.classList.toggle('on', sortCol === b.dataset.sort);
+  });
+  var active = gState.pq.size + gState.eq.size + gState.flags.size + (gState.species !== null ? 1 : 0);
+  var badge = document.getElementById('galleryFilterBadge');
+  if (badge) {
+    if (active > 0) { badge.style.display = 'inline-block'; badge.textContent = active; }
+    else badge.style.display = 'none';
+  }
 }
 
 // ---- Selection ----
-function toggleSel(id, cb) {
-  if (cb.checked) selected.add(id); else selected.delete(id);
-  var row = cb.closest('tr');
-  if (row) row.classList.toggle('selected', cb.checked);
-  updateSelCount();
-  syncAllCk();
+function toggleSel(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  var card = gStage ? gStage.querySelector('.card[data-id="' + id + '"]') : null;
+  if (card) markCardSel(card, selected.has(id));
+  updateBatchbar();
 }
+function markCardSel(card, sel) {
+  card.classList.toggle('sel', sel);
+  var box = card.querySelector('.sel-pill .box');
+  var lbl = card.querySelector('.sel-pill');
+  if (box) box.innerHTML = sel ? '&#10003;' : '';
+  if (lbl) lbl.lastChild.textContent = sel ? '已選' : '選取';
+}
+// 全選目前篩選結果
 function toggleAll() {
-  var ck = document.getElementById('ckAll').checked || document.getElementById('ckAllH').checked;
-  document.getElementById('ckAll').checked = ck;
-  document.getElementById('ckAllH').checked = ck;
-  if (ck) filtered.forEach(function(p) { selected.add(p.id); });
-  else filtered.forEach(function(p) { selected.delete(p.id); });
-  renderTable(); updateSelCount();
+  var allSel = filtered.length > 0 && filtered.every(function(p) { return selected.has(p.id); });
+  if (allSel) filtered.forEach(function(p) { selected.delete(p.id); });
+  else filtered.forEach(function(p) { selected.add(p.id); });
+  renderTable();
+  updateBatchbar();
 }
-function syncAllCk() {
-  var all = filtered.length > 0 && filtered.every(function(p) { return selected.has(p.id); });
-  document.getElementById('ckAll').checked = all;
-  document.getElementById('ckAllH').checked = all;
+function selectGroupKey(key) {
+  filtered.forEach(function(p) { if (groupKeyOf(p) === String(key)) selected.add(p.id); });
+  renderTable();
+  updateBatchbar();
 }
-function updateSelCount() { document.getElementById('selCount').textContent = '已選 ' + selected.size; }
+
+// ---- 批次列 ----
+function updateBatchbar() {
+  var bar = document.getElementById('galleryBatchbar');
+  var n = document.getElementById('galleryBatchN');
+  var sub = document.getElementById('galleryBatchSub');
+  if (!bar) return;
+  if (n) n.textContent = selected.size;
+  if (selected.size > 0) {
+    bar.classList.add('show');
+    var locked = 0;
+    selected.forEach(function(id) { var p = allPets.find(function(x) { return x.id === id; }); if (p && p.lock) locked++; });
+    if (sub) sub.textContent = locked ? ('已選取（含 ' + locked + ' 隻鎖定，將略過）') : '已選取，待分解';
+  } else {
+    bar.classList.remove('show');
+  }
+}
+
 function updateStats() {
   document.getElementById('sTotal').textContent = allPets.length;
   document.getElementById('sFight').textContent = allPets.filter(function(p) { return p.fight===1; }).length;
@@ -832,6 +1258,179 @@ function updateStats() {
   document.getElementById('sFiltered').textContent = filtered.length;
   var el = document.getElementById('petlistSummary');
   if (el) el.textContent = '(' + allPets.length + ' 隻, 篩選 ' + filtered.length + ')';
+}
+
+// ---- 單隻詳情抽屜 (含 設為基底/A/B、分解、鎖狀態) ----
+function openDetail(id) {
+  var p = allPets.find(function(x) { return x.id === id; });
+  if (!p) return;
+  var pqc = PQ_COLOR[p.quality] || PQ_COLOR[0];
+  var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
+  var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join('');
+  if (!entries) entries = '<span style="color:#444;font-size:12px;">無詞條</span>';
+  var lockTxt = p.lock ? '🔒 已鎖定' : '🔓 未鎖定';
+  var modal = document.getElementById('galleryDetail');
+  var name = esc(p.display_name || p.name || '(?)');
+  modal.innerHTML =
+    '<div class="mh">' + petIcon(p, 72) +
+      '<div><h3>' + name + '</h3>' +
+        '<span class="pq-tag" style="background:' + pqc + ';font-size:12px;padding:3px 9px;">' + esc(PQ[p.quality] || '') + '色 · ' + lockTxt + (p.fight === 1 ? ' · ⚔出戰' : '') + '</span>' +
+      '</div>' +
+      '<button class="close" data-detail-close="1">&times;</button>' +
+    '</div>' +
+    '<div class="mb">' +
+      '<div class="mb-grid">' +
+        '<div class="mb-cell"><div class="k">等級</div><div class="v">Lv ' + (p.level || 0) + '</div></div>' +
+        '<div class="mb-cell"><div class="k">代數</div><div class="v">' + (p.generation || 0) + ' 代</div></div>' +
+        '<div class="mb-cell"><div class="k">成長 / 階</div><div class="v">' + growth + ' · 階' + (p.step || 0) + '</div></div>' +
+        '<div class="mb-cell"><div class="k">ID</div><div class="v">#' + p.id + '</div></div>' +
+      '</div>' +
+      '<h4 style="margin:0 0 10px;font-size:12px;color:var(--fg-txt-dim);letter-spacing:1px;">詞條（' + (p.entries || []).length + '）</h4>' +
+      '<div class="mb-entries">' + entries + '</div>' +
+      '<div class="mb-acts">' +
+        '<button data-breed-base="' + p.id + '">設為基底</button>' +
+        '<button data-breed-a="' + p.id + '">設為 A</button>' +
+        '<button data-breed-b="' + p.id + '">設為 B</button>' +
+      '</div>' +
+      '<div class="mb-acts2">' +
+        '<button data-detail-sel="' + p.id + '">' + (selected.has(p.id) ? '✓ 取消選取' : '＋ 加入選取') + '</button>' +
+        '<button class="dis" data-detail-dissolve="' + p.id + '">⚡ 分解此隻</button>' +
+      '</div>' +
+    '</div>';
+  document.getElementById('galleryDetailScrim').classList.add('show');
+}
+function closeDetail() { document.getElementById('galleryDetailScrim').classList.remove('show'); }
+
+// ---- 事件綁定 (gallery init) ----
+function initGallery() {
+  var stage = document.getElementById('galleryStage');
+  if (!stage || stage._wired) return;
+  stage._wired = true;
+  buildGalleryChips();
+
+  // 搜尋
+  var searchEl = document.getElementById('gallerySearch');
+  var searchClear = document.getElementById('gallerySearchClear');
+  var _t;
+  if (searchEl) searchEl.addEventListener('input', function() {
+    gState.search = searchEl.value.trim();
+    if (searchClear) searchClear.classList.toggle('show', !!gState.search);
+    clearTimeout(_t); _t = setTimeout(function() { applyFilters(); renderSpeciesPane(); }, 140);
+  });
+  if (searchClear) searchClear.addEventListener('click', function() {
+    searchEl.value = ''; gState.search = ''; searchClear.classList.remove('show');
+    applyFilters(); renderSpeciesPane();
+  });
+
+  // 視圖切換
+  var vt = document.getElementById('galleryViewToggle');
+  if (vt) vt.addEventListener('click', function(e) {
+    var b = e.target.closest('button'); if (!b) return;
+    setView(b.dataset.view);
+  });
+
+  // 種類欄
+  var spList = document.getElementById('speciesList');
+  if (spList) spList.addEventListener('click', function(e) {
+    var all = e.target.closest('.sp-all');
+    var it = e.target.closest('.sp-item');
+    if (all) { selectSpecies(null); return; }
+    if (it) {
+      var key = it.dataset.sp;
+      if (gState.species !== null && String(gState.species) === key) selectSpecies(null);
+      else selectSpecies(key);
+    }
+  });
+  var spFilter = document.getElementById('speciesFilter');
+  if (spFilter) spFilter.addEventListener('input', function() { renderSpeciesPane(); });
+  var backBtn = document.getElementById('galleryBackBtn');
+  if (backBtn) backBtn.addEventListener('click', function() { selectSpecies(null); });
+
+  // 快捷 chip (品質/詞條)
+  document.getElementById('galleryPqQuick').addEventListener('click', function(e) {
+    var b = e.target.closest('.pq-chip'); if (!b) return;
+    var q = +b.dataset.pq; gState.pq.has(q) ? gState.pq.delete(q) : gState.pq.add(q); applyFilters();
+  });
+  document.getElementById('galleryEqQuick').addEventListener('click', function(e) {
+    var b = e.target.closest('.eq-chip'); if (!b) return;
+    var q = +b.dataset.eq; gState.eq.has(q) ? gState.eq.delete(q) : gState.eq.add(q); applyFilters();
+  });
+
+  // 卡片牆: 選取 / 詳情 / 種類全選
+  stage.addEventListener('click', function(e) {
+    var gsel = e.target.closest('.gsel-all');
+    if (gsel) { selectGroupKey(gsel.dataset.grpKey); return; }
+    var detail = e.target.closest('[data-detail]');
+    var card = e.target.closest('.card');
+    if (!card) return;
+    if (detail) { openDetail(+card.dataset.id); return; }
+    toggleSel(+card.dataset.id);
+  });
+
+  // 全選結果
+  var selAll = document.getElementById('gallerySelAll');
+  if (selAll) selAll.addEventListener('click', function() { toggleAll(); });
+
+  // 批次列
+  document.getElementById('galleryBatchClear').addEventListener('click', function() {
+    selected.clear(); renderTable(); updateBatchbar();
+  });
+  document.getElementById('galleryBatchDissolve').addEventListener('click', function() { doSell(); });
+
+  // 進階抽屜
+  var scrim = document.getElementById('galleryScrim');
+  var sheet = document.getElementById('gallerySheet');
+  function openSheet() { syncGalleryChips(); scrim.classList.add('show'); sheet.classList.add('show'); }
+  function closeSheet() { scrim.classList.remove('show'); sheet.classList.remove('show'); }
+  document.getElementById('galleryFilterBtn').addEventListener('click', openSheet);
+  document.getElementById('gallerySheetClose').addEventListener('click', closeSheet);
+  document.getElementById('gallerySheetApply').addEventListener('click', closeSheet);
+  scrim.addEventListener('click', closeSheet);
+  document.getElementById('galleryPqChipset').addEventListener('click', function(e) {
+    var b = e.target.closest('.c'); if (!b) return;
+    var q = +b.dataset.pq; gState.pq.has(q) ? gState.pq.delete(q) : gState.pq.add(q); applyFilters();
+  });
+  document.getElementById('galleryEqChipset').addEventListener('click', function(e) {
+    var b = e.target.closest('.c'); if (!b) return;
+    var q = +b.dataset.eq; gState.eq.has(q) ? gState.eq.delete(q) : gState.eq.add(q); applyFilters();
+  });
+  document.getElementById('galleryFlagChipset').addEventListener('click', function(e) {
+    var b = e.target.closest('.c'); if (!b) return;
+    var f = b.dataset.flag; gState.flags.has(f) ? gState.flags.delete(f) : gState.flags.add(f); applyFilters();
+  });
+  document.getElementById('gallerySortRow').addEventListener('click', function(e) {
+    var b = e.target.closest('.o'); if (!b) return;
+    sortCol = b.dataset.sort; sortAsc = false; applyFilters();
+  });
+  document.getElementById('gallerySheetReset').addEventListener('click', function() { resetGalleryFilters(); });
+
+  // 詳情抽屜事件
+  var dScrim = document.getElementById('galleryDetailScrim');
+  dScrim.addEventListener('click', function(e) {
+    if (e.target === dScrim) { closeDetail(); return; }
+    var close = e.target.closest('[data-detail-close]');
+    if (close) { closeDetail(); return; }
+    var bBase = e.target.closest('[data-breed-base]');
+    var bA = e.target.closest('[data-breed-a]');
+    var bB = e.target.closest('[data-breed-b]');
+    if (bBase) { document.getElementById('bBase').value = +bBase.dataset.breedBase; toast('已設定基底 #' + bBase.dataset.breedBase, 'ok'); closeDetail(); return; }
+    if (bA) { setBreedPet('A', +bA.dataset.breedA); closeDetail(); return; }
+    if (bB) { setBreedPet('B', +bB.dataset.breedB); closeDetail(); return; }
+    var ds = e.target.closest('[data-detail-sel]');
+    if (ds) { toggleSel(+ds.dataset.detailSel); renderTable(); closeDetail(); return; }
+    var dd = e.target.closest('[data-detail-dissolve]');
+    if (dd) { var pid = +dd.dataset.detailDissolve; closeDetail(); doSellOne(pid); return; }
+  });
+}
+
+function resetGalleryFilters() {
+  gState.search = ''; gState.species = null;
+  gState.pq.clear(); gState.eq.clear(); gState.flags.clear();
+  sortCol = 'entry_quality'; sortAsc = false;
+  var se = document.getElementById('gallerySearch'); if (se) se.value = '';
+  var sc = document.getElementById('gallerySearchClear'); if (sc) sc.classList.remove('show');
+  var g = document.getElementById('flypetGallery'); if (g) g.classList.remove('detail-open');
+  applyFilters(); renderSpeciesPane();
 }
 
 // ---- API helpers ----
@@ -1721,6 +2320,7 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
 
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', function() {
+  initGallery();    // 綁定卡片牆/種類欄/抽屜事件 (只綁一次)
   syncPresetUI();
   updateFVals();
   initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)

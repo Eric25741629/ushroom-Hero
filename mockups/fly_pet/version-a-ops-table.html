@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>飛寵管理 · 版本 A · 密集戰情表</title>
+<style>
+/* ===================== 設計語彙：A · 密集戰情表 ===================== */
+:root{
+  --bg:#0b0e14;
+  --bg-2:#10141d;
+  --panel:#151b27;
+  --panel-2:#1b2230;
+  --line:#243044;
+  --line-soft:#1c2533;
+  --txt:#e6edf6;
+  --txt-dim:#8b97a8;
+  --txt-faint:#5f6b7c;
+  --accent:#19e3b1;          /* 戰情綠 */
+  --accent-2:#0fae87;
+  --accent-glow:rgba(25,227,177,.16);
+  --warn:#ef5350;
+  --row-h:46px;
+  --tool-h:auto;
+  --radius:10px;
+  --mono:"SFMono-Regular",ui-monospace,Consolas,"Courier New",monospace;
+  --sans:"Segoe UI",system-ui,-apple-system,"Microsoft JhengHei","PingFang TC",sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  background:
+     radial-gradient(900px 500px at 85% -8%, rgba(25,227,177,.07), transparent 60%),
+     radial-gradient(700px 500px at -5% 0%, rgba(80,120,255,.05), transparent 55%),
+     var(--bg);
+  color:var(--txt);
+  font-family:var(--sans);
+  font-size:14px;
+  -webkit-text-size-adjust:100%;
+  min-height:100vh;
+  overflow-x:hidden;
+}
+button{font-family:inherit;color:inherit;cursor:pointer;}
+::-webkit-scrollbar{width:10px;height:10px;}
+::-webkit-scrollbar-thumb{background:#2a3850;border-radius:8px;border:2px solid var(--bg-2);}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* ===================== 外框版面 ===================== */
+.app{max-width:1280px;margin:0 auto;padding:0 14px 120px;}
+
+/* ---- 頂部標題列 ---- */
+.topbar{
+  display:flex;align-items:center;gap:14px;
+  padding:16px 4px 12px;
+}
+.brand{display:flex;align-items:center;gap:11px;min-width:0;}
+.brand .glyph{
+  width:38px;height:38px;border-radius:11px;flex:none;
+  background:linear-gradient(150deg,var(--accent),#0aa );
+  display:grid;place-items:center;font-weight:800;color:#062018;font-size:18px;
+  box-shadow:0 0 0 1px rgba(25,227,177,.4),0 6px 16px -6px var(--accent-glow);
+}
+.brand h1{font-size:16px;margin:0;letter-spacing:.5px;white-space:nowrap;}
+.brand .ver{
+  font-family:var(--mono);font-size:10.5px;color:var(--accent);
+  border:1px solid var(--accent-2);border-radius:5px;padding:1px 6px;
+  background:var(--accent-glow);letter-spacing:.5px;white-space:nowrap;
+}
+.brand .sub{font-size:11px;color:var(--txt-faint);white-space:nowrap;}
+.topbar .spacer{flex:1;}
+.help-toggle{
+  background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  padding:7px 12px;font-size:12.5px;color:var(--txt-dim);min-height:40px;
+  display:inline-flex;align-items:center;gap:6px;
+}
+.help-toggle:hover{border-color:var(--accent-2);color:var(--txt);}
+
+.help-note{
+  margin:0 4px 12px;padding:11px 14px;border-radius:var(--radius);
+  border:1px solid var(--line-soft);border-left:3px solid var(--accent);
+  background:linear-gradient(90deg,var(--accent-glow),transparent 70%);
+  font-size:12.5px;color:var(--txt-dim);line-height:1.6;
+}
+.help-note b{color:var(--txt);}
+.help-note.hidden{display:none;}
+
+/* ===================== 工具列 ===================== */
+.toolbar{
+  position:sticky;top:0;z-index:40;
+  background:linear-gradient(180deg,var(--bg) 70%,rgba(11,14,20,.86));
+  backdrop-filter:blur(6px);
+  padding:8px 4px 10px;margin-bottom:6px;
+  border-bottom:1px solid var(--line-soft);
+}
+.tool-row{display:flex;gap:9px;align-items:center;flex-wrap:wrap;}
+.tool-row + .tool-row{margin-top:9px;}
+
+/* 搜尋框 */
+.search{
+  position:relative;flex:1 1 260px;min-width:200px;
+}
+.search input{
+  width:100%;height:42px;border-radius:9px;border:1px solid var(--line);
+  background:var(--panel);color:var(--txt);font-size:14px;
+  padding:0 36px 0 38px;outline:none;
+}
+.search input:focus{border-color:var(--accent-2);box-shadow:0 0 0 3px var(--accent-glow);}
+.search .ic{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--txt-faint);font-size:15px;}
+.search .clr{
+  position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  border:none;background:#26313f;color:var(--txt-dim);width:24px;height:24px;border-radius:6px;
+  display:none;place-items:center;font-size:13px;line-height:1;
+}
+.search .clr.on{display:grid;}
+
+/* 種類多選下拉 */
+.species-dd{position:relative;flex:0 0 auto;}
+.species-btn{
+  height:42px;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+  padding:0 13px;display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);
+  white-space:nowrap;min-height:40px;
+}
+.species-btn:hover{border-color:var(--accent-2);}
+.species-btn .cnt{
+  font-family:var(--mono);font-size:11px;background:var(--accent-glow);color:var(--accent);
+  border:1px solid var(--accent-2);border-radius:5px;padding:1px 5px;
+}
+.species-btn .cnt.zero{background:#23303f;color:var(--txt-faint);border-color:var(--line);}
+.species-btn .car{font-size:10px;color:var(--txt-faint);}
+
+.species-pop{
+  position:absolute;top:48px;left:0;z-index:60;width:300px;max-width:92vw;
+  background:var(--panel-2);border:1px solid var(--line);border-radius:11px;
+  box-shadow:0 20px 50px -12px rgba(0,0,0,.7);padding:10px;display:none;
+}
+.species-pop.open{display:block;animation:pop .14s ease;}
+@keyframes pop{from{opacity:0;transform:translateY(-5px);}to{opacity:1;transform:none;}}
+.species-pop .ddsearch{
+  width:100%;height:36px;border-radius:8px;border:1px solid var(--line);
+  background:var(--bg-2);color:var(--txt);padding:0 11px;font-size:13px;outline:none;margin-bottom:8px;
+}
+.species-pop .ddsearch:focus{border-color:var(--accent-2);}
+.species-pop .ddhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}
+.species-pop .ddhead span{font-size:11px;color:var(--txt-faint);}
+.species-pop .ddhead button{
+  background:none;border:none;color:var(--accent);font-size:11.5px;padding:2px 4px;
+}
+.species-list{max-height:264px;overflow:auto;display:flex;flex-direction:column;gap:2px;}
+.species-opt{
+  display:flex;align-items:center;gap:9px;padding:6px 7px;border-radius:7px;
+  font-size:13px;cursor:pointer;min-height:40px;
+}
+.species-opt:hover{background:var(--panel);}
+.species-opt.sel{background:var(--accent-glow);}
+.species-opt .chk{
+  width:17px;height:17px;border-radius:5px;border:1.5px solid var(--line);flex:none;
+  display:grid;place-items:center;font-size:11px;color:var(--bg);
+}
+.species-opt.sel .chk{background:var(--accent);border-color:var(--accent);}
+.species-opt .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.species-opt .n{font-family:var(--mono);font-size:11px;color:var(--txt-faint);}
+
+/* 視圖切換 */
+.viewtog{
+  display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--panel);
+  height:42px;flex:0 0 auto;
+}
+.viewtog button{
+  background:transparent;border:none;padding:0 14px;font-size:12.5px;color:var(--txt-dim);
+  display:inline-flex;align-items:center;gap:6px;min-height:40px;
+}
+.viewtog button.on{background:var(--accent);color:#062018;font-weight:700;}
+.viewtog button:not(.on):hover{color:var(--txt);}
+
+/* chip 快捷篩選 */
+.chips{display:flex;gap:7px;flex-wrap:wrap;align-items:center;}
+.chip-grp{display:flex;gap:5px;align-items:center;}
+.chip-lbl{font-size:11px;color:var(--txt-faint);margin-right:1px;white-space:nowrap;}
+.chip{
+  border:1px solid var(--line);background:var(--panel);border-radius:999px;
+  padding:6px 11px;font-size:12px;color:var(--txt-dim);display:inline-flex;align-items:center;gap:6px;
+  min-height:34px;line-height:1;transition:border-color .12s,background .12s;
+}
+.chip:hover{border-color:var(--txt-faint);color:var(--txt);}
+.chip .dot{width:9px;height:9px;border-radius:50%;flex:none;box-shadow:0 0 6px -1px currentColor;}
+.chip.on{color:#fff;border-color:transparent;background:var(--chip-on,#2a3850);font-weight:600;}
+.chip.on .dot{box-shadow:0 0 0 2px rgba(255,255,255,.3);}
+.chip.special{border-style:dashed;}
+.chip.reset{border:1px solid var(--line);color:var(--txt-faint);}
+.chip.reset:hover{border-color:var(--warn);color:var(--warn);}
+.divider-v{width:1px;height:22px;background:var(--line);margin:0 2px;}
+
+/* ===================== 統計列 ===================== */
+.statline{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  padding:9px 6px 4px;font-size:12.5px;color:var(--txt-dim);
+}
+.statline .num{font-family:var(--mono);color:var(--accent);font-weight:700;font-size:13px;}
+.statline .seg{display:inline-flex;align-items:center;gap:5px;}
+.statline .bar{
+  flex:1 1 120px;min-width:90px;height:6px;border-radius:4px;background:var(--panel);overflow:hidden;
+}
+.statline .bar i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));}
+.statline .mini{font-size:11px;color:var(--txt-faint);}
+
+/* ===================== 表格 ===================== */
+.tablewrap{
+  border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;
+  background:var(--panel);
+}
+.thead{
+  display:grid;
+  grid-template-columns:var(--cols);
+  align-items:center;
+  background:var(--panel-2);
+  border-bottom:1px solid var(--line);
+  font-size:11px;color:var(--txt-faint);letter-spacing:.5px;
+  height:38px;
+}
+.thead > div{padding:0 10px;display:flex;align-items:center;gap:5px;}
+.thead .cb{justify-content:center;padding:0;}
+.thead .sortable{cursor:pointer;}
+.thead .sortable:hover{color:var(--txt);}
+.thead .arr{font-size:9px;color:var(--accent);}
+
+/* 視窗化容器：固定列高，只渲染可視範圍 */
+.viewport{position:relative;height:62vh;min-height:340px;overflow-y:auto;overflow-x:hidden;}
+@media(min-height:900px){.viewport{height:68vh;}}
+.spacer-top,.spacer-bot{width:100%;}
+.rows{will-change:transform;}
+
+/* --- group view header rows --- */
+.grouphdr{
+  display:flex;align-items:center;gap:11px;height:var(--row-h);
+  padding:0 12px;background:linear-gradient(90deg,var(--panel-2),transparent);
+  border-bottom:1px solid var(--line-soft);position:relative;cursor:pointer;
+}
+.grouphdr:hover{background:linear-gradient(90deg,#1f2738,transparent);}
+.grouphdr .tw{width:14px;color:var(--txt-faint);font-size:11px;transition:transform .12s;}
+.grouphdr.collapsed .tw{transform:rotate(-90deg);}
+.grouphdr .gname{font-weight:700;font-size:13.5px;}
+.grouphdr .gcount{font-family:var(--mono);font-size:11px;color:var(--accent);
+  background:var(--accent-glow);border:1px solid var(--accent-2);border-radius:6px;padding:1px 7px;}
+.grouphdr .gbest{font-size:11px;color:var(--txt-faint);margin-left:auto;}
+
+/* --- pet row --- */
+.row{
+  display:grid;grid-template-columns:var(--cols);align-items:center;
+  height:var(--row-h);border-bottom:1px solid var(--line-soft);
+  transition:background .1s;position:relative;
+}
+.row:hover{background:#1a2230;}
+.row.sel{background:linear-gradient(90deg,var(--accent-glow),rgba(25,227,177,.04));}
+.row.sel::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent);}
+.row.locked{opacity:.62;}
+.row > div{padding:0 10px;min-width:0;overflow:hidden;}
+.row .cb{display:grid;place-items:center;padding:0;}
+
+.ckbox{
+  width:20px;height:20px;border-radius:6px;border:1.5px solid var(--line);
+  display:grid;place-items:center;font-size:12px;color:var(--bg);flex:none;
+  background:var(--bg-2);transition:all .1s;
+}
+.row:hover .ckbox{border-color:var(--txt-faint);}
+.ckbox.on{background:var(--accent);border-color:var(--accent);}
+.ckbox.dis{opacity:.4;cursor:not-allowed;}
+
+/* 圖標 */
+.pic{
+  width:34px;height:34px;border-radius:9px;flex:none;position:relative;
+  display:grid;place-items:center;font-size:16px;font-weight:800;color:#fff;
+  text-shadow:0 1px 2px rgba(0,0,0,.55);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.18),inset 0 -8px 14px rgba(0,0,0,.35);
+}
+.pic .ring{position:absolute;inset:-2px;border-radius:11px;border:2px solid var(--pqc,#888);
+  box-shadow:0 0 7px -1px var(--pqc,#888);pointer-events:none;}
+.pic.lg{width:46px;height:46px;font-size:21px;border-radius:11px;}
+.pic.lg .ring{inset:-2px;border-radius:13px;border-width:2.5px;}
+.pic .star{
+  position:absolute;bottom:-5px;right:-5px;font-size:9px;background:var(--bg-2);
+  border-radius:6px;padding:0 3px;line-height:1.5;color:#ffd54f;border:1px solid #3a3a22;
+}
+.cell-icon{display:flex;align-items:center;justify-content:center;}
+
+/* 名稱欄 */
+.cell-name{display:flex;flex-direction:column;justify-content:center;gap:2px;}
+.cell-name .nm{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cell-name .nm .pqtag{font-size:10px;font-weight:700;padding:0 5px;border-radius:5px;color:#0b0e14;flex:none;}
+.cell-name .meta{font-size:10.5px;color:var(--txt-faint);font-family:var(--mono);display:flex;gap:8px;}
+.lockmark{color:#ffd54f;font-size:11px;}
+.fightmark{color:var(--accent);font-size:10px;border:1px solid var(--accent-2);border-radius:4px;padding:0 3px;}
+
+/* 詞條欄 */
+.cell-entries{display:flex;gap:5px;flex-wrap:wrap;align-items:center;}
+.etag{
+  font-size:11px;padding:2px 7px;border-radius:6px;white-space:nowrap;
+  border:1px solid transparent;display:inline-flex;align-items:center;gap:4px;line-height:1.4;
+}
+.etag .ed{width:6px;height:6px;border-radius:50%;flex:none;}
+.etag.neg{text-decoration:line-through;opacity:.85;}
+.etag.shine{box-shadow:0 0 0 1px currentColor inset, 0 0 8px -2px currentColor;font-weight:600;}
+
+/* 數值欄 */
+.num-cell{font-family:var(--mono);font-size:12.5px;color:var(--txt-dim);text-align:right;justify-content:flex-end;display:flex;}
+.num-cell.lv{color:var(--txt);}
+
+/* 列內動作 */
+.cell-act{display:flex;gap:6px;justify-content:flex-end;}
+.icon-btn{
+  width:30px;height:30px;border-radius:7px;border:1px solid var(--line);background:var(--bg-2);
+  display:grid;place-items:center;font-size:13px;color:var(--txt-dim);
+}
+.icon-btn:hover{border-color:var(--accent-2);color:var(--accent);}
+.icon-btn.danger:hover{border-color:var(--warn);color:var(--warn);}
+
+/* 空狀態 */
+.empty{padding:48px 20px;text-align:center;color:var(--txt-faint);}
+.empty .big{font-size:34px;margin-bottom:8px;}
+.empty button{margin-top:14px;background:var(--accent);color:#062018;border:none;border-radius:8px;padding:9px 16px;font-weight:700;}
+
+/* ===================== sticky 批次操作列 ===================== */
+.batchbar{
+  position:fixed;left:0;right:0;bottom:0;z-index:80;
+  transform:translateY(120%);transition:transform .22s cubic-bezier(.2,.8,.2,1);
+  background:linear-gradient(180deg,rgba(16,20,29,.6),var(--panel-2));
+  backdrop-filter:blur(10px);border-top:1px solid var(--accent-2);
+  box-shadow:0 -14px 40px -18px rgba(25,227,177,.5);
+}
+.batchbar.show{transform:translateY(0);}
+.batchbar .inner{max-width:1280px;margin:0 auto;padding:11px 16px;display:flex;align-items:center;gap:12px;}
+.batchbar .count{font-family:var(--mono);}
+.batchbar .count b{color:var(--accent);font-size:18px;}
+.batchbar .sumnote{font-size:11.5px;color:var(--txt-dim);}
+.batchbar .sumnote .lk{color:#ffd54f;}
+.batchbar .spacer{flex:1;}
+.bbtn{height:42px;border-radius:9px;padding:0 15px;font-size:13.5px;font-weight:600;border:1px solid var(--line);
+  background:var(--panel);color:var(--txt-dim);display:inline-flex;align-items:center;gap:7px;min-height:42px;}
+.bbtn:hover{color:var(--txt);border-color:var(--txt-faint);}
+.bbtn.primary{background:var(--accent);color:#062018;border-color:var(--accent);}
+.bbtn.primary:hover{background:#22f0bd;}
+.bbtn.ghost{background:transparent;}
+
+/* ===================== 手機抽屜 + bottom sheet ===================== */
+.mobile-bar{display:none;}
+.scrim{
+  position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:90;opacity:0;pointer-events:none;
+  transition:opacity .2s;
+}
+.scrim.show{opacity:1;pointer-events:auto;}
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;z-index:95;max-height:86vh;overflow:auto;
+  background:var(--panel-2);border-top-left-radius:18px;border-top-right-radius:18px;
+  border-top:1px solid var(--line);transform:translateY(100%);transition:transform .26s cubic-bezier(.2,.8,.2,1);
+  padding:6px 16px 28px;
+}
+.sheet.show{transform:translateY(0);}
+.sheet .grab{width:42px;height:5px;border-radius:3px;background:#37445a;margin:9px auto 14px;}
+.sheet h3{margin:4px 0 10px;font-size:14px;}
+.sheet .blk{margin-bottom:18px;}
+.sheet .blk-t{font-size:12px;color:var(--txt-faint);margin-bottom:8px;letter-spacing:.5px;}
+
+/* ===================== toast ===================== */
+.toasts{position:fixed;left:50%;bottom:78px;transform:translateX(-50%);z-index:200;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none;}
+.toast{
+  background:var(--panel-2);border:1px solid var(--accent-2);color:var(--txt);
+  padding:10px 16px;border-radius:10px;font-size:13px;box-shadow:0 12px 30px -10px rgba(0,0,0,.7);
+  animation:tin .25s ease, tout .3s ease 2.5s forwards;max-width:90vw;
+}
+.toast.warn{border-color:var(--warn);}
+@keyframes tin{from{opacity:0;transform:translateY(12px);}to{opacity:1;transform:none;}}
+@keyframes tout{to{opacity:0;transform:translateY(-8px);}}
+
+/* ===================== RWD ===================== */
+@media (max-width:920px){
+  .statline .bar{flex-basis:100%;}
+}
+@media (max-width:760px){
+  /* 工具列收起，桌面式控制改進抽屜 */
+  .toolbar .desktop-only{display:none;}
+  .mobile-bar{
+    display:flex;gap:9px;align-items:center;
+    position:sticky;top:0;z-index:40;padding:8px 4px 9px;
+    background:linear-gradient(180deg,var(--bg) 70%,rgba(11,14,20,.85));backdrop-filter:blur(6px);
+    border-bottom:1px solid var(--line-soft);
+  }
+  .mobile-bar .search{flex:1;}
+  .filter-fab{
+    height:42px;border-radius:9px;border:1px solid var(--line);background:var(--panel);
+    padding:0 14px;display:inline-flex;align-items:center;gap:7px;font-size:13px;position:relative;white-space:nowrap;
+  }
+  .filter-fab .badge{
+    position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 4px;
+    background:var(--accent);color:#062018;font-size:10px;font-weight:800;border-radius:9px;
+    display:grid;place-items:center;font-family:var(--mono);
+  }
+  .topbar .help-toggle{display:none;}
+  .brand .sub{display:none;}
+
+  /* 表格 -> 堆疊卡 */
+  .thead{display:none;}
+  .viewport{height:auto;min-height:0;overflow:visible;}
+  .tablewrap{border:none;background:transparent;overflow:visible;}
+  .rows{display:flex;flex-direction:column;gap:9px;padding:4px 0;}
+
+  .row{
+    display:grid;
+    grid-template-columns:auto 1fr auto;
+    grid-template-areas:
+      "cb pic head"
+      "cb ent ent"
+      "cb meta act";
+    height:auto;gap:6px 11px;padding:11px 12px;
+    background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;
+    /* 手機未做 JS 視窗化：靠 content-visibility 讓瀏覽器跳過離屏卡片的 layout/paint，
+       312 張卡只 render 視窗附近，大幅降低長白屏。contain-intrinsic-size 提供佔位高度避免捲動跳動。 */
+    content-visibility:auto;
+    contain-intrinsic-size:auto 112px;
+  }
+  /* group header 同樣離屏跳過 */
+  .grouphdr{content-visibility:auto;contain-intrinsic-size:auto 46px;}
+  .row:hover{background:var(--panel);}
+  .row.sel{background:linear-gradient(120deg,var(--accent-glow),var(--panel));border-color:var(--accent-2);}
+  .row.sel::before{display:none;}
+  .row > div{padding:0;}
+  .row .cb{grid-area:cb;align-self:start;margin-top:2px;}
+  .row .cell-icon{grid-area:pic;justify-content:flex-start;}
+  .row .cell-name{grid-area:head;align-self:center;}
+  .row .cell-entries{grid-area:ent;}
+  .row .num-cell.col-lv,.row .num-cell.col-gen,.row .num-cell.col-grow{display:none;}
+  .row .mob-meta{
+    grid-area:meta;display:flex;gap:12px;font-family:var(--mono);font-size:11px;color:var(--txt-faint);align-items:center;
+  }
+  .row .cell-act{grid-area:act;}
+
+  .grouphdr{border-radius:10px;background:var(--panel-2);margin-bottom:2px;}
+  .pic{width:42px;height:42px;font-size:19px;}
+
+  /* 觸控目標 >=40px：手機端把主要可點控件放大到符合規格 */
+  .ckbox{width:26px;height:26px;}
+  /* 勾選格用透明 padding 撐出 >=40px 命中區，但視覺仍維持 26px 方塊 */
+  .row .cb{padding:7px;margin:-7px 0 -7px -7px;}
+  .icon-btn{width:40px;height:40px;font-size:15px;border-radius:9px;}
+  .chip{min-height:40px;padding:9px 14px;font-size:13px;}
+  .species-opt{min-height:44px;}
+  /* 搜尋清除鈕：放大命中區（手機 bar 內 + sheet 內共用） */
+  .search .clr{width:40px;height:40px;border-radius:8px;font-size:15px;}
+  .ddhead button{min-height:40px;padding:0 8px;}
+
+  .batchbar .sumnote{display:none;}
+  .toasts{bottom:86px;}
+}
+.mob-meta{display:none;}
+@media (max-width:760px){.mob-meta{display:flex;}}
+
+@media (max-width:380px){
+  .app{padding:0 9px 120px;}
+  .row .cell-act .icon-btn:nth-child(2){display:none;}
+}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 頂部標題 -->
+  <div class="topbar">
+    <div class="brand">
+      <div class="glyph">飛</div>
+      <h1>飛寵管理</h1>
+      <span class="ver">A · 密集戰情表</span>
+      <span class="sub">高密度 · 批次分解</span>
+    </div>
+    <div class="spacer"></div>
+    <button class="help-toggle" id="helpBtn">說明</button>
+  </div>
+
+  <div class="help-note" id="helpNote">
+    <b>版本 A「密集戰情表」</b>：為「我有 300+ 隻、要快速掃視與分解」設計。頂部一條工具列即時篩選，表格視窗化只渲染可視列以撐住 312 筆；左方圖標 + 品質光環一眼辨識，<b>勾選後底部批次列</b>可一鍵分解，並支援「依種類分組 / 平鋪全部」切換。
+  </div>
+
+  <!-- ===== 桌面工具列 ===== -->
+  <div class="toolbar">
+    <!-- 手機列（手機才顯示）：搜尋 + 篩選抽屜按鈕 -->
+    <div class="mobile-bar">
+      <div class="search">
+        <span class="ic">🔍</span>
+        <input id="searchM" type="search" placeholder="搜種類 / 詞條名…" autocomplete="off">
+        <button class="clr" id="searchMclr" aria-label="清除">✕</button>
+      </div>
+      <button class="filter-fab" id="filterFab">
+        篩選 <span class="badge" id="fabBadge" style="display:none">0</span>
+      </button>
+    </div>
+
+    <!-- 桌面第一排 -->
+    <div class="tool-row desktop-only">
+      <div class="search">
+        <span class="ic">🔍</span>
+        <input id="searchD" type="search" placeholder="搜尋種類名稱或詞條名稱（同時比對）…" autocomplete="off">
+        <button class="clr" id="searchDclr" aria-label="清除">✕</button>
+      </div>
+
+      <div class="species-dd">
+        <button class="species-btn" id="speciesBtn">
+          種類 <span class="cnt zero" id="spCnt">全部</span> <span class="car">▾</span>
+        </button>
+        <div class="species-pop" id="speciesPop">
+          <input class="ddsearch" id="spSearch" placeholder="搜尋種類…" autocomplete="off">
+          <div class="ddhead">
+            <span id="spHint">點選以鎖定單一或多個種類</span>
+            <button id="spClear">清除</button>
+          </div>
+          <div class="species-list" id="speciesList"></div>
+        </div>
+      </div>
+
+      <div class="viewtog">
+        <button class="on" id="vFlat" data-view="flat">▦ 平鋪全部</button>
+        <button id="vGroup" data-view="group">▤ 依種類分組</button>
+      </div>
+    </div>
+
+    <!-- 桌面第二排：品質 / 詞條品質 chip -->
+    <div class="tool-row desktop-only chips" id="chipRowDesktop"></div>
+  </div>
+
+  <!-- ===== 統計列 ===== -->
+  <div class="statline" id="statline"></div>
+
+  <!-- ===== 表格 ===== -->
+  <div class="tablewrap" id="tablewrap">
+    <div class="thead" id="thead">
+      <div class="cb">
+        <button class="ckbox" id="headCheck" title="全選目前篩選結果"></button>
+      </div>
+      <div>圖標</div>
+      <div class="sortable" data-sort="name">種類 / 品質</div>
+      <div>詞條</div>
+      <div class="sortable" data-sort="level">等級</div>
+      <div class="sortable" data-sort="generation">世代</div>
+      <div class="sortable" data-sort="growth">成長</div>
+      <div style="justify-content:flex-end">操作</div>
+    </div>
+    <div class="viewport" id="viewport">
+      <div class="spacer-top" id="spTop"></div>
+      <div class="rows" id="rows"></div>
+      <div class="spacer-bot" id="spBot"></div>
+    </div>
+  </div>
+</div>
+
+<!-- sticky 批次操作列 -->
+<div class="batchbar" id="batchbar">
+  <div class="inner">
+    <div class="count">已選 <b id="selCount">0</b> 隻</div>
+    <div class="sumnote" id="selNote"></div>
+    <div class="spacer"></div>
+    <button class="bbtn ghost" id="selClear">取消選取</button>
+    <button class="bbtn" id="selInvert">反選</button>
+    <button class="bbtn primary" id="selDissolve">⚡ 分解選中</button>
+  </div>
+</div>
+
+<!-- 手機篩選 bottom sheet -->
+<div class="scrim" id="scrim"></div>
+<div class="sheet" id="sheet">
+  <div class="grab"></div>
+  <h3>篩選與視圖</h3>
+
+  <div class="blk">
+    <div class="blk-t">視圖切換</div>
+    <div class="viewtog" style="width:100%">
+      <button class="on" data-view="flat" style="flex:1" data-mview>▦ 平鋪全部</button>
+      <button data-view="group" style="flex:1" data-mview>▤ 依種類分組</button>
+    </div>
+  </div>
+
+  <div class="blk">
+    <div class="blk-t">指定種類（可多選 / 搜尋）</div>
+    <input class="ddsearch" id="spSearchM" placeholder="搜尋種類…" autocomplete="off"
+      style="width:100%;height:42px;border-radius:9px;border:1px solid var(--line);background:var(--bg-2);color:var(--txt);padding:0 12px;font-size:14px;outline:none;margin-bottom:8px;">
+    <div class="ddhead" style="display:flex;justify-content:space-between;margin-bottom:6px;">
+      <span style="font-size:11px;color:var(--txt-faint);" id="spHintM">點選鎖定單一種類</span>
+      <button id="spClearM" style="background:none;border:none;color:var(--accent);font-size:12px;">清除</button>
+    </div>
+    <div class="species-list" id="speciesListM" style="max-height:240px;"></div>
+  </div>
+
+  <div class="blk">
+    <div class="blk-t">寵物品質</div>
+    <div class="chips" id="chipPQm"></div>
+  </div>
+  <div class="blk">
+    <div class="blk-t">詞條品質 / 特性</div>
+    <div class="chips" id="chipEQm"></div>
+  </div>
+
+  <button class="bbtn primary" id="sheetApply" style="width:100%;height:48px;font-size:15px;">
+    查看 <span id="sheetCount">0</span> 隻結果
+  </button>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* === 共用 mock 資料 (3 版一致, 請勿改動 generatePets) === */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const SPECIES = ['炎角龍','碧水靈','疾風隼','岩甲獸','雷紋豹','幽影貓','晨曦鹿','熔火蠍','霜羽鶴','藤蔓妖','沙鱗蜥','星紋蝶','怒濤鯨','枯骨蛛','金鬃獅','夜瞳梟','珊瑚馬','烈陽鷹','寒月狐','毒霧蟾','翠玉龜','風暴鷲','焦土犀','銀絲蠶','深淵鰻','花靈兔','赤煉犬','冰晶鹿','雲端龍','迅雷鼠','磐石熊','溪語蛙','榴火雀','墨羽鴉','晶背龜','綠鬃馬','灼心蛾','霜牙狼','潮汐獺','虹彩魚'];
+const ENTRIES = [
+ {id:101,name:'攻擊強化',q:1},{id:102,name:'生命強化',q:1},{id:103,name:'防禦強化',q:1},
+ {id:201,name:'暴擊提升',q:2},{id:202,name:'閃避提升',q:2},{id:203,name:'命中提升',q:2},{id:204,name:'速度提升',q:2},
+ {id:301,name:'神聖庇護',q:3},{id:302,name:'狂暴之力',q:3},{id:303,name:'不滅意志',q:3},{id:304,name:'致命一擊',q:3},
+ {id:401,name:'易碎',q:4},{id:402,name:'遲緩',q:4},{id:403,name:'虛弱',q:4},
+ {id:501,name:'吸血',q:5},{id:502,name:'反傷',q:5},{id:503,name:'格擋',q:5},{id:504,name:'急救',q:5},
+ {id:601,name:'變異·雙生',q:6},{id:602,name:'變異·狂亂',q:6},{id:603,name:'變異·永續',q:6},
+ {id:701,name:'採礦工',q:7},{id:702,name:'農夫',q:7},{id:703,name:'漁夫',q:7},{id:704,name:'守衛',q:7}
+];
+function generatePets(){
+ const rnd=mulberry32(20260605); const pets=[]; const N=312;
+ for(let i=0;i<N;i++){
+  const sp=Math.floor(rnd()*SPECIES.length);
+  const q=rnd()<0.05?3:rnd()<0.2?2:rnd()<0.55?1:0;
+  const nEntry=1+Math.floor(rnd()*4);
+  const chosen={}; const entries=[];
+  let guard=0;
+  while(entries.length<nEntry && guard++<40){
+   const e=ENTRIES[Math.floor(rnd()*ENTRIES.length)];
+   if(chosen[e.id])continue; chosen[e.id]=1;
+   entries.push({id:e.id,name:e.name,quality:e.q,desc:e.name+' 效果'});
+  }
+  pets.push({
+   id:10000+i, config_id:1000+sp, display_name:SPECIES[sp], name:'',
+   quality:q, level:1+Math.floor(rnd()*100), generation:1+Math.floor(rnd()*20),
+   growth:Math.floor(rnd()*30000), step:Math.floor(rnd()*5),
+   fight:i<6?1:0, lock:rnd()<0.08?1:0, star:Math.floor(rnd()*6), entries:entries
+  });
+ }
+ return pets;
+}
+/* 品質色語言 (寵物 PQ / 詞條 EQ) */
+const PQ_NAME={0:'白',1:'藍',2:'紫',3:'金'};
+const PQ_COLOR={0:'#9aa6b2',1:'#64b5f6',2:'#ce93d8',3:'#ffd54f'};
+const EQ_NAME={1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
+const EQ_COLOR={1:'#64b5f6',2:'#ffd54f',3:'#ffe08a',4:'#ef5350',5:'#b9a4ff',6:'#f0abfc',7:'#5eead4'};
+</script>
+
+<script>
+/* ============================================================
+   版本 A 應用邏輯
+   ============================================================ */
+const ALL = generatePets();
+
+/* ---- petIcon: 決定性彩色頭像（之後可替換為 <img>） ---- */
+function petIcon(pet,size){
+  size = size||'sm';
+  const hue=(pet.config_id*37)%360;
+  const bg1=`hsl(${hue} 62% 42%)`;
+  const bg2=`hsl(${(hue+34)%360} 58% 28%)`;
+  const ch=pet.display_name.charAt(0);
+  const pqc=PQ_COLOR[pet.quality];
+  const star = pet.star>0 ? `<span class="star">★${pet.star}</span>` : '';
+  /* 真實 sprite 上線後：把內層字元換成 <img src="/api/fly_pet_sprite/${pet.config_id}.png"> 即可，外框/光環不動 */
+  return `<div class="pic ${size==='lg'?'lg':''}" style="background:linear-gradient(150deg,${bg1},${bg2});--pqc:${pqc}">
+    <span class="ico-char">${ch}</span>
+    <span class="ring"></span>${star}
+  </div>`;
+}
+
+/* ---- 詞條強弱：3 史詩 / 6 變異 為強；4 負面為扣分 ---- */
+const STRONG_EQ = new Set([3,6]);
+function entryTag(e){
+  const c=EQ_COLOR[e.quality];
+  const neg = e.quality===4;
+  const shine = STRONG_EQ.has(e.quality);
+  const cls = ['etag', neg?'neg':'', shine?'shine':''].filter(Boolean).join(' ');
+  const fg = neg ? c : (e.quality===7? '#0b1f1a' : '#0b0e14');
+  const bg = neg ? 'rgba(239,83,80,.12)' : c;
+  const border = neg ? c : 'transparent';
+  return `<span class="${cls}" style="background:${neg?bg:'transparent'};color:${neg?c:c};border-color:${neg?c:'transparent'}">
+    <span class="ed" style="background:${c}"></span>${e.name}</span>`;
+}
+
+/* ============== 狀態 ============== */
+const state = {
+  q:'',                     // 搜尋字串
+  species:new Set(),        // 選定 config_id（空=全部）
+  pq:new Set(),             // 寵物品質
+  eq:new Set(),             // 詞條品質
+  flagLock:false, flagFight:false, flagNeg:false,  // 特性快捷
+  view:'flat',              // flat | group
+  sort:{key:'level',dir:-1},
+  selected:new Set(),
+  collapsed:new Set(),      // 分組摺疊（存 config_id）
+};
+
+/* 種類 -> 數量 / 代表 */
+const SPECIES_INFO = (()=>{
+  const m={};
+  for(const p of ALL){
+    if(!m[p.config_id]) m[p.config_id]={config_id:p.config_id,name:p.display_name,count:0,best:0,rep:p};
+    m[p.config_id].count++;
+    if(p.quality>m[p.config_id].best){m[p.config_id].best=p.quality;m[p.config_id].rep=p;}
+  }
+  return Object.values(m).sort((a,b)=>b.count-a.count);
+})();
+
+/* ============== 篩選核心 ============== */
+function passFilter(p){
+  if(state.species.size && !state.species.has(p.config_id)) return false;
+  if(state.pq.size && !state.pq.has(p.quality)) return false;
+  if(state.flagLock && !p.lock) return false;
+  if(state.flagFight && !p.fight) return false;
+  if(state.flagNeg && !p.entries.some(e=>e.quality===4)) return false;
+  if(state.eq.size){
+    if(!p.entries.some(e=>state.eq.has(e.quality))) return false;
+  }
+  if(state.q){
+    const q=state.q.toLowerCase();
+    const inName = p.display_name.toLowerCase().includes(q);
+    const inEntry = p.entries.some(e=>e.name.toLowerCase().includes(q));
+    if(!inName && !inEntry) return false;
+  }
+  return true;
+}
+function sortPets(arr){
+  const {key,dir}=state.sort;
+  return arr.slice().sort((a,b)=>{
+    let av,bv;
+    if(key==='name'){ av=a.config_id; bv=b.config_id; if(av===bv){av=a.quality;bv=b.quality;} }
+    else { av=a[key]; bv=b[key]; }
+    return (av<bv?-1:av>bv?1:0)*dir;
+  });
+}
+function currentFiltered(){
+  return ALL.filter(passFilter);
+}
+
+/* ============== 視窗化 (flat) + 分組渲染 ============== */
+const ROW_H = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--row-h'))||46;
+const COLS = '46px 56px minmax(110px,1.5fr) minmax(160px,2.4fr) 64px 60px 78px 92px';
+let viewModel = []; // 攤平後的可渲染項：{type:'group'|'pet', ...}
+const OVERSCAN = 6;
+
+const viewport = document.getElementById('viewport');
+const rowsEl = document.getElementById('rows');
+const spTop = document.getElementById('spTop');
+const spBot = document.getElementById('spBot');
+
+function buildViewModel(){
+  const filtered = sortPets(currentFiltered());
+  if(state.view==='flat'){
+    viewModel = filtered.map(p=>({type:'pet',pet:p}));
+  } else {
+    // 依種類分組
+    const groups={};
+    for(const p of filtered){ (groups[p.config_id]=groups[p.config_id]||[]).push(p); }
+    const order = Object.keys(groups).map(Number)
+      .sort((a,b)=>groups[b].length-groups[a].length || a-b);
+    viewModel=[];
+    for(const cid of order){
+      const list=groups[cid];
+      const best=Math.max(...list.map(x=>x.quality));
+      // rep 用全域 SPECIES_INFO 的代表（最高品質那隻），與種類下拉頭像同色，避免同種兩處顏色不一致
+      const rep=(SPECIES_INFO.find(i=>i.config_id===cid)||{}).rep || list[0];
+      viewModel.push({type:'group',cid,name:list[0].display_name,count:list.length,best,rep});
+      if(!state.collapsed.has(cid)){
+        for(const p of list) viewModel.push({type:'pet',pet:p});
+      }
+    }
+  }
+  return filtered;
+}
+
+function rowHTML(item){
+  if(item.type==='group'){
+    const collapsed = state.collapsed.has(item.cid);
+    return `<div class="grouphdr ${collapsed?'collapsed':''}" data-grp="${item.cid}" style="--cols:${COLS}">
+      <span class="tw">▾</span>
+      ${petIcon(item.rep,'sm')}
+      <span class="gname">${item.name}</span>
+      <span class="gcount">${item.count} 隻</span>
+      <span class="gbest">最高品質：<b style="color:${PQ_COLOR[item.best]}">${PQ_NAME[item.best]}</b></span>
+    </div>`;
+  }
+  const p=item.pet;
+  const sel=state.selected.has(p.id);
+  const dis=p.lock;
+  const pqc=PQ_COLOR[p.quality];
+  const entriesHTML = p.entries.map(entryTag).join('');
+  const flags = (p.lock?'<span class="lockmark" title="已鎖定">🔒</span>':'') +
+                (p.fight?'<span class="fightmark">出戰</span>':'');
+  return `<div class="row ${sel?'sel':''} ${p.lock?'locked':''}" data-id="${p.id}" style="--cols:${COLS}">
+    <div class="cb">
+      <button class="ckbox ${sel?'on':''} ${dis?'dis':''}" data-check="${p.id}" ${dis?'title="已鎖定，無法選取"':''}>${sel?'✓':''}</button>
+    </div>
+    <div class="cell-icon">${petIcon(p,'sm')}</div>
+    <div class="cell-name">
+      <span class="nm">
+        <span class="pqtag" style="background:${pqc}">${PQ_NAME[p.quality]}</span>
+        ${p.display_name} ${flags}
+      </span>
+      <span class="meta">#${p.config_id}</span>
+    </div>
+    <div class="cell-entries">${entriesHTML}</div>
+    <div class="num-cell lv col-lv">Lv${p.level}</div>
+    <div class="num-cell col-gen">${p.generation}代</div>
+    <div class="num-cell col-grow">${p.growth.toLocaleString()}</div>
+    <div class="mob-meta">
+      <span>Lv${p.level}</span><span>${p.generation}代</span><span>成長 ${p.growth.toLocaleString()}</span>
+    </div>
+    <div class="cell-act">
+      <button class="icon-btn" data-info="${p.id}" title="詳情">ⓘ</button>
+      <button class="icon-btn danger" data-quick="${p.id}" title="${p.lock?'已鎖定':'快速分解'}" ${p.lock?'disabled style=opacity:.4':''}>⚡</button>
+    </div>
+  </div>`;
+}
+
+const isMobile = ()=>window.matchMedia('(max-width:760px)').matches;
+
+function renderRows(){
+  // 一律以 viewModel 為渲染來源（由 buildViewModel 產生），不重算 filter
+  const total = viewModel.length;
+  if(total===0){
+    spTop.style.height='0';spBot.style.height='0';
+    rowsEl.innerHTML = `<div class="empty">
+      <div class="big">🔍</div>
+      <div>沒有符合條件的飛寵</div>
+      <button id="emptyReset">清除所有篩選</button>
+    </div>`;
+    const er=document.getElementById('emptyReset'); if(er) er.onclick=resetAll;
+    return;
+  }
+  if(isMobile()){
+    // 手機：堆疊卡，一次全渲染但靠 CSS reflow（312 卡仍可接受；用 group 視圖時更少）
+    rowsEl.innerHTML = viewModel.map(rowHTML).join('');
+    spTop.style.height='0';spBot.style.height='0';
+    return;
+  }
+  // 桌面：固定列高視窗化
+  const scrollTop = viewport.scrollTop;
+  const vh = viewport.clientHeight;
+  let start = Math.floor(scrollTop/ROW_H)-OVERSCAN;
+  let end = Math.ceil((scrollTop+vh)/ROW_H)+OVERSCAN;
+  start=Math.max(0,start); end=Math.min(total,end);
+  spTop.style.height=(start*ROW_H)+'px';
+  spBot.style.height=((total-end)*ROW_H)+'px';
+  let html='';
+  for(let i=start;i<end;i++) html+=rowHTML(viewModel[i]);
+  rowsEl.innerHTML=html;
+}
+
+/* 滾動時重渲染（rAF 節流） */
+let ticking=false;
+viewport.addEventListener('scroll',()=>{
+  if(isMobile())return;
+  if(!ticking){requestAnimationFrame(()=>{renderRows();ticking=false;});ticking=true;}
+});
+
+/* ============== 全量刷新 ============== */
+function refresh(){
+  const filtered = buildViewModel();
+  // 篩選/視圖改變後結果集大小可能驟縮：先把捲動歸頂，否則視窗化會用舊的大 scrollTop
+  // 算出 start>end → 渲染 0 列 + 巨大頂部空隙（整片空白）。桌面/手機都要歸頂。
+  viewport.scrollTop=0;
+  renderRows();
+  updateStats(filtered.length, filtered);
+  updateBatchBar(filtered);
+  updateSpeciesBtn();
+  updateChipStates();
+  updateFabBadge(filtered);
+}
+function refreshKeepScroll(){
+  buildViewModel();
+  renderRows();
+  updateBatchBar();
+}
+
+/* ============== 統計列 ============== */
+const statline=document.getElementById('statline');
+function updateStats(filteredCount,filtered){
+  const total=ALL.length;
+  const sel=state.selected.size;
+  const pct = total? Math.round(filteredCount/total*100):0;
+  // 篩選結果中各品質分布（refresh 會傳入已算好的 filtered 重用，避免重複 filter）
+  filtered = filtered || currentFiltered();
+  const byq={0:0,1:0,2:0,3:0};
+  filtered.forEach(p=>byq[p.quality]++);
+  const dist = Object.keys(byq).map(q=>
+    `<span class="seg" title="${PQ_NAME[q]}品質"><span class="dot" style="width:9px;height:9px;border-radius:50%;background:${PQ_COLOR[q]}"></span>${byq[q]}</span>`
+  ).join('');
+  statline.innerHTML = `
+    <span class="seg">總計 <span class="num">${total}</span> 隻</span>
+    <span class="mini">·</span>
+    <span class="seg">篩選後 <span class="num">${filteredCount}</span> 隻</span>
+    <span class="mini">·</span>
+    ${dist}
+    ${sel? `<span class="mini">·</span><span class="seg">已選 <span class="num">${sel}</span></span>`:''}
+    <div class="bar" title="${pct}% 命中"><i style="width:${pct}%"></i></div>`;
+}
+
+/* ============== 批次列 ============== */
+const batchbar=document.getElementById('batchbar');
+function updateBatchBar(filtered){
+  const n=state.selected.size;
+  document.getElementById('selCount').textContent=n;
+  batchbar.classList.toggle('show',n>0);
+  // 摘要：分解可得感
+  if(n>0){
+    let locked=0;
+    state.selected.forEach(id=>{const p=ALL.find(x=>x.id===id);if(p&&p.lock)locked++;});
+    document.getElementById('selNote').innerHTML =
+      `分解可回收材料 · ${locked?`<span class="lk">含 ${locked} 隻鎖定（將跳過）</span>`:'無鎖定寵物'}`;
+  }
+  // 頭部全選態（refresh 會傳入已算好的 filtered 重用）
+  const filteredPets = (filtered||currentFiltered()).filter(p=>!p.lock);
+  const allSel = filteredPets.length>0 && filteredPets.every(p=>state.selected.has(p.id));
+  const head=document.getElementById('headCheck');
+  head.classList.toggle('on',allSel);
+  head.textContent = allSel?'✓':'';
+}
+
+/* ============== 種類下拉 ============== */
+const speciesList=document.getElementById('speciesList');
+const speciesListM=document.getElementById('speciesListM');
+function speciesOptHTML(info){
+  const sel=state.species.has(info.config_id);
+  return `<div class="species-opt ${sel?'sel':''}" data-cid="${info.config_id}">
+    <span class="chk">${sel?'✓':''}</span>
+    ${petIcon(info.rep,'sm')}
+    <span class="nm">${info.name}</span>
+    <span class="n">${info.count}</span>
+  </div>`;
+}
+function renderSpeciesList(filter,target){
+  const f=(filter||'').toLowerCase();
+  const items=SPECIES_INFO.filter(i=>!f||i.name.toLowerCase().includes(f));
+  target.innerHTML = items.length? items.map(speciesOptHTML).join('')
+    : `<div style="padding:14px;text-align:center;color:var(--txt-faint);font-size:12px">查無種類</div>`;
+}
+function toggleSpecies(cid){
+  cid=Number(cid);
+  if(state.species.has(cid)) state.species.delete(cid); else state.species.add(cid);
+  renderSpeciesList(document.getElementById('spSearch').value,speciesList);
+  renderSpeciesList(document.getElementById('spSearchM').value,speciesListM);
+  refresh();
+}
+function updateSpeciesBtn(){
+  const n=state.species.size;
+  const cnt=document.getElementById('spCnt');
+  if(n===0){cnt.textContent='全部';cnt.classList.add('zero');}
+  else if(n===1){
+    const cid=[...state.species][0];
+    const info=SPECIES_INFO.find(i=>i.config_id===cid);
+    cnt.textContent=info?info.name:'1';cnt.classList.remove('zero');
+  } else {cnt.textContent=n+' 種';cnt.classList.remove('zero');}
+}
+
+/* ============== chips ============== */
+function buildChips(){
+  // 桌面 chip 列：品質群 + 詞條品質群 + 特性 + 重置
+  const pqChips = Object.keys(PQ_NAME).map(q=>
+    `<button class="chip" data-pq="${q}" style="--chip-on:${PQ_COLOR[q]}">
+       <span class="dot" style="color:${PQ_COLOR[q]};background:${PQ_COLOR[q]}"></span>${PQ_NAME[q]}</button>`).join('');
+  const eqChips = [3,6,7,5,2,1,4].map(q=>
+    `<button class="chip" data-eq="${q}" style="--chip-on:${EQ_COLOR[q]}">
+       <span class="dot" style="color:${EQ_COLOR[q]};background:${EQ_COLOR[q]}"></span>${EQ_NAME[q]}</button>`).join('');
+  const html = `
+    <span class="chip-grp"><span class="chip-lbl">寵物品質</span>${pqChips}</span>
+    <span class="divider-v"></span>
+    <span class="chip-grp"><span class="chip-lbl">詞條</span>${eqChips}</span>
+    <span class="divider-v"></span>
+    <span class="chip-grp">
+      <button class="chip special" data-flag="flagFight"><span class="dot" style="background:var(--accent)"></span>出戰中</button>
+      <button class="chip special" data-flag="flagLock"><span class="dot" style="background:#ffd54f"></span>已鎖定</button>
+      <button class="chip special" data-flag="flagNeg"><span class="dot" style="background:var(--warn)"></span>含負面</button>
+    </span>
+    <span class="divider-v"></span>
+    <button class="chip reset" id="chipReset">✕ 清除全部</button>`;
+  document.getElementById('chipRowDesktop').innerHTML=html;
+
+  // 手機 sheet chips
+  document.getElementById('chipPQm').innerHTML = pqChips;
+  document.getElementById('chipEQm').innerHTML = eqChips + `
+    <button class="chip special" data-flag="flagFight"><span class="dot" style="background:var(--accent)"></span>出戰中</button>
+    <button class="chip special" data-flag="flagLock"><span class="dot" style="background:#ffd54f"></span>已鎖定</button>
+    <button class="chip special" data-flag="flagNeg"><span class="dot" style="background:var(--warn)"></span>含負面</button>`;
+}
+function updateChipStates(){
+  document.querySelectorAll('[data-pq]').forEach(el=>{
+    el.classList.toggle('on',state.pq.has(Number(el.dataset.pq)));
+  });
+  document.querySelectorAll('[data-eq]').forEach(el=>{
+    el.classList.toggle('on',state.eq.has(Number(el.dataset.eq)));
+  });
+  document.querySelectorAll('[data-flag]').forEach(el=>{
+    el.classList.toggle('on',state[el.dataset.flag]);
+  });
+}
+function activeFilterCount(){
+  return state.species.size + state.pq.size + state.eq.size +
+    (state.flagFight?1:0)+(state.flagLock?1:0)+(state.flagNeg?1:0)+(state.q?1:0);
+}
+function updateFabBadge(filtered){
+  const n=activeFilterCount();
+  const b=document.getElementById('fabBadge');
+  b.style.display = n? 'grid':'none';
+  b.textContent=n;
+  document.getElementById('sheetCount').textContent=(filtered||currentFiltered()).length;
+}
+
+/* ============== 事件綁定 ============== */
+// 搜尋（桌面 + 手機共用 state.q，雙向同步）
+function bindSearch(input,clr){
+  input.addEventListener('input',()=>{
+    const v=input.value;
+    state.q=v.trim();
+    clr.classList.toggle('on',!!state.q);
+    // 兩框鏡像同一個原始值（含前導空白），避免一框 trim 一框未 trim 的視覺/資料不一致
+    document.getElementById('searchD').value=v;
+    document.getElementById('searchM').value=v;
+    document.getElementById('searchDclr').classList.toggle('on',!!state.q);
+    document.getElementById('searchMclr').classList.toggle('on',!!state.q);
+    refresh();
+  });
+  clr.addEventListener('click',()=>{
+    state.q='';input.value='';
+    document.getElementById('searchD').value='';document.getElementById('searchM').value='';
+    document.getElementById('searchDclr').classList.remove('on');
+    document.getElementById('searchMclr').classList.remove('on');
+    refresh();
+  });
+}
+bindSearch(document.getElementById('searchD'),document.getElementById('searchDclr'));
+bindSearch(document.getElementById('searchM'),document.getElementById('searchMclr'));
+
+// 種類下拉開關
+const speciesBtn=document.getElementById('speciesBtn');
+const speciesPop=document.getElementById('speciesPop');
+speciesBtn.onclick=(e)=>{e.stopPropagation();speciesPop.classList.toggle('open');
+  if(speciesPop.classList.contains('open')){document.getElementById('spSearch').focus();}};
+document.addEventListener('click',(e)=>{
+  if(!speciesPop.contains(e.target)&&e.target!==speciesBtn) speciesPop.classList.remove('open');
+});
+document.getElementById('spSearch').addEventListener('input',e=>renderSpeciesList(e.target.value,speciesList));
+document.getElementById('spSearchM').addEventListener('input',e=>renderSpeciesList(e.target.value,speciesListM));
+speciesList.addEventListener('click',e=>{const o=e.target.closest('[data-cid]');if(o)toggleSpecies(o.dataset.cid);});
+speciesListM.addEventListener('click',e=>{const o=e.target.closest('[data-cid]');if(o)toggleSpecies(o.dataset.cid);});
+document.getElementById('spClear').onclick=()=>{state.species.clear();renderSpeciesList('',speciesList);renderSpeciesList('',speciesListM);refresh();};
+document.getElementById('spClearM').onclick=()=>{state.species.clear();renderSpeciesList('',speciesList);renderSpeciesList('',speciesListM);refresh();};
+
+// 視圖切換（桌面 + 手機）
+function setView(v){
+  state.view=v;
+  document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('on',b.dataset.view===v));
+  viewport.scrollTop=0;
+  refresh();
+}
+document.getElementById('vFlat').onclick=()=>setView('flat');
+document.getElementById('vGroup').onclick=()=>setView('group');
+document.querySelectorAll('[data-mview]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
+
+// chip 委派
+document.body.addEventListener('click',e=>{
+  const pq=e.target.closest('[data-pq]');
+  const eq=e.target.closest('[data-eq]');
+  const fl=e.target.closest('[data-flag]');
+  if(pq){const q=Number(pq.dataset.pq);state.pq.has(q)?state.pq.delete(q):state.pq.add(q);refresh();}
+  if(eq){const q=Number(eq.dataset.eq);state.eq.has(q)?state.eq.delete(q):state.eq.add(q);refresh();}
+  if(fl){state[fl.dataset.flag]=!state[fl.dataset.flag];refresh();}
+});
+document.body.addEventListener('click',e=>{ if(e.target.id==='chipReset') resetAll(); });
+
+function resetAll(){
+  state.q='';state.species.clear();state.pq.clear();state.eq.clear();
+  state.flagLock=state.flagFight=state.flagNeg=false;
+  ['searchD','searchM'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('searchDclr').classList.remove('on');
+  document.getElementById('searchMclr').classList.remove('on');
+  renderSpeciesList('',speciesList);renderSpeciesList('',speciesListM);
+  toast('已清除所有篩選');
+  refresh();
+}
+
+// 表格列點擊（選取 / 群組摺疊 / 動作）委派
+rowsEl.addEventListener('click',e=>{
+  const grp=e.target.closest('[data-grp]');
+  if(grp){
+    const cid=Number(grp.dataset.grp);
+    state.collapsed.has(cid)?state.collapsed.delete(cid):state.collapsed.add(cid);
+    refreshKeepScroll();return;
+  }
+  const chk=e.target.closest('[data-check]');
+  if(chk){
+    if(chk.classList.contains('dis')){toast('此寵物已鎖定，無法選取','warn');return;}
+    toggleSelect(Number(chk.dataset.check));return;
+  }
+  const info=e.target.closest('[data-info]');
+  if(info){const p=ALL.find(x=>x.id===Number(info.dataset.info));showInfo(p);return;}
+  const quick=e.target.closest('[data-quick]');
+  if(quick){
+    // 不論 disabled 與否都攔截並 return，避免冒泡到列選取邏輯誤觸發「無法選取」toast
+    if(quick.disabled){toast('此寵物已鎖定，無法分解','warn');return;}
+    const p=ALL.find(x=>x.id===Number(quick.dataset.quick));
+    toast(`（示意）已將「${p.display_name}」送入分解佇列`);console.log('dissolve',p);return;
+  }
+  // 點整列也可選取
+  const row=e.target.closest('.row[data-id]');
+  if(row){const p=ALL.find(x=>x.id===Number(row.dataset.id));if(p&&!p.lock)toggleSelect(p.id);
+    else if(p&&p.lock)toast('此寵物已鎖定，無法選取','warn');}
+});
+
+function toggleSelect(id){
+  const p=ALL.find(x=>x.id===id);
+  if(p&&p.lock)return;
+  state.selected.has(id)?state.selected.delete(id):state.selected.add(id);
+  // 只更新該列 + 批次列，避免整表重畫
+  const rowEl=rowsEl.querySelector(`.row[data-id="${id}"]`);
+  if(rowEl){
+    const on=state.selected.has(id);
+    rowEl.classList.toggle('sel',on);
+    const cb=rowEl.querySelector('[data-check]');
+    cb.classList.toggle('on',on);cb.textContent=on?'✓':'';
+  }
+  updateBatchBar();updateStats(currentFiltered().length);
+}
+
+// 頭部全選
+document.getElementById('headCheck').onclick=()=>{
+  const pets=currentFiltered().filter(p=>!p.lock);
+  const allSel = pets.length>0 && pets.every(p=>state.selected.has(p.id));
+  if(allSel){pets.forEach(p=>state.selected.delete(p.id));toast('已取消全選');}
+  else{pets.forEach(p=>state.selected.add(p.id));toast(`已選取 ${pets.length} 隻（略過鎖定）`);}
+  renderRows();updateBatchBar();updateStats(currentFiltered().length);
+};
+
+// 排序
+document.querySelectorAll('.thead .sortable').forEach(th=>{
+  th.onclick=()=>{
+    const k=th.dataset.sort;
+    if(state.sort.key===k) state.sort.dir*=-1; else {state.sort.key=k;state.sort.dir = k==='name'?1:-1;}
+    document.querySelectorAll('.thead .arr').forEach(a=>a.remove());
+    const arr=document.createElement('span');arr.className='arr';arr.textContent=state.sort.dir>0?'▲':'▼';
+    th.appendChild(arr);
+    viewport.scrollTop=0;refresh();
+  };
+});
+
+// 批次操作列按鈕
+document.getElementById('selClear').onclick=()=>{state.selected.clear();renderRows();updateBatchBar();updateStats(currentFiltered().length);};
+document.getElementById('selInvert').onclick=()=>{
+  const pets=currentFiltered().filter(p=>!p.lock);
+  pets.forEach(p=>{state.selected.has(p.id)?state.selected.delete(p.id):state.selected.add(p.id);});
+  renderRows();updateBatchBar();updateStats(currentFiltered().length);toast('已反選');
+};
+document.getElementById('selDissolve').onclick=()=>{
+  const n=state.selected.size;
+  if(!n){toast('尚未選取任何飛寵','warn');return;}
+  let locked=0;state.selected.forEach(id=>{const p=ALL.find(x=>x.id===id);if(p&&p.lock)locked++;});
+  console.log('[mock] 分解佇列：',[...state.selected]);
+  toast(`（示意）已送出分解 ${n-locked} 隻${locked?`，略過 ${locked} 隻鎖定`:''}`);
+  // 原型：不真的刪除，只清空選取
+  state.selected.clear();renderRows();updateBatchBar();updateStats(currentFiltered().length);
+};
+
+// 說明摺疊
+document.getElementById('helpBtn').onclick=()=>document.getElementById('helpNote').classList.toggle('hidden');
+
+// 手機篩選 sheet
+const scrim=document.getElementById('scrim');
+const sheet=document.getElementById('sheet');
+function openSheet(){renderSpeciesList(document.getElementById('spSearchM').value,speciesListM);updateChipStates();scrim.classList.add('show');sheet.classList.add('show');}
+function closeSheet(){scrim.classList.remove('show');sheet.classList.remove('show');}
+document.getElementById('filterFab').onclick=openSheet;
+scrim.onclick=closeSheet;
+document.getElementById('sheetApply').onclick=()=>{closeSheet();toast(`顯示 ${currentFiltered().length} 隻結果`);};
+
+// 詳情（示意）
+function showInfo(p){
+  const ent=p.entries.map(e=>`${EQ_NAME[e.quality]}·${e.name}`).join('、');
+  toast(`${p.display_name}｜${PQ_NAME[p.quality]}品質 Lv${p.level}｜${ent}`);
+  console.log('pet detail',p);
+}
+
+// toast
+const toastsEl=document.getElementById('toasts');
+function toast(msg,kind){
+  const t=document.createElement('div');t.className='toast'+(kind==='warn'?' warn':'');
+  t.textContent=msg;toastsEl.appendChild(t);
+  setTimeout(()=>t.remove(),2900);
+}
+
+// 視窗尺寸變動：桌面/手機切換需重渲染
+let rT;
+window.addEventListener('resize',()=>{clearTimeout(rT);rT=setTimeout(()=>{renderRows();},120);});
+
+/* ============== 初始化 ============== */
+buildChips();
+renderSpeciesList('',speciesList);
+renderSpeciesList('',speciesListM);
+// 預設排序箭頭
+(function(){const th=document.querySelector('.thead .sortable[data-sort="level"]');
+  const arr=document.createElement('span');arr.className='arr';arr.textContent='▼';th.appendChild(arr);})();
+refresh();
+console.log('版本 A · 密集戰情表 已載入，共',ALL.length,'隻飛寵');
+</script>
+</body>
+</html>
