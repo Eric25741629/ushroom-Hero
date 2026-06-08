@@ -64,6 +64,30 @@ def test_entry_quality_sort_is_default_descending():
     assert "var sortCol = 'entry_quality', sortAsc = false;" in html
 
 
+def test_pet_quality_dashboard_mapping_is_three_tiers_only():
+    """飛寵品質保留 API 原值, dashboard 只映射 3/2/1 三級標籤。"""
+    html = _template_text()
+
+    assert "var PQ = {3:'珍稀',2:'高級',1:'普通'};" in html
+    assert "0:'白'" not in html
+    assert "1:'藍'" not in html
+    assert "2:'紫'" not in html
+    assert "3:'金'" not in html
+    assert "[3,2,1].forEach(function(q)" in html
+    assert "[0,1,2,3].forEach(function(q)" not in html
+    assert "[0,1,2,3].map(function(q)" not in html
+
+
+def test_pet_quality_badge_removed_from_cards_and_detail():
+    """同一種類品質固定,卡片與詳情不再額外顯示飛寵品質標籤。"""
+    html = _template_text()
+
+    assert "pq-tag" not in html
+    card_body = html[html.index("function cardHTML") : html.index("function groupHeadHTML")]
+    assert "pqName" not in card_body
+    assert "PQ[p.quality]" not in card_body
+
+
 def test_epic_entry_chip_uses_visible_background():
     html = _template_text()
     epic_style = _style_block_for(".ec-3 {", html)

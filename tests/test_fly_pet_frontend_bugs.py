@@ -111,11 +111,35 @@ def test_do_sell_blocks_via_guard():
     assert GUARD_NAME in body
 
 
+def test_do_sell_excludes_locked_collected_and_deployed():
+    """批次分解必須在前端排除鎖定、已收藏、已上陣。"""
+    html = _template_text()
+    body = _function_body(html, "async function doSell", "function doSellOne")
+
+    assert "p.lock === 1" in body
+    assert "p.is_collected" in body
+    assert "p.fight === 1" in body
+    assert "protectedIds" in body
+    assert "apiPost('/api/fly_pet_resolve/'" in body
+    assert "{ids: safeIds}" in body
+
+
 def test_do_sell_one_blocks_via_guard():
     """doSellOne 為破壞性操作,須透過 guard 並在腳本運行時 BLOCK。"""
     html = _template_text()
     body = _function_body(html, "function doSellOne", "// ---- Breed pet selection")
     assert GUARD_NAME in body
+
+
+def test_do_sell_one_rejects_collected_and_deployed():
+    """單隻分解也不可送已收藏或已上陣飛寵。"""
+    html = _template_text()
+    body = _function_body(html, "function doSellOne", "// ---- Breed pet selection")
+
+    assert "pet.is_collected" in body
+    assert "pet.fight === 1" in body
+    assert "已收藏" in body
+    assert "已上陣" in body
 
 
 def test_do_load_warns_via_guard_but_proceeds():

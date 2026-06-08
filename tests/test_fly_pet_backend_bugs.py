@@ -187,6 +187,25 @@ def test_fly_pet_list_uses_shared_lock_helper(monkeypatch):
     assert "star:" in js
 
 
+def test_fly_pet_list_fetches_collection_and_marks_model(monkeypatch):
+    """列表刷新須讀 fly_pet_collection,並以 config_id 標記 is_collected。"""
+    cpa = _import_control_panel_app()
+    client = cpa.app.test_client()
+    _login_fly_pet(client)
+    captured = _capture_json_response(cpa, monkeypatch)
+
+    resp = client.get("/api/fly_pet_list/dev4")
+
+    assert resp.status_code == 200
+    js = captured["expression"]
+    assert captured["await_promise"] is True
+    assert "send_66_32()" in js
+    assert "FlyPeCollectionBack" in js
+    assert "collection_list" in js
+    assert "is_collected" in js
+    assert "collectionIds.has(String(pet.config_id))" in js
+
+
 def test_fly_pet_find_pair_uses_shared_lock_helper(monkeypatch):
     cpa = _import_control_panel_app()
     client = cpa.app.test_client()
@@ -203,3 +222,25 @@ def test_fly_pet_find_pair_uses_shared_lock_helper(monkeypatch):
     assert cpa._FLY_PET_LOCK_JS in js
     # still skips locked pets and fighting pets
     assert "continue" in js
+
+
+def test_fly_pet_resolve_filters_collected_and_deployed_before_rpc(monkeypatch):
+    """分解 RPC 只能收到未收藏、未上陣、未鎖定的 safeIds。"""
+    cpa = _import_control_panel_app()
+    client = cpa.app.test_client()
+    _login_fly_pet(client)
+    captured = _capture_json_response(cpa, monkeypatch)
+
+    resp = client.post("/api/fly_pet_resolve/dev6", json={"ids": [101, 202]})
+
+    assert resp.status_code == 200
+    assert captured["ip"] == "dev6"
+    assert captured["await_promise"] is True
+    js = captured["expression"]
+    assert "send_66_32()" in js
+    assert "collection_list" in js
+    assert "collectionIds.has(String(pet.config_id))" in js
+    assert "pet.fight === 1" in js or "pet.fight == 1" in js
+    assert "safeIds" in js
+    assert "send_66_8(safeIds)" in js
+    assert "send_66_8([101, 202])" not in js

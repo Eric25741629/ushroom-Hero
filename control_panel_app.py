@@ -2102,11 +2102,28 @@ def cdp_evaluate(ip):
 @_fly_pet_auth
 def fly_pet_list(ip):
     """Dump all fly pets + entries for a device (convenience wrapper)."""
-    js = r"""(() => {
+    js = r"""new Promise((resolve) => {
+        let done = false;
+        function finish() {
+            if (done) return;
+            done = true;
+            normalEvent.off('FlyPeCollectionBack', finish);
+            clearTimeout(timeout);
+            resolve(collect());
+        }
+        const timeout = setTimeout(finish, 2500);
+        function collect() {
         try {
             const __extractLockStar = """ + _FLY_PET_LOCK_JS + r""";
             const cache = IS(ISInclude.FlyPetDataCache);
             const pets = cache.pet_list;
+            const collectionIds = new Set();
+            const collectionList = cache.collection_list || {};
+            for (const ck in collectionList) {
+                const cv = collectionList[ck];
+                if (cv !== null && cv !== undefined && cv !== 0) collectionIds.add(String(cv));
+                if (ck !== null && ck !== undefined && ck !== "0") collectionIds.add(String(ck));
+            }
             const result = [];
             for (const key in pets) {
                 const pet = pets[key];
@@ -2140,6 +2157,8 @@ def fly_pet_list(ip):
                     quality: pet.quality,
                     level: pet.level,
                     fight: pet.fight || 0,
+                    is_deployed: (pet.fight || 0) === 1,
+                    is_collected: collectionIds.has(String(pet.config_id)),
                     generation: pet.generation || 0,
                     growth: pet.growth || 0,
                     step: pet.step || 0,
@@ -2153,8 +2172,15 @@ def fly_pet_list(ip):
         } catch(err) {
             return JSON.stringify({error: err.message, stack: err.stack});
         }
-    })()"""
-    return _cdp_json_response(ip, js, data_key="pets")
+        }
+        normalEvent.on('FlyPeCollectionBack', finish);
+        try {
+            IS(ISInclude.FlyPetControl).send_66_32();
+        } catch(ex) {
+            finish();
+        }
+    })"""
+    return _cdp_json_response(ip, js, await_promise=True, data_key="pets")
 
 
 # Real in-game fly-pet icons dumped from the live game by tools/dump_flypet_icons.py
@@ -2260,24 +2286,85 @@ def fly_pet_resolve(ip):
         return jsonify({"status": "error", "message": "ids must be a non-empty list"}), 400
     ids_js = json.dumps([int(i) for i in ids])
     js = f"""new Promise((resolve) => {{
-    let done = false;
-    const timeout = setTimeout(() => {{
-        if (done) return;
-        done = true;
-        normalEvent.off('OnInfoUpdate', handler);
-        const count = Object.keys(IS(ISInclude.FlyPetDataCache).pet_list).length;
-        resolve(JSON.stringify({{ok: false, message: 'timeout', petCount: count}}));
-    }}, 8000);
-    function handler() {{
-        if (done) return;
-        done = true;
-        clearTimeout(timeout);
-        normalEvent.off('OnInfoUpdate', handler);
-        const count = Object.keys(IS(ISInclude.FlyPetDataCache).pet_list).length;
-        resolve(JSON.stringify({{ok: true, petCount: count}}));
+    const requestedIds = {ids_js}.map(String);
+    const __extractLockStar = {_FLY_PET_LOCK_JS};
+    let collectionReady = false;
+
+    function countPets() {{
+        return Object.keys(IS(ISInclude.FlyPetDataCache).pet_list).filter(k => IS(ISInclude.FlyPetDataCache).pet_list[k]).length;
     }}
-    normalEvent.on('OnInfoUpdate', handler);
-    IS(ISInclude.FlyPetControl).send_66_8({ids_js});
+    function petById(cache, id) {{
+        if (cache.pet_list[id]) return cache.pet_list[id];
+        for (const k in cache.pet_list) {{
+            const pet = cache.pet_list[k];
+            if (pet && String(pet.id) === String(id)) return pet;
+        }}
+        return null;
+    }}
+    function collectionIdSet(cache) {{
+        const collectionIds = new Set();
+        const collectionList = cache.collection_list || {{}};
+        for (const ck in collectionList) {{
+            const cv = collectionList[ck];
+            if (cv !== null && cv !== undefined && cv !== 0) collectionIds.add(String(cv));
+            if (ck !== null && ck !== undefined && ck !== "0") collectionIds.add(String(ck));
+        }}
+        return collectionIds;
+    }}
+    function buildSafeIds() {{
+        const cache = IS(ISInclude.FlyPetDataCache);
+        const collectionIds = collectionIdSet(cache);
+        const safeIds = [];
+        const skipped = {{locked: 0, collected: 0, deployed: 0, missing: 0}};
+        requestedIds.forEach((id) => {{
+            const pet = petById(cache, id);
+            if (!pet) {{ skipped.missing++; return; }}
+            const locked = __extractLockStar(pet).lock || pet.lock;
+            if (locked) {{ skipped.locked++; return; }}
+            if (collectionIds.has(String(pet.config_id))) {{ skipped.collected++; return; }}
+            if (pet.fight === 1) {{ skipped.deployed++; return; }}
+            safeIds.push(Number(pet.id));
+        }});
+        return {{safeIds, skipped, petCount: countPets()}};
+    }}
+    function startResolve() {{
+        const plan = buildSafeIds();
+        const safeIds = plan.safeIds;
+        if (safeIds.length === 0) {{
+            resolve(JSON.stringify({{ok: false, message: 'no safe pets', petCount: plan.petCount, skipped: plan.skipped}}));
+            return;
+        }}
+        let done = false;
+        const timeout = setTimeout(() => {{
+            if (done) return;
+            done = true;
+            normalEvent.off('OnInfoUpdate', handler);
+            resolve(JSON.stringify({{ok: false, message: 'timeout', petCount: countPets(), skipped: plan.skipped}}));
+        }}, 8000);
+        function handler() {{
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            normalEvent.off('OnInfoUpdate', handler);
+            resolve(JSON.stringify({{ok: true, petCount: countPets(), skipped: plan.skipped}}));
+        }}
+        normalEvent.on('OnInfoUpdate', handler);
+        IS(ISInclude.FlyPetControl).send_66_8(safeIds);
+    }}
+    function onCollectionReady() {{
+        if (collectionReady) return;
+        collectionReady = true;
+        clearTimeout(collectionTimeout);
+        normalEvent.off('FlyPeCollectionBack', onCollectionReady);
+        startResolve();
+    }}
+    const collectionTimeout = setTimeout(onCollectionReady, 2500);
+    normalEvent.on('FlyPeCollectionBack', onCollectionReady);
+    try {{
+        IS(ISInclude.FlyPetControl).send_66_32();
+    }} catch(ex) {{
+        onCollectionReady();
+    }}
 }})"""
     return _cdp_json_response(ip, js, await_promise=True)
 
