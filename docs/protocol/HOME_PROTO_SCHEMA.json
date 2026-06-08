@@ -1,0 +1,977 @@
+{
+  "family": "home",
+  "module": 12,
+  "note": "cmd ids: c2s and s2c share the same id. Actual proto message names may carry a family prefix (e.g. home_<verb>_c2s).",
+  "cmd_ids": {
+    "home.home_mine_info": 3073,
+    "home.home_mine_update_recover": 3074,
+    "home.home_mine_use_goods": 3075,
+    "home.home_mine_get_reward": 3076,
+    "home.home_mine_auto_use_goods": 3097,
+    "home.home_mine_hole_update": 3105,
+    "home.home_mine_hole_working": 3106
+  },
+  "schema": {
+    "nested": {
+      "home_mine_info_c2s": {
+        "fields": {}
+      },
+      "home_mine_info_s2c": {
+        "fields": {
+          "max_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "next_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "area": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "baseline": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "actives": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 5,
+            "options": {
+              "packed": false
+            }
+          },
+          "area_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          },
+          "blocks": {
+            "rule": "repeated",
+            "type": "type.p_mine_block",
+            "id": 7
+          },
+          "holes": {
+            "rule": "repeated",
+            "type": "type.p_mine_hole",
+            "id": 8
+          }
+        }
+      },
+      "home_mine_update_recover_s2c": {
+        "fields": {
+          "max_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "next_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_mine_use_goods_c2s": {
+        "fields": {
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "block_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_mine_use_goods_s2c": {
+        "fields": {
+          "area": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "baseline": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "actives": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          },
+          "area_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          },
+          "blocks": {
+            "rule": "repeated",
+            "type": "type.p_mine_block",
+            "id": 5
+          },
+          "reward": {
+            "rule": "repeated",
+            "type": "type.p_mine_reward",
+            "id": 6
+          },
+          "holes": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          }
+        }
+      },
+      "home_mine_get_reward_c2s": {
+        "fields": {
+          "block_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_mine_get_reward_s2c": {
+        "fields": {
+          "reward": {
+            "rule": "required",
+            "type": "type.p_mine_reward",
+            "id": 1
+          },
+          "blocks": {
+            "rule": "required",
+            "type": "type.p_mine_block",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_info_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_info_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "land_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_land",
+            "id": 5
+          },
+          "building_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_building",
+            "id": 6
+          },
+          "self_stolen_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_self_stolen",
+            "id": 7
+          },
+          "can_help_battle": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          }
+        }
+      },
+      "home_farm_plant_c2s": {
+        "fields": {
+          "seed_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "land_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_plant_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "new_land": {
+            "rule": "required",
+            "type": "type.p_farm_land",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_fertilize_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "land_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "fertilizer_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "home_farm_fertilize_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "new_land": {
+            "rule": "required",
+            "type": "type.p_farm_land",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_pick_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "land_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_pick_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "new_land": {
+            "rule": "required",
+            "type": "type.p_farm_land",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_harvest_c2s": {
+        "fields": {
+          "land_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_harvest_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "new_land": {
+            "rule": "required",
+            "type": "type.p_farm_land",
+            "id": 2
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          }
+        }
+      },
+      "home_farm_building_lev_up_c2s": {
+        "fields": {
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_building_lev_up_s2c": {
+        "fields": {
+          "building": {
+            "rule": "required",
+            "type": "type.p_farm_building",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_log_list_c2s": {
+        "fields": {
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_log_list_s2c": {
+        "fields": {
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "log_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_log",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_battle_report_list_c2s": {
+        "fields": {
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_battle_report_list_s2c": {
+        "fields": {
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "battle_report_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_battle_report",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_battle_begin_c2s": {
+        "fields": {
+          "crop_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "robber_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_battle_begin_s2c": {
+        "fields": {
+          "crop_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "robber_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 4
+          },
+          "atk_data": {
+            "type": "type.p_farm_battle_role",
+            "id": 5
+          },
+          "def_data": {
+            "type": "type.p_farm_battle_role",
+            "id": 6
+          },
+          "atk_origin": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          }
+        }
+      },
+      "home_farm_battle_result_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "win_role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_battle_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "e_name": {
+            "type": "string",
+            "id": 4
+          },
+          "e_head": {
+            "type": "type.p_head",
+            "id": 5
+          }
+        }
+      },
+      "home_farm_search_list_c2s": {
+        "fields": {}
+      },
+      "home_farm_search_list_s2c": {
+        "fields": {
+          "search_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_search_role",
+            "id": 1
+          },
+          "cd": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "enemy_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_search_role",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_search_refresh_c2s": {
+        "fields": {}
+      },
+      "home_farm_search_refresh_s2c": {
+        "fields": {
+          "search_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_search_role",
+            "id": 1
+          },
+          "cd": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_statue_info_c2s": {
+        "fields": {}
+      },
+      "home_farm_statue_info_s2c": {
+        "fields": {
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "show_tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "tab_list": {
+            "rule": "repeated",
+            "type": "type.p_farm_statue_tab",
+            "id": 5
+          }
+        }
+      },
+      "home_farm_statue_refresh_c2s": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_play_video_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_play_video_s2c": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "atk_data": {
+            "type": "type.p_farm_battle_role",
+            "id": 3
+          },
+          "def_data": {
+            "type": "type.p_farm_battle_role",
+            "id": 4
+          },
+          "collects": {
+            "rule": "required",
+            "type": "string",
+            "id": 5
+          },
+          "winner_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 6
+          }
+        }
+      },
+      "home_farm_statue_attr_lock_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_statue_attr_lock_s2c": {
+        "fields": {
+          "attr": {
+            "rule": "required",
+            "type": "type.p_farm_statue_attr",
+            "id": 1
+          },
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_update_self_stolen_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "self_stolen": {
+            "rule": "required",
+            "type": "type.p_farm_self_stolen",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_battle_begin_fail_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_statue_tab_use_c2s": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_statue_tab_use_s2c": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_statue_tab_change_name_c2s": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_statue_tab_change_name_s2c": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "home_mine_auto_use_goods_c2s": {
+        "fields": {
+          "gtid": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "auto_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "num": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          }
+        }
+      },
+      "home_mine_auto_use_goods_s2c": {
+        "fields": {
+          "add_baseline": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          },
+          "holes": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "home_farm_robber_share_c2s": {
+        "fields": {
+          "target_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "land_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "robber_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "crop_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 4
+          }
+        }
+      },
+      "home_farm_robber_share_s2c": {
+        "fields": {}
+      },
+      "home_farm_robber_share_update_c2s": {
+        "fields": {}
+      },
+      "home_farm_robber_share_update_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "robber_share": {
+            "rule": "repeated",
+            "type": "type.p_farm_robber_share",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_robber_share_ignore_c2s": {
+        "fields": {}
+      },
+      "home_farm_robber_share_ignore_s2c": {
+        "fields": {}
+      },
+      "home_farm_human_check_c2s": {
+        "fields": {}
+      },
+      "home_farm_human_check_s2c": {
+        "fields": {
+          "group_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "graph_id": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "home_farm_human_check_result_c2s": {
+        "fields": {
+          "graph_id": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "home_farm_human_check_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_clean_enemy_list_c2s": {
+        "fields": {}
+      },
+      "home_farm_clean_enemy_list_s2c": {
+        "fields": {}
+      },
+      "home_farm_robber_battle_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "e_name": {
+            "type": "string",
+            "id": 4
+          },
+          "e_head": {
+            "type": "type.p_head",
+            "id": 5
+          }
+        }
+      },
+      "home_mine_hole_update_c2s": {
+        "fields": {
+          "is_notice": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_mine_hole_update_s2c": {
+        "fields": {
+          "holes": {
+            "rule": "repeated",
+            "type": "type.p_mine_hole",
+            "id": 1
+          }
+        }
+      },
+      "home_mine_hole_working_c2s": {
+        "fields": {
+          "team_cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "hole_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "home_farm_spend_fruit_c2s": {
+        "fields": {
+          "spend_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "home_farm_spend_fruit_s2c": {
+        "fields": {
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_farm_battle_report",
+    "p_farm_battle_role",
+    "p_farm_building",
+    "p_farm_land",
+    "p_farm_log",
+    "p_farm_robber_share",
+    "p_farm_search_role",
+    "p_farm_self_stolen",
+    "p_farm_statue_attr",
+    "p_farm_statue_tab",
+    "p_head",
+    "p_key_value",
+    "p_mine_block",
+    "p_mine_hole",
+    "p_mine_reward",
+    "p_reward"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

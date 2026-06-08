@@ -1,0 +1,228 @@
+{
+  "family": "task",
+  "module": 10,
+  "note": "cmd ids: c2s and s2c share the same id. Actual proto message names may carry a family prefix (e.g. task_<verb>_c2s).",
+  "cmd_ids": {
+    "task.task_all": 2561,
+    "task.task_commit": 2562,
+    "task.task_update": 2563,
+    "task.task_commit_all": 2564,
+    "task.task_daily_point": 2565,
+    "task.task_req_daily_box": 2566,
+    "task.task_weekly_box": 2567,
+    "task.task_req_weekly_box": 2568,
+    "task.task_achievement": 2569,
+    "task.task_achievement_reward": 2570,
+    "task.task_fly_achievement": 2571,
+    "task.task_fly_achievement_reward": 2572
+  },
+  "schema": {
+    "nested": {
+      "task_all_s2c": {
+        "fields": {
+          "task_list": {
+            "rule": "repeated",
+            "type": "type.p_task",
+            "id": 1
+          }
+        }
+      },
+      "task_commit_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "task_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "task_commit_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "task_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "task_update_s2c": {
+        "fields": {
+          "task_list": {
+            "rule": "repeated",
+            "type": "type.p_task",
+            "id": 1
+          }
+        }
+      },
+      "task_commit_all_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          }
+        }
+      },
+      "task_commit_all_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "task_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "task_daily_point_s2c": {
+        "fields": {
+          "daily_point": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "box_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "task_req_daily_box_c2s": {
+        "fields": {}
+      },
+      "task_req_daily_box_s2c": {
+        "fields": {
+          "box_list": {
+            "rule": "repeated",
+            "type": "int32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "task_weekly_box_s2c": {
+        "fields": {
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "last_list": {
+            "rule": "repeated",
+            "type": "int32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          },
+          "cur_list": {
+            "rule": "repeated",
+            "type": "int32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          },
+          "week_day": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "task_req_weekly_box_c2s": {
+        "fields": {}
+      },
+      "task_req_weekly_box_s2c": {
+        "fields": {
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "task_achievement_c2s": {
+        "fields": {}
+      },
+      "task_achievement_s2c": {
+        "fields": {
+          "get_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "now_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "progress": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "task_achievement_reward_c2s": {
+        "fields": {}
+      },
+      "task_achievement_reward_s2c": {
+        "fields": {}
+      },
+      "task_fly_achievement_c2s": {
+        "fields": {}
+      },
+      "task_fly_achievement_s2c": {
+        "fields": {
+          "get_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "now_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "progress": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "task_fly_achievement_reward_c2s": {
+        "fields": {}
+      },
+      "task_fly_achievement_reward_s2c": {
+        "fields": {}
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_key_value",
+    "p_task"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

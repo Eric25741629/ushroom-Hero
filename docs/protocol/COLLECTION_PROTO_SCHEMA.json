@@ -1,0 +1,49 @@
+{
+  "family": "collection",
+  "module": 18,
+  "note": "cmd ids: c2s and s2c share the same id. Actual proto message names may carry a family prefix (e.g. collection_<verb>_c2s).",
+  "cmd_ids": {
+    "collection.collection_info": 4609,
+    "collection.collection_enhance": 4610
+  },
+  "schema": {
+    "nested": {
+      "collection_info_c2s": {
+        "fields": {}
+      },
+      "collection_info_s2c": {
+        "fields": {
+          "type_list": {
+            "rule": "repeated",
+            "type": "type.p_collection_list",
+            "id": 1
+          }
+        }
+      },
+      "collection_enhance_c2s": {
+        "fields": {
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "collection_enhance_s2c": {
+        "fields": {
+          "collection": {
+            "rule": "required",
+            "type": "type.p_collection",
+            "id": 1
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_collection",
+    "p_collection_list"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

@@ -1,0 +1,3971 @@
+{
+  "family": "act2",
+  "module": 25,
+  "note": "cmd ids: c2s and s2c share the same id. Actual proto message names may carry a family prefix (e.g. act2_<verb>_c2s).",
+  "cmd_ids": {
+    "act2.act_danjon_meshi_dinner_info": 6583,
+    "act2.act_danjon_meshi_dinner_reward": 6584
+  },
+  "schema": {
+    "nested": {
+      "act_christmas_farm_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_christmas_farm_info_s2c": {
+        "fields": {
+          "is_push": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          },
+          "today_cnt": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "act_christmas_farm_claim_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_christmas_farm_claim_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_treasure_hunt_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_treasure_hunt_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "acc_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "refresh_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "next_refresh_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "got_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 5,
+            "options": {
+              "packed": false
+            }
+          },
+          "gift_list": {
+            "rule": "repeated",
+            "type": "type.p_treasure_hunt_gift",
+            "id": 6
+          },
+          "must_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          },
+          "replace_count": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 8
+          },
+          "replace_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 9
+          }
+        }
+      },
+      "act_treasure_hunt_draw_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "seq_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_treasure_hunt_draw_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "seq_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "update_gift_list": {
+            "rule": "repeated",
+            "type": "type.p_treasure_hunt_gift",
+            "id": 3
+          },
+          "extra_reward": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          }
+        }
+      },
+      "act_treasure_hunt_refresh_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_treasure_hunt_replace_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_treasure_hunt_replace_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_treasure_hunt_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_treasure_hunt_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_treasure_hunt_report_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_treasure_hunt_report_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "report_list": {
+            "rule": "repeated",
+            "type": "type.p_treasure_hunt_report",
+            "id": 3
+          }
+        }
+      },
+      "act_star_rain_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_star_rain_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sum_star": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "star_process": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "must_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "replace_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          },
+          "report_list": {
+            "rule": "repeated",
+            "type": "type.p_act_draw_report",
+            "id": 7
+          }
+        }
+      },
+      "act_star_rain_draw_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_star_rain_draw_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          },
+          "drop_id_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_star_rain_update_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sum_star": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "star_process": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_golden_tower_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_golden_tower_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "round": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "ceng": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "choose_list": {
+            "rule": "repeated",
+            "type": "type.p_key_kv_list",
+            "id": 4
+          },
+          "total": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "sum_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 6,
+            "options": {
+              "packed": false
+            }
+          },
+          "remain": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          }
+        }
+      },
+      "act_golden_tower_draw_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "draw_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_golden_tower_draw_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "draw_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "draw_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          },
+          "total": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "is_up": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 6
+          },
+          "remain": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          },
+          "round": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          },
+          "ceng": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 9
+          }
+        }
+      },
+      "act_golden_tower_choose_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "replace_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_golden_tower_choose_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "replace_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_golden_tower_count_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_golden_tower_count_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "sum_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_nine_number_info_c2s": {
+        "fields": {}
+      },
+      "act_nine_number_info_s2c": {
+        "fields": {
+          "number_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "act_nine_number_guess_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "key": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_nine_number_guess_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "key": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "number_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "act_mini_game_buy_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_mini_game_buy_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "act_mini_game_buy_item_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "item_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_mini_game_buy_item_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "item_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_nine_number_pre_c2s": {
+        "fields": {}
+      },
+      "act_nine_number_pre_s2c": {
+        "fields": {
+          "is_start": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_clear_game_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_clear_game_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "save": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_clear_game_save_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "save": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "act_custom_mall_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "bundle_list": {
+            "rule": "repeated",
+            "type": "type.p_act_custom_mall",
+            "id": 2
+          },
+          "receive_list": {
+            "rule": "repeated",
+            "type": "type.p_act_custom_mall_receive",
+            "id": 3
+          }
+        }
+      },
+      "act_custom_mall_set_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "choose_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "act_custom_mall_set_s2c": {
+        "fields": {
+          "bundle": {
+            "rule": "required",
+            "type": "type.p_act_custom_mall",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_buy_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_buy_s2c": {
+        "fields": {
+          "bundle": {
+            "rule": "required",
+            "type": "type.p_act_custom_mall",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_search_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "content": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "act_custom_mall_search_s2c": {
+        "fields": {
+          "role_list": {
+            "rule": "repeated",
+            "type": "type.p_act_custom_mall_role",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_send_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "target_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "message": {
+            "rule": "required",
+            "type": "string",
+            "id": 3
+          },
+          "choose_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "act_custom_mall_send_s2c": {
+        "fields": {
+          "bundle": {
+            "rule": "required",
+            "type": "type.p_act_custom_mall",
+            "id": 1
+          }
+        }
+      },
+      "act_custom_mall_claim_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_custom_mall_claim_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_draw_away_monster_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_draw_away_monster_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "now_step": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_draw_away_monster_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "fast_move": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_draw_away_monster_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "now_step": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "act_sugar_bawl_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_sugar_bawl_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "now_sweet_value": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "act_sugar_bawl_fill_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_sugar_bawl_fill_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_sugar_bawl_get_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_sugar_bawl_get_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_yfs_draw_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_yfs_draw_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "count_reward_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          },
+          "pool_list": {
+            "rule": "repeated",
+            "type": "type.p_yfs_pool",
+            "id": 4
+          }
+        }
+      },
+      "act_yfs_draw_draw_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_yfs_draw_draw_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "id_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 5,
+            "options": {
+              "packed": false
+            }
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 6
+          }
+        }
+      },
+      "act_yfs_draw_count_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_yfs_draw_count_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_yfs_draw_choose_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_yfs_draw_choose_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_yfs_black_hole_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_yfs_black_hole_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "goods_list": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "act_yfs_reset_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_yfs_reset_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "pool": {
+            "rule": "required",
+            "type": "type.p_yfs_pool",
+            "id": 3
+          }
+        }
+      },
+      "act_mine_sweeper_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_mine_sweeper_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "template_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "cell_list": {
+            "rule": "repeated",
+            "type": "type.p_mine_cell",
+            "id": 3
+          }
+        }
+      },
+      "act_mine_sweeper_open_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "type.p_pos",
+            "id": 2
+          }
+        }
+      },
+      "act_mine_sweeper_open_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cell": {
+            "rule": "required",
+            "type": "type.p_mine_cell",
+            "id": 2
+          }
+        }
+      },
+      "act_valentine_cp_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_cp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "cp_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 3
+          },
+          "cp_head": {
+            "rule": "required",
+            "type": "type.p_head",
+            "id": 4
+          }
+        }
+      },
+      "act_valentine_cp_search_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "content": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "act_valentine_cp_search_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "teammate_list": {
+            "rule": "repeated",
+            "type": "type.p_tanabata_teammate_info",
+            "id": 2
+          }
+        }
+      },
+      "act_valentine_cp_invite_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_invite_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_handle_invite_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_handle_invite_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_invite_info_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_valentine_cp_invite_info_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "state": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_angel_pool_info_c2s": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_angel_pool_info_s2c": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "spec_acc_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "spec_got_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "must_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "act_angel_pool_draw_c2s": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_angel_pool_draw_s2c": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "act_angel_send_mall_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_angel_send_mall_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "got_ids": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_angel_get_mall_reward_c2s": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_path_info_c2s": {
+        "fields": {}
+      },
+      "act_path_info_s2c": {
+        "fields": {
+          "use_plan": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "plan_name_list": {
+            "rule": "repeated",
+            "type": "type.p_key_string",
+            "id": 2
+          },
+          "path_list": {
+            "rule": "repeated",
+            "type": "type.p_path_info",
+            "id": 3
+          },
+          "unlock_path_list": {
+            "rule": "repeated",
+            "type": "type.p_unlock_tree",
+            "id": 4
+          }
+        }
+      },
+      "act_path_enlighten_c2s": {
+        "fields": {
+          "tab_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "path_cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "path_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "act_path_enlighten_s2c": {
+        "fields": {
+          "path_info": {
+            "rule": "required",
+            "type": "type.p_path_info",
+            "id": 1
+          },
+          "unlock_path_list": {
+            "rule": "repeated",
+            "type": "type.p_unlock_tree",
+            "id": 2
+          }
+        }
+      },
+      "act_path_replace_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_path_replace_s2c": {
+        "fields": {
+          "path_info": {
+            "rule": "required",
+            "type": "type.p_path_info",
+            "id": 1
+          }
+        }
+      },
+      "act_path_lock_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "slot_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_lock": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_path_lock_s2c": {
+        "fields": {
+          "path_info": {
+            "rule": "required",
+            "type": "type.p_path_info",
+            "id": 1
+          }
+        }
+      },
+      "act_path_auto_interception_c2s": {
+        "fields": {
+          "tab_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "path_cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "path_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "auto_interception": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "act_path_auto_interception_s2c": {
+        "fields": {
+          "path_info": {
+            "rule": "required",
+            "type": "type.p_path_info",
+            "id": 1
+          }
+        }
+      },
+      "act_path_enlighten_history_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "act_path_enlighten_history_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "path_info": {
+            "rule": "repeated",
+            "type": "type.p_path_history",
+            "id": 2
+          }
+        }
+      },
+      "act_path_use_plan_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_path_use_plan_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_path_change_plan_name_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "act_path_change_plan_name_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_strategy_s_equip_use_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "use_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_strategy_s_equip_use_s2c": {
+        "fields": {
+          "use_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_sheep_a_sheep_use_c2s": {
+        "fields": {
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_sheep_a_sheep_use_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_star_rain_local_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_star_rain_local_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sum_star": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "star_process": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "stage_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "got_ids": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 6,
+            "options": {
+              "packed": false
+            }
+          },
+          "must_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          },
+          "replace_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 8
+          },
+          "stage_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 9
+          },
+          "report_list": {
+            "rule": "repeated",
+            "type": "type.p_act_draw_report",
+            "id": 10
+          }
+        }
+      },
+      "act_star_rain_local_draw_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_star_rain_local_draw_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          },
+          "drop_id_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_star_rain_local_update_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sum_star": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "star_process": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_star_rain_local_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_star_rain_local_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "got_ids": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_star_rain_local_replace_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_star_rain_local_replace_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "choose_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_star_rain_local_history_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_star_rain_local_history_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "history_list": {
+            "rule": "repeated",
+            "type": "type.p_act_star_rain_history",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_quest_house_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "exp": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "building_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          },
+          "pet_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "quest_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 6,
+            "options": {
+              "packed": false
+            }
+          },
+          "finish_quest_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          }
+        }
+      },
+      "act_quest_house_deal_quest_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "dispatch_pet_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_quest_house_deal_quest_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "rate": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "exp": {
+            "rule": "required",
+            "type": "int32",
+            "id": 4
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "pet_info_list": {
+            "rule": "repeated",
+            "type": "type.p_pet_quest_result",
+            "id": 6
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          }
+        }
+      },
+      "act_quest_house_pet_unlock_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_pet_unlock_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_pet_upgrade_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_pet_upgrade_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "new_pet_info": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_building_unlock_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_building_unlock_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_building_upgrade_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_quest_house_building_upgrade_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "new_lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_quest_house_refresh_s2c": {
+        "fields": {
+          "quest_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_combo_game_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_combo_game_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "act_day": {
+            "type": "uint32",
+            "id": 2
+          },
+          "chapter_info": {
+            "rule": "repeated",
+            "type": "type.p_mini_game_chapter",
+            "id": 3
+          },
+          "history_score": {
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "act_combo_game_chapter_start_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "chapter_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_combo_game_chapter_start_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "chapter_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_combo_game_chapter_result_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "chapter_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value_string",
+            "id": 4
+          }
+        }
+      },
+      "act_combo_game_chapter_result_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "chapter_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value_string",
+            "id": 4
+          }
+        }
+      },
+      "act_combo_game_rank_start_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_combo_game_rank_start_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_combo_game_rank_result_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_combo_game_rank_result_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "history_score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "is_new_high": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "act_rowing_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_rowing_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "team_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "team_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          },
+          "winner": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "act_rowing_choose_team_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "team_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_rowing_donate_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_rowing_donate_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cost_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_get_joys_game_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_get_joys_game_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_get_joys_game_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_scratch_off_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_scratch_off_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_info": {
+            "rule": "repeated",
+            "type": "type.p_scratch_off_result",
+            "id": 2
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_scratch_off_open_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "index_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_scratch_off_open_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_turn_card_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_turn_card_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_turn_card_claim_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_turn_card_claim_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_plant_search_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "content": {
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_search_s2c": {
+        "fields": {
+          "list": {
+            "rule": "repeated",
+            "type": "type.p_friend_info",
+            "id": 1
+          },
+          "friend_be_help": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_info_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_plant_tree_info_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "tree_id": {
+            "type": "uint32",
+            "id": 2
+          },
+          "round_id": {
+            "type": "uint32",
+            "id": 3
+          },
+          "round": {
+            "type": "uint32",
+            "id": 4
+          },
+          "growth": {
+            "type": "uint32",
+            "id": 5
+          },
+          "round_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 6,
+            "options": {
+              "packed": false
+            }
+          },
+          "water_times": {
+            "type": "uint32",
+            "id": 7
+          },
+          "next_add_time": {
+            "type": "uint32",
+            "id": 8
+          }
+        }
+      },
+      "act_plant_tree_water_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_water_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "type": "uint32",
+            "id": 2
+          },
+          "add_growth": {
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_plant_tree_select_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "tree_id": {
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_select_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "tree_id": {
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_plant_tree_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "round": {
+            "type": "uint32",
+            "id": 2
+          },
+          "round_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_plant_tree_friend_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_plant_tree_friend_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "times_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          },
+          "friend_be_help": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          },
+          "be_help_times": {
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "act_plant_tree_record_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_plant_tree_record_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "be_help_times": {
+            "type": "uint32",
+            "id": 2
+          },
+          "list": {
+            "rule": "repeated",
+            "type": "type.p_act_plant_record",
+            "id": 3
+          }
+        }
+      },
+      "act_plant_tree_target_info_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_target_info_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "tree_id": {
+            "type": "uint32",
+            "id": 2
+          },
+          "round_id": {
+            "type": "uint32",
+            "id": 3
+          },
+          "round": {
+            "type": "uint32",
+            "id": 4
+          },
+          "growth": {
+            "type": "uint32",
+            "id": 5
+          },
+          "round_rewards": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 6,
+            "options": {
+              "packed": false
+            }
+          },
+          "help_times": {
+            "type": "type.p_key_value",
+            "id": 7
+          },
+          "be_help_times": {
+            "type": "uint32",
+            "id": 8
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 9
+          },
+          "head": {
+            "type": "type.p_head",
+            "id": 10
+          },
+          "name": {
+            "type": "string",
+            "id": 11
+          }
+        }
+      },
+      "act_plant_tree_help_c2s": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "act_plant_tree_help_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "add_growth": {
+            "type": "uint32",
+            "id": 2
+          },
+          "help_times": {
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "act_plant_tree_time_update_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "water_times": {
+            "type": "uint32",
+            "id": 2
+          },
+          "next_add_time": {
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_plant_tree_growth_update_s2c": {
+        "fields": {
+          "act_type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "growth": {
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_move_enter_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "type.p_pos",
+            "id": 2
+          }
+        }
+      },
+      "act_move_enter_s2c": {
+        "fields": {
+          "member_list": {
+            "rule": "repeated",
+            "type": "type.p_act_move_member",
+            "id": 1
+          }
+        }
+      },
+      "act_move_exit_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_move_exit_s2c": {
+        "fields": {}
+      },
+      "act_move_move_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 2
+          }
+        }
+      },
+      "act_move_move_s2c": {
+        "fields": {}
+      },
+      "act_move_broadcast_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "action_member": {
+            "rule": "required",
+            "type": "type.p_act_move_member",
+            "id": 3
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 4
+          },
+          "emoji": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          }
+        }
+      },
+      "act_move_emoji_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_move_emoji_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_move_reward_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_move_reward_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_cnt": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "act_move_reward_claim_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "random_pet_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_move_reward_claim_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_spring_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_spring_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "stage": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_spring_room_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_spring_room_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "my_room": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "room_list": {
+            "rule": "repeated",
+            "type": "type.p_act_spring_room",
+            "id": 3
+          }
+        }
+      },
+      "act_spring_enter_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "room_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_spring_enter_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "room_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "role_n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "role_list": {
+            "rule": "repeated",
+            "type": "type.p_act_spring_role",
+            "id": 4
+          },
+          "question_n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "act_spring_exit_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_spring_exit_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_spring_question_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_spring_question_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "question_n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "question_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "question_stage": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "question_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "my_answer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "answer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          },
+          "right_n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_act_spring_role",
+            "id": 9
+          }
+        }
+      },
+      "act_spring_move_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 2
+          }
+        }
+      },
+      "act_spring_move_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "my_answer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_spring_broadcast_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "action_member": {
+            "rule": "required",
+            "type": "type.p_act_spring_role",
+            "id": 4
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 5
+          }
+        }
+      },
+      "act_chat_reward_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_chat_reward_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "act_blind_box_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_blind_box_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "open_status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "box_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "act_blind_box_open_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "box_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_pay_launch_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_pay_launch_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "current_day": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_act_pay_launch_reward",
+            "id": 3
+          }
+        }
+      },
+      "act_pay_launch_buy_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_pay_launch_buy_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_type_progress_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_type_progress_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "progress": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_cross_limited_rank_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_cross_limited_rank_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "group_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "task_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_limited_rank_task",
+            "id": 3
+          }
+        }
+      },
+      "act_cross_limited_rank_group_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_cross_limited_rank_group_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "serv_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_cross_limited_rank_task_update_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "update_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_limited_rank_task",
+            "id": 2
+          }
+        }
+      },
+      "act_cross_limited_rank_task_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "small_group_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_cross_limit_rank_calendar_c2s": {
+        "fields": {}
+      },
+      "act_cross_limit_rank_calendar_s2c": {
+        "fields": {
+          "calendars": {
+            "rule": "repeated",
+            "type": "type.p_act_calendar",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_danjon_meshi_pos",
+            "id": 5
+          },
+          "max_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "act_danjon_meshi_click_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_danjon_meshi_click_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "pos_info": {
+            "rule": "required",
+            "type": "type.p_danjon_meshi_pos",
+            "id": 3
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          }
+        }
+      },
+      "act_danjon_meshi_battle_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "act_danjon_meshi_battle_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "pos_info": {
+            "rule": "required",
+            "type": "type.p_danjon_meshi_pos",
+            "id": 6
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 7
+          }
+        }
+      },
+      "act_danjon_meshi_box_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "act_danjon_meshi_box_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "pos_info": {
+            "rule": "required",
+            "type": "type.p_danjon_meshi_pos",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          }
+        }
+      },
+      "act_danjon_meshi_next_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_next_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_cooking_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "goods_ids": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "act_danjon_meshi_cooking_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "add_exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "food_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 6
+          }
+        }
+      },
+      "act_danjon_meshi_dinner_info_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_dinner_info_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "next_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "exp": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "reward_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          },
+          "next_reward_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          }
+        }
+      },
+      "act_danjon_meshi_dinner_reward_c2s": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "act_danjon_meshi_dinner_reward_s2c": {
+        "fields": {
+          "act_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "next_reward_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_act_calendar",
+    "p_act_custom_mall",
+    "p_act_custom_mall_receive",
+    "p_act_custom_mall_role",
+    "p_act_draw_report",
+    "p_act_move_member",
+    "p_act_pay_launch_reward",
+    "p_act_plant_record",
+    "p_act_spring_role",
+    "p_act_spring_room",
+    "p_act_star_rain_history",
+    "p_cross_limited_rank_task",
+    "p_danjon_meshi_pos",
+    "p_friend_info",
+    "p_head",
+    "p_key_kv_list",
+    "p_key_string",
+    "p_key_value",
+    "p_key_value_string",
+    "p_mine_cell",
+    "p_mini_game_chapter",
+    "p_path_history",
+    "p_path_info",
+    "p_pet_quest_result",
+    "p_pos",
+    "p_reward",
+    "p_scratch_off_result",
+    "p_tanabata_teammate_info",
+    "p_treasure_hunt_gift",
+    "p_treasure_hunt_report",
+    "p_unlock_tree",
+    "p_yfs_pool"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}
