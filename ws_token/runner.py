@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 from ws_token import guild, league_solo, main_tasks, steward
-from ws_token.client import WSGameClient, WSError, WSLoginError
+from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
 from ws_token.creds import load_creds
 
 logger = logging.getLogger(__name__)
@@ -43,6 +43,11 @@ logger = logging.getLogger(__name__)
 # Seconds to wait after connect for the login-time PUSH frames (task_all /
 # daily_point / weekly_box) to drain before snapshotting the main-task state.
 _PUSH_SETTLE_S: float = 1.5
+
+# Short probe timeout for the event-gated guild treasure read: a dormant 尋寶
+# event never answers guild_treasure_info, so don't block the daily run on the
+# full call timeout when we're only checking whether a round is live.
+_TREASURE_PROBE_S: float = 6.0
 
 LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = ("main_tasks", "league_solo", "guild", "steward")
@@ -93,16 +98,30 @@ def _run_league_solo(client) -> dict:
 
 
 def _run_guild(client, *, spend: bool) -> dict:
-    """help_all (free); donate (spend); treasure open only with an active round."""
+    """help_all (free); donate (spend); treasure open only with an active round.
+
+    Guild treasure (尋寶) is event-gated: when no round is running the server
+    does not answer guild_treasure_info at all, which surfaces as a
+    :class:`WSTimeoutError`. So the treasure read is (a) only done under
+    ``spend`` (we would never open it otherwise) and (b) wrapped so a dormant
+    event is skipped without failing the whole guild task — help / donate still
+    count. A short probe timeout keeps a dormant event from stalling the run.
+    """
     summary: dict = {"help": None, "donate": None, "treasure": None}
     summary["help"] = guild.help_all(client)
-    if spend:
-        summary["donate"] = guild.donate_until_capped(client)
-    # Treasure is event-gated: only open when a round is active (round != 0 and
-    # there are boxes). A dormant event simply reports round=0 -> skip silently.
-    info = guild.list_treasure(client)
-    if spend and getattr(info, "round", 0) and getattr(info, "box_list", None):
+    if not spend:
+        return summary
+    summary["donate"] = guild.donate_until_capped(client)
+    try:
+        info = guild.list_treasure(client, timeout=_TREASURE_PROBE_S)
+    except WSTimeoutError:
+        summary["treasure"] = "unavailable (dormant event)"
+        logger.info("ws_token runner: guild treasure dormant (no response), skipped")
+        return summary
+    if getattr(info, "round", 0) and getattr(info, "box_list", None):
         summary["treasure"] = guild.open_all_treasure(client)
+    else:
+        summary["treasure"] = "no active round"
     return summary
 
 

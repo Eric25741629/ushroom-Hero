@@ -288,6 +288,42 @@ def test_guild_treasure_opened_when_round_active(patched, monkeypatch):
     assert ("guild", "open_all_treasure") in {(t, a) for t, a in calls}
 
 
+def test_guild_treasure_timeout_is_skipped_not_fatal(patched, monkeypatch):
+    """A dormant 尋寶 event never answers guild_treasure_info -> WSTimeoutError.
+
+    Under spend the runner must skip treasure gracefully: help + donate still
+    count, the guild task is NOT recorded as an error, and open is not attempted.
+    (Regression: a raw list_treasure timeout used to fail the whole guild task.)
+    """
+    calls, _ = patched
+
+    def timeout_treasure(c, **k):
+        calls.append(("guild", "list_treasure"))
+        raise WSTimeoutError("no response for cmd=7459")
+
+    monkeypatch.setattr(runner.guild, "list_treasure", timeout_treasure)
+
+    rep = run_device("dev", spend=True)
+
+    assert "guild" not in rep.errors          # treasure timeout did NOT fail guild
+    assert "guild" in rep.tasks
+    actions = {(t, a) for t, a in calls}
+    assert ("guild", "help_all") in actions
+    assert ("guild", "donate_until_capped") in actions
+    assert ("guild", "open_all_treasure") not in actions
+    assert rep.tasks["guild"]["treasure"] == "unavailable (dormant event)"
+
+
+def test_guild_treasure_not_read_when_free(patched):
+    """spend=False must not even probe treasure (it is spend-gated), so a dormant
+    event never costs the free daily run a timeout."""
+    calls, _ = patched
+
+    run_device("dev", spend=False)
+
+    assert ("guild", "list_treasure") not in {(t, a) for t, a in calls}
+
+
 # --- login failure ----------------------------------------------------------
 
 def test_login_failure_records_error_and_runs_no_tasks(patched, monkeypatch):
