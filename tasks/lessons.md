@@ -1,5 +1,31 @@
 # Lessons learned
 
+## 2026-06-08 Codex companion 背景任務：別信 stale `status: running`，要驗 PID
+
+- **User 指正:「真的有再跑嗎 我怎麼連shell都沒有看到」→「我這邊看他就是沒有再跑啊」。**
+  我把飛寵修正委派給 `codex:codex-rescue`,subagent 回「已送出背景處理」就返回。我去查
+  `codex-companion.mjs status --json` 看到 `status: running` / `elapsed` 還在累加,就跟 user 說
+  「有在跑」。**錯。** 那個 process(pid 22828)其實早就死了 — companion 的狀態檔停在 stale 的
+  "running",`elapsed` 是用 startedAt 現算的假值。實測 `Get-Process -Id <pid>` = False、log 檔
+  16 分鐘沒再寫 → 才是真相。
+
+- **Rule**: codex(或任何 detached 背景 job)宣稱「running」前,**一定要驗真實存活訊號**,不能只看
+  狀態欄位:(1) `Get-Process -Id <pid>` 是否存在;(2) log 檔 `LastWriteTime` 是否還在前進。
+  兩者其一死了就是任務已停,不管狀態檔寫什麼。
+
+- **Codex companion runtime 機制**(踩過一次記下來):
+  - task 跑在**獨立 detached process**,不是 Claude Code 的 Bash shell → UI 看不到 shell 是正常的。
+  - subagent 是 thin forwarder,送出 task 後**立刻返回**,不會等完成、也不保證有完成通知 →
+    要自己用背景輪詢(`status --json` 的 `running` 長度歸零)或盯 log/PID 才知道結束。
+  - process 若 crash,companion **無法**自動把 job 標 finished;`cancel` 會吐
+    `thread not found`(live thread 已隨 process 消失)→ job 永遠卡 "running",連帶
+    `task-resume-candidate` 回 `available:false`,resume 被擋。
+  - 解法:手動把 stale job 在 `state.json` + `jobs/<id>.json` 兩處的 `status/phase` 改成
+    `failed`、`pid:null`、補 `completedAt` → `running` 歸零、resume candidate 變 available →
+    才能 `task --resume` 接回同一條 thread(threadId 不變,rollout 還在,脈絡保留)。
+  - 路徑:`~/.claude/plugins/data/codex-openai-codex/state/workspace-<hash>/`(`state.json` +
+    `jobs/<job-id>.{json,log}`)。
+
 ## 2026-06-05 挖礦 cluster 量測：單張快照會漏判跨時間的結構
 
 - **User 指正：「無 3x3 有 只是可能 log 無法完全顯示出來 你應該追蹤的是 pit 下去計算回放」。**
