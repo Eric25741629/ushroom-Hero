@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-06-09 ws_token 任務批次 + live 驗證 session
+
+- **別把上一輪「未驗證的結論」當事實複述。** 交接檔 `tasks/ws_token_backend_todo.md` 寫「小寶神燈=0(被驗證跑開光)」,更早的 session 顯然把它當事實講過 → User 開場就「我明明小寶帳號還有神燈 你在欺騙我」,後來明說「小寶神燈數量是71萬個」。**Rule**:handoff/交接裡的數值結論一律標「待驗」,引用時實際 re-verify;絕不把別人(或過去自己)未當場驗證的數字當事實轉述。User 對此極敏感(等同欺騙)。
+
+- **工具參數裡的中文會 mangle。** 我 `AskUserQuestion` 的選項「採購掃蕩」顯示成「採購掜蕩」(掃 U+6383 變成別的字),User 因此看不懂、漏勾了他其實要的「副本掃蕩」。**Rule**:tool 參數(尤其選項 label)中文用字要簡單、避開罕用/易 mangle 字;關鍵選項加英文/代碼旁註(例:`副本掃蕩 (dungeon sweep)`)。
+
+- **smoke/CLI 的 argparse bug 不會被模組單測抓到。** guild build agent 加了 `--help` 旗標跟 argparse 內建 `-h/--help` 衝突 → smoke 一啟動就 crash,但 27 個模組單測全綠(它們測 guild 模組、不碰 smoke argparse)。**Rule**:smoke/CLI runner 至少要被「`--help`/空跑 parse」掃過一次(或驗收時實跑一次 dry-run);別用保留字當旗標名。
+
+- **離線測試綠 ≠ live 能動;活動制功能會休眠。** 兩個只在 live 才現形:(1) 上面的 argparse crash;(2) `guild_treasure_info`(7459)在「該家族沒在跑尋寶輪」時 server **完全不回** → `client.call` timeout → smoke crash。**Rule**:(a) 宣稱任務「完成」前一定 live 驗一次真實 send/讀;(b) 日常自動化遇到「功能休眠→server 不回→WSTimeoutError」要當「現在不可用,skip」優雅處理,不能讓整條讀路徑掛掉。錯誤碼 **159 = 已領/已滿**(家族捐獻、league_solo 寶箱共用),當「已領」跳過不 abort。
+
 ## 2026-06-08 Codex companion 背景任務：別信 stale `status: running`，要驗 PID
 
 - **User 指正:「真的有再跑嗎 我怎麼連shell都沒有看到」→「我這邊看他就是沒有再跑啊」。**

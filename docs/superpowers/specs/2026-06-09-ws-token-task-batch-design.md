@@ -166,3 +166,17 @@ CDP 匯出需小寶瀏覽器在跑且 9226 可連;若沒開,請使用者開「�
 - steward 採購清單來源(config 預設 vs 使用者指定)→ Phase 0 看 config 後決定。
 - 主畫面任務能否純 WS 領 → recon 後評估,可能只能領「已達成未領」。
 - 各 greenfield 任務的失敗碼(0x0201 vs 任務內 code)→ live 確認。
+
+## 12. Recon + Live 驗證更正 (2026-06-09 當日)
+
+**Recon 釘死(CDP read-only 匯出,欄位號權威)**:`WORKER_COMMON_PROTO_SCHEMA.json`(家園管家)、`TASK/COLLECTION/HOME/ACT2_PROTO_SCHEMA.json`。
+
+**§4.3 挖礦更正**:挖一格的 cmd 是 `home_mine_use_goods` **0x0C03** `{goods_id#1, block_id#2}`,**不是** `home_mine_hole_update`(0x0C21 = `is_notice` 通知開關)。盤面 `home_mine_info_s2c {max_num#1, next_time#2, area#3, baseline#4, actives#5, area_info#6:p_key_value[], blocks#7:p_mine_block[], holes#8:p_mine_hole[]}`。既有解碼器 `utils/web_game_api.parse_mine_board`。道具現量靠 0x0402 push(非 max_num)。
+
+**§4.4 魔法劇場更正**:不是 act2 riceParty。魔法劇場(幻劇寶箱)與烈焰山洞(熔岩寶箱)**共用** `dungeon.dungeon_league_solo_get_reward` **0x0E0F** `{type#1}`:type **1/2 = 熔岩(烈焰山洞,每日)**、**3/4 = 幻劇(魔法劇場,每週)**。協議已在 `DUNGEON_PROTO_SCHEMA.json`。→ **烈炎山洞(原 §10 out-of-scope)自動併入同一個 `league_solo` 任務**。box `p_league_solo_box{type,count,got_count,rare_offer_name}`,可領=count>got_count,領滿回 error 159。
+
+**Phase 2 Live 驗證(5554 @google,真實 WS 連線):**
+- **steward**:login code=0✅;購物管家(id1)+副本管家(id2)**都在期**;購物採購掃蕩✅(掃 9 店,買 item 1024×1 / 6021×10);副本掃蕩✅(送 `2:1:1` → chapter 2「突襲神燈小偷」code=0,獎勵 **{1001: 52} = 52 顆神燈**)→ **`sweep_list[].id` = chapter id(1-12)確認**;`level=1/times=1` server 照收。`buy_service.day_num` 續期語義**未驗**(兩服務在期、不需 renew)。
+- **guild**:login✅;help_info 解出真實求助(`num=20`)✅;help_status✅;**捐獻✅(捐 5 次到上限,error 159)**;treasure 休眠(該家族無尋寶輪→server 不回→已改容錯 skip)。
+- **修正**:`guild_smoke.py` `--help`→`--answer-help`(argparse 與內建衝突)、`_read_only` 容錯 `WSTimeoutError`(休眠功能 skip 不 crash)。
+- 帳號對照:小寶 `7fe98fc6`=`27399634 kenken@gmail`(獨立);5554 閃電=`27353216 @google`。**小寶神燈=710,000**(交接檔「燈=0」為誤)。
