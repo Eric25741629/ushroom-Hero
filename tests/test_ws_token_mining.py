@@ -1,0 +1,272 @@
+"""Tests for ws_token.mining + ws_token.mining_adapter — OFFLINE only.
+
+The board/builders/inventory/grid layers are exercised against synthetic
+home_mine_info bodies built with the ws_token codec; NO real socket and NO
+``plan_v4`` call (importing the planner is safe, but we keep tests decoupled
+from miner so they never risk pulling torch/cv2). The dig orchestrators
+(``dig``/``get_reward``) are intentionally NOT exercised — mining live is
+human-supervised because it mutates the real board / burns pickaxes.
+
+Protocol (docs/protocol/HOME_PROTO_SCHEMA.json + TYPE_PROTO_SCHEMA.json):
+  home_mine_info_s2c {max_num#1, next_time#2, area#3, baseline#4, actives#5:uint32[],
+                      area_info#6:p_key_value[], blocks#7:p_mine_block[], holes#8:p_mine_hole[]}
+  p_mine_block       {id#1, x#2, y#3, config_id#4, count#5, is_reward#6}
+  p_mine_hole        {config_id#1, last_num#2, max_num#3, hole_num#4}
+  p_key_value        {k#1, v#2}
+  home_mine_use_goods_c2s {goods_id#1, block_id#2}
+  home_mine_get_reward_c2s {block_id#1}
+  home_mine_auto_use_goods_c2s {gtid#1:int32, auto_type#2, num#3:int32}
+Inventory現量 only from 0x0402 push (evt 9800001 consume / 9800009 gain).
+"""
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ws_token import codec  # noqa: E402
+from ws_token.mining import (  # noqa: E402
+    GOODS_BOMB,
+    GOODS_DRILL,
+    GOODS_PICKAXE,
+    InventoryTracker,
+    MineBlock,
+    MineBoard,
+    MineHole,
+    build_auto_use_goods_body,
+    build_get_reward_body,
+    build_use_goods_body,
+    parse_board,
+)
+from ws_token.mining_adapter import (  # noqa: E402
+    board_to_grid,
+    grid_pos_to_block_id,
+)
+
+
+# --- body builders (mirror the live wire layout for synthetic fixtures) -----
+
+def _block(block_id, x, y, config_id, count, is_reward=0):
+    return (codec.pb_uint(1, block_id) + codec.pb_uint(2, x) + codec.pb_uint(3, y)
+            + codec.pb_uint(4, config_id) + codec.pb_uint(5, count)
+            + codec.pb_uint(6, is_reward))
+
+
+def _hole(config_id, last_num, max_num, hole_num):
+    return (codec.pb_uint(1, config_id) + codec.pb_uint(2, last_num)
+            + codec.pb_uint(3, max_num) + codec.pb_uint(4, hole_num))
+
+
+def _kv(k, v):
+    return codec.pb_uint(1, k) + codec.pb_uint(2, v)
+
+
+def _mine_info_body(*, max_num, next_time, area, baseline, actives=(),
+                    area_info=(), blocks=(), holes=()):
+    out = (codec.pb_uint(1, max_num) + codec.pb_uint(2, next_time)
+           + codec.pb_uint(3, area) + codec.pb_uint(4, baseline))
+    for a in actives:
+        out += codec.pb_uint(5, a)
+    for kv in area_info:
+        out += codec.pb_msg(6, kv)
+    for b in blocks:
+        out += codec.pb_msg(7, b)
+    for h in holes:
+        out += codec.pb_msg(8, h)
+    return out
+
+
+# --- parse_board ------------------------------------------------------------
+
+def test_parse_board_top_level_scalars():
+    body = _mine_info_body(max_num=114, next_time=1780000000, area=3, baseline=11003900)
+    board = parse_board(body)
+    assert isinstance(board, MineBoard)
+    assert board.max_num == 114
+    assert board.next_time == 1780000000
+    assert board.area == 3
+    assert board.baseline == 11003900
+
+
+def test_parse_board_decodes_actives_repeated():
+    body = _mine_info_body(max_num=1, next_time=0, area=1, baseline=0,
+                           actives=(101, 202, 303))
+    board = parse_board(body)
+    assert board.actives == [101, 202, 303]
+
+
+def test_parse_board_decodes_blocks_with_all_fields():
+    blk = _block(block_id=390006, x=6, y=3900, config_id=201, count=2, is_reward=1)
+    body = _mine_info_body(max_num=1, next_time=0, area=1, baseline=3900, blocks=(blk,))
+    board = parse_board(body)
+    assert len(board.blocks) == 1
+    b = board.blocks[0]
+    assert isinstance(b, MineBlock)
+    assert (b.block_id, b.x, b.y, b.config_id, b.count, b.is_reward) == (390006, 6, 3900, 201, 2, 1)
+
+
+def test_parse_board_decodes_holes():
+    h = _hole(config_id=7001, last_num=4, max_num=10, hole_num=2)
+    body = _mine_info_body(max_num=1, next_time=0, area=1, baseline=0, holes=(h,))
+    board = parse_board(body)
+    assert len(board.holes) == 1
+    hole = board.holes[0]
+    assert isinstance(hole, MineHole)
+    assert (hole.config_id, hole.last_num, hole.max_num, hole.hole_num) == (7001, 4, 10, 2)
+
+
+def test_parse_board_decodes_area_info_key_values():
+    body = _mine_info_body(max_num=1, next_time=0, area=2, baseline=0,
+                           area_info=(_kv(1, 5), _kv(2, 9)))
+    board = parse_board(body)
+    assert board.area_info == {1: 5, 2: 9}
+
+
+def test_parse_board_empty_body_is_safe():
+    board = parse_board(b"")
+    assert board.blocks == [] and board.holes == [] and board.actives == []
+
+
+# --- builders ---------------------------------------------------------------
+
+def test_build_use_goods_body_goods_first_then_block():
+    # home_mine_use_goods_c2s {goods_id#1, block_id#2}: goods first, then block.
+    assert build_use_goods_body(GOODS_PICKAXE, 390006) == (
+        codec.pb_uint(1, 4001) + codec.pb_uint(2, 390006))
+
+
+def test_build_use_goods_body_round_trips_via_walk():
+    body = build_use_goods_body(GOODS_BOMB, 12345)
+    d = codec.walk_dict(body)
+    assert d[1] == GOODS_BOMB == 4003
+    assert d[2] == 12345
+
+
+def test_build_get_reward_body_single_block_field():
+    assert build_get_reward_body(390006) == codec.pb_uint(1, 390006)
+
+
+def test_build_auto_use_goods_body_three_fields():
+    # home_mine_auto_use_goods_c2s {gtid#1, auto_type#2, num#3}
+    body = build_auto_use_goods_body(gtid=4001, auto_type=1, num=20)
+    d = codec.walk_dict(body)
+    assert d == {1: 4001, 2: 1, 3: 20}
+
+
+def test_goods_ids_match_mining_schema():
+    assert (GOODS_PICKAXE, GOODS_DRILL, GOODS_BOMB) == (4001, 4002, 4003)
+
+
+# --- InventoryTracker (fed synthetic 0x0402 pushes) -------------------------
+
+def _inv_push(evt_type, *entries):
+    """0x0402 body {event_type#1, items#2:{item_id#1, uid#2, new_count#3}[]}."""
+    out = codec.pb_uint(1, evt_type)
+    for item_id, new_count in entries:
+        sub = (codec.pb_uint(1, item_id) + codec.pb_uint(2, 9999999999)
+               + codec.pb_uint(3, new_count))
+        out += codec.pb_msg(2, sub)
+    return out
+
+
+def test_inventory_tracker_consume_event_updates_count():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 113)))
+    assert tracker.pickaxe == 113
+
+
+def test_inventory_tracker_gain_event_updates_count():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(9800009, (4002, 181)))
+    assert tracker.drill == 181
+
+
+def test_inventory_tracker_tracks_all_three_props():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 50), (4002, 60), (4003, 70)))
+    assert (tracker.pickaxe, tracker.drill, tracker.bomb) == (50, 60, 70)
+    assert tracker.counts == {4001: 50, 4002: 60, 4003: 70}
+
+
+def test_inventory_tracker_ignores_unrelated_event_type():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(5011, (4001, 999)))  # currency change, not item
+    assert tracker.pickaxe == 0
+    assert tracker.counts == {}
+
+
+def test_inventory_tracker_ignores_unrelated_cmd():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0504, _inv_push(9800001, (4001, 5)))  # lamp drop push, not inventory
+    assert tracker.pickaxe == 0
+
+
+def test_inventory_tracker_latest_count_wins():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 113)))
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 112)))
+    assert tracker.pickaxe == 112
+
+
+# --- mining_adapter.board_to_grid (NO plan_v4 call) -------------------------
+
+def _board(baseline, blocks):
+    return MineBoard(max_num=114, next_time=0, area=1, baseline=baseline,
+                     actives=[], area_info={}, blocks=blocks, holes=[])
+
+
+def test_board_to_grid_shape_is_7x6():
+    grid = board_to_grid(_board(0, []))
+    assert len(grid) == 7
+    assert all(len(row) == 6 for row in grid)
+
+
+def test_board_to_grid_empty_board_all_empty_label():
+    grid = board_to_grid(_board(0, []))
+    assert all(cell == "empty" for row in grid for cell in row)
+
+
+def test_board_to_grid_dirt_terrain_label():
+    # config_id 202 = 泥土 (1 hit) -> "dirt"
+    blk = MineBlock(block_id=6, x=6, y=0, config_id=202, count=1, is_reward=0)
+    grid = board_to_grid(_board(0, [blk]))
+    # baseline row (y == baseline) sits at viewport row 0; x=6 -> col 5 (1-indexed cols).
+    assert grid[0][5] == "dirt"
+
+
+def test_board_to_grid_rock_terrain_label():
+    # config_id 201 = 石頭 (>=2 hits) -> "rock"
+    blk = MineBlock(block_id=1, x=1, y=0, config_id=201, count=2, is_reward=0)
+    grid = board_to_grid(_board(0, [blk]))
+    assert grid[0][0] == "rock"
+
+
+def test_board_to_grid_pit_terrain_label():
+    # config_id 401 = 礦洞 -> reachable_pit (planner reward target)
+    blk = MineBlock(block_id=3, x=3, y=0, config_id=401, count=1, is_reward=1)
+    grid = board_to_grid(_board(0, [blk]))
+    assert grid[0][2] == "reachable_pit"
+
+
+def test_board_to_grid_depth_maps_to_rows():
+    # baseline=100: y=100 -> row 0, y=101 -> row 1, ... y=106 -> row 6.
+    blocks = [MineBlock(block_id=0, x=1, y=100 + r, config_id=202, count=1, is_reward=0)
+              for r in range(7)]
+    grid = board_to_grid(_board(100, blocks))
+    for r in range(7):
+        assert grid[r][0] == "dirt", f"row {r} expected dirt"
+
+
+def test_board_to_grid_block_outside_viewport_ignored():
+    # y far below the 7-row viewport must not raise / must be dropped.
+    blk = MineBlock(block_id=0, x=1, y=999, config_id=202, count=1, is_reward=0)
+    grid = board_to_grid(_board(0, [blk]))
+    assert all(cell == "empty" for row in grid for cell in row)
+
+
+def test_grid_pos_to_block_id_round_trips_depth_col():
+    # block_id = depth*100 + col, depth = baseline + row, col = x (1-indexed).
+    bid = grid_pos_to_block_id(baseline=11003900, row=2, col=5)
+    # depth = 11003902, col index 5 -> game col 6 -> block_id = 11003902*100 + 6
+    assert bid == 11003902 * 100 + 6
