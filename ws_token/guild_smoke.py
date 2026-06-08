@@ -3,7 +3,7 @@
   python -m ws_token.guild_smoke --device 7fe98fc6              # read-only (dry)
   python -m ws_token.guild_smoke --device 7fe98fc6 --donate     # actually donate
   python -m ws_token.guild_smoke --device 7fe98fc6 --treasure   # actually open boxes
-  python -m ws_token.guild_smoke --device 7fe98fc6 --help       # actually answer helps
+  python -m ws_token.guild_smoke --device 7fe98fc6 --answer-help # actually answer helps
   python -m ws_token.guild_smoke --device 7fe98fc6 --help-type 0
 
 DRY by default: only the info/list reads run unless an action flag is given.
@@ -15,29 +15,45 @@ from __future__ import annotations
 import argparse
 
 from ws_token import guild
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 from ws_token.creds import load_creds
 
 
 def _read_only(client: WSGameClient, help_type: int) -> None:
-    """The dry-run read path: dump donate state, treasure, help list + status."""
-    treasure = guild.list_treasure(client)
-    print(f"[guild] treasure round={treasure.round} my_open={treasure.my_open} "
-          f"boxes={len(treasure.box_list)} countdown={treasure.countdown}", flush=True)
-    for box in treasure.box_list:
-        print(f"  box n={box.n} pos={box.pos} open={box.open_num}/{box.open_limit} "
-              f"room={box.has_room}", flush=True)
+    """The dry-run read path: dump treasure, help list + status.
 
-    statuses = guild.list_help_status(client)
-    print(f"[guild] help_status: {len(statuses)} channel(s)", flush=True)
-    for st in statuses:
-        print(f"  type={st.type} sub_type={st.sub_type} status={st.status}", flush=True)
+    Each read is independent: a dormant/event-gated feature (e.g. guild treasure
+    when no round is active) makes the server simply not answer, which surfaces
+    as a WSTimeoutError. Treat that as "unavailable" and keep going, rather than
+    crashing the whole read path.
+    """
+    try:
+        treasure = guild.list_treasure(client)
+        print(f"[guild] treasure round={treasure.round} my_open={treasure.my_open} "
+              f"boxes={len(treasure.box_list)} countdown={treasure.countdown}", flush=True)
+        for box in treasure.box_list:
+            print(f"  box n={box.n} pos={box.pos} open={box.open_num}/{box.open_limit} "
+                  f"room={box.has_room}", flush=True)
+    except WSTimeoutError:
+        print("[guild] treasure: no response (event inactive / not in a treasure round)",
+              flush=True)
 
-    helps = guild.list_help(client, help_type)
-    print(f"[guild] help_info(type={help_type}): {len(helps)} request(s)", flush=True)
-    for h in helps:
-        print(f"  help_id={h.help_id} role={h.role_id} name={h.name!r} "
-              f"type={h.type} sub_type={h.sub_type} num={h.help_num}", flush=True)
+    try:
+        statuses = guild.list_help_status(client)
+        print(f"[guild] help_status: {len(statuses)} channel(s)", flush=True)
+        for st in statuses:
+            print(f"  type={st.type} sub_type={st.sub_type} status={st.status}", flush=True)
+    except WSTimeoutError:
+        print("[guild] help_status: no response", flush=True)
+
+    try:
+        helps = guild.list_help(client, help_type)
+        print(f"[guild] help_info(type={help_type}): {len(helps)} request(s)", flush=True)
+        for h in helps:
+            print(f"  help_id={h.help_id} role={h.role_id} name={h.name!r} "
+                  f"type={h.type} sub_type={h.sub_type} num={h.help_num}", flush=True)
+    except WSTimeoutError:
+        print(f"[guild] help_info(type={help_type}): no response", flush=True)
 
 
 def main() -> int:
@@ -49,7 +65,7 @@ def main() -> int:
                     help="actually donate (guild_donate) until capped")
     ap.add_argument("--treasure", action="store_true",
                     help="actually open treasure boxes (guild_treasure_open)")
-    ap.add_argument("--help", dest="do_help", action="store_true",
+    ap.add_argument("--answer-help", dest="do_help", action="store_true",
                     help="actually answer guildmate help requests (guild_help)")
     ap.add_argument("--daily-limit", type=int, default=None, dest="daily_limit",
                     help="cap for --help (remaining = daily_limit - daily_count)")
