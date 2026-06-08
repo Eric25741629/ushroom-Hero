@@ -1,0 +1,399 @@
+{
+  "housekeeper": [
+    {
+      "id": 1,
+      "type": 1,
+      "name": "購物管家",
+      "desc": "雇傭後開啟購物車功能",
+      "price": [
+        [
+          301,
+          3,
+          30000
+        ],
+        [
+          301,
+          7,
+          60000
+        ],
+        [
+          301,
+          15,
+          120000
+        ],
+        [
+          301,
+          30,
+          200000
+        ]
+      ]
+    },
+    {
+      "id": 2,
+      "type": 2,
+      "name": "副本管家",
+      "desc": "雇傭後開啟副本一鍵掃蕩功能",
+      "price": [
+        [
+          301,
+          3,
+          30000
+        ],
+        [
+          301,
+          7,
+          60000
+        ],
+        [
+          301,
+          15,
+          120000
+        ],
+        [
+          301,
+          30,
+          200000
+        ]
+      ]
+    }
+  ],
+  "shopping": [
+    {
+      "id": 1,
+      "type": 1,
+      "type_argu_list": [
+        1,
+        2,
+        3,
+        4,
+        8
+      ],
+      "mall_name": "特權卡",
+      "condition": []
+    },
+    {
+      "id": 2,
+      "type": 2,
+      "type_argu_list": [
+        2,
+        3
+      ],
+      "mall_name": "家族商店",
+      "condition": [
+        [
+          "openfunc",
+          35
+        ]
+      ]
+    },
+    {
+      "id": 3,
+      "type": 2,
+      "type_argu_list": [
+        8,
+        9
+      ],
+      "mall_name": "榮耀商店",
+      "condition": [
+        [
+          "openfunc",
+          66
+        ]
+      ]
+    },
+    {
+      "id": 4,
+      "type": 2,
+      "type_argu_list": [
+        10
+      ],
+      "mall_name": "積分商店",
+      "condition": [
+        [
+          "openfunc",
+          70
+        ]
+      ]
+    },
+    {
+      "id": 5,
+      "type": 2,
+      "type_argu_list": [
+        11
+      ],
+      "mall_name": "車友商行",
+      "condition": [
+        [
+          "openfunc",
+          77
+        ]
+      ]
+    },
+    {
+      "id": 6,
+      "type": 2,
+      "type_argu_list": [
+        18
+      ],
+      "mall_name": "星將商店",
+      "condition": [
+        [
+          "openfunc",
+          801
+        ]
+      ]
+    },
+    {
+      "id": 7,
+      "type": 2,
+      "type_argu_list": [
+        23
+      ],
+      "mall_name": "神秘商人",
+      "condition": [
+        [
+          "openfunc",
+          105
+        ]
+      ]
+    },
+    {
+      "id": 8,
+      "type": 2,
+      "type_argu_list": [
+        24
+      ],
+      "mall_name": "召喚靈石",
+      "condition": [
+        [
+          "openfunc",
+          107
+        ]
+      ]
+    },
+    {
+      "id": 9,
+      "type": 3,
+      "type_argu_list": [
+        1,
+        2
+      ],
+      "mall_name": "召喚商店",
+      "condition": []
+    }
+  ],
+  "chapter": [
+    {
+      "id": 1,
+      "type": 1,
+      "chapter_type": 11,
+      "chapter_name": "武魂試煉",
+      "chapter_banner": "",
+      "condition": [
+        [
+          "openfunc",
+          52
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonFate"
+    },
+    {
+      "id": 2,
+      "type": 2,
+      "chapter_type": 2,
+      "chapter_name": "突襲神燈小偷",
+      "chapter_banner": "jy_jydg_whslbn01",
+      "condition": [
+        [
+          "openfunc",
+          3
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonKeyType"
+    },
+    {
+      "id": 3,
+      "type": 2,
+      "chapter_type": 3,
+      "chapter_name": "挑戰冰巢龍穴",
+      "chapter_banner": "jy_jydg_whslbn05",
+      "condition": [
+        [
+          "openfunc",
+          4
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonKeyType"
+    },
+    {
+      "id": 4,
+      "type": 2,
+      "chapter_type": 8,
+      "chapter_name": "守衛殘垣古城",
+      "chapter_banner": "jy_jydg_whslbn06",
+      "condition": [
+        [
+          "openfunc",
+          12
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonKeyType"
+    },
+    {
+      "id": 5,
+      "type": 2,
+      "chapter_type": 9,
+      "chapter_name": "顛倒時序塔",
+      "chapter_banner": "jy_jydg_whslbn08",
+      "condition": [
+        [
+          "openfunc",
+          39
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonKeyType"
+    },
+    {
+      "id": 6,
+      "type": 2,
+      "chapter_type": 22,
+      "chapter_name": "探秘焚焰神殿",
+      "chapter_banner": "jy_jydg_whslbn07",
+      "condition": [
+        [
+          "openfunc",
+          73
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonKeyType"
+    },
+    {
+      "id": 7,
+      "type": 2,
+      "chapter_type": 28,
+      "chapter_name": "暗黑試煉-戰士",
+      "chapter_banner": "jy_jydg_whslbn03",
+      "condition": [
+        [
+          "openfunc",
+          81
+        ],
+        [
+          "pass_level",
+          14
+        ]
+      ],
+      "dungeon_class": "DungeonWing"
+    },
+    {
+      "id": 8,
+      "type": 2,
+      "chapter_type": 29,
+      "chapter_name": "暗黑試煉-弓手",
+      "chapter_banner": "jy_jydg_whslbn03",
+      "condition": [
+        [
+          "openfunc",
+          81
+        ],
+        [
+          "pass_level",
+          14
+        ]
+      ],
+      "dungeon_class": "DungeonWing"
+    },
+    {
+      "id": 9,
+      "type": 2,
+      "chapter_type": 30,
+      "chapter_name": "暗黑試煉-法師",
+      "chapter_banner": "jy_jydg_whslbn03",
+      "condition": [
+        [
+          "openfunc",
+          81
+        ],
+        [
+          "pass_level",
+          14
+        ]
+      ],
+      "dungeon_class": "DungeonWing"
+    },
+    {
+      "id": 10,
+      "type": 2,
+      "chapter_type": 36,
+      "chapter_name": "暗黑試煉-馭魂師",
+      "chapter_banner": "jy_jydg_whslbn03",
+      "condition": [
+        [
+          "openfunc",
+          81
+        ],
+        [
+          "pass_level",
+          14
+        ]
+      ],
+      "dungeon_class": "DungeonWing"
+    },
+    {
+      "id": 11,
+      "type": 2,
+      "chapter_type": 38,
+      "chapter_name": "神樹試煉",
+      "chapter_banner": "jy_jydg_whslbn02",
+      "condition": [
+        [
+          "openfunc",
+          104
+        ],
+        [
+          "pass_level",
+          1
+        ]
+      ],
+      "dungeon_class": "DungeonTree"
+    },
+    {
+      "id": 12,
+      "type": 2,
+      "chapter_type": 6,
+      "chapter_name": "征戰熔岩巨獸",
+      "chapter_banner": "jy_jydg_whslbn04",
+      "condition": [
+        [
+          "openfunc",
+          36
+        ]
+      ],
+      "dungeon_class": "DungeonSingleBoss"
+    }
+  ]
+}

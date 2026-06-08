@@ -1,0 +1,460 @@
+{
+  "family": "worker_common",
+  "module": 73,
+  "note": "cmd ids: c2s and s2c share the same id (module 73 / 0x49). Actual proto message names carry a 'worker_common_farm_' prefix (e.g. worker_common_farm_housekeeper_info_c2s).",
+  "cmd_ids": {
+    "worker_common.housekeeper_info": 18692,
+    "worker_common.buy_service": 18693,
+    "worker_common.set_switch": 18694,
+    "worker_common.switch_setting_info": 18695,
+    "worker_common.shopping": 18696,
+    "worker_common.shop_info": 18697,
+    "worker_common.set_shop_item": 18698,
+    "worker_common.dungeon_setting_info": 18699,
+    "worker_common.set_dungeon": 18700,
+    "worker_common.dungeon_sweep": 18701
+  },
+  "schema": {
+    "nested": {
+      "worker_common_farm_worker_setting_c2s": {
+        "fields": {
+          "team_cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "fertilizer_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          },
+          "fertilizer_time_rest": {
+            "type": "uint32",
+            "id": 3
+          },
+          "seed_used_seq_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "worker_common_farm_worker_setting_s2c": {
+        "fields": {
+          "worker_info": {
+            "rule": "required",
+            "type": "type.p_worker",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_get_other_role_info_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "team_cfg_id": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "worker_common_farm_get_other_role_info_s2c": {
+        "fields": {
+          "team_list": {
+            "rule": "repeated",
+            "type": "type.p_other_worker",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_shop_item_price_c2s": {
+        "fields": {}
+      },
+      "worker_common_farm_shop_item_price_s2c": {
+        "fields": {
+          "price_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          },
+          "tomorrow_price_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_info_c2s": {
+        "fields": {}
+      },
+      "worker_common_farm_housekeeper_info_s2c": {
+        "fields": {
+          "buy_housekeeper_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_buy_service_c2s": {
+        "fields": {
+          "day_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_switch_c2s": {
+        "fields": {
+          "switch_setting": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_switch_s2c": {
+        "fields": {
+          "switch_setting": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_switch_setting_info_c2s": {
+        "fields": {}
+      },
+      "worker_common_farm_housekeeper_switch_setting_info_s2c": {
+        "fields": {
+          "switch_setting": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_shopping_c2s": {
+        "fields": {}
+      },
+      "worker_common_farm_housekeeper_shopping_s2c": {
+        "fields": {
+          "shop_result": {
+            "rule": "repeated",
+            "type": "type.p_housekeeper_shopping_shop_result",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_shop_info_c2s": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_shop_info_s2c": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_shop_item_c2s": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_shop_item_s2c": {
+        "fields": {
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_dungeon_setting_info_c2s": {
+        "fields": {}
+      },
+      "worker_common_farm_housekeeper_dungeon_setting_info_s2c": {
+        "fields": {
+          "setting": {
+            "rule": "repeated",
+            "type": "type.p_key_kv_list",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_dungeon_c2s": {
+        "fields": {
+          "setting": {
+            "rule": "repeated",
+            "type": "type.p_key_kv_list",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_set_dungeon_s2c": {
+        "fields": {
+          "setting": {
+            "rule": "repeated",
+            "type": "type.p_key_kv_list",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_dungeon_sweep_c2s": {
+        "fields": {
+          "sweep_list": {
+            "rule": "repeated",
+            "type": "type.p_housekeeper_shopping_sweep_req",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_farm_housekeeper_dungeon_sweep_s2c": {
+        "fields": {
+          "result": {
+            "rule": "repeated",
+            "type": "type.p_housekeeper_shopping_sweep_result",
+            "id": 1
+          }
+        }
+      },
+      "worker_common_set_car_auto_pay_c2s": {
+        "fields": {
+          "team_cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_auto": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_park_in_lover": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "park_mode": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "defense_mode": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          }
+        }
+      }
+    }
+  },
+  "types": {
+    "type.p_housekeeper_shopping_shop_result": {
+      "fields": {
+        "id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "code": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "item_list": {
+          "rule": "repeated",
+          "type": "p_key_value",
+          "id": 3
+        }
+      }
+    },
+    "type.p_housekeeper_shopping_sweep_req": {
+      "fields": {
+        "id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "level": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "times": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        },
+        "use_ad": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 4
+        }
+      }
+    },
+    "type.p_housekeeper_shopping_sweep_result": {
+      "fields": {
+        "id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "code": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "reward_list": {
+          "rule": "repeated",
+          "type": "p_key_value",
+          "id": 3
+        }
+      }
+    },
+    "type.p_key_value": {
+      "fields": {
+        "k": {
+          "rule": "required",
+          "type": "int64",
+          "id": 1
+        },
+        "v": {
+          "rule": "required",
+          "type": "int64",
+          "id": 2
+        }
+      }
+    },
+    "type.p_key_kv_list": {
+      "fields": {
+        "k": {
+          "rule": "required",
+          "type": "int32",
+          "id": 1
+        },
+        "list": {
+          "rule": "repeated",
+          "type": "p_key_value",
+          "id": 2
+        }
+      }
+    },
+    "type.p_worker": {
+      "fields": {
+        "team_cfg_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "worker_base": {
+          "rule": "required",
+          "type": "p_worker_base",
+          "id": 2
+        },
+        "worker_status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        },
+        "auto_feed": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 4
+        },
+        "unlock_slot_num": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 5
+        },
+        "farm_worker_info": {
+          "type": "p_worker_farm_info",
+          "id": 6
+        },
+        "pw_worker_info": {
+          "type": "p_worker_pw_food_info",
+          "id": 7
+        },
+        "mine_worker_info": {
+          "type": "p_worker_mine_info",
+          "id": 8
+        },
+        "science_worker_info": {
+          "type": "p_worker_science_info",
+          "id": 9
+        },
+        "car_park_worker_info": {
+          "type": "p_worker_car_park",
+          "id": 10
+        }
+      }
+    },
+    "type.p_other_worker": {
+      "fields": {
+        "role_id": {
+          "rule": "required",
+          "type": "uint64",
+          "id": 1
+        },
+        "team_cfg_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "pet_info": {
+          "rule": "required",
+          "type": "p_pet",
+          "id": 3
+        },
+        "worker_status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 4
+        },
+        "fly_pet_list": {
+          "rule": "repeated",
+          "type": "p_fly_pet",
+          "id": 5
+        }
+      }
+    }
+  }
+}
