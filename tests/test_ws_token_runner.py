@@ -1,0 +1,376 @@
+"""Tests for ws_token.runner — the single-device daily task orchestrator.
+
+run_device builds ONE WSGameClient, connects once (background heartbeat), then
+runs every daily task in a fixed order with per-task isolation, and finally
+closes the client. These tests:
+
+  - verify the call ORDER of the per-task orchestrators,
+  - verify the spend gate (spend=False sends no cost actions; spend=True does),
+  - verify per-task isolation (one task raising WSTimeoutError does not abort the
+    others; its error is recorded on the RunReport),
+  - verify a login failure surfaces on the report without running any task.
+
+Tasks are isolated by monkeypatching the orchestrator functions on the
+``runner`` module's task-module references, so we assert against recorded calls
+rather than real WS round-trips. A separate end-to-end test drives the real
+task code over the FakeTransport responder to prove the wiring is sound.
+"""
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from ws_token import codec  # noqa: E402
+from ws_token import runner  # noqa: E402
+from ws_token.client import WSLoginError, WSTimeoutError  # noqa: E402
+from ws_token.runner import RunReport, run_device  # noqa: E402
+from tests.fakes.ws_fakes import (  # noqa: E402
+    CREDS,
+    FakeTransport,
+    factory_for,
+    s2c,
+)
+
+
+# --- fakes ------------------------------------------------------------------
+
+class _SpyClient:
+    """Stand-in for WSGameClient: records connect/close, returns a login dict."""
+
+    def __init__(self, *, login: dict | None = None, connect_error: Exception | None = None):
+        self._login = login if login is not None else {"code": 0, "role_id": 1, "serv_time": 99}
+        self._connect_error = connect_error
+        self.connected = False
+        self.closed = False
+
+    def connect(self) -> dict:
+        if self._connect_error is not None:
+            raise self._connect_error
+        self.connected = True
+        return self._login
+
+    def close(self) -> None:
+        self.closed = True
+
+
+@pytest.fixture
+def patched(monkeypatch):
+    """Patch client construction + every task orchestrator; record the call log.
+
+    Returns ``(calls, spy_holder)`` where ``calls`` is the ordered list of
+    ``(task, action)`` tuples and ``spy_holder["client"]`` is the SpyClient that
+    run_device constructed (so the test can assert connect/close).
+    """
+    calls: list[tuple[str, str]] = []
+    spy_holder: dict = {"client": None, "login": {"code": 0, "role_id": 1, "serv_time": 99}}
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(login=spy_holder["login"])
+        spy_holder["client"] = spy
+        spy_holder["push_handler"] = kwargs.get("push_handler")
+        return spy
+
+    def fake_load_creds(device, **kwargs):
+        return CREDS
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+    monkeypatch.setattr(runner, "load_creds", fake_load_creds)
+
+    # main_tasks
+    monkeypatch.setattr(runner.main_tasks, "collect_state",
+                        lambda c, col, **k: (calls.append(("main_tasks", "collect_state")) or "STATE"))
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_tasks",
+                        lambda c, st, **k: (calls.append(("main_tasks", "claim_daily_tasks")) or {"claimed": 0}))
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_box",
+                        lambda c, st, **k: (calls.append(("main_tasks", "claim_daily_box")) or False))
+    monkeypatch.setattr(runner.main_tasks, "claim_weekly_box",
+                        lambda c, st, **k: (calls.append(("main_tasks", "claim_weekly_box")) or False))
+    monkeypatch.setattr(runner.main_tasks, "claim_achievement",
+                        lambda c, **k: (calls.append(("main_tasks", "claim_achievement")) or {"claimed": 0}))
+
+    # league_solo
+    monkeypatch.setattr(runner.league_solo, "claim_available",
+                        lambda c, **k: (calls.append(("league_solo", "claim_available")) or {"claimed": 0}))
+
+    # guild
+    monkeypatch.setattr(runner.guild, "help_all",
+                        lambda c, **k: (calls.append(("guild", "help_all")) or {"helped": 0}))
+    monkeypatch.setattr(runner.guild, "donate_until_capped",
+                        lambda c, **k: (calls.append(("guild", "donate_until_capped")) or {"donated": 0}))
+    monkeypatch.setattr(runner.guild, "list_treasure",
+                        lambda c, **k: (calls.append(("guild", "list_treasure")) or _NoRound()))
+    monkeypatch.setattr(runner.guild, "open_all_treasure",
+                        lambda c, **k: (calls.append(("guild", "open_all_treasure")) or {"opened": 0}))
+
+    # steward
+    monkeypatch.setattr(runner.steward, "read_info",
+                        lambda c, **k: (calls.append(("steward", "read_info")) or _Info()))
+    monkeypatch.setattr(runner.steward, "run_shopping",
+                        lambda c, **k: (calls.append(("steward", "run_shopping")) or "SHOP"))
+    monkeypatch.setattr(runner.steward, "run_dungeon_sweep",
+                        lambda c, sl, **k: (calls.append(("steward", "run_dungeon_sweep")) or "SWEEP"))
+    monkeypatch.setattr(runner.steward, "ensure_active",
+                        lambda c, sid, **k: (calls.append(("steward", "ensure_active")) or True))
+
+    return calls, spy_holder
+
+
+class _NoRound:
+    """guild.list_treasure result with no active round (event dormant)."""
+    round = 0
+    my_open = 0
+    box_list: list = []
+
+
+class _Info:
+    """steward.read_info result; expiry empty => nothing expired/active."""
+    expiry: dict = {}
+
+
+# --- RunReport shape --------------------------------------------------------
+
+def test_run_report_is_frozen_dataclass():
+    rep = RunReport(device="dev", login_ok=True, spend=False, tasks={}, errors={})
+    assert rep.device == "dev"
+    with pytest.raises(Exception):
+        rep.device = "other"  # frozen
+
+
+# --- call order -------------------------------------------------------------
+
+def test_run_device_runs_tasks_in_fixed_order(patched):
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    # main_tasks first (and its sub-claims), then league_solo, guild, steward.
+    task_order = [t for t, _a in calls]
+    assert task_order.index("main_tasks") < task_order.index("league_solo")
+    assert task_order.index("league_solo") < task_order.index("guild")
+    assert task_order.index("guild") < task_order.index("steward")
+    assert rep.login_ok is True
+
+
+def test_run_device_main_tasks_collects_then_claims(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False)
+
+    mt = [a for t, a in calls if t == "main_tasks"]
+    assert mt[0] == "collect_state"
+    assert set(mt[1:]) == {
+        "claim_daily_tasks", "claim_daily_box", "claim_weekly_box", "claim_achievement"
+    }
+
+
+# --- spend gate -------------------------------------------------------------
+
+def test_spend_false_sends_no_cost_actions(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False)
+
+    actions = {(t, a) for t, a in calls}
+    # free reads/claims happened
+    assert ("main_tasks", "collect_state") in actions
+    assert ("league_solo", "claim_available") in actions
+    assert ("guild", "help_all") in actions
+    assert ("steward", "read_info") in actions
+    # NO cost actions
+    assert ("guild", "donate_until_capped") not in actions
+    assert ("steward", "run_shopping") not in actions
+    assert ("steward", "run_dungeon_sweep") not in actions
+
+
+def test_spend_true_adds_cost_actions(patched):
+    calls, _ = patched
+
+    # provide a sweep_list so the 副本管家 sweep is exercised (it is gated on a
+    # caller-supplied chapter list; with none configured the sweep is skipped).
+    run_device("dev", spend=True, sweep_list=[(1, 5, 10)])
+
+    actions = {(t, a) for t, a in calls}
+    assert ("guild", "donate_until_capped") in actions
+    assert ("steward", "run_shopping") in actions
+    assert ("steward", "run_dungeon_sweep") in actions
+
+
+def test_spend_true_skips_sweep_without_chapter_list(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=True)  # no sweep_list
+
+    actions = {(t, a) for t, a in calls}
+    # shopping still runs on spend, but the sweep is skipped (nothing configured)
+    assert ("steward", "run_shopping") in actions
+    assert ("steward", "run_dungeon_sweep") not in actions
+
+
+# --- per-task isolation -----------------------------------------------------
+
+def test_task_failure_does_not_abort_other_tasks(patched, monkeypatch):
+    calls, _ = patched
+
+    def boom(c, **k):
+        calls.append(("league_solo", "claim_available"))
+        raise WSTimeoutError("league_solo timed out")
+
+    monkeypatch.setattr(runner.league_solo, "claim_available", boom)
+
+    rep = run_device("dev", spend=False)
+
+    # league_solo failed, but guild + steward still ran afterwards.
+    assert any(t == "guild" for t, _a in calls)
+    assert any(t == "steward" for t, _a in calls)
+    # error recorded for league_solo, not for the others.
+    assert "league_solo" in rep.errors
+    assert "guild" not in rep.errors
+    assert "steward" not in rep.errors
+
+
+def test_each_task_isolated_when_first_raises(patched, monkeypatch):
+    calls, _ = patched
+
+    def boom(c, col, **k):
+        raise WSTimeoutError("main_tasks push read timed out")
+
+    monkeypatch.setattr(runner.main_tasks, "collect_state", boom)
+
+    rep = run_device("dev", spend=False)
+
+    assert "main_tasks" in rep.errors
+    # subsequent tasks still ran
+    assert any(t == "league_solo" for t, _a in calls)
+    assert any(t == "guild" for t, _a in calls)
+    assert any(t == "steward" for t, _a in calls)
+
+
+def test_client_is_closed_even_when_a_task_raises(patched, monkeypatch):
+    _calls, spy_holder = patched
+
+    monkeypatch.setattr(runner.guild, "help_all",
+                        lambda c, **k: (_ for _ in ()).throw(WSTimeoutError("x")))
+
+    run_device("dev", spend=False)
+
+    assert spy_holder["client"].closed is True
+
+
+# --- guild treasure is event-gated -----------------------------------------
+
+def test_guild_treasure_skipped_when_no_round(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=True)
+
+    # list_treasure returns round=0 -> open_all_treasure must NOT be called.
+    assert ("guild", "list_treasure") in {(t, a) for t, a in calls}
+    assert ("guild", "open_all_treasure") not in {(t, a) for t, a in calls}
+
+
+def test_guild_treasure_opened_when_round_active(patched, monkeypatch):
+    calls, _ = patched
+
+    class _ActiveRound:
+        round = 7
+        my_open = 2
+        box_list = [object()]
+
+    monkeypatch.setattr(runner.guild, "list_treasure",
+                        lambda c, **k: (calls.append(("guild", "list_treasure")) or _ActiveRound()))
+
+    run_device("dev", spend=True)
+
+    assert ("guild", "open_all_treasure") in {(t, a) for t, a in calls}
+
+
+# --- login failure ----------------------------------------------------------
+
+def test_login_failure_records_error_and_runs_no_tasks(patched, monkeypatch):
+    calls, spy_holder = patched
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(connect_error=WSLoginError("role_login failed: code=7"))
+        spy_holder["client"] = spy
+        return spy
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.login_ok is False
+    assert "login" in rep.errors
+    assert calls == []  # no task ran
+    # client still closed
+    assert spy_holder["client"].closed is True
+
+
+# --- end-to-end over the real task code + FakeTransport responder ----------
+
+def test_run_device_end_to_end_over_fake_transport(monkeypatch):
+    """Drive the REAL task orchestrators against a scripted responder to prove
+    the wiring (cmd ids, body building, push collection) is sound end-to-end."""
+    from ws_token import league_solo, main_tasks, steward
+
+    # main_tasks reads are PUSH-based; emit the login-time frames on login.
+    def login_with_pushes(cmd, body):
+        if cmd == 257:  # role_login
+            from tests.fakes.ws_fakes import login_ok
+            task_all = codec.pb_msg(1, codec.pb_uint(1, 10) + codec.pb_uint(2, 2)
+                                    + codec.pb_uint(3, 0) + codec.pb_uint(4, main_tasks.TYPE_DAILY))
+            return [login_ok(),
+                    s2c(main_tasks.CMD_ALL, task_all),
+                    s2c(main_tasks.CMD_DAILY_POINT, codec.pb_uint(1, 100)),
+                    s2c(main_tasks.CMD_WEEKLY_BOX, codec.pb_uint(1, 0))]
+        return None  # fall through to extra
+
+    extra = {
+        # main_tasks: claim the one claimable daily, achievement caught up
+        main_tasks.CMD_COMMIT: lambda b: [s2c(main_tasks.CMD_COMMIT, b"")],
+        main_tasks.CMD_ACHIEVEMENT: lambda b: [
+            s2c(main_tasks.CMD_ACHIEVEMENT,
+                codec.pb_uint(1, 5) + codec.pb_uint(2, 5) + codec.pb_uint(3, 0))],
+        # league_solo: no claimable boxes
+        league_solo.CMD_SOLO_INFO: lambda b: [s2c(league_solo.CMD_SOLO_INFO, b"")],
+        # guild: empty help list, no treasure round
+        runner.guild.CMD_HELP_INFO: lambda b: [
+            s2c(runner.guild.CMD_HELP_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
+        runner.guild.CMD_TREASURE_INFO: lambda b: [
+            s2c(runner.guild.CMD_TREASURE_INFO,
+                codec.pb_uint(1, 0) + codec.pb_uint(2, 0) + codec.pb_uint(4, 0))],
+        # steward: read info -> empty expiry (nothing active)
+        steward.CMD_INFO: lambda b: [s2c(steward.CMD_INFO, b"")],
+    }
+
+    def responder(cmd, body):
+        frames = login_with_pushes(cmd, body)
+        if frames is not None:
+            return frames
+        if cmd in extra:
+            return extra[cmd](body)
+        return []
+
+    fake = FakeTransport(responder)
+
+    def fake_make_client(creds, **kwargs):
+        from ws_token.client import WSGameClient
+        return WSGameClient(creds, transport_factory=factory_for(fake),
+                            heartbeat_enabled=False, **kwargs)
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+    # zero settle so the test does not sleep waiting for pushes
+    monkeypatch.setattr(runner, "_PUSH_SETTLE_S", 0.05)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.login_ok is True
+    assert rep.errors == {} or all(v is None for v in rep.errors.values())
+    assert "main_tasks" in rep.tasks
+    assert "league_solo" in rep.tasks
+    assert "guild" in rep.tasks
+    assert "steward" in rep.tasks
