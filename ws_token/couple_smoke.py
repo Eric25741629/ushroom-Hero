@@ -1,7 +1,7 @@
 """Live runner for 比格先生 / 伴侶 (spouse-favor) over pure WS — dry by default.
 
   python -m ws_token.couple_smoke --device 7fe98fc6                    # read (dry)
-  python -m ws_token.couple_smoke --device 7fe98fc6 --give-flowers 30  # send 30 奶茶 + 30 鮮花
+  python -m ws_token.couple_smoke --device 7fe98fc6 --give-flowers 30  # send 30 奶茶 + 30 玫瑰
   python -m ws_token.couple_smoke --device 7fe98fc6 --fetch-reward 5   # 默契考驗 favor_lv=5
   python -m ws_token.couple_smoke --device 7fe98fc6 --forge-ring       # 錘鍊 to 真愛之石 zero
 
@@ -9,7 +9,7 @@ Dry run reads marry_status (partner), favor_friend_info (partner list), and
 marry_ring_info (戒指 level/exp). Mutations target the FIRST partner.
 
 WARNING: logging in over WS kicks that account's active session (App / web / bot).
-Mutations are IRREVERSIBLE: --give-flowers sends NUM 奶茶 then NUM 鮮花 to the
+Mutations are IRREVERSIBLE: --give-flowers sends NUM 奶茶 then NUM 玫瑰 to the
 partner (親密度↑), --fetch-reward claims the weekly 默契考驗, --forge-ring consumes
 ALL 真愛之石. Inventory counts (奶茶/鮮花/真愛之石 在手幾個) are NOT readable here —
 they come from the login-time 0x0402 push — so NUM is EXPLICIT and live-confirm;
@@ -68,7 +68,7 @@ def main() -> int:
                 print("[couple] no partner — skipping --give-flowers", flush=True)
             else:
                 num = args.give_flowers
-                for goods, label in ((couple.MILK_TEA, "奶茶"), (couple.FLOWER, "鮮花")):
+                for goods, label in ((couple.MILK_TEA, "奶茶"), (couple.FLOWER, "玫瑰")):
                     out = couple.give_all(client, friend_id=friend_id,
                                           flower_id=goods, num=num)
                     print(f"[couple] give_all {label}({goods}) num={num}: "

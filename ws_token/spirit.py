@@ -202,6 +202,15 @@ def buy_summon_currency(
     """招喚貨幣: shop_buy {shop_type, shop_id, num}. SPENDS — caller-gated.
 
     Returns {ok, error_code}. A rejection replies on 0x0201 (e.g. 159 次數不足).
+
+    UNCONFIRMED/WARNING (2026-06-09): The item id 800003 (previously assumed as
+    招喚貨幣) does NOT appear anywhere in the game client source or configMall
+    (1502 rows scanned). The real summon currency is purchased from the 召喚
+    pay-mall (a premium/diamond gacha tab), NOT via the generic shop_buy path.
+    The correct shop_type + shop_id are UNKNOWN and must be verified via CDP
+    or live WS capture before this function can be safely used. Do NOT hardcode
+    800003 or any unverified shop_id. Pass the value explicitly and treat this
+    function as caller-gated until the path is confirmed.
     # live-confirm: shop_id 是 configMall 的招喚貨幣項,必須由呼叫端帶入,不可硬編。
     """
     reply_cmd, reply = client.call_for(
