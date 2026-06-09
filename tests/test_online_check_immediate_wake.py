@@ -40,6 +40,10 @@ def _fake_state(**overrides):
         check_skip_sleep=lambda ip: False,
         has_pending_web_launch_request=lambda ip: False,
         has_pending_online_check_request=lambda ip: False,
+        # Default checker list == legacy default config (only 5554 is a checker),
+        # so the early-wake gate (is_online_check_checker AND pending) fires for
+        # 5554 and never for other devices.
+        is_online_check_checker=lambda ip: ip == "emulator-5554",
         update_state=lambda *a, **k: None,
     )
     base.update(overrides)

@@ -224,19 +224,29 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
             return False
         return True
 
-    # --- 核心邏輯：5558 啟動前透過 5554 檢查帳號線上狀態 ---
-    if 'emulator-5558' in ip and not skip_online_check_once:
+    # --- 核心邏輯：requester 啟動前透過 checker 檢查帳號線上狀態 ---
+    # 解耦 (2026-06-09): 任何設定了 online_check_target_pid 的 requester 都會走
+    # 互檢；checker 不再寫死 5554（由 online_check_checkers 清單動態決定）。預設
+    # 只有 5558 設了 target_pid → 行為與舊版相同。is_online_check_checker(ip) 用來
+    # 避免 checker 自己對自己發起互檢。
+    _online_check_target_pid = config_manager.get_device_config(ip).get('online_check_target_pid')
+    _wants_online_check = (
+        bool(_online_check_target_pid)
+        and not skip_online_check_once
+        and not bot_state.is_online_check_checker(ip)
+    )
+    if _wants_online_check:
         while True:
             # Honor dashboard controls at every loop entry so the user can
             # pause / force-sleep / request-web-launch without waiting for
             # the full online_check_interval_sec to elapse.
             _honor_dashboard_controls(ip)
-            logger.info(f"[{ip}] 5558 等待 5554 狀態檢查(check_on_line request)...")
+            logger.info(f"[{ip}] 等待 checker 狀態檢查(check_on_line request)...")
             is_busy = True
             try:
                 req_id = bot_state.submit_online_check_request(
                     requester_ip=ip,
-                    checker_ip='emulator-5554',
+                    target_pid=_online_check_target_pid,
                 )
                 # Protocol path takes < 1s; OCR fallback takes 30-50s. 60s timeout
                 # comfortably covers both with margin.
@@ -245,32 +255,32 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
                 if status == 'done':
                     is_busy = bool(result.get('result_busy', True))
                     logger.info(
-                        f"[{ip}] 5554 online-check result: busy={is_busy}, detail={result.get('detail', '')}"
+                        f"[{ip}] checker online-check result: busy={is_busy}, detail={result.get('detail', '')}"
                     )
                 elif status in ('pending', 'processing'):
                     logger.info(
-                        f"[{ip}] 5554 online-check 尚未完成（status={status}），稍後重試"
+                        f"[{ip}] checker online-check 尚未完成（status={status}），稍後重試"
                     )
                     is_busy = True
                 else:
                     logger.warning(
-                        f"[{ip}] 5554 online-check failed: status={status}, error={result.get('error', '')}"
+                        f"[{ip}] checker online-check failed: status={status}, error={result.get('error', '')}"
                     )
                     is_busy = True
             except Exception as e:
-                logger.error(f"[{ip}] 檢查 5554 狀態失敗: {e}")
+                logger.error(f"[{ip}] 檢查 checker 狀態失敗: {e}")
                 is_busy = True
 
             if not is_busy:
-                logger.info(f"[{ip}] 5554 狀態可放行，5558 繼續喚醒")
+                logger.info(f"[{ip}] checker 狀態可放行，繼續喚醒")
                 break
 
             wait_sec = int(config_manager.get_device_config(ip).get("online_check_interval_sec", 30))
             wait_sec = max(1, wait_sec)
-            logger.info(f"[{ip}] 5558 在線中，{wait_sec} 秒後重新檢查")
+            logger.info(f"[{ip}] 帳號在線中，{wait_sec} 秒後重新檢查")
             for remain in range(wait_sec, 0, -1):
                 _honor_dashboard_controls(ip)
-                bot_state.update_state(ip, task="等待放行", step=f"5558在線中，{remain} 秒後重新檢查")
+                bot_state.update_state(ip, task="等待放行", step=f"帳號在線中，{remain} 秒後重新檢查")
                 time.sleep(1)
 
     # --- 直連設備喚醒流程 (fc65396d / 192.168) ---
@@ -324,8 +334,8 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         logger.info(f"[{ip}] 執行啟動分流，等待 5 分鐘...")
         deadline = time.time() + (60 * 5)
         while time.time() < deadline:
-            if 'emulator-5554' in ip and bot_state.has_pending_online_check_request('emulator-5554'):
-                logger.info(f"[{ip}] 偵測到 5558 的 online-check 請求，提前結束分流等待")
+            if bot_state.is_online_check_checker(ip) and bot_state.has_pending_online_check_request(ip):
+                logger.info(f"[{ip}] 偵測到 online-check 請求，提前結束分流等待")
                 break
             if bot_state.check_skip_sleep(ip):
                 logger.info(f"[{ip}] 收到 skip_sleep，提前結束分流等待")
@@ -334,11 +344,9 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
 
         # Checker 裝置若此時已有互檢請求，直接回主迴圈先處理 mailbox，
         # 不要繼續往下執行自己的 app_stop / 喚醒流程。
-        if 'emulator-5554' in ip:
-            if (
-                bot_state.has_pending_online_check_request('emulator-5554')
-            ):
-                logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 emulator-5558 上線檢查")
+        if bot_state.is_online_check_checker(ip):
+            if bot_state.has_pending_online_check_request(ip):
+                logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 requester 上線檢查")
                 return d
     elif '3a8d31f2' in ip:
         time.sleep(10)

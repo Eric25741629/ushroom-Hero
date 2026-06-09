@@ -241,11 +241,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 if not isinstance(d, MonitoredDevice):
                     d = MonitoredDevice(d, ip)
                 skip_online_check_once = False
-                if ip == 'emulator-5554':
-                    has_req = bot_state.has_pending_online_check_request('emulator-5554')
-                    has_priority = bot_state.is_online_check_priority_active('emulator-5554')
+                if bot_state.is_online_check_checker(ip):
+                    has_req = bot_state.has_pending_online_check_request(ip)
+                    has_priority = bot_state.is_online_check_priority_active(ip)
                     if has_req or has_priority:
-                        logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 emulator-5558 上線檢查")
+                        logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 requester 上線檢查")
                         time.sleep(0.2)
                         continue
 
@@ -420,10 +420,10 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             if interrupted and bot_state.has_pending_web_launch_request(ip) and time.time() < wake_ts:
                 resume_sleep_until_ts = wake_ts
                 resume_sleep_reason = "手動操作結束後返回休眠"
-            if interrupted and ip == "emulator-5554" and time.time() < wake_ts:
+            if interrupted and bot_state.is_online_check_checker(ip) and time.time() < wake_ts:
                 if (
-                    bot_state.has_pending_online_check_request("emulator-5554")
-                    or bot_state.is_online_check_priority_active("emulator-5554")
+                    bot_state.has_pending_online_check_request(ip)
+                    or bot_state.is_online_check_priority_active(ip)
                 ):
                     resume_sleep_until_ts = wake_ts
                     resume_sleep_reason = "互檢完成後返回休眠"

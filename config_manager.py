@@ -194,6 +194,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "worker_id": "unknown_worker",
     "worker_sync_timeout_sec": 10.0,
     "worker_sync_failure_backoff_sec": 6.0,
+    # 跨裝置 online-check 的 checker 候選清單。任一在此清單、目前空閒、且好友
+    # 列表含 target 的帳號都可代為查線。預設只有 emulator-5554，與舊行為一致
+    # （5558 仍只被 5554 服務）。
+    "online_check_checkers": ["emulator-5554"],
     "ocr": copy.deepcopy(DEFAULT_OCR_CONFIG),
     # 針對特定電腦名稱的設定 (解決 NAS 共用檔案問題)
     # 格式: "COMPUTER_NAME": { 設定覆蓋 }
@@ -499,6 +503,32 @@ def get_global_config() -> Dict[str, Any]:
         final_cfg.update(host_settings[matched_key])
 
     return final_cfg
+
+
+def get_online_check_checkers() -> "list[str]":
+    """Return the list of device serials allowed to serve cross-device
+    online-check requests.
+
+    Source of truth: global config `online_check_checkers`. Defaults to
+    `["emulator-5554"]` (legacy behaviour) when missing or malformed. Entries
+    are trimmed and de-duplicated while preserving order.
+    """
+    try:
+        raw = get_global_config().get("online_check_checkers")
+    except Exception:
+        raw = None
+    if not isinstance(raw, list) or not raw:
+        return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+    seen: set = set()
+    checkers: "list[str]" = []
+    for item in raw:
+        ip = str(item).strip()
+        if ip and ip not in seen:
+            seen.add(ip)
+            checkers.append(ip)
+    if not checkers:
+        return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+    return checkers
 
 
 def get_ocr_config() -> Dict[str, Any]:
