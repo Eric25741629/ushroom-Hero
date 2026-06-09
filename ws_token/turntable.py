@@ -29,14 +29,18 @@ logger = logging.getLogger(__name__)
 
 CMD_INFO = 0x1603   # 5635 ad.ad_wheel_info_c2s/s2c (empty request body)
 CMD_SPIN = 0x1604   # 5636 ad.ad_wheel_spin_c2s/s2c (empty request body)
-CMD_ERROR = 0x0201  # generic server error/notice channel
+CMD_ERROR = 0x0201  # error.error_info_s2c {error_code#1}
 
-# Live (小寶 2026-06-09): a spin is answered with a 0x0201 notice (code 173) and
-# the ad_wheel_spin reply (0x1604) does NOT arrive as a synchronous call reply —
-# waiting only for 0x1604 times out. 轉盤 appears to be ad-gated (the free `num`
-# spins still want an ad SDK flow that pure WS cannot drive), so a spin over WS is
-# declined. We surface that as "not awarded" (None) instead of crashing.
-ERR_SPIN_DECLINED = 173
+# Live (小寶 2026-06-09) + error codes decoded from the client (configErrorInfo):
+#   90  = "冷卻時間未到" (spin cooldown not elapsed) — between spins (`cd` field).
+#   173 = "活動已結束"  (the event wheel is currently closed).
+# 轉盤 is an EVENT wheel: when open, a spin returns 0x1604 {id} (live got slot 5),
+# then `cd` is set and the next spin returns 0x0201 code 90; when the event is
+# closed every spin returns 0x0201 code 173. The 0x1604 reply is also not a
+# reliable synchronous call reply, so spin_once waits for either 0x1604 or 0x0201
+# and returns None on any 0x0201 / timeout instead of crashing.
+ERR_COOLDOWN = 90        # 冷卻時間未到
+ERR_EVENT_ENDED = 173    # 活動已結束
 
 _DEFAULT_SPACING = 0.3
 _DEFAULT_MAX_SPINS = 50
@@ -71,22 +75,21 @@ def spin_once(client: WSGameClient, *, timeout: float | None = None) -> Optional
     server declined the spin.
 
     The server replies with EITHER the spin result (0x1604 {id}) OR an 0x0201
-    notice (live-observed code 173 = 轉盤需看廣告, not drivable over pure WS). It is
-    NOT guaranteed to send 0x1604 to the call waiter, so waiting only for 0x1604
-    times out. We wait for either cmd and return None on a 0x0201 notice or a
-    timeout, so the caller stops gracefully instead of crashing the whole task.
+    notice — code 90 "冷卻時間未到" (spin cooldown) or code 173 "活動已結束" (event
+    wheel closed). The 0x1604 reply is not a guaranteed synchronous call reply, so
+    waiting only for 0x1604 times out. We wait for either cmd and return None on a
+    0x0201 notice or a timeout, so the caller stops gracefully instead of crashing.
     """
     try:
         cmd, body = client.call_for(CMD_SPIN, b"",
                                     expect_cmds=(CMD_SPIN, CMD_ERROR), timeout=timeout)
     except WSTimeoutError:
-        logger.warning("ws_token turntable: spin got no 0x1604/0x0201 reply (timeout); "
-                       "轉盤可能需看廣告, WS 無法執行")
+        logger.warning("ws_token turntable: spin got no 0x1604/0x0201 reply (timeout)")
         return None
     if cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(body).get(1))
-        logger.warning("ws_token turntable: spin declined 0x0201 code=%s "
-                       "(轉盤可能需看廣告, WS 無法執行)", code)
+        reason = {ERR_COOLDOWN: "冷卻時間未到", ERR_EVENT_ENDED: "活動已結束"}.get(code, "")
+        logger.info("ws_token turntable: spin declined 0x0201 code=%s %s", code, reason)
         return None
     return parse_spin(body)
 
@@ -111,8 +114,8 @@ def spin_all_free(
     for _ in range(budget):
         slot = spin_once(client)
         if slot is None:
-            # Server declined (0x0201 / no reply). Stop — re-trying just wastes
-            # spins and spams timeouts (轉盤 likely ad-gated, unusable over WS).
+            # Server declined (0x0201 code 90 冷卻 / 173 活動已結束, or no reply).
+            # Stop — re-trying before the cooldown/event just wastes round-trips.
             declined = True
             break
         results.append(slot)

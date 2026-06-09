@@ -35,12 +35,17 @@ operators 回放驗算，並可能強制判敗。送 result=0 (client-reported w
   - 深淵 type=2 (深淵之門) 門票 gtid 待 live 確認 (# live-confirm)。
   - 次數用完 / 門票不足 → battle_start.code != 0 或 sweep 回 0x0201 error。
 
-LIVE 2026-06-09 (5554):run_sweep(type=2, dungeon_id∈{150,1,0}, num=1) 一律回
-0x0201 code=173。dungeon_id 的真正來源未解(p_dungeon 沒有 dungeon_id 欄位),且
-code 173 是跨功能(轉盤/農場/掃蕩都出現)的通用「操作失敗/條件不符」碼,非掃蕩專屬。
-run_sweep 已優雅處理(回 SweepResult success=False error_code=173,不 crash)。
-  # live-confirm: 深淵是否支援掃蕩 + sweep dungeon_id 來源 + 解 error 173 字義
-  (建議抓真實客戶端 sweep 封包 或 CDP 讀 error-code config)。
+LIVE 2026-06-09 (5554 + CDP 解碼 configErrorInfo):
+  - run_sweep(type=2, dungeon_id∈{150,1,0}, num=1) 一律回 0x0201 **code=173 =「活動已結束」**
+    → 深淵/萬神 的「掃蕩」(3596) 目前不開放(這條多半是限時掃蕩活動;日常 深淵/萬神 要走
+    BATTLE 3591/3592,有 anti-cheat 風險)。run_sweep 已優雅處理(SweepResult success=False
+    error_code=173,不 crash)。
+  - day_times(156/748…)經 CDP chapterDataCache 確認 = **累計總數,非今日剩餘**。
+    深淵(type2)真正每日上限 = 2(chapterDataCache.getLimit(2) -> [2, 2, [1003,1]]),
+    **門票 gtid = 1003**(解掉先前的 # live-confirm)。
+  - error 碼字義(configErrorInfo,權威):90=冷卻時間未到 / 159=次數不足 / 173=活動已結束。
+  # live-confirm: 「掃蕩活動」幾時開 + 開時 sweep 的 dungeon_id 真值(抓客戶端封包);
+  #   日常自動化 深淵/萬神 大概率得走 battle 路徑(anti-cheat)。
 """
 from __future__ import annotations
 
@@ -60,8 +65,9 @@ CMD_SWEEP = 3596           # 0x0E0C dungeon.dungeon_sweep_c2s/s2c
 CMD_ERROR = 0x0201         # error.error_info_s2c {error_code#1}
 
 # Dungeon type discriminators (same protocol, only the type differs).
-TYPE_ABYSS = 2             # 深淵之門 (daily Coin dungeon); # live-confirm 門票 gtid
+TYPE_ABYSS = 2             # 深淵之門 (daily Coin dungeon); daily limit 2, 門票 gtid 1003
 TYPE_SEVEN_TRIAL = 23      # 萬神試煉 (weekly Seven dungeon, Mon-Sat)
+ABYSS_TICKET_GTID = 1003   # 深淵之門 門票 gtid (CDP getLimit(2) -> [..,[1003,1]])
 SEVEN_TICKET_GTID = 1081   # 萬神試煉 門票 gtid (每場 1 張)
 
 

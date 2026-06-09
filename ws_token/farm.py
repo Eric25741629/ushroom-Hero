@@ -54,12 +54,15 @@ CMD_PICK = 3080           # home_farm_pick (偷菜)
 CMD_HARVEST = 3081        # home_farm_harvest
 CMD_WORKER_SETTING = 18689  # worker_common_farm_worker_setting (worker module 73)
 CMD_SHOP_BUY = 6914       # shop_buy (豐收卡; shop module 27)
-CMD_ERROR = 0x0201        # generic server error/reject channel
+CMD_ERROR = 0x0201        # error.error_info_s2c {error_code#1}
 
 # Live (小寶 2026-06-09): a rejected plant/harvest replies on the 0x0201 error
-# channel (observed code 173), NOT on the action's own cmd. The old
-# ``client.call(CMD_PLANT)`` waited only for 3078 and crashed with WSTimeoutError
-# on any rejection. Actions must wait for EITHER the success cmd OR 0x0201.
+# channel, NOT on the action's own cmd. Error codes decoded from the client
+# (configErrorInfo): 173 = "活動已結束" (e.g. an event-crop seed whose event ended),
+# 159 = "次數不足". The old ``client.call(CMD_PLANT)`` waited only for 3078 and
+# crashed with WSTimeoutError on any rejection — actions must wait for EITHER the
+# success cmd OR 0x0201. (打工 with free seeds is the intended path; event seeds
+# like the live-tried 102 return 173 once their event is over.)
 
 # crop.state enum (p_farm_crop.state#5)
 STATE_NOT_EXIT = 0        # 空地
