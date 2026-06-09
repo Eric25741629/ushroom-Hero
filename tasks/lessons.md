@@ -1,5 +1,15 @@
 # Lessons learned
 
+## 2026-06-09 家園功能批次 (feat/ws-token-home)
+
+- **0x0201 不是「純 error channel」,它也帶『成功通知碼』— 收到 0x0201 一定要看 code,不能一律當失敗。** `favor_give_flower`(贈禮)成功時 server 回的是 **0x0201 code 369**,而 369 在 configErrorInfo = **「贈送成功」**(不是錯誤!)。我一開始把 give_flower 的 0x0201/369 當失敗(ok=False),其實是成功送出。**Rule**:`call_for(cmd, 0x0201)` 收到 0x0201 後,先把 code 丟 `configErrorInfo` 解字義再判成敗;維護一個 `OK_NOTICE_CODES`(目前 {369}=贈送成功)。先前「失敗一律走 0x0201」的教訓仍對(失敗確實走 0x0201),但反過來「0x0201 一律失敗」是錯的。
+
+- **未知 cmd 號可用 CDP fake-cnet 法離線抓,不必等 WS 連線、不必猜。** H5 WS 斷線時(被我 smoke 踢掉),`netManager.send(t,e)` 走不到 `l[t]`(cmd 查表)。但可暫時把 `netManager._cnet` 換成 `{state:2, sendMessage:(cmd,body)=>capture(cmd)}`(state=2=Connected,我用 0..8 brute 出來),再給 `netManager._protoClass[name]` 塞一個 encode 不會丟的 dummy,然後 `netManager.send('<family>.<msg>_c2s', {})` → `cnet.sendMessage` 的第一個參數就是 cmd(proto_id)。驗證 `home.home_mine_info_c2s`=3073 ✓。`netManager.protoRoot.toJSON().nested` 列全部 82 family;cmd=module*256+N。工具 `tools/_cdp_cmds.js`。**Rule**:卡在「這個任務的 WS cmd 是什麼」時,別猜也別等連線 — fake-cnet 直接從 client 抓。
+
+- **c2s 的 request body 別假設是空的 — 有 required 欄位空送會 timeout(無回應)。** `favor_friend_info_c2s` 需 `{page#1}`(required),我送空 body → server 不回 → `WSTimeoutError`。`marry_status`/`marry_ring_info` 才是真的空 body。**Rule**:建 read 之前先 dump 該 `_c2s` 的 schema(不只 `_s2c`),required 欄位一定要帶。
+
+- **遊戲設定值(food id / goods id / error 字義 / 副本上限)通通在 client config,CDP 直接讀。** 脆脆餅乾=8001 / 精英拼盤=8005(configGoods)、奶茶=1106 / 鮮花=1031 / 真愛之石=1114、error 碼=configErrorInfo。**Rule**:任何「這個 id/值是多少」先問 client(`window.config*` / `*DataCache`),別猜別問 user。
+
 ## 2026-06-09 ws_token 任務批次 + live 驗證 session
 
 - **別把上一輪「未驗證的結論」當事實複述。** 交接檔 `tasks/ws_token_backend_todo.md` 寫「小寶神燈=0(被驗證跑開光)」,更早的 session 顯然把它當事實講過 → User 開場就「我明明小寶帳號還有神燈 你在欺騙我」,後來明說「小寶神燈數量是71萬個」。**Rule**:handoff/交接裡的數值結論一律標「待驗」,引用時實際 re-verify;絕不把別人(或過去自己)未當場驗證的數字當事實轉述。User 對此極敏感(等同欺騙)。
