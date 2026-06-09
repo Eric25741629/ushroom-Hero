@@ -1,0 +1,1828 @@
+{
+  "family": "car_park",
+  "module": 50,
+  "note": "cmd ids: c2s and s2c share the same id. cmd = module*256 + N. Proto message names carry the family verb (e.g. car_park_<verb>_c2s/_s2c).",
+  "cmd_ids": {
+    "car_park.car_park_info": 12801,
+    "car_park.car_park_parking_start": 12804,
+    "car_park.cross_car_park_preview": 12830,
+    "car_park.cross_car_park_info": 12831,
+    "car_park.cross_car_park_parking_start": 12832,
+    "car_park.cross_car_park_new_parking_start": 12847
+  },
+  "schema": {
+    "nested": {
+      "car_park_info_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "ceng": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "car_park_info_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "master_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 3
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 4
+          },
+          "show_car": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "space_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "space_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_space",
+            "id": 7
+          },
+          "skin_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_skin",
+            "id": 8
+          },
+          "protect": {
+            "type": "type.p_car_park_protect",
+            "id": 9
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 10
+          },
+          "info_list": {
+            "type": "type.p_role_change",
+            "id": 11
+          },
+          "ceng": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 12
+          },
+          "cross_fight_times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 13
+          },
+          "cross_fail_cd": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 14
+          },
+          "reward_buff": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 15
+          }
+        }
+      },
+      "car_park_car_info_c2s": {
+        "fields": {}
+      },
+      "car_park_car_info_s2c": {
+        "fields": {
+          "car_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_car",
+            "id": 1
+          }
+        }
+      },
+      "car_park_car_up_c2s": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "cost_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "car_park_car_up_s2c": {
+        "fields": {
+          "update_car": {
+            "rule": "required",
+            "type": "type.p_car_park_car",
+            "id": 1
+          }
+        }
+      },
+      "car_park_parking_start_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "is_protect": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "is_replace": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          }
+        }
+      },
+      "car_park_parking_start_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 3
+          }
+        }
+      },
+      "car_park_parking_stop_c2s": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "car_park_parking_stop_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 3
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          },
+          "is_die": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          }
+        }
+      },
+      "car_park_combat_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "car_park_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "eid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "type": "type.p_battle_role",
+            "id": 4
+          },
+          "def_data": {
+            "type": "type.p_battle_role",
+            "id": 5
+          }
+        }
+      },
+      "car_park_result_c2s": {
+        "fields": {
+          "win_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "hp": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "car_park_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "e_name": {
+            "type": "string",
+            "id": 4
+          },
+          "e_head": {
+            "type": "type.p_head",
+            "id": 5
+          },
+          "e_serv_id": {
+            "type": "uint32",
+            "id": 6
+          }
+        }
+      },
+      "car_park_search_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "park_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "car_park_search_s2c": {
+        "fields": {
+          "null_space": {
+            "rule": "repeated",
+            "type": "type.p_car_park_null",
+            "id": 1
+          },
+          "collect_space": {
+            "rule": "repeated",
+            "type": "type.p_car_park_null",
+            "id": 2
+          }
+        }
+      },
+      "car_park_protect_c2s": {
+        "fields": {
+          "protect": {
+            "rule": "required",
+            "type": "type.p_car_park_protect",
+            "id": 1
+          }
+        }
+      },
+      "car_park_protect_s2c": {
+        "fields": {
+          "protect": {
+            "rule": "required",
+            "type": "type.p_car_park_protect",
+            "id": 1
+          }
+        }
+      },
+      "car_park_skin_use_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "skin_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_use": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "pos": {
+            "rule": "required",
+            "type": "type.p_pos",
+            "id": 4
+          }
+        }
+      },
+      "car_park_skin_use_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "skin_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_skin",
+            "id": 2
+          }
+        }
+      },
+      "car_park_history_c2s": {
+        "fields": {}
+      },
+      "car_park_history_s2c": {
+        "fields": {
+          "record_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_record",
+            "id": 1
+          }
+        }
+      },
+      "car_park_video_play_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "car_park_video_play_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "type": "type.p_battle_role",
+            "id": 4
+          },
+          "def_data": {
+            "type": "type.p_battle_role",
+            "id": 5
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "collects": {
+            "rule": "required",
+            "type": "string",
+            "id": 7
+          },
+          "winner_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 8
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 9
+          }
+        }
+      },
+      "car_park_look_c2s": {
+        "fields": {
+          "vid_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "car_park_look_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "vid_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "car_park_mount_id_c2s": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "car_park_mount_id_s2c": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "car_park_rename_c2s": {
+        "fields": {
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 1
+          }
+        }
+      },
+      "car_park_rename_s2c": {
+        "fields": {
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 1
+          }
+        }
+      },
+      "car_park_collect_c2s": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "car_park_collect_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "car_park_skin_up_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "skin_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "car_park_skin_up_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "skin_list": {
+            "rule": "repeated",
+            "type": "type.p_car_park_skin",
+            "id": 2
+          }
+        }
+      },
+      "car_park_read_c2s": {
+        "fields": {
+          "nid_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "car_park_read_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "nid_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "car_park_space_update_c2s": {
+        "fields": {}
+      },
+      "car_park_space_update_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "master_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 3
+          }
+        }
+      },
+      "car_park_report_c2s": {
+        "fields": {}
+      },
+      "car_park_report_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "history_list": {
+            "rule": "repeated",
+            "type": "type.p_battle_video",
+            "id": 2
+          }
+        }
+      },
+      "car_park_parking_help_c2s": {
+        "fields": {
+          "car_role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "car_park_parking_help_s2c": {
+        "fields": {}
+      },
+      "cross_car_park_rank_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_rank_s2c": {
+        "fields": {
+          "atk_kill": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "atk_rank": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "def_kill": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "def_rank": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 4
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_rank",
+            "id": 5
+          },
+          "log_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_belong_change",
+            "id": 6
+          }
+        }
+      },
+      "cross_car_park_preview_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_preview_s2c": {
+        "fields": {
+          "park_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_preview",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_info_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_info_s2c": {
+        "fields": {
+          "park_info": {
+            "rule": "required",
+            "type": "type.p_cross_car_park",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_parking_start_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_parking_start_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 2
+          }
+        }
+      },
+      "cross_car_park_parking_stop_c2s": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_parking_stop_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_battle_queue_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "cross_car_park_battle_queue_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_queue_role",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_queue_join_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "action": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_queue_stick_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_look_fighting_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_look_fighting_s2c": {
+        "fields": {
+          "def_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "atk_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_fighting",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_report_list_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_report_list_s2c": {
+        "fields": {
+          "history_list": {
+            "rule": "repeated",
+            "type": "type.p_battle_video",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_role_state_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_role_state_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "freeze_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "data_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "cross_car_park_settle_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "kill_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "top_three": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_top_three",
+            "id": 4
+          }
+        }
+      },
+      "cross_car_park_video_play_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_video_play_s2c": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "winner": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "type": "type.p_battle_role",
+            "id": 4
+          },
+          "def_data": {
+            "type": "type.p_battle_role",
+            "id": 5
+          }
+        }
+      },
+      "cross_car_park_next_time_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_next_time_s2c": {
+        "fields": {
+          "next_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_merge_time_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_merge_time_s2c": {
+        "fields": {
+          "merge_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "car_park_parking_stop_all_c2s": {
+        "fields": {
+          "car_list": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "car_park_parking_stop_all_s2c": {
+        "fields": {}
+      },
+      "car_park_bag_rewards_c2s": {
+        "fields": {}
+      },
+      "car_park_bag_rewards_s2c": {
+        "fields": {
+          "bag_records": {
+            "rule": "repeated",
+            "type": "type.p_car_park_bag_record",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "car_park_collect_all_bag_rewards_c2s": {
+        "fields": {}
+      },
+      "car_park_collect_all_bag_rewards_s2c": {
+        "fields": {}
+      },
+      "cross_car_park_new_parking_start_c2s": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_new_parking_start_s2c": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 2
+          }
+        }
+      },
+      "cross_car_park_new_parking_stop_c2s": {
+        "fields": {
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_new_parking_stop_s2c": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "space": {
+            "rule": "required",
+            "type": "type.p_car_park_space",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_new_combat_c2s": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_new_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "eid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "type": "type.p_battle_role",
+            "id": 4
+          },
+          "def_data": {
+            "type": "type.p_battle_role",
+            "id": 5
+          }
+        }
+      },
+      "cross_car_park_new_result_c2s": {
+        "fields": {
+          "win_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_new_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "e_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 4
+          },
+          "e_head": {
+            "rule": "required",
+            "type": "type.p_head",
+            "id": 5
+          },
+          "e_serv_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          }
+        }
+      },
+      "cross_car_park_new_point_info_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_new_point_info_s2c": {
+        "fields": {
+          "week_point": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "today_point": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "server_rank": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "got_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 4,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "cross_car_park_new_daily_reward_c2s": {
+        "fields": {
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_new_daily_reward_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_new_buff_info_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_new_buff_info_s2c": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "supreme_buff": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "is_supreme_pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "group_buff": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "battle_debuff": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "protect_buff_expire": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          },
+          "super_moment_expire": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          },
+          "reward_buff": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 9
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 10
+          },
+          "fight_times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 11
+          },
+          "next_recover_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 12
+          },
+          "battle_debuff_expire": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 13
+          },
+          "debuff_stack_cd_expire": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 14
+          },
+          "server_car_buff": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 15
+          }
+        }
+      },
+      "cross_car_park_new_change_log_c2s": {
+        "fields": {}
+      },
+      "cross_car_park_new_change_log_s2c": {
+        "fields": {
+          "log_list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_new_change_log",
+            "id": 1
+          }
+        }
+      },
+      "cross_car_park_new_preview_rob_buff_c2s": {
+        "fields": {
+          "park_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "mount_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "cross_car_park_new_preview_rob_buff_s2c": {
+        "fields": {
+          "reward_buff": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "server_car_info_c2s": {
+        "fields": {}
+      },
+      "server_car_info_s2c": {
+        "fields": {
+          "space_list": {
+            "rule": "repeated",
+            "type": "type.p_server_car_space",
+            "id": 1
+          },
+          "my_queue_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          },
+          "my_buff": {
+            "type": "type.p_server_car_buff",
+            "id": 3
+          },
+          "defend_cd_end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "attack_cd_end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "server_car_join_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "queue_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "server_car_join_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "queue_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "queue_index": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "server_car_leave_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "queue_type": {
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "server_car_leave_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "defend_cd_end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "attack_cd_end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "server_car_battle_result_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "old_server_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "new_server_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 4
+          },
+          "video_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "server_car_change_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "old_server_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "new_server_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "attacker_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 4
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          }
+        }
+      },
+      "server_car_buff_update_s2c": {
+        "fields": {
+          "buff_layer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "buff_ratio": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "server_car_queue_update_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "attack_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 2
+          },
+          "defend_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 3
+          }
+        }
+      },
+      "server_car_report_list_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "server_car_report_list_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "history_list": {
+            "rule": "repeated",
+            "type": "type.p_battle_video",
+            "id": 2
+          }
+        }
+      },
+      "server_car_queue_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "server_car_queue_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "attack_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 2
+          },
+          "defend_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 3
+          }
+        }
+      },
+      "server_car_queue_stick_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "queue_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "server_car_queue_stick_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "attack_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 3
+          },
+          "defend_queue": {
+            "rule": "repeated",
+            "type": "type.p_server_car_queue_member",
+            "id": 4
+          }
+        }
+      },
+      "server_car_look_fighting_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "server_car_look_fighting_s2c": {
+        "fields": {
+          "def_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "atk_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "list": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_fighting",
+            "id": 3
+          }
+        }
+      },
+      "server_car_settle_s2c": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "kill_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "top_three": {
+            "rule": "repeated",
+            "type": "type.p_cross_car_park_top_three",
+            "id": 4
+          }
+        }
+      },
+      "server_car_role_state_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "server_car_role_state_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "pos": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "freeze_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "data_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_battle_role",
+    "p_battle_video",
+    "p_car_park_bag_record",
+    "p_car_park_car",
+    "p_car_park_null",
+    "p_car_park_protect",
+    "p_car_park_record",
+    "p_car_park_skin",
+    "p_car_park_space",
+    "p_cross_car_park",
+    "p_cross_car_park_belong_change",
+    "p_cross_car_park_fighting",
+    "p_cross_car_park_new_change_log",
+    "p_cross_car_park_preview",
+    "p_cross_car_park_queue_role",
+    "p_cross_car_park_rank",
+    "p_cross_car_park_top_three",
+    "p_head",
+    "p_key_value",
+    "p_pos",
+    "p_reward",
+    "p_role_change",
+    "p_server_car_buff",
+    "p_server_car_queue_member",
+    "p_server_car_space"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

@@ -1,0 +1,317 @@
+{
+  "family": "arena",
+  "cmd_ids": {
+    "arena.arena_info_c2s": 5121,
+    "arena.arena_rank_list_c2s": 5122,
+    "arena.arena_combat_c2s": 5123,
+    "arena.arena_result_c2s": 5124,
+    "arena.arena_history_c2s": 5125,
+    "arena.arena_refresh_c2s": 5126,
+    "arena.arena_role_info_c2s": 5127,
+    "arena.arena_video_play_c2s": 5128,
+    "arena.arena_buy_c2s": 5129
+  },
+  "schema": {
+    "nested": {
+      "arena_info_c2s": {
+        "fields": {}
+      },
+      "arena_info_s2c": {
+        "fields": {
+          "season": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "my_score": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "int32",
+            "id": 4
+          },
+          "enemy_list": {
+            "rule": "repeated",
+            "type": "type.p_arena_role",
+            "id": 5
+          },
+          "buy_times": {
+            "rule": "required",
+            "type": "int32",
+            "id": 6
+          }
+        }
+      },
+      "arena_rank_list_c2s": {
+        "fields": {}
+      },
+      "arena_rank_list_s2c": {
+        "fields": {
+          "my_score": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_arena_rank",
+            "id": 4
+          }
+        }
+      },
+      "arena_combat_c2s": {
+        "fields": {
+          "eid": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "arena_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "eid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 4
+          },
+          "atk_data": {
+            "type": "type.p_arena_role",
+            "id": 5
+          },
+          "def_data": {
+            "type": "type.p_arena_role",
+            "id": 6
+          }
+        }
+      },
+      "arena_result_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "wid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "arena_result_s2c": {
+        "fields": {
+          "is_win": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "my_score": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "my_score_change": {
+            "rule": "required",
+            "type": "int32",
+            "id": 4
+          },
+          "e_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 5
+          },
+          "e_rank": {
+            "rule": "required",
+            "type": "int32",
+            "id": 6
+          },
+          "e_score": {
+            "rule": "required",
+            "type": "int32",
+            "id": 7
+          },
+          "e_score_change": {
+            "rule": "required",
+            "type": "int32",
+            "id": 8
+          },
+          "e_head": {
+            "rule": "required",
+            "type": "type.p_head",
+            "id": 9
+          }
+        }
+      },
+      "arena_history_c2s": {
+        "fields": {}
+      },
+      "arena_history_s2c": {
+        "fields": {
+          "history_list": {
+            "rule": "repeated",
+            "type": "type.p_arena_history",
+            "id": 1
+          }
+        }
+      },
+      "arena_refresh_c2s": {
+        "fields": {}
+      },
+      "arena_refresh_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "enemy_list": {
+            "rule": "repeated",
+            "type": "type.p_arena_role",
+            "id": 2
+          }
+        }
+      },
+      "arena_role_info_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "arena_role_info_s2c": {
+        "fields": {
+          "arena_role": {
+            "rule": "required",
+            "type": "type.p_arena_role",
+            "id": 1
+          }
+        }
+      },
+      "arena_video_play_c2s": {
+        "fields": {
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "arena_video_play_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "vid": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "type": "type.p_arena_role",
+            "id": 4
+          },
+          "def_data": {
+            "type": "type.p_arena_role",
+            "id": 5
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "collects": {
+            "rule": "required",
+            "type": "string",
+            "id": 7
+          },
+          "winner_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 8
+          }
+        }
+      },
+      "arena_buy_c2s": {
+        "fields": {
+          "buy_count": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "chapter_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "arena_buy_s2c": {
+        "fields": {
+          "buy_times": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "chapter_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      }
+    }
+  }
+}

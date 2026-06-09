@@ -1,0 +1,212 @@
+{
+  "family": "main_chapter",
+  "module": 13,
+  "note": "cmd ids: c2s and s2c share the same id. cmd = module*256 + N. Proto message names carry the family verb (e.g. main_chapter_<verb>_c2s/_s2c).",
+  "cmd_ids": {
+    "main_chapter.main_chapter_reward_info": 3333,
+    "main_chapter.main_chapter_claim_reward": 3334
+  },
+  "schema": {
+    "nested": {
+      "main_chapter_info_c2s": {
+        "fields": {}
+      },
+      "main_chapter_info_s2c": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_unlimited": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "main_chapter_enter_c2s": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "main_chapter_enter_s2c": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_unlimited": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "battle_checkout": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "random_seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 4
+          },
+          "roles": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 5
+          }
+        }
+      },
+      "main_chapter_result_c2s": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "manual_operators": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "operators": {
+            "rule": "repeated",
+            "type": "type.p_battle_operator",
+            "id": 4
+          }
+        }
+      },
+      "main_chapter_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_unlimited": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "main_chapter_kill_reward_c2s": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "unit_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "pos": {
+            "rule": "required",
+            "type": "type.p_pos",
+            "id": 3
+          }
+        }
+      },
+      "main_chapter_kill_reward_s2c": {
+        "fields": {
+          "part_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "unit_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "pos": {
+            "type": "type.p_pos",
+            "id": 3
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          }
+        }
+      },
+      "main_chapter_reward_info_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "main_chapter_reward_info_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "res_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          },
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          }
+        }
+      },
+      "main_chapter_claim_reward_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "main_chapter_claim_reward_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_battle_operator",
+    "p_battle_role",
+    "p_pos",
+    "p_reward"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

@@ -1,0 +1,833 @@
+{
+  "family": "guild",
+  "cmd_ids": {
+    "guild.guild_info_c2s": 7425,
+    "guild.guild_create_c2s": 7426,
+    "guild.guild_search_c2s": 7427,
+    "guild.guild_join_c2s": 7428,
+    "guild.guild_quick_join_c2s": 7429,
+    "guild.guild_setting_c2s": 7430,
+    "guild.guild_apply_c2s": 7431,
+    "guild.guild_approve_c2s": 7432,
+    "guild.guild_kick_out_c2s": 7433,
+    "guild.guild_quit_c2s": 7435,
+    "guild.guild_dissolve_c2s": 7436,
+    "guild.guild_change_career_c2s": 7437,
+    "guild.guild_info_update_c2s": 7438,
+    "guild.guild_members_change_c2s": 7439,
+    "guild.guild_members_info_c2s": 7440,
+    "guild.guild_donate_c2s": 7441,
+    "guild.guild_apply_list_c2s": 7442,
+    "guild.guild_resource_change_c2s": 7443,
+    "guild.guild_rank_info_c2s": 7444,
+    "guild.guild_rank_my_info_c2s": 7445,
+    "guild.guild_question_c2s": 7446,
+    "guild.guild_question_rank_c2s": 7447,
+    "guild.guild_area_enter_c2s": 7448,
+    "guild.guild_area_exit_c2s": 7449,
+    "guild.guild_area_move_c2s": 7450,
+    "guild.guild_area_broadcast_c2s": 7451,
+    "guild.guild_help_info_c2s": 7452,
+    "guild.guild_help_ask_c2s": 7453,
+    "guild.guild_help_c2s": 7454,
+    "guild.guild_help_change_c2s": 7455,
+    "guild.guild_help_status_c2s": 7456,
+    "guild.guild_dice_start_c2s": 7457,
+    "guild.guild_dice_point_c2s": 7458,
+    "guild.guild_treasure_info_c2s": 7459,
+    "guild.guild_treasure_open_c2s": 7460,
+    "guild.guild_schedule_c2s": 7461,
+    "guild.guild_log_c2s": 7462,
+    "guild.guild_get_message_notice_list_c2s": 7463,
+    "guild.guild_new_message_notice_c2s": 7464,
+    "guild.world_schedule_update_c2s": 7465
+  },
+  "schema": {
+    "nested": {
+      "guild_info_c2s": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_info_s2c": {
+        "fields": {
+          "guild_info": {
+            "rule": "required",
+            "type": "type.p_guild",
+            "id": 1
+          }
+        }
+      },
+      "guild_create_c2s": {
+        "fields": {
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 1
+          }
+        }
+      },
+      "guild_create_s2c": {
+        "fields": {
+          "guild_info": {
+            "rule": "required",
+            "type": "type.p_guild",
+            "id": 1
+          }
+        }
+      },
+      "guild_search_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "search_key": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          },
+          "page": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          }
+        }
+      },
+      "guild_search_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "page": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "page_num": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "guild_list": {
+            "rule": "repeated",
+            "type": "type.p_guild",
+            "id": 4
+          }
+        }
+      },
+      "guild_join_c2s": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_join_s2c": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_quick_join_c2s": {
+        "fields": {}
+      },
+      "guild_setting_c2s": {
+        "fields": {
+          "k": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "v": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "s": {
+            "rule": "required",
+            "type": "string",
+            "id": 3
+          },
+          "l": {
+            "rule": "repeated",
+            "type": "type.p_key_value_string",
+            "id": 4
+          }
+        }
+      },
+      "guild_setting_s2c": {
+        "fields": {}
+      },
+      "guild_apply_c2s": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_apply_s2c": {
+        "fields": {
+          "apply_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_apply",
+            "id": 1
+          }
+        }
+      },
+      "guild_approve_c2s": {
+        "fields": {
+          "apply_uid": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          }
+        }
+      },
+      "guild_approve_s2c": {
+        "fields": {
+          "apply_uid": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          }
+        }
+      },
+      "guild_kick_out_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_kick_out_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_quit_c2s": {
+        "fields": {}
+      },
+      "guild_quit_s2c": {
+        "fields": {
+          "reason": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          }
+        }
+      },
+      "guild_dissolve_c2s": {
+        "fields": {}
+      },
+      "guild_dissolve_s2c": {
+        "fields": {}
+      },
+      "guild_change_career_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          },
+          "career": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          }
+        }
+      },
+      "guild_change_career_s2c": {
+        "fields": {}
+      },
+      "guild_info_update_s2c": {
+        "fields": {
+          "update_list": {
+            "rule": "required",
+            "type": "type.p_obj_update",
+            "id": 1
+          }
+        }
+      },
+      "guild_members_change_s2c": {
+        "fields": {
+          "change_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "member_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_member",
+            "id": 2
+          }
+        }
+      },
+      "guild_members_info_c2s": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          }
+        }
+      },
+      "guild_members_info_s2c": {
+        "fields": {
+          "guild_id": {
+            "rule": "required",
+            "type": "int64",
+            "id": 1
+          },
+          "member_list": {
+            "rule": "repeated",
+            "type": "type.p_simple_guild_member",
+            "id": 2
+          }
+        }
+      },
+      "guild_donate_c2s": {
+        "fields": {}
+      },
+      "guild_donate_s2c": {
+        "fields": {
+          "donate_sum": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "donate_week": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "donate_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "guild_apply_list_c2s": {
+        "fields": {}
+      },
+      "guild_apply_list_s2c": {
+        "fields": {
+          "guild_ids": {
+            "rule": "repeated",
+            "type": "int64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "guild_resource_change_s2c": {
+        "fields": {
+          "change_info": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 1
+          }
+        }
+      },
+      "guild_rank_info_c2s": {
+        "fields": {
+          "rank_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "guild_id": {
+            "type": "uint64",
+            "id": 3
+          }
+        }
+      },
+      "guild_rank_info_s2c": {
+        "fields": {
+          "rank_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "max_page": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "type.p_guild_rank_info",
+            "id": 4
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_rank_info",
+            "id": 5
+          },
+          "guild_id": {
+            "type": "int64",
+            "id": 6
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          }
+        }
+      },
+      "guild_rank_my_info_c2s": {
+        "fields": {
+          "rank_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "guild_rank_my_info_s2c": {
+        "fields": {
+          "rank_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "type.p_guild_rank_info",
+            "id": 2
+          }
+        }
+      },
+      "guild_question_c2s": {
+        "fields": {}
+      },
+      "guild_question_s2c": {
+        "fields": {
+          "question": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "number": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_show": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_question_rank",
+            "id": 5
+          }
+        }
+      },
+      "guild_question_rank_s2c": {
+        "fields": {
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_question_rank",
+            "id": 1
+          }
+        }
+      },
+      "guild_area_enter_c2s": {
+        "fields": {
+          "pos": {
+            "rule": "required",
+            "type": "type.p_pos",
+            "id": 1
+          },
+          "break": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "guild_area_enter_s2c": {
+        "fields": {
+          "member_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_area_member",
+            "id": 1
+          }
+        }
+      },
+      "guild_area_exit_c2s": {
+        "fields": {}
+      },
+      "guild_area_exit_s2c": {
+        "fields": {}
+      },
+      "guild_area_move_c2s": {
+        "fields": {
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 1
+          }
+        }
+      },
+      "guild_area_move_s2c": {
+        "fields": {}
+      },
+      "guild_area_broadcast_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "action_member": {
+            "rule": "required",
+            "type": "type.p_guild_area_member",
+            "id": 2
+          },
+          "pos_list": {
+            "rule": "repeated",
+            "type": "type.p_pos",
+            "id": 3
+          }
+        }
+      },
+      "guild_help_info_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "guild_help_info_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "daily_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "help_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_help",
+            "id": 3
+          }
+        }
+      },
+      "guild_help_ask_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sub_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "guild_help_ask_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sub_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "guild_help_c2s": {
+        "fields": {
+          "help_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "guild_help_s2c": {
+        "fields": {
+          "new_daily_count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "guild_help_change_s2c": {
+        "fields": {
+          "update_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_help",
+            "id": 1
+          }
+        }
+      },
+      "guild_help_status_c2s": {
+        "fields": {}
+      },
+      "guild_help_status_s2c": {
+        "fields": {
+          "status": {
+            "rule": "repeated",
+            "type": "type.p_guild_help_status",
+            "id": 1
+          }
+        }
+      },
+      "guild_dice_start_c2s": {
+        "fields": {}
+      },
+      "guild_dice_start_s2c": {
+        "fields": {
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "guild_dice_point_c2s": {
+        "fields": {}
+      },
+      "guild_dice_point_s2c": {
+        "fields": {
+          "point": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "guild_treasure_info_c2s": {
+        "fields": {}
+      },
+      "guild_treasure_info_s2c": {
+        "fields": {
+          "is_new": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "round": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "cfg_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "my_open": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "box_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_treasure_box",
+            "id": 6
+          }
+        }
+      },
+      "guild_treasure_open_c2s": {
+        "fields": {
+          "round": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "guild_treasure_open_s2c": {
+        "fields": {
+          "round": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "n": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "guild_schedule_c2s": {
+        "fields": {}
+      },
+      "guild_schedule_s2c": {
+        "fields": {
+          "schedules": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "guild_log_c2s": {
+        "fields": {
+          "guild_log_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "guild_log_s2c": {
+        "fields": {
+          "log_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_log",
+            "id": 1
+          }
+        }
+      },
+      "guild_get_message_notice_list_c2s": {
+        "fields": {
+          "now_page_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          }
+        }
+      },
+      "guild_get_message_notice_list_s2c": {
+        "fields": {
+          "now_page_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "tot_num": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "max_page_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          },
+          "notice_list": {
+            "rule": "repeated",
+            "type": "type.p_guild_message_board_msg",
+            "id": 4
+          }
+        }
+      },
+      "guild_new_message_notice_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          }
+        }
+      },
+      "world_schedule_update_c2s": {
+        "fields": {}
+      },
+      "world_schedule_update_s2c": {
+        "fields": {
+          "key": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "state": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      }
+    }
+  }
+}

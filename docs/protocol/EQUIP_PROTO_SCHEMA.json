@@ -1,0 +1,525 @@
+{
+  "family": "equip",
+  "cmd_ids": {
+    "equip.equip_info_c2s": 1281,
+    "equip.equip_wear_c2s": 1282,
+    "equip.equip_change_c2s": 1284,
+    "equip.equip_shop_c2s": 1285,
+    "equip.equip_box_info_c2s": 1286,
+    "equip.equip_box_lv_c2s": 1287,
+    "equip.equip_box_open_c2s": 1288,
+    "equip.equip_box_open_all_c2s": 1289,
+    "equip.equip_book_list_c2s": 1291,
+    "equip.equip_book_update_c2s": 1292,
+    "equip.equip_figure_list_c2s": 1293,
+    "equip.equip_figure_c2s": 1294,
+    "equip.equip_select_c2s": 1295,
+    "equip.equip_tab_info_c2s": 1296,
+    "equip.equip_choose_tab_c2s": 1297,
+    "equip.equip_change_tab_name_c2s": 1298,
+    "equip.equip_box_skin_c2s": 1299,
+    "equip.equip_change_box_skin_c2s": 1300,
+    "equip.equip_filter_info_c2s": 1301,
+    "equip.equip_filter_attr_c2s": 1302,
+    "equip.equip_refine_info_c2s": 1303,
+    "equip.equip_refine_c2s": 1304,
+    "equip.equip_refine_stage_c2s": 1305,
+    "equip.equip_refine_resonate_c2s": 1306,
+    "equip.equip_offline_open_box_setting_c2s": 1309,
+    "equip.equip_offline_open_box_info_c2s": 1310,
+    "equip.equip_power_update_c2s": 1311
+  },
+  "schema": {
+    "nested": {
+      "equip_info_c2s": {
+        "fields": {}
+      },
+      "equip_info_s2c": {
+        "fields": {
+          "equip_list": {
+            "rule": "repeated",
+            "type": "type.p_equip",
+            "id": 1
+          }
+        }
+      },
+      "equip_wear_c2s": {
+        "fields": {
+          "tab_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "equip_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "equip_change_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "sub_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "change_list": {
+            "rule": "repeated",
+            "type": "type.p_equip",
+            "id": 3
+          }
+        }
+      },
+      "equip_shop_c2s": {
+        "fields": {
+          "equip_ids": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "equip_shop_s2c": {
+        "fields": {
+          "reward": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 1
+          }
+        }
+      },
+      "equip_box_info_c2s": {
+        "fields": {}
+      },
+      "equip_box_info_s2c": {
+        "fields": {
+          "lv": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "exp": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          },
+          "etime": {
+            "rule": "required",
+            "type": "int32",
+            "id": 3
+          }
+        }
+      },
+      "equip_box_lv_c2s": {
+        "fields": {}
+      },
+      "equip_box_open_c2s": {
+        "fields": {}
+      },
+      "equip_box_open_s2c": {
+        "fields": {
+          "equip_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "equip_box_open_all_c2s": {
+        "fields": {
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "quality": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "equip_box_open_all_s2c": {
+        "fields": {
+          "equip_ids": {
+            "rule": "repeated",
+            "type": "uint64",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          },
+          "reward": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "equip_book_list_c2s": {
+        "fields": {}
+      },
+      "equip_book_list_s2c": {
+        "fields": {
+          "got_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "equip_book_update_s2c": {
+        "fields": {
+          "add_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "equip_figure_list_c2s": {
+        "fields": {}
+      },
+      "equip_figure_list_s2c": {
+        "fields": {
+          "figure_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "equip_figure_c2s": {
+        "fields": {
+          "figure": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "equip_figure_s2c": {
+        "fields": {
+          "figure_list": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "equip_select_c2s": {
+        "fields": {
+          "equip_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          }
+        }
+      },
+      "equip_select_s2c": {
+        "fields": {
+          "equip_info": {
+            "rule": "required",
+            "type": "type.p_equip",
+            "id": 1
+          }
+        }
+      },
+      "equip_tab_info_c2s": {
+        "fields": {}
+      },
+      "equip_tab_info_s2c": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "unlock_list": {
+            "rule": "repeated",
+            "type": "type.p_key_string",
+            "id": 2
+          }
+        }
+      },
+      "equip_choose_tab_c2s": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_change_tab_name_c2s": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "equip_change_tab_name_s2c": {
+        "fields": {
+          "tab": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "name": {
+            "rule": "required",
+            "type": "string",
+            "id": 2
+          }
+        }
+      },
+      "equip_box_skin_c2s": {
+        "fields": {}
+      },
+      "equip_box_skin_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_change_box_skin_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_change_box_skin_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_filter_info_c2s": {
+        "fields": {}
+      },
+      "equip_filter_info_s2c": {
+        "fields": {
+          "filter_attrs": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "equip_filter_attr_c2s": {
+        "fields": {
+          "order": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "attr_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "equip_refine_info_c2s": {
+        "fields": {}
+      },
+      "equip_refine_info_s2c": {
+        "fields": {
+          "stage": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "resonate": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "levels": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "equip_refine_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_refine_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "levels": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          },
+          "locations": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 3,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "equip_refine_stage_c2s": {
+        "fields": {}
+      },
+      "equip_refine_stage_s2c": {
+        "fields": {
+          "stage": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_refine_resonate_c2s": {
+        "fields": {}
+      },
+      "equip_refine_resonate_s2c": {
+        "fields": {
+          "resonate": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_offline_open_box_setting_c2s": {
+        "fields": {
+          "quality": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "attr_condition_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value_list",
+            "id": 2
+          },
+          "open_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "is_offline_open": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "equip_offline_open_box_setting_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "equip_offline_open_box_info_c2s": {
+        "fields": {}
+      },
+      "equip_offline_open_box_info_s2c": {
+        "fields": {
+          "quality": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "attr_condition_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value_list",
+            "id": 2
+          },
+          "open_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "is_offline_open": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "equip_power_update_c2s": {
+        "fields": {
+          "equip_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "tab_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "equip_power_update_s2c": {
+        "fields": {
+          "equip_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "tab_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "power_update": {
+            "rule": "required",
+            "type": "int64",
+            "id": 3
+          }
+        }
+      }
+    }
+  }
+}
