@@ -34,6 +34,13 @@ operators 回放驗算，並可能強制判敗。送 result=0 (client-reported w
   - 週副本 type=23 (萬神試煉) 用 gtid 1081 (SEVEN_TICKET_GTID)，每場 1 張。
   - 深淵 type=2 (深淵之門) 門票 gtid 待 live 確認 (# live-confirm)。
   - 次數用完 / 門票不足 → battle_start.code != 0 或 sweep 回 0x0201 error。
+
+LIVE 2026-06-09 (5554):run_sweep(type=2, dungeon_id∈{150,1,0}, num=1) 一律回
+0x0201 code=173。dungeon_id 的真正來源未解(p_dungeon 沒有 dungeon_id 欄位),且
+code 173 是跨功能(轉盤/農場/掃蕩都出現)的通用「操作失敗/條件不符」碼,非掃蕩專屬。
+run_sweep 已優雅處理(回 SweepResult success=False error_code=173,不 crash)。
+  # live-confirm: 深淵是否支援掃蕩 + sweep dungeon_id 來源 + 解 error 173 字義
+  (建議抓真實客戶端 sweep 封包 或 CDP 讀 error-code config)。
 """
 from __future__ import annotations
 
@@ -65,12 +72,16 @@ class Dungeon:
     type: int               # 2=深淵之門, 23=萬神試煉
     max_level: int          # highest level ever cleared
     cur_level: int          # current / next level
-    day_times: int          # attempts remaining today (0 == none left)
+    day_times: int          # p_dungeon#4 — SEMANTIC UNCONFIRMED (see note below)
     raw: dict = field(compare=False, default_factory=dict)
 
     @property
     def has_attempts(self) -> bool:
-        """True while there are daily attempts left."""
+        """⚠ UNRELIABLE. Live (小寶/5554/5556/5560 2026-06-09) day_times returns
+        large values (150~748), i.e. it looks like a CUMULATIVE total, NOT
+        "remaining today" — so ``day_times > 0`` does not mean a sweep/battle is
+        available. The real "remaining today" field is not yet identified.
+        # live-confirm: find the true remaining-attempts field before gating on this."""
         return self.day_times > 0
 
 
