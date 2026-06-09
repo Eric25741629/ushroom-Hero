@@ -141,3 +141,4 @@ tools/watch_capture.py
 tools/watch_qring.py
 tools/watch_ws.py
 tools/watch_ws_raw.py
+ws_state/
