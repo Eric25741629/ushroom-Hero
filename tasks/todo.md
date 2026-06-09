@@ -25,6 +25,16 @@
 - **R2 5556 沒 ticket、也沒連 adb**:要試點得先讓 5556 上線一次撈 ticket;或先用有 ticket 的 5554 試點。
 - **R3 同帳號錯開**:5558 維持 web_h5 + 偶爾 WS 會互踢 → 必須錯開時段（`wake_hour_parity`/`wake_minute_offset`）。
 
+## 分解（Codex task 6.3h stale/死了,改自己分解;隔離件現在做,live-bot 件等使用者過目）
+
+**A. 隔離件（不碰 live bot,可現在做）**
+- [~] S0 `ws_token/online_guard.py` 純 WS 在線檢查(好友 `0x0F02` last_login_ts==0 / guild `is_online`,**無 OCR**)+ 測試 — 建構中(subagent)
+- [x] S6a 神燈 num=20:`ws_token/lamp.py:268` `batch_num=20` **預設已是 20,已滿足**
+- [ ] S6b 神燈接進 runner（可選）
+- [ ] guild_members_info(cmd 7440)若走 guild 法需在 `ws_token/guild.py` 補(online_guard 一併處理)
+
+**B. Live-bot 件（動 new_main_v2/scanner/config/5558,依 CLAUDE.md「Working Style」規則先過目再動）**
+
 ## 步驟（核准後;複雜→用 subagents 隔離）
 - [ ] S1 config_manager: `use_ws_runner` 旗標 + backend enum 白名單 + DEFAULT
 - [ ] S2 wake loop branch: backend/`use_ws_runner` → `run_device`（跳過 ADB/PW init）
