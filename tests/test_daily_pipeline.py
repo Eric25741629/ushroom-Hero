@@ -62,7 +62,14 @@ if "Open_gold_paddle_ocr" not in sys.modules:
     sys.modules["Open_gold_paddle_ocr"] = _gp
 
 if "opengold_v2" not in sys.modules:
-    sys.modules["opengold_v2"] = types.ModuleType("opengold_v2")
+    _og = types.ModuleType("opengold_v2")
+    # __path__ 讓真實的輕量子模組（config/models/ocr_parser/skill_evaluator —
+    # ws_token.lamp 需要）照常匯入，同時跳過 opengold_v2/__init__ 的重依賴；
+    # 沒有它，同 session 後收集的 test_ws_phase.py（→ ws_token.runner → lamp）
+    # 會炸 "opengold_v2 is not a package"。heavy 的 lamp_service 仍用下方 stub。
+    from pathlib import Path as _Path
+    _og.__path__ = [str(_Path(__file__).resolve().parents[1] / "opengold_v2")]
+    sys.modules["opengold_v2"] = _og
 if "opengold_v2.lamp_service" not in sys.modules:
     _ls = types.ModuleType("opengold_v2.lamp_service")
     class _FakeLampSvc:
