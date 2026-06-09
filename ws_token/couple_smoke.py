@@ -30,10 +30,13 @@ def _print_state(client: WSGameClient) -> int:
           f"({'no partner' if lover_id == 0 else 'has partner'})", flush=True)
     partners = couple.read_favor_info(client)
     print(f"[couple] favor_friend_info: {len(partners)} partner(s)", flush=True)
-    for i, p in enumerate(partners):
-        tag = " <- 伴侶" if i == 0 else ""
-        print(f"  role_id={p.role_id} name={p.name!r} favor_lv={p.favor_lv} "
-              f"favor={p.favor}{tag}", flush=True)
+    # only the first partner (the 伴侶) matters; printing all 50 names can also
+    # hit a non-UTF-8 console's encoder, so show just the first.
+    if partners:
+        p = partners[0]
+        name = p.name.encode("utf-8", "replace").decode("utf-8")
+        print(f"  role_id={p.role_id} name={name!r} favor_lv={p.favor_lv} "
+              f"favor={p.favor} <- 伴侶", flush=True)
     ring = couple.read_ring(client)
     print(f"[couple] marry_ring_info level={ring['level']} use={ring['use']} "
           f"exp={ring['exp']}", flush=True)

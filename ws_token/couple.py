@@ -143,10 +143,15 @@ def read_partner(client: WSGameClient, *, timeout: Optional[float] = None) -> in
 
 
 def read_favor_info(
-    client: WSGameClient, *, timeout: Optional[float] = None
+    client: WSGameClient, *, page: int = 1, timeout: Optional[float] = None
 ) -> list[Partner]:
-    """favor_friend_info (empty body): parse the partner list (first = 伴侶)."""
-    return parse_favor_info(client.call(CMD_FAVOR_INFO, b"", timeout=timeout))
+    """favor_friend_info: parse the partner list (first = 伴侶).
+
+    c2s requires {page#1} (live-confirmed) — an empty body gets NO reply and times
+    out. Page 1 holds the partner(s).
+    """
+    body = codec.pb_uint(1, page)
+    return parse_favor_info(client.call(CMD_FAVOR_INFO, body, timeout=timeout))
 
 
 def read_ring(client: WSGameClient, *, timeout: Optional[float] = None) -> dict:
