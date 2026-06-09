@@ -36,6 +36,7 @@ from ws_token.couple import (  # noqa: E402
     CMD_ERROR,
     CMD_FAVOR_INFO,
     CMD_GIVE_FLOWER,
+    CMD_MARK_INFO,
     CMD_REWARD_FETCH,
     CMD_REWARD_INFO,
     CMD_RING_INFO,
@@ -45,6 +46,7 @@ from ws_token.couple import (  # noqa: E402
     FLOWER,
     LOVE_STONE,
     MILK_TEA,
+    MarkInfo,
     Partner,
     build_give_flower_body,
     build_reward_fetch_body,
@@ -52,8 +54,11 @@ from ws_token.couple import (  # noqa: E402
     fetch_favor_reward,
     forge_ring_until_empty,
     give_all,
+    give_all_in_hand,
     give_flower,
     parse_favor_info,
+    parse_mark_info,
+    read_mark_info,
     read_partner,
     read_ring,
     ring_levup,
@@ -98,6 +103,11 @@ def _ring_levup_s2c(exp, old_lev, new_lev):
     return codec.pb_uint(1, exp) + codec.pb_uint(2, old_lev) + codec.pb_uint(3, new_lev)
 
 
+def _mark_info_s2c(start_time, next_reward_time):
+    """marry_mark_info_s2c {start_time#1, next_reward_time#2}."""
+    return codec.pb_uint(1, start_time) + codec.pb_uint(2, next_reward_time)
+
+
 # --- cmd / goods constants --------------------------------------------------
 
 def test_cmd_constants_match_captured_values():
@@ -109,11 +119,14 @@ def test_cmd_constants_match_captured_values():
     assert CMD_REWARD_FETCH == 15142
     assert CMD_RING_INFO == 15134
     assert CMD_RING_LEVUP == 15135
+    assert CMD_MARK_INFO == 15131
     assert CMD_ERROR == 0x0201
 
 
 def test_goods_ids_match_config():
-    assert FLOWER == 1031
+    # FLOWER=1614 (玫瑰) live-verified 2026-06-09: MarrySendFlowerView m=[1106,1614].
+    # 1031 is NOT a valid favor gift (server returns error 2 請求的參數不合法).
+    assert FLOWER == 1614
     assert MILK_TEA == 1106
     assert LOVE_STONE == 1114
 
@@ -283,6 +296,32 @@ def test_read_ring_parses_level_exp_use():
         c.close()
 
 
+# --- marry_mark_info: MARRIED anniversary countdown (read-only) -------------
+
+def test_parse_mark_info_reads_start_and_next_reward_time():
+    # Live shape (small ints here): {start_time#1, next_reward_time#2}.
+    body = _mark_info_s2c(1764172800, 1795622400)
+    info = parse_mark_info(body)
+    assert info == MarkInfo(start_time=1764172800, next_reward_time=1795622400)
+
+
+def test_parse_mark_info_empty_body_is_zeros():
+    assert parse_mark_info(b"") == MarkInfo(start_time=0, next_reward_time=0)
+
+
+def test_read_mark_info_sends_empty_body_and_parses():
+    c, fake = _client({
+        CMD_MARK_INFO: lambda _b: [s2c(CMD_MARK_INFO, _mark_info_s2c(100, 200))],
+    })
+    try:
+        info = read_mark_info(c)
+        assert info == MarkInfo(start_time=100, next_reward_time=200)
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_MARK_INFO]
+        assert sent == [b""]  # marry_mark_info c2s body is EMPTY (live-confirmed)
+    finally:
+        c.close()
+
+
 # --- ring_levup: parse s2c {exp, old_lev, new_lev} + rejection --------------
 
 def test_ring_levup_success_parses_new_lev():
@@ -348,6 +387,75 @@ def test_forge_ring_until_empty_respects_max_forges():
         assert out["stopped_reason"] == "max_forges"
         sent = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_RING_LEVUP]
         assert len(sent) == 5
+    finally:
+        c.close()
+
+
+# --- give_all_in_hand: batches of 20, server caps, code 3 = done -------------
+
+def _err_s2c(code):
+    """error_info_s2c {error_code#1} on the 0x0201 channel."""
+    return s2c(CMD_ERROR, codec.pb_uint(1, code))
+
+
+def test_give_all_in_hand_stops_on_code3_after_batches():
+    # 2 batches succeed (server capped them to inventory), 3rd batch -> code 3.
+    replies = [
+        [s2c(CMD_GIVE_FLOWER, b"")],
+        [s2c(CMD_GIVE_FLOWER, b"")],
+        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],
+    ]
+    calls = []
+
+    def responder(body):
+        calls.append(body)
+        return replies[len(calls) - 1]
+
+    c, fake = _client({CMD_GIVE_FLOWER: responder})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=MILK_TEA, spacing=0)
+        assert out == {"batches_ok": 2, "stopped_reason": "error_code=3"}
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_GIVE_FLOWER]
+        assert len(sent) == 3
+        for b in sent:  # every batch is num=20 {friend_id#1, flower_id#2, num#3}
+            assert codec.walk_dict(b) == {1: 111, 2: MILK_TEA, 3: 20}
+    finally:
+        c.close()
+
+
+def test_give_all_in_hand_empty_inventory_first_batch():
+    c, _ = _client({CMD_GIVE_FLOWER: lambda _b: [_err_s2c(ERR_NOT_ENOUGH_ITEM)]})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=FLOWER, spacing=0)
+        assert out == {"batches_ok": 0, "stopped_reason": "error_code=3"}
+    finally:
+        c.close()
+
+
+def test_give_all_in_hand_success_notice_369_counts_as_ok():
+    # live: give success replies on 0x0201 with code 369 (贈送成功) — must count
+    # as a successful batch, then a real code 3 ends the loop.
+    replies = [[_err_s2c(369)], [_err_s2c(ERR_NOT_ENOUGH_ITEM)]]
+    calls = []
+
+    def responder(body):
+        calls.append(body)
+        return replies[len(calls) - 1]
+
+    c, _ = _client({CMD_GIVE_FLOWER: responder})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=MILK_TEA, spacing=0)
+        assert out == {"batches_ok": 1, "stopped_reason": "error_code=3"}
+    finally:
+        c.close()
+
+
+def test_give_all_in_hand_max_batches_guardrail():
+    c, _ = _client({CMD_GIVE_FLOWER: lambda _b: [s2c(CMD_GIVE_FLOWER, b"")]})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=MILK_TEA,
+                               max_batches=4, spacing=0)
+        assert out == {"batches_ok": 4, "stopped_reason": "max_batches"}
     finally:
         c.close()
 
