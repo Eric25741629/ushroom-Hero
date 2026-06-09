@@ -96,6 +96,17 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.league_solo, "claim_available",
                         lambda c, **k: (calls.append(("league_solo", "claim_available")) or {"claimed": 0}))
 
+    # redpack (free; always runs)
+    monkeypatch.setattr(runner.redpack, "grab_claimable",
+                        lambda c, **k: (calls.append(("redpack", "grab_claimable"))
+                                        or {"attempted": 0, "claimed": 0, "results": []}))
+
+    # lamp (opt-in via open_lamp; spends 神燈 items)
+    monkeypatch.setattr(runner.lamp, "open_lamp",
+                        lambda c, **k: (calls.append(("lamp", "open_lamp"))
+                                        or {"opened": 0, "equipped": [], "sold": [],
+                                            "left": [], "dry_run": k.get("dry_run", True)}))
+
     # guild
     monkeypatch.setattr(runner.guild, "help_all",
                         lambda c, **k: (calls.append(("guild", "help_all")) or {"helped": 0}))
@@ -147,11 +158,14 @@ def test_run_device_runs_tasks_in_fixed_order(patched):
 
     rep = run_device("dev", spend=False)
 
-    # main_tasks first (and its sub-claims), then league_solo, guild, steward.
+    # main_tasks first (and its sub-claims), then league_solo, redpack (free),
+    # guild, steward. lamp is opt-in and OFF here so it does not appear.
     task_order = [t for t, _a in calls]
     assert task_order.index("main_tasks") < task_order.index("league_solo")
-    assert task_order.index("league_solo") < task_order.index("guild")
+    assert task_order.index("league_solo") < task_order.index("redpack")
+    assert task_order.index("redpack") < task_order.index("guild")
     assert task_order.index("guild") < task_order.index("steward")
+    assert "lamp" not in task_order
     assert rep.login_ok is True
 
 
@@ -208,6 +222,103 @@ def test_spend_true_skips_sweep_without_chapter_list(patched):
     # shopping still runs on spend, but the sweep is skipped (nothing configured)
     assert ("steward", "run_shopping") in actions
     assert ("steward", "run_dungeon_sweep") not in actions
+
+
+# --- redpack (free; always runs) --------------------------------------------
+
+def test_redpack_runs_for_free_and_records_result(patched):
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    # redpack.grab_claimable was called (free, no spend gate) ...
+    assert ("redpack", "grab_claimable") in {(t, a) for t, a in calls}
+    # ... and its summary landed on the report.
+    assert "redpack" in rep.tasks
+    assert rep.tasks["redpack"] == {"attempted": 0, "claimed": 0, "results": []}
+
+
+def test_redpack_failure_does_not_abort_other_tasks(patched, monkeypatch):
+    calls, _ = patched
+
+    def boom(c, **k):
+        calls.append(("redpack", "grab_claimable"))
+        raise WSTimeoutError("redpack list timed out")
+
+    monkeypatch.setattr(runner.redpack, "grab_claimable", boom)
+
+    rep = run_device("dev", spend=False)
+
+    assert "redpack" in rep.errors          # error recorded ...
+    assert "redpack" not in rep.tasks       # ... and no bogus result
+    # guild + steward still ran afterwards.
+    assert any(t == "guild" for t, _a in calls)
+    assert any(t == "steward" for t, _a in calls)
+
+
+# --- lamp (opt-in via open_lamp; spends 神燈 items) --------------------------
+
+def test_lamp_not_run_when_open_lamp_false(patched):
+    """Default open_lamp=False must NOT open the lamp (no 神燈 spend)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("lamp", "open_lamp") not in {(t, a) for t, a in calls}
+    assert "lamp" not in rep.tasks
+
+
+def test_lamp_not_run_even_with_spend_true(patched):
+    """open_lamp is independent of spend: spend=True alone must not open lamps."""
+    calls, _ = patched
+
+    run_device("dev", spend=True, sweep_list=[(1, 5, 10)])
+
+    assert ("lamp", "open_lamp") not in {(t, a) for t, a in calls}
+
+
+def test_lamp_runs_when_open_lamp_true(patched):
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False, open_lamp=True)
+
+    assert ("lamp", "open_lamp") in {(t, a) for t, a in calls}
+    assert "lamp" in rep.tasks
+    assert rep.tasks["lamp"]["opened"] == 0
+
+
+def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
+    """The daily runner opens lamps for REAL (dry_run=False) with a bounded
+    batch_num — winners get equipped/sold, never an unbounded drain."""
+    captured: dict = {}
+
+    def spy_open(c, **k):
+        captured.update(k)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": k.get("dry_run", True)}
+
+    monkeypatch.setattr(runner.lamp, "open_lamp", spy_open)
+
+    run_device("dev", spend=False, open_lamp=True)
+
+    assert captured.get("dry_run") is False          # REAL open, not simulated
+    assert captured.get("batch_num") == runner._LAMP_BATCH_NUM  # bounded batch
+
+
+def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
+    calls, _ = patched
+
+    def boom(c, **k):
+        calls.append(("lamp", "open_lamp"))
+        raise WSTimeoutError("lamp open timed out")
+
+    monkeypatch.setattr(runner.lamp, "open_lamp", boom)
+
+    rep = run_device("dev", spend=False, open_lamp=True)
+
+    assert "lamp" in rep.errors        # error recorded ...
+    assert "lamp" not in rep.tasks     # ... and no bogus result
+    assert rep.login_ok is True        # the rest of the run completed fine
 
 
 # --- per-task isolation -----------------------------------------------------
@@ -350,7 +461,7 @@ def test_login_failure_records_error_and_runs_no_tasks(patched, monkeypatch):
 def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     """Drive the REAL task orchestrators against a scripted responder to prove
     the wiring (cmd ids, body building, push collection) is sound end-to-end."""
-    from ws_token import league_solo, main_tasks, steward
+    from ws_token import league_solo, main_tasks, redpack, steward
 
     # main_tasks reads are PUSH-based; emit the login-time frames on login.
     def login_with_pushes(cmd, body):
@@ -372,6 +483,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
                 codec.pb_uint(1, 5) + codec.pb_uint(2, 5) + codec.pb_uint(3, 0))],
         # league_solo: no claimable boxes
         league_solo.CMD_SOLO_INFO: lambda b: [s2c(league_solo.CMD_SOLO_INFO, b"")],
+        # redpack: empty brief list (no claimable bags) -> attempted=0
+        redpack.CMD_BRIEF_LIST: lambda b: [s2c(redpack.CMD_BRIEF_LIST, b"")],
         # guild: empty help list, no treasure round
         runner.guild.CMD_HELP_INFO: lambda b: [
             s2c(runner.guild.CMD_HELP_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
@@ -408,5 +521,9 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.errors == {} or all(v is None for v in rep.errors.values())
     assert "main_tasks" in rep.tasks
     assert "league_solo" in rep.tasks
+    assert "redpack" in rep.tasks
+    assert rep.tasks["redpack"]["attempted"] == 0
     assert "guild" in rep.tasks
     assert "steward" in rep.tasks
+    # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
+    assert "lamp" not in rep.tasks

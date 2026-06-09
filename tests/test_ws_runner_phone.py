@@ -157,7 +157,7 @@ def test_protected_true_when_mailbox_raises(svc, monkeypatch):
 def _stub_run_device(svc, monkeypatch, *, login_ok=True):
     calls = []
 
-    def fake_run_device(ip, *, spend=False, sweep_list=None):
+    def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False):
         calls.append(ip)
         return types.SimpleNamespace(device=ip, login_ok=login_ok, tasks={}, errors={})
 

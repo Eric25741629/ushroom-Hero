@@ -191,8 +191,9 @@ def patched_runner(monkeypatch):
 
     calls = []
 
-    def fake_run_device(ip, *, spend=False, sweep_list=None):
-        calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list})
+    def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False):
+        calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
+                      "open_lamp": open_lamp})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -210,7 +211,8 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
     )
     report = svc.run_ws_device_cycle("ws-x", cfg, _NullLogger())
     assert len(calls) == 1
-    assert calls[0] == {"ip": "ws-x", "spend": True, "sweep_list": [[1, 2, 3]]}
+    assert calls[0] == {"ip": "ws-x", "spend": True, "sweep_list": [[1, 2, 3]],
+                        "open_lamp": False}
     assert report.login_ok is True
 
 
@@ -226,7 +228,7 @@ def test_run_ws_device_cycle_passes_none_sweep_when_empty(patched_runner):
 def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkeypatch):
     svc, calls = patched_runner
 
-    def failing_login(ip, *, spend=False, sweep_list=None):
+    def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -241,7 +243,7 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
 def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monkeypatch):
     svc, _calls = patched_runner
 
-    def boom(ip, *, spend=False, sweep_list=None):
+    def boom(ip, *, spend=False, sweep_list=None, open_lamp=False):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)

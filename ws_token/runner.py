@@ -13,19 +13,25 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
   1. main_tasks  — free: collect login-push state, then claim daily tasks +
                    daily activity box + weekly box + achievement milestones.
   2. league_solo — free: claim every claimable 烈焰山洞 / 魔法劇場 box (types 1-4).
-  3. guild       — help_all (free); donate_until_capped (spend); treasure open
+  3. redpack     — free: list grab_list and claim every claimable 紅包.
+  4. guild       — help_all (free); donate_until_capped (spend); treasure open
                    only when a round is active (event-gated; spend).
-  4. steward     — read_info (free); shopping + dungeon sweep (spend); service
+  5. steward     — read_info (free); shopping + dungeon sweep (spend); service
                    renewal only when spend AND the service is expired.
+  6. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
+                   auto-equips/sells drops, so it is gated behind its own flag
+                   (NOT ``spend``) and OFF by default. Runs one batch of up to
+                   ``batch_num`` boxes (lamp.open_lamp's own cap), never unbounded.
 
 mining is deliberately NOT in the daily runner: it is human-supervised and runs
 via ws_token.mining_smoke instead.
 
-Default ``spend=False`` runs only the free reads + claims and sends NO cost
-action. ``spend=True`` additionally donates, shops, sweeps, and (if expired)
-renews — see the per-task spend gates below.
+Default ``spend=False`` runs only the free reads + claims (incl. redpack) and
+sends NO cost action. ``spend=True`` additionally donates, shops, sweeps, and (if
+expired) renews — see the per-task spend gates below. ``open_lamp`` is an
+independent opt-in: it is OFF by default and consumes 神燈 items only when True.
 
-CLI:  python -m ws_token.runner --device <dev> [--spend]
+CLI:  python -m ws_token.runner --device <dev> [--spend] [--open-lamp]
 """
 from __future__ import annotations
 
@@ -34,7 +40,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
-from ws_token import guild, league_solo, main_tasks, steward
+from ws_token import guild, lamp, league_solo, main_tasks, redpack, steward
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
 from ws_token.creds import load_creds
 
@@ -50,7 +56,12 @@ _PUSH_SETTLE_S: float = 1.5
 _TREASURE_PROBE_S: float = 6.0
 
 LOGIN_TASK = "login"
-TASK_ORDER: tuple[str, ...] = ("main_tasks", "league_solo", "guild", "steward")
+TASK_ORDER: tuple[str, ...] = (
+    "main_tasks", "league_solo", "redpack", "guild", "steward", "lamp")
+
+# 開神燈 batch size for one daily pass (lamp.open_lamp caps to max_batches=1 by
+# default, so this opens at most one batch — never an unbounded drain).
+_LAMP_BATCH_NUM: int = 20
 
 
 @dataclass(frozen=True)
@@ -95,6 +106,27 @@ def _run_main_tasks(client, collector: main_tasks.TaskCollector) -> dict:
 def _run_league_solo(client) -> dict:
     """Free: claim every claimable 烈焰山洞 / 魔法劇場 box (types 1-4)."""
     return league_solo.claim_available(client)
+
+
+def _run_redpack(client) -> dict:
+    """Free: list grab_list and claim every claimable 紅包.
+
+    grab is always free (no cost gate), so this runs unconditionally in the free
+    task group. Returns redpack.grab_claimable's summary
+    ``{attempted, claimed, results}``.
+    """
+    return redpack.grab_claimable(client)
+
+
+def _run_lamp(client) -> dict:
+    """開神燈: open one batch of boxes and auto-equip/sell drops (REAL, not dry_run).
+
+    Only reached when ``open_lamp=True`` (gated by run_device); it consumes 神燈
+    items. ``batch_num`` + lamp.open_lamp's own ``max_batches=1`` cap keep it to a
+    single bounded batch (~one box/sec), never an unbounded drain. Returns
+    lamp.open_lamp's summary ``{opened, equipped, sold, left, dry_run}``.
+    """
+    return lamp.open_lamp(client, dry_run=False, batch_num=_LAMP_BATCH_NUM)
 
 
 def _run_guild(client, *, spend: bool) -> dict:
@@ -158,7 +190,8 @@ def _run_steward(client, *, spend: bool, serv_time: int,
 
 
 def run_device(device: str, *, spend: bool = False,
-               sweep_list: Optional[Iterable[Sequence[int]]] = None) -> RunReport:
+               sweep_list: Optional[Iterable[Sequence[int]]] = None,
+               open_lamp: bool = False) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -170,6 +203,12 @@ def run_device(device: str, *, spend: bool = False,
     ``sweep_list`` (only used when ``spend``) is the 副本管家 chapter list
     ``[(id, level, times[, use_ad]), ...]``; with none configured the sweep is
     skipped (steward does not auto-derive level/times).
+
+    ``open_lamp`` (default False) is an independent opt-in for 開神燈. When True
+    the runner opens one bounded batch of 神燈 boxes (REAL, not dry_run) and
+    auto-equips/sells the drops — it consumes 神燈 items, so it is gated behind
+    its own flag rather than ``spend`` and is OFF by default (legacy behaviour is
+    unchanged: only the free redpack step is added for non-lamp devices).
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -200,10 +239,13 @@ def run_device(device: str, *, spend: bool = False,
     try:
         _safe(tasks, errors, "main_tasks", lambda: _run_main_tasks(client, collector))
         _safe(tasks, errors, "league_solo", lambda: _run_league_solo(client))
+        _safe(tasks, errors, "redpack", lambda: _run_redpack(client))
         _safe(tasks, errors, "guild", lambda: _run_guild(client, spend=spend))
         _safe(tasks, errors, "steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
                                    sweep_list=sweep))
+        if open_lamp:
+            _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
     finally:
         try:
             client.close()
@@ -264,14 +306,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--sweep", action="append", default=[],
                     metavar="id:level:times[:use_ad]",
                     help="副本管家 sweep chapter (repeatable; only used with --spend)")
+    ap.add_argument("--open-lamp", dest="open_lamp", action="store_true",
+                    help="also 開神燈 (REAL): opens one bounded batch and "
+                         "auto-equips/sells drops. Consumes 神燈 items. Default: off.")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
     sweep_list = _parse_sweep_arg(args.sweep) or None
-    print(f"[runner] starting device={args.device} spend={args.spend}", flush=True)
-    rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list)
+    print(f"[runner] starting device={args.device} spend={args.spend} "
+          f"open_lamp={args.open_lamp}", flush=True)
+    rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
+                     open_lamp=args.open_lamp)
     print(_format_report(rep), flush=True)
     return 0 if rep.login_ok else 1
 

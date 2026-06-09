@@ -35,6 +35,7 @@ DEFAULT_DEVICE_CONFIG = {
     "use_ws_runner": False,  # True => wake loop 走 ws_token.runner.run_device，不連 ADB/Playwright
     "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
     "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
+    "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
     "web_url": "",
     "web_canvas_selector": "canvas",
     "web_profile_dir": "playwright_profile/{device_id}",
@@ -95,6 +96,7 @@ class DeviceConfig:
     use_ws_runner: bool = False
     ws_token_spend: bool = False
     ws_token_sweep_list: list = field(default_factory=list)
+    ws_token_open_lamp: bool = False
 
     # Web H5 settings
     web_url: str = ""
@@ -704,6 +706,10 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             DEFAULT_DEVICE_CONFIG["ws_token_spend"],
         )
         current["ws_token_sweep_list"] = _sanitize_sweep_list(current.get("ws_token_sweep_list"))
+        current["ws_token_open_lamp"] = _to_bool(
+            current.get("ws_token_open_lamp", DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"],
+        )
         current["web_url"] = str(current.get("web_url", "")).strip()
         current["web_canvas_selector"] = (
             str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
