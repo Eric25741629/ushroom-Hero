@@ -1,5 +1,23 @@
 # 紅包 (Red Envelope) 協議 (2026-05-20)
 
+> ## ⚠️ 重大修正 (2026-06-09, 純 WS LIVE 領取成功)
+> 用 `ws_token` 純 WS 真的領到一個紅包(`num=102`)。權威 schema 已用 CDP 從 `netManager.protoRoot`
+> 匯出:`docs/protocol/RED_PROTO_SCHEMA.json`。**本文件 2026-05-20 版的 grab 欄位寫反了**,以下為正解:
+> - **`red_grab_c2s {type#1:uint32, id#2:uint64}`** — **type 在前、id 在後**(舊版以為 id#1/type#2,錯)。
+>   舊版送 `{id#1=bag_id, type#2}` → server 把 field1 當 type、field2 當 id → 查 id=2 不存在 → 回 `0x0201 code=2`。
+>   這也解釋了舊版「raw sock 一律回 code=2」**不是 malformed,是欄位錯位**;**純 WS gen_packet 完全可行**,不必走 netManager.send。
+> - **grab `type` = `configRed_packet.getDataByKey(cfg_id).type`**(client 設定表,**不是** brief 的 field 3)。
+>   值域 {0,1}(1019 列:893 個=1、126 個=0)。bundle 源:`d.EventType.CLICK ... send_red_grab_c2s(i.id, configRed_packet.getDataByKey(i.cfg_id).type)`。
+>   cfg_id→type 對照已存 `ws_token/data/red_packet_types.json`。
+> - **`red_brief_list_s2c {send_list#1:p_brief_red[], grab_list#2:p_brief_red[]}`**(不是「repeated 在 field 2」;
+>   field 1=我發的、field 2=可領的)。`p_brief_red {id#1, cfg_id#2, state#3, role_id#4, name#5, expiry_time#6, min#7, max#8}`。
+>   → 舊版 RedBagEntry 的「field_2 未知 100k-230k」其實是 **cfg_id**;「type=2」其實是 **state**。
+> - **`red_grab_s2c {code#1, num#2, red_envelope#3:p_red}`** success body **已抓到**:`code=0, num=102(=領到的金額), red_envelope=p_red`。
+>   `p_red {id, cfg_id, state, red_sum#4, red_remain#5, goods_sum#6, goods_remain#7, role_id#8, name#9, head#10, expiry_time#11, roles#12:p_red_role[]}`。
+> - 純 WS 實作:`ws_token/redpack.py`(+ `ws_token/redpack_smoke.py`),300 離線測試綠。
+>
+> 下方 2026-05-20 內容保留作歷史紀錄,grab/list 欄位以本修正為準。
+
 實驗環境：emulator-5554，bot launched via dashboard `web_launch`，CDP attach via 9230，
 Cocos Creator 3.6.3 + protobuf-over-WebSocket。Schema 從 `docs/game_client_sources/`
 的 game bundle 解出 + 真機 round-trip 驗證。

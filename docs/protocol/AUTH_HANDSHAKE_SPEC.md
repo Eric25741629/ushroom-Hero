@@ -4,6 +4,7 @@
 > 模組:IOHandler.ts、SocketClient.ts、NetManager.ts、LoginControl.ts、LoginDataCache.ts、ByteArray.ts
 > 目的:評估「純原生 client(Kotlin/B 路線)直連協議」可行性。本檔是 B 路線的地基。
 > 狀態:**已 LIVE 驗證(2026-06-04,裝置 7fe98fc6)**。純 Python 無瀏覽器登入成功,見 §7。
+> **2026-06-08 更新:§5 的「生死線」(SDK token/ticket)已被 root ADB 繞過,連瀏覽器都不必,見 §9。**
 
 ## ✅ 驗證結論(2026-06-04)
 
@@ -286,3 +287,45 @@ client 一登入,同帳號的 bot/dashboard 會被異地登入踢掉。短連線
 | NetManager.ts | 7473 |
 | protoregister.ts (MSG_TO_ID_MAP) | 7835 |
 | SocketClient.ts | 8657 |
+
+---
+
+## 9. 突破:root ADB 直接從原生 App 撈憑證(2026-06-08,emulator-5554)
+
+§5/§6 把「SDK token/ticket 要靠第三方 FN SDK,client 自己造不出來」當成 B 的天花板,結論是
+「離不開瀏覽器/WebView 跑一次 SDK」。**這個前提在 root 模擬器上不成立。**
+
+### 9.1 原生 App 把整條登入鏈明文吐到 logcat
+原生 Cocos client(`com.mxdzz.tw.and`,版本 3.1.49.12595)冷啟動時,JS console(`printLogErr`)
+經 jsb 轉成 logcat `D Cocos ... D/ JS:`,**明文**印出:
+- **server_list 回應**:`get:{"list":[{ip,cp,cp2}],"gateway":{"ip":"wss://sgw-mix-tw-xxjzz.acenetgame.com",...}}`
+- **sdkext**(SDK login JSON):`{username, suid, signStr, suidSignStr, timestamp, access_token, autoStr, fnpid:"2001", fngid:"<16位>", ...}`
+- **login_auth 請求 URL**:`https://slogin1001-mix-tw-xxjzz.acenetgame.com/oversea/login_auth?&ticket=..&platform=2002&username=..&suidSignStr=..&suid=..&device=android&timestamp=..&big_version=3.1.49&version=3.1.49.12595&did=..&game_id=<fngid>`
+- **login_auth 回應**(= WS ticket):`{"code":0,"time":..,"uname":..,"uid":..,"token":..,"p_key":..,"role_id":..,"ip":..,"server_list":[{"id":"1467","game_server":"U2FsdGVkX1..."}],"is_white_ip":0}`
+
+login_auth 回應**就是** §5 Step 3 要的那組憑證,直接對應 `LoginDataCache`:`loginTicket=token`、
+`pKey=p_key`、`loginTime=time`、`roleId=role_id`、WS url = `gateway.ip + "?token=" + server_list[0].game_server`、
+`loginSceneId=0`(回應無 scene_id,沿用 §7 capture 的 0,實測 SUCCESS)。
+
+### 9.2 持久層在 user_infos.xml(免重啟也能撈帳號身分)
+`/data/data/com.mxdzz.tw.and/shared_prefs/user_infos.xml` 的 `<string name="normal">` 是 base64 JSON:
+`{suid, username, access_token, signStr, suidSignStr, timestamp, expires_in=2419200(28天), source}`。
+`access_token` 28 天穩定;`timestamp/suidSignStr/signStr` 每次登入由 SDK 重簽(用 secret app-key,
+非單純 MD5,已試 1~4 欄位排列組合全不中 → 無法純算重生)。所以**不能只靠 access_token 自算簽章**,
+但可以靠「重啟 App 讓 SDK 自己重簽 + logcat 撈回應」拿到全新 ticket。
+
+### 9.3 工具 + LIVE 驗證
+`tools/adb_token_login.py`:`adb logcat -c` → `am force-stop` → `monkey` 啟動 → 輪詢 logcat 撈上面三行
+→ 解析寫 `auth_state/_auth_capture_<device>.json`(與 CDP 版 `_auth_capture_probe.py` 同 `{creds}` 格式,
+`_login_poc.py` 直接吃)。`--verify` 會 reuse `_login_poc` 的 framing 送 `role_login_c2s` 實測。
+
+**2026-06-08 emulator-5554(suid 27353216)實測:restart → scrape → `role_login_s2c code=0 SUCCESS`**,
+role_id/serv_time 正確。整條無瀏覽器、無 CDP,只靠 root ADB + logcat。
+
+### 9.4 影響與限制
+- **B 路線升級為「全 ADB 半原生」**:刷 ticket 不再需要瀏覽器/CDP,只要 root + 一次 ~30s App 冷啟動;
+  ticket 可重用數小時(§7),所以刷一次可用很久。
+- 仍是「半」原生:`suidSignStr` 的 secret app-key 沒逆出來,無法完全脫離「跑一次 App SDK」。
+- `--verify`(或任何用此 ticket 的 WS 登入)會異地登入**踢掉 App 自己的 session**;與 bot/dashboard 同帳號要錯開。
+- 需要 root(模擬器 `adbd` 已 root);真機無 root 印不出 logcat 也讀不到 shared_prefs。
+- logcat buffer 會滾,撈完要立刻解析(工具已在迴圈內 `-d` dump)。
