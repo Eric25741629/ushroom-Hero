@@ -1,3 +1,42 @@
+# WS 後端整合進 bot — toggle / 5556 pilot / 5558 / 離線自動跑 / 神燈 (2026-06-09)
+
+**Branch**: `feat/dragon-realm`（ws_token 工作都在這支）
+**Trigger**: 使用者要「盡可能通通走 WS 取代 Playwright」降低本機運算;5556 試點、5558 調整、ADB 離線自動跑、WS 開神燈一次 20。
+**前置**: ws_token 6 任務 + runner 已 live 驗證（見 `tasks/ws_token_backend_todo.md`）。接入點已由 code-explorer map（下）。
+
+## 需求（使用者指定）
+1. 用 WS runner 取代舊 Playwright/ADB pipeline,**per-device toggle 可切回舊邏輯**;盡量走 WS（省運算）。
+2. **5556（菜雞）先試點**:排程換成 WS,其餘不變。
+3. **5558**:(a) 保留 5554 跨裝置 `check_online`（一定要、不可省）;(b) 關掉自動停車。
+4. **ADB 裝置（手機）離線時**:用快取 ticket **每 2 小時**自動跑一次 WS 任務。
+5. **WS 開神燈**:`equip_box_open_all` 一次 **num=20**。
+
+## 接入點（explorer 已驗,file:line）
+- toggle/backend: `config_manager.py:629`（enum 白名單加 `"ws_token"`）、`:29-65`（`DEFAULT_DEVICE_CONFIG` 加 `use_ws_runner`/`ws_token_spend`）
+- scanner 納入: `device_scan_service.py:116-120`（仿 `get_web_backend_devices` 收 ws_token 裝置）
+- wake loop branch: `new_main_v2.py:325-336`（`daily_pipeline.run` 前依 backend/`use_ws_runner` branch 成 `run_device`）;純 token 不需 ADB/PW → `:122-160` 跳過 init
+- 5558 check_online（**保留勿動**）: `web_session_service.py:89,127-128` / `new_main_v2.py:232-238` / `sleep_service.py:242-248`
+- 5558 carpark off: `carpark_scheduler.py:31-34`（已 gate `backend=="web_h5"`+`carpark.enabled`;5558 目前無 carpark block=已 off,顯式設 false 保險）
+- ADB 離線偵測: `device_scan_service.py:156-179`（`missing_now`）
+- ticket: `ws_token/creds.py:83-116`（`load_creds`/`refresh_creds`→`adb_token_login.py`）
+
+## ⚠ 風險 / 待拍板
+- **R1（最大）手機離線自動跑 WS 會踢人**:WS `role_login` 踢同帳號 session。你若正在手機上玩那帳號,每 2h 的 WS 登入會把你踢出;純 WS 路徑**沒有真人在線偵測**能保護。→ 需決定處理方式。
+- **R2 5556 沒 ticket、也沒連 adb**:要試點得先讓 5556 上線一次撈 ticket;或先用有 ticket 的 5554 試點。
+- **R3 同帳號錯開**:5558 維持 web_h5 + 偶爾 WS 會互踢 → 必須錯開時段（`wake_hour_parity`/`wake_minute_offset`）。
+
+## 步驟（核准後;複雜→用 subagents 隔離）
+- [ ] S1 config_manager: `use_ws_runner` 旗標 + backend enum 白名單 + DEFAULT
+- [ ] S2 wake loop branch: backend/`use_ws_runner` → `run_device`（跳過 ADB/PW init）
+- [ ] S3 scanner 納入 ws_token 裝置
+- [ ] S4 5558: 確認 `check_online` 完整保留 + carpark 顯式關
+- [ ] S5 ADB 離線 → WS fallback 每 2h（含 R1 安全閥）
+- [ ] S6 `ws_token/lamp.py`: num=20 per batch + 接進 runner
+- [ ] S7 5556 pilot live 驗證（撈 ticket → 跑一輪）
+- [ ] 改 `new_main_v2`/`device_wrapper` 後**需重啟 bot** 才生效;不破壞既有 6 裝置
+
+---
+
 # 降低本機運算量 / GPU (2026-05-31)
 
 **Branch**: `perf/reduce-gpu-usage`
