@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 from ws_token import codec  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.turntable import (  # noqa: E402
+    CMD_ERROR,
     CMD_INFO,
     CMD_SPIN,
     TurntableInfo,
@@ -112,6 +113,16 @@ def test_spin_once_returns_winning_id():
         c.close()
 
 
+def test_spin_once_returns_none_on_0x0201_decline():
+    # Live (小寶 2026-06-09): a spin can be answered with 0x0201 (code 173,
+    # 轉盤需看廣告) instead of 0x1604. spin_once must return None, not crash.
+    c, _ = _client({CMD_SPIN: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 173))]})
+    try:
+        assert spin_once(c) is None
+    finally:
+        c.close()
+
+
 # --- spin_all_free: drain num>0, stop at num<=0 or max_spins ----------------
 
 def test_spin_all_free_spins_exactly_num_times():
@@ -126,6 +137,24 @@ def test_spin_all_free_spins_exactly_num_times():
         assert out["results"] == [2, 2, 2]
         spins = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_SPIN]
         assert len(spins) == 3
+    finally:
+        c.close()
+
+
+def test_spin_all_free_stops_on_decline_without_hammering():
+    # num=5 but the server declines every spin (0x0201 code 173) -> stop after the
+    # FIRST attempt, do not re-try (would just waste spins / spam timeouts).
+    c, fake = _client({
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 5))],
+        CMD_SPIN: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 173))],
+    })
+    try:
+        out = spin_all_free(c, spacing=0)
+        assert out["spun"] == 0
+        assert out["results"] == []
+        assert out["declined"] is True
+        spins = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_SPIN]
+        assert len(spins) == 1   # only ONE attempt before stopping
     finally:
         c.close()
 

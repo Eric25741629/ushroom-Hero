@@ -20,14 +20,23 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
+from typing import Optional
 
 from ws_token import codec
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
 
 CMD_INFO = 0x1603   # 5635 ad.ad_wheel_info_c2s/s2c (empty request body)
 CMD_SPIN = 0x1604   # 5636 ad.ad_wheel_spin_c2s/s2c (empty request body)
+CMD_ERROR = 0x0201  # generic server error/notice channel
+
+# Live (小寶 2026-06-09): a spin is answered with a 0x0201 notice (code 173) and
+# the ad_wheel_spin reply (0x1604) does NOT arrive as a synchronous call reply —
+# waiting only for 0x1604 times out. 轉盤 appears to be ad-gated (the free `num`
+# spins still want an ad SDK flow that pure WS cannot drive), so a spin over WS is
+# declined. We surface that as "not awarded" (None) instead of crashing.
+ERR_SPIN_DECLINED = 173
 
 _DEFAULT_SPACING = 0.3
 _DEFAULT_MAX_SPINS = 50
@@ -57,9 +66,29 @@ def read_info(client: WSGameClient, *, timeout: float | None = None) -> Turntabl
     return parse_info(client.call(CMD_INFO, b"", timeout=timeout))
 
 
-def spin_once(client: WSGameClient, *, timeout: float | None = None) -> int:
-    """Send ad_wheel_spin (empty body) and return the winning slot id."""
-    return parse_spin(client.call(CMD_SPIN, b"", timeout=timeout))
+def spin_once(client: WSGameClient, *, timeout: float | None = None) -> Optional[int]:
+    """Send ad_wheel_spin (empty body); return the winning slot id, or None if the
+    server declined the spin.
+
+    The server replies with EITHER the spin result (0x1604 {id}) OR an 0x0201
+    notice (live-observed code 173 = 轉盤需看廣告, not drivable over pure WS). It is
+    NOT guaranteed to send 0x1604 to the call waiter, so waiting only for 0x1604
+    times out. We wait for either cmd and return None on a 0x0201 notice or a
+    timeout, so the caller stops gracefully instead of crashing the whole task.
+    """
+    try:
+        cmd, body = client.call_for(CMD_SPIN, b"",
+                                    expect_cmds=(CMD_SPIN, CMD_ERROR), timeout=timeout)
+    except WSTimeoutError:
+        logger.warning("ws_token turntable: spin got no 0x1604/0x0201 reply (timeout); "
+                       "轉盤可能需看廣告, WS 無法執行")
+        return None
+    if cmd == CMD_ERROR:
+        code = _as_int(codec.walk_dict(body).get(1))
+        logger.warning("ws_token turntable: spin declined 0x0201 code=%s "
+                       "(轉盤可能需看廣告, WS 無法執行)", code)
+        return None
+    return parse_spin(body)
 
 
 def spin_all_free(
@@ -78,13 +107,20 @@ def spin_all_free(
     info = read_info(client)
     budget = min(info.num, max_spins) if info.num > 0 else 0
     results: list[int] = []
+    declined = False
     for _ in range(budget):
-        results.append(spin_once(client))
+        slot = spin_once(client)
+        if slot is None:
+            # Server declined (0x0201 / no reply). Stop — re-trying just wastes
+            # spins and spams timeouts (轉盤 likely ad-gated, unusable over WS).
+            declined = True
+            break
+        results.append(slot)
         if spacing:
             time.sleep(spacing)
-    logger.info("ws_token turntable: num=%d spun=%d (max=%d)",
-                info.num, len(results), max_spins)
-    return {"spun": len(results), "results": results}
+    logger.info("ws_token turntable: num=%d spun=%d declined=%s (max=%d)",
+                info.num, len(results), declined, max_spins)
+    return {"spun": len(results), "results": results, "declined": declined}
 
 
 def _as_int(v) -> int:
