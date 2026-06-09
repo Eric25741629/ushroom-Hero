@@ -10,6 +10,8 @@
 
 - **離線測試綠 ≠ live 能動;活動制功能會休眠。** 兩個只在 live 才現形:(1) 上面的 argparse crash;(2) `guild_treasure_info`(7459)在「該家族沒在跑尋寶輪」時 server **完全不回** → `client.call` timeout → smoke crash。**Rule**:(a) 宣稱任務「完成」前一定 live 驗一次真實 send/讀;(b) 日常自動化遇到「功能休眠→server 不回→WSTimeoutError」要當「現在不可用,skip」優雅處理,不能讓整條讀路徑掛掉。錯誤碼 **159 = 已領/已滿**(家族捐獻、league_solo 寶箱共用),當「已領」跳過不 abort。
 
+- **「子訊息存在」≠「旗標成立」;schema 註解的語意要 live 核。** carpark `parse_my_mounts` 用 `parking_data#5 is not None` 判斷 mount 是否已在停車(schema 註解寫「present iff parking」)。但 live(小寶)抓到伺服器對**空閒** mount 也一律送 `parking_data#5`,只是**全欄位為 0** → 每隻 mount 都被當「已停車」排除,6 mounts→0,`auto_park_cross` 永遠 `no_available_mount`(靜默壞掉,離線測還綠因為 fake 對空閒 mount 根本沒送 #5)。**Rule**:(a) optional/flag 欄位的語意(「有沒有送」vs「值是不是非零」)一定要對真實 wire 核,不能信 schema 註解的 iff 假設;判存在要 parse 出來看**有沒有非零內容**。(b) 測試的 fake 要照**真實 server 行為**造(空閒也送全零子訊息),否則測不到這個 bug。這正是 User 整個 session 反覆強調的「要驗證、別亂報、實事求是」的具體案例。
+
 ## 2026-06-08 Codex companion 背景任務：別信 stale `status: running`，要驗 PID
 
 - **User 指正:「真的有再跑嗎 我怎麼連shell都沒有看到」→「我這邊看他就是沒有再跑啊」。**
