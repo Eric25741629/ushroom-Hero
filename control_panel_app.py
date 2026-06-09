@@ -1345,6 +1345,7 @@ def get_status():
         info["enabled"] = bool(cfg.get("enabled", True))
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
+        info["ws_enabled"] = bool((cfg.get("ws_token") or {}).get("enabled"))
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
         info["mining_planner_version"] = cfg.get("mining_planner_version", "v4")
         info["live_view_available"] = bool(
