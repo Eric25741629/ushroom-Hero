@@ -67,6 +67,16 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
+    "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
+        "enabled": False,       # 喚醒後先跑純 WS 任務，成功項由 Playwright 階段跳過
+        "spend": False,         # 家族捐獻/管家代購/掃蕩/續約 等花費類
+        "open_lamp": False,     # WS 開神燈（一批，取代 Playwright 開神燈）
+        "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
+        "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
+        "carpark_target": None, # 跨界停車 master_id（只停不收）
+        "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
+        "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
+    },
 }
 
 
