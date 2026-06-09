@@ -22,6 +22,10 @@ logger = logging.getLogger(__name__)
 
 CMD_ROLE_LOGIN = 257       # login.role_login_c2s / _s2c (same id both directions)
 CMD_HEARTBEAT = 260        # login.heart_beat_c2s {svr_time uint32 id=1}
+CMD_KICKED = 259           # login.kick_s2c (0x103): server push when this account
+                           # is logged in elsewhere (異地登入). Body is {1: reason};
+                           # reason 20 = 異地登入. The server closes the socket
+                           # right after, so we treat this frame as "kicked".
 ACTIVE_NEW = b"\x00"       # SocketClient active message: fresh connect
 ACTIVE_RECONNECT = b"\x01"
 
@@ -33,6 +37,7 @@ _JOIN_TIMEOUT_S = 2.0
 
 TransportFactory = Callable[[str], Transport]
 PushHandler = Callable[[int, bytes], None]
+KickHandler = Callable[[], None]
 
 
 class WSError(Exception):
@@ -120,6 +125,7 @@ class WSGameClient:
         call_timeout: float = _DEFAULT_CALL_TIMEOUT_S,
         time_val: Optional[int] = None,
         push_handler: Optional[PushHandler] = None,
+        on_kick: Optional[KickHandler] = None,
     ) -> None:
         self._creds = creds
         self._factory = transport_factory
@@ -129,6 +135,7 @@ class WSGameClient:
         self._call_timeout = call_timeout
         self._time_val = time_val
         self._push_handler = push_handler
+        self._on_kick = on_kick
 
         self._transport: Optional[Transport] = None
         self._reader: Optional[threading.Thread] = None
@@ -140,6 +147,7 @@ class WSGameClient:
         self._send_id = 1
         self._serv_time = 0
         self._connected = False
+        self._kicked = False
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -150,6 +158,7 @@ class WSGameClient:
         Raises :class:`WSLoginError` if login fails or never replies.
         """
         self._stop.clear()
+        self._kicked = False
         self._transport = self._factory(self._creds.ws_url)
         self._start_reader()
 
@@ -200,7 +209,22 @@ class WSGameClient:
                 th.join(timeout=_JOIN_TIMEOUT_S)
 
     def is_running(self) -> bool:
-        return self._connected and not self._stop.is_set()
+        """True while logged-in, not stopped, and not kicked.
+
+        Kicking (異地登入 cmd 259, or a non-stop reader exit) flips the session
+        dead even though ``_connected`` is still set, so callers polling this no
+        longer keep using a connection the server has already torn down.
+        """
+        return self._connected and not self._stop.is_set() and not self._kicked
+
+    def is_kicked(self) -> bool:
+        """True iff this connection was kicked (異地登入) or dropped unexpectedly.
+
+        Set when a kick push (cmd 259) arrives, or when the reader thread exits
+        on a closed/erroring socket WITHOUT a deliberate ``close()`` — i.e. the
+        server hung up on us. A clean ``close()`` does NOT set this.
+        """
+        return self._kicked
 
     def set_push_handler(self, handler: Optional[PushHandler]) -> None:
         """Install (or clear with None) the callback for unmatched server frames.
@@ -209,6 +233,14 @@ class WSGameClient:
         ``call``/``call_for`` is waiting on are delivered here as (cmd, body).
         """
         self._push_handler = handler
+
+    def set_kick_handler(self, handler: Optional[KickHandler]) -> None:
+        """Install (or clear with None) the callback fired when we are kicked.
+
+        Invoked once from the reader thread when a kick (cmd 259) is detected.
+        It takes no arguments; use :meth:`is_kicked` to read the flag afterwards.
+        """
+        self._on_kick = handler
 
     def __enter__(self) -> "WSGameClient":
         return self
@@ -288,7 +320,30 @@ class WSGameClient:
                 if lst and w in lst:
                     lst.remove(w)
 
+    def _mark_kicked(self, *, fire_callback: bool) -> None:
+        """Flip the kicked flag (idempotent) and optionally fire ``on_kick``.
+
+        ``fire_callback`` is True only for the explicit kick push (cmd 259) — a
+        bare socket drop sets the flag silently (no callback) so a deliberate
+        reconnect isn't reported as a kick to the dashboard.
+        """
+        already = self._kicked
+        self._kicked = True
+        if fire_callback and not already and self._on_kick is not None:
+            try:
+                self._on_kick()
+            except Exception:
+                logger.exception("ws_token on_kick handler failed")
+
     def _route(self, cmd: int, body: bytes) -> None:
+        if cmd == CMD_KICKED:
+            reason = codec.walk_dict(body).get(1)
+            logger.warning(
+                "ws_token 異地登入被踢 (cmd=259, reason=%s) — 連線即將被伺服器關閉",
+                reason,
+            )
+            self._mark_kicked(fire_callback=True)
+            return
         if cmd == CMD_HEARTBEAT:
             st = codec.walk_dict(body).get(1)
             if st:
@@ -339,6 +394,11 @@ class WSGameClient:
             buf += data
             for cmd, body in codec.drain_packets(buf):
                 self._route(cmd, body)
+        # Reader exited. If we did NOT ask it to stop, the socket was closed by
+        # the server (or errored) — treat that as a kick/interruption too. A
+        # deliberate close() sets _stop first, so this stays quiet for shutdown.
+        if not self._stop.is_set():
+            self._mark_kicked(fire_callback=False)
 
     def _start_heartbeat(self) -> None:
         self._heartbeat = threading.Thread(

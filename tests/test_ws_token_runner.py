@@ -41,9 +41,11 @@ from tests.fakes.ws_fakes import (  # noqa: E402
 class _SpyClient:
     """Stand-in for WSGameClient: records connect/close, returns a login dict."""
 
-    def __init__(self, *, login: dict | None = None, connect_error: Exception | None = None):
+    def __init__(self, *, login: dict | None = None, connect_error: Exception | None = None,
+                 kicked: bool = False):
         self._login = login if login is not None else {"code": 0, "role_id": 1, "serv_time": 99}
         self._connect_error = connect_error
+        self._kicked = kicked
         self.connected = False
         self.closed = False
 
@@ -52,6 +54,9 @@ class _SpyClient:
             raise self._connect_error
         self.connected = True
         return self._login
+
+    def is_kicked(self) -> bool:
+        return self._kicked
 
     def close(self) -> None:
         self.closed = True
@@ -454,6 +459,91 @@ def test_login_failure_records_error_and_runs_no_tasks(patched, monkeypatch):
     assert calls == []  # no task ran
     # client still closed
     assert spy_holder["client"].closed is True
+
+
+# --- kick detection surfaces on the report ----------------------------------
+
+def test_report_kicked_false_on_normal_run(patched):
+    """A run on a healthy (not-kicked) client reports kicked=False."""
+    _calls, spy_holder = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is False
+    # default _SpyClient is not kicked, and a clean run keeps the flag clear
+    assert spy_holder["client"].is_kicked() is False
+
+
+def test_report_kicked_true_when_client_kicked(patched, monkeypatch):
+    """When the client was kicked mid-run, RunReport.kicked is True.
+
+    The kicked client's in-flight tasks may also fail (connection gone); the
+    point is that ``kicked`` is set so the loop can tell this apart from an
+    ordinary task failure. login_ok stays True (login itself succeeded).
+    """
+    _calls, spy_holder = patched
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(kicked=True)
+        spy_holder["client"] = spy
+        return spy
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is True
+    assert rep.login_ok is True
+    assert spy_holder["client"].closed is True  # still closed
+
+
+def test_report_kicked_false_when_client_lacks_is_kicked(patched, monkeypatch):
+    """Defensive: a client without is_kicked() must not crash the run."""
+
+    class _NoKickClient:
+        def connect(self):
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client", lambda creds, **k: _NoKickClient())
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is False
+
+
+def test_report_kicked_via_fake_transport_259_then_close(monkeypatch):
+    """End-to-end: a cmd-259 push then socket close → RunReport.kicked=True.
+
+    Drives the REAL WSGameClient over a FakeTransport whose login response
+    includes the 異地登入 kick frame (cmd 259, body {1:20}) and then closes the
+    transport — exactly the LIVE-observed kick sequence (kick push, then the
+    server hangs up). Emitting it at login keeps the test deterministic
+    regardless of which task issues the first round-trip.
+    """
+    from ws_token.client import CMD_KICKED, WSGameClient
+    from tests.fakes.ws_fakes import login_ok
+
+    def responder(cmd, body):
+        if cmd == 257:  # role_login: ack first, then the 異地登入 kick push frame
+            return [login_ok(), s2c(CMD_KICKED, codec.pb_uint(1, 20))]
+        return []
+
+    fake = FakeTransport(responder)
+
+    def fake_make_client(creds, **kwargs):
+        return WSGameClient(creds, transport_factory=factory_for(fake),
+                            heartbeat_enabled=False, **kwargs)
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+    monkeypatch.setattr(runner, "_PUSH_SETTLE_S", 0.2)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is True
 
 
 # --- end-to-end over the real task code + FakeTransport responder ----------

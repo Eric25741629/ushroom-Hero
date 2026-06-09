@@ -385,6 +385,200 @@ def test_loop_stays_in_refresh_mode_while_unreachable(svc, monkeypatch):
     assert cycle_calls == ["ws-phone"]
 
 
+# ── kick cooldown: a kicked run sleeps 30 min, next wake re-checks online ─────
+
+def _ns(**kw):
+    """A RunReport-like namespace with kicked defaulting False."""
+    kw.setdefault("login_ok", True)
+    kw.setdefault("tasks", {})
+    kw.setdefault("errors", {})
+    kw.setdefault("kicked", False)
+    return types.SimpleNamespace(**kw)
+
+
+def test_report_kicked_helper(svc):
+    assert svc._report_kicked(None) is False
+    assert svc._report_kicked(_ns(kicked=False)) is False
+    assert svc._report_kicked(_ns(kicked=True)) is True
+    # report without a `kicked` attribute is safe (legacy / partial fakes)
+    assert svc._report_kicked(types.SimpleNamespace(login_ok=True)) is False
+
+
+def test_loop_kicked_run_sleeps_cooldown_and_skips_cycle_next_wake(svc, monkeypatch):
+    """A kicked cycle → this wake sleeps _KICK_COOLDOWN_SEC; next wake re-checks.
+
+    wake 1: cycle reports kicked=True → sleep uses forced_wake_ts ≈ now+1800,
+            policy=kick_cooldown.
+    wake 2: a fresh (not-kicked) cycle runs again normally (no cooldown).
+    """
+    cfg = _cfg(online_check_target_pid=PHONE_PID)
+
+    monkeypatch.setattr(svc.bot_state, "init_device", lambda ip: None)
+    monkeypatch.setattr(svc.bot_state, "set_offline", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "check_force_sleep", lambda ip: False)
+    monkeypatch.setattr(svc.bot_state, "check_pause", lambda ip: None)
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda ip: cfg)
+
+    import runtime_services.startup_sleep as ss
+    import runtime_services.sleep_service as sl
+    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+
+    monkeypatch.setattr(svc, "_ensure_token", lambda ip, c, lg, force=False: True)
+    # pin the clock so we can assert the cooldown wake timestamp exactly.
+    monkeypatch.setattr(svc.time, "time", lambda: 1_000_000.0)
+
+    run_results = iter([_ns(kicked=True), _ns(kicked=False)])
+    cycle_calls = []
+
+    def fake_cycle(ip, c, lg):
+        cycle_calls.append(ip)
+        return next(run_results)
+
+    monkeypatch.setattr(svc, "run_ws_device_cycle", fake_cycle)
+
+    sleeps = []
+    wake = {"n": 0}
+
+    def fake_sleep(ip, lg, **k):
+        sleeps.append(k)
+        wake["n"] += 1
+        if wake["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(sl, "run_sleep_cycle", fake_sleep)
+
+    svc.run_ws_device_loop("ws-phone", _NullLogger())
+
+    # both wakes ran a cycle (cooldown does NOT stop the next wake's cycle).
+    assert cycle_calls == ["ws-phone", "ws-phone"]
+    # wake1 slept the cooldown ...
+    assert sleeps[0]["sleep_policy"] == "kick_cooldown"
+    assert sleeps[0]["forced_wake_ts"] == 1_000_000.0 + svc._KICK_COOLDOWN_SEC
+    # ... wake2 (not kicked) went back to the normal aligned window.
+    assert sleeps[1]["sleep_policy"] == "aligned_window"
+    assert sleeps[1]["forced_wake_ts"] is None
+
+
+def test_loop_kick_cooldown_applies_to_plain_device(svc, monkeypatch):
+    """Cooldown is NOT gated on online_check_target_pid — a plain ws device
+    that gets kicked still backs off 30 min."""
+    cfg = _cfg()  # no online_check_target_pid → no protection / no token refresh
+
+    monkeypatch.setattr(svc.bot_state, "init_device", lambda ip: None)
+    monkeypatch.setattr(svc.bot_state, "set_offline", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "check_force_sleep", lambda ip: False)
+    monkeypatch.setattr(svc.bot_state, "check_pause", lambda ip: None)
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda ip: cfg)
+
+    import runtime_services.startup_sleep as ss
+    import runtime_services.sleep_service as sl
+    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+
+    monkeypatch.setattr(svc, "run_ws_device_cycle", lambda ip, c, lg: _ns(kicked=True))
+
+    sleeps = []
+
+    def fake_sleep(ip, lg, **k):
+        sleeps.append(k)
+        raise _Stop()
+
+    monkeypatch.setattr(sl, "run_sleep_cycle", fake_sleep)
+
+    svc.run_ws_device_loop("ws-plain", _NullLogger())
+
+    assert sleeps[0]["sleep_policy"] == "kick_cooldown"
+    assert sleeps[0]["forced_wake_ts"] is not None
+
+
+def test_loop_kick_in_refresh_recovery_also_cools_down(svc, monkeypatch):
+    """A kick on the refresh-mode recovery cycle also triggers the cooldown.
+
+    wake 1: bootstrap + run → login_ok=False → enter refresh mode.
+    wake 2: refresh mode, adb reachable → re-mint + recovery cycle reports
+            kicked=True → cooldown applied on this wake.
+    """
+    cfg = _cfg(online_check_target_pid=PHONE_PID)
+
+    monkeypatch.setattr(svc.bot_state, "init_device", lambda ip: None)
+    monkeypatch.setattr(svc.bot_state, "set_offline", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "check_force_sleep", lambda ip: False)
+    monkeypatch.setattr(svc.bot_state, "check_pause", lambda ip: None)
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda ip: cfg)
+
+    import runtime_services.startup_sleep as ss
+    import runtime_services.sleep_service as sl
+    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+
+    # wake2 refresh branch probes reachability → reachable so it re-runs.
+    monkeypatch.setattr(svc, "_is_adb_reachable", lambda ip: True)
+    monkeypatch.setattr(svc, "_ensure_token", lambda ip, c, lg, force=False: True)
+
+    run_results = iter([
+        _ns(login_ok=False, errors={"login": "expired"}),  # wake1 → refresh mode
+        _ns(login_ok=True, kicked=True),                    # wake2 recovery → kicked
+    ])
+
+    def fake_cycle(ip, c, lg):
+        return next(run_results)
+
+    monkeypatch.setattr(svc, "run_ws_device_cycle", fake_cycle)
+
+    sleeps = []
+    wake = {"n": 0}
+
+    def fake_sleep(ip, lg, **k):
+        sleeps.append(k)
+        wake["n"] += 1
+        if wake["n"] >= 2:
+            raise _Stop()
+
+    monkeypatch.setattr(sl, "run_sleep_cycle", fake_sleep)
+
+    svc.run_ws_device_loop("ws-phone", _NullLogger())
+
+    assert sleeps[0]["sleep_policy"] == "aligned_window"  # wake1 not kicked
+    assert sleeps[1]["sleep_policy"] == "kick_cooldown"   # wake2 recovery kicked
+
+
+def test_loop_force_sleep_overrides_kick_cooldown(svc, monkeypatch):
+    """Force-sleep this wake wins even if the cycle reported a kick.
+
+    Note: when force-sleep is requested at the top of the wake the cycle does
+    NOT run at all, so the kick path is moot; this guards the ordering and the
+    policy that surfaces to the sleep service.
+    """
+    cfg = _cfg(online_check_target_pid=PHONE_PID)
+    seen = {"policy": None, "forced": "unset"}
+
+    monkeypatch.setattr(svc.bot_state, "init_device", lambda ip: None)
+    monkeypatch.setattr(svc.bot_state, "set_offline", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "check_force_sleep", lambda ip: True)  # force!
+    monkeypatch.setattr(svc.bot_state, "check_pause", lambda ip: None)
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda ip: cfg)
+
+    import runtime_services.startup_sleep as ss
+    import runtime_services.sleep_service as sl
+    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+    monkeypatch.setattr(svc, "_ensure_token", lambda ip, c, lg, force=False: True)
+    monkeypatch.setattr(svc, "run_ws_device_cycle", lambda ip, c, lg: _ns(kicked=True))
+
+    def fake_sleep(ip, lg, **k):
+        seen["policy"] = k.get("sleep_policy")
+        seen["forced"] = k.get("forced_wake_ts")
+        raise _Stop()
+
+    monkeypatch.setattr(sl, "run_sleep_cycle", fake_sleep)
+
+    svc.run_ws_device_loop("ws-phone", _NullLogger())
+
+    assert seen["policy"] == "force_sleep"   # force-sleep wins
+    assert seen["forced"] is None            # not a cooldown forced wake
+
+
 def test_loop_force_sleep_skips_everything(svc, monkeypatch):
     """Force-sleep short-circuits before token/protection work, like S0."""
     cfg = _cfg(online_check_target_pid=PHONE_PID)

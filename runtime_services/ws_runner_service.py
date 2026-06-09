@@ -33,9 +33,19 @@ Phone-account flow (2026-06-09) — applies ONLY to devices that declare an
      resumes normal operation. Sleep + online-protection keep applying while
      waiting.
 
+Kick cooldown (異地登入) — applies to ALL ws_token devices regardless of the
+phone-account gate. When a run reports it was kicked (the account was logged in
+elsewhere, or the server dropped the socket — surfaced as ``RunReport.kicked``),
+the loop sleeps for :data:`_KICK_COOLDOWN_SEC` (30 min) this wake instead of the
+normal aligned window. The cooldown reuses the existing interruptible sleep
+(``run_sleep_cycle(forced_wake_ts=...)``) so pause / force-sleep / skip still cut
+it short. The next wake's online-protection probe then decides whether to resume
+(online → keep waiting, offline → run). Force-sleep takes priority over cooldown.
+
 Devices WITHOUT an ``online_check_target_pid`` keep the original behaviour
-byte-for-byte: no online protection, no auto token refresh — just
-wake → run_device → sleep (this is the path the S0 wiring tests exercise).
+byte-for-byte EXCEPT for this kick cooldown: no online protection, no auto token
+refresh — just wake → run_device → sleep (this is the path the S0 wiring tests
+exercise). A normal (not-kicked) run is byte-for-byte unchanged.
 
 Heavy / runtime-only modules (``ws_token.runner``, ``ws_token.creds``, the
 ``device`` ADB scanner, the sleep services) are imported lazily inside the
@@ -50,6 +60,7 @@ and control handling) which ``new_main_v2.main`` dispatches to.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any, Optional
 
 import bot_state
@@ -61,6 +72,12 @@ logger = logging.getLogger(__name__)
 # short relative to the 2h wake cadence: a slow/absent checker should not pin a
 # device awake — it just yields a None result and we skip the wake.
 _PROTECT_WAIT_SEC_DEFAULT = 60.0
+
+# Cooldown after a kick (異地登入 / server drop). When a run reports it was kicked
+# we back off for 30 minutes before the next wake instead of immediately
+# reconnecting (which would just race the human who logged in elsewhere). The
+# next wake's online-protection probe then decides whether to resume.
+_KICK_COOLDOWN_SEC = 1800.0
 
 
 def _load_run_device():
@@ -252,6 +269,37 @@ def _is_token_invalid(report: Optional[Any]) -> bool:
     return report is not None and not bool(getattr(report, "login_ok", False))
 
 
+def _report_kicked(report: Optional[Any]) -> bool:
+    """True iff a run completed and reported it was kicked (異地登入 / drop).
+
+    A skipped/protected cycle or a swallowed exception returns ``None`` and is
+    NOT a kick. Only an explicit ``report.kicked`` truthy value counts, so this
+    is safe to call on any cycle result.
+    """
+    return report is not None and bool(getattr(report, "kicked", False))
+
+
+def _kick_cooldown_wake_ts() -> float:
+    """Absolute wake timestamp for the post-kick cooldown (now + 30 min).
+
+    Indirected (and using ``time.time`` via the module attribute) so tests can
+    monkeypatch the duration or the clock deterministically.
+    """
+    return time.time() + _KICK_COOLDOWN_SEC
+
+
+def _log_kick_cooldown(ip: str, logger_obj) -> None:
+    """Announce the kick cooldown on the logger and the dashboard state."""
+    logger_obj.warning(
+        f"[{ip}] ws_token 偵測到異地登入被踢，本輪冷卻 "
+        f"{_KICK_COOLDOWN_SEC / 60:.0f} 分鐘後再查在線"
+    )
+    bot_state.update_state(
+        ip, task="WS 被踢冷卻",
+        step=f"異地登入被踢，冷卻 {_KICK_COOLDOWN_SEC / 60:.0f} 分鐘後再查在線",
+    )
+
+
 def _device_needs_protection(cfg: Any) -> bool:
     """True iff this device opts into the phone-account flow.
 
@@ -291,6 +339,7 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
             force_sleep_now = False
             sleep_policy = "aligned_window"
             sleep_reason = "常規對齊喚醒 (ws_token)"
+            cooldown_wake_ts = None  # set when a kick triggers the 30-min back-off
             try:
                 # Respect dashboard force-sleep before doing any work.
                 if bot_state.check_force_sleep(ip):
@@ -316,7 +365,10 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
                             logger_obj.info(
                                 f"[{ip}] ws_token 重撈成功，恢復正常 cycle"
                             )
-                            run_ws_device_cycle(ip, cfg, logger_obj)
+                            report = run_ws_device_cycle(ip, cfg, logger_obj)
+                            if _report_kicked(report):
+                                cooldown_wake_ts = _kick_cooldown_wake_ts()
+                                _log_kick_cooldown(ip, logger_obj)
                         else:
                             # Cached token reused but we already know it's dead —
                             # stay in refresh mode until the phone comes back.
@@ -345,18 +397,28 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
                             f"[{ip}] ws_token token 失效，進入重撈模式（停跑 cycle，"
                             f"等 adb 可達後重撈）"
                         )
+                    if _report_kicked(report):
+                        cooldown_wake_ts = _kick_cooldown_wake_ts()
+                        _log_kick_cooldown(ip, logger_obj)
             except ForceSleepRequested as e:
                 force_sleep_now = True
                 sleep_policy = "force_sleep"
                 sleep_reason = "強制休眠"
+                cooldown_wake_ts = None  # force-sleep takes priority over cooldown
                 logger_obj.warning(f"[{ip}] ws_token 迴圈收到強制休眠請求: {e}")
 
             enable_dungeon_manager = bool(
                 config_manager.get_device_config(ip).get("enable_dungeon_manager", True)
             )
+            if cooldown_wake_ts is not None:
+                #被踢冷卻：睡滿 30 分鐘（forced_wake_ts 走既有可中斷睡眠，
+                # pause / force_sleep / skip 仍能提前喚醒），下輪再走在線保護。
+                sleep_policy = "kick_cooldown"
+                sleep_reason = "異地登入被踢，冷卻 30 分鐘"
             run_sleep_cycle(
                 ip,
                 logger_obj,
+                forced_wake_ts=cooldown_wake_ts,
                 force_sleep_now=force_sleep_now,
                 sleep_policy=sleep_policy,
                 sleep_reason=sleep_reason,

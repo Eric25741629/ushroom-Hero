@@ -72,6 +72,12 @@ class RunReport:
     orchestrator returned, or a small dict assembled here). ``errors`` maps a
     task name (or ``"login"``) to a short error string for whatever failed; a
     successful run has an empty ``errors``.
+
+    ``kicked`` is True iff the connection was kicked mid-run — the account was
+    logged in elsewhere (異地登入, cmd 259) or the server dropped the socket. The
+    in-flight tasks usually fail (connection gone) and land in ``errors``; this
+    flag lets the loop tell "kicked" apart from an ordinary task failure so it
+    can back off (30-min cooldown) instead of hammering.
     """
 
     device: str
@@ -79,6 +85,7 @@ class RunReport:
     spend: bool
     tasks: dict[str, Any] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+    kicked: bool = False
 
 
 def _make_client(creds, **kwargs) -> WSGameClient:
@@ -247,15 +254,24 @@ def run_device(device: str, *, spend: bool = False,
         if open_lamp:
             _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
     finally:
+        # Read the kick flag BEFORE close() — a deliberate close never sets it,
+        # so this captures only a real 異地登入 / server-drop during the run.
+        try:
+            kicked = bool(client.is_kicked())
+        except Exception:  # noqa: BLE001 — defensive: a fake/odd client w/o the method
+            kicked = False
         try:
             client.close()
         except Exception:  # noqa: BLE001
             logger.debug("ws_token runner: %s close raised", device, exc_info=True)
 
-    logger.info("ws_token runner: %s done — %d task(s) ok, %d error(s)",
-                device, len(tasks), len(errors))
+    if kicked:
+        logger.warning("ws_token runner: %s 連線在執行中被踢（異地登入/伺服器斷線）",
+                       device)
+    logger.info("ws_token runner: %s done — %d task(s) ok, %d error(s), kicked=%s",
+                device, len(tasks), len(errors), kicked)
     return RunReport(device=device, login_ok=True, spend=spend,
-                     tasks=tasks, errors=errors)
+                     tasks=tasks, errors=errors, kicked=kicked)
 
 
 def _safe(tasks: dict, errors: dict, name: str, fn) -> None:
