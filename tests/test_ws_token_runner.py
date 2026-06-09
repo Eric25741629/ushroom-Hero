@@ -106,6 +106,39 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("redpack", "grab_claimable"))
                                         or {"attempted": 0, "claimed": 0, "results": []}))
 
+    # idle_reward (free; always runs). claim_* return a result with .success or None.
+    monkeypatch.setattr(runner.idle_reward, "claim_online",
+                        lambda c, **k: (calls.append(("idle_reward", "claim_online")) or _ClaimOK()))
+    monkeypatch.setattr(runner.idle_reward, "claim_offline_from_push",
+                        lambda c, b, **k: (calls.append(("idle_reward", "claim_offline")) or _ClaimOK()))
+
+    # turntable (free; always runs)
+    monkeypatch.setattr(runner.turntable, "spin_all_free",
+                        lambda c, **k: (calls.append(("turntable", "spin_all_free"))
+                                        or {"spun": 0, "results": []}))
+
+    # farm (harvest free + always; plant/work gated on farm_config)
+    monkeypatch.setattr(runner.farm, "harvest_ready",
+                        lambda c, rid, **k: (calls.append(("farm", "harvest_ready"))
+                                             or {"attempted": 0, "harvested": 0,
+                                                 "rewards": {}, "results": []}))
+    monkeypatch.setattr(runner.farm, "plant_empty",
+                        lambda c, rid, sid, **k: (calls.append(("farm", "plant_empty"))
+                                                  or {"attempted": 0, "planted": 0, "results": []}))
+    monkeypatch.setattr(runner.farm, "start_work",
+                        lambda c, tid, **k: (calls.append(("farm", "start_work"))
+                                             or {"running": True, "worker_status": 1, "raw": {}}))
+
+    # dungeon (掃蕩 only; gated on dungeon_sweeps)
+    monkeypatch.setattr(runner.dungeon, "run_sweep",
+                        lambda c, **k: (calls.append(("dungeon", "run_sweep")) or _SweepOK()))
+
+    # carpark (只停不收; gated on carpark_target)
+    monkeypatch.setattr(runner.carpark, "auto_park_cross",
+                        lambda c, **k: (calls.append(("carpark", "auto_park_cross"))
+                                        or {"parked": True, "reason": "ok", "pos": 1,
+                                            "mount_id": 11}))
+
     # lamp (opt-in via open_lamp; spends 神燈 items)
     monkeypatch.setattr(runner.lamp, "open_lamp",
                         lambda c, **k: (calls.append(("lamp", "open_lamp"))
@@ -147,6 +180,18 @@ class _Info:
     expiry: dict = {}
 
 
+class _ClaimOK:
+    """idle_reward.claim_* result: a successful claim."""
+    success = True
+
+
+class _SweepOK:
+    """dungeon.run_sweep result with the fields _run_dungeon reads."""
+    success = True
+    rewards: dict = {}
+    error_code = 0
+
+
 # --- RunReport shape --------------------------------------------------------
 
 def test_run_report_is_frozen_dataclass():
@@ -163,13 +208,20 @@ def test_run_device_runs_tasks_in_fixed_order(patched):
 
     rep = run_device("dev", spend=False)
 
-    # main_tasks first (and its sub-claims), then league_solo, redpack (free),
-    # guild, steward. lamp is opt-in and OFF here so it does not appear.
+    # main_tasks first (and its sub-claims), then league_solo, redpack, the free
+    # idle_reward / turntable / farm-harvest group, then guild, steward.
+    # dungeon (掃蕩) and carpark are gated on config and SKIP by default; lamp is
+    # opt-in and OFF here — none of the three appear.
     task_order = [t for t, _a in calls]
     assert task_order.index("main_tasks") < task_order.index("league_solo")
     assert task_order.index("league_solo") < task_order.index("redpack")
-    assert task_order.index("redpack") < task_order.index("guild")
+    assert task_order.index("redpack") < task_order.index("idle_reward")
+    assert task_order.index("idle_reward") < task_order.index("turntable")
+    assert task_order.index("turntable") < task_order.index("farm")
+    assert task_order.index("farm") < task_order.index("guild")
     assert task_order.index("guild") < task_order.index("steward")
+    assert "dungeon" not in task_order   # no dungeon_sweeps -> skipped
+    assert "carpark" not in task_order   # no carpark_target -> skipped
     assert "lamp" not in task_order
     assert rep.login_ok is True
 
@@ -324,6 +376,129 @@ def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
     assert "lamp" in rep.errors        # error recorded ...
     assert "lamp" not in rep.tasks     # ... and no bogus result
     assert rep.login_ok is True        # the rest of the run completed fine
+
+
+# --- new free tasks: idle_reward / turntable / farm-harvest -----------------
+
+def test_new_free_tasks_run_on_spend_false(patched):
+    """idle_reward (claim online), turntable (spin free) and farm harvest are free
+    and run unconditionally — no spend, no config needed."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    actions = {(t, a) for t, a in calls}
+    assert ("idle_reward", "claim_online") in actions
+    assert ("turntable", "spin_all_free") in actions
+    assert ("farm", "harvest_ready") in actions
+    for name in ("idle_reward", "turntable", "farm"):
+        assert name in rep.tasks
+
+
+def test_farm_plant_and_work_skipped_without_config(patched):
+    """No farm_config -> only harvest runs; planting / 打工 are not attempted."""
+    calls, _ = patched
+
+    run_device("dev", spend=False)
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "harvest_ready") in actions
+    assert ("farm", "plant_empty") not in actions
+    assert ("farm", "start_work") not in actions
+
+
+def test_farm_plant_and_work_run_with_config(patched):
+    """farm_config {seed_id, team_cfg_id} -> plant empties + start 打工."""
+    calls, _ = patched
+
+    run_device("dev", spend=False,
+               farm_config={"seed_id": 102, "team_cfg_id": 7})
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "plant_empty") in actions
+    assert ("farm", "start_work") in actions
+
+
+def test_dungeon_sweep_skipped_without_config(patched):
+    """No dungeon_sweeps -> dungeon task is skipped (run_sweep never called)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("dungeon", "run_sweep") not in {(t, a) for t, a in calls}
+    assert rep.tasks["dungeon"]["skipped"]
+
+
+def test_dungeon_sweep_runs_with_config(patched):
+    """dungeon_sweeps -> 掃蕩 each chapter (battle is never auto-run)."""
+    calls, _ = patched
+
+    run_device("dev", spend=False, dungeon_sweeps=[(2, 4001, 1), (23, 1081, 1)])
+
+    sweep_calls = [a for t, a in calls if t == "dungeon"]
+    assert sweep_calls == ["run_sweep", "run_sweep"]   # one per chapter, no battle
+
+
+def test_carpark_skipped_without_target(patched):
+    """No carpark_target -> carpark is skipped (auto_park_cross never called)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("carpark", "auto_park_cross") not in {(t, a) for t, a in calls}
+    assert rep.tasks["carpark"]["skipped"]
+
+
+def test_carpark_runs_with_target(patched):
+    """carpark_target set -> auto_park_cross into that cross lot (只停不收)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False, carpark_target=5001)
+
+    assert ("carpark", "auto_park_cross") in {(t, a) for t, a in calls}
+    assert rep.tasks["carpark"]["parked"] is True
+
+
+def test_idle_offline_claimed_from_login_push(monkeypatch):
+    """End-to-end: an OFFLINE reward_info{type:2} pushed at login is captured by the
+    runner's composite handler and claimed via claim_offline_from_push.
+
+    Drives the REAL idle_reward code over FakeTransport: login emits a
+    reward_info_s2c{type:2} with a non-zero reward (claimable), and the claim cmd
+    is answered with a success. Other tasks get empty replies (no-ops)."""
+    from ws_token import idle_reward
+    from ws_token.client import WSGameClient
+    from tests.fakes.ws_fakes import login_ok
+
+    # OFFLINE reward_info: type#1=2, time#2=600, res_list#3 = one p_reward {1:1, 2:9}
+    offline_push = (codec.pb_uint(1, idle_reward.TYPE_OFFLINE)
+                    + codec.pb_uint(2, 600)
+                    + codec.pb_msg(3, codec.pb_uint(1, 1) + codec.pb_uint(2, 9)))
+
+    def responder(cmd, body):
+        if cmd == 257:  # role_login: ack + the offline reward push
+            return [login_ok(), s2c(idle_reward.CMD_REWARD_INFO, offline_push)]
+        if cmd == idle_reward.CMD_REWARD_INFO:   # ONLINE read -> nothing claimable
+            return [s2c(idle_reward.CMD_REWARD_INFO, codec.pb_uint(1, idle_reward.TYPE_ONLINE))]
+        # Echo an empty reply for every other read/claim so no call hits the 15s
+        # timeout. The CLAIM_REWARD echo (code 0) makes claim_offline_from_push
+        # succeed; every other task gets an empty (no-op) reply.
+        return [s2c(cmd, b"")]
+
+    fake = FakeTransport(responder)
+
+    def fake_make_client(creds, **kwargs):
+        return WSGameClient(creds, transport_factory=factory_for(fake),
+                            heartbeat_enabled=False, **kwargs)
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+    monkeypatch.setattr(runner, "_PUSH_SETTLE_S", 0.2)
+
+    rep = run_device("dev", spend=False)
+
+    assert "idle_reward" in rep.tasks
+    assert rep.tasks["idle_reward"]["offline"] is True   # claimed from the login push
 
 
 # --- per-task isolation -----------------------------------------------------
@@ -551,7 +726,9 @@ def test_report_kicked_via_fake_transport_259_then_close(monkeypatch):
 def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     """Drive the REAL task orchestrators against a scripted responder to prove
     the wiring (cmd ids, body building, push collection) is sound end-to-end."""
-    from ws_token import league_solo, main_tasks, redpack, steward
+    from ws_token import (
+        farm, idle_reward, league_solo, main_tasks, redpack, steward, turntable,
+    )
 
     # main_tasks reads are PUSH-based; emit the login-time frames on login.
     def login_with_pushes(cmd, body):
@@ -575,6 +752,14 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         league_solo.CMD_SOLO_INFO: lambda b: [s2c(league_solo.CMD_SOLO_INFO, b"")],
         # redpack: empty brief list (no claimable bags) -> attempted=0
         redpack.CMD_BRIEF_LIST: lambda b: [s2c(redpack.CMD_BRIEF_LIST, b"")],
+        # idle_reward: ONLINE read -> type=1, nothing claimable (no claim sent)
+        idle_reward.CMD_REWARD_INFO: lambda b: [
+            s2c(idle_reward.CMD_REWARD_INFO, codec.pb_uint(1, idle_reward.TYPE_ONLINE))],
+        # turntable: info -> num=0 (no free spins)
+        turntable.CMD_INFO: lambda b: [
+            s2c(turntable.CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
+        # farm: home_farm_info -> empty (no lands -> 0 harvested)
+        farm.CMD_INFO: lambda b: [s2c(farm.CMD_INFO, b"")],
         # guild: empty help list, no treasure round
         runner.guild.CMD_HELP_INFO: lambda b: [
             s2c(runner.guild.CMD_HELP_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
@@ -615,5 +800,14 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["redpack"]["attempted"] == 0
     assert "guild" in rep.tasks
     assert "steward" in rep.tasks
+    # new free tasks ran end-to-end over the real code
+    assert "idle_reward" in rep.tasks
+    assert "turntable" in rep.tasks
+    assert rep.tasks["turntable"]["spun"] == 0
+    assert "farm" in rep.tasks
+    assert rep.tasks["farm"]["harvest"]["harvested"] == 0
+    # dungeon / carpark are gated (no config) -> skipped, not errored
+    assert rep.tasks["dungeon"]["skipped"]
+    assert rep.tasks["carpark"]["skipped"]
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks

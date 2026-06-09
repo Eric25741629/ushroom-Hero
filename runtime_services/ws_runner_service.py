@@ -226,12 +226,17 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     spend = bool(cfg.get("ws_token_spend", False))
     sweep_list = cfg.get("ws_token_sweep_list") or None
     open_lamp = bool(cfg.get("ws_token_open_lamp", False))
+    farm_config = cfg.get("ws_token_farm_config") or None
+    dungeon_sweeps = cfg.get("ws_token_dungeon_sweeps") or None
+    carpark_target = cfg.get("ws_token_carpark_target") or None
 
     run_device = _load_run_device()
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
-                            open_lamp=open_lamp)
+                            open_lamp=open_lamp, farm_config=farm_config,
+                            dungeon_sweeps=dungeon_sweeps,
+                            carpark_target=carpark_target)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")

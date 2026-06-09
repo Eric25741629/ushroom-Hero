@@ -40,7 +40,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
-from ws_token import guild, lamp, league_solo, main_tasks, redpack, steward
+from ws_token import (
+    carpark, dungeon, farm, guild, idle_reward, lamp, league_solo, main_tasks,
+    redpack, steward, turntable,
+)
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
 from ws_token.creds import load_creds
 
@@ -57,7 +60,8 @@ _TREASURE_PROBE_S: float = 6.0
 
 LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
-    "main_tasks", "league_solo", "redpack", "guild", "steward", "lamp")
+    "main_tasks", "league_solo", "redpack", "idle_reward", "turntable", "farm",
+    "dungeon", "guild", "steward", "carpark", "lamp")
 
 # 開神燈 batch size for one daily pass (lamp.open_lamp caps to max_batches=1 by
 # default, so this opens at most one batch — never an unbounded drain).
@@ -123,6 +127,87 @@ def _run_redpack(client) -> dict:
     ``{attempted, claimed, results}``.
     """
     return redpack.grab_claimable(client)
+
+
+def _run_idle_reward(client, offline_pushes: list) -> dict:
+    """Free: claim ONLINE accrual (claim{1}) + the OFFLINE reward pushed at login.
+
+    The OFFLINE reward arrives as a reward_info_s2c{type:2} PUSH right after login;
+    ``offline_pushes`` collects those bodies (see the composite push handler in
+    run_device). claim_online / claim_offline_from_push are no-ops when nothing is
+    claimable (returns None), so this is safe to run unconditionally. There is no
+    "看廣告加倍" over WS — only the base amount. Returns
+    ``{online, offline}`` booleans (True = claimed).
+    """
+    online = idle_reward.claim_online(client)
+    summary: dict = {"online": bool(online and online.success), "offline": None}
+    if offline_pushes:
+        off = idle_reward.claim_offline_from_push(client, offline_pushes[0])
+        summary["offline"] = bool(off and off.success)
+    return summary
+
+
+def _run_turntable(client) -> dict:
+    """Free: spin every free / accumulated 轉盤 turn (no ad top-ups over WS).
+
+    spin_all_free reads ``num`` once and spins that many (capped); it only ever
+    consumes turns the account already has. Returns ``{spun, results}``.
+    """
+    return turntable.spin_all_free(client)
+
+
+def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
+    """農場/打工: harvest ready crops (free); plant / 打工 only when configured.
+
+    harvest_ready claims every MATURE land (free reward) and always runs. Planting
+    needs a ``seed_id`` and starting 打工 needs a ``team_cfg_id`` — both are
+    live-confirm config values, so they run ONLY when ``farm_config`` supplies them
+    (empty seed_used_seq = 用免費種子 = 不買種). Returns ``{harvest, plant, work}``.
+    """
+    summary: dict = {"harvest": None, "plant": None, "work": None}
+    summary["harvest"] = farm.harvest_ready(client, role_id)
+    if farm_config:
+        seed_id = farm_config.get("seed_id")
+        team_cfg_id = farm_config.get("team_cfg_id")
+        if seed_id:
+            summary["plant"] = farm.plant_empty(client, role_id, int(seed_id))
+        if team_cfg_id:
+            summary["work"] = farm.start_work(client, int(team_cfg_id))
+    return summary
+
+
+def _run_dungeon(client, *, sweeps: Sequence[Sequence[int]]) -> dict:
+    """深淵之門 / 萬神試煉: 掃蕩 only (battle has anti-cheat risk — never auto-run).
+
+    Each ``sweeps`` entry is ``(type, dungeon_id, num)``; with none configured the
+    task is skipped (dungeon_id is a live-confirm value steward does not derive).
+    run_sweep takes the reward directly and bypasses the client-side battle, so it
+    never sends an unverified client-reported result. Returns ``{sweeps: [...]}``.
+    """
+    if not sweeps:
+        return {"skipped": "no dungeon_sweeps configured"}
+    results: list[dict] = []
+    for entry in sweeps:
+        type_, dungeon_id, num = int(entry[0]), int(entry[1]), int(entry[2])
+        r = dungeon.run_sweep(client, type=type_, dungeon_id=dungeon_id, sweep_num=num)
+        results.append({
+            "type": type_, "dungeon_id": dungeon_id, "num": num,
+            "success": r.success, "rewards": r.rewards, "error_code": r.error_code,
+        })
+    return {"sweeps": results}
+
+
+def _run_carpark(client, *, target: Optional[int]) -> dict:
+    """跨界停車 (只停不收): auto-park one free CROSS slot when a target is set.
+
+    Cross-parking is event-gated — when no cross event is live the lot read times
+    out — and the target lot id is a live-confirm value, so this runs ONLY when
+    ``carpark_target`` is configured. Returns auto_park_cross's summary
+    (``{parked, reason, pos, mount_id, ...}``) or a skip note.
+    """
+    if not target:
+        return {"skipped": "no carpark_target configured (event-gated)"}
+    return carpark.auto_park_cross(client, target_id=int(target))
 
 
 def _run_lamp(client) -> dict:
@@ -198,7 +283,10 @@ def _run_steward(client, *, spend: bool, serv_time: int,
 
 def run_device(device: str, *, spend: bool = False,
                sweep_list: Optional[Iterable[Sequence[int]]] = None,
-               open_lamp: bool = False) -> RunReport:
+               open_lamp: bool = False,
+               farm_config: Optional[dict] = None,
+               dungeon_sweeps: Optional[Iterable[Sequence[int]]] = None,
+               carpark_target: Optional[int] = None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -216,16 +304,43 @@ def run_device(device: str, *, spend: bool = False,
     auto-equips/sells the drops — it consumes 神燈 items, so it is gated behind
     its own flag rather than ``spend`` and is OFF by default (legacy behaviour is
     unchanged: only the free redpack step is added for non-lamp devices).
+
+    The other new daily tasks split by safety:
+      - idle_reward (掛機/離線獎勵) + turntable (轉盤免費次數) + farm harvest run
+        unconditionally — they only ever take free / already-earned rewards.
+      - ``farm_config`` ``{seed_id?, team_cfg_id?}`` enables farm planting / 打工
+        (live-confirm config values; empty = 用免費種子, no seed purchase).
+      - ``dungeon_sweeps`` ``[(type, dungeon_id, num), ...]`` enables 掃蕩 only —
+        battle is never auto-run (anti-cheat). Skipped with none configured.
+      - ``carpark_target`` (cross lot master_id) enables 跨界停車 (只停不收);
+        skipped when unset (cross-parking is event-gated and the id is per-event).
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
     sweep: tuple[Sequence[int], ...] = tuple(sweep_list or ())
+    dsweeps: tuple[Sequence[int], ...] = tuple(dungeon_sweeps or ())
+    role_id_hint = 0
 
     creds = load_creds(device)
     # The collector must be mounted BEFORE connect so the login-time task PUSH
-    # frames (task_all / daily_point / weekly_box) land in it.
+    # frames (task_all / daily_point / weekly_box) land in it. The OFFLINE idle
+    # reward is ALSO a login-time PUSH (reward_info_s2c{type:2}), so the same
+    # handler tees those bodies into ``idle_offline`` for _run_idle_reward.
     collector = main_tasks.TaskCollector()
-    client = _make_client(creds, push_handler=collector)
+    idle_offline: list[bytes] = []
+
+    def _push(cmd: int, body: bytes) -> None:
+        collector(cmd, body)
+        if cmd == idle_reward.CMD_REWARD_INFO:
+            try:
+                info = idle_reward.parse_reward_info(body)
+                if info.type == idle_reward.TYPE_OFFLINE:
+                    idle_offline.append(bytes(body))
+            except Exception:  # noqa: BLE001 — a malformed push must not break login
+                logger.debug("ws_token runner: %s idle offline push parse failed",
+                             device, exc_info=True)
+
+    client = _make_client(creds, push_handler=_push)
 
     try:
         login = client.connect()
@@ -240,17 +355,25 @@ def run_device(device: str, *, spend: bool = False,
                          tasks=tasks, errors={LOGIN_TASK: str(exc)})
 
     serv_time = int(login.get("serv_time") or creds.login_time or 0)
+    role_id_hint = int(login.get("role_id") or creds.role_id or 0)
     logger.info("ws_token runner: %s login ok role_id=%s spend=%s",
-                device, login.get("role_id"), spend)
+                device, role_id_hint, spend)
 
     try:
         _safe(tasks, errors, "main_tasks", lambda: _run_main_tasks(client, collector))
         _safe(tasks, errors, "league_solo", lambda: _run_league_solo(client))
         _safe(tasks, errors, "redpack", lambda: _run_redpack(client))
+        _safe(tasks, errors, "idle_reward", lambda: _run_idle_reward(client, idle_offline))
+        _safe(tasks, errors, "turntable", lambda: _run_turntable(client))
+        _safe(tasks, errors, "farm",
+              lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config))
+        _safe(tasks, errors, "dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _safe(tasks, errors, "guild", lambda: _run_guild(client, spend=spend))
         _safe(tasks, errors, "steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
                                    sweep_list=sweep))
+        _safe(tasks, errors, "carpark",
+              lambda: _run_carpark(client, target=carpark_target))
         if open_lamp:
             _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
     finally:
@@ -312,6 +435,17 @@ def _parse_sweep_arg(items: list[str]) -> list[tuple[int, ...]]:
     return out
 
 
+def _parse_dungeon_sweep_arg(items: list[str]) -> list[tuple[int, int, int]]:
+    """Parse --dungeon-sweep type:dungeon_id:num tokens (same as dungeon_smoke)."""
+    out: list[tuple[int, int, int]] = []
+    for tok in items:
+        parts = [int(p) for p in tok.split(":")]
+        if len(parts) != 3:
+            raise SystemExit(f"--dungeon-sweep entry {tok!r} needs type:dungeon_id:num")
+        out.append((parts[0], parts[1], parts[2]))
+    return out
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -325,16 +459,33 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--open-lamp", dest="open_lamp", action="store_true",
                     help="also 開神燈 (REAL): opens one bounded batch and "
                          "auto-equips/sells drops. Consumes 神燈 items. Default: off.")
+    ap.add_argument("--farm-seed", type=int, default=None, metavar="SEED_ID",
+                    help="農場: plant this seed_id on empty lands (live-confirm value)")
+    ap.add_argument("--farm-team", type=int, default=None, metavar="TEAM_CFG_ID",
+                    help="農場: start 打工 with this team_cfg_id (live-confirm value)")
+    ap.add_argument("--dungeon-sweep", action="append", default=[],
+                    metavar="type:dungeon_id:num",
+                    help="深淵/萬神 掃蕩 (repeatable; 掃蕩 only, never battle)")
+    ap.add_argument("--carpark-target", type=int, default=None, metavar="MASTER_ID",
+                    help="跨界停車: cross lot master_id to park into (只停不收)")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
     sweep_list = _parse_sweep_arg(args.sweep) or None
+    dungeon_sweeps = _parse_dungeon_sweep_arg(args.dungeon_sweep) or None
+    farm_config = None
+    if args.farm_seed is not None or args.farm_team is not None:
+        farm_config = {"seed_id": args.farm_seed, "team_cfg_id": args.farm_team}
     print(f"[runner] starting device={args.device} spend={args.spend} "
-          f"open_lamp={args.open_lamp}", flush=True)
+          f"open_lamp={args.open_lamp} farm_config={farm_config} "
+          f"dungeon_sweeps={dungeon_sweeps} carpark_target={args.carpark_target}",
+          flush=True)
     rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
-                     open_lamp=args.open_lamp)
+                     open_lamp=args.open_lamp, farm_config=farm_config,
+                     dungeon_sweeps=dungeon_sweeps,
+                     carpark_target=args.carpark_target)
     print(_format_report(rep), flush=True)
     return 0 if rep.login_ok else 1
 
