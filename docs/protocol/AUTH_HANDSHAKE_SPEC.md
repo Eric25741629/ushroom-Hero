@@ -234,7 +234,7 @@ cmd id map:`(await System.import("chunks:///_virtual/protoregister.ts")).MSG_TO_
 | 2a | 容忍窗:遠未來 | now+100000 | **SUCCESS** |
 | 2b | 容忍窗:原始 6h 前 | loginTime(舊) | **SUCCESS** |
 | 2c | 容忍窗:3 年前 | now-1e8 | **SUCCESS** |
-| 3 | 絕對 TTL | — | **未測**,需跨日;目前已知 ticket 壽命 ≥6h |
+| 3 | 絕對 TTL | — | **跨日數據點 2026-06-10**:7fe98fc6 以 **29.5h** 舊 ticket role_login SUCCESS → 壽命 ≥29.5h。絕對上限仍未知,production 由 ws_phase/runner log ticket age 持續追蹤 |
 
 **結論**:`time` 不參與驗證;ticket+p_key 是唯一憑證。半原生模型成立——瀏覽器/SDK 登入「偶爾」跑一次刷新 ticket,期間純原生 client 可無限重連。
 
