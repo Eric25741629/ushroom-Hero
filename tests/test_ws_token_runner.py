@@ -859,7 +859,9 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["carpark"]["skipped"]
     # spirit / workshop / couple ran end-to-end over the real code
     assert rep.tasks["spirit"]["pools_drawn"] == 0
-    assert rep.tasks["workshop"]["rotated"] is True   # first run: no state yet
+    # workshop: empty info -> no team workshops -> no successful switch ->
+    # best-effort rule: rotated=False and NO state written (retry next run)
+    assert rep.tasks["workshop"]["rotated"] is False
     assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
@@ -915,12 +917,23 @@ def test_run_couple_forge_ring_gated(monkeypatch):
     assert called == [1]
 
 
+def _switched_entry(team, food, *, chosen_ok=True, timeout=False):
+    """One rotate_team_recipes switched[] entry as workshop.switch_recipe shapes it."""
+    chosen = ({"ok": True, "error_code": None} if chosen_ok else
+              {"ok": False, "error_code": None, "timeout": timeout})
+    return {"team_cfg_id": team, "food_id": food, "count": 1,
+            "workshop_id": team - 6000,
+            "cancelled": {"ok": True, "error_code": None}, "chosen": chosen}
+
+
 def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
     from ws_token import runner
     rotated = []
-    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
-                        lambda c, *, parity: rotated.append(parity)
-                        or {"parity": parity % 2, "switched": []})
+    monkeypatch.setattr(
+        runner.workshop, "rotate_team_recipes",
+        lambda c, *, parity: rotated.append(parity)
+        or {"parity": parity % 2,
+            "switched": [_switched_entry(6002, 8001 if parity % 2 == 0 else 8005)]})
     # first run: no state -> rotates with parity 0
     out1 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
                                 now=1_000_000.0)
@@ -933,6 +946,64 @@ def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
     out3 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
                                 now=1_000_000.0 + 12 * 3600 + 1)
     assert rotated == [0, 1] and out3["rotated"] is True
+
+
+def test_run_workshop_all_switches_failed_does_not_write_state(monkeypatch, tmp_path):
+    # Server was state-gated silent on every switch (live 2026-06-10 7fe98fc6):
+    # rotate returns only chosen ok=False entries -> NOT a valid rotation ->
+    # no state write, so the next run retries instead of waiting 12h.
+    from ws_token import runner
+    calls = []
+    monkeypatch.setattr(
+        runner.workshop, "rotate_team_recipes",
+        lambda c, *, parity: calls.append(parity)
+        or {"parity": parity % 2,
+            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
+                         _switched_entry(6003, 8005, chosen_ok=False, timeout=True)]})
+    out1 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
+                                now=1_000_000.0)
+    assert out1["rotated"] is False
+    assert out1["reason"] == "all switches failed/timeout"
+    assert len(out1["switched"]) == 2
+    # state NOT written -> a retry 1h later is NOT gated and rotates again
+    out2 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
+                                now=1_000_000.0 + 3600)
+    assert calls == [0, 0]
+    assert out2["rotated"] is False  # still all-failed in this mock
+
+
+def test_run_workshop_one_success_is_enough_to_write_state(monkeypatch, tmp_path):
+    from ws_token import runner
+    calls = []
+    monkeypatch.setattr(
+        runner.workshop, "rotate_team_recipes",
+        lambda c, *, parity: calls.append(parity)
+        or {"parity": parity % 2,
+            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
+                         _switched_entry(6003, 8005, chosen_ok=True)]})
+    out1 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
+                                now=1_000_000.0)
+    assert out1["rotated"] is True
+    # state written -> 1h later is gated
+    out2 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
+                                now=1_000_000.0 + 3600)
+    assert calls == [0]
+    assert out2["rotated"] is False and "ago" in out2["reason"]
+
+
+def test_run_workshop_empty_switched_does_not_write_state(monkeypatch, tmp_path):
+    # No team workshops in info -> switched=[] -> no success -> no state write.
+    from ws_token import runner
+    calls = []
+    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
+                        lambda c, *, parity: calls.append(parity)
+                        or {"parity": parity % 2, "switched": []})
+    out = runner._run_workshop(object(), device="devD", state_dir=tmp_path,
+                               now=1_000_000.0)
+    assert out["rotated"] is False
+    runner._run_workshop(object(), device="devD", state_dir=tmp_path,
+                         now=1_000_000.0 + 60)
+    assert calls == [0, 0]  # not gated: it retried
 
 
 def test_run_spirit_draws_free(monkeypatch):

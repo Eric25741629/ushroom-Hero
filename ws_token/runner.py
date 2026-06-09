@@ -238,7 +238,12 @@ def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
     """加工坊 12h 配方輪換 (spec §2.2; cadence 存 ws_state/<device>.json).
 
     state {"workshop": {"last_rotate_ts": float, "parity": int}}; 12h 未到 →
-    {"rotated": False}; 到了 → rotate_team_recipes(交替 parity) 並回寫 state。
+    {"rotated": False}; 到了 → rotate_team_recipes(交替 parity)。
+
+    Best-effort 驗收: rotate_team_recipes 不會 raise（伺服器對狀態不符的
+    cancel/choose 靜默不回，switch_recipe 內吞 WSTimeoutError），所以只有
+    ``switched`` 內至少一個 ``chosen.ok == True``（真的換成一個配方）才算有效
+    輪換並回寫 state；全失敗/timeout 則不寫 state，下一輪再試。
     """
     import time as _time
     now = _time.time() if now is None else now
@@ -251,6 +256,13 @@ def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
         return {"rotated": False, "reason": f"rotated {hours:.1f}h ago (<12h)"}
     parity = (int(wst.get("parity") or 0) + 1) % 2 if last_ts else 0
     out = workshop.rotate_team_recipes(client, parity=parity)
+    any_ok = any((s.get("chosen") or {}).get("ok") for s in out.get("switched", ()))
+    if not any_ok:
+        logger.warning(
+            "ws_token runner: %s workshop rotate had no successful switch "
+            "(server silent / no team workshops) — state not written, will retry",
+            device)
+        return {"rotated": False, "reason": "all switches failed/timeout", **out}
     st["workshop"] = {"last_rotate_ts": now, "parity": parity}
     ws_state.save_state(device, st, **kw)
     return {"rotated": True, **out}

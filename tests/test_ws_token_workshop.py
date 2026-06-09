@@ -558,3 +558,62 @@ def test_switch_recipe_cancel_first_false_skips_cancel():
         assert CMD_CANCEL_WORK not in fake.sent_cmds()
     finally:
         c.close()
+
+
+# --- best-effort: server is state-gated SILENT on cancel/choose --------------
+# live 2026-06-10 (7fe98fc6) twice: cancel got no reply (no 18438, no 0x0201)
+# even on a worker_status>0 workshop -> worker_status is not a reliable signal
+# (the real processing state may live in the unparsed pw_worker_info#7 blob).
+# switch_recipe must tolerate the timeout and keep going — choose proves itself.
+
+def _silent(_body):
+    """Responder that never replies — the server's state-gated silence."""
+    return []
+
+
+def test_switch_recipe_cancel_timeout_continues_to_choose():
+    c, fake = _client({
+        CMD_CANCEL_WORK: _silent,
+        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8005, 12))],
+        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
+    })
+    try:
+        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_ELITE_PLATTER,
+                            timeout=0.1)
+        assert out["cancelled"] == {"ok": False, "error_code": None, "timeout": True}
+        assert out["chosen"]["ok"] is True
+        assert out["count"] == 12
+        # cancel WAS attempted (best-effort) and choose still went out after it
+        assert fake.sent_cmds().count(CMD_CANCEL_WORK) == 1
+        assert fake.sent_cmds().count(CMD_CHOOSE_FOOD) == 1
+    finally:
+        c.close()
+
+
+def test_switch_recipe_choose_timeout_is_surfaced_not_raised():
+    c, _ = _client({
+        CMD_CANCEL_WORK: lambda _b: [s2c(CMD_CANCEL_WORK, b"")],
+        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 3))],
+        CMD_CHOOSE_FOOD: _silent,
+    })
+    try:
+        out = switch_recipe(c, team_cfg_id=6003, food_id=FOOD_CRISPY_COOKIE,
+                            timeout=0.1)
+        assert out["cancelled"]["ok"] is True
+        assert out["chosen"] == {"ok": False, "error_code": None, "timeout": True}
+        assert out["workshop_id"] == 3
+    finally:
+        c.close()
+
+
+def test_rotate_survives_fully_silent_cancel():
+    # Both workshops running, cancel silent on BOTH -> rotate still completes a
+    # full summary (chosen ok=True since choose answered) instead of raising.
+    c, _ = _rotate_client([(6002, 1), (6003, 1)], [(8001, 7), (8005, 4)],
+                          cancel_responder=_silent)
+    try:
+        out = rotate_team_recipes(c, parity=0, timeout=0.1)
+        assert [s["cancelled"].get("timeout") for s in out["switched"]] == [True, True]
+        assert all(s["chosen"]["ok"] for s in out["switched"])
+    finally:
+        c.close()

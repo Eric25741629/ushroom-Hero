@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ws_token import codec
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -321,11 +321,19 @@ def switch_recipe(
 
     ``cancel_first``: sending cancel_work to an IDLE (worker_status=0) workshop
     gets NO reply at all — state-gated silence (live-confirmed 2026-06-10 on
-    7fe98fc6, same pattern as guild_treasure dormancy) — so the call dies as
-    WSTimeoutError.  Callers must pass ``cancel_first=w.is_running`` (from
-    read_info).  With ``cancel_first=False`` the cancel step is skipped and
-    ``cancelled`` reports ``{"ok": True, "error_code": None,
+    7fe98fc6, same pattern as guild_treasure dormancy).  Callers should pass
+    ``cancel_first=w.is_running`` (from read_info) to skip the pointless attempt;
+    a skipped cancel reports ``{"ok": True, "error_code": None,
     "skipped": "not running"}``.
+
+    BEST-EFFORT (live 2026-06-10, twice on 7fe98fc6): the server is state-gated
+    silent on cancel AND choose whenever the account state does not match — it
+    happened even on a worker_status>0 workshop, so worker_status is NOT a
+    reliable "is processing" signal (the real state may live in the unparsed
+    pw_worker_info#7 blob — needs live recon).  Both steps therefore catch
+    :class:`WSTimeoutError` and surface ``{"ok": False, "error_code": None,
+    "timeout": True}`` instead of raising; after a cancel timeout the choose
+    still runs (choose proves by itself whether the switch is possible).
 
     Note: 手動加工 (team_cfg_id=6001, workshop_id=1) rejects team choose_food with
     code=2 (param invalid) — do NOT call switch_recipe for it.
@@ -335,13 +343,25 @@ def switch_recipe(
     """
     wire_id = team_cfg_id_to_workshop_id(team_cfg_id)
     if cancel_first:
-        cancelled = cancel_work(client, wire_id, timeout=timeout)
+        try:
+            cancelled = cancel_work(client, wire_id, timeout=timeout)
+        except WSTimeoutError:
+            logger.warning(
+                "ws_token workshop: cancel_work workshop_id=%s no response "
+                "(state-gated silence) — continuing to choose", wire_id)
+            cancelled = {"ok": False, "error_code": None, "timeout": True}
     else:
         cancelled = {"ok": True, "error_code": None, "skipped": "not running"}
     foods = dict(read_dining_hall(client, timeout=timeout))
     count = foods.get(food_id, 0)
-    chosen = choose_food(client, food_k=food_id, food_v=count,
-                         workshop_id=wire_id, timeout=timeout)
+    try:
+        chosen = choose_food(client, food_k=food_id, food_v=count,
+                             workshop_id=wire_id, timeout=timeout)
+    except WSTimeoutError:
+        logger.warning(
+            "ws_token workshop: choose_food food=%s workshop_id=%s no response "
+            "(state-gated silence)", food_id, wire_id)
+        chosen = {"ok": False, "error_code": None, "timeout": True}
     logger.info(
         "ws_token workshop: switch_recipe team_cfg_id=%s workshop_id=%s "
         "food_id=%s count=%s cancelled_ok=%s chosen_ok=%s",
@@ -367,7 +387,10 @@ def rotate_team_recipes(
     [8001, 8005, ...]，奇數 = 反序。每個 workshop 走已驗的 switch_recipe
     （cancel → dining_hall → choose，count = 餐廳現有全量）。idle 工坊
     （worker_status=0）送 cancel 伺服器不回包 → 用 cancel_first=w.is_running
-    跳過 cancel（live 2026-06-10 7fe98fc6 證實）。
+    跳過 cancel（live 2026-06-10 7fe98fc6 證實）。整段 best-effort：cancel/choose
+    對帳號狀態不符時伺服器靜默不回（含 worker_status>0 的工坊也發生過）→
+    switch_recipe 內吞 WSTimeoutError 回 timeout 標記，不往外拋；呼叫端
+    （runner）以「至少一個 chosen ok」判定本輪是否有效。
 
     CADENCE 不在這裡：呼叫端（runner）用 ws_token.state 記 last_rotate_ts/parity，
     12h 未到就不呼叫本函式。Returns {parity, switched: [...]}。
