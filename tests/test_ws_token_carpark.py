@@ -78,8 +78,14 @@ def _lot_body(type_, master_id, spaces, ceng=0):
 def _car(mount_id, car_lev=1, parking=False):
     out = codec.pb_uint(1, mount_id) + codec.pb_uint(2, car_lev)
     if parking:
-        # parking_data#5 present -> mount is busy parking somewhere
+        # parking_data#5 with a NON-ZERO field -> mount is busy parking somewhere
         out += codec.pb_msg(5, codec.pb_uint(1, 3) + codec.pb_uint(3, 0))
+    else:
+        # The live server ALWAYS sends parking_data#5, all-zero, for an IDLE mount
+        # (verified on 小寶). Mirror that so the "present != parked" rule is tested.
+        out += codec.pb_msg(5, codec.pb_uint(1, 0) + codec.pb_uint(2, 0)
+                            + codec.pb_uint(3, 0) + codec.pb_uint(4, 0)
+                            + codec.pb_uint(5, 0) + codec.pb_uint(6, 0))
     return out
 
 
@@ -172,6 +178,22 @@ def test_parse_my_mounts_excludes_parking_mounts():
 
 def test_parse_my_mounts_empty():
     assert parse_my_mounts(b"") == []
+
+
+def test_parse_my_mounts_keeps_idle_mounts_with_allzero_parking_data():
+    # Regression (live 小寶 2026-06-09): the server sends parking_data#5 ALWAYS,
+    # all-zero for an idle mount. Real captured car_list entry for mount_id=1:
+    #   f1=1 (mount_id) f2=104 (car_lev) f3=2148817 (car_exp) f4=0 (minute)
+    #   f5={1:0,2:0,3:0,4:0,5:0,6:0} (parking_data, all zero -> NOT parked)
+    real_entry = bytes.fromhex(
+        "0801106818d193830120002a0c080010001800200028003000")
+    body = codec.pb_msg(1, real_entry)
+    mounts = parse_my_mounts(body)
+
+    assert len(mounts) == 1                       # was 0 before the fix
+    assert mounts[0].mount_id == 1
+    assert mounts[0].car_lev == 104
+    assert mounts[0].parking is False
 
 
 def test_build_lot_info_body_carries_type_master_ceng():

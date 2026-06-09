@@ -131,12 +131,32 @@ def parse_car_park_info(body: bytes) -> CarParkLot:
     )
 
 
+def _is_parking(parking_data: object) -> bool:
+    """A mount is actually parked only when its ``parking_data`` (#5) sub-message
+    carries a NON-ZERO field.
+
+    The live server sends an all-zero ``parking_data`` (every field 0, e.g.
+    ``{1:0,2:0,3:0,4:0,5:0,6:0}``) for an IDLE mount — so the mere presence of the
+    sub-message does NOT mean parked. The old ``d.get(5) is not None`` check
+    excluded every free mount (verified on 小寶: 6 mounts -> 0 returned), which
+    would make ``auto_park_cross`` always report ``no_available_mount``.
+    """
+    if not isinstance(parking_data, (bytes, bytearray)):
+        return bool(parking_data)
+    for _fn, v in codec.walk(bytes(parking_data)):
+        if isinstance(v, int) and v != 0:
+            return True
+        if isinstance(v, (bytes, bytearray)) and _is_parking(v):
+            return True
+    return False
+
+
 def _parse_car(entry: bytes) -> Mount:
     d = codec.walk_dict(entry)
     return Mount(
         mount_id=_as_int(d.get(1)),
         car_lev=_as_int(d.get(2)),
-        parking=d.get(5) is not None,
+        parking=_is_parking(d.get(5)),
     )
 
 
