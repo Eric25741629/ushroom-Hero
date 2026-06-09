@@ -87,6 +87,7 @@ from runtime_services.sleep_service import (
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
 from game_actions import daily_pipeline
+from game_actions.ws_phase import run_ws_phase
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
@@ -227,6 +228,15 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 if _skip:
                     continue
 
+                # --- WS 階段：純 WS 先跑（瀏覽器啟動前；WS 登入會踢頁面，順序不可反）---
+                # ws_token.enabled=False 時 run_ws_phase 直接回空集合，零影響。
+                ws_done = frozenset()
+                try:
+                    bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
+                    ws_done = run_ws_phase(ip)
+                except Exception as ws_exc:
+                    logger.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
+
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
                 d = handle_device_wakeup(
@@ -321,6 +331,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     )
                     if result:
                         logger.info(f"[{ip}] 遊戲已進入可操作狀態")
+                        if backend_kind == "web_h5":
+                            from utils.ws_ticket_refresh import refresh_from_device
+                            refresh_from_device(d, ip)
                     else:
                         logger.warning(f"[{ip}] 遊戲啟動失敗，避讓休眠 30 分鐘...")
                         # 計算 30 分鐘後的喚醒時間
@@ -345,6 +358,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     wheel_manager=wheel_manager,
                     mission_manager=mission_manager,
                     family_manager=family_manager,
+                    ws_done=ws_done,
                 ))
             except WakeLoopInterrupted as e:
                 # A manual web-launch request arrived mid-flow (typically a

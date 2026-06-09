@@ -252,7 +252,17 @@
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30,
-            "online_check_interval": 5
+            "online_check_interval": 5,
+            "ws_token": {
+                "enabled": true,
+                "spend": true,
+                "open_lamp": true,
+                "farm": null,
+                "dungeon_sweeps": [],
+                "carpark_target": null,
+                "couple_gifts": true,
+                "forge_ring": false
+            }
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
             "wake_hour_parity": "odd",
