@@ -36,6 +36,9 @@ from ws_token.workshop import (  # noqa: E402
     CMD_FOOD_AUTO_USE,
     CMD_INFO,
     CMD_UNLOCK_WORKSHOP,
+    FOOD_CRISPY_COOKIE,
+    FOOD_ELITE_PLATTER,
+    RECIPE_FOOD_IDS,
     Workshop,
     WorkshopInfo,
     build_cancel_body,
@@ -48,6 +51,7 @@ from ws_token.workshop import (  # noqa: E402
     parse_info,
     read_dining_hall,
     read_info,
+    switch_recipe,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
     CREDS,
@@ -315,3 +319,54 @@ def test_cmd_ids_match_module_72_formula():
     assert CMD_INFO == 72 * 256 + 2
     assert CMD_CHOOSE_FOOD == 72 * 256 + 3
     assert CMD_DINING_HALL == 72 * 256 + 9
+
+
+# --- switch_recipe: 取消 BEFORE 換 (in-game rule) ---------------------------
+
+def test_recipe_food_ids():
+    assert FOOD_CRISPY_COOKIE == 8001          # 脆脆餅乾
+    assert FOOD_ELITE_PLATTER == 8005          # 精英拼盤
+    assert RECIPE_FOOD_IDS == (8001, 8005)
+
+
+def test_switch_recipe_cancels_before_choosing():
+    # The in-game rule: you MUST 取消 (cancel_work) before changing the recipe.
+    # switch_recipe must send cancel FIRST, then read the dining-hall qty, then
+    # choose the new food with that count.
+    order: list[str] = []
+    c, fake = _client({
+        CMD_CANCEL_WORK: lambda _b: (order.append("cancel") or [s2c(CMD_CANCEL_WORK, b"")]),
+        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8005, 56))],
+        CMD_CHOOSE_FOOD: lambda _b: (order.append("choose") or [s2c(CMD_CHOOSE_FOOD, b"")]),
+    })
+    try:
+        out = switch_recipe(c, workshop_id=6001, food_id=FOOD_ELITE_PLATTER)
+        assert order == ["cancel", "choose"]       # cancel FIRST, then choose
+        assert out["food_id"] == 8005
+        assert out["count"] == 56                    # qty read from the dining hall
+        assert out["cancelled"]["ok"] is True
+        assert out["chosen"]["ok"] is True
+        # the choose body carried food_list{k=8005, v=56}, workshop_id=6001
+        chose = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CHOOSE_FOOD][0]
+        d = codec.walk_dict(chose)
+        assert codec.walk_dict(bytes(d[1])) == {1: 8005, 2: 56}
+        assert d[2] == 6001
+    finally:
+        c.close()
+
+
+def test_switch_recipe_surfaces_cancel_rejection():
+    # If cancel is rejected (0x0201), switch_recipe still returns without crashing
+    # and surfaces ok=False on the cancelled sub-result.
+    c, _ = _client({
+        CMD_CANCEL_WORK: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 90))],
+        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 0))],
+        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
+    })
+    try:
+        out = switch_recipe(c, workshop_id=6001, food_id=FOOD_CRISPY_COOKIE)
+        assert out["cancelled"]["ok"] is False
+        assert out["cancelled"]["error_code"] == 90
+        assert out["food_id"] == 8001
+    finally:
+        c.close()

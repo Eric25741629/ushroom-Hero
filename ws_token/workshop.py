@@ -61,6 +61,13 @@ ERR_COOLDOWN = 90       # 冷卻時間未到
 ERR_NOT_ENOUGH = 159    # 次數不足
 ERR_EVENT_OVER = 173    # 活動已結束
 
+# 小隊加工 recipes (food ids resolved from configGoods on 小寶, 2026-06-09). The
+# 加工坊 makes ONE recipe at a time and runs it until materials hit zero; switching
+# recipe requires a 取消 (cancel_work) FIRST. The user runs these two:
+FOOD_CRISPY_COOKIE = 8001   # 脆脆餅乾
+FOOD_ELITE_PLATTER = 8005   # 精英拼盤 (菁英拼盤)
+RECIPE_FOOD_IDS = (FOOD_CRISPY_COOKIE, FOOD_ELITE_PLATTER)
+
 
 # --- dataclasses ------------------------------------------------------------
 
@@ -258,6 +265,39 @@ def collect(
     logger.info("ws_token workshop: collect material_id=%s num=%s", material_id, num)
     return _mutate(client, CMD_CROPS_TRANSFER,
                    build_collect_body(material_id, num), timeout=timeout)
+
+
+def switch_recipe(
+    client: WSGameClient,
+    *,
+    workshop_id: int,
+    food_id: int,
+    timeout: Optional[float] = None,
+) -> dict:
+    """切換小隊加工配方: 取消 (cancel) the workshop FIRST, then start the new food.
+
+    In-game rule (from the player): you MUST press 取消 before changing the recipe
+    of a running 小隊加工; only then can you 確定 the new one. The quantity is read
+    from the dining hall (make as many as the available count allows — the workshop
+    then runs until materials hit zero). ``food_id`` is one of RECIPE_FOOD_IDS
+    (8001 脆脆餅乾 / 8005 精英拼盤). This is a once-a-day switch.
+
+    Returns {cancelled, chosen, food_id, count}. A cancel/choose rejection (0x0201)
+    is surfaced in the sub-dicts (ok=False) rather than crashing.
+
+    # live-confirm: workshop_id (= p_worker.team_cfg_id? a slot index?) and whether
+    #   food_v is the make-count must be confirmed on a supervised live run before
+    #   wiring this into an unattended runner.
+    """
+    cancelled = cancel_work(client, workshop_id, timeout=timeout)
+    foods = dict(read_dining_hall(client, timeout=timeout))
+    count = foods.get(food_id, 0)
+    chosen = choose_food(client, food_k=food_id, food_v=count,
+                         workshop_id=workshop_id, timeout=timeout)
+    logger.info("ws_token workshop: switch_recipe workshop_id=%s food_id=%s count=%s "
+                "cancelled_ok=%s chosen_ok=%s", workshop_id, food_id, count,
+                cancelled.get("ok"), chosen.get("ok"))
+    return {"cancelled": cancelled, "chosen": chosen, "food_id": food_id, "count": count}
 
 
 # --- helpers ----------------------------------------------------------------
