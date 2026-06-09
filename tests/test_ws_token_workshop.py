@@ -417,11 +417,16 @@ def _pw_worker(team_cfg_id, worker_status):
     return codec.pb_uint(1, team_cfg_id) + codec.pb_uint(3, worker_status)
 
 
-def _info_s2c_body(team_ids):
-    """worker_pw_info_s2c with one running p_worker per team_cfg_id."""
+def _info_s2c_body(teams):
+    """worker_pw_info_s2c with one p_worker per team.
+
+    Each item is a bare team_cfg_id (worker_status=1, running) or a
+    (team_cfg_id, worker_status) tuple.
+    """
     out = b""
-    for t in team_ids:
-        out += codec.pb_msg(2, _pw_worker(t, 1))
+    for t in teams:
+        team_id, status = t if isinstance(t, tuple) else (t, 1)
+        out += codec.pb_msg(2, _pw_worker(team_id, status))
     return out
 
 
@@ -433,13 +438,27 @@ def _dining_s2c_body(foods):
     return out
 
 
-def _rotate_client(team_ids, foods):
+def _rotate_client(teams, foods, *, cancel_responder=None):
+    """Fake client for rotate tests.
+
+    ``cancel_responder`` defaults to a normal ok reply; pass a raising one for
+    idle-workshop tests (server NEVER replies to cancel on an idle workshop, so
+    sending it at all is the bug).
+    """
+    if cancel_responder is None:
+        cancel_responder = lambda _b: [s2c(CMD_CANCEL_WORK, b"")]  # noqa: E731
     return _client({
-        CMD_INFO: lambda _b: [s2c(CMD_INFO, _info_s2c_body(team_ids))],
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, _info_s2c_body(teams))],
         CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _dining_s2c_body(foods))],
-        CMD_CANCEL_WORK: lambda _b: [s2c(CMD_CANCEL_WORK, b"")],
+        CMD_CANCEL_WORK: cancel_responder,
         CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
     })
+
+
+def _forbid_cancel(_body):
+    raise AssertionError(
+        "cancel_work sent to an idle workshop — server never replies (live "
+        "2026-06-10 7fe98fc6), this would hang as WSTimeoutError in production")
 
 
 def test_rotate_parity0_assigns_8001_then_8005():
@@ -472,5 +491,70 @@ def test_rotate_no_team_workshops_is_noop():
         out = rotate_team_recipes(c, parity=0)
         assert out["switched"] == []
         assert all(cmd != CMD_CHOOSE_FOOD for _s, cmd, _b in fake.framed_sent())
+    finally:
+        c.close()
+
+
+# --- idle workshops: cancel is state-gated silent (live 2026-06-10 7fe98fc6) -
+
+def test_rotate_idle_workshop_skips_cancel_but_still_chooses():
+    # Both team workshops idle (worker_status=0). Sending cancel_work to an idle
+    # workshop gets NO reply at all -> WSTimeoutError in production. The fake's
+    # cancel responder raises to prove cancel is never sent.
+    c, fake = _rotate_client([(6002, 0), (6003, 0)], [(8001, 7), (8005, 4)],
+                             cancel_responder=_forbid_cancel)
+    try:
+        out = rotate_team_recipes(c, parity=0)
+        assert [s["food_id"] for s in out["switched"]] == [8001, 8005]
+        sent = fake.sent_cmds()
+        assert CMD_CANCEL_WORK not in sent
+        assert sent.count(CMD_CHOOSE_FOOD) == 2
+        for s in out["switched"]:
+            assert s["cancelled"] == {
+                "ok": True, "error_code": None, "skipped": "not running"}
+    finally:
+        c.close()
+
+
+def test_rotate_running_workshop_still_cancels_first():
+    c, fake = _rotate_client([(6002, 1), (6003, 2)], [(8001, 7), (8005, 4)])
+    try:
+        out = rotate_team_recipes(c, parity=0)
+        assert [s["food_id"] for s in out["switched"]] == [8001, 8005]
+        cancels = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CANCEL_WORK]
+        assert [codec.walk_dict(b) for b in cancels] == [{1: 2}, {1: 3}]
+        for s in out["switched"]:
+            assert s["cancelled"]["ok"] is True
+            assert "skipped" not in s["cancelled"]
+    finally:
+        c.close()
+
+
+def test_rotate_mixed_idle_and_running():
+    # 6002 running -> cancel sent for workshop_id=2 only; 6003 idle -> no cancel.
+    c, fake = _rotate_client([(6002, 1), (6003, 0)], [(8001, 7), (8005, 4)])
+    try:
+        out = rotate_team_recipes(c, parity=0)
+        cancels = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CANCEL_WORK]
+        assert [codec.walk_dict(b) for b in cancels] == [{1: 2}]
+        assert out["switched"][1]["cancelled"]["skipped"] == "not running"
+    finally:
+        c.close()
+
+
+def test_switch_recipe_cancel_first_false_skips_cancel():
+    c, fake = _client({
+        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 9))],
+        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
+        CMD_CANCEL_WORK: _forbid_cancel,
+    })
+    try:
+        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_CRISPY_COOKIE,
+                            cancel_first=False)
+        assert out["cancelled"] == {
+            "ok": True, "error_code": None, "skipped": "not running"}
+        assert out["food_id"] == 8001
+        assert out["count"] == 9
+        assert CMD_CANCEL_WORK not in fake.sent_cmds()
     finally:
         c.close()

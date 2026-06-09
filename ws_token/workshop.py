@@ -305,6 +305,7 @@ def switch_recipe(
     *,
     team_cfg_id: int,
     food_id: int,
+    cancel_first: bool = True,
     timeout: Optional[float] = None,
 ) -> dict:
     """切換小隊加工配方: 取消 (cancel) the workshop FIRST, then start the new food.
@@ -318,6 +319,14 @@ def switch_recipe(
     dining hall (make as many as available — the workshop runs until materials hit
     zero).  ``food_id`` must be one of RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤).
 
+    ``cancel_first``: sending cancel_work to an IDLE (worker_status=0) workshop
+    gets NO reply at all — state-gated silence (live-confirmed 2026-06-10 on
+    7fe98fc6, same pattern as guild_treasure dormancy) — so the call dies as
+    WSTimeoutError.  Callers must pass ``cancel_first=w.is_running`` (from
+    read_info).  With ``cancel_first=False`` the cancel step is skipped and
+    ``cancelled`` reports ``{"ok": True, "error_code": None,
+    "skipped": "not running"}``.
+
     Note: 手動加工 (team_cfg_id=6001, workshop_id=1) rejects team choose_food with
     code=2 (param invalid) — do NOT call switch_recipe for it.
 
@@ -325,7 +334,10 @@ def switch_recipe(
     are surfaced in sub-dicts (ok=False) rather than crashing.
     """
     wire_id = team_cfg_id_to_workshop_id(team_cfg_id)
-    cancelled = cancel_work(client, wire_id, timeout=timeout)
+    if cancel_first:
+        cancelled = cancel_work(client, wire_id, timeout=timeout)
+    else:
+        cancelled = {"ok": True, "error_code": None, "skipped": "not running"}
     foods = dict(read_dining_hall(client, timeout=timeout))
     count = foods.get(food_id, 0)
     chosen = choose_food(client, food_k=food_id, food_v=count,
@@ -353,7 +365,9 @@ def rotate_team_recipes(
     把 RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤) 輪流指派給每個小隊加工
     （team_cfg_id 6002/6003；手動加工 6001 一律不動）：parity 偶數 = 依序
     [8001, 8005, ...]，奇數 = 反序。每個 workshop 走已驗的 switch_recipe
-    （cancel → dining_hall → choose，count = 餐廳現有全量）。
+    （cancel → dining_hall → choose，count = 餐廳現有全量）。idle 工坊
+    （worker_status=0）送 cancel 伺服器不回包 → 用 cancel_first=w.is_running
+    跳過 cancel（live 2026-06-10 7fe98fc6 證實）。
 
     CADENCE 不在這裡：呼叫端（runner）用 ws_token.state 記 last_rotate_ts/parity，
     12h 未到就不呼叫本函式。Returns {parity, switched: [...]}。
@@ -366,7 +380,8 @@ def rotate_team_recipes(
     for i, w in enumerate(teams):
         food_id = order[i % len(order)]
         result = switch_recipe(client, team_cfg_id=w.team_cfg_id,
-                               food_id=food_id, timeout=timeout)
+                               food_id=food_id, cancel_first=w.is_running,
+                               timeout=timeout)
         switched.append({"team_cfg_id": w.team_cfg_id, **result})
     logger.info("ws_token workshop: rotate_team_recipes parity=%d switched=%d",
                 parity % 2, len(switched))
