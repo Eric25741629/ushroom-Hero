@@ -27,19 +27,21 @@ Pilot 裝置：小寶 `7fe98fc6`（bot 內的 web_h5 裝置；非使用者手機
 
 ## 2. ws_token 端新增
 
-### 2.1 couple.give_all_in_hand（送光全部，批次 10）
+### 2.1 couple.give_all_in_hand（送光全部，每批 20，server 封頂）
+
+使用者 2026-06-10 確認：**server 對超量 num 自動封頂到庫存**，批次單位用 20。
 
 ```python
 give_all_in_hand(client, *, friend_id, flower_id,
-                 batch=10, max_batches=30, spacing=0.2) -> dict
-# {sent, batches, stopped_reason}
+                 batch=20, max_batches=20, spacing=0.2) -> dict
+# {batches_ok, stopped_reason}
 ```
 
-- 迴圈 `give_flower(num=10)` 直到 `0x0201 code 3 物品不足`；
-- 收到 code 3 後改 `num=1` 收尾殘量（<10 的餘數），再次 code 3 即停；
-- 護欄：`max_batches=30`（上限 300 個）+ 殘量收尾上限 9 次；
+- 迴圈 `give_flower(num=20)`：每批 server 自動送 min(20, 庫存)；
+- 庫存歸零後下一批回 `0x0201 code 3 物品不足` = 正常結束訊號（非錯誤）；
+- 封頂吃掉殘量，**不需 1 顆收尾**；護欄 `max_batches=20`（上限 400 個）；
 - `0x0201 code 369 = 贈送成功`（成功走錯誤通道）已由 `_mutate` 處理；
-- **不用大數封頂法**（使用者明確否決 num=999 一發送光）。
+- 不用大數一發送光（使用者否決 num=999）。
 
 ### 2.2 runner 接三個新任務
 
@@ -49,7 +51,7 @@ dungeon, guild, steward, carpark, spirit, workshop, couple, lamp`
 | 任務 | 行為 | 閘門 |
 |---|---|---|
 | spirit | `spirit.draw_all_free()` 免費召喚 | 無（只用免費次數） |
-| workshop | `workshop.auto_cycle()`：收成品 → 用 `configWorkshop.id`（非 team_cfg_id）指派食物開工。流程依 `HOME_FEATURES_MUTATE_VERIFY_2026-06-10.md` 已驗路徑封裝 | `ws_token.workshop.enabled` |
+| workshop | `workshop.rotate_team_recipes()`：**每 12 小時輪換一次配方**（使用者指定；兩類別 8001 脆脆餅乾 ↔ 8005 精英拼盤，輪流指派給各小隊加工 6002/6003），走已驗的 `switch_recipe`（cancel → dining_hall → choose，wire id 用 `configWorkshop.id`）。上次輪換時間/parity 存 `ws_state/<device>.json`；12h 未到 → skip。手動加工(6001)不動；collect/crops_transfer 仍 live-unconfirmed，不在本期 | `ws_token.workshop.enabled` |
 | couple | `read_partner` 無伴侶即 skip；有 → 奶茶+玫瑰各 `give_all_in_hand`；默契考驗已在 main_tasks（claim_marry_tasks, type 6）；戒指錘鍊 `forge_ring_until_empty`（消耗全部真愛之石） | 送禮 `couple_gifts`（預設 on）；錘鍊掛 `spend` |
 
 ### 2.3 不做在線前置檢查（使用者拍板）
@@ -143,13 +145,18 @@ ADB 在線？
 - 主 repo：`ws_done` skip 生效（stub pipeline）、WS 失敗→全跑、config 預設值。
 
 Live（小寶，依 manual-hold 慣例取得獨佔）：
-1. 單獨 live 驗批次送禮（code 3 邊界行為：超量是封頂還是拒絕，順手記進 schema 文件）。
+1. 單獨 live 驗批次送禮全流程（封頂行為使用者已確認，驗 code 3 結束訊號與摘要正確）。
 2. `python -m ws_token.runner --device 7fe98fc6`（含三新任務）全跑。
 3. 主 repo 完整 wake cycle：看 WS 階段 → skip log → Playwright 補跑。
 4. 觀察數日 → 擴到下一台。
 
-## 8. 開放問題（live-confirm）
+## 8. 開放問題（2026-06-10 使用者答覆後更新）
 
-- give_flower 超量行為（封頂 vs 拒絕）——live 測試 1 順手定案，影響收尾迴圈寫法。
-- workshop auto_cycle 的食物選擇策略（目前依驗證文件已驗路徑；多種食物時選哪個）。
-- ticket 絕對 TTL（AUTH_HANDSHAKE_SPEC §7 #3 未測）——ADB 離線多日場景的上限。
+- ~~give_flower 超量行為~~ → **已定案：封頂**，批次 20（§2.1）。
+- ~~workshop 食物選擇策略~~ → **已定案：兩類別 12hr 輪換一次**（§2.2）。
+- ticket 絕對 TTL → **用 production log 追蹤**：WS 登入（成功與失敗）都 log
+  ticket age（now − loginTime/_captured_at），TTL 從長期 log 浮現，不做專測。
+- workshop collect（crops_transfer 的 material_id/num 來源）仍 live-unconfirmed，
+  本期不做收成品。
+- 小寶 farm `seed_id`（免費種子 id）：live 驗證時 CDP 抓一次填進 config；
+  填好前 `農場任務` 不進 skip 表（mapping 對 farm 採條件式 skip）。
