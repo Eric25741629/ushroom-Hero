@@ -1,3 +1,32 @@
+# WS 覆蓋 roadmap — 6 features recon 全完成 (2026-06-09)
+
+> 分支 `feat/ws-token-integration`(worktree `C:\Users\Eric\ws-token-integration`)。整合主體已建(toggle/解耦online-check/手機loop/紅包神燈/kick建構中)。
+
+## 已做 + 在 runner(裝置設 use_ws_runner 就跑這些)
+main_tasks(主畫面領任務)、league_solo(魔法劇場+烈炎山洞寶箱)、guild(家族大廳)、steward(家園管家採購掃蕩)、redpack(紅包,免費常開)、lamp(神燈,`ws_token_open_lamp` gate)。
+
+## recon 完成、待 build(6 個)
+| feature | family / 關鍵 cmd | 欄位號 | 風險/備註 |
+|---|---|---|---|
+| 轉盤金幣 | `ad`22:`ad_wheel_info`5635 / `ad_wheel_spin`5636(空body) | CDP匯出 `ad`(進行中) | 轉即中無領獎步;只能轉**免費**次數(看廣告補 WS 用不到) |
+| 掛機/離線獎勵 | `main_chapter`13:`reward_info`3333`{type}` / `claim`3334`{type}` | CDP匯出 `main_chapter`(進行中) | 離線(type2)=登入後 server **push**;在線(type1)主動拉;8h上限;無廣告加倍 |
+| 跨界停車 | `car_park`50:`info`12801`{type,master_id,ceng}` / `cross_new_parking_start`12847`{park_id,mount_id,pos}` | CDP匯出 `car_park`(進行中);**space_list 空位欄位待釘** | 只停跨界(`type==3`);新/舊跨界用 checkNewCrossOpen 分;不收車 |
+| 深淵之門 | `dungeon`:`battle_start`3591`{type,level}`→`battle_result`3592 或 `sweep`3596 | **已在 DUNGEON** | ⚠ **戰鬥客戶端算 + anti-cheat**(checkCheat 強制判敗、server 可能用 seed 回放);type 待 live(強候選 Coin=2);**優先試掃蕩繞過** |
+| 週副本(萬神試煉) | `dungeon` type=**23**:battle_start/result 同上;門票 **gtid 1081**(7張/週) | **已在 DUNGEON** | ⚠ 同上 anti-cheat;優先試掃蕩;Mon-Sat 是 bot 排程非 server gate |
+| 農場/打工 | home_farm 12(`info`3077/`plant`3078/`harvest`3081)+ 打工 `worker_setting`18689 + 豐收卡 `shop_buy`6914 | **已在 HOME/WORKER_COMMON/SHOP**(WORKER_COMMON cmd_ids 漏 18689-91 待補) | 打工=server 自動種+收(空 `seed_used_seq_list`=用免費種=不買種);需 config 值 live 取 |
+
+## 待 live 釘的 config / 值(非 proto,看一次回包或 dump config)
+深淵 type 值、農場 `seed_id`/`fertilizer_id`/`team_cfg_id`、豐收卡 `shop_type`/`shop_id`、轉盤獎品表。
+
+## 兩大共通風險
+1. **副本戰鬥 anti-cheat**(深淵/週副本):不能無腦送 `result=0` 騙勝 → 優先 `dungeon_sweep` 掃蕩,或 live 抓一包真實 `battle_result` 看 server 認不認 client result。
+2. **看廣告加倍**(轉盤/掛機):WS 無廣告 SDK → 只拿免費/基礎份。
+
+## kick / 異地登入(建構中)
+被踢訊號 = **cmd 259**(0x103,body `{1:20}`)+ 隨後斷線。流程:偵測 → 30 分冷卻 → 下輪 online-check 再查在線 → 離線才恢復。
+
+---
+
 # WS 後端整合進 bot — toggle / 5556 pilot / 5558 / 離線自動跑 / 神燈 (2026-06-09)
 
 **Branch**: `feat/dragon-realm`（ws_token 工作都在這支）
@@ -40,7 +69,12 @@
 - [ ] S2 wake loop branch: backend/`use_ws_runner` → `run_device`（跳過 ADB/PW init）
 - [ ] S3 scanner 納入 ws_token 裝置
 - [ ] S4 5558: 確認 `check_online` 完整保留 + carpark 顯式關
-- [ ] S5 ADB 離線 → WS fallback 每 2h（含 R1 安全閥 = 在線保護）
+- [ ] S5 手機帳號「撈 token → 下線 → 純 WS 跑到 token 失效」(使用者 2026-06-09 定案流程)
+  1. 啟動 / 手機 adb-reachable 時 → `tools/adb_token_login.py` 撈 fresh token(冷啟 App ~30s,趁手機在身邊時做)。
+  2. token 到手 → 手機可下線;之後不碰手機。
+  3. WS loop 每 2h:**先經解耦 online-check（S5b）查「大意了沒有閃」89565100511322 是否在線**(idle friend-account 走好友 0x0F02 / online_guard,**無 OCR**;在線→skip 不踢)→ 離線才 `run_device(phone, cached token)`。
+  4. **跑到 token 失效**(`run_device` 回 `login_ok=False`)→ 停 WS loop,等手機下次 adb-reachable 再撈新 token。
+  - online_guard 已 live 驗證(5554 友列 50 筆、target=大意了沒有閃、is_online False=離線),純 WS 路徑可用。
 - [ ] S5b **解耦 online-check（使用者 2026-06-09 追加）**:現有 `check_on_line` 硬編「5554 當 checker」（`web_session_service.py:89` `if ip!="emulator-5554":return`、`wake_up_handler.py:239` `checker_ip='emulator-5554'`）→ 改成**動態選 checker**:requester（任何需要在線保護的裝置，如手機/5558）把「查某玩家是否在線」寫進既有 online-check mailbox（`bot_state.submit_online_check_request`）；**由任何「有空閒 + 好友列表含該玩家」的帳號**被喚醒去查（protocol 好友列表 0x0F02 / guild is_online，**無 OCR**），結果 `complete_online_check_request` 回寫。checker 不再鎖 5554。需保留現有 mailbox/中斷喚醒機制，只改「誰當 checker」的選擇邏輯 + requester 不限 5558。
   - 待確認：哪些帳號互為好友（誰能查 89565100511322）、「有空閒」的判定（非任務中/睡眠中可被喚醒）。
 - [ ] S6 `ws_token/lamp.py`: num=20 per batch + 接進 runner
