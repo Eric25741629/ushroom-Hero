@@ -19,3 +19,4 @@ def test_default_device_config_has_ws_token_disabled():
     assert ws["dungeon_sweeps"] == []
     assert ws["farm"] is None
     assert ws["carpark_target"] is None
+    assert ws["workshop_rotate"] is True

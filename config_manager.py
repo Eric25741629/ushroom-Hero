@@ -76,6 +76,7 @@ DEFAULT_DEVICE_CONFIG = {
         "carpark_target": None, # 跨界停車 master_id（只停不收）
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
+        "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
     },
 }
 

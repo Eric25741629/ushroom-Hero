@@ -51,7 +51,7 @@ dungeon, guild, steward, carpark, spirit, workshop, couple, lamp`
 | 任務 | 行為 | 閘門 |
 |---|---|---|
 | spirit | `spirit.draw_all_free()` 免費召喚 | 無（只用免費次數） |
-| workshop | `workshop.rotate_team_recipes()`：**每 12 小時輪換一次配方**（使用者指定；兩類別 8001 脆脆餅乾 ↔ 8005 精英拼盤，輪流指派給各小隊加工 6002/6003），走已驗的 `switch_recipe`（cancel → dining_hall → choose，wire id 用 `configWorkshop.id`）。上次輪換時間/parity 存 `ws_state/<device>.json`；12h 未到 → skip。手動加工(6001)不動；collect/crops_transfer 仍 live-unconfirmed，不在本期 | `ws_token.workshop.enabled` |
+| workshop | `workshop.rotate_team_recipes()`：**每 12 小時輪換一次配方**（使用者指定；兩類別 8001 脆脆餅乾 ↔ 8005 精英拼盤，輪流指派給各小隊加工 6002/6003），走已驗的 `switch_recipe`（cancel → dining_hall → choose，wire id 用 `configWorkshop.id`）。上次輪換時間/parity 存 `ws_state/<device>.json`；12h 未到 → skip。手動加工(6001)不動；collect/crops_transfer 仍 live-unconfirmed，不在本期 | `ws_token.workshop_rotate` |
 | couple | `read_partner` 無伴侶即 skip；有 → 奶茶+玫瑰各 `give_all_in_hand`；默契考驗已在 main_tasks（claim_marry_tasks, type 6）；戒指錘鍊 `forge_ring_until_empty`（消耗全部真愛之石） | 送禮 `couple_gifts`（預設 on）；錘鍊掛 `spend` |
 
 ### 2.3 不做在線前置檢查（使用者拍板）
@@ -70,7 +70,7 @@ dungeon, guild, steward, carpark, spirit, workshop, couple, lamp`
   "farm": {"seed_id": null, "team_cfg_id": null},
   "dungeon_sweeps": [], "carpark_target": null,
   "couple_gifts": true, "forge_ring": false,
-  "workshop": {"enabled": true}
+  "workshop_rotate": true
 }
 ```
 

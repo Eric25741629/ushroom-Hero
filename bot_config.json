@@ -261,7 +261,8 @@
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "couple_gifts": true,
-                "forge_ring": false
+                "forge_ring": false,
+                "workshop_rotate": true
             }
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
@@ -397,6 +398,9 @@
                 "master_url": "http://127.0.0.1:5002",
                 "worker_id": "laptop_worker"
             }
-        }
+        },
+        "online_check_checkers": [
+            "emulator-5554"
+        ]
     }
 }

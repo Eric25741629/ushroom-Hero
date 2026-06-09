@@ -352,3 +352,55 @@ def test_run_recovers_from_consecutive_mismatch_abort(pipeline_mod, fake_all, mo
     assert fake_all["lamp_if_due"] == [], "lamp (Task 19) must not run after abort"
     assert fake_all["weekly_dungeon"] == [], "weekly dungeon (Task 15) must not run after abort"
     assert fake_all["biweekly_dungeon"] == [], "biweekly dungeon (Task 17) must not run after abort"
+
+
+def test_ws_done_tasks_are_skipped_but_others_still_run(pipeline_mod, fake_all):
+    """Tasks listed in ws_done must be skipped; tasks not in ws_done must still run.
+
+    We pass ws_done={"紅包檢查", "家族任務", "開神燈", "轉盤金幣"}.
+
+    Expected:
+    - None of those four appear in at_main_page call records (they were skipped).
+    - 家族任務 skipped → pipeline falls back to get_stage_with_check, which is
+      patched to return "主頁面" → no crash.
+    - 開神燈 skipped → _run_lamp_if_due NOT called.
+    - 轉盤金幣 skipped → wheel_manager.spin_and_send_gold not in at_main_page records.
+    - At least one non-skipped task (e.g. "農場任務" or "點擊寶箱") appears in
+      at_main_page records, proving the pipeline did not short-circuit entirely.
+    """
+    ws_skipped = frozenset({"紅包檢查", "家族任務", "開神燈", "轉盤金幣"})
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    ctx = pipeline_mod.DailyContext(
+        d=ctx.d,
+        ip=ctx.ip,
+        Cnn_model=ctx.Cnn_model,
+        clf=ctx.clf,
+        rl_recorder=ctx.rl_recorder,
+        current_time=ctx.current_time,
+        enable_dungeon_manager=ctx.enable_dungeon_manager,
+        wheel_manager=ctx.wheel_manager,
+        mission_manager=ctx.mission_manager,
+        family_manager=ctx.family_manager,
+        ws_done=ws_skipped,
+    )
+    pipeline_mod.run(ctx)
+
+    executed_tasks = {call["task"] for call in fake_all["at_main_page"]}
+
+    # WS-done tasks must NOT appear in _run_at_main_page call records.
+    for skipped_name in ("紅包檢查", "家族任務", "開神燈", "轉盤金幣"):
+        assert skipped_name not in executed_tasks, (
+            f"{skipped_name!r} was in ws_done but still appeared in at_main_page calls"
+        )
+
+    # 開神燈 skip → lamp helper must not have fired.
+    assert fake_all["lamp_if_due"] == [], (
+        "開神燈 was in ws_done; _run_lamp_if_due must not be called"
+    )
+
+    # At least one non-skipped task must have executed (pipeline is not dead).
+    non_skipped_candidates = {"農場任務", "點擊寶箱"}
+    assert executed_tasks & non_skipped_candidates, (
+        f"Expected at least one of {non_skipped_candidates} to run, "
+        f"but executed tasks were: {executed_tasks}"
+    )
