@@ -199,8 +199,9 @@ def test_draw_body_carries_draw_id_and_count():
 
 # --- draw_all_free: only pools with free_times>0, aggregate -----------------
 
-def test_draw_all_free_only_draws_pools_with_free_times():
-    # pool 101 has 2 free draws, pool 102 has 0 -> only 101 is drawn (count=2)
+def test_draw_all_free_draws_each_free_pool_one_pull_at_a_time():
+    # pool 101 free=2 -> TWO single (count=1) pulls (server rejects count>1 with
+    # 0x0201 code 2); pool 102 free=0 -> skipped.
     captured: list[bytes] = []
 
     def _draw_responder(b):
@@ -214,10 +215,10 @@ def test_draw_all_free_only_draws_pools_with_free_times():
     try:
         out = draw_all_free(c)
         assert out["pools_drawn"] == 1
-        assert out["rewards"] == {2001: 5}
-        assert len(out["results"]) == 1
-        # the one draw used count == the pool's free_times (2)
-        assert captured == [build_draw_body(101, 2)]
+        assert out["rewards"] == {2001: 10}        # 5 per pull * 2 free pulls
+        assert out["results"][0]["drew"] == 2
+        # two SINGLE-pull draws (count=1 each), never count>1
+        assert captured == [build_draw_body(101, 1), build_draw_body(101, 1)]
     finally:
         c.close()
 
@@ -241,8 +242,9 @@ def test_draw_all_free_aggregates_rewards_across_pools():
     try:
         out = draw_all_free(c)
         assert out["pools_drawn"] == 2
-        assert seen == [101, 103]            # 102 (free=0) skipped
-        assert out["rewards"] == {2001: 1, 2002: 2, 9000: 15}
+        # 101 free=1 -> 1 pull; 103 free=2 -> 2 pulls; 102 (free=0) skipped
+        assert seen == [101, 103, 103]
+        assert out["rewards"] == {2001: 1, 2002: 4, 9000: 20}
     finally:
         c.close()
 

@@ -146,15 +146,17 @@ def draw_all_free(
     spacing: float = _DEFAULT_SPACING,
     timeout: Optional[float] = None,
 ) -> dict:
-    """Read pools, then draw every pool's free_times (ONLY free draws).
+    """Read pools, then draw every pool's free_times — ONE draw at a time.
 
-    For each pool with ``free_times > 0`` issue one draw with ``count =
-    free_times``; pools with no free draws are skipped. Rewards are summed across
-    pools into ``rewards`` {gtid: num}. A rejected pool (0x0201) is recorded but
-    yields no rewards. Never pays — paid draws / buying 招喚貨幣 are caller-gated.
+    Draws are SINGLE pulls: the server rejects ``count>1`` with 0x0201 code 2
+    (請求的參數不合法, verified live), so for each pool with ``free_times > 0`` we
+    issue ``free_times`` separate ``count=1`` draws, stopping that pool early if
+    one is rejected (cooldown / param / 物品不足). Rewards are summed across pools
+    into ``rewards`` {gtid: num}. Never pays — paid draws / buying 招喚貨幣 are
+    caller-gated.
 
     Returns {pools_drawn, rewards, results} where ``results`` is one dict per
-    attempted pool: {draw_id, count, ok, error_code, rewards}.
+    attempted pool: {draw_id, free_times, drew, ok, error_code, rewards}.
     """
     pools = read_draw_info(client, timeout=timeout)
     pools_drawn = 0
@@ -162,20 +164,31 @@ def draw_all_free(
     results: list[dict] = []
     free_pools = [p for p in pools if p.has_free]
     for pool in free_pools:
-        out = draw(client, pool.draw_id, pool.free_times, timeout=timeout)
-        if out["ok"]:
-            pools_drawn += 1
+        pool_rewards: dict[int, int] = {}
+        drew = 0
+        last_code = 0
+        for _ in range(pool.free_times):
+            out = draw(client, pool.draw_id, 1, timeout=timeout)  # single pull
+            if not out["ok"]:
+                last_code = out["error_code"]
+                break
+            drew += 1
             for gtid, num in out["rewards"].items():
+                pool_rewards[gtid] = pool_rewards.get(gtid, 0) + num
+            if spacing:
+                time.sleep(spacing)
+        if drew:
+            pools_drawn += 1
+            for gtid, num in pool_rewards.items():
                 rewards[gtid] = rewards.get(gtid, 0) + num
         results.append({
             "draw_id": pool.draw_id,
-            "count": pool.free_times,
-            "ok": out["ok"],
-            "error_code": out["error_code"],
-            "rewards": out["rewards"],
+            "free_times": pool.free_times,
+            "drew": drew,
+            "ok": drew > 0,
+            "error_code": last_code,
+            "rewards": pool_rewards,
         })
-        if spacing:
-            time.sleep(spacing)
     logger.info("ws_token spirit: draw_all_free pools=%d free_pools=%d drawn=%d rewards=%s",
                 len(pools), len(free_pools), pools_drawn, rewards)
     return {"pools_drawn": pools_drawn, "rewards": rewards, "results": results}

@@ -64,8 +64,9 @@ def main() -> int:
             print(f"[spirit] draw_all_free: pools_drawn={out['pools_drawn']} "
                   f"rewards={out['rewards']}", flush=True)
             for r in out["results"]:
-                print(f"  draw_id={r['draw_id']} count={r['count']} ok={r['ok']} "
-                      f"error_code={r['error_code']} rewards={r['rewards']}", flush=True)
+                print(f"  draw_id={r['draw_id']} free_times={r['free_times']} "
+                      f"drew={r['drew']} ok={r['ok']} error_code={r['error_code']} "
+                      f"rewards={r['rewards']}", flush=True)
         elif args.buy_summon is None:
             free = sum(1 for p in pools if p.has_free)
             print(f"[spirit] (dry run) {free} pool(s) with free draws; "
