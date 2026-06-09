@@ -192,10 +192,13 @@ def patched_runner(monkeypatch):
     calls = []
 
     def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False,
-                        farm_config=None, dungeon_sweeps=None, carpark_target=None):
+                        farm_config=None, dungeon_sweeps=None, carpark_target=None,
+                        couple_gifts=True, forge_ring=False, workshop_rotate=True):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "farm_config": farm_config,
-                      "dungeon_sweeps": dungeon_sweeps, "carpark_target": carpark_target})
+                      "dungeon_sweeps": dungeon_sweeps, "carpark_target": carpark_target,
+                      "couple_gifts": couple_gifts, "forge_ring": forge_ring,
+                      "workshop_rotate": workshop_rotate})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -215,7 +218,9 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
     assert len(calls) == 1
     assert calls[0] == {"ip": "ws-x", "spend": True, "sweep_list": [[1, 2, 3]],
                         "open_lamp": False, "farm_config": None,
-                        "dungeon_sweeps": None, "carpark_target": None}
+                        "dungeon_sweeps": None, "carpark_target": None,
+                        "couple_gifts": True, "forge_ring": False,
+                        "workshop_rotate": True}
     assert report.login_ok is True
 
 
@@ -232,7 +237,8 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
     svc, calls = patched_runner
 
     def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False,
-                      farm_config=None, dungeon_sweeps=None, carpark_target=None):
+                      farm_config=None, dungeon_sweeps=None, carpark_target=None,
+                      couple_gifts=True, forge_ring=False, workshop_rotate=True):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -248,7 +254,8 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
     svc, _calls = patched_runner
 
     def boom(ip, *, spend=False, sweep_list=None, open_lamp=False,
-             farm_config=None, dungeon_sweeps=None, carpark_target=None):
+             farm_config=None, dungeon_sweeps=None, carpark_target=None,
+             couple_gifts=True, forge_ring=False, workshop_rotate=True):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)

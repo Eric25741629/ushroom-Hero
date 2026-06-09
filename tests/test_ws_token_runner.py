@@ -90,6 +90,8 @@ def patched(monkeypatch):
                         lambda c, col, **k: (calls.append(("main_tasks", "collect_state")) or "STATE"))
     monkeypatch.setattr(runner.main_tasks, "claim_daily_tasks",
                         lambda c, st, **k: (calls.append(("main_tasks", "claim_daily_tasks")) or {"claimed": 0}))
+    monkeypatch.setattr(runner.main_tasks, "claim_marry_tasks",
+                        lambda c, st, **k: (calls.append(("main_tasks", "claim_marry_tasks")) or {"claimed": 0}))
     monkeypatch.setattr(runner.main_tasks, "claim_daily_box",
                         lambda c, st, **k: (calls.append(("main_tasks", "claim_daily_box")) or False))
     monkeypatch.setattr(runner.main_tasks, "claim_weekly_box",
@@ -148,6 +150,33 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("lamp", "open_lamp"))
                                         or {"opened": 0, "equipped": [], "sold": [],
                                             "left": [], "dry_run": k.get("dry_run", True)}))
+
+    # spirit (free draws; always runs)
+    monkeypatch.setattr(runner.spirit, "draw_all_free",
+                        lambda c, **k: (calls.append(("spirit", "draw_all_free"))
+                                        or {"pools_drawn": 0, "rewards": {}, "results": []}))
+
+    # workshop (12h rotation; cadence state sandboxed in-memory below)
+    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
+                        lambda c, **k: (calls.append(("workshop", "rotate_team_recipes"))
+                                        or {"parity": k.get("parity", 0), "switched": []}))
+    _mem_state: dict = {}
+    monkeypatch.setattr(runner.ws_state, "load_state",
+                        lambda device, **k: dict(_mem_state))
+    monkeypatch.setattr(runner.ws_state, "save_state",
+                        lambda device, data, **k: _mem_state.update(data))
+
+    # couple (no partner by default -> gifts/ring skipped)
+    monkeypatch.setattr(runner.couple, "read_favor_info",
+                        lambda c, **k: (calls.append(("couple", "read_favor_info")) or []))
+    monkeypatch.setattr(runner.couple, "read_partner",
+                        lambda c, **k: (calls.append(("couple", "read_partner")) or 0))
+    monkeypatch.setattr(runner.couple, "give_all_in_hand",
+                        lambda c, **k: (calls.append(("couple", "give_all_in_hand"))
+                                        or {"batches_ok": 0, "stopped_reason": ""}))
+    monkeypatch.setattr(runner.couple, "forge_ring_until_empty",
+                        lambda c, **k: (calls.append(("couple", "forge_ring_until_empty"))
+                                        or {"forges": 0}))
 
     # guild
     monkeypatch.setattr(runner.guild, "help_all",
@@ -238,7 +267,8 @@ def test_run_device_main_tasks_collects_then_claims(patched):
     mt = [a for t, a in calls if t == "main_tasks"]
     assert mt[0] == "collect_state"
     assert set(mt[1:]) == {
-        "claim_daily_tasks", "claim_daily_box", "claim_weekly_box", "claim_achievement"
+        "claim_daily_tasks", "claim_marry_tasks", "claim_daily_box",
+        "claim_weekly_box", "claim_achievement"
     }
 
 
@@ -731,7 +761,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     """Drive the REAL task orchestrators against a scripted responder to prove
     the wiring (cmd ids, body building, push collection) is sound end-to-end."""
     from ws_token import (
-        farm, idle_reward, league_solo, main_tasks, redpack, steward, turntable,
+        couple, farm, idle_reward, league_solo, main_tasks, redpack, spirit,
+        steward, turntable, workshop,
     )
 
     # main_tasks reads are PUSH-based; emit the login-time frames on login.
@@ -772,6 +803,13 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
                 codec.pb_uint(1, 0) + codec.pb_uint(2, 0) + codec.pb_uint(4, 0))],
         # steward: read info -> empty expiry (nothing active)
         steward.CMD_INFO: lambda b: [s2c(steward.CMD_INFO, b"")],
+        # spirit: empty pool list -> no free draws
+        spirit.CMD_DRAW_INFO: lambda b: [s2c(spirit.CMD_DRAW_INFO, b"")],
+        # workshop: empty info -> no team workshops to rotate
+        workshop.CMD_INFO: lambda b: [s2c(workshop.CMD_INFO, b"")],
+        # couple: empty favor list + lover_id=0 -> no partner, skipped
+        couple.CMD_FAVOR_INFO: lambda b: [s2c(couple.CMD_FAVOR_INFO, b"")],
+        couple.CMD_STATUS: lambda b: [s2c(couple.CMD_STATUS, b"")],
     }
 
     def responder(cmd, body):
@@ -793,6 +831,12 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
     # zero settle so the test does not sleep waiting for pushes
     monkeypatch.setattr(runner, "_PUSH_SETTLE_S", 0.05)
+    # sandbox the workshop rotation cadence state (no writes to repo ws_state/)
+    _state: dict = {}
+    monkeypatch.setattr(runner.ws_state, "load_state",
+                        lambda device, **k: dict(_state))
+    monkeypatch.setattr(runner.ws_state, "save_state",
+                        lambda device, data, **k: _state.update(data))
 
     rep = run_device("dev", spend=False)
 
@@ -813,5 +857,86 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     # dungeon / carpark are gated (no config) -> skipped, not errored
     assert rep.tasks["dungeon"]["skipped"]
     assert rep.tasks["carpark"]["skipped"]
+    # spirit / workshop / couple ran end-to-end over the real code
+    assert rep.tasks["spirit"]["pools_drawn"] == 0
+    assert rep.tasks["workshop"]["rotated"] is True   # first run: no state yet
+    assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
+
+
+# --- spirit / workshop / couple wiring ---------------------------------------
+
+def test_task_order_has_home_features_before_lamp():
+    from ws_token import runner
+    order = list(runner.TASK_ORDER)
+    assert order.index("spirit") > order.index("carpark")
+    assert order[-4:] == ["spirit", "workshop", "couple", "lamp"]
+
+
+def test_run_couple_no_partner_skips(monkeypatch):
+    from ws_token import runner
+    monkeypatch.setattr(runner.couple, "read_favor_info", lambda c: [])
+    monkeypatch.setattr(runner.couple, "read_partner", lambda c: 0)
+    out = runner._run_couple(object(), gifts=True, forge_ring=False)
+    assert out["skipped"] == "no partner"
+
+
+def test_run_couple_gifts_milk_tea_then_flower(monkeypatch):
+    from ws_token import couple, runner
+
+    sent = []
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
+        or {"batches_ok": 1, "stopped_reason": "error_code=3"})
+    out = runner._run_couple(object(), gifts=True, forge_ring=False)
+    assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER)]
+    assert out["ring"] is None
+
+
+def test_run_couple_forge_ring_gated(monkeypatch):
+    from ws_token import couple, runner
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, **kw: {"batches_ok": 0, "stopped_reason": "error_code=3"})
+    called = []
+    monkeypatch.setattr(runner.couple, "forge_ring_until_empty",
+                        lambda c: called.append(1) or {"forges": 2})
+    runner._run_couple(object(), gifts=True, forge_ring=False)
+    assert called == []
+    runner._run_couple(object(), gifts=True, forge_ring=True)
+    assert called == [1]
+
+
+def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
+    from ws_token import runner
+    rotated = []
+    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
+                        lambda c, *, parity: rotated.append(parity)
+                        or {"parity": parity % 2, "switched": []})
+    # first run: no state -> rotates with parity 0
+    out1 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
+                                now=1_000_000.0)
+    assert rotated == [0] and out1["rotated"] is True
+    # 1 hour later: gated
+    out2 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
+                                now=1_000_000.0 + 3600)
+    assert rotated == [0] and out2["rotated"] is False
+    # 12h+ later: rotates with parity 1
+    out3 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
+                                now=1_000_000.0 + 12 * 3600 + 1)
+    assert rotated == [0, 1] and out3["rotated"] is True
+
+
+def test_run_spirit_draws_free(monkeypatch):
+    from ws_token import runner
+    monkeypatch.setattr(runner.spirit, "draw_all_free",
+                        lambda c: {"pools_drawn": 2, "rewards": {}, "results": []})
+    assert runner._run_spirit(object())["pools_drawn"] == 2

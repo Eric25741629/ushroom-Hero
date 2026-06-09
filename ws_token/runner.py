@@ -11,14 +11,23 @@ the others — every per-task result or error is collected into the frozen
 Task order (matches the in-game daily flow's free-then-paid grouping):
 
   1. main_tasks  — free: collect login-push state, then claim daily tasks +
-                   daily activity box + weekly box + achievement milestones.
+                   默契考驗 好感週任務 (Marry type 6) + daily activity box +
+                   weekly box + achievement milestones.
   2. league_solo — free: claim every claimable 烈焰山洞 / 魔法劇場 box (types 1-4).
   3. redpack     — free: list grab_list and claim every claimable 紅包.
   4. guild       — help_all (free); donate_until_capped (spend); treasure open
                    only when a round is active (event-gated; spend).
   5. steward     — read_info (free); shopping + dungeon sweep (spend); service
                    renewal only when spend AND the service is expired.
-  6. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
+  6. spirit      — free: 守護靈免費召喚 (draw_all_free; only free_times,
+                   never buys 招喚貨幣 — item 800003 does not exist).
+  7. workshop    — 加工坊 12h 配方輪換 (rotate_team_recipes, parity alternates;
+                   cadence persisted in ws_state/<device>.json; gated by
+                   ``workshop_rotate``, default on).
+  8. couple      — 伴侶: 奶茶+玫瑰送光 (give_all_in_hand, batches of 20;
+                   ``couple_gifts`` default on) + 戒指錘鍊 (``forge_ring``
+                   opt-in, default off). Skipped without a partner.
+  9. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
                    auto-equips/sells drops, so it is gated behind its own flag
                    (NOT ``spend``) and OFF by default. Runs one batch of up to
                    ``batch_num`` boxes (lamp.open_lamp's own cap), never unbounded.
@@ -41,9 +50,10 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 from ws_token import (
-    carpark, dungeon, farm, guild, idle_reward, lamp, league_solo, main_tasks,
-    redpack, steward, turntable,
+    carpark, couple, dungeon, farm, guild, idle_reward, lamp, league_solo,
+    main_tasks, redpack, spirit, steward, turntable, workshop,
 )
+from ws_token import state as ws_state
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
 from ws_token.creds import load_creds
 
@@ -61,11 +71,15 @@ _TREASURE_PROBE_S: float = 6.0
 LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "main_tasks", "league_solo", "redpack", "idle_reward", "turntable", "farm",
-    "dungeon", "guild", "steward", "carpark", "lamp")
+    "dungeon", "guild", "steward", "carpark", "spirit", "workshop", "couple",
+    "lamp")
 
 # 開神燈 batch size for one daily pass (lamp.open_lamp caps to max_batches=1 by
 # default, so this opens at most one batch — never an unbounded drain).
 _LAMP_BATCH_NUM: int = 20
+
+# workshop 12h 配方輪換間隔（使用者 2026-06-10 指定：兩類別 12hr 切一次）
+_WORKSHOP_ROTATE_S: float = 12 * 3600.0
 
 
 @dataclass(frozen=True)
@@ -103,11 +117,13 @@ def _run_main_tasks(client, collector: main_tasks.TaskCollector) -> dict:
     """Free: snapshot login-push state, then claim every free reward."""
     state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily = main_tasks.claim_daily_tasks(client, state)
+    marry = main_tasks.claim_marry_tasks(client, state)  # 默契考驗 好感週任務 (type 6)
     daily_box = main_tasks.claim_daily_box(client, state)
     weekly_box = main_tasks.claim_weekly_box(client, state)
     achievement = main_tasks.claim_achievement(client)
     return {
         "daily_tasks": daily,
+        "marry_tasks": marry,
         "daily_box": daily_box,
         "weekly_box": weekly_box,
         "achievement": achievement,
@@ -213,6 +229,55 @@ def _run_carpark(client, *, target: Optional[int]) -> dict:
     return carpark.auto_park_cross(client, target_id=int(target))
 
 
+def _run_spirit(client) -> dict:
+    """守護靈免費召喚: draw_all_free 只用 free_times, 不買招喚貨幣 (800003 不存在)."""
+    return spirit.draw_all_free(client)
+
+
+def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
+    """加工坊 12h 配方輪換 (spec §2.2; cadence 存 ws_state/<device>.json).
+
+    state {"workshop": {"last_rotate_ts": float, "parity": int}}; 12h 未到 →
+    {"rotated": False}; 到了 → rotate_team_recipes(交替 parity) 並回寫 state。
+    """
+    import time as _time
+    now = _time.time() if now is None else now
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw)
+    wst = st.get("workshop") or {}
+    last_ts = float(wst.get("last_rotate_ts") or 0)
+    if now - last_ts < _WORKSHOP_ROTATE_S:
+        hours = (now - last_ts) / 3600.0
+        return {"rotated": False, "reason": f"rotated {hours:.1f}h ago (<12h)"}
+    parity = (int(wst.get("parity") or 0) + 1) % 2 if last_ts else 0
+    out = workshop.rotate_team_recipes(client, parity=parity)
+    st["workshop"] = {"last_rotate_ts": now, "parity": parity}
+    ws_state.save_state(device, st, **kw)
+    return {"rotated": True, **out}
+
+
+def _run_couple(client, *, gifts: bool, forge_ring: bool) -> dict:
+    """伴侶: 奶茶+玫瑰送光 (give_all_in_hand, 每批20封頂) + 戒指錘鍊 (spend 類).
+
+    默契考驗 (Marry type 6) 已由 _run_main_tasks 的 claim_marry_tasks 領取。
+    無伴侶 (favor list 空且 lover_id=0) → skip。
+    """
+    partners = couple.read_favor_info(client)
+    friend_id = partners[0].role_id if partners else couple.read_partner(client)
+    summary: dict = {"partner": friend_id, "milk_tea": None, "flower": None,
+                     "ring": None}
+    if not friend_id:
+        return {**summary, "skipped": "no partner"}
+    if gifts:
+        summary["milk_tea"] = couple.give_all_in_hand(
+            client, friend_id=friend_id, flower_id=couple.MILK_TEA)
+        summary["flower"] = couple.give_all_in_hand(
+            client, friend_id=friend_id, flower_id=couple.FLOWER)
+    if forge_ring:
+        summary["ring"] = couple.forge_ring_until_empty(client)
+    return summary
+
+
 def _run_lamp(client) -> dict:
     """開神燈: open one batch of boxes and auto-equip/sell drops (REAL, not dry_run).
 
@@ -289,7 +354,10 @@ def run_device(device: str, *, spend: bool = False,
                open_lamp: bool = False,
                farm_config: Optional[dict] = None,
                dungeon_sweeps: Optional[Iterable[Sequence[int]]] = None,
-               carpark_target: Optional[int] = None) -> RunReport:
+               carpark_target: Optional[int] = None,
+               couple_gifts: bool = True,
+               forge_ring: bool = False,
+               workshop_rotate: bool = True) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -317,6 +385,10 @@ def run_device(device: str, *, spend: bool = False,
         battle is never auto-run (anti-cheat). Skipped with none configured.
       - ``carpark_target`` (cross lot master_id) enables 跨界停車 (只停不收);
         skipped when unset (cross-parking is event-gated and the id is per-event).
+      - spirit (守護靈免費召喚) always runs (free draws only); ``workshop_rotate``
+        (default True) enables the 加工坊 12h recipe rotation; ``couple_gifts``
+        (default True) sends 奶茶+玫瑰 to the partner and ``forge_ring`` (default
+        False) opts in to 戒指錘鍊 (consumes all 真愛之石).
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -377,6 +449,13 @@ def run_device(device: str, *, spend: bool = False,
                                    sweep_list=sweep))
         _safe(tasks, errors, "carpark",
               lambda: _run_carpark(client, target=carpark_target))
+        _safe(tasks, errors, "spirit", lambda: _run_spirit(client))
+        if workshop_rotate:
+            _safe(tasks, errors, "workshop",
+                  lambda: _run_workshop(client, device=device))
+        _safe(tasks, errors, "couple",
+              lambda: _run_couple(client, gifts=couple_gifts,
+                                  forge_ring=forge_ring))
         if open_lamp:
             _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
     finally:
@@ -471,6 +550,12 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="深淵/萬神 掃蕩 (repeatable; 掃蕩 only, never battle)")
     ap.add_argument("--carpark-target", type=int, default=None, metavar="MASTER_ID",
                     help="跨界停車: cross lot master_id to park into (只停不收)")
+    ap.add_argument("--no-couple-gifts", dest="couple_gifts", action="store_false",
+                    help="伴侶送禮 (奶茶+玫瑰送光) 預設開; 此旗標關閉")
+    ap.add_argument("--forge-ring", action="store_true",
+                    help="戒指錘鍊: 消耗全部真愛之石 (預設關)")
+    ap.add_argument("--no-workshop", dest="workshop_rotate", action="store_false",
+                    help="加工坊 12h 配方輪換預設開; 此旗標關閉")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
@@ -488,7 +573,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
                      open_lamp=args.open_lamp, farm_config=farm_config,
                      dungeon_sweeps=dungeon_sweeps,
-                     carpark_target=args.carpark_target)
+                     carpark_target=args.carpark_target,
+                     couple_gifts=args.couple_gifts, forge_ring=args.forge_ring,
+                     workshop_rotate=args.workshop_rotate)
     print(_format_report(rep), flush=True)
     return 0 if rep.login_ok else 1
 
