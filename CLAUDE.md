@@ -8,6 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `adb`: Direct device/emulator control via `uiautomator2`
 - `web_h5`: Playwright-based browser automation for H5 game
 
+## Working Style (本專案工作慣例 — 使用者 2026-06-09 指定，務必遵守)
+
+- **多用 todolist**：任何多步驟工作用 Task 工具（TaskCreate/TaskUpdate）+ `tasks/todo.md` 追蹤進度。
+- **規劃與實作都走 `tasks/todo.md`**：先把 plan 寫進去，實作時逐項標完成。
+- **memory 一律用英文寫**（`~/.claude/.../memory/*.md`）。
+- **複雜或大 context 的任務用 subagents 做上下文隔離**：自行判斷是否需要大量子代理；把研究 / 探索 / 實作 offload 給 subagent，保持主 context 乾淨。
+- 動到正在跑的 bot（`new_main_v2.py` / `device_wrapper.py` / 排程）的大改動：先把 plan 寫進 `tasks/todo.md` 並讓使用者過目，再動手。
+
 ## 導覽索引 (Navigation Index)
 
 > **先看這裡再開工。** 完整程式碼地圖 + 文件總覽 + 「我想做 X → 看這裡」快查表：[`docs/INDEX.md`](docs/INDEX.md)。
