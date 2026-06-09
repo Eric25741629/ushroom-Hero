@@ -95,6 +95,18 @@ atexit.register(lambda: shutdown_web_devices(logger))
 
 
 def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
+    # ws_token 純 WS 後端分支：設了 use_ws_runner 的裝置不連 ADB/Playwright、
+    # 不啟動遊戲、不走 daily_pipeline，改由 ws_token.runner.run_device 每次喚醒跑
+    # 一輪純 WS 任務，沿用既有睡眠/喚醒/暫停/強制休眠機制 (schedule parity 同樣適用)。
+    # 預設 use_ws_runner=False → 一般裝置一行邏輯都不走這裡。
+    if bool(config_manager.get_device_config(ip).get("use_ws_runner", False)):
+        from runtime_services.ws_runner_service import run_ws_device_loop
+        ws_logger = setup_logger_for_device(ip)
+        set_thread_logger(ws_logger)
+        ws_logger.info(f"[{ip}] 使用 ws_token 純 WS 後端 (use_ws_runner=True)，跳過 ADB/Playwright 初始化")
+        run_ws_device_loop(ip, ws_logger)
+        return
+
     # 初始化狀態監控
     bot_state.init_device(ip)
     device_logger = logger

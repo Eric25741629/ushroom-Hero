@@ -29,8 +29,12 @@ _config_cache_path = None      # CONFIG_FILE the cache was built for (path can c
 DEFAULT_DEVICE_CONFIG = {
     "name": "",  # 自定義別名 (例如: 主力機)
     "enabled": True,  # 自動掛機總開關 (新裝置註冊時設 False, 登入+設定完成後手動啟用)
-    "backend": "adb",  # adb / web_h5
+    "backend": "adb",  # adb / web_h5 / ws_token
     "backend_display_id": "",  # display/config binding id (empty => use device key)
+    # ws_token (純 WS 後端) 設定 — 預設全 off，旗標關閉時行為與舊版完全相同。
+    "use_ws_runner": False,  # True => wake loop 走 ws_token.runner.run_device，不連 ADB/Playwright
+    "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
+    "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
     "web_url": "",
     "web_canvas_selector": "canvas",
     "web_profile_dir": "playwright_profile/{device_id}",
@@ -84,6 +88,13 @@ class DeviceConfig:
     # Backend
     backend: str = "adb"
     backend_display_id: str = ""
+
+    # ws_token (pure-WS backend) — additive, default off so legacy devices are
+    # unaffected. When use_ws_runner is True the wake loop runs
+    # ws_token.runner.run_device instead of the ADB/Playwright daily pipeline.
+    use_ws_runner: bool = False
+    ws_token_spend: bool = False
+    ws_token_sweep_list: list = field(default_factory=list)
 
     # Web H5 settings
     web_url: str = ""
@@ -291,6 +302,32 @@ def _clamp_float(v: Any, lo: float, hi: float, default: float) -> float:
 def _enum_str(v: Any, allowed: set, default: str) -> str:
     s = str(v).strip().lower()
     return s if s in allowed else default
+
+
+def _sanitize_sweep_list(v: Any) -> list:
+    """Coerce a ws_token_sweep_list into ``[[int, ...], ...]``.
+
+    Each chapter entry is ``[id, level, times[, use_ad]]``; non-list / malformed
+    entries are dropped. Invalid input collapses to ``[]`` so a bad value can
+    never persist a non-list (which steward's sweep would choke on).
+    """
+    if not isinstance(v, list):
+        return []
+    out: list = []
+    for entry in v:
+        if not isinstance(entry, (list, tuple)):
+            continue
+        row: list = []
+        ok = True
+        for part in entry:
+            try:
+                row.append(int(part))
+            except (TypeError, ValueError):
+                ok = False
+                break
+        if ok and len(row) >= 3:
+            out.append(row[:4])
+    return out
 
 
 def _invalidate_config_cache() -> None:
@@ -626,8 +663,17 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
         current.update(new_settings or {})
 
-        current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5"}, "adb")
+        current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5", "ws_token"}, "adb")
         current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
+        current["use_ws_runner"] = _to_bool(
+            current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
+            DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+        )
+        current["ws_token_spend"] = _to_bool(
+            current.get("ws_token_spend", DEFAULT_DEVICE_CONFIG["ws_token_spend"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_spend"],
+        )
+        current["ws_token_sweep_list"] = _sanitize_sweep_list(current.get("ws_token_sweep_list"))
         current["web_url"] = str(current.get("web_url", "")).strip()
         current["web_canvas_selector"] = (
             str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
