@@ -30,7 +30,9 @@
 - [ ] S2 wake loop branch: backend/`use_ws_runner` → `run_device`（跳過 ADB/PW init）
 - [ ] S3 scanner 納入 ws_token 裝置
 - [ ] S4 5558: 確認 `check_online` 完整保留 + carpark 顯式關
-- [ ] S5 ADB 離線 → WS fallback 每 2h（含 R1 安全閥）
+- [ ] S5 ADB 離線 → WS fallback 每 2h（含 R1 安全閥 = 在線保護）
+- [ ] S5b **解耦 online-check（使用者 2026-06-09 追加）**:現有 `check_on_line` 硬編「5554 當 checker」（`web_session_service.py:89` `if ip!="emulator-5554":return`、`wake_up_handler.py:239` `checker_ip='emulator-5554'`）→ 改成**動態選 checker**:requester（任何需要在線保護的裝置，如手機/5558）把「查某玩家是否在線」寫進既有 online-check mailbox（`bot_state.submit_online_check_request`）；**由任何「有空閒 + 好友列表含該玩家」的帳號**被喚醒去查（protocol 好友列表 0x0F02 / guild is_online，**無 OCR**），結果 `complete_online_check_request` 回寫。checker 不再鎖 5554。需保留現有 mailbox/中斷喚醒機制，只改「誰當 checker」的選擇邏輯 + requester 不限 5558。
+  - 待確認：哪些帳號互為好友（誰能查 89565100511322）、「有空閒」的判定（非任務中/睡眠中可被喚醒）。
 - [ ] S6 `ws_token/lamp.py`: num=20 per batch + 接進 runner
 - [ ] S7 5556 pilot live 驗證（撈 ticket → 跑一輪）
 - [ ] 改 `new_main_v2`/`device_wrapper` 後**需重啟 bot** 才生效;不破壞既有 6 裝置
