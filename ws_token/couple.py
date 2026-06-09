@@ -163,20 +163,28 @@ def read_ring(client: WSGameClient, *, timeout: Optional[float] = None) -> dict:
 
 # --- mutates (call_for with 0x0201; never plain call) -----------------------
 
+# 0x0201 codes that are actually SUCCESS notices, NOT errors (live-decoded from
+# configErrorInfo). 369 = 贈送成功 — favor_give_flower's success comes back on the
+# 0x0201 channel with this code, not on its own cmd (verified live on 小寶).
+OK_NOTICE_CODES = frozenset({369})
+
+
 def _mutate(
     client: WSGameClient, cmd: int, body: bytes, *, timeout: Optional[float] = None
 ) -> tuple[bool, int, bytes]:
     """Send a mutate that can be rejected on 0x0201.
 
-    SUCCESS replies on the action's own ``cmd``; a REJECTION replies on the
-    0x0201 error channel (code#1 = error code). Waits for EITHER so a rejected
-    action records ``ok=False`` + ``error_code`` instead of timing out / raising.
-    Returns ``(ok, error_code, reply_body)``.
+    SUCCESS replies on the action's own ``cmd`` OR on 0x0201 with an OK-notice code
+    (e.g. 369 贈送成功); a REJECTION replies on 0x0201 with an error code. Waits for
+    EITHER so a rejection records ``ok=False`` + ``error_code`` instead of timing
+    out / raising. Returns ``(ok, error_code, reply_body)``.
     """
     reply_cmd, reply = client.call_for(
         cmd, body, expect_cmds=(cmd, CMD_ERROR), timeout=timeout)
     if reply_cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(reply).get(1))
+        if code in OK_NOTICE_CODES:
+            return True, 0, reply        # success notice on the 0x0201 channel
         return False, code, reply
     return True, 0, reply
 

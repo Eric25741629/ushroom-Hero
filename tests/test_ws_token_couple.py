@@ -219,6 +219,18 @@ def test_give_flower_rejection_on_0x0201_returns_ok_false_error_code_3():
         c.close()
 
 
+def test_give_flower_success_notice_369_is_ok():
+    # Live (小寶): favor_give_flower SUCCESS comes back on 0x0201 with code 369
+    # (贈送成功), NOT on 15140. _mutate must treat 369 as ok=True, error_code=0.
+    c, _ = _client({CMD_GIVE_FLOWER: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 369))]})
+    try:
+        out = give_flower(c, friend_id=111, flower_id=MILK_TEA, num=1)
+        assert out["ok"] is True
+        assert out["error_code"] == 0
+    finally:
+        c.close()
+
+
 # --- give_all: one give_flower of num (server caps to inventory) ------------
 
 def test_give_all_sends_single_give_flower_of_num():
