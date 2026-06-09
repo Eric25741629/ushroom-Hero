@@ -1107,9 +1107,13 @@
 
         <select id="editBackend" class="form-control" onchange="toggleBackendInputs()">
 
-          <option value="adb">模擬器 / ADB</option>
+          <option value="adb">adb（純 ADB 模擬器）</option>
 
-          <option value="web_h5">網頁 H5 / Playwright</option>
+          <option value="adb+ws">adb + WS（WS 先跑，App 補跑）</option>
+
+          <option value="web_h5">h5（純 Playwright）</option>
+
+          <option value="web_h5+ws">h5 + WS（WS 先跑，瀏覽器補跑）</option>
 
         </select>
 
@@ -2298,7 +2302,7 @@
 
               <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">更新 <span id="time-${ip}">${formatTime(info.last_update)}</span> · 截圖 <span id="sst-${ip}">--</span></span>
 
-              <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">後端：<span id="backend-${ip}">${info.backend || 'adb'}</span></span>
+              <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">後端：<span id="backend-${ip}">${(info.backend || 'adb') + (info.ws_enabled ? ' +WS' : '')}</span></span>
 
             </div>
 
@@ -2322,7 +2326,7 @@
 
         updateText(`status-${ip}`, statusText);
 
-        updateText(`backend-${ip}`, info.backend || 'adb');
+        updateText(`backend-${ip}`, (info.backend || 'adb') + (info.ws_enabled ? ' +WS' : ''));
 
         updateText(`web-stop-${ip}`, info.web_stop_mode || 'keep_page');
 
@@ -2503,7 +2507,7 @@
 
       const webGroup = document.getElementById('webBackendGroup');
 
-      webGroup.style.display = backend === 'web_h5' ? 'block' : 'none';
+      webGroup.style.display = backend.startsWith('web_h5') ? 'block' : 'none';
 
     }
 
@@ -2903,6 +2907,7 @@
     let _lvWs = null;
     let _lvIp = null;
     let _existingCarpark = {};
+    let _existingWsToken = {};
     // Live-view decode pipeline: single-slot pending, dropping older frames if
     // a newer one arrives before the current decode finishes. Combined with
     // createImageBitmap (off-main-thread JPEG decode), this caps decode-queue
@@ -3096,7 +3101,12 @@
 
         }
 
-        document.getElementById('editBackend').value = config.backend || 'adb';
+        // 方案 select = backend + ws_token.enabled 組合。先保留整顆 ws_token，
+        // 避免 saveConfig 淺併時把 spend/open_lamp/... 等巢狀欄位整顆蓋掉
+        // (同 _existingCarpark 的 stash-and-spread 模式)。
+        _existingWsToken = (config.ws_token && typeof config.ws_token === 'object') ? config.ws_token : {};
+        const plan = (config.backend || 'adb') + (_existingWsToken.enabled === true ? '+ws' : '');
+        document.getElementById('editBackend').value = plan;
 
         document.getElementById('editWebUrl').value = config.web_url || '';
 
@@ -3178,7 +3188,7 @@
 
         mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v4',
 
-        backend: document.getElementById('editBackend').value || 'adb',
+        backend: (document.getElementById('editBackend').value || 'adb').replace('+ws', ''),
 
         web_url: document.getElementById('editWebUrl').value.trim(),
 
@@ -3226,6 +3236,12 @@
       if (cpEnabled) {
         payload.experimental_cocos_navigation = true;
       }
+
+      // ws_token: 方案 select 的 "+ws" 後綴 → ws_token.enabled。巢狀 dict 在
+      // 後端是整顆替換，所以 merge 進 openSettings 暫存的 _existingWsToken，
+      // 保留 spend/open_lamp/farm/dungeon_sweeps/... 等其餘欄位。
+      const wsEnabled = document.getElementById('editBackend').value.endsWith('+ws');
+      payload.ws_token = Object.assign({}, _existingWsToken, { enabled: wsEnabled });
 
       try {
 
@@ -3465,7 +3481,7 @@
 
       const ip = document.getElementById('editIp').value;
 
-      if (backend !== 'web_h5' || !ip) return;
+      if (!backend.startsWith('web_h5') || !ip) return;
 
       await pollWebLoginStatus(ip);
 

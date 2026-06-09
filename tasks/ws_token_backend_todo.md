@@ -61,3 +61,13 @@ python -m ws_token.mining_smoke      --device emulator-5554            # 唯讀�
 python -m ws_token.runner            --device emulator-5554 [--spend]  # (建中) 一次跑完每日任務
 ```
 ⚠ WS 登入會踢同帳號 session;在借測機/已授權可踢的帳號上跑。
+
+## 2026-06-10 Workflow 接入（feat/ws-backend，主線整合完成）
+
+- **兩階段 wake cycle 已實裝**：`new_main_v2` 喚醒後、瀏覽器啟動前跑 `game_actions/ws_phase.run_ws_phase(ip)` → `daily_pipeline`（`ctx.ws_done`，11 處 guard）跳過 WS 成功項。失敗/登入失敗/自宣告 skipped 一律降級全跑。
+- **新任務**：runner 接 `spirit`（免費召喚）/ `workshop`（12h 兩配方輪換，cadence 存 `ws_state/`）/ `couple`（奶茶+玫瑰 `give_all_in_hand` 每批 20 封頂送光；錘鍊掛 spend）。
+- **ticket 自癒**：Playwright 階段載入後 `utils/ws_ticket_refresh.refresh_from_device` 回寫 capture 檔（`_CAPTURE_JS` 欄位名待 live page 驗，spec plan Task 11.1）。
+- **Dashboard**：「方案」選擇器 adb / adb+ws / h5 / h5+ws（= backend + ws_token.enabled；前端 stash-merge 巢狀 ws_token），卡片 `+WS` 標記（中控要重啟）。
+- **Pilot**：小寶 7fe98fc6 `ws_token.enabled=true, spend=true, open_lamp=true`。
+- **Live 2026-06-10**：29.5h 舊 ticket 登入 SUCCESS（TTL ≥29.5h）；12/14 任務 ok（紅包 222 金/掛機/轉盤/守護靈抽2/管家代購/神燈 20 開 20 賣/couple code3 優雅）；workshop idle-cancel 不回包 bug 修復中；farm 3077 首讀 timeout 待觀察。
+- **待辦**：小寶 farm seed_id（CDP 抓後填 config 才 skip 農場）；_CAPTURE_JS live 驗；ADB 模式（離線降級常駐 thread）= spec §4 phase 2 另開計畫。

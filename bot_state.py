@@ -411,8 +411,31 @@ def check_refresh_needed() -> bool:
 _web_launch_requests: Dict[str, Dict[str, Any]] = {}
 
 # Cross-thread online-check request/response mailbox.
-_online_check_queue_by_checker: Dict[str, list[str]] = {}
+#
+# Decoupled model (2026-06-09): a request is NOT bound to a specific checker.
+# It carries a `target_pid` and sits in a single FIFO pending list; ANY device
+# in the configured `online_check_checkers` list may claim and serve it. The
+# legacy single-checker behaviour is preserved by the default config
+# (`online_check_checkers == ["emulator-5554"]`), so 5558→5554 still works
+# exactly as before.
+_online_check_pending: "list[str]" = []          # request ids awaiting a checker (FIFO)
 _online_check_requests: Dict[str, Dict[str, Any]] = {}
+
+
+def is_online_check_checker(ip: str) -> bool:
+    """True iff `ip` is allowed to serve cross-device online-check requests.
+
+    Reads the configured checker list (global `online_check_checkers`, default
+    `["emulator-5554"]`). Lazily imports config_manager to avoid an import cycle
+    and to stay safe if config is unavailable (then fall back to the legacy
+    single checker so the 5558 protection never silently disappears).
+    """
+    try:
+        import config_manager  # lazy: avoid import cycle / import-time config load
+        checkers = config_manager.get_online_check_checkers()
+    except Exception:
+        checkers = ["emulator-5554"]
+    return ip in checkers
 
 
 def set_skip_sleep(ip: str):
@@ -552,34 +575,67 @@ def get_web_launch_status(ip: str) -> Dict[str, Any]:
         }
 
 
-def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
+def _signal_all_checkers_locked() -> None:
+    """Wake every configured checker so the freest one can claim the request.
+
+    Must be called while holding _global_lock. Raising SKIP_SLEEP on each
+    checker lets each one break its long sleep and poll the mailbox; the first
+    to claim wins (pop is atomic under the lock), the rest find nothing pending.
+    """
+    try:
+        import config_manager  # lazy: avoid import cycle
+        checkers = config_manager.get_online_check_checkers()
+    except Exception:
+        checkers = ["emulator-5554"]
+    for checker in checkers:
+        _signals.setdefault(checker, set()).add(Signal.SKIP_SLEEP)
+
+
+def submit_online_check_request(
+    requester_ip: str,
+    checker_ip: Optional[str] = None,
+    *,
+    target_pid: Optional[int] = None,
+) -> str:
     """Submit a cross-thread online-check request and return request id.
 
+    Decoupled (2026-06-09): the request carries a `target_pid` (the player to
+    check) and is NOT bound to a single checker. Any device in the configured
+    `online_check_checkers` list may claim and serve it.
+
+    `checker_ip` is retained for backward compatibility (legacy callers passed
+    `checker_ip='emulator-5554'`). It is recorded on the payload as a hint only
+    and does NOT restrict which checker may serve the request.
+
     Dedupe: if there is already a pending or processing request for the same
-    (requester, checker) pair, reuse it instead of enqueuing a duplicate. The
-    checker only needs the current "busy?" answer, not one snapshot per retry —
-    seen in logs where 5558 piled up ~60 identical requests on a sleeping 5554.
+    requester+target_pid, reuse it instead of enqueuing a duplicate — the
+    checker only needs the current "busy?" answer, not one snapshot per retry
+    (logs showed 5558 piling up ~60 identical requests on a sleeping 5554).
     """
     now = time.time()
+    norm_pid = None if target_pid is None else int(target_pid)
     with _global_lock:
-        # Scan the request mailbox (not just the queue) — a popped entry has
-        # status="processing" and is no longer in the queue, but the answer
-        # is still in flight, so a fresh submit should still reuse it.
+        # Scan the request mailbox (not just the pending list) — a claimed entry
+        # has status="processing" and is no longer pending, but the answer is
+        # still in flight, so a fresh submit should still reuse it. Dedup keys on
+        # (requester, target_pid); checker is intentionally NOT part of the key
+        # so re-submitting after a checker swap still coalesces.
         for existing_id, existing in _online_check_requests.items():
             if (
                 existing.get("requester_ip") == requester_ip
-                and existing.get("checker_ip") == checker_ip
+                and existing.get("target_pid") == norm_pid
                 and existing.get("status") in ("pending", "processing")
             ):
                 existing["updated_at"] = now
-                _signals.setdefault(checker_ip, set()).add(Signal.SKIP_SLEEP)
+                _signal_all_checkers_locked()
                 return existing_id
 
         req_id = str(uuid.uuid4())
         payload = {
             "id": req_id,
             "requester_ip": requester_ip,
-            "checker_ip": checker_ip,
+            "checker_ip": checker_ip,   # hint only; not a routing constraint
+            "target_pid": norm_pid,
             "status": "pending",
             "created_at": now,
             "updated_at": now,
@@ -589,9 +645,9 @@ def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
             "_event": threading.Event(),
         }
         _online_check_requests[req_id] = payload
-        _online_check_queue_by_checker.setdefault(checker_ip, []).append(req_id)
-        # Hint checker thread to break long sleep and process mailbox ASAP.
-        _signals.setdefault(checker_ip, set()).add(Signal.SKIP_SLEEP)
+        _online_check_pending.append(req_id)
+        # Hint every configured checker to break its long sleep and poll ASAP.
+        _signal_all_checkers_locked()
         # Also request an immediate device rescan so a cold-start-delayed checker
         # thread can be started right away instead of waiting for the next 30s loop.
         _set_refresh_needed_locked()  # already holding _global_lock
@@ -599,42 +655,79 @@ def submit_online_check_request(requester_ip: str, checker_ip: str) -> str:
 
 
 def pop_online_check_request(checker_ip: str) -> Optional[Dict[str, Any]]:
-    """Pop one pending request for checker thread; mark as processing."""
+    """Claim one pending request for a checker thread; mark it processing.
+
+    Only devices in the configured `online_check_checkers` list may claim
+    requests. Any such checker may pop ANY unclaimed pending request (FIFO);
+    requests are not bound to a specific checker. A non-checker `checker_ip`
+    always gets None, so a stray caller can never steal a request.
+    """
     with _global_lock:
-        q = _online_check_queue_by_checker.get(checker_ip, [])
-        if not q:
+        if not _online_check_pending:
             return None
-        req_id = q.pop(0)
+        if not _is_online_check_checker_locked(checker_ip):
+            return None
+        req_id = _online_check_pending.pop(0)
         req = _online_check_requests.get(req_id)
         if not req:
             return None
         req["status"] = "processing"
+        req["claimed_by"] = checker_ip
         req["updated_at"] = time.time()
         return {
             "id": req_id,
             "requester_ip": req.get("requester_ip"),
             "checker_ip": req.get("checker_ip"),
+            "target_pid": req.get("target_pid"),
             "created_at": req.get("created_at"),
         }
 
 
+def _is_online_check_checker_locked(ip: str) -> bool:
+    """Lock-free checker-membership test (caller already holds _global_lock)."""
+    try:
+        import config_manager  # lazy: avoid import cycle
+        checkers = config_manager.get_online_check_checkers()
+    except Exception:
+        checkers = ["emulator-5554"]
+    return ip in checkers
+
+
 def has_pending_online_check_request(checker_ip: str) -> bool:
-    """Check whether checker has pending mailbox items."""
+    """True iff `checker_ip` is a configured checker AND a request is pending.
+
+    A non-checker device always gets False — it must never early-wake on
+    another device's online-check request.
+    """
     with _global_lock:
-        q = _online_check_queue_by_checker.get(checker_ip, [])
-        return bool(q)
+        if not _online_check_pending:
+            return False
+        return _is_online_check_checker_locked(checker_ip)
 
 
 def is_online_check_priority_active(checker_ip: str) -> bool:
-    """Return True when checker has a request currently being processed (in-flight)."""
+    """True when `checker_ip` (a configured checker) has an in-flight request.
+
+    Matches the checker that actually claimed the request (`claimed_by`), so a
+    request being served by another checker does not pin this one awake.
+    """
     with _global_lock:
+        if not _is_online_check_checker_locked(checker_ip):
+            return False
         for req in _online_check_requests.values():
             if (
-                req.get("checker_ip") == checker_ip
-                and req.get("status") == "processing"
+                req.get("status") == "processing"
+                and req.get("claimed_by") == checker_ip
             ):
                 return True
         return False
+
+
+def get_online_check_target_pid(req_id: str) -> Optional[int]:
+    """Return the target player id recorded on an online-check request, or None."""
+    with _global_lock:
+        req = _online_check_requests.get(req_id)
+        return None if req is None else req.get("target_pid")
 
 
 def complete_online_check_request(req_id: str, is_busy: bool, detail: str = ""):
@@ -687,6 +780,8 @@ def wait_online_check_result(req_id: str, timeout_sec: float = 120.0) -> Dict[st
             "error": req.get("error", ""),
             "requester_ip": req.get("requester_ip"),
             "checker_ip": req.get("checker_ip"),
+            "target_pid": req.get("target_pid"),
+            "claimed_by": req.get("claimed_by"),
             "created_at": req.get("created_at"),
             "updated_at": req.get("updated_at"),
         }

@@ -27,6 +27,51 @@ main_tasks(主畫面領任務)、league_solo(魔法劇場+烈炎山洞寶箱)、
 
 ---
 
+# 解耦跨裝置 online-check (S5b 落地, 2026-06-09)
+
+**Branch**: `feat/ws-token-integration` (worktree `C:\Users\Eric\ws-token-integration`)
+**Trigger**: 使用者要 checker 不再寫死 emulator-5554、requester 不限 5558。
+
+## 目標
+- request 帶 `target_pid`、不綁特定 checker；任一「在 checker 清單 + 空閒 + 好友含 target」的帳號可服務並回寫 mailbox。
+- 向後相容：預設 config `online_check_checkers=["emulator-5554"]` → 現行行為零變化、5558 保護不變。
+- checker 的 check_on_line 走 **protocol-only** (無 OCR)。
+
+## Plan / Progress
+- [x] config_manager: `DEFAULT_GLOBAL_CONFIG["online_check_checkers"]=["emulator-5554"]` + `get_online_check_checkers()`。
+- [x] bot_state:
+  - request payload 帶 `target_pid`；queue 改成單一 pending FIFO (`_online_check_pending`)，pop 時 checker 必須在清單內。
+  - `submit_online_check_request(requester_ip, checker_ip=None, *, target_pid=None)` 向後相容。
+  - `pop_online_check_request(checker_ip)` / `has_pending_online_check_request(checker_ip)` / `is_online_check_priority_active(checker_ip)`：checker 不在清單內一律回空/False。
+  - 新增 `is_online_check_checker(ip)`、`get_online_check_target_pid(req_id)` helper。dedup/event/wait/refresh/signal 全保留。
+- [x] web_session_service.process_online_check_requests：`if ip != "emulator-5554"` → `if not is_online_check_checker(ip)`；改走 protocol-only check。
+- [x] game_initialization: 新增 `check_on_line_protocol_only(checker_ip, target_pid, threshold_sec)` (跳過 OCR、好友沒 target → busy)。
+- [x] wake_up_handler / new_main_v2 / sleep_service / device_runtime_service / startup_sleep：所有寫死 `emulator-5554` 的 checker 分支 → `is_online_check_checker(ip)`；requester 不限 5558。
+- [x] 新增 `tests/test_online_check_decoupled.py`。
+
+## Review — S5b online-check 解耦 (2026-06-09)
+
+**改了哪些檔**
+- `config_manager.py`：`DEFAULT_GLOBAL_CONFIG["online_check_checkers"]=["emulator-5554"]` + `get_online_check_checkers()`（trim/dedup/fallback）。
+- `bot_state.py`：mailbox 改成單一 FIFO `_online_check_pending`（移除 `_online_check_queue_by_checker`）；request payload 帶 `target_pid`/`claimed_by`；`submit_online_check_request(requester, checker_ip=None, *, target_pid=None)`（dedup key 改 requester+target_pid）；`pop`/`has_pending`/`is_priority_active` 全部 gate 在 checker 清單內；新增 `is_online_check_checker`/`get_online_check_target_pid`/`_signal_all_checkers_locked`。
+- `runtime_services/web_session_service.py`：`process_online_check_requests` checker gate 改 `is_online_check_checker(ip)` + protocol-only（`_run_checker_protocol_only`，undetermined → fail 讓別人試）；`wait_for_checker_gate_before_start` 帶 target_pid；`initialize_runtime_device` requester gate 改「有 target_pid 且非 checker」。
+- `game_initialization.py`：新增 `_prepare_checker_web_api(ip)` + `check_on_line_protocol_only(checker_ip, target_pid, threshold)`（好友列表沒 target → `(None, CHECK_TARGET_NOT_FRIEND)`）。
+- `utils/wake_up_handler.py` / `new_main_v2.py` / `runtime_services/sleep_service.py` / `device_runtime_service.py` / `startup_sleep.py`：所有 `ip=="emulator-5554"` checker 分支 → `is_online_check_checker(ip)`；5558 requester 分支 → 「有 target_pid 且非 checker」。
+- tests：新增 `tests/test_online_check_decoupled.py`（11 測）；修 `test_bot_state_phase2.py`（cleanup 用 `_online_check_pending`）、`test_online_check_immediate_wake.py`（fake state 補 `is_online_check_checker`）。
+
+**測試**：`test_online_check_decoupled / immediate_wake / bot_state_phase2 / startup_sleep / sleep_service / wake_loop_escape / game_initialization / device_config` = **75 passed**。py_compile 全綠。
+（`test_stage_guard.py`/`test_pause_routing_and_weblaunch.py` 失敗為**既有環境** import 問題 `adb_operations.tap_device`/`run_adb`，與本次無關。）
+
+**向後相容怎麼保證**：預設 config 不含 `online_check_checkers` → fallback `["emulator-5554"]`；唯一設 `online_check_target_pid` 的是 5558 → requester gate 仍只對 5558 觸發；checker gate 仍只 5554 服務；dedup/中斷立即喚醒/`skip_online_check_once`/resume-sleep 全保留。回歸測試（immediate_wake 5554 立即喚醒、5560 不誤喚；startup_sleep 5554 提前結束）佐證。
+
+**check_on_line 怎麼變 protocol-only**：checker 不再呼叫舊 `check_on_line`（protocol+OCR cross-verify）。改 `check_on_line_protocol_only`：用 checker 既有 web_h5 session 抓好友列表（0x0f02），用與 `is_player_online` 相同規則判 busy；**完全不跑 OCR**。target 不在好友列表 → 回 None（無法判定）→ caller `fail_online_check_request` 讓 requester retry / 其他 checker 試，**不誤判 offline 放行**。
+
+**checker「空閒」判定**：沿用既有中斷驅動語義（未新增 busy flag）。submit 時 `_signal_all_checkers_locked` 對清單內每個 checker 發 SKIP_SLEEP + refresh；checker 在自己的 sleep/wake gate 或主迴圈頂端輪詢 mailbox，正在跑任務的 checker 跑完當前 iteration 才服務。pop 在 `_global_lock` 內原子，最先到的 checker 認領，其餘看到空 pending。
+
+**對 5558 保護的疑慮**：(1) 多 checker 時若某 checker 好友沒 target → 回 None fail，requester 看到 status!=done 視同 busy 繼續等（保守，不放行）。(2) 預設單 checker 下行為與舊版逐行等價。(3) dedup 改 key requester+target_pid：5558 target 固定 → 仍正確 coalesce。
+
+---
+
 # WS 後端整合進 bot — toggle / 5556 pilot / 5558 / 離線自動跑 / 神燈 (2026-06-09)
 
 **Branch**: `feat/dragon-realm`（ws_token 工作都在這支）

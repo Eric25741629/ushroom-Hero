@@ -62,7 +62,14 @@ if "Open_gold_paddle_ocr" not in sys.modules:
     sys.modules["Open_gold_paddle_ocr"] = _gp
 
 if "opengold_v2" not in sys.modules:
-    sys.modules["opengold_v2"] = types.ModuleType("opengold_v2")
+    _og = types.ModuleType("opengold_v2")
+    # __path__ 讓真實的輕量子模組（config/models/ocr_parser/skill_evaluator —
+    # ws_token.lamp 需要）照常匯入，同時跳過 opengold_v2/__init__ 的重依賴；
+    # 沒有它，同 session 後收集的 test_ws_phase.py（→ ws_token.runner → lamp）
+    # 會炸 "opengold_v2 is not a package"。heavy 的 lamp_service 仍用下方 stub。
+    from pathlib import Path as _Path
+    _og.__path__ = [str(_Path(__file__).resolve().parents[1] / "opengold_v2")]
+    sys.modules["opengold_v2"] = _og
 if "opengold_v2.lamp_service" not in sys.modules:
     _ls = types.ModuleType("opengold_v2.lamp_service")
     class _FakeLampSvc:
@@ -352,3 +359,55 @@ def test_run_recovers_from_consecutive_mismatch_abort(pipeline_mod, fake_all, mo
     assert fake_all["lamp_if_due"] == [], "lamp (Task 19) must not run after abort"
     assert fake_all["weekly_dungeon"] == [], "weekly dungeon (Task 15) must not run after abort"
     assert fake_all["biweekly_dungeon"] == [], "biweekly dungeon (Task 17) must not run after abort"
+
+
+def test_ws_done_tasks_are_skipped_but_others_still_run(pipeline_mod, fake_all):
+    """Tasks listed in ws_done must be skipped; tasks not in ws_done must still run.
+
+    We pass ws_done={"紅包檢查", "家族任務", "開神燈", "轉盤金幣"}.
+
+    Expected:
+    - None of those four appear in at_main_page call records (they were skipped).
+    - 家族任務 skipped → pipeline falls back to get_stage_with_check, which is
+      patched to return "主頁面" → no crash.
+    - 開神燈 skipped → _run_lamp_if_due NOT called.
+    - 轉盤金幣 skipped → wheel_manager.spin_and_send_gold not in at_main_page records.
+    - At least one non-skipped task (e.g. "農場任務" or "點擊寶箱") appears in
+      at_main_page records, proving the pipeline did not short-circuit entirely.
+    """
+    ws_skipped = frozenset({"紅包檢查", "家族任務", "開神燈", "轉盤金幣"})
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    ctx = pipeline_mod.DailyContext(
+        d=ctx.d,
+        ip=ctx.ip,
+        Cnn_model=ctx.Cnn_model,
+        clf=ctx.clf,
+        rl_recorder=ctx.rl_recorder,
+        current_time=ctx.current_time,
+        enable_dungeon_manager=ctx.enable_dungeon_manager,
+        wheel_manager=ctx.wheel_manager,
+        mission_manager=ctx.mission_manager,
+        family_manager=ctx.family_manager,
+        ws_done=ws_skipped,
+    )
+    pipeline_mod.run(ctx)
+
+    executed_tasks = {call["task"] for call in fake_all["at_main_page"]}
+
+    # WS-done tasks must NOT appear in _run_at_main_page call records.
+    for skipped_name in ("紅包檢查", "家族任務", "開神燈", "轉盤金幣"):
+        assert skipped_name not in executed_tasks, (
+            f"{skipped_name!r} was in ws_done but still appeared in at_main_page calls"
+        )
+
+    # 開神燈 skip → lamp helper must not have fired.
+    assert fake_all["lamp_if_due"] == [], (
+        "開神燈 was in ws_done; _run_lamp_if_due must not be called"
+    )
+
+    # At least one non-skipped task must have executed (pipeline is not dead).
+    non_skipped_candidates = {"農場任務", "點擊寶箱"}
+    assert executed_tasks & non_skipped_candidates, (
+        f"Expected at least one of {non_skipped_candidates} to run, "
+        f"but executed tasks were: {executed_tasks}"
+    )

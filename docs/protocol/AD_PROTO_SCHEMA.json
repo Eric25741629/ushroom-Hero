@@ -1,0 +1,94 @@
+{
+  "family": "ad",
+  "module": 22,
+  "note": "cmd ids: c2s and s2c share the same id. cmd = module*256 + N. Proto message names carry the family verb (e.g. ad_<verb>_c2s/_s2c).",
+  "cmd_ids": {
+    "ad.ad_wheel_info": 5635,
+    "ad.ad_wheel_spin": 5636
+  },
+  "schema": {
+    "nested": {
+      "ad_info_c2s": {
+        "fields": {}
+      },
+      "ad_info_s2c": {
+        "fields": {
+          "ad_list": {
+            "rule": "repeated",
+            "type": "type.p_ad",
+            "id": 1
+          }
+        }
+      },
+      "ad_reward_c2s": {
+        "fields": {
+          "config_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          },
+          "is_free": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "ad_reward_s2c": {
+        "fields": {
+          "new_ad": {
+            "rule": "required",
+            "type": "type.p_ad",
+            "id": 1
+          }
+        }
+      },
+      "ad_wheel_info_c2s": {
+        "fields": {}
+      },
+      "ad_wheel_info_s2c": {
+        "fields": {
+          "cd": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "ad_wheel_spin_c2s": {
+        "fields": {}
+      },
+      "ad_wheel_spin_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "ad_begin_c2s": {
+        "fields": {}
+      },
+      "ad_begin_s2c": {
+        "fields": {}
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_ad",
+    "p_key_value"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

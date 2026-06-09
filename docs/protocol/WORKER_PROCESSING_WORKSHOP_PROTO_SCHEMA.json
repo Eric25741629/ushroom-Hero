@@ -1,0 +1,352 @@
+{
+  "family": "worker_processing_workshop",
+  "module": 72,
+  "note": "cmd ids: c2s and s2c share the same id (cmd = module*256 + N). Captured live via netManager fake-cnet 2026-06-09.",
+  "cmd_ids": {
+    "worker_processing_workshop.worker_pw_crops_auto_transfer": 18433,
+    "worker_processing_workshop.worker_pw_info": 18434,
+    "worker_processing_workshop.worker_pw_choose_food": 18435,
+    "worker_processing_workshop.worker_pw_cancel_work": 18438,
+    "worker_processing_workshop.worker_pw_auto_add_materials": 18439,
+    "worker_processing_workshop.worker_pw_crops_transfer": 18440,
+    "worker_processing_workshop.worker_pw_dining_hall": 18441,
+    "worker_processing_workshop.worker_pw_unlock_workshop": 18443,
+    "worker_processing_workshop.worker_pw_add_materials": 18444,
+    "worker_processing_workshop.worker_pw_food_auto_use": 18445
+  },
+  "schema": {
+    "nested": {
+      "worker_pw_crops_auto_transfer_c2s": {
+        "fields": {
+          "material_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_auto_transfer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_crops_auto_transfer_s2c": {
+        "fields": {
+          "material_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_auto_transfer": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_info_c2s": {
+        "fields": {}
+      },
+      "worker_pw_info_s2c": {
+        "fields": {
+          "auto_use_food_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          },
+          "food_info": {
+            "rule": "repeated",
+            "type": "type.p_worker",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_choose_food_c2s": {
+        "fields": {
+          "food_list": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 1
+          },
+          "workshop_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_cancel_work_c2s": {
+        "fields": {
+          "workshop_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "worker_pw_auto_add_materials_c2s": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "workshop_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_crops_transfer_c2s": {
+        "fields": {
+          "materials": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "materials_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_dining_hall_c2s": {
+        "fields": {}
+      },
+      "worker_pw_dining_hall_s2c": {
+        "fields": {
+          "food_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "worker_pw_unlock_workshop_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "worker_pw_add_materials_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "target_food": {
+            "rule": "required",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_food_auto_use_c2s": {
+        "fields": {
+          "food_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_auto_use": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "worker_pw_food_auto_use_s2c": {
+        "fields": {
+          "auto_use_food_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      }
+    }
+  },
+  "types": {
+    "p_spirit_tab": {
+      "fields": {
+        "tab": {
+          "type": "uint32",
+          "id": 1
+        },
+        "name": {
+          "type": "string",
+          "id": 2
+        },
+        "spirit_id": {
+          "type": "uint64",
+          "id": 3
+        }
+      }
+    },
+    "p_spirit_draw": {
+      "fields": {
+        "draw_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "free_times": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "must_info": {
+          "rule": "repeated",
+          "type": "p_key_value",
+          "id": 3
+        }
+      }
+    },
+    "p_reward": {
+      "fields": {
+        "gtid": {
+          "rule": "required",
+          "type": "int32",
+          "id": 1
+        },
+        "num": {
+          "rule": "required",
+          "type": "int64",
+          "id": 2
+        }
+      }
+    },
+    "p_worker": {
+      "fields": {
+        "team_cfg_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "worker_base": {
+          "rule": "required",
+          "type": "p_worker_base",
+          "id": 2
+        },
+        "worker_status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        },
+        "auto_feed": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 4
+        },
+        "unlock_slot_num": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 5
+        },
+        "farm_worker_info": {
+          "type": "p_worker_farm_info",
+          "id": 6
+        },
+        "pw_worker_info": {
+          "type": "p_worker_pw_food_info",
+          "id": 7
+        },
+        "mine_worker_info": {
+          "type": "p_worker_mine_info",
+          "id": 8
+        },
+        "science_worker_info": {
+          "type": "p_worker_science_info",
+          "id": 9
+        },
+        "car_park_worker_info": {
+          "type": "p_worker_car_park",
+          "id": 10
+        }
+      }
+    },
+    "p_welfare_task": {
+      "fields": {
+        "task_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "count": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        }
+      }
+    },
+    "p_goods": {
+      "fields": {
+        "goods_gtid": {
+          "rule": "required",
+          "type": "int32",
+          "id": 1
+        },
+        "goods_id": {
+          "rule": "required",
+          "type": "uint64",
+          "id": 2
+        },
+        "num": {
+          "rule": "required",
+          "type": "int32",
+          "id": 3
+        },
+        "type": {
+          "rule": "required",
+          "type": "int32",
+          "id": 4
+        },
+        "subtype": {
+          "rule": "required",
+          "type": "int32",
+          "id": 5
+        },
+        "quality": {
+          "rule": "required",
+          "type": "int32",
+          "id": 6
+        },
+        "expire_time": {
+          "type": "int32",
+          "id": 7
+        }
+      }
+    },
+    "p_key_value": {
+      "fields": {
+        "k": {
+          "rule": "required",
+          "type": "int64",
+          "id": 1
+        },
+        "v": {
+          "rule": "required",
+          "type": "int64",
+          "id": 2
+        }
+      }
+    }
+  }
+}

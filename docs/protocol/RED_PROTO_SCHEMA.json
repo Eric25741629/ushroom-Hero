@@ -1,0 +1,126 @@
+{
+  "cmd_ids": {
+    "red.red_all_list_c2s": 9729,
+    "red.red_send_c2s": 9730,
+    "red.red_grab_c2s": 9731,
+    "red.red_pop_c2s": 9732,
+    "red.red_brief_list_c2s": 9733
+  },
+  "schema": {
+    "nested": {
+      "red_all_list_c2s": {
+        "fields": {}
+      },
+      "red_all_list_s2c": {
+        "fields": {
+          "send_list": {
+            "rule": "repeated",
+            "type": "type.p_brief_red",
+            "id": 1
+          },
+          "grab_list": {
+            "rule": "repeated",
+            "type": "type.p_brief_red",
+            "id": 2
+          }
+        }
+      },
+      "red_send_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "red_send_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "red": {
+            "rule": "required",
+            "type": "type.p_brief_red",
+            "id": 3
+          }
+        }
+      },
+      "red_grab_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          }
+        }
+      },
+      "red_grab_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "red_envelope": {
+            "type": "type.p_red",
+            "id": 3
+          }
+        }
+      },
+      "red_pop_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "red": {
+            "rule": "required",
+            "type": "type.p_brief_red",
+            "id": 2
+          }
+        }
+      },
+      "red_brief_list_c2s": {
+        "fields": {}
+      },
+      "red_brief_list_s2c": {
+        "fields": {
+          "send_list": {
+            "rule": "repeated",
+            "type": "type.p_brief_red",
+            "id": 1
+          },
+          "grab_list": {
+            "rule": "repeated",
+            "type": "type.p_brief_red",
+            "id": 2
+          }
+        }
+      }
+    }
+  }
+}

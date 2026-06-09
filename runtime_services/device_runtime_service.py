@@ -139,9 +139,9 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
             logger_obj.info(f"[{ip}] 收到中控網頁啟動請求，提前喚醒處理手動模式")
             return True
 
-        if ip == "emulator-5554":
-            if bot_state.has_pending_online_check_request("emulator-5554"):
-                logger_obj.info(f"[{ip}] 偵測到 emulator-5558 上線檢查請求，提前喚醒處理")
+        if bot_state.is_online_check_checker(ip):
+            if bot_state.has_pending_online_check_request(ip):
+                logger_obj.info(f"[{ip}] 偵測到 requester 上線檢查請求，提前喚醒處理")
                 return True
 
         if time.time() >= wake_ts:

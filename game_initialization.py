@@ -322,6 +322,122 @@ def check_on_line(Cnn_model):
     return True
 
 
+def _prepare_checker_web_api(ip: str):
+    """Bring the checker's web_h5 session in-game and return a ready WebGameAPI.
+
+    Shared by the protocol online-check paths. Reuses the checker's same-thread
+    main-loop session when present (never hard-closes it — see the long note
+    below) and waits until the game is in-game so friend-list RPCs succeed.
+
+    Raises RuntimeError if `ip` is not on the web_h5 backend, the page is
+    unavailable, or the game never reaches in-game within the wait window.
+    """
+    from utils.web_game_api import WebGameAPI  # lazy to avoid circular import in tests
+
+    device_cfg = config_manager.get_device_config(ip)
+    backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+    if backend_kind != "web_h5":
+        raise RuntimeError(f"protocol path requires {ip} on web_h5 backend")
+
+    # Reuse the same-thread main-loop session if present; otherwise create one.
+    # Either way we DO NOT close it here — hard-closing the session the main loop
+    # is about to use caused the historical "web_h5 session unavailable" restart
+    # churn (see _check_on_line_via_protocol notes / logs 2026-05-29).
+    prior_device = get_same_thread_web_device(ip)
+    if prior_device is not None:
+        d = prior_device
+    else:
+        d = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=default_logger)
+        if d is None:
+            raise RuntimeError("create_web_device_if_enabled returned None")
+
+    page = getattr(d, "_page", None)
+    if page is None or page.is_closed():
+        raise RuntimeError(f"{ip} page is not available / closed")
+
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+
+    # Honor dashboard pause/force-sleep — this path bypasses MonitoredDevice.
+    bot_state.check_pause(ip)
+    pause_poll = lambda: bot_state.check_pause(ip)
+
+    api = WebGameAPI(page)
+    if not api.wait_until_in_game(timeout_sec=25.0, on_poll=pause_poll):
+        st = {}
+        try:
+            st = api.game_state()
+        except Exception:
+            pass
+        raise RuntimeError(
+            f"{ip} not in game after 25s: ws_ready={st.get('ws_ready_state')}"
+            f" sock_state={st.get('sock_state')} scene={st.get('scene_name')}"
+        )
+
+    bot_state.check_pause(ip)
+    return api
+
+
+# Sentinel reason: checker's friend list does not contain the target, so this
+# checker cannot judge the target's presence. The caller must NOT treat this as
+# "offline / 放行" — it should let another checker try.
+CHECK_TARGET_NOT_FRIEND = "target_not_in_friend_list"
+
+
+def check_on_line_protocol_only(
+    checker_ip: str,
+    target_pid: int,
+    threshold_sec: int = 60,
+) -> "Tuple[Optional[bool], str]":
+    """Protocol-only online check (no OCR) for a decoupled checker.
+
+    Runs on a configured checker device that holds a web_h5 session. Fetches the
+    checker's friend list (cmd 0x0f02) and judges the target's presence with the
+    exact same rule as WebGameAPI.is_player_online.
+
+    Returns (is_busy, reason):
+      (True,  "account_online")          target online within threshold → busy
+      (False, "account_offline")         target found, offline           → 放行
+      (None,  CHECK_TARGET_NOT_FRIEND)   target NOT in this checker's friend
+                                         list → cannot determine. Caller must
+                                         fail the request so another checker
+                                         tries, NOT 放行.
+    Raises on session/RPC failure (caller decides conservative handling).
+    """
+    if not target_pid:
+        return None, "online_check_target_pid not set"
+
+    api = _prepare_checker_web_api(checker_ip)
+    friends = api.fetch_friend_list(tab=1, timeout_sec=5.0, net_wait_ms=5000)
+    target = None
+    for f in friends:
+        if f.get("player_id") == int(target_pid):
+            target = f
+            break
+    if target is None:
+        logger.info(
+            f"[check_on_line/protocol-only] {checker_ip} 好友列表不含 target_pid="
+            f"{target_pid} → 無法判定，交給其他 checker"
+        )
+        return None, CHECK_TARGET_NOT_FRIEND
+
+    ts = target.get("last_login_ts")
+    if ts is None:
+        # Found but no timestamp → parser miss; mirror is_player_online=offline.
+        is_busy = False
+    else:
+        ts_int = int(ts)
+        is_busy = True if ts_int == 0 else (int(time.time()) - ts_int) < int(threshold_sec)
+    reason = "account_online" if is_busy else "account_offline"
+    logger.info(
+        f"[check_on_line/protocol-only] checker={checker_ip} target_pid={target_pid} "
+        f"busy={is_busy} (last_login_ts={ts})"
+    )
+    return is_busy, reason
+
+
 def _check_on_line_via_protocol(target_pid: int, threshold_sec: int = 60) -> bool:
     """Protocol fast-path：透過 5554 已登入的 web_h5 session 直接查好友列表。
 

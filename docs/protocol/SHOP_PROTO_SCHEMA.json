@@ -1,0 +1,91 @@
+{
+  "family": "shop",
+  "cmd_ids": {
+    "shop.shop_info_c2s": 6913,
+    "shop.shop_buy_c2s": 6914,
+    "shop.shop_limit_time_c2s": 6915
+  },
+  "schema": {
+    "nested": {
+      "shop_info_c2s": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "shop_info_s2c": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "buy_info": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "shop_buy_c2s": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "shop_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "shop_buy_s2c": {
+        "fields": {
+          "shop_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "shop_limit_time_c2s": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "shop_limit_time_s2c": {
+        "fields": {
+          "shop_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "shop_list": {
+            "rule": "repeated",
+            "type": "type.p_shop_item_time",
+            "id": 2
+          }
+        }
+      }
+    }
+  }
+}

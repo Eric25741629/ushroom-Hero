@@ -145,9 +145,10 @@ def test_submit_online_check_sets_refresh_without_deadlock():
         assert isinstance(req_id, str)
         assert bot_state.check_refresh_needed() is True
     finally:
-        # online-check leaves request + queue + signal entries; clear thoroughly
+        # online-check leaves request + pending + signal entries; clear thoroughly
         with bot_state._global_lock:
             bot_state._online_check_requests.pop(req_id, None)
-            bot_state._online_check_queue_by_checker.pop(checker, None)
+            if req_id in bot_state._online_check_pending:
+                bot_state._online_check_pending.remove(req_id)
         _cleanup(requester)
         _cleanup(checker)

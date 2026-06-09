@@ -29,8 +29,13 @@ _config_cache_path = None      # CONFIG_FILE the cache was built for (path can c
 DEFAULT_DEVICE_CONFIG = {
     "name": "",  # 自定義別名 (例如: 主力機)
     "enabled": True,  # 自動掛機總開關 (新裝置註冊時設 False, 登入+設定完成後手動啟用)
-    "backend": "adb",  # adb / web_h5
+    "backend": "adb",  # adb / web_h5 / ws_token
     "backend_display_id": "",  # display/config binding id (empty => use device key)
+    # ws_token (純 WS 後端) 設定 — 預設全 off，旗標關閉時行為與舊版完全相同。
+    "use_ws_runner": False,  # True => wake loop 走 ws_token.runner.run_device，不連 ADB/Playwright
+    "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
+    "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
+    "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
     "web_url": "",
     "web_canvas_selector": "canvas",
     "web_profile_dir": "playwright_profile/{device_id}",
@@ -62,6 +67,17 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
+    "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
+        "enabled": False,       # 喚醒後先跑純 WS 任務，成功項由 Playwright 階段跳過
+        "spend": False,         # 家族捐獻/管家代購/掃蕩/續約 等花費類
+        "open_lamp": False,     # WS 開神燈（一批，取代 Playwright 開神燈）
+        "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
+        "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
+        "carpark_target": None, # 跨界停車 master_id（只停不收）
+        "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
+        "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
+        "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
+    },
 }
 
 
@@ -84,6 +100,14 @@ class DeviceConfig:
     # Backend
     backend: str = "adb"
     backend_display_id: str = ""
+
+    # ws_token (pure-WS backend) — additive, default off so legacy devices are
+    # unaffected. When use_ws_runner is True the wake loop runs
+    # ws_token.runner.run_device instead of the ADB/Playwright daily pipeline.
+    use_ws_runner: bool = False
+    ws_token_spend: bool = False
+    ws_token_sweep_list: list = field(default_factory=list)
+    ws_token_open_lamp: bool = False
 
     # Web H5 settings
     web_url: str = ""
@@ -183,6 +207,10 @@ DEFAULT_GLOBAL_CONFIG = {
     "worker_id": "unknown_worker",
     "worker_sync_timeout_sec": 10.0,
     "worker_sync_failure_backoff_sec": 6.0,
+    # 跨裝置 online-check 的 checker 候選清單。任一在此清單、目前空閒、且好友
+    # 列表含 target 的帳號都可代為查線。預設只有 emulator-5554，與舊行為一致
+    # （5558 仍只被 5554 服務）。
+    "online_check_checkers": ["emulator-5554"],
     "ocr": copy.deepcopy(DEFAULT_OCR_CONFIG),
     # 針對特定電腦名稱的設定 (解決 NAS 共用檔案問題)
     # 格式: "COMPUTER_NAME": { 設定覆蓋 }
@@ -291,6 +319,32 @@ def _clamp_float(v: Any, lo: float, hi: float, default: float) -> float:
 def _enum_str(v: Any, allowed: set, default: str) -> str:
     s = str(v).strip().lower()
     return s if s in allowed else default
+
+
+def _sanitize_sweep_list(v: Any) -> list:
+    """Coerce a ws_token_sweep_list into ``[[int, ...], ...]``.
+
+    Each chapter entry is ``[id, level, times[, use_ad]]``; non-list / malformed
+    entries are dropped. Invalid input collapses to ``[]`` so a bad value can
+    never persist a non-list (which steward's sweep would choke on).
+    """
+    if not isinstance(v, list):
+        return []
+    out: list = []
+    for entry in v:
+        if not isinstance(entry, (list, tuple)):
+            continue
+        row: list = []
+        ok = True
+        for part in entry:
+            try:
+                row.append(int(part))
+            except (TypeError, ValueError):
+                ok = False
+                break
+        if ok and len(row) >= 3:
+            out.append(row[:4])
+    return out
 
 
 def _invalidate_config_cache() -> None:
@@ -464,6 +518,32 @@ def get_global_config() -> Dict[str, Any]:
     return final_cfg
 
 
+def get_online_check_checkers() -> "list[str]":
+    """Return the list of device serials allowed to serve cross-device
+    online-check requests.
+
+    Source of truth: global config `online_check_checkers`. Defaults to
+    `["emulator-5554"]` (legacy behaviour) when missing or malformed. Entries
+    are trimmed and de-duplicated while preserving order.
+    """
+    try:
+        raw = get_global_config().get("online_check_checkers")
+    except Exception:
+        raw = None
+    if not isinstance(raw, list) or not raw:
+        return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+    seen: set = set()
+    checkers: "list[str]" = []
+    for item in raw:
+        ip = str(item).strip()
+        if ip and ip not in seen:
+            seen.add(ip)
+            checkers.append(ip)
+    if not checkers:
+        return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+    return checkers
+
+
 def get_ocr_config() -> Dict[str, Any]:
     """取得 OCR 全域設定（含預設補齊）。"""
     global_cfg = get_global_config()
@@ -626,8 +706,21 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
         current.update(new_settings or {})
 
-        current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5"}, "adb")
+        current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5", "ws_token"}, "adb")
         current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
+        current["use_ws_runner"] = _to_bool(
+            current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
+            DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+        )
+        current["ws_token_spend"] = _to_bool(
+            current.get("ws_token_spend", DEFAULT_DEVICE_CONFIG["ws_token_spend"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_spend"],
+        )
+        current["ws_token_sweep_list"] = _sanitize_sweep_list(current.get("ws_token_sweep_list"))
+        current["ws_token_open_lamp"] = _to_bool(
+            current.get("ws_token_open_lamp", DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"],
+        )
         current["web_url"] = str(current.get("web_url", "")).strip()
         current["web_canvas_selector"] = (
             str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"

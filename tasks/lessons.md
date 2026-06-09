@@ -1,5 +1,32 @@
 # Lessons learned
 
+## 2026-06-10 ws_token 接入 workflow 設計 session
+
+- **消耗品操作別用「大數讓 server 封頂」的取巧法,User 要的是可控批次。** 我提議送禮用
+  `give_flower(num=999)` 一發送光(賭 server cap),User 直接否決:「不對 請你以10為單位」。
+  **Rule**:涉及真實消耗/花費的自動化,預設用小批次迴圈(以遊戲的自然單位,如每日配額 10)+
+  錯誤碼當結束訊號,不用依賴未驗證 server 行為的大數法;優雅 != 取巧。
+
+- **任務等價關係 User 比我清楚,保守假設要先問。** 我假設「商店購買≠管家代購」「好友每日禮物
+  ≠伴侶送禮」所以不 skip;User 確認兩組其實相同(==)。**Rule**:WS↔UI 任務的語意對應表是
+  User 的領域知識,列表給 User 確認,別自己悶頭保守(白跑)或激進(漏跑)。
+
+- **「防互踢」這種保護機制要先問,別自作主張加。** 我以為小寶 7fe98fc6 在 User 手機上會被
+  WS 登入踢,設計了 online_guard 在線檢查+整輪禮讓;User 拍板「這個不用線上檢查 直接登入就好」
+  並在 spec 訂正小寶**不是**手機常用帳號。**Rule**:(a) 對帳號的保護性 gating(在線禮讓/確認窗/
+  冷卻)屬於 User 的取捨,設計時列為選項問一句,不要當必要機制直接內建;(b) 「哪個帳號跑在誰
+  手上」這種事實別從隻言片語推論,直接問清楚再寫進設計。
+
+## 2026-06-09 家園功能批次 (feat/ws-token-home)
+
+- **0x0201 不是「純 error channel」,它也帶『成功通知碼』— 收到 0x0201 一定要看 code,不能一律當失敗。** `favor_give_flower`(贈禮)成功時 server 回的是 **0x0201 code 369**,而 369 在 configErrorInfo = **「贈送成功」**(不是錯誤!)。我一開始把 give_flower 的 0x0201/369 當失敗(ok=False),其實是成功送出。**Rule**:`call_for(cmd, 0x0201)` 收到 0x0201 後,先把 code 丟 `configErrorInfo` 解字義再判成敗;維護一個 `OK_NOTICE_CODES`(目前 {369}=贈送成功)。先前「失敗一律走 0x0201」的教訓仍對(失敗確實走 0x0201),但反過來「0x0201 一律失敗」是錯的。
+
+- **未知 cmd 號可用 CDP fake-cnet 法離線抓,不必等 WS 連線、不必猜。** H5 WS 斷線時(被我 smoke 踢掉),`netManager.send(t,e)` 走不到 `l[t]`(cmd 查表)。但可暫時把 `netManager._cnet` 換成 `{state:2, sendMessage:(cmd,body)=>capture(cmd)}`(state=2=Connected,我用 0..8 brute 出來),再給 `netManager._protoClass[name]` 塞一個 encode 不會丟的 dummy,然後 `netManager.send('<family>.<msg>_c2s', {})` → `cnet.sendMessage` 的第一個參數就是 cmd(proto_id)。驗證 `home.home_mine_info_c2s`=3073 ✓。`netManager.protoRoot.toJSON().nested` 列全部 82 family;cmd=module*256+N。工具 `tools/_cdp_cmds.js`。**Rule**:卡在「這個任務的 WS cmd 是什麼」時,別猜也別等連線 — fake-cnet 直接從 client 抓。
+
+- **c2s 的 request body 別假設是空的 — 有 required 欄位空送會 timeout(無回應)。** `favor_friend_info_c2s` 需 `{page#1}`(required),我送空 body → server 不回 → `WSTimeoutError`。`marry_status`/`marry_ring_info` 才是真的空 body。**Rule**:建 read 之前先 dump 該 `_c2s` 的 schema(不只 `_s2c`),required 欄位一定要帶。
+
+- **遊戲設定值(food id / goods id / error 字義 / 副本上限)通通在 client config,CDP 直接讀。** 脆脆餅乾=8001 / 精英拼盤=8005(configGoods)、奶茶=1106 / 鮮花=1031 / 真愛之石=1114、error 碼=configErrorInfo。**Rule**:任何「這個 id/值是多少」先問 client(`window.config*` / `*DataCache`),別猜別問 user。
+
 ## 2026-06-09 ws_token 任務批次 + live 驗證 session
 
 - **別把上一輪「未驗證的結論」當事實複述。** 交接檔 `tasks/ws_token_backend_todo.md` 寫「小寶神燈=0(被驗證跑開光)」,更早的 session 顯然把它當事實講過 → User 開場就「我明明小寶帳號還有神燈 你在欺騙我」,後來明說「小寶神燈數量是71萬個」。**Rule**:handoff/交接裡的數值結論一律標「待驗」,引用時實際 re-verify;絕不把別人(或過去自己)未當場驗證的數字當事實轉述。User 對此極敏感(等同欺騙)。
@@ -9,6 +36,12 @@
 - **smoke/CLI 的 argparse bug 不會被模組單測抓到。** guild build agent 加了 `--help` 旗標跟 argparse 內建 `-h/--help` 衝突 → smoke 一啟動就 crash,但 27 個模組單測全綠(它們測 guild 模組、不碰 smoke argparse)。**Rule**:smoke/CLI runner 至少要被「`--help`/空跑 parse」掃過一次(或驗收時實跑一次 dry-run);別用保留字當旗標名。
 
 - **離線測試綠 ≠ live 能動;活動制功能會休眠。** 兩個只在 live 才現形:(1) 上面的 argparse crash;(2) `guild_treasure_info`(7459)在「該家族沒在跑尋寶輪」時 server **完全不回** → `client.call` timeout → smoke crash。**Rule**:(a) 宣稱任務「完成」前一定 live 驗一次真實 send/讀;(b) 日常自動化遇到「功能休眠→server 不回→WSTimeoutError」要當「現在不可用,skip」優雅處理,不能讓整條讀路徑掛掉。錯誤碼 **159 = 已領/已滿**(家族捐獻、league_solo 寶箱共用),當「已領」跳過不 abort。
+
+- **「子訊息存在」≠「旗標成立」;schema 註解的語意要 live 核。** carpark `parse_my_mounts` 用 `parking_data#5 is not None` 判斷 mount 是否已在停車(schema 註解寫「present iff parking」)。但 live(小寶)抓到伺服器對**空閒** mount 也一律送 `parking_data#5`,只是**全欄位為 0** → 每隻 mount 都被當「已停車」排除,6 mounts→0,`auto_park_cross` 永遠 `no_available_mount`(靜默壞掉,離線測還綠因為 fake 對空閒 mount 根本沒送 #5)。**Rule**:(a) optional/flag 欄位的語意(「有沒有送」vs「值是不是非零」)一定要對真實 wire 核,不能信 schema 註解的 iff 假設;判存在要 parse 出來看**有沒有非零內容**。(b) 測試的 fake 要照**真實 server 行為**造(空閒也送全零子訊息),否則測不到這個 bug。這正是 User 整個 session 反覆強調的「要驗證、別亂報、實事求是」的具體案例。
+
+- **未知的 error code / 參數,直接 CDP 從 client config 抓,別猜也別問 user。** User 明說「你倒是直接抓阿 我都給你 auto 的權限了 什麼都要問我 那為什麼我需要你」。我卡在「error 173 是什麼、dungeon sweep 的 dungeon_id 是什麼」就想問 user — 錯。**這些全在 H5 client 的 config 表裡,CDP 一查就有**:`Get-Content x.js | python tools/_auth_capture_probe.py 9226`(小寶 web_h5,Runtime.evaluate;UTF-8 要 `$env:PYTHONIOENCODING='utf-8'` + `[Console]::OutputEncoding=UTF8` 否則中文 mojibake)。錯誤碼 = `window.configErrorInfo.getDataByKey(code)._data[1]` = langId → `window.GetStrFromConfig(langId)` = 中文(173=活動已結束/90=冷卻時間未到/159=次數不足)。副本狀態/門票/上限在 `window.chapterDataCache`(`getLimit(type)`、`dungeonList`、`day_times` 是累計非剩餘)。**Rule**:被「某個值/碼是什麼」卡住時,先問「client 自己知道嗎?」— 幾乎都在 `window.config*` / `*DataCache`,CDP eval 直接讀,這是有 auto 權限時該自主做的事,不是回頭問 user 的理由。
+
+- **失敗一律走 0x0201 error channel — 可失敗的 mutate 都要 `call_for(cmd, 0x0201)`,別用 `call(只等 success cmd)`。** mutate 驗證一口氣抓到三個同根 bug:turntable spin、farm plant/harvest/work 都用 `client.call(CMD)`(只等該 cmd 的 reply)。但 live 伺服器**成功才回該 cmd,失敗(種子不足/冷卻/不可掃蕩…)一律回 `0x0201` 帶 error code**(本 session 看到的通用碼 = **173**,轉盤/農場/深淵都出現)。於是任何一次失敗 → 等不到 success cmd → `WSTimeoutError` 整個 task crash。離線測全綠因為 fake 只餵 success cmd。**Rule**:(a) 任何「可能被伺服器拒」的 mutate(送出會改狀態的指令)一律 `call_for(CMD, 0x0201)`,reply_cmd==0x0201 就當失敗記 error_code,不要 crash;redpack/dungeon 本來就對,turntable/farm 漏了。(b) 每個 mutate 至少 live 跑一次「會被拒」的情境(用沒資源/冷卻中的帳號),純單測測不到 0x0201 路徑。(c) 順帶另一個 live-only 坑:`home_farm_info`(3077)**一個 session 只答一次**,第二次 read 必 timeout → 同一輪要重用第一次的快照,別重 read。
 
 ## 2026-06-08 Codex companion 背景任務：別信 stale `status: running`，要驗 PID
 

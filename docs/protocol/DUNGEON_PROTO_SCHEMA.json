@@ -1,0 +1,835 @@
+{
+  "family": "dungeon",
+  "cmd_ids": {
+    "dungeon.dungeon_list_c2s": 3585,
+    "dungeon.dungeon_start_c2s": 3586,
+    "dungeon.dungeon_result_c2s": 3587,
+    "dungeon.dungeon_update_c2s": 3588,
+    "dungeon.dungeon_type_c2s": 3589,
+    "dungeon.dungeon_combat_c2s": 3590,
+    "dungeon.dungeon_battle_start_c2s": 3591,
+    "dungeon.dungeon_battle_result_c2s": 3592,
+    "dungeon.dungeon_fate_daily_reward_c2s": 3593,
+    "dungeon.dungeon_world_boss_info_c2s": 3594,
+    "dungeon.dungeon_world_boss_change_c2s": 3595,
+    "dungeon.dungeon_sweep_c2s": 3596,
+    "dungeon.dungeon_battle_more_start_c2s": 3597,
+    "dungeon.dungeon_league_solo_info_c2s": 3598,
+    "dungeon.dungeon_league_solo_get_reward_c2s": 3599,
+    "dungeon.dungeon_league_solo_update_box_c2s": 3600,
+    "dungeon.dungeon_wing_quick_pass_c2s": 3601,
+    "dungeon.dungeon_wing_reset_c2s": 3602,
+    "dungeon.dungeon_mount_battle_result_c2s": 3603,
+    "dungeon.dungeon_dc_entrance_info_c2s": 3604,
+    "dungeon.dungeon_dc_info_c2s": 3605,
+    "dungeon.dungeon_idol_main_info_c2s": 3606,
+    "dungeon.dungeon_league_hard_buff_c2s": 3607,
+    "dungeon.dungeon_league_hard_info_c2s": 3608
+  },
+  "schema": {
+    "nested": {
+      "dungeon_list_c2s": {
+        "fields": {}
+      },
+      "dungeon_list_s2c": {
+        "fields": {
+          "dungeon_list": {
+            "rule": "repeated",
+            "type": "type.p_dungeon",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_start_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "dungeon_start_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "data": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "dungeon_result_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "args": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          }
+        }
+      },
+      "dungeon_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          },
+          "sext": {
+            "rule": "repeated",
+            "type": "type.p_key_string",
+            "id": 7
+          }
+        }
+      },
+      "dungeon_update_s2c": {
+        "fields": {
+          "dungeon": {
+            "rule": "required",
+            "type": "type.p_dungeon",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_type_c2s": {
+        "fields": {}
+      },
+      "dungeon_type_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "data": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "dungeon_combat_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "data": {
+            "rule": "repeated",
+            "type": "type.p_string_string",
+            "id": 3
+          }
+        }
+      },
+      "dungeon_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "data": {
+            "rule": "repeated",
+            "type": "type.p_string_string",
+            "id": 4
+          }
+        }
+      },
+      "dungeon_battle_start_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "dungeon_battle_start_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "battle_checkout": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "random_seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 5
+          },
+          "roles": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 6
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_battle_rank",
+            "id": 8
+          }
+        }
+      },
+      "dungeon_battle_result_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "manual_operators": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "operators": {
+            "rule": "repeated",
+            "type": "type.p_battle_operator",
+            "id": 5
+          },
+          "args": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "dungeon_battle_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "dungeon_fate_daily_reward_c2s": {
+        "fields": {}
+      },
+      "dungeon_fate_daily_reward_s2c": {
+        "fields": {}
+      },
+      "dungeon_world_boss_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_world_boss_info_s2c": {
+        "fields": {
+          "is_open": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "start_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "role_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 4
+          },
+          "figure": {
+            "type": "type.p_role_figure",
+            "id": 5
+          },
+          "today_buff": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "total_hurt": {
+            "rule": "required",
+            "type": "string",
+            "id": 7
+          },
+          "my_rank": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 8
+          },
+          "my_hurt": {
+            "rule": "required",
+            "type": "string",
+            "id": 9
+          },
+          "times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 10
+          },
+          "is_first": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 11
+          }
+        }
+      },
+      "dungeon_world_boss_change_c2s": {
+        "fields": {}
+      },
+      "dungeon_world_boss_change_s2c": {
+        "fields": {
+          "is_open": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_sweep_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "sweep_num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "dungeon_sweep_s2c": {
+        "fields": {
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "dungeon_battle_more_start_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "dungeon_battle_more_start_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "battle_checkout": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "random_seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 5
+          },
+          "roles": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 6
+          },
+          "deal_role": {
+            "type": "type.p_dead_battle_role",
+            "id": 7
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 8
+          },
+          "rank_list": {
+            "rule": "repeated",
+            "type": "type.p_battle_rank",
+            "id": 9
+          }
+        }
+      },
+      "dungeon_league_solo_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_league_solo_info_s2c": {
+        "fields": {
+          "box_list": {
+            "rule": "repeated",
+            "type": "type.p_league_solo_box",
+            "id": 1
+          },
+          "record_list": {
+            "rule": "repeated",
+            "type": "type.p_league_solo_box_record",
+            "id": 2
+          },
+          "reward_status": {
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "dungeon_league_solo_get_reward_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_league_solo_update_box_s2c": {
+        "fields": {
+          "box_info": {
+            "rule": "repeated",
+            "type": "type.p_league_solo_box",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_wing_quick_pass_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_wing_reset_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "dungeon_mount_battle_result_c2s": {
+        "fields": {
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "manual_operators": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "operators": {
+            "rule": "repeated",
+            "type": "type.p_battle_operator",
+            "id": 4
+          },
+          "buffs": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 5,
+            "options": {
+              "packed": false
+            }
+          },
+          "args": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "dungeon_mount_battle_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "dungeon_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "dungeon_dc_entrance_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_dc_entrance_info_s2c": {
+        "fields": {
+          "is_open": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "end_time": {
+            "type": "uint32",
+            "id": 2
+          },
+          "start_time": {
+            "type": "uint32",
+            "id": 3
+          },
+          "choose_reward_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          },
+          "max_reward_num": {
+            "type": "uint32",
+            "id": 5
+          }
+        }
+      },
+      "dungeon_dc_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_dc_info_s2c": {
+        "fields": {
+          "now_dc_level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "max_dc_level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "my_figure": {
+            "rule": "required",
+            "type": "type.p_role_figure",
+            "id": 3
+          },
+          "my_name": {
+            "rule": "required",
+            "type": "string",
+            "id": 4
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "my_hp": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 6
+          },
+          "my_max_hp": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 7
+          },
+          "teammate_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 8
+          },
+          "teammate_hp": {
+            "type": "uint64",
+            "id": 9
+          },
+          "teammate_max_hp": {
+            "type": "uint64",
+            "id": 10
+          },
+          "teammate_head": {
+            "type": "type.p_head",
+            "id": 11
+          },
+          "teammate_figure": {
+            "type": "type.p_role_figure",
+            "id": 12
+          },
+          "teammate_name": {
+            "type": "string",
+            "id": 13
+          },
+          "teammate_level": {
+            "type": "uint32",
+            "id": 14
+          }
+        }
+      },
+      "dungeon_idol_main_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_idol_main_info_s2c": {
+        "fields": {
+          "now_choose_pve_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          },
+          "inspire_level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "dungeon_league_hard_buff_c2s": {
+        "fields": {}
+      },
+      "dungeon_league_hard_buff_s2c": {
+        "fields": {
+          "buff_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "state": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "dungeon_league_hard_info_c2s": {
+        "fields": {}
+      },
+      "dungeon_league_hard_info_s2c": {
+        "fields": {
+          "buff_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "state": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "countdown": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "rank": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 5
+          },
+          "hurt": {
+            "rule": "required",
+            "type": "string",
+            "id": 6
+          },
+          "serv_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 7,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      }
+    }
+  }
+}

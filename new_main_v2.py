@@ -87,6 +87,7 @@ from runtime_services.sleep_service import (
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
 from game_actions import daily_pipeline
+from game_actions.ws_phase import run_ws_phase
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
@@ -95,6 +96,18 @@ atexit.register(lambda: shutdown_web_devices(logger))
 
 
 def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
+    # ws_token 純 WS 後端分支：設了 use_ws_runner 的裝置不連 ADB/Playwright、
+    # 不啟動遊戲、不走 daily_pipeline，改由 ws_token.runner.run_device 每次喚醒跑
+    # 一輪純 WS 任務，沿用既有睡眠/喚醒/暫停/強制休眠機制 (schedule parity 同樣適用)。
+    # 預設 use_ws_runner=False → 一般裝置一行邏輯都不走這裡。
+    if bool(config_manager.get_device_config(ip).get("use_ws_runner", False)):
+        from runtime_services.ws_runner_service import run_ws_device_loop
+        ws_logger = setup_logger_for_device(ip)
+        set_thread_logger(ws_logger)
+        ws_logger.info(f"[{ip}] 使用 ws_token 純 WS 後端 (use_ws_runner=True)，跳過 ADB/Playwright 初始化")
+        run_ws_device_loop(ip, ws_logger)
+        return
+
     # 初始化狀態監控
     bot_state.init_device(ip)
     device_logger = logger
@@ -215,6 +228,15 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 if _skip:
                     continue
 
+                # --- WS 階段：純 WS 先跑（瀏覽器啟動前；WS 登入會踢頁面，順序不可反）---
+                # ws_token.enabled=False 時 run_ws_phase 直接回空集合，零影響。
+                ws_done = frozenset()
+                try:
+                    bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
+                    ws_done = run_ws_phase(ip)
+                except Exception as ws_exc:
+                    logger.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
+
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
                 d = handle_device_wakeup(
@@ -229,11 +251,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 if not isinstance(d, MonitoredDevice):
                     d = MonitoredDevice(d, ip)
                 skip_online_check_once = False
-                if ip == 'emulator-5554':
-                    has_req = bot_state.has_pending_online_check_request('emulator-5554')
-                    has_priority = bot_state.is_online_check_priority_active('emulator-5554')
+                if bot_state.is_online_check_checker(ip):
+                    has_req = bot_state.has_pending_online_check_request(ip)
+                    has_priority = bot_state.is_online_check_priority_active(ip)
                     if has_req or has_priority:
-                        logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 emulator-5558 上線檢查")
+                        logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 requester 上線檢查")
                         time.sleep(0.2)
                         continue
 
@@ -309,6 +331,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     )
                     if result:
                         logger.info(f"[{ip}] 遊戲已進入可操作狀態")
+                        if backend_kind == "web_h5":
+                            from utils.ws_ticket_refresh import refresh_from_device
+                            refresh_from_device(d, ip)
                     else:
                         logger.warning(f"[{ip}] 遊戲啟動失敗，避讓休眠 30 分鐘...")
                         # 計算 30 分鐘後的喚醒時間
@@ -333,6 +358,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     wheel_manager=wheel_manager,
                     mission_manager=mission_manager,
                     family_manager=family_manager,
+                    ws_done=ws_done,
                 ))
             except WakeLoopInterrupted as e:
                 # A manual web-launch request arrived mid-flow (typically a
@@ -408,10 +434,10 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             if interrupted and bot_state.has_pending_web_launch_request(ip) and time.time() < wake_ts:
                 resume_sleep_until_ts = wake_ts
                 resume_sleep_reason = "手動操作結束後返回休眠"
-            if interrupted and ip == "emulator-5554" and time.time() < wake_ts:
+            if interrupted and bot_state.is_online_check_checker(ip) and time.time() < wake_ts:
                 if (
-                    bot_state.has_pending_online_check_request("emulator-5554")
-                    or bot_state.is_online_check_priority_active("emulator-5554")
+                    bot_state.has_pending_online_check_request(ip)
+                    or bot_state.is_online_check_priority_active(ip)
                 ):
                     resume_sleep_until_ts = wake_ts
                     resume_sleep_reason = "互檢完成後返回休眠"

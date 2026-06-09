@@ -1,0 +1,224 @@
+{
+  "family": "draw",
+  "module": 9,
+  "note": "cmd ids: c2s and s2c share the same id (cmd = module*256 + N). Captured live via netManager fake-cnet 2026-06-09.",
+  "cmd_ids": {
+    "draw.draw_info": 2305,
+    "draw.draw_card": 2306
+  },
+  "schema": {
+    "nested": {
+      "draw_info_c2s": {
+        "fields": {}
+      },
+      "draw_info_s2c": {
+        "fields": {
+          "pool_list": {
+            "rule": "repeated",
+            "type": "type.p_draw_info",
+            "id": 1
+          }
+        }
+      },
+      "draw_card_c2s": {
+        "fields": {
+          "pool_id": {
+            "rule": "required",
+            "type": "int32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "int32",
+            "id": 2
+          }
+        }
+      },
+      "draw_card_s2c": {
+        "fields": {
+          "pool_list": {
+            "rule": "required",
+            "type": "type.p_draw_info",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      }
+    }
+  },
+  "types": {
+    "p_spirit_tab": {
+      "fields": {
+        "tab": {
+          "type": "uint32",
+          "id": 1
+        },
+        "name": {
+          "type": "string",
+          "id": 2
+        },
+        "spirit_id": {
+          "type": "uint64",
+          "id": 3
+        }
+      }
+    },
+    "p_spirit_draw": {
+      "fields": {
+        "draw_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "free_times": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "must_info": {
+          "rule": "repeated",
+          "type": "p_key_value",
+          "id": 3
+        }
+      }
+    },
+    "p_reward": {
+      "fields": {
+        "gtid": {
+          "rule": "required",
+          "type": "int32",
+          "id": 1
+        },
+        "num": {
+          "rule": "required",
+          "type": "int64",
+          "id": 2
+        }
+      }
+    },
+    "p_worker": {
+      "fields": {
+        "team_cfg_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "worker_base": {
+          "rule": "required",
+          "type": "p_worker_base",
+          "id": 2
+        },
+        "worker_status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        },
+        "auto_feed": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 4
+        },
+        "unlock_slot_num": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 5
+        },
+        "farm_worker_info": {
+          "type": "p_worker_farm_info",
+          "id": 6
+        },
+        "pw_worker_info": {
+          "type": "p_worker_pw_food_info",
+          "id": 7
+        },
+        "mine_worker_info": {
+          "type": "p_worker_mine_info",
+          "id": 8
+        },
+        "science_worker_info": {
+          "type": "p_worker_science_info",
+          "id": 9
+        },
+        "car_park_worker_info": {
+          "type": "p_worker_car_park",
+          "id": 10
+        }
+      }
+    },
+    "p_welfare_task": {
+      "fields": {
+        "task_id": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 1
+        },
+        "count": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 2
+        },
+        "status": {
+          "rule": "required",
+          "type": "uint32",
+          "id": 3
+        }
+      }
+    },
+    "p_goods": {
+      "fields": {
+        "goods_gtid": {
+          "rule": "required",
+          "type": "int32",
+          "id": 1
+        },
+        "goods_id": {
+          "rule": "required",
+          "type": "uint64",
+          "id": 2
+        },
+        "num": {
+          "rule": "required",
+          "type": "int32",
+          "id": 3
+        },
+        "type": {
+          "rule": "required",
+          "type": "int32",
+          "id": 4
+        },
+        "subtype": {
+          "rule": "required",
+          "type": "int32",
+          "id": 5
+        },
+        "quality": {
+          "rule": "required",
+          "type": "int32",
+          "id": 6
+        },
+        "expire_time": {
+          "type": "int32",
+          "id": 7
+        }
+      }
+    },
+    "p_key_value": {
+      "fields": {
+        "k": {
+          "rule": "required",
+          "type": "int64",
+          "id": 1
+        },
+        "v": {
+          "rule": "required",
+          "type": "int64",
+          "id": 2
+        }
+      }
+    }
+  }
+}

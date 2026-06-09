@@ -101,6 +101,7 @@ class DailyContext:
     wheel_manager: Any
     mission_manager: Any
     family_manager: Any
+    ws_done: frozenset = frozenset()  # WS 階段已完成的任務名（ws_phase 對照表輸出）
 
 
 def run(ctx: DailyContext) -> None:
@@ -136,6 +137,14 @@ def _run_tasks(ctx: DailyContext) -> None:
     mission_manager = ctx.mission_manager
     family_manager = ctx.family_manager
 
+    def _ws_skip(task_name: str) -> bool:
+        """WS 階段已完成 → 記 log + 更新狀態並跳過該任務。"""
+        if task_name in ctx.ws_done:
+            logger.info(f"[{ip}] {task_name}: WS 階段已完成，跳過")
+            bot_state.update_state(ip, task=task_name, step="WS 已完成，跳過")
+            return True
+        return False
+
     _streak = [0]  # 連續不在主頁面計數
 
     def _track(stage: str) -> str:
@@ -164,7 +173,8 @@ def _run_tasks(ctx: DailyContext) -> None:
         )
 
     # Task 0 (experimental): 紅包檢查 — web_h5 + flag-gated, no-op for others
-    run_redpack_check_if_due(d, ip)
+    if not _ws_skip("紅包檢查"):
+        run_redpack_check_if_due(d, ip)
 
     # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
     run_carpark_check_if_due(d, ip)
@@ -198,12 +208,13 @@ def _run_tasks(ctx: DailyContext) -> None:
         logger.info("地獄之門: 尚未到達執行時間或已執行過")
 
     # Task 2: 農場任務
-    stage = _guarded_run(
-        task_name="農場任務",
-        mismatch_reason="農場任務前不在主頁面",
-        fn=lambda: farm_manager.farm(d, ip, Cnn_model),
-        step="準備進入",
-    )
+    if not _ws_skip("農場任務"):
+        stage = _guarded_run(
+            task_name="農場任務",
+            mismatch_reason="農場任務前不在主頁面",
+            fn=lambda: farm_manager.farm(d, ip, Cnn_model),
+            step="準備進入",
+        )
 
     # Task 3: 點擊寶箱
     def _tap_chest():
@@ -211,23 +222,27 @@ def _run_tasks(ctx: DailyContext) -> None:
         time.sleep(1)
         reward(d)
         time.sleep(3)
-    _guarded_run(
-        task_name="點擊寶箱",
-        mismatch_reason="點擊寶箱前不在主頁面",
-        fn=_tap_chest,
-        step="領取獎勵",
-    )
+    if not _ws_skip("點擊寶箱"):
+        _guarded_run(
+            task_name="點擊寶箱",
+            mismatch_reason="點擊寶箱前不在主頁面",
+            fn=_tap_chest,
+            step="領取獎勵",
+        )
 
     # Task 4: 家族任務 — stage reused by Tasks 5+6
-    stage = _guarded_run(
-        task_name="家族任務",
-        mismatch_reason="家族任務前不在主頁面",
-        fn=family_manager.go_to_family,
-        step="執行中",
-    )
+    if not _ws_skip("家族任務"):
+        stage = _guarded_run(
+            task_name="家族任務",
+            mismatch_reason="家族任務前不在主頁面",
+            fn=family_manager.go_to_family,
+            step="執行中",
+        )
+    else:
+        stage = _track(get_stage_with_check(d, ip, Cnn_model))
 
     # Task 5 & 6: 守護靈 + 技能夥伴 (reuse stage from Task 4, matching original)
-    if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
+    if not _DEVICE_SKIP_GUARDIAN.get(ip, False) and not _ws_skip("領取守護靈"):
         if stage == "主頁面":
             guardian_record = return_time(ip, name="guardian_spirit")
             should_get_guardian = True
@@ -248,24 +263,25 @@ def _run_tasks(ctx: DailyContext) -> None:
             log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
 
     # Task 7: 商店購買
-    stage = _track(get_stage_with_check(d, ip, Cnn_model))
-    if stage == "主頁面":
-        device_cfg = config_manager.get_device_config(ip)
-        if device_cfg.get("enable_shop_manager", True):
-            store_record = return_time(ip, name="Store")
-            should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
-            if should_check_store:
-                bot_state.update_state(ip, task="商店購買", step="執行中")
-                Store.buy_store(d, Cnn_model)
-                time_recording(ip, name="Store")
+    if not _ws_skip("商店購買"):
+        stage = _track(get_stage_with_check(d, ip, Cnn_model))
+        if stage == "主頁面":
+            device_cfg = config_manager.get_device_config(ip)
+            if device_cfg.get("enable_shop_manager", True):
+                store_record = return_time(ip, name="Store")
+                should_check_store = is_record_expired(store_record, 10800) or current_time.tm_hour == 23
+                if should_check_store:
+                    bot_state.update_state(ip, task="商店購買", step="執行中")
+                    Store.buy_store(d, Cnn_model)
+                    time_recording(ip, name="Store")
+                else:
+                    logger.info("商店購買: 尚未過期且非23點，跳過")
             else:
-                logger.info("商店購買: 尚未過期且非23點，跳過")
+                logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
         else:
-            logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
-    else:
-        bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
-        screenshot_path = save_error_screenshot(d, ip, stage, "商店購買前不在主頁面")
-        logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
+            bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
+            screenshot_path = save_error_screenshot(d, ip, stage, "商店購買前不在主頁面")
+            logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
 
     # Task 8: 坐騎強化
     stage = _guarded_run(
@@ -299,7 +315,7 @@ def _run_tasks(ctx: DailyContext) -> None:
     )
 
     # Task 12: 所有日常任務 (20:00–23:00 only)
-    if 20 <= current_time.tm_hour < 23:
+    if 20 <= current_time.tm_hour < 23 and not _ws_skip("所有日常任務"):
         stage = _run_at_main_page(
             d, ip, Cnn_model,
             task_name="所有日常任務",
@@ -355,8 +371,9 @@ def _run_tasks(ctx: DailyContext) -> None:
         logger.exception("[%s] 龍骸聖域 任務異常", ip)
 
     # Task 15: 萬神試煉
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
+    if not _ws_skip("萬神試煉"):
+        stage = get_stage_with_check(d, ip, Cnn_model)
+        _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
 
     # Task 16: 雲端戰鬥
     if enable_dungeon_manager:
@@ -376,17 +393,21 @@ def _run_tasks(ctx: DailyContext) -> None:
     _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
 
     # Task 18: 好友每日禮物 — stage refreshed after run for Task 19 (lamp)
-    stage = _guarded_run(
-        task_name="好友每日禮物",
-        mismatch_reason="好友每日禮物前不在主頁面",
-        fn=lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
-        step="領取中",
-    )
-    if stage == "主頁面":
+    if not _ws_skip("好友每日禮物"):
+        stage = _guarded_run(
+            task_name="好友每日禮物",
+            mismatch_reason="好友每日禮物前不在主頁面",
+            fn=lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
+            step="領取中",
+        )
+        if stage == "主頁面":
+            stage = get_stage_with_check(d, ip, Cnn_model)
+    else:
         stage = get_stage_with_check(d, ip, Cnn_model)
 
     # Task 19: 開神燈
-    _run_lamp_if_due(d, ip, stage)
+    if not _ws_skip("開神燈"):
+        _run_lamp_if_due(d, ip, stage)
 
     # Task 20: 轉盤金幣
     def _spin_wheel():
@@ -395,12 +416,13 @@ def _run_tasks(ctx: DailyContext) -> None:
             logger.info(f"[{ip}] 轉盤金幣執行成功，本次確實完成轉盤操作")
         else:
             logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
-    _guarded_run(
-        task_name="轉盤金幣",
-        mismatch_reason="轉盤金幣執行前不在主頁面",
-        fn=_spin_wheel,
-        step="執行中",
-    )
+    if not _ws_skip("轉盤金幣"):
+        _guarded_run(
+            task_name="轉盤金幣",
+            mismatch_reason="轉盤金幣執行前不在主頁面",
+            fn=_spin_wheel,
+            step="執行中",
+        )
 
     # Device cleanup
     if ip == "emulator-5558":

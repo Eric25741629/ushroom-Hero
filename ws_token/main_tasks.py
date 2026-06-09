@@ -18,7 +18,10 @@ Schemas (docs/protocol/TASK_PROTO_SCHEMA.json + TYPE_PROTO_SCHEMA.json):
   task_achievement_s2c { get_id#1, now_id#2, progress#3 }
   task_achievement_reward_c2s {}                                         claim a milestone
 
-state: 1=未達成 / 2=可領 / 3=已領.  type: Main=1, Daily=2, Achievement=9, FlyPet=10.
+state: 1=未達成 / 2=可領 / 3=已領.  type (TaskType enum): Main=1, Daily=2,
+  AdventureTitle=3, GameRoom=5, Marry=6, RebetTunble=7, KungfuRace=8,
+  Achievement=9, FlyPet=10.  Marry(6) = 婚姻/默契考驗 好感週任務 (claimed like any
+  task via task_commit{type:6, task_id}; see claim_marry_tasks).
 daily box v: 1=可領未領 / 2=已領.  weekly status==1 => 可領.
 Errors arrive on error.error_info_s2c (0x0201) {error_code#1}.
 """
@@ -49,9 +52,14 @@ STATE_PENDING = 1     # 未達成
 STATE_CLAIMABLE = 2   # 可領
 STATE_CLAIMED = 3     # 已領
 
-# p_task.type values
+# p_task.type values (TaskType enum, client index.966f5.js)
 TYPE_MAIN = 1
 TYPE_DAILY = 2
+TYPE_ADVENTURE_TITLE = 3
+TYPE_GAMEROOM = 5
+TYPE_MARRY = 6          # 婚姻/默契考驗 好感週任務 (MarryFavorWeekTaskView)
+TYPE_REBET_TUNBLE = 7
+TYPE_KUNGFU_RACE = 8
 TYPE_ACHIEVEMENT = 9
 TYPE_FLYPET = 10
 
@@ -216,6 +224,42 @@ def _is_error(cmd: int) -> bool:
     return cmd == CMD_ERROR
 
 
+def _claim_tasks_of_type(
+    client: WSGameClient,
+    state: TaskState,
+    type_: int,
+    *,
+    spacing: float = 0.0,
+    timeout: float | None = None,
+) -> dict:
+    """Commit every claimable task of ``type_`` (state==Claimable).
+
+    Each is sent as task_commit{type:type_, task_id}; a 0x0201 reply counts as a
+    skip/failure (the task simply isn't counted). Returns
+    {attempted, claimed, results:[(task_id, ok)]}.
+    """
+    claimable = [t for t in state.tasks
+                 if t.type == type_ and t.state == STATE_CLAIMABLE]
+    results: list[tuple[int, bool]] = []
+    claimed = 0
+    for t in claimable:
+        cmd, _body = client.call_for(
+            CMD_COMMIT, build_commit_body(type_, t.task_id),
+            expect_cmds=(CMD_COMMIT, CMD_ERROR), timeout=timeout)
+        ok = not _is_error(cmd)
+        results.append((t.task_id, ok))
+        if ok:
+            claimed += 1
+        else:
+            logger.info("ws_token tasks: type=%d task %s commit rejected (0x0201)",
+                        type_, t.task_id)
+        if spacing:
+            time.sleep(spacing)
+    logger.info("ws_token tasks: type=%d commit attempted=%d claimed=%d",
+                type_, len(claimable), claimed)
+    return {"attempted": len(claimable), "claimed": claimed, "results": results}
+
+
 def claim_daily_tasks(
     client: WSGameClient,
     state: TaskState,
@@ -229,25 +273,32 @@ def claim_daily_tasks(
     skip/failure (the task simply isn't counted). Returns
     {attempted, claimed, results:[(task_id, ok)]}.
     """
-    claimable = [t for t in state.tasks
-                 if t.type == TYPE_DAILY and t.state == STATE_CLAIMABLE]
-    results: list[tuple[int, bool]] = []
-    claimed = 0
-    for t in claimable:
-        cmd, _body = client.call_for(
-            CMD_COMMIT, build_commit_body(TYPE_DAILY, t.task_id),
-            expect_cmds=(CMD_COMMIT, CMD_ERROR), timeout=timeout)
-        ok = not _is_error(cmd)
-        results.append((t.task_id, ok))
-        if ok:
-            claimed += 1
-        else:
-            logger.info("ws_token tasks: daily task %s commit rejected (0x0201)", t.task_id)
-        if spacing:
-            time.sleep(spacing)
-    logger.info("ws_token tasks: daily commit attempted=%d claimed=%d",
-                len(claimable), claimed)
-    return {"attempted": len(claimable), "claimed": claimed, "results": results}
+    return _claim_tasks_of_type(client, state, TYPE_DAILY,
+                                spacing=spacing, timeout=timeout)
+
+
+def claim_marry_tasks(
+    client: WSGameClient,
+    state: TaskState,
+    *,
+    spacing: float = 0.0,
+    timeout: float | None = None,
+) -> dict:
+    """Commit every claimable 婚姻/默契考驗 weekly task (type==Marry=6).
+
+    The 默契考驗 (好感週任務, in-game MarryFavorWeekTaskView) rewards are plain
+    TaskType.Marry tasks in the global task push — claimed via
+    task_commit{type:6, task_id}, exactly like any other task. This is the real
+    married-couple weekly claim, NOT couple.favor_reward_fetch (15142, which is
+    the UNMARRIED friend-favor milestone path used by MarryIntimacyView and which
+    returns 0x0201 code 2 for married accounts).
+
+    Live-verified 2026-06-10 on 小寶 (3 claimable) + emulator-5554 (2 claimable):
+    every task_commit{type:6} returned OK and a re-read showed 0 remaining.
+    Returns {attempted, claimed, results:[(task_id, ok)]}.
+    """
+    return _claim_tasks_of_type(client, state, TYPE_MARRY,
+                                spacing=spacing, timeout=timeout)
 
 
 def claim_daily_box(

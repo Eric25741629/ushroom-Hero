@@ -35,6 +35,7 @@ from ws_token.main_tasks import (  # noqa: E402
     CMD_REQ_WEEKLY_BOX,
     CMD_WEEKLY_BOX,
     TYPE_DAILY,
+    TYPE_MARRY,
     Task,
     TaskCollector,
     TaskState,
@@ -42,6 +43,7 @@ from ws_token.main_tasks import (  # noqa: E402
     claim_achievement,
     claim_daily_box,
     claim_daily_tasks,
+    claim_marry_tasks,
     claim_weekly_box,
     collect_state,
     parse_achievement,
@@ -281,6 +283,53 @@ def test_claim_daily_tasks_none_claimable():
         summary = claim_daily_tasks(c, state)
         assert summary["attempted"] == 0 and summary["claimed"] == 0
         assert CMD_COMMIT not in fake.sent_cmds()
+    finally:
+        c.close()
+
+
+# --- claim_marry_tasks: 默契考驗 = only type==Marry(6) and state==2 -----------
+
+def test_claim_marry_tasks_only_commits_claimable_marry():
+    # 默契考驗 (好感週任務) are TaskType.Marry(6) tasks; claim via task_commit{6, id}.
+    state = TaskState(
+        tasks=[
+            Task(5, 2, 36, TYPE_MARRY),    # claimable marry -> commit (live: 小寶)
+            Task(2, 2, 100, TYPE_MARRY),   # claimable marry -> commit
+            Task(3, 1, 0, TYPE_MARRY),     # marry but not claimable (state 1)
+            Task(9, 2, 0, TYPE_DAILY),     # claimable but Daily, not Marry
+        ],
+        daily_point=0, daily_boxes=[], weekly_status=0,
+    )
+    commits = []
+
+    def commit_resp(body):
+        commits.append(codec.walk_dict(body))
+        return [s2c(CMD_COMMIT, body)]
+
+    c, _, _ = _client({CMD_COMMIT: commit_resp})
+    try:
+        summary = claim_marry_tasks(c, state)
+        assert summary["attempted"] == 2
+        assert summary["claimed"] == 2
+        # both commits carry type=TYPE_MARRY (6), not Daily
+        assert commits == [{1: TYPE_MARRY, 2: 5}, {1: TYPE_MARRY, 2: 2}]
+    finally:
+        c.close()
+
+
+def test_claim_marry_tasks_rejection_is_graceful():
+    # a rejected marry commit (0x0201) is counted as a skip, never raises.
+    state = TaskState(
+        tasks=[Task(7, 2, 3, TYPE_MARRY)], daily_point=0,
+        daily_boxes=[], weekly_status=0)
+
+    def commit_resp(body):
+        return [s2c(CMD_ERROR, codec.pb_uint(1, 2))]
+
+    c, _, _ = _client({CMD_COMMIT: commit_resp})
+    try:
+        summary = claim_marry_tasks(c, state)
+        assert summary["attempted"] == 1 and summary["claimed"] == 0
     finally:
         c.close()
 

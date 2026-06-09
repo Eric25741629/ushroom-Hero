@@ -84,6 +84,49 @@ def is_web_backend_device(ip: str) -> bool:
         return False
 
 
+def _is_ws_runner_cfg(dcfg) -> bool:
+    """True when a device config opts into the pure-WS ws_token runner.
+
+    Either ``use_ws_runner: true`` or ``backend: "ws_token"`` selects the
+    WS runner. These devices have no ADB serial and are not web_h5, so they
+    must be injected into the scan's device list explicitly.
+    """
+    dcfg = dcfg or {}
+    if bool(dcfg.get("use_ws_runner", False)):
+        return True
+    return str(dcfg.get("backend", "adb")).strip().lower() == "ws_token"
+
+
+def get_ws_runner_devices(logger_obj) -> list[str]:
+    """Config-declared devices that should run via the ws_token WS runner.
+
+    Mirrors ``get_web_backend_devices``: these devices are not produced by an
+    ADB scan (no serial) so they're added to the monitored set from config.
+    Disabled devices (enabled=false) are skipped; missing key reads as enabled.
+    """
+    try:
+        cfg = config_manager.load_config()
+        devices = cfg.get("devices", {}) if isinstance(cfg, dict) else {}
+        result = []
+        for serial, dcfg in devices.items():
+            if not _is_ws_runner_cfg(dcfg):
+                continue
+            if not bool((dcfg or {}).get("enabled", True)):
+                continue
+            result.append(serial)
+        return sorted(set(result))
+    except Exception as e:
+        logger_obj.warning(f"[System] Failed to load ws_token runner devices from config: {e}")
+        return []
+
+
+def is_ws_runner_device(ip: str) -> bool:
+    try:
+        return _is_ws_runner_cfg(config_manager.get_device_config(ip))
+    except Exception:
+        return False
+
+
 def use_phone_ocr_lamp_mode(ip: str) -> bool:
     try:
         cfg = config_manager.get_device_config(ip)
@@ -119,6 +162,14 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
                     current_devices.append(web_ip)
         else:
             current_devices = [d for d in current_devices if not d.startswith("emulator-")]
+
+        # ws_token runner devices come from config, not from the ADB scan, and
+        # need neither an ADB serial nor a browser. Inject them in BOTH master
+        # and worker mode (a worker may host a WS device); the worker-mode
+        # emulator strip above doesn't touch them since they aren't emulator-*.
+        for ws_ip in get_ws_runner_devices(logger_obj):
+            if ws_ip not in current_devices:
+                current_devices.append(ws_ip)
 
         if not allow_web_backend:
             skipped_web_devices = [d for d in current_devices if is_web_backend_device(d)]

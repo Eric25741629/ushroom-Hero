@@ -50,9 +50,11 @@ def wait_for_checker_gate_before_start(
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
+            target_pid = config_manager.get_device_config(ip).get("online_check_target_pid")
             req_id = bot_state.submit_online_check_request(
                 requester_ip=ip,
                 checker_ip=checker_ip,
+                target_pid=target_pid,
             )
             result = bot_state.wait_online_check_result(req_id, timeout_sec=60.0)
             status = str(result.get("status", "pending"))
@@ -86,32 +88,101 @@ def wait_for_checker_gate_before_start(
 
 
 def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_fn) -> None:
-    if ip != "emulator-5554":
+    """Serve pending cross-device online-check requests as a checker.
+
+    Decoupled (2026-06-09): any device in the configured `online_check_checkers`
+    list may serve requests (default: just emulator-5554, so legacy behaviour is
+    unchanged). The check is **protocol-only** (friend list, no OCR): the
+    requester's `target_pid` is read off the request, and
+    `game_initialization.check_on_line_protocol_only` judges presence via this
+    checker's web_h5 session.
+
+    The `check_on_line_fn` / `cnn_model` params are kept for signature
+    compatibility but no longer drive the check (no OCR fallback by design).
+    """
+    if not bot_state.is_online_check_checker(ip):
         return
 
     while True:
-        req = bot_state.pop_online_check_request("emulator-5554")
+        req = bot_state.pop_online_check_request(ip)
         if not req:
             return
 
         req_id = req.get("id")
         requester_ip = req.get("requester_ip")
+        target_pid = req.get("target_pid")
         try:
-            logger_obj.info(f"[emulator-5554] processing online-check request from {requester_ip} (req={req_id})")
+            logger_obj.info(
+                f"[{ip}] processing online-check request from {requester_ip} "
+                f"(req={req_id}, target_pid={target_pid})"
+            )
             bot_state.update_state(
-                "emulator-5554",
+                ip,
                 task="互檢中",
                 step=f"處理 {requester_ip} 的上線檢查",
             )
-            is_busy, reason = check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip="emulator-5554")
+            is_busy, reason = _run_checker_protocol_only(
+                ip, target_pid, requester_ip, logger_obj
+            )
+            if is_busy is None:
+                # Cannot determine on this checker (e.g. target not in friend
+                # list). Fail so the requester retries and another checker can
+                # claim it — never 放行 on an unknown result.
+                logger_obj.info(
+                    f"[{ip}] online-check 無法判定 (req={req_id}, reason={reason})，"
+                    f"交給其他 checker / 下一輪重試"
+                )
+                bot_state.fail_online_check_request(
+                    req_id, f"undetermined by {ip}: {reason}"
+                )
+                continue
             bot_state.complete_online_check_request(
                 req_id,
                 is_busy=is_busy,
-                detail=f"checked by emulator-5554 for requester={requester_ip}; reason={reason}",
+                detail=f"checked by {ip} for requester={requester_ip}; reason={reason}",
             )
         except Exception as e:
-            logger_obj.error(f"[emulator-5554] online-check request failed: req={req_id}, err={e}")
+            logger_obj.error(f"[{ip}] online-check request failed: req={req_id}, err={e}")
             bot_state.fail_online_check_request(req_id, str(e))
+
+
+def _run_checker_protocol_only(ip, target_pid, requester_ip, logger_obj):
+    """Resolve the target_pid then run the protocol-only check on this checker.
+
+    Returns (is_busy, reason); is_busy is None when the result is undetermined.
+    On error, conservatively returns (True, "check_failed:...") so the requester
+    keeps waiting rather than 放行.
+    """
+    # Backward-compat: legacy requesters submitted without a target_pid (the old
+    # check_on_line read it from the hardcoded emulator-5558 config). Fall back
+    # to the requester's own online_check_target_pid so the 5558 path is intact.
+    pid = target_pid
+    if not pid:
+        try:
+            pid = config_manager.get_device_config(requester_ip).get("online_check_target_pid")
+        except Exception:
+            pid = None
+    if not pid:
+        # No way to do a protocol check → undetermined (let caller fail it).
+        return None, "online_check_target_pid not set"
+
+    threshold_sec = 60
+    try:
+        threshold_sec = int(
+            config_manager.get_device_config(requester_ip).get(
+                "online_check_threshold_sec", 60
+            )
+        )
+    except Exception:
+        threshold_sec = 60
+
+    from game_initialization import check_on_line_protocol_only  # lazy import
+
+    try:
+        return check_on_line_protocol_only(ip, int(pid), threshold_sec)
+    except Exception as e:
+        logger_obj.warning(f"[{ip}] protocol-only online-check error: {e}; conservative → busy")
+        return True, f"check_failed:{e}"
 
 
 def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
@@ -124,7 +195,16 @@ def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
     )
     skip_online_check_once = False
 
-    if ip == "emulator-5558" and backend_kind == "web_h5":
+    # Decoupled requester gate (2026-06-09): any web_h5 device that has an
+    # online_check_target_pid (and is not itself a checker) goes through the
+    # checker gate before starting. Default config only sets target_pid on
+    # emulator-5558, so this is byte-for-byte the old 5558 behaviour; it also
+    # generalizes to any future requester without re-hardcoding a serial.
+    is_requester = (
+        bool(device_cfg.get("online_check_target_pid"))
+        and not bot_state.is_online_check_checker(ip)
+    )
+    if backend_kind == "web_h5" and is_requester:
         require_checker_gate = True
     if has_manual_web_launch_request and require_checker_gate:
         device_logger.info(f"[{ip}] manual web launch requested, skip checker gate")
@@ -132,7 +212,7 @@ def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
 
     if backend_kind == "web_h5" and require_checker_gate:
         wait_for_checker_gate_before_start(ip, device_logger, checker_ip=checker_ip)
-        if ip == "emulator-5558":
+        if is_requester:
             skip_online_check_once = True
 
     web_device = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=device_logger)
