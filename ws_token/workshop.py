@@ -61,9 +61,33 @@ ERR_COOLDOWN = 90       # 冷卻時間未到
 ERR_NOT_ENOUGH = 159    # 次數不足
 ERR_EVENT_OVER = 173    # 活動已結束
 
-# 小隊加工 recipes (food ids resolved from configGoods on 小寶, 2026-06-09). The
-# 加工坊 makes ONE recipe at a time and runs it until materials hit zero; switching
-# recipe requires a 取消 (cancel_work) FIRST. The user runs these two:
+# configWorkshop mapping (CDP-exported 2026-06-09, authoritative):
+#   configWorkshop.id (=workshop_id on wire)  team_cfg_id  name
+#   1                                          6001         手動加工  (manual; rejects choose_food/cancel)
+#   2                                          6002         小隊加工  (team processing)
+#   3                                          6003         小隊加工  (team processing)
+#
+# worker_pw_info (18434) food_info#2 p_worker.team_cfg_id#1 gives the team_cfg_id
+# (e.g. 6001 / 6002); choose_food and cancel_work use configWorkshop.id on the wire.
+# Use team_cfg_id_to_workshop_id() to convert, or Workshop.workshop_id property.
+TEAM_TO_WORKSHOP_ID: dict[int, int] = {6001: 1, 6002: 2, 6003: 3}
+
+
+def team_cfg_id_to_workshop_id(team_cfg_id: int) -> int:
+    """Convert p_worker.team_cfg_id (6001/6002/6003) to configWorkshop.id (1/2/3).
+
+    Raises KeyError for unknown team_cfg_id values.  Use the result as the
+    workshop_id wire field in choose_food, cancel_work, etc.
+    """
+    return TEAM_TO_WORKSHOP_ID[team_cfg_id]
+
+
+# 小隊加工 recipes (food ids resolved from configFood on live client, 2026-06-09).
+# configFood (NOT configGoods): 8001 脆脆餅乾 approach=[[6017,2]],
+#   8003 活力精華 approach=[], 8005 精英拼盤 approach=[[6019,2],[6020,2],[6021,2]].
+# choose_food requires approach materials in inventory; 手動加工 (workshop_id=1)
+# rejects team choose_food entirely (live-confirmed on 5554: code=2 param invalid).
+# The user runs these two recipes on 小隊加工 (workshop_id 2/3):
 FOOD_CRISPY_COOKIE = 8001   # 脆脆餅乾
 FOOD_ELITE_PLATTER = 8005   # 精英拼盤 (菁英拼盤)
 RECIPE_FOOD_IDS = (FOOD_CRISPY_COOKIE, FOOD_ELITE_PLATTER)
@@ -90,6 +114,15 @@ class Workshop:
     def is_running(self) -> bool:
         """True iff the workshop is currently processing (worker_status > 0)."""
         return self.worker_status > 0
+
+    @property
+    def workshop_id(self) -> int:
+        """configWorkshop.id (1/2/3) derived from team_cfg_id via TEAM_TO_WORKSHOP_ID.
+
+        This is the wire field for choose_food, cancel_work, etc.
+        Raises KeyError if team_cfg_id is not in TEAM_TO_WORKSHOP_ID.
+        """
+        return team_cfg_id_to_workshop_id(self.team_cfg_id)
 
 
 @dataclass(frozen=True)
@@ -270,34 +303,74 @@ def collect(
 def switch_recipe(
     client: WSGameClient,
     *,
-    workshop_id: int,
+    team_cfg_id: int,
     food_id: int,
     timeout: Optional[float] = None,
 ) -> dict:
     """切換小隊加工配方: 取消 (cancel) the workshop FIRST, then start the new food.
 
-    In-game rule (from the player): you MUST press 取消 before changing the recipe
-    of a running 小隊加工; only then can you 確定 the new one. The quantity is read
-    from the dining hall (make as many as the available count allows — the workshop
-    then runs until materials hit zero). ``food_id`` is one of RECIPE_FOOD_IDS
-    (8001 脆脆餅乾 / 8005 精英拼盤). This is a once-a-day switch.
+    ``team_cfg_id`` is p_worker.team_cfg_id#1 as returned by worker_pw_info (18434)
+    — e.g. 6002 for 小隊加工.  It is translated to configWorkshop.id internally via
+    TEAM_TO_WORKSHOP_ID before sending on the wire (wire field = 2, not 6002).
 
-    Returns {cancelled, chosen, food_id, count}. A cancel/choose rejection (0x0201)
-    is surfaced in the sub-dicts (ok=False) rather than crashing.
+    In-game rule: you MUST press 取消 before changing the recipe of a running
+    小隊加工; only then can you 確定 the new one.  The quantity is read from the
+    dining hall (make as many as available — the workshop runs until materials hit
+    zero).  ``food_id`` must be one of RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤).
 
-    # live-confirm: workshop_id (= p_worker.team_cfg_id? a slot index?) and whether
-    #   food_v is the make-count must be confirmed on a supervised live run before
-    #   wiring this into an unattended runner.
+    Note: 手動加工 (team_cfg_id=6001, workshop_id=1) rejects team choose_food with
+    code=2 (param invalid) — do NOT call switch_recipe for it.
+
+    Returns {cancelled, chosen, food_id, count, workshop_id}.  Rejections (0x0201)
+    are surfaced in sub-dicts (ok=False) rather than crashing.
     """
-    cancelled = cancel_work(client, workshop_id, timeout=timeout)
+    wire_id = team_cfg_id_to_workshop_id(team_cfg_id)
+    cancelled = cancel_work(client, wire_id, timeout=timeout)
     foods = dict(read_dining_hall(client, timeout=timeout))
     count = foods.get(food_id, 0)
     chosen = choose_food(client, food_k=food_id, food_v=count,
-                         workshop_id=workshop_id, timeout=timeout)
-    logger.info("ws_token workshop: switch_recipe workshop_id=%s food_id=%s count=%s "
-                "cancelled_ok=%s chosen_ok=%s", workshop_id, food_id, count,
-                cancelled.get("ok"), chosen.get("ok"))
-    return {"cancelled": cancelled, "chosen": chosen, "food_id": food_id, "count": count}
+                         workshop_id=wire_id, timeout=timeout)
+    logger.info(
+        "ws_token workshop: switch_recipe team_cfg_id=%s workshop_id=%s "
+        "food_id=%s count=%s cancelled_ok=%s chosen_ok=%s",
+        team_cfg_id, wire_id, food_id, count,
+        cancelled.get("ok"), chosen.get("ok"),
+    )
+    return {
+        "cancelled": cancelled,
+        "chosen": chosen,
+        "food_id": food_id,
+        "count": count,
+        "workshop_id": wire_id,
+    }
+
+
+def rotate_team_recipes(
+    client: WSGameClient, *, parity: int, timeout: Optional[float] = None,
+) -> dict:
+    """12h 配方輪換（使用者 2026-06-10 指定：兩類別 12hr 切一次）。
+
+    把 RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤) 輪流指派給每個小隊加工
+    （team_cfg_id 6002/6003；手動加工 6001 一律不動）：parity 偶數 = 依序
+    [8001, 8005, ...]，奇數 = 反序。每個 workshop 走已驗的 switch_recipe
+    （cancel → dining_hall → choose，count = 餐廳現有全量）。
+
+    CADENCE 不在這裡：呼叫端（runner）用 ws_token.state 記 last_rotate_ts/parity，
+    12h 未到就不呼叫本函式。Returns {parity, switched: [...]}。
+    """
+    info = read_info(client, timeout=timeout)
+    teams = [w for w in info.workshops
+             if w.team_cfg_id in TEAM_TO_WORKSHOP_ID and w.team_cfg_id != 6001]
+    order = RECIPE_FOOD_IDS if parity % 2 == 0 else tuple(reversed(RECIPE_FOOD_IDS))
+    switched: list[dict] = []
+    for i, w in enumerate(teams):
+        food_id = order[i % len(order)]
+        result = switch_recipe(client, team_cfg_id=w.team_cfg_id,
+                               food_id=food_id, timeout=timeout)
+        switched.append({"team_cfg_id": w.team_cfg_id, **result})
+    logger.info("ws_token workshop: rotate_team_recipes parity=%d switched=%d",
+                parity % 2, len(switched))
+    return {"parity": parity % 2, "switched": switched}
 
 
 # --- helpers ----------------------------------------------------------------
