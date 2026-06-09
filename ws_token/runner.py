@@ -165,12 +165,15 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
     (empty seed_used_seq = 用免費種子 = 不買種). Returns ``{harvest, plant, work}``.
     """
     summary: dict = {"harvest": None, "plant": None, "work": None}
-    summary["harvest"] = farm.harvest_ready(client, role_id)
+    # The live server answers home_farm_info only ONCE per session, so read the
+    # farm a single time and reuse the snapshot for both harvest and plant.
+    info = farm.read_farm(client, role_id)
+    summary["harvest"] = farm.harvest_ready(client, role_id, info=info)
     if farm_config:
         seed_id = farm_config.get("seed_id")
         team_cfg_id = farm_config.get("team_cfg_id")
         if seed_id:
-            summary["plant"] = farm.plant_empty(client, role_id, int(seed_id))
+            summary["plant"] = farm.plant_empty(client, role_id, int(seed_id), info=info)
         if team_cfg_id:
             summary["work"] = farm.start_work(client, int(team_cfg_id))
     return summary

@@ -35,6 +35,7 @@ if str(ROOT) not in sys.path:
 from ws_token import codec  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.farm import (  # noqa: E402
+    CMD_ERROR,
     CMD_HARVEST,
     CMD_INFO,
     CMD_PLANT,
@@ -268,6 +269,26 @@ def test_plant_empty_counts_code_nonzero_as_failure():
         c.close()
 
 
+def test_plant_empty_handles_0x0201_rejection_without_crashing():
+    # Live (小寶 2026-06-09): a rejected plant replies on 0x0201 (code 173, e.g.
+    # 種子不足), NOT on CMD_PLANT. The old client.call(CMD_PLANT) timed out and
+    # crashed. plant_empty must record ok=False with the error code instead.
+    lands = [_land(1)]
+    info_body = _info_body(1, "x", 1, 0, lands=lands)
+    c, _ = _client({
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, info_body)],
+        CMD_PLANT: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 173))],
+    })
+    try:
+        summary = plant_empty(c, role_id=1, seed_id=5001)
+        assert summary["attempted"] == 1
+        assert summary["planted"] == 0
+        assert summary["results"][0]["ok"] is False
+        assert summary["results"][0]["code"] == 173
+    finally:
+        c.close()
+
+
 def test_harvest_ready_only_targets_mature_lands():
     lands = [_land(1, _crop(1, 1, 5001, 6001, STATE_GROWING, end=9e9)),  # not ready
              _land(2, _crop(2, 1, 5001, 6001, STATE_MATURE, end=1)),     # ready
@@ -309,6 +330,25 @@ def test_harvest_ready_code_nonzero_is_failure():
         c.close()
 
 
+def test_harvest_ready_handles_0x0201_rejection_without_crashing():
+    # A rejected harvest replies on 0x0201 (not CMD_HARVEST) -> ok=False, no crash.
+    lands = [_land(1, _crop(1, 1, 5001, 6001, STATE_MATURE, end=1))]
+    info_body = _info_body(1, "x", 1, 0, lands=lands)
+    c, _ = _client({
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, info_body)],
+        CMD_HARVEST: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 173))],
+    })
+    try:
+        summary = harvest_ready(c, role_id=1)
+        assert summary["attempted"] == 1
+        assert summary["harvested"] == 0
+        assert summary["rewards"] == {}
+        assert summary["results"][0]["ok"] is False
+        assert summary["results"][0]["code"] == 173
+    finally:
+        c.close()
+
+
 def test_start_work_sends_worker_setting_and_reports_status():
     # s2c worker_info#1 = p_worker{team_cfg_id#1, worker_status#3>0 = running}
     worker = codec.pb_uint(1, 101) + codec.pb_uint(3, 1)
@@ -333,6 +373,19 @@ def test_start_work_status_zero_not_running():
         result = start_work(c, 101)
         assert result["running"] is False
         assert result["worker_status"] == 0
+    finally:
+        c.close()
+
+
+def test_start_work_handles_0x0201_rejection_without_crashing():
+    # A rejected worker_setting replies on 0x0201 (not CMD_WORKER_SETTING) ->
+    # running=False with the error code, no crash/timeout.
+    c, _ = _client({CMD_WORKER_SETTING: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 173))]})
+    try:
+        result = start_work(c, 101)
+        assert result["running"] is False
+        assert result["worker_status"] == 0
+        assert result["error_code"] == 173
     finally:
         c.close()
 

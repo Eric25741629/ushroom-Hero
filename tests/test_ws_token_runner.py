@@ -117,7 +117,11 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("turntable", "spin_all_free"))
                                         or {"spun": 0, "results": []}))
 
-    # farm (harvest free + always; plant/work gated on farm_config)
+    # farm (harvest free + always; plant/work gated on farm_config).
+    # read_farm is read ONCE in _run_farm and the snapshot reused (server answers
+    # home_farm_info once per session), so stub it too.
+    monkeypatch.setattr(runner.farm, "read_farm",
+                        lambda c, rid, **k: (calls.append(("farm", "read_farm")) or object()))
     monkeypatch.setattr(runner.farm, "harvest_ready",
                         lambda c, rid, **k: (calls.append(("farm", "harvest_ready"))
                                              or {"attempted": 0, "harvested": 0,

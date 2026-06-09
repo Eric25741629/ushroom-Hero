@@ -46,7 +46,7 @@ from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
-# --- cmd ids (c2s and s2c share the same id) --------------------------------
+# --- cmd ids (c2s and s2c share the same id, but FAILURES reply on 0x0201) ---
 CMD_INFO = 3077            # home_farm_info       (home module 12)
 CMD_PLANT = 3078          # home_farm_plant
 CMD_FERTILIZE = 3079      # home_farm_fertilize
@@ -54,6 +54,12 @@ CMD_PICK = 3080           # home_farm_pick (偷菜)
 CMD_HARVEST = 3081        # home_farm_harvest
 CMD_WORKER_SETTING = 18689  # worker_common_farm_worker_setting (worker module 73)
 CMD_SHOP_BUY = 6914       # shop_buy (豐收卡; shop module 27)
+CMD_ERROR = 0x0201        # generic server error/reject channel
+
+# Live (小寶 2026-06-09): a rejected plant/harvest replies on the 0x0201 error
+# channel (observed code 173), NOT on the action's own cmd. The old
+# ``client.call(CMD_PLANT)`` waited only for 3078 and crashed with WSTimeoutError
+# on any rejection. Actions must wait for EITHER the success cmd OR 0x0201.
 
 # crop.state enum (p_farm_crop.state#5)
 STATE_NOT_EXIT = 0        # 空地
@@ -240,26 +246,48 @@ def read_farm(
     return parse_farm_info(body)
 
 
+def _farm_action(
+    client: WSGameClient, cmd: int, body: bytes, *, timeout: Optional[float] = None
+) -> tuple[bool, int, bytes]:
+    """Send a farm action (plant/harvest) that can be rejected.
+
+    SUCCESS replies on the action's own ``cmd`` (code#1==0); a REJECTION replies on
+    the 0x0201 error channel (code#1 = error code, live-observed 173). Waits for
+    EITHER so a rejected action records ``ok=False`` instead of timing out / raising.
+    Returns ``(ok, code, reply_body)``.
+    """
+    reply_cmd, reply = client.call_for(
+        cmd, body, expect_cmds=(cmd, CMD_ERROR), timeout=timeout)
+    code = _as_int(codec.walk_dict(reply).get(1))
+    ok = reply_cmd == cmd and code == 0
+    return ok, code, reply
+
+
 def plant_empty(
     client: WSGameClient,
     role_id: int,
     seed_id: int,
     *,
+    info: Optional[FarmInfo] = None,
     spacing: float = 0.2,
     timeout: Optional[float] = None,
 ) -> dict:
     """Plant ``seed_id`` on every empty land (per-land plant; no batch cmd).
 
-    Returns {attempted, planted, results}. A plant_s2c.code!=0 counts as failure.
+    Returns {attempted, planted, results}. A plant rejection (0x0201) or
+    plant_s2c.code!=0 counts as failure. Pass a pre-read ``info`` to skip the
+    read: the live server answers ``home_farm_info`` only ONCE per session, so a
+    caller that already read the farm (e.g. right after harvest) MUST reuse it or
+    the second read times out.
     """
-    info = read_farm(client, role_id, timeout=timeout)
+    if info is None:
+        info = read_farm(client, role_id, timeout=timeout)
     targets = info.empty_lands
     planted = 0
     results: list[dict] = []
     for land in targets:
-        body = client.call(CMD_PLANT, build_plant_body(seed_id, land.id), timeout=timeout)
-        code = _as_int(codec.walk_dict(body).get(1))
-        ok = code == 0
+        ok, code, _body = _farm_action(
+            client, CMD_PLANT, build_plant_body(seed_id, land.id), timeout=timeout)
         if ok:
             planted += 1
         results.append({"land_id": land.id, "code": code, "ok": ok})
@@ -273,6 +301,7 @@ def harvest_ready(
     client: WSGameClient,
     role_id: int,
     *,
+    info: Optional[FarmInfo] = None,
     now: Optional[int] = None,
     spacing: float = 0.2,
     timeout: Optional[float] = None,
@@ -280,17 +309,19 @@ def harvest_ready(
     """Harvest every ready land (MATURE, or end_time<=now if ``now`` is given).
 
     Returns {attempted, harvested, rewards, results}. reward_list#5 entries are
-    summed across harvests into ``rewards`` {gtid: num}. code!=0 = failure.
+    summed across harvests into ``rewards`` {gtid: num}. A 0x0201 rejection or
+    code!=0 = failure. Pass a pre-read ``info`` to skip the read (the live server
+    answers ``home_farm_info`` only ONCE per session — see plant_empty).
     """
-    info = read_farm(client, role_id, timeout=timeout)
+    if info is None:
+        info = read_farm(client, role_id, timeout=timeout)
     targets = info.ready_lands_at(now=now) if now is not None else info.ready_lands
     harvested = 0
     rewards: dict[int, int] = {}
     results: list[dict] = []
     for land in targets:
-        body = client.call(CMD_HARVEST, build_harvest_body(land.id), timeout=timeout)
-        code = _as_int(codec.walk_dict(body).get(1))
-        ok = code == 0
+        ok, code, body = _farm_action(
+            client, CMD_HARVEST, build_harvest_body(land.id), timeout=timeout)
         if ok:
             harvested += 1
             for gtid, num in parse_rewards(body).items():
@@ -324,7 +355,14 @@ def start_work(
         fertilizer_time_rest=fertilizer_time_rest,
         seed_used_seq=seed_used_seq,
     )
-    reply = client.call(CMD_WORKER_SETTING, body, timeout=timeout)
+    reply_cmd, reply = client.call_for(
+        CMD_WORKER_SETTING, body,
+        expect_cmds=(CMD_WORKER_SETTING, CMD_ERROR), timeout=timeout)
+    if reply_cmd == CMD_ERROR:
+        code = _as_int(codec.walk_dict(reply).get(1))
+        logger.warning("ws_token farm: start_work rejected 0x0201 code=%s "
+                       "(team_cfg_id=%s)", code, team_cfg_id)
+        return {"running": False, "worker_status": 0, "error_code": code, "raw": reply}
     status = 0
     worker = codec.walk_dict(reply).get(1)  # worker_info#1 = p_worker
     if isinstance(worker, (bytes, bytearray)):

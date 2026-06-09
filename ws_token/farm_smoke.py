@@ -55,14 +55,14 @@ def main() -> int:
         _print_state(info)
 
         if args.plant is not None:
-            summary = farm.plant_empty(client, role_id, args.plant)
+            summary = farm.plant_empty(client, role_id, args.plant, info=info)
             print(f"[farm] plant: attempted={summary['attempted']} "
                   f"planted={summary['planted']}", flush=True)
             for r in summary["results"]:
                 print(f"  land_id={r['land_id']} code={r['code']} ok={r['ok']}", flush=True)
 
         if args.harvest:
-            summary = farm.harvest_ready(client, role_id)
+            summary = farm.harvest_ready(client, role_id, info=info)
             print(f"[farm] harvest: attempted={summary['attempted']} "
                   f"harvested={summary['harvested']} rewards={summary['rewards']}", flush=True)
             for r in summary["results"]:
