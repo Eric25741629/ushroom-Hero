@@ -17,9 +17,17 @@ import pytest
 
 
 def _install_heavy_stubs() -> None:
-    """Stub paddleocr/torch/cv2 so importing ocr_server does not pull real OCR."""
-    if "paddleocr" not in sys.modules:
+    """Stub paddleocr/torch/cv2 so importing ocr_server does not pull real OCR.
+
+    其他測試檔（如 test_manager_factory.py）會在 module 層塞入「空殼」
+    paddleocr stub 且不還原；合跑時這裡可能拿到缺 PaddleOCR 屬性的殘留
+    stub，故不只檢查模組存在，還要補齊 ocr_server 用到的屬性。
+    """
+    _paddle = sys.modules.get("paddleocr")
+    if _paddle is None:
         _paddle = types.ModuleType("paddleocr")
+        sys.modules["paddleocr"] = _paddle
+    if not hasattr(_paddle, "PaddleOCR"):
 
         class _FakePaddleOCR:  # noqa: D401 - minimal stand-in
             def __init__(self, *a, **kw):
@@ -29,7 +37,6 @@ def _install_heavy_stubs() -> None:
                 return []
 
         _paddle.PaddleOCR = _FakePaddleOCR
-        sys.modules["paddleocr"] = _paddle
 
     if "torch" not in sys.modules:
         _torch = types.ModuleType("torch")
