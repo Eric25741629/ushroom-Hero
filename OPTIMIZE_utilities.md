@@ -219,7 +219,7 @@ control_panel/
 
 ---
 
-### 2.11 `dashboard_test.py` — 文字版監控
+### 2.11 `tools/scratch/dashboard_test.py` — 文字版監控
 
 **現狀**：簡單的 polling + console 清屏。
 

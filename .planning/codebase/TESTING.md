@@ -15,7 +15,7 @@
 ## 結構
 - 主要測試目錄：`tests/`。
 - 在該目錄觀察到的檔案：`tests/test_smoke_config_api.py` 與 `tests/mock_item_placement_rl_test.py`。
-- 其他根目錄層級的類測試檔案：`test_item_placement_guards.py`、`test_json_manager.py`、`test_server_brain.py`、`test_stage_debug.py`、`test_mount_rush.py`、`test_minigame_ocr.py`、`dashboard_test.py`。
+- 其他根目錄層級的類測試檔案：`test_item_placement_guards.py`、`test_json_manager.py`（其餘 device/debug 腳本已移至 `tools/debug/`，dashboard_test 移至 `tools/scratch/`）。
 - 在 `miner/scripts/` 下也存在領域特定的測試腳本（例如 `miner/scripts/test_void_logic.py`、`miner/scripts/test_streaming.py`）。
 - 在 `OCR/PaddleOCR/tests/` 下存在第三方/供應商測試樹；應與專案自有覆蓋率分開看待。
 

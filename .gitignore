@@ -142,3 +142,12 @@ tools/watch_qring.py
 tools/watch_ws.py
 tools/watch_ws_raw.py
 ws_state/
+
+# --- capture / scratch directories (cosmetic; contents already ignored by ext rules; labeler reads ocr_fails_new — do NOT purge) ---
+ocr_fails_new/
+ocr_errors/
+ocr_incomplete/
+found_matches/
+trash/
+20??-??-?? ??????/
+miner/rl/rl_logs/

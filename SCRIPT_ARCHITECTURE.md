@@ -16,7 +16,6 @@
 
 1. 入口與流程層
 - `new_main_v2.py`
-- `main.py`
 
 2. 裝置與畫面層
 - `adb_operations.py`
