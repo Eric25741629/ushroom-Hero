@@ -15,6 +15,7 @@ from State import state
 from miner.models.classifier import ClassifierCNN
 from miner.rl.rl_recorder import RLRecorder
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
+from utils.log_paths import LogPaths
 
 
 def _init_runtime_managers(
@@ -38,7 +39,7 @@ def _init_runtime_managers(
         classes=oracle_classes,
         dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR,
     )
-    rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))
+    rl_logs_dir = os.path.join("miner", "rl_logs", LogPaths.safe_device_id(ip))
     os.makedirs(rl_logs_dir, exist_ok=True)
     rl_recorder = RLRecorder(log_dir=rl_logs_dir, auto_train=False, flush_interval=1)
     return wheel_manager, mission_manager, family_manager, state_manager, clf, rl_recorder

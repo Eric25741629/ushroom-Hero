@@ -9,6 +9,7 @@ import time
 import numpy as np
 from typing import Optional, Tuple
 from .config import OpenGoldConfig
+from sea_v2.navigator import world_to_pixel
 
 
 class UIController:
@@ -485,8 +486,10 @@ class UIController:
             wp = None
         if not wp:
             return False
-        px = round(wp["x"] * 540.0 / wp["dw"])
-        py = round((wp["dh"] - wp["y"]) * 960.0 / wp["dh"])
+        fpx, fpy = world_to_pixel(
+            wp["x"], wp["y"], frame=(540, 960), design=(wp["dw"], wp["dh"])
+        )
+        px, py = round(fpx), round(fpy)
         self._log_click(px, py, 0, f"cocos:{path.split('/')[-1]}")
         self.device.click(px, py)
         time.sleep(1.0)

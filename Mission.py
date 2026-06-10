@@ -9,6 +9,8 @@ from img_tools import click_str_by_server
 import json
 import os
 from typing import Optional, Union
+from json_manager import JsonDataManager
+from utils.main_page_guard import is_main_page_with_popup
 
 class device:
     def __init__(self, device: Optional[u2.Device], test_image: Optional[np.ndarray] = None):
@@ -50,19 +52,7 @@ class device:
         while attempts < max_attempts:
             img = self._get_screenshot()
 
-            conditions = [
-                abs(np.sum(img[234, 189]) - np.sum([179, 91, 70])) < 10,
-                abs(np.sum(img[218, 236]) - np.sum([254, 241, 225])) < 10,
-                abs(np.sum(img[228, 318]) - np.sum([254, 241, 225])) < 10,
-                abs(np.sum(img[236, 363]) - np.sum([179, 91, 70])) < 10,
-                abs(np.sum(img[249, 132]) - np.sum([162, 75, 57])) < 10,
-                abs(np.sum(img[264, 139]) - np.sum([162, 75, 57])) < 10,
-                abs(np.sum(img[329, 154]) - np.sum([194, 219, 227])) < 10,
-                abs(np.sum(img[361, 370]) - np.sum([193, 218, 226])) < 10,
-                abs(np.sum(img[337, 451]) - np.sum([44, 155, 111])) < 10,
-            ]
-
-            if all(conditions):
+            if is_main_page_with_popup(img):
                 if self.test_image is not None:
                     break
                 self.device.click(509, 56)
@@ -88,26 +78,19 @@ class mission(device):
             self.set_test_image(test_image)
         self.device_ip = ip
         self.data_file = self.device_ip + '.json'
-
+        # 檔案 IO 委派給 JsonDataManager 取得原子寫 + 損毀備份；
+        # 但保留 flat on-disk schema（mission_timestamp / mission_num 不可巢狀化）。
+        self._json_mgr = JsonDataManager(self.device_ip)
 
     def load_data(self):
         """
         加载数据文件，如果文件不存在则返回默认数据。
-        """
-        if not os.path.exists(self.data_file):
-            # 新增文件
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                json.dump({'mission_timestamp': 0,
-                          'mission_num': 0}, f)
-            return {'mission_timestamp': 0, 'mission_num': 0}  # 返回默认值
 
-        try:
-            with open(self.data_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"Error decoding JSON data: {e}")
-            # 文件格式错误，返回默认值
-            return {'mission_timestamp': 0, 'mission_num': 0}
+        flat schema 保持不變：{'mission_timestamp': 0, 'mission_num': 0}。
+        """
+        return self._json_mgr.load_data(
+            default_data={'mission_timestamp': 0, 'mission_num': 0}
+        )
 
     def record(self, buy_num=0):
         """
@@ -119,13 +102,12 @@ class mission(device):
 
             # 讀取現有的資料
             data = self.load_data()
-            # 更新數據
+            # 更新數據（保留 flat keys，不改 on-disk schema）
             data['mission_timestamp'] = timestamp
             data['mission_num'] = buy_num
 
-            # 寫入 JSON 文件
-            with open(self.data_file, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=4)
+            # 原子寫回（temp + os.replace）
+            self._json_mgr.save_data(data)
 
             print(
                 f"mission_timestamp and buy number recorded for {self.device_ip}.")

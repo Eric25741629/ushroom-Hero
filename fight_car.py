@@ -20,7 +20,7 @@ import img_tools
 logger = logging.getLogger(__name__)
 
 
-from json_manager import create_store_manager
+from json_manager import create_store_manager, _atomic_write_json
 # ==========================================
 # 1. 影像增強
 # ==========================================
@@ -526,8 +526,8 @@ def flush_logs(device):
         # 記錄最後更新時間（便於檢查）
         existing_data["_LAST_UPDATE_AT"] = current_time_str
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(existing_data, f, indent=2, ensure_ascii=False)
+        # 原子寫回（temp + os.replace），固定路徑不適用 JsonDataManager。
+        _atomic_write_json(output_path, existing_data, indent=2, ensure_ascii=False)
 
         print(f"\n=== 資料已更新至 {output_path} ({current_time_str}) ===")
     except Exception as e:

@@ -15,6 +15,8 @@ from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import pytz
 
+from utils.json_io import read_json_bom_safe
+
 _TZ_TAIPEI = pytz.timezone("Asia/Taipei")
 
 
@@ -163,8 +165,7 @@ class JsonDataManager:
                 json.dump(default_data, f, indent=4, ensure_ascii=False)
             return default_data
         try:
-            with open(filename, "r", encoding="utf-8") as f:
-                return json.load(f)
+            return read_json_bom_safe(filename)
         except (json.JSONDecodeError, ValueError) as e:
             print(f"JSON文件損壞，但保留原文件避免數據丟失: {e}")
             backup = f"{filename}.backup_{int(time.time())}"

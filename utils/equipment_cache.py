@@ -30,6 +30,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from utils.json_io import read_json_bom_safe
 from utils.web_game_api import (
     _walk_pb,
     decode_equip_template,
@@ -176,7 +177,7 @@ class EquipmentCache:
         if not self.path.exists():
             return
         try:
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = read_json_bom_safe(self.path)
         except (OSError, json.JSONDecodeError):
             return
         if data.get("schema_version") != self.SCHEMA_VERSION:
