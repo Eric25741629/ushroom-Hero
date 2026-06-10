@@ -13,6 +13,11 @@ import queue
 import itertools
 from pathlib import Path
 
+# 詞表單一真相：opengold_v2.OpenGoldConfig（見 docs/REFACTORING_OPPORTUNITIES.md cx-6）。
+# 注意：import 子模組仍會先執行 opengold_v2/__init__（其拉入 numpy/cv2）；
+# 本檔自身已依賴 paddleocr/cv2，故無額外負擔。config.py 本身為純 stdlib。
+from opengold_v2.config import OpenGoldConfig
+
 app = Flask(__name__)
 ocr_lock = threading.Lock()  # 初始化鎖
 
@@ -266,24 +271,16 @@ class OCRWorkerPool:
 ocr_pool = OCRWorkerPool(OCR_WORKERS)
 
 
-# 詞條映射表
-SKILL_MAP = {
-    '反擊': '反', '反': '反',
-    '暴擊': '爆', '暴': '爆', 
-    '連擊': '連', '連': '連',
-    '擊暈': '暈', '暈': '暈', '量': '暈',
-    '閃避': '閃', '閃': '閃',
-    '回復': '回', '回': '回',
-    '技能暴擊': '技', '技': '技'
-}
+# 詞表共用實例：所有技能/組合詞表的單一真相來自 OpenGoldConfig。
+_OPENGOLD_CONFIG = OpenGoldConfig()
 
-# 不要的技能組合
-UNWANTED_COMBOS = {
-    ('技', '反'), ('技', '連'), ('技', '爆'), ('技', '閃'),
-    ('連', '暈'), ('連', '反'), ('連', '回'),
-    ('暈', '閃'), ('暈', '爆'), ('暈', '反'),
-    ('反', '閃'), ('爆', '回'), ('爆', '暈')
-}
+# 詞條映射表（alias -> code）。由 OpenGoldConfig.affix_dict 衍生，
+# 再補上本 server 端特有的 OCR-misread 別名（'量' 誤辨為 '暈'），確保與 V2 同步。
+SKILL_MAP = {alias: code for alias, code in _OPENGOLD_CONFIG.get_alias_to_code()}
+SKILL_MAP.setdefault('量', '暈')  # OCR 把「暈」吃成「量」的常見誤辨
+
+# 不要的技能組合（取自 OpenGoldConfig.unwanted_combos，frozenset -> tuple 供既有比對沿用）
+UNWANTED_COMBOS = {tuple(pair) for pair in _OPENGOLD_CONFIG.unwanted_combos}
 
 def normalize_text(text):
     """統一處理 OCR 誤辨"""
@@ -375,14 +372,8 @@ def normalize_combo(combo):
     elif set(combo) == {'技', '回'}: combo = '技回'
     elif set(combo) == {'反', '爆'}: combo = '反爆'
     
-    # 正規化替換
-    replacements = {
-        '爆閃': '連閃', '閃閃': '連閃', '閃爆': '連閃', '閃連': '連閃',
-        '爆連': '連爆', '回技': '技回', '回閃': '閃回', '爆反': '反爆',
-        '回暈': '暈回', '回反': '反回', '暈技': '技暈'
-    }
-    
-    return replacements.get(combo, combo)
+    # 正規化替換（取自 OpenGoldConfig.pair_rewrite，單一真相）
+    return _OPENGOLD_CONFIG.pair_rewrite.get(combo, combo)
 
 def is_unwanted_combo(combo):
     """判斷是否為不要的組合"""
