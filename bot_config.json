@@ -262,7 +262,13 @@
                 "carpark_target": null,
                 "couple_gifts": true,
                 "forge_ring": false,
-                "workshop_rotate": true
+                "workshop_rotate": true,
+                "mining": {
+                    "enabled": true,
+                    "allow_bomb": false,
+                    "allow_drill": false,
+                    "max_steps": 200
+                }
             }
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
@@ -305,7 +311,25 @@
             },
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30
+            "online_check_interval_sec": 30,
+            "enabled": true,
+            "online_check_interval": 5,
+            "ws_token": {
+                "carpark_target": null,
+                "couple_gifts": true,
+                "dungeon_sweeps": [],
+                "enabled": true,
+                "farm": null,
+                "forge_ring": false,
+                "open_lamp": false,
+                "spend": false,
+                "workshop_rotate": true
+            },
+            "use_ws_runner": false,
+            "ws_token_spend": false,
+            "ws_token_sweep_list": [],
+            "ws_token_open_lamp": false,
+            "web_reload_after_goto": false
         },
         "web-001": {
             "name": "寶兒",

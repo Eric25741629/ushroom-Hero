@@ -1344,6 +1344,8 @@
 
           <label class="checkbox-item"><input type="checkbox" id="chkMining">啟用挖礦（Mining）</label>
 
+          <label class="checkbox-item"><input type="checkbox" id="chkWsMining">WS 挖礦（純 WS，挖到鎬子用完；需方案含 +ws）</label>
+
           <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用地城（螺旋/秘境）</label>
 
           <div style="border-top:1px solid #444; margin:4px 0;"></div>
@@ -3108,6 +3110,10 @@
         const plan = (config.backend || 'adb') + (_existingWsToken.enabled === true ? '+ws' : '');
         document.getElementById('editBackend').value = plan;
 
+        const wsMining = _existingWsToken.mining;
+        document.getElementById('chkWsMining').checked =
+          !!(wsMining && typeof wsMining === 'object' && wsMining.enabled === true);
+
         document.getElementById('editWebUrl').value = config.web_url || '';
 
         document.getElementById('editCanvasSelector').value = config.web_canvas_selector || 'canvas';
@@ -3241,7 +3247,18 @@
       // 後端是整顆替換，所以 merge 進 openSettings 暫存的 _existingWsToken，
       // 保留 spend/open_lamp/farm/dungeon_sweeps/... 等其餘欄位。
       const wsEnabled = document.getElementById('editBackend').value.endsWith('+ws');
-      payload.ws_token = Object.assign({}, _existingWsToken, { enabled: wsEnabled });
+      // WS 挖礦 opt-in：merge 進既有 mining dict，保留 allow_bomb/allow_drill/max_steps。
+      const wsMiningEnabled = document.getElementById('chkWsMining').checked;
+      const existingWsMining =
+        (_existingWsToken.mining && typeof _existingWsToken.mining === 'object')
+          ? _existingWsToken.mining : {};
+      payload.ws_token = Object.assign({}, _existingWsToken, {
+        enabled: wsEnabled,
+        mining: Object.assign(
+          { allow_bomb: false, allow_drill: false, max_steps: 200 },
+          existingWsMining,
+          { enabled: wsMiningEnabled }),
+      });
 
       try {
 
