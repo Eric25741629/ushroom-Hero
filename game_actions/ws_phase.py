@@ -52,12 +52,26 @@ def _run_device(ip: str, cfg: dict, progress=None):
     )
 
 
+def _bootstrap_token(ip: str, log, *, force: bool = False) -> bool:
+    """間接層：lazy import，tests monkeypatch 這裡。"""
+    from ws_token.bootstrap import bootstrap_token
+    return bootstrap_token(ip, logger_obj=log, force=force)
+
+
+def _should_bootstrap(backend_kind: str, cfg: dict) -> bool:
+    """只有 adb+WS-first 需要冷啟 App 撈 token；web_h5 走頁面回寫。"""
+    return backend_kind == "adb" and bool(cfg.get("bootstrap_token", True))
+
+
 def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
     """跑 WS 階段並回傳本輪 pipeline 的 skip-set；任何失敗回空集合。"""
     log = logger_obj or logger
-    cfg = config_manager.get_device_config(ip).get("ws_token") or {}
+    device_cfg = config_manager.get_device_config(ip)
+    cfg = device_cfg.get("ws_token") or {}
     if not cfg.get("enabled", False):
         return frozenset()
+    backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+    can_bootstrap = _should_bootstrap(backend_kind, cfg)
     started = time.time()
 
     def _progress(name: str, status: str, detail: str = "") -> None:
@@ -77,16 +91,35 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
             log.debug("[%s] WS 階段 update_state 失敗", ip, exc_info=True)
 
+    if can_bootstrap and not _bootstrap_token(ip, log, force=False):
+        return frozenset()
+
+    def _run_once():
+        return _run_device(ip, cfg, _progress)
+
     try:
-        report = _run_device(ip, cfg, _progress)
+        report = _run_once()
     except Exception as exc:  # noqa: BLE001 — WS 階段失敗必須降級、不能炸 wake loop
         log.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
                     exc_info=True)
         return frozenset()
     if not report.login_ok:
-        log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
-                    ip, report.errors.get("login"))
-        return frozenset()
+        if can_bootstrap:
+            log.warning("[%s] WS 登入失敗 (%s)，嘗試重撈 token 後重跑一次",
+                        ip, report.errors.get("login"))
+            if _bootstrap_token(ip, log, force=True):
+                try:
+                    report = _run_once()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[%s] WS 重撈後仍失敗，本輪 Playwright 全跑: %s",
+                                ip, exc, exc_info=True)
+                    return frozenset()
+        if report.login_ok:
+            log.info("[%s] WS 重撈 token 後登入成功", ip)
+        else:
+            log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
+                        ip, report.errors.get("login"))
+            return frozenset()
 
     skips: set[str] = set()
     for key, names in WS_TO_PIPELINE_SKIPS.items():

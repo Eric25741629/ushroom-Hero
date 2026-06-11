@@ -15,6 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUTH_DIR = ROOT / "auth_state"
 
+# adb_token_login.py 內部 scrape 上限 120s + App 冷啟 ~30s；wake loop 直接呼叫
+# refresh_creds，外層必須有 timeout 護欄，否則 adb/websocket 卡死會吊死裝置 thread。
+_REFRESH_TIMEOUT_SEC = 300
+
 # JSON keys that must be present (others have safe defaults).
 _REQUIRED = ("uid", "uname", "plat", "loginGameId", "roleId", "pKey", "loginTicket")
 
@@ -112,5 +116,5 @@ def refresh_creds(
            "--device", device]
     if user is not None:
         cmd += ["--user", str(user)]
-    subprocess.run(cmd, check=True, cwd=str(ROOT))
+    subprocess.run(cmd, check=True, cwd=str(ROOT), timeout=_REFRESH_TIMEOUT_SEC)
     return load_creds(device, auth_dir=auth_dir)

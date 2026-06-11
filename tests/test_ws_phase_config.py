@@ -14,6 +14,7 @@ def test_default_device_config_has_ws_token_disabled():
     assert ws["enabled"] is False
     assert ws["spend"] is False
     assert ws["open_lamp"] is False
+    assert ws["bootstrap_token"] is True
     assert ws["couple_gifts"] is True
     assert ws["forge_ring"] is False
     assert ws["dungeon_sweeps"] == []

@@ -91,3 +91,23 @@ def test_load_creds_tolerates_utf8_bom(tmp_path: Path):
 def test_load_creds_missing_file_raises(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         load_creds("nope", auth_dir=tmp_path / "auth_state")
+
+
+def test_refresh_creds_subprocess_has_timeout(tmp_path: Path, monkeypatch):
+    """wake loop 會呼叫 refresh_creds；外層 subprocess 必須有 timeout 護欄。"""
+    from ws_token import creds as creds_mod
+
+    auth_dir = tmp_path / "auth_state"
+    auth_dir.mkdir()
+    (auth_dir / "_auth_capture_emu-t.json").write_text(
+        json.dumps({"creds": SAMPLE}), encoding="utf-8"
+    )
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured.update(kwargs)
+        return type("P", (), {"returncode": 0})()
+
+    monkeypatch.setattr(creds_mod.subprocess, "run", fake_run)
+    creds_mod.refresh_creds("emu-t", auth_dir=auth_dir)
+    assert captured.get("timeout") is not None and captured["timeout"] > 0

@@ -71,6 +71,7 @@ DEFAULT_DEVICE_CONFIG = {
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
         "enabled": False,       # 喚醒後先跑純 WS 任務，成功項由 Playwright 階段跳過
+        "bootstrap_token": True, # ADB 裝置缺 capture/登入失敗時主動冷啟 App 撈 token
         "spend": False,         # 家族捐獻/管家代購/掃蕩/續約 等花費類
         "open_lamp": False,     # WS 開神燈（一批，取代 Playwright 開神燈）
         "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
@@ -386,6 +387,10 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
         return default
     merged = copy.deepcopy(default)
     merged.update(v)
+    merged["bootstrap_token"] = _to_bool(
+        merged.get("bootstrap_token"),
+        default["bootstrap_token"],
+    )
     mining_cfg = _sanitize_mining_config(merged.get("mining"))
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
     return merged

@@ -14,11 +14,13 @@ from game_actions import ws_phase  # noqa: E402
 from ws_token.runner import RunReport  # noqa: E402
 
 
-def _cfg(monkeypatch, ws):
+def _cfg(monkeypatch, ws, *, backend="adb"):
+    merged_ws = {"bootstrap_token": False}
+    merged_ws.update(ws)
     monkeypatch.setattr(
         config_manager, "get_device_config",
         lambda ip: type("C", (), {"get": lambda self, k, d=None:
-                                  {"ws_token": ws}.get(k, d)})())
+                                  {"ws_token": merged_ws, "backend": backend}.get(k, d)})())
 
 
 def _report(tasks, errors=None, login_ok=True):
@@ -112,3 +114,84 @@ def test_any_exception_returns_empty(monkeypatch):
         raise RuntimeError("creds missing")
     monkeypatch.setattr(ws_phase, "_run_device", _boom)
     assert ws_phase.run_ws_phase("dev") == frozenset()
+
+
+def test_adb_missing_creds_bootstraps_then_runs(tmp_path, monkeypatch):
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True})
+    from ws_token import bootstrap
+    monkeypatch.setattr(bootstrap, "AUTH_DIR", tmp_path)
+
+    refresh_calls = []
+    adb_calls = []
+
+    def fake_refresh(ip):
+        refresh_calls.append(ip)
+        return object()
+
+    def fake_adb(cmd, **kwargs):
+        adb_calls.append(cmd)
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(bootstrap, "refresh_creds", fake_refresh)
+    monkeypatch.setattr(bootstrap.subprocess, "run", fake_adb)
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None: _report({"redpack": {}}))
+
+    skips = ws_phase.run_ws_phase("dev")
+
+    assert skips == frozenset({"紅包檢查"})
+    assert refresh_calls == ["dev"]
+    assert adb_calls == [
+        ["adb", "-s", "dev", "shell", "am", "force-stop", bootstrap.PACKAGE],
+        ["adb", "-s", "dev", "shell", "input", "keyevent", "HOME"],
+    ]
+
+
+def test_adb_bootstrap_refresh_failure_returns_empty(tmp_path, monkeypatch):
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True})
+    from ws_token import bootstrap
+    monkeypatch.setattr(bootstrap, "AUTH_DIR", tmp_path)
+    monkeypatch.setattr(bootstrap, "refresh_creds",
+                        lambda ip: (_ for _ in ()).throw(RuntimeError("no ticket")))
+    monkeypatch.setattr(bootstrap.subprocess, "run",
+                        lambda *a, **k: type("P", (), {"returncode": 0})())
+    run_calls = []
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None: run_calls.append(ip) or _report({}))
+
+    assert ws_phase.run_ws_phase("dev") == frozenset()
+    assert run_calls == []
+
+
+def test_web_h5_backend_does_not_adb_bootstrap(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True}, backend="web_h5")
+    bootstrap_calls = []
+    monkeypatch.setattr(ws_phase, "_bootstrap_token",
+                        lambda ip, log, force=False: bootstrap_calls.append(force) or True)
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None: _report({"redpack": {}}))
+
+    assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
+    assert bootstrap_calls == []
+
+
+def test_adb_login_failure_refreshes_once_and_retries(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True})
+    bootstrap_calls = []
+    monkeypatch.setattr(ws_phase, "_bootstrap_token",
+                        lambda ip, log, force=False: bootstrap_calls.append(force) or True)
+    reports = iter([
+        _report({}, errors={"login": "expired"}, login_ok=False),
+        _report({"redpack": {}}),
+    ])
+    run_calls = []
+
+    def fake_run(ip, cfg, progress=None):
+        run_calls.append(ip)
+        return next(reports)
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run)
+
+    assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
+    assert bootstrap_calls == [False, True]
+    assert run_calls == ["dev", "dev"]
