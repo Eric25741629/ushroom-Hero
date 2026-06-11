@@ -16,6 +16,7 @@ rather than real WS round-trips. A separate end-to-end test drives the real
 task code over the FakeTransport responder to prove the wiring is sound.
 """
 import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+sys.modules.setdefault("cv2", types.SimpleNamespace())
 
 from ws_token import codec  # noqa: E402
 from ws_token import runner  # noqa: E402
@@ -146,10 +149,12 @@ def patched(monkeypatch):
                                             "mount_id": 11}))
 
     # lamp (opt-in via open_lamp; spends 神燈 items)
-    monkeypatch.setattr(runner.lamp, "open_lamp",
-                        lambda c, **k: (calls.append(("lamp", "open_lamp"))
-                                        or {"opened": 0, "equipped": [], "sold": [],
-                                            "left": [], "dry_run": k.get("dry_run", True)}))
+    fake_lamp = types.SimpleNamespace(
+        open_lamp=lambda c, **k: (calls.append(("lamp", "open_lamp"))
+                                  or {"opened": 0, "equipped": [], "sold": [],
+                                      "left": [], "dry_run": k.get("dry_run", True)})
+    )
+    monkeypatch.setattr(runner, "_load_lamp", lambda: fake_lamp)
 
     # spirit (free draws; always runs)
     monkeypatch.setattr(runner.spirit, "draw_all_free",
@@ -380,7 +385,7 @@ def test_lamp_runs_when_open_lamp_true(patched):
 
 def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
     """The daily runner opens lamps for REAL (dry_run=False) with a bounded
-    batch_num — winners get equipped/sold, never an unbounded drain."""
+    per-call batch size plus a guarded total target."""
     captured: dict = {}
 
     def spy_open(c, **k):
@@ -388,12 +393,15 @@ def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
         return {"opened": 0, "equipped": [], "sold": [], "left": [],
                 "dry_run": k.get("dry_run", True)}
 
-    monkeypatch.setattr(runner.lamp, "open_lamp", spy_open)
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(open_lamp=spy_open))
 
     run_device("dev", spend=False, open_lamp=True)
 
     assert captured.get("dry_run") is False          # REAL open, not simulated
-    assert captured.get("batch_num") == runner._LAMP_BATCH_NUM  # bounded batch
+    assert captured.get("batch_num") == runner._LAMP_BATCH_NUM  # API limit: 20 per call
+    assert captured.get("max_batches") == runner._LAMP_MAX_BATCHES  # 20 * 500 = 10000
+    assert captured.get("batch_delay") == runner._LAMP_BATCH_DELAY_SEC
 
 
 def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
@@ -403,13 +411,54 @@ def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
         calls.append(("lamp", "open_lamp"))
         raise WSTimeoutError("lamp open timed out")
 
-    monkeypatch.setattr(runner.lamp, "open_lamp", boom)
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(open_lamp=boom))
 
     rep = run_device("dev", spend=False, open_lamp=True)
 
     assert "lamp" in rep.errors        # error recorded ...
     assert "lamp" not in rep.tasks     # ... and no bogus result
     assert rep.login_ok is True        # the rest of the run completed fine
+
+
+# --- mining (opt-in; consumes mining tools) ---------------------------------
+
+def test_mining_not_run_when_config_absent(patched):
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("mining", "mine_until_pickaxe_empty") not in {(t, a) for t, a in calls}
+    assert "mining" not in rep.tasks
+
+
+def test_mining_runs_when_config_enabled(patched, monkeypatch):
+    calls, _ = patched
+    captured = {}
+
+    def fake_mine(client, tracker, **kwargs):
+        calls.append(("mining", "mine_until_pickaxe_empty"))
+        captured.update(kwargs)
+        return {"executed": [{"goods_id": 4001}], "stopped_reason": "pickaxe_empty"}
+
+    monkeypatch.setattr(runner.mining_supervised, "mine_until_pickaxe_empty", fake_mine)
+
+    rep = run_device(
+        "dev",
+        spend=False,
+        mining_config={
+            "enabled": True,
+            "allow_bomb": True,
+            "allow_drill": True,
+            "max_steps": 35,
+        },
+    )
+
+    assert ("mining", "mine_until_pickaxe_empty") in {(t, a) for t, a in calls}
+    assert captured["allow_bomb"] is True
+    assert captured["allow_drill"] is True
+    assert captured["max_steps"] == 35
+    assert "mining" in rep.tasks
 
 
 # --- new free tasks: idle_reward / turntable / farm-harvest -----------------
@@ -873,7 +922,9 @@ def test_task_order_has_home_features_before_lamp():
     from ws_token import runner
     order = list(runner.TASK_ORDER)
     assert order.index("spirit") > order.index("carpark")
-    assert order[-4:] == ["spirit", "workshop", "couple", "lamp"]
+    assert order.index("mining") > order.index("couple")
+    assert order.index("mining") < order.index("lamp")
+    assert order[-5:] == ["spirit", "workshop", "couple", "mining", "lamp"]
 
 
 def test_run_couple_no_partner_skips(monkeypatch):

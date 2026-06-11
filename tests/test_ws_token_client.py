@@ -120,6 +120,23 @@ def test_call_times_out_when_no_reply():
         client.close()
 
 
+def test_send_posts_framed_packet_without_waiting_for_reply():
+    fake = FakeTransport(login_responder())  # CMD_PETS gets no response
+    client = WSGameClient(CREDS, transport_factory=factory_for(fake),
+                          heartbeat_enabled=False)
+    client.connect()
+    try:
+        client.send(CMD_PETS, b"abc")
+        sent = fake.framed_sent()
+        assert [(sid, cmd) for sid, cmd, _body in sent] == [
+            (1, CMD_LOGIN),
+            (2, CMD_PETS),
+        ]
+        assert sent[-1][2] == b"abc"
+    finally:
+        client.close()
+
+
 # --- send id ----------------------------------------------------------------
 
 def test_send_id_increments_per_framed_packet():

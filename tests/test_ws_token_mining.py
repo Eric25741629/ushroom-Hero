@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from ws_token import codec  # noqa: E402
+from ws_token import codec, mining  # noqa: E402
 from ws_token.mining import (  # noqa: E402
     GOODS_BOMB,
     GOODS_DRILL,
@@ -42,6 +42,7 @@ from ws_token.mining import (  # noqa: E402
 from ws_token.mining_adapter import (  # noqa: E402
     board_to_grid,
     grid_pos_to_block_id,
+    plan as plan_ws_mining,
 )
 
 
@@ -158,6 +159,21 @@ def test_goods_ids_match_mining_schema():
     assert (GOODS_PICKAXE, GOODS_DRILL, GOODS_BOMB) == (4001, 4002, 4003)
 
 
+def test_send_dig_uses_send_only_use_goods_body():
+    class FakeClient:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, cmd, body):
+            self.sent.append((cmd, body))
+
+    client = FakeClient()
+
+    mining.send_dig(client, GOODS_PICKAXE, 390006)
+
+    assert client.sent == [(0x0C03, build_use_goods_body(GOODS_PICKAXE, 390006))]
+
+
 # --- InventoryTracker (fed synthetic 0x0402 pushes) -------------------------
 
 def _inv_push(evt_type, *entries):
@@ -180,6 +196,14 @@ def test_inventory_tracker_gain_event_updates_count():
     tracker = InventoryTracker()
     tracker.on_push(0x0402, _inv_push(9800009, (4002, 181)))
     assert tracker.drill == 181
+
+
+def test_inventory_tracker_snapshot_event_updates_count():
+    tracker = InventoryTracker()
+    tracker.on_push(0x0402, _inv_push(9800004, (4001, 35)))
+
+    assert tracker.pickaxe == 35
+    assert tracker.has_item(4001) is True
 
 
 def test_inventory_tracker_tracks_all_three_props():
@@ -211,9 +235,9 @@ def test_inventory_tracker_latest_count_wins():
 
 # --- mining_adapter.board_to_grid (NO plan_v4 call) -------------------------
 
-def _board(baseline, blocks):
+def _board(baseline, blocks, actives=()):
     return MineBoard(max_num=114, next_time=0, area=1, baseline=baseline,
-                     actives=[], area_info={}, blocks=blocks, holes=[])
+                     actives=list(actives), area_info={}, blocks=blocks, holes=[])
 
 
 def test_board_to_grid_shape_is_7x6():
@@ -228,45 +252,70 @@ def test_board_to_grid_empty_board_all_empty_label():
 
 
 def test_board_to_grid_dirt_terrain_label():
-    # config_id 202 = 泥土 (1 hit) -> "dirt"
-    blk = MineBlock(block_id=6, x=6, y=0, config_id=202, count=1, is_reward=0)
-    grid = board_to_grid(_board(0, [blk]))
-    # baseline row (y == baseline) sits at viewport row 0; x=6 -> col 5 (1-indexed cols).
+    # live H5/CDP: config_id 201 = 泥土 (1 hit) -> "dirt".
+    blk = MineBlock(block_id=16238306, x=6, y=162383, config_id=201, count=1, is_reward=0)
+    grid = board_to_grid(_board(162388, [blk]))
+    # visible top is baseline - 5; x=6 -> col 5 (1-indexed cols).
     assert grid[0][5] == "dirt"
 
 
 def test_board_to_grid_rock_terrain_label():
-    # config_id 201 = 石頭 (>=2 hits) -> "rock"
-    blk = MineBlock(block_id=1, x=1, y=0, config_id=201, count=2, is_reward=0)
-    grid = board_to_grid(_board(0, [blk]))
+    # live H5/CDP: config_id 202 = 石頭 (>=2 hits) -> "rock".
+    blk = MineBlock(block_id=16238301, x=1, y=162383, config_id=202, count=2, is_reward=0)
+    grid = board_to_grid(_board(162388, [blk]))
     assert grid[0][0] == "rock"
 
 
 def test_board_to_grid_pit_terrain_label():
     # config_id 401 = 礦洞 -> reachable_pit (planner reward target)
-    blk = MineBlock(block_id=3, x=3, y=0, config_id=401, count=1, is_reward=1)
-    grid = board_to_grid(_board(0, [blk]))
+    blk = MineBlock(block_id=16238303, x=3, y=162383, config_id=401, count=1, is_reward=1)
+    grid = board_to_grid(_board(162388, [blk]))
     assert grid[0][2] == "reachable_pit"
 
 
 def test_board_to_grid_depth_maps_to_rows():
-    # baseline=100: y=100 -> row 0, y=101 -> row 1, ... y=106 -> row 6.
-    blocks = [MineBlock(block_id=0, x=1, y=100 + r, config_id=202, count=1, is_reward=0)
+    # live H5/CDP: baseline=162388 shows y=162383..162389 as rows 0..6.
+    baseline = 162388
+    top = baseline - 5
+    blocks = [MineBlock(block_id=(top + r) * 100 + 1, x=1, y=top + r,
+                        config_id=201, count=1, is_reward=0)
               for r in range(7)]
-    grid = board_to_grid(_board(100, blocks))
+    grid = board_to_grid(_board(baseline, blocks))
     for r in range(7):
         assert grid[r][0] == "dirt", f"row {r} expected dirt"
 
 
 def test_board_to_grid_block_outside_viewport_ignored():
     # y far below the 7-row viewport must not raise / must be dropped.
-    blk = MineBlock(block_id=0, x=1, y=999, config_id=202, count=1, is_reward=0)
-    grid = board_to_grid(_board(0, [blk]))
+    blk = MineBlock(block_id=16239001, x=1, y=162390, config_id=201, count=1, is_reward=0)
+    grid = board_to_grid(_board(162388, [blk]))
     assert all(cell == "empty" for row in grid for cell in row)
 
 
+def test_board_to_grid_actives_without_features_are_unknown_solid():
+    # live 0x0c01: actives lists valid dig targets; blocks only carries known
+    # terrain features. Missing feature must not become empty or the planner
+    # thinks row 6 is already open and emits no progress step.
+    baseline = 162390
+    active_block_id = grid_pos_to_block_id(baseline, row=6, col=3)
+    grid = board_to_grid(_board(baseline, [], actives=[active_block_id]))
+    assert grid[6][3] == "rock"
+
+
+def test_plan_uses_active_cells_to_make_ws_progress_step():
+    baseline = 162390
+    active_block_id = grid_pos_to_block_id(baseline, row=6, col=3)
+    board = _board(baseline, [], actives=[active_block_id])
+
+    result = plan_ws_mining(board, {"pickaxe": 2, "drill": 0, "bomb": 0})
+
+    assert result["ws_steps"], result
+    first = result["ws_steps"][0]
+    assert first["type"] == "dig"
+    assert first["block_id"] == active_block_id
+
+
 def test_grid_pos_to_block_id_round_trips_depth_col():
-    # block_id = depth*100 + col, depth = baseline + row, col = x (1-indexed).
-    bid = grid_pos_to_block_id(baseline=11003900, row=2, col=5)
-    # depth = 11003902, col index 5 -> game col 6 -> block_id = 11003902*100 + 6
-    assert bid == 11003902 * 100 + 6
+    # block_id = depth*100 + col, depth = baseline - 5 + row, col = x (1-indexed).
+    assert grid_pos_to_block_id(baseline=162388, row=0, col=2) == 16238303
+    assert grid_pos_to_block_id(baseline=162388, row=6, col=3) == 16238904

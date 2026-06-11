@@ -23,6 +23,15 @@ import pytest
 
 import config_manager
 
+sys.modules.setdefault("cv2", types.SimpleNamespace())
+sys.modules.setdefault(
+    "opencc",
+    types.SimpleNamespace(
+        OpenCC=lambda *args, **kwargs: types.SimpleNamespace(convert=lambda text: text)
+    ),
+)
+sys.modules.setdefault("uiautomator2", types.SimpleNamespace(Device=object))
+
 
 # ── shared fixtures / helpers (mirror test_device_enabled_gate.py) ───────────
 
@@ -72,27 +81,44 @@ def _import_scan_service():
     return device_scan_service
 
 
+def _stub_sleep_modules(monkeypatch):
+    """Provide lazy-import stubs for run_ws_device_loop without OCR/CNN deps."""
+    startup_stub = types.ModuleType("runtime_services.startup_sleep")
+    startup_stub._handle_startup_sleep = lambda ip, lg: None
+    sleep_stub = types.ModuleType("runtime_services.sleep_service")
+    sleep_stub.run_sleep_cycle = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "runtime_services.startup_sleep", startup_stub)
+    monkeypatch.setitem(sys.modules, "runtime_services.sleep_service", sleep_stub)
+    return startup_stub, sleep_stub
+
+
 # ── 1. config: new fields default off + survive round-trip ───────────────────
 
 def test_ws_fields_are_typed_with_off_defaults():
     from config_manager import DeviceConfig, DEFAULT_DEVICE_CONFIG
-    for key in ("use_ws_runner", "ws_token_spend", "ws_token_sweep_list"):
+    for key in ("use_ws_runner", "ws_token_spend", "ws_token_sweep_list",
+                "ws_token_mining"):
         assert key in DeviceConfig.__dataclass_fields__
         assert key in DEFAULT_DEVICE_CONFIG
     dc = DeviceConfig()
     assert dc.use_ws_runner is False
     assert dc.ws_token_spend is False
     assert dc.ws_token_sweep_list == []
+    assert dc.ws_token_mining is None
+    assert DEFAULT_DEVICE_CONFIG["ws_token"]["mining"]["enabled"] is False
 
 
 def test_from_dict_reads_ws_fields():
     from config_manager import DeviceConfig
     dc = DeviceConfig.from_dict(
-        {"use_ws_runner": True, "ws_token_spend": True, "ws_token_sweep_list": [[1, 2, 3]]}
+        {"use_ws_runner": True, "ws_token_spend": True,
+         "ws_token_sweep_list": [[1, 2, 3]],
+         "ws_token_mining": {"enabled": True, "max_steps": 35}}
     )
     assert dc.get("use_ws_runner") is True
     assert dc.get("ws_token_spend") is True
     assert dc.get("ws_token_sweep_list") == [[1, 2, 3]]
+    assert dc.get("ws_token_mining") == {"enabled": True, "max_steps": 35}
 
 
 def test_from_dict_defaults_when_keys_absent():
@@ -101,6 +127,7 @@ def test_from_dict_defaults_when_keys_absent():
     assert dc.get("use_ws_runner") is False
     assert dc.get("ws_token_spend") is False
     assert dc.get("ws_token_sweep_list") == []
+    assert dc.get("ws_token_mining") is None
 
 
 # ── 1b. backend whitelist keeps "ws_token" (not downgraded to adb) ───────────
@@ -127,6 +154,39 @@ def test_update_device_config_persists_ws_flags(temp_config):
     assert raw["use_ws_runner"] is True
     assert raw["ws_token_spend"] is True  # coerced 1 -> True
     assert raw["ws_token_sweep_list"] == [[10, 1, 5, 1]]
+
+
+def test_update_device_config_persists_ws_mining_config(temp_config):
+    config_manager.update_device_config(
+        "ws-mine",
+        {
+            "backend": "ws_token",
+            "ws_token_mining": {
+                "enabled": 1,
+                "allow_bomb": "true",
+                "allow_drill": "yes",
+                "max_steps": 9999,
+                "max_depth": "42",
+            },
+        },
+    )
+    raw = json.loads(temp_config.read_text(encoding="utf-8"))["devices"]["ws-mine"]
+    assert raw["ws_token_mining"] == {
+        "enabled": True,
+        "allow_bomb": True,
+        "allow_drill": True,
+        "max_steps": 500,
+        "max_depth": 42,
+    }
+
+
+def test_update_device_config_bad_ws_mining_becomes_none(temp_config):
+    config_manager.update_device_config(
+        "ws-mine-bad",
+        {"backend": "ws_token", "ws_token_mining": "not-a-dict"},
+    )
+    raw = json.loads(temp_config.read_text(encoding="utf-8"))["devices"]["ws-mine-bad"]
+    assert raw["ws_token_mining"] is None
 
 
 def test_update_device_config_sanitizes_bad_sweep_list(temp_config):
@@ -193,12 +253,14 @@ def patched_runner(monkeypatch):
 
     def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False,
                         farm_config=None, dungeon_sweeps=None, carpark_target=None,
-                        couple_gifts=True, forge_ring=False, workshop_rotate=True):
+                        couple_gifts=True, forge_ring=False, workshop_rotate=True,
+                        mining_config=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "farm_config": farm_config,
                       "dungeon_sweeps": dungeon_sweeps, "carpark_target": carpark_target,
                       "couple_gifts": couple_gifts, "forge_ring": forge_ring,
-                      "workshop_rotate": workshop_rotate})
+                      "workshop_rotate": workshop_rotate,
+                      "mining_config": mining_config})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -220,8 +282,18 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "open_lamp": False, "farm_config": None,
                         "dungeon_sweeps": None, "carpark_target": None,
                         "couple_gifts": True, "forge_ring": False,
-                        "workshop_rotate": True}
+                        "workshop_rotate": True, "mining_config": None}
     assert report.login_ok is True
+
+
+def test_run_ws_device_cycle_passes_mining_config(patched_runner):
+    svc, calls = patched_runner
+    mining_config = {"enabled": True, "allow_bomb": True, "max_steps": 12}
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True, "ws_token_mining": mining_config}
+    )
+    svc.run_ws_device_cycle("ws-mine", cfg, _NullLogger())
+    assert calls[0]["mining_config"] == mining_config
 
 
 def test_run_ws_device_cycle_passes_none_sweep_when_empty(patched_runner):
@@ -238,7 +310,8 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
 
     def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False,
                       farm_config=None, dungeon_sweeps=None, carpark_target=None,
-                      couple_gifts=True, forge_ring=False, workshop_rotate=True):
+                      couple_gifts=True, forge_ring=False, workshop_rotate=True,
+                      mining_config=None):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -255,7 +328,8 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
 
     def boom(ip, *, spend=False, sweep_list=None, open_lamp=False,
              farm_config=None, dungeon_sweeps=None, carpark_target=None,
-             couple_gifts=True, forge_ring=False, workshop_rotate=True):
+             couple_gifts=True, forge_ring=False, workshop_rotate=True,
+             mining_config=None):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)
@@ -284,10 +358,8 @@ def test_loop_runs_cycle_then_sleeps_then_stops(monkeypatch):
     monkeypatch.setattr(svc.config_manager, "get_device_config",
                         lambda ip: config_manager.DeviceConfig.from_dict({"use_ws_runner": True}))
 
-    # Stub the lazily-imported sleep/startup helpers via their source modules.
-    import runtime_services.startup_sleep as ss
-    import runtime_services.sleep_service as sl
-    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+    # Stub the lazily-imported sleep/startup helpers without importing OCR/CNN deps.
+    _ss, sl = _stub_sleep_modules(monkeypatch)
 
     class _Stop(Exception):
         pass
@@ -317,9 +389,7 @@ def test_loop_force_sleep_skips_cycle(monkeypatch):
     monkeypatch.setattr(svc.config_manager, "get_device_config",
                         lambda ip: config_manager.DeviceConfig.from_dict({"use_ws_runner": True}))
 
-    import runtime_services.startup_sleep as ss
-    import runtime_services.sleep_service as sl
-    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+    _ss, sl = _stub_sleep_modules(monkeypatch)
 
     class _Stop(Exception):
         pass

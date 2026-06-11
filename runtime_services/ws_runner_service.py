@@ -232,6 +232,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     couple_gifts = bool(cfg.get("ws_token_couple_gifts", True))
     forge_ring = bool(cfg.get("ws_token_forge_ring", False))
     workshop_rotate = bool(cfg.get("ws_token_workshop_rotate", True))
+    mining_config = cfg.get("ws_token_mining") or None
 
     run_device = _load_run_device()
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
@@ -241,7 +242,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             dungeon_sweeps=dungeon_sweeps,
                             carpark_target=carpark_target,
                             couple_gifts=couple_gifts, forge_ring=forge_ring,
-                            workshop_rotate=workshop_rotate)
+                            workshop_rotate=workshop_rotate,
+                            mining_config=mining_config)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")

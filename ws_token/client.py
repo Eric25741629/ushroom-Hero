@@ -293,6 +293,14 @@ class WSGameClient:
                 f"no response for cmd={cmd} (expected one of {tuple(expect_cmds)})"
             )
 
+    def send(self, cmd: int, body: bytes = b"") -> None:
+        """Send a framed packet without waiting for a response.
+
+        Some live mutations are confirmed by a later read/push instead of a
+        same-cmd reply. Callers using this method must do their own confirmation.
+        """
+        self._send_framed(cmd, body)
+
     # --- internals ---------------------------------------------------------
 
     def _next_send_id(self) -> int:

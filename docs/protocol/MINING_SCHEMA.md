@@ -1,6 +1,8 @@
 # 菇勇者 挖礦系統協議 Schema
 
 捕獲於 2026-05-11，5554 帳號 live session via CDP attach (port 9230)。
+更新於 2026-06-11：補 `0x0402 evt=9800004` 登入道具 snapshot 與 WS runner
+挖礦串接行為。
 
 **只記錄 user-confirmed 事實**，未驗證的推測一律省略。
 
@@ -11,7 +13,7 @@
 | cmd | 方向 | 用途 |
 |---|---|---|
 | `0x0c01` | tx 0B → rx ~700B | 礦盤狀態查詢（empty body） |
-| `0x0c03` | tx 8B → rx varies | dig 一格 RPC |
+| `0x0c03` | tx 8B → rx varies | dig / use mining prop RPC |
 | `0x0402` | rx-only push | inventory 異動（多種 evt_type） |
 
 ---
@@ -30,6 +32,7 @@
 
 | evt_type | 用途 | 驗證 |
 |---:|---|---|
+| **9800004** | 登入/道具 snapshot-update | read-only WS probe: entries include `(4001, 35, ...)` ✓ |
 | **9800001** | 道具消耗 | 用 1 鎬 → f3 = 113 ✓ |
 | **9800009** | 道具獲得 | 挖礦得礦物 → f3 = 5412819（5412.3K → 5412.8K, +500）✓ |
 | 1001006 | 神燈消耗 | 自動開 20 → qty −20 ✓ |
@@ -97,8 +100,8 @@ f6 varint = ?（觀測 = 0）
 
 | f4 | 名稱 | 驗證 cell |
 |---:|---|---|
-| **201** | 石頭 | 11003501 → user 挖 → 確認「石頭」✓ 且需 ≥2 hits |
-| **202** | 泥土 | 11003901 → user 挖 → 確認「泥土」✓ |
+| **201** | 泥土 | H5/CDP board adapter 2026-06-11 對齊 |
+| **202** | 石頭 | H5/CDP board adapter 2026-06-11 對齊，通常需 ≥2 hits |
 | **401** | 礦洞 | 11003906 → user 指出右側礦洞對應此 cell ✓ |
 | 100 | (未驗證) | 出現 2 次但 user 沒挖過任一個 |
 
@@ -121,13 +124,16 @@ f6 varint = ?（觀測 = 0）
 
 ---
 
-## 8. `0x0c03` Dig RPC（user-confirmed via 配對）
+## 8. `0x0c03` Dig / Use Prop RPC（user-confirmed via 配對）
 
 ### tx body
 ```
-f1 varint = prop_id   (4001 / 4002 / 4003)
+f1 varint = prop_id   (4001 鎬子 / 4002 鑽頭 / 4003 炸彈)
 f2 varint = cell_id   (從 0x0c01 f5 list 拿)
 ```
+
+4001、4002、4003 都走同一個 `home_mine_use_goods`。自動化預設只允許鎬子；
+炸彈與鑽頭必須由設定明確開啟，避免未授權消耗。
 
 ### rx body
 ```
@@ -181,10 +187,14 @@ class InventoryTracker:
 
     def on_0x0402(self, body):
         parsed = parse_inventory_push(body)
-        if parsed.get("evt_type") in (9800001, 9800009, 1001006):
+        if parsed.get("evt_type") in (9800004, 9800001, 9800009, 1001006):
             for item in parsed.get("items", []):
                 self.counts[item["item_id"]] = item["new_count"]
 ```
+
+WS runner 只在 `InventoryTracker` 已看過 `4001` 現量時才會挖礦；若本輪快速重連
+沒有收到 `9800004` snapshot，會回傳 `{"skipped": "inventory snapshot missing"}`，
+不會用 `0x0c01.max_num` 或預設值猜測鎬子數量。
 
 ---
 
@@ -193,9 +203,10 @@ class InventoryTracker:
 | 項目 | 驗證方式 |
 |---|---|
 | Prop 4001/4002/4003 | 各用 1 個 → server push 114→113 / 181→180 / 889→888 |
-| f4=202 = 泥土 | user 挖 cell 11003901 → 顯示「泥土」|
-| f4=201 = 石頭 | user 挖 cell 11003501 → 顯示「石頭」|
+| f4=201 = 泥土 | H5/CDP board adapter 對齊 |
+| f4=202 = 石頭 | H5/CDP board adapter 對齊 |
 | f4=401 = 礦洞 | user 指出右側礦洞 → 對應 cell 11003906 |
 | f1 = pickaxe_cap | f1=114，玩家當前 112 → 是 cap 不是 current |
+| evt=9800004 = 道具 snapshot | read-only WS probe: 4001 現量 35 |
 | item_id 1007 = 礦物 | push 5412819, on-screen 5412.3K |
 | evt=9800009 = 道具獲得 | 挖礦得礦物觸發此 evt |

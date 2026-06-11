@@ -8,23 +8,27 @@ Two layers, kept apart so the pure grid transform never imports the planner:
       Builds the grid, runs the bounded DFS, maps each step's (row, col) back
       to a WS block_id.
 
-LIVE-CALIBRATION GAPS (all marked # live-confirm; reasonable defaults, no
-magic-number guessing):
+LIVE-CALIBRATION (7fe98fc6 / 小寶 H5/CDP):
 
-1. terrain enum is incomplete. Only 201/202/401 are 5554-verified. Any other
+1. terrain enum is incomplete. Only 201/202/401 are live-verified. Any other
    config_id is mapped to "rock" (treated as a generic solid obstacle, cost 2)
-   so the planner never crashes on an unknown block. # live-confirm
-2. viewport / depth->row mapping. We assume the 7-row planner window starts at
-   ``baseline`` (depth == baseline -> row 0) and grows downward, mirroring
-   the 7-row scroll viewport in miner/core/config GRID_CFG (H=7). Blocks
-   outside [baseline, baseline+7) are dropped. The real board may key the
-   viewport off a different anchor (e.g. the deepest reachable row). # live-confirm
+   so the planner never crashes on an unknown block.
+2. viewport / depth->row mapping. The 7-row planner window starts at
+   ``baseline - 5``. For baseline=162388, the visible rows are
+   y=162383..162389. Blocks outside that 7-row window are dropped.
 3. column origin. ``p_mine_block.x`` is 1-indexed in the live captures
-   (block_id = depth*100 + col, col in 1..6), so grid col = x - 1. # live-confirm
+   (block_id = depth*100 + col, col in 1..6), so grid col = x - 1.
 4. reachability. We cannot infer true reachability from a single board, so
    every pit is emitted as "reachable_pit" and solids as their plain
    (reachable) label. The planner's own reachability pass then refines it.
-   A future calibration may downgrade buried pits to "unreachable_pit". # live-confirm
+   A future calibration may downgrade buried pits to "unreachable_pit".
+5. ``actives`` are valid dig targets. Live 0x0c01 may omit terrain features
+   for some active cells, so viewport actives without a block feature are
+   emitted as conservative "rock" instead of "empty"; otherwise the planner
+   can falsely think row 6 is already open and return no progress step.
+   When row 6 contains any active dig target, the other unknown row-6 cells are
+   marked "unreachable_empty" rather than reachable "empty" for the same reason:
+   pure WS absence is not proof of a visual floor-open air cell.
 """
 from __future__ import annotations
 
@@ -40,15 +44,15 @@ GRID_COLS = 6
 
 EMPTY = "empty"
 
-# terrain config_id -> planner label. Only 201/202/401 are 5554-verified;
+# terrain config_id -> planner label. Only 201/202/401 are live-verified;
 # see gap #1. count is consulted to distinguish 1-hit vs >=2-hit rock.
-TERRAIN_STONE = 201
-TERRAIN_DIRT = 202
+TERRAIN_DIRT = 201
+TERRAIN_STONE = 202
 TERRAIN_PIT = 401
 
 
 def _block_label(config_id: int, count: int, is_reward: int) -> str:
-    """Map a WS block's terrain to a DEFAULT_CLASSES label. # live-confirm enum."""
+    """Map a WS block's terrain to a DEFAULT_CLASSES label."""
     if config_id == TERRAIN_PIT or is_reward:
         # Single-snapshot reachability is unknown -> assume reachable; the
         # planner's reachability pass refines it (gap #4).
@@ -64,31 +68,102 @@ def _block_label(config_id: int, count: int, is_reward: int) -> str:
     return "rock"
 
 
+def viewport_top_depth(baseline: int) -> int:
+    """Live H5 視窗頂端深度；baseline 不是 row 0，而是 row 5。"""
+    return int(baseline) - (GRID_ROWS - 2)
+
+
+def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[dict]]:
+    """Project WS board into planner grid and record what the projection drops."""
+    grid: List[List[str]] = [[EMPTY for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
+    baseline = int(getattr(mine_board, "baseline", 0) or 0)
+    top_depth = viewport_top_depth(baseline)
+    dropped_blocks: list[dict] = []
+    dropped_actives: list[dict] = []
+
+    for block_id in getattr(mine_board, "actives", []) or []:
+        try:
+            cell_id = int(block_id)
+        except (TypeError, ValueError):
+            continue
+        depth, game_col = divmod(cell_id, 100)
+        row = depth - top_depth
+        col = game_col - 1
+        if not (0 <= row < GRID_ROWS) or not (0 <= col < GRID_COLS):
+            reason = "outside_viewport" if not (0 <= row < GRID_ROWS) else "outside_cols"
+            dropped_actives.append({
+                "cell_id": cell_id, "row": row, "col": col, "reason": reason,
+            })
+            continue
+        # actives 是 server 接受的可挖目標；terrain 缺失時用 rock 保守估成本。
+        grid[row][col] = "rock"
+
+    if any(cell != EMPTY for cell in grid[GRID_ROWS - 1]):
+        for col, cell in enumerate(grid[GRID_ROWS - 1]):
+            if cell == EMPTY:
+                # 純 WS 沒有證據證明底列缺失格是可達空氣；避免誤判已下樓。
+                grid[GRID_ROWS - 1][col] = "unreachable_empty"
+
+    for blk in getattr(mine_board, "blocks", []) or []:
+        row = int(blk.y) - top_depth          # depth offset from visible viewport top
+        col = int(blk.x) - 1                   # x is 1-indexed in live captures
+        if not (0 <= row < GRID_ROWS) or not (0 <= col < GRID_COLS):
+            reasons: list[str] = []
+            if not (0 <= row < GRID_ROWS):
+                reasons.append("outside_viewport")
+            if not (0 <= col < GRID_COLS):
+                reasons.append("outside_cols")
+            dropped_blocks.append({
+                "block_id": int(getattr(blk, "block_id", 0) or 0),
+                "x": int(getattr(blk, "x", 0) or 0),
+                "y": int(getattr(blk, "y", 0) or 0),
+                "row": row,
+                "col": col,
+                "config_id": int(getattr(blk, "config_id", 0) or 0),
+                "count": int(getattr(blk, "count", 0) or 0),
+                "reason": "+".join(reasons) or "unknown",
+            })
+            continue
+        grid[row][col] = _block_label(blk.config_id, blk.count, blk.is_reward)
+    return grid, dropped_blocks, dropped_actives
+
+
 def board_to_grid(mine_board: Any) -> List[List[str]]:
     """Project a MineBoard's blocks into a 7x6 grid of planner labels.
 
-    Pure: no planner import, no side effects. Cells with no block default to
-    "empty". Blocks outside the 7-row viewport [baseline, baseline+7) or
-    outside columns 1..6 are dropped (gap #2/#3).
+    Pure: no planner import, no side effects. Viewport cells listed in
+    ``actives`` default to conservative "rock" when no terrain feature exists.
+    Blocks outside the 7-row viewport [baseline-5, baseline+2) or outside
+    columns 1..6 are dropped (gap #2/#3).
     """
-    grid: List[List[str]] = [[EMPTY for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
-    baseline = int(getattr(mine_board, "baseline", 0) or 0)
-    for blk in getattr(mine_board, "blocks", []) or []:
-        row = int(blk.y) - baseline           # depth offset from viewport top
-        col = int(blk.x) - 1                   # x is 1-indexed in live captures
-        if not (0 <= row < GRID_ROWS) or not (0 <= col < GRID_COLS):
-            continue
-        grid[row][col] = _block_label(blk.config_id, blk.count, blk.is_reward)
+    grid, _dropped_blocks, _dropped_actives = _project_board(mine_board)
     return grid
+
+
+def board_projection_trace(mine_board: Any) -> Dict[str, Any]:
+    """Return log-friendly details of WS board -> planner grid projection."""
+    grid, dropped_blocks, dropped_actives = _project_board(mine_board)
+    return {
+        "area": int(getattr(mine_board, "area", 0) or 0),
+        "baseline": int(getattr(mine_board, "baseline", 0) or 0),
+        "top_depth": viewport_top_depth(int(getattr(mine_board, "baseline", 0) or 0)),
+        "actives_count": len(getattr(mine_board, "actives", []) or []),
+        "blocks_count": len(getattr(mine_board, "blocks", []) or []),
+        "holes_count": len(getattr(mine_board, "holes", []) or []),
+        "area_info": dict(getattr(mine_board, "area_info", {}) or {}),
+        "grid": grid,
+        "dropped_blocks": dropped_blocks,
+        "dropped_actives": dropped_actives,
+    }
 
 
 def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
     """Inverse of the grid mapping: (row, col) -> WS block_id.
 
-    block_id = depth*100 + game_col, depth = baseline + row, game_col = col + 1
+    block_id = depth*100 + game_col, depth = baseline - 5 + row, game_col = col + 1
     (col is the 0-indexed grid column; the live board uses 1-indexed cols).
     """
-    depth = int(baseline) + int(row)
+    depth = viewport_top_depth(baseline) + int(row)
     game_col = int(col) + 1
     return depth * 100 + game_col
 

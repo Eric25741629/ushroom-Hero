@@ -36,6 +36,7 @@ DEFAULT_DEVICE_CONFIG = {
     "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
     "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
     "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
+    "ws_token_mining": None,  # {"enabled": bool, "allow_bomb": bool, "allow_drill": bool, "max_steps": int}
     "web_url": "",
     "web_canvas_selector": "canvas",
     "web_profile_dir": "playwright_profile/{device_id}",
@@ -50,6 +51,7 @@ DEFAULT_DEVICE_CONFIG = {
     "web_stop_mode": "keep_page",  # keep_page / blank / close_browser
     "web_screenshot_method": "playwright",  # playwright / canvas_capture
     "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
+    "web_reload_after_goto": False,  # True=goto 成功後再 reload；預設關閉以加快 H5 載入
     "enable_farm": True,  # 啟用農場
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
@@ -77,6 +79,12 @@ DEFAULT_DEVICE_CONFIG = {
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
         "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
+        "mining": {             # WS 挖礦 opt-in；成功後可跳過 Playwright 挖礦任務
+            "enabled": False,
+            "allow_bomb": False,
+            "allow_drill": False,
+            "max_steps": 200,
+        },
     },
 }
 
@@ -108,6 +116,7 @@ class DeviceConfig:
     ws_token_spend: bool = False
     ws_token_sweep_list: list = field(default_factory=list)
     ws_token_open_lamp: bool = False
+    ws_token_mining: Optional[dict] = None
 
     # Web H5 settings
     web_url: str = ""
@@ -124,6 +133,7 @@ class DeviceConfig:
     web_stop_mode: str = "keep_page"
     web_screenshot_method: str = "playwright"
     web_screenshot_jpeg_quality: Optional[int] = None
+    web_reload_after_goto: bool = False
 
     # Feature flags
     enable_farm: bool = True
@@ -345,6 +355,40 @@ def _sanitize_sweep_list(v: Any) -> list:
         if ok and len(row) >= 3:
             out.append(row[:4])
     return out
+
+
+def _sanitize_mining_config(v: Any) -> Optional[dict]:
+    """Coerce WS mining config; invalid input disables pure-WS mining.
+
+    max_steps 上限保守設 500，避免設定錯誤造成一輪喚醒無界消耗。
+    """
+    if v is None:
+        return None
+    if not isinstance(v, dict):
+        return None
+    out = {
+        "enabled": _to_bool(v.get("enabled"), False),
+        "allow_bomb": _to_bool(v.get("allow_bomb"), False),
+        "allow_drill": _to_bool(v.get("allow_drill"), False),
+        "max_steps": _clamp_int(v.get("max_steps"), 1, 500, 200),
+    }
+    if v.get("max_depth") is not None:
+        out["max_depth"] = max(1, _to_int(v.get("max_depth"), 1))
+    if v.get("timeout") is not None:
+        out["timeout"] = max(0.1, _to_float(v.get("timeout"), 8.0))
+    return out
+
+
+def _merge_ws_token_phase_config(v: Any) -> dict:
+    """Merge nested ws_token config with defaults, including mining defaults."""
+    default = copy.deepcopy(DEFAULT_DEVICE_CONFIG["ws_token"])
+    if not isinstance(v, dict):
+        return default
+    merged = copy.deepcopy(default)
+    merged.update(v)
+    mining_cfg = _sanitize_mining_config(merged.get("mining"))
+    merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
+    return merged
 
 
 def _invalidate_config_cache() -> None:
@@ -660,14 +704,15 @@ def _get_raw_device_config(ip: str) -> Dict[str, Any]:
     devices = config.get("devices", {})
 
     if ip not in devices:
-        default = DEFAULT_DEVICE_CONFIG.copy()
+        default = copy.deepcopy(DEFAULT_DEVICE_CONFIG)
         default["name"] = ip  # 預設名稱就是 IP
         return default
 
     # Ensure old config files also have new fields (Migration)
     user_config = devices[ip]
-    merged_config = DEFAULT_DEVICE_CONFIG.copy()
+    merged_config = copy.deepcopy(DEFAULT_DEVICE_CONFIG)
     merged_config.update(user_config)
+    merged_config["ws_token"] = _merge_ws_token_phase_config(user_config.get("ws_token"))
 
     return merged_config
 
@@ -703,7 +748,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         if "devices" not in config:
             config["devices"] = {}
 
-        current = config["devices"].get(ip, DEFAULT_DEVICE_CONFIG.copy())
+        current = config["devices"].get(ip, copy.deepcopy(DEFAULT_DEVICE_CONFIG))
         current.update(new_settings or {})
 
         current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5", "ws_token"}, "adb")
@@ -721,6 +766,8 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             current.get("ws_token_open_lamp", DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"]),
             DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"],
         )
+        current["ws_token_mining"] = _sanitize_mining_config(current.get("ws_token_mining"))
+        current["ws_token"] = _merge_ws_token_phase_config(current.get("ws_token"))
         current["web_url"] = str(current.get("web_url", "")).strip()
         current["web_canvas_selector"] = (
             str(current.get("web_canvas_selector", "canvas")).strip() or "canvas"
@@ -737,6 +784,9 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["web_headless"] = _to_bool(current.get("web_headless", False), False)
         current["web_clear_cookies_on_start"] = _to_bool(
             current.get("web_clear_cookies_on_start", False), False
+        )
+        current["web_reload_after_goto"] = _to_bool(
+            current.get("web_reload_after_goto", False), False
         )
         current["web_viewport_width"] = _clamp_int(
             current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]

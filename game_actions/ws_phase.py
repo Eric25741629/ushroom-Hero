@@ -30,6 +30,7 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "couple": ("好友每日禮物",),     # 使用者確認 == 伴侶送禮
     "lamp": ("開神燈",),
     "turntable": ("轉盤金幣",),
+    "mining": ("挖礦任務",),
 }
 
 
@@ -46,11 +47,13 @@ def _run_device(ip: str, cfg: dict):
         couple_gifts=bool(cfg.get("couple_gifts", True)),
         workshop_rotate=bool(cfg.get("workshop_rotate", True)),
         forge_ring=bool(cfg.get("forge_ring", False)),
+        mining_config=cfg.get("mining") or None,
     )
 
 
-def run_ws_phase(ip: str) -> frozenset[str]:
+def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
     """跑 WS 階段並回傳本輪 pipeline 的 skip-set；任何失敗回空集合。"""
+    log = logger_obj or logger
     cfg = config_manager.get_device_config(ip).get("ws_token") or {}
     if not cfg.get("enabled", False):
         return frozenset()
@@ -58,12 +61,12 @@ def run_ws_phase(ip: str) -> frozenset[str]:
     try:
         report = _run_device(ip, cfg)
     except Exception as exc:  # noqa: BLE001 — WS 階段失敗必須降級、不能炸 wake loop
-        logger.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
-                       exc_info=True)
+        log.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
+                    exc_info=True)
         return frozenset()
     if not report.login_ok:
-        logger.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
-                       ip, report.errors.get("login"))
+        log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
+                    ip, report.errors.get("login"))
         return frozenset()
 
     skips: set[str] = set()
@@ -82,7 +85,7 @@ def run_ws_phase(ip: str) -> frozenset[str]:
             and cfg.get("dungeon_sweeps"):
         skips.add("萬神試煉")
 
-    logger.info(
+    log.info(
         "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s skip=%s",
         ip, time.time() - started, list(report.tasks), list(report.errors),
         report.kicked, sorted(skips))

@@ -27,20 +27,22 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
   8. couple      — 伴侶: 奶茶+玫瑰送光 (give_all_in_hand, batches of 20;
                    ``couple_gifts`` default on) + 戒指錘鍊 (``forge_ring``
                    opt-in, default off). Skipped without a partner.
-  9. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
+  9. mining      — 挖礦: opt-in (``mining_config.enabled=True``) only. Uses the
+                   login-time 0x0402 inventory snapshot; skips instead of
+                   guessing when the pickaxe count is unknown. Re-plans after
+                   each confirmed step and can consume pickaxe/bomb/drill only
+                   through explicit config flags.
+ 10. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
                    auto-equips/sells drops, so it is gated behind its own flag
                    (NOT ``spend``) and OFF by default. Runs one batch of up to
                    ``batch_num`` boxes (lamp.open_lamp's own cap), never unbounded.
-
-mining is deliberately NOT in the daily runner: it is human-supervised and runs
-via ws_token.mining_smoke instead.
 
 Default ``spend=False`` runs only the free reads + claims (incl. redpack) and
 sends NO cost action. ``spend=True`` additionally donates, shops, sweeps, and (if
 expired) renews — see the per-task spend gates below. ``open_lamp`` is an
 independent opt-in: it is OFF by default and consumes 神燈 items only when True.
 
-CLI:  python -m ws_token.runner --device <dev> [--spend] [--open-lamp]
+CLI:  python -m ws_token.runner --device <dev> [--spend] [--open-lamp] [--mine]
 """
 from __future__ import annotations
 
@@ -50,8 +52,8 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 from ws_token import (
-    carpark, couple, dungeon, farm, guild, idle_reward, lamp, league_solo,
-    main_tasks, redpack, spirit, steward, turntable, workshop,
+    carpark, couple, dungeon, farm, guild, idle_reward, league_solo, main_tasks,
+    mining, mining_supervised, redpack, spirit, steward, turntable, workshop,
 )
 from ws_token import state as ws_state
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
@@ -72,11 +74,12 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "main_tasks", "league_solo", "redpack", "idle_reward", "turntable", "farm",
     "dungeon", "guild", "steward", "carpark", "spirit", "workshop", "couple",
-    "lamp")
+    "mining", "lamp")
 
-# 開神燈 batch size for one daily pass (lamp.open_lamp caps to max_batches=1 by
-# default, so this opens at most one batch — never an unbounded drain).
+# 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
+_LAMP_MAX_BATCHES: int = 500  # 20 * 500 = 10000
+_LAMP_BATCH_DELAY_SEC: float = 0.2
 
 # workshop 12h 配方輪換間隔（使用者 2026-06-10 指定：兩類別 12hr 切一次）
 _WORKSHOP_ROTATE_S: float = 12 * 3600.0
@@ -109,6 +112,12 @@ class RunReport:
 def _make_client(creds, **kwargs) -> WSGameClient:
     """Construct the WSGameClient. Indirected so tests can inject a fake."""
     return WSGameClient(creds, **kwargs)
+
+
+def _load_lamp():
+    """Lazy import 開神燈 deps; runner import should stay pure-WS/light."""
+    from ws_token import lamp
+    return lamp
 
 
 # --- per-task runners (each returns a summary; raising is caught by run_device)
@@ -291,14 +300,36 @@ def _run_couple(client, *, gifts: bool, forge_ring: bool) -> dict:
 
 
 def _run_lamp(client) -> dict:
-    """開神燈: open one batch of boxes and auto-equip/sell drops (REAL, not dry_run).
+    """開神燈: sequentially open up to 10000 boxes and auto-equip/sell drops.
 
     Only reached when ``open_lamp=True`` (gated by run_device); it consumes 神燈
-    items. ``batch_num`` + lamp.open_lamp's own ``max_batches=1`` cap keep it to a
-    single bounded batch (~one box/sec), never an unbounded drain. Returns
+    items. The server accepts at most 20 per OPEN_ALL call, so this runs a
+    single-threaded 20-item batch loop capped at 500 batches (10000 total) and
+    stops early when the server reports no lamps left. Returns
     lamp.open_lamp's summary ``{opened, equipped, sold, left, dry_run}``.
     """
-    return lamp.open_lamp(client, dry_run=False, batch_num=_LAMP_BATCH_NUM)
+    return _load_lamp().open_lamp(
+        client,
+        dry_run=False,
+        batch_num=_LAMP_BATCH_NUM,
+        max_batches=_LAMP_MAX_BATCHES,
+        batch_delay=_LAMP_BATCH_DELAY_SEC,
+    )
+
+
+def _run_mining(client, tracker: mining.InventoryTracker, *,
+                mining_config: Optional[dict]) -> dict:
+    """挖礦 opt-in: 用 0x0402 庫存現量，一步一刷新，鎬子用完即停。"""
+    cfg = mining_config or {}
+    return mining_supervised.mine_until_pickaxe_empty(
+        client,
+        tracker,
+        allow_bomb=bool(cfg.get("allow_bomb")),
+        allow_drill=bool(cfg.get("allow_drill")),
+        max_steps=int(cfg.get("max_steps") or 200),
+        timeout=cfg.get("timeout"),
+        max_depth=cfg.get("max_depth"),
+    )
 
 
 def _run_guild(client, *, spend: bool) -> dict:
@@ -369,7 +400,8 @@ def run_device(device: str, *, spend: bool = False,
                carpark_target: Optional[int] = None,
                couple_gifts: bool = True,
                forge_ring: bool = False,
-               workshop_rotate: bool = True) -> RunReport:
+               workshop_rotate: bool = True,
+               mining_config: Optional[dict] = None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -401,6 +433,9 @@ def run_device(device: str, *, spend: bool = False,
         (default True) enables the 加工坊 12h recipe rotation; ``couple_gifts``
         (default True) sends 奶茶+玫瑰 to the partner and ``forge_ring`` (default
         False) opts in to 戒指錘鍊 (consumes all 真愛之石).
+      - ``mining_config`` ``{enabled, allow_bomb, allow_drill, max_steps}``
+        enables pure-WS mining. It consumes mining tools and therefore stays
+        OFF by default. Missing 0x0402 inventory snapshot -> skip, not guess.
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -414,10 +449,16 @@ def run_device(device: str, *, spend: bool = False,
     # reward is ALSO a login-time PUSH (reward_info_s2c{type:2}), so the same
     # handler tees those bodies into ``idle_offline`` for _run_idle_reward.
     collector = main_tasks.TaskCollector()
+    inventory_tracker = mining.InventoryTracker()
     idle_offline: list[bytes] = []
 
     def _push(cmd: int, body: bytes) -> None:
         collector(cmd, body)
+        try:
+            inventory_tracker.on_push(cmd, body)
+        except Exception:  # noqa: BLE001 — 庫存 push 壞掉不該中斷登入
+            logger.debug("ws_token runner: %s inventory push parse failed",
+                         device, exc_info=True)
         if cmd == idle_reward.CMD_REWARD_INFO:
             try:
                 info = idle_reward.parse_reward_info(body)
@@ -468,6 +509,10 @@ def run_device(device: str, *, spend: bool = False,
         _safe(tasks, errors, "couple",
               lambda: _run_couple(client, gifts=couple_gifts,
                                   forge_ring=forge_ring))
+        if mining_config and mining_config.get("enabled"):
+            _safe(tasks, errors, "mining",
+                  lambda: _run_mining(client, inventory_tracker,
+                                      mining_config=mining_config))
         if open_lamp:
             _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
     finally:
@@ -568,6 +613,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="戒指錘鍊: 消耗全部真愛之石 (預設關)")
     ap.add_argument("--no-workshop", dest="workshop_rotate", action="store_false",
                     help="加工坊 12h 配方輪換預設開; 此旗標關閉")
+    ap.add_argument("--mine", action="store_true",
+                    help="挖礦 opt-in: 依 0x0402 庫存現量挖到鎬子用完")
+    ap.add_argument("--mine-allow-bomb", action="store_true",
+                    help="挖礦允許使用炸彈 4003 (預設關)")
+    ap.add_argument("--mine-allow-drill", action="store_true",
+                    help="挖礦允許使用鑽頭 4002 (預設關)")
+    ap.add_argument("--mine-max-steps", type=int, default=200, metavar="N",
+                    help="挖礦最多送出的步數上限 (預設 200)")
+    ap.add_argument("--mine-max-depth", type=int, default=None, metavar="DEPTH",
+                    help="挖礦 planner max_depth；未設則使用 adapter 預設")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO,
@@ -578,16 +633,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     farm_config = None
     if args.farm_seed is not None or args.farm_team is not None:
         farm_config = {"seed_id": args.farm_seed, "team_cfg_id": args.farm_team}
+    mining_config = None
+    if args.mine:
+        mining_config = {
+            "enabled": True,
+            "allow_bomb": args.mine_allow_bomb,
+            "allow_drill": args.mine_allow_drill,
+            "max_steps": args.mine_max_steps,
+            "max_depth": args.mine_max_depth,
+        }
     print(f"[runner] starting device={args.device} spend={args.spend} "
           f"open_lamp={args.open_lamp} farm_config={farm_config} "
-          f"dungeon_sweeps={dungeon_sweeps} carpark_target={args.carpark_target}",
+          f"dungeon_sweeps={dungeon_sweeps} carpark_target={args.carpark_target} "
+          f"mining_config={mining_config}",
           flush=True)
     rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
                      open_lamp=args.open_lamp, farm_config=farm_config,
                      dungeon_sweeps=dungeon_sweeps,
                      carpark_target=args.carpark_target,
                      couple_gifts=args.couple_gifts, forge_ring=args.forge_ring,
-                     workshop_rotate=args.workshop_rotate)
+                     workshop_rotate=args.workshop_rotate,
+                     mining_config=mining_config)
     print(_format_report(rep), flush=True)
     return 0 if rep.login_ok else 1
 

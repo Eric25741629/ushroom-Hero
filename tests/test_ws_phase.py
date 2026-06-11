@@ -1,10 +1,13 @@
 """game_actions.ws_phase — WS-first 階段與 RunReport→pipeline skip-set 對照。"""
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+sys.modules.setdefault("cv2", types.SimpleNamespace())
 
 import config_manager  # noqa: E402
 from game_actions import ws_phase  # noqa: E402
@@ -33,12 +36,12 @@ def test_success_tasks_map_to_pipeline_names(monkeypatch):
     monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg: _report({
         "redpack": {}, "farm": {}, "idle_reward": {}, "guild": {},
         "spirit": {}, "steward": {}, "main_tasks": {}, "couple": {},
-        "lamp": {}, "turntable": {},
+        "lamp": {}, "turntable": {}, "mining": {},
     }))
     skips = ws_phase.run_ws_phase("dev")
     assert skips == frozenset({
         "紅包檢查", "點擊寶箱", "家族任務", "領取守護靈", "商店購買",
-        "所有日常任務", "好友每日禮物", "開神燈", "轉盤金幣",
+        "所有日常任務", "好友每日禮物", "開神燈", "轉盤金幣", "挖礦任務",
     })
     # farm 沒配 seed_id → 農場任務不 skip（spec §8）
     assert "農場任務" not in skips
@@ -60,6 +63,24 @@ def test_dungeon_skips_only_with_sweeps_configured(monkeypatch):
     monkeypatch.setattr(ws_phase, "_run_device",
                         lambda ip, cfg: _report({"dungeon": {}}))
     assert "萬神試煉" not in ws_phase.run_ws_phase("dev")
+
+
+def test_run_device_passes_mining_config(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured["ip"] = ip
+        captured.update(kwargs)
+        return _report({"mining": {}})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    cfg = {"enabled": True, "mining": {"enabled": True, "allow_drill": True}}
+    ws_phase._run_device("dev", cfg)
+
+    assert captured["ip"] == "dev"
+    assert captured["mining_config"] == {"enabled": True, "allow_drill": True}
 
 
 def test_errored_task_not_skipped(monkeypatch):

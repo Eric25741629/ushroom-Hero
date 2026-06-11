@@ -19,13 +19,14 @@ docs/protocol/MINING_SCHEMA.md — 5554 CDP-verified terrain/prop semantics):
   p_mine_hole  {config_id#1, last_num#2, max_num#3, hole_num#4}
   p_key_value  {k#1, v#2}
 
-  block_id = depth*100 + col.  terrain config_id (MINING_SCHEMA):
-    201 = 石 (>=2 hit) / 202 = 泥 (1 hit) / 401 = 礦洞 (pit/reward).
+  block_id = depth*100 + col.  terrain config_id (live H5/CDP):
+    201 = 泥 (1 hit) / 202 = 石 (>=2 hit) / 401 = 礦洞 (pit/reward).
   goods_id: 鎬=4001 / 鑽=4002 / 炸=4003 (MINING_SCHEMA §2; whether
     home_mine_use_goods takes this exact value is live-confirm — see below).
 
 Inventory 現量: ``max_num`` is the cap, NOT the current count. The only trusted
-live source is the 0x0402 push (evt 9800001 consume f3=new_count / 9800009 gain).
+live source is the 0x0402 push (evt 9800004 login snapshot/update,
+9800001 consume f3=new_count / 9800009 gain).
 """
 from __future__ import annotations
 
@@ -51,16 +52,17 @@ GOODS_PICKAXE = 4001          # 鎬子 (single block)
 GOODS_DRILL = 4002            # 鑽頭 (vertical + bottom row)
 GOODS_BOMB = 4003             # 炸彈 (3x3 + cross)
 
-# terrain config_id (= p_mine_block.config_id), MINING_SCHEMA §6 f4 enum.
-TERRAIN_STONE = 201           # 石頭 (>=2 hits)
-TERRAIN_DIRT = 202            # 泥土 (1 hit)
+# terrain config_id (= p_mine_block.config_id), live H5/CDP verified on 7fe98fc6.
+TERRAIN_DIRT = 201            # 泥土 (1 hit)
+TERRAIN_STONE = 202           # 石頭 (>=2 hits)
 TERRAIN_PIT = 401             # 礦洞 (reward target)
 
 # 0x0402 evt_type that carry an item 現量 (MINING_SCHEMA §3). Currency-only
 # evt (e.g. 5011) are ignored so they never clobber an item count.
+INV_EVT_SNAPSHOT = 9800004    # 登入/道具快照 -> f3 = current_count
 INV_EVT_CONSUME = 9800001     # 道具消耗 -> f3 = new_count
 INV_EVT_GAIN = 9800009        # 道具獲得 -> f3 = new_count
-INV_ITEM_EVT_TYPES = frozenset({INV_EVT_CONSUME, INV_EVT_GAIN})
+INV_ITEM_EVT_TYPES = frozenset({INV_EVT_SNAPSHOT, INV_EVT_CONSUME, INV_EVT_GAIN})
 
 # Item ids we surface as named properties (MINING_SCHEMA §2/§4).
 _PROP_ITEM_IDS = (GOODS_PICKAXE, GOODS_DRILL, GOODS_BOMB)
@@ -73,7 +75,7 @@ class MineBlock:
     block_id: int       # id #1  (= depth*100 + col)
     x: int              # #2  (col, 1-indexed in the live board)
     y: int              # #3  (depth / floor row)
-    config_id: int      # #4  (terrain: 201 stone / 202 dirt / 401 pit)
+    config_id: int      # #4  (terrain: 201 dirt / 202 stone / 401 pit)
     count: int          # #5  (hits remaining)
     is_reward: int      # #6
 
@@ -186,8 +188,8 @@ class InventoryTracker:
     """Maintains item 現量 from 0x0402 pushes — the only trusted live source.
 
     Install with ``client.set_push_handler(tracker.on_push)``. Only the
-    item-bearing evt types (consume/gain) update counts; currency-only events
-    are ignored so they never overwrite an item quantity.
+    item-bearing evt types (login snapshot/update, consume, gain) update counts;
+    currency-only events are ignored so they never overwrite an item quantity.
     """
 
     def __init__(self) -> None:
@@ -224,6 +226,10 @@ class InventoryTracker:
     def bomb(self) -> int:
         return self.counts.get(GOODS_BOMB, 0)
 
+    def has_item(self, item_id: int) -> bool:
+        """Whether this tracker has seen an authoritative count for ``item_id``."""
+        return int(item_id) in self.counts
+
     def as_props(self) -> dict:
         """{'pickaxe', 'drill', 'bomb'} snapshot for the planner adapter."""
         return {"pickaxe": self.pickaxe, "drill": self.drill, "bomb": self.bomb}
@@ -234,6 +240,16 @@ class InventoryTracker:
 def read_board(client: WSGameClient, *, timeout: Optional[float] = None) -> MineBoard:
     """Query the current mine board (0x0c01). Read-only, safe to call."""
     return parse_board(client.call(CMD_MINE_INFO, b"", timeout=timeout))
+
+
+def send_dig(client: WSGameClient, goods_id: int, block_id: int) -> None:
+    """Send one home_mine_use_goods without waiting for a same-cmd reply.
+
+    Live 0x0c03 can mutate the board while staying silent; supervised callers
+    should confirm by ``read_board`` afterwards instead of treating no reply as
+    failure.
+    """
+    client.send(CMD_USE_GOODS, build_use_goods_body(goods_id, block_id))
 
 
 def dig(client: WSGameClient, goods_id: int, block_id: int,

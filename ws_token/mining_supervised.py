@@ -1,0 +1,481 @@
+"""Supervised pure-WS mining bridge.
+
+This module connects ``ws_token.mining_adapter.plan`` output to
+``home_mine_use_goods`` calls, but keeps live mutation behind explicit caller
+flags. Defaults are dry-run and single-step because every executed step consumes
+real mining resources.
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import math
+import time
+from typing import Any, Dict, Optional
+
+from ws_token import mining, mining_adapter
+from ws_token.client import WSGameClient
+from ws_token.creds import load_creds
+
+logger = logging.getLogger(__name__)
+
+
+class LiveMiningBlocked(PermissionError):
+    """Raised when a planned step is not allowed for supervised live execution."""
+
+
+def _board_signature(board: Any) -> tuple:
+    """Small stable signature for refresh confirmation."""
+    blocks = []
+    for blk in getattr(board, "blocks", []) or []:
+        blocks.append((
+            int(getattr(blk, "block_id", 0) or 0),
+            int(getattr(blk, "x", 0) or 0),
+            int(getattr(blk, "y", 0) or 0),
+            int(getattr(blk, "config_id", 0) or 0),
+            int(getattr(blk, "count", 0) or 0),
+            int(getattr(blk, "is_reward", 0) or 0),
+        ))
+    holes = []
+    for hole in getattr(board, "holes", []) or []:
+        holes.append((
+            int(getattr(hole, "config_id", 0) or 0),
+            int(getattr(hole, "last_num", 0) or 0),
+            int(getattr(hole, "max_num", 0) or 0),
+            int(getattr(hole, "hole_num", 0) or 0),
+        ))
+    return (
+        int(getattr(board, "area", 0) or 0),
+        int(getattr(board, "baseline", 0) or 0),
+        tuple(sorted(int(a) for a in (getattr(board, "actives", []) or []))),
+        tuple(sorted(blocks)),
+        tuple(sorted(holes)),
+    )
+
+
+def _planned_pickaxe_hits(step: Dict[str, Any], goods_id: int) -> int:
+    if goods_id == mining.GOODS_PICKAXE and step.get("type") == "dig":
+        return max(1, int(math.ceil(float(step.get("step_cost") or 1))))
+    return 1
+
+
+def _decrement_inventory(inventory: Dict[str, int], goods_id: int, hits: int) -> None:
+    key_by_goods = {
+        mining.GOODS_PICKAXE: "pickaxe",
+        mining.GOODS_DRILL: "drill",
+        mining.GOODS_BOMB: "bomb",
+    }
+    key = key_by_goods.get(goods_id)
+    if key is None or key not in inventory:
+        return
+    inventory[key] = max(0, int(inventory.get(key, 0)) - int(hits))
+
+
+def _format_grid(grid: list) -> str:
+    return " | ".join(",".join(str(cell) for cell in row) for row in grid)
+
+
+def _log_board_trace(board: Any, inventory: Dict[str, int], *,
+                     phase: str, step_index: int) -> None:
+    """Log WS raw board projection so live runs can diagnose filtered layout."""
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    trace = mining_adapter.board_projection_trace(board)
+    logger.info(
+        "ws_mining board phase=%s step=%s area=%s baseline=%s top_depth=%s "
+        "actives=%s blocks=%s holes=%s inventory=%s area_info=%s grid=%s "
+        "dropped_blocks=%s dropped_block_details=%s dropped_actives=%s "
+        "dropped_active_details=%s",
+        phase,
+        step_index,
+        trace["area"],
+        trace["baseline"],
+        trace["top_depth"],
+        trace["actives_count"],
+        trace["blocks_count"],
+        trace["holes_count"],
+        dict(inventory),
+        trace["area_info"],
+        _format_grid(trace["grid"]),
+        len(trace["dropped_blocks"]),
+        trace["dropped_blocks"][:12],
+        len(trace["dropped_actives"]),
+        trace["dropped_actives"][:12],
+    )
+
+
+def _log_plan_trace(plan_result: Dict[str, Any], inventory: Dict[str, int],
+                    *, step_index: int) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    steps = list(plan_result.get("ws_steps", []))
+    logger.info(
+        "ws_mining plan step=%s inventory=%s message=%r steps=%s first_step=%s",
+        step_index,
+        dict(inventory),
+        plan_result.get("message"),
+        len(steps),
+        steps[0] if steps else None,
+    )
+
+
+def _log_execute_trace(item: Dict[str, Any], *, step_index: int,
+                       inventory: Dict[str, int]) -> None:
+    if not logger.isEnabledFor(logging.INFO):
+        return
+    logger.info(
+        "ws_mining execute step=%s goods_id=%s block_id=%s confirmed=%s "
+        "confirmation=%s refresh_attempts=%s inventory_after=%s error=%s",
+        step_index,
+        item.get("goods_id"),
+        item.get("block_id"),
+        item.get("confirmed"),
+        item.get("confirmation"),
+        item.get("refresh_attempts"),
+        dict(inventory),
+        item.get("error"),
+    )
+
+
+def step_goods_id(
+    step: Dict[str, Any],
+    *,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
+) -> int:
+    """Map one planner ``ws_step`` to the mining goods id used by 0x0c03.
+
+    炸彈/鑽頭都需要明確 allow flag；預設只允許鎬子。
+    """
+    step_type = step.get("type")
+    if step_type == "dig":
+        return mining.GOODS_PICKAXE
+    if step_type != "use":
+        raise LiveMiningBlocked(f"unsupported mining step type: {step_type!r}")
+
+    item = step.get("item")
+    if item == "bomb":
+        if not allow_bomb:
+            raise LiveMiningBlocked("bomb step requires allow_bomb=True")
+        return mining.GOODS_BOMB
+    if item == "drill":
+        if not allow_drill:
+            raise LiveMiningBlocked("drill step requires allow_drill=True")
+        return mining.GOODS_DRILL
+    raise LiveMiningBlocked(f"unsupported mining item step: {item!r}")
+
+
+def execute_plan_step(
+    client: WSGameClient,
+    step: Dict[str, Any],
+    *,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
+    timeout: Optional[float] = None,
+    before_board: Optional[Any] = None,
+    confirm_by_refresh: bool = True,
+    refresh_timeout: float = 6.0,
+    refresh_interval: float = 0.75,
+) -> Dict[str, Any]:
+    """Execute one planned WS step via send-only ``home_mine_use_goods``.
+
+    0x0c03 may not reply even when the server accepts the mutation. We therefore
+    send one action, refresh the board, and let the caller re-plan from the new
+    snapshot. ``step_cost`` is reported as ``planned_hits`` but is not blindly
+    repeated because unknown active terrain is deliberately cost-conservative.
+    """
+    block_id = step.get("block_id")
+    if block_id is None:
+        raise ValueError(f"missing block_id in ws step: {step!r}")
+    block_id = int(block_id)
+    goods_id = step_goods_id(step, allow_bomb=allow_bomb, allow_drill=allow_drill)
+    planned_hits = _planned_pickaxe_hits(step, goods_id)
+    if confirm_by_refresh and before_board is None:
+        before_board = mining.read_board(client, timeout=timeout)
+
+    mining.send_dig(client, goods_id, block_id)
+
+    after_board = None
+    confirmed = False
+    confirmation = "sent_unconfirmed"
+    error = None
+    refresh_attempts = 0
+    if confirm_by_refresh:
+        deadline = time.monotonic() + max(0.0, float(refresh_timeout))
+        while True:
+            refresh_attempts += 1
+            try:
+                after_board = mining.read_board(client, timeout=timeout)
+            except Exception as exc:  # pragma: no cover - live transport failure path
+                confirmation = "refresh_failed"
+                error = f"{type(exc).__name__}: {exc}"
+                break
+            if _board_signature(after_board) != _board_signature(before_board):
+                confirmed = True
+                confirmation = "confirmed_by_board_change"
+                break
+            confirmation = "unconfirmed_no_board_change"
+            if time.monotonic() >= deadline:
+                break
+            if refresh_interval > 0:
+                time.sleep(float(refresh_interval))
+    return {
+        "step": dict(step),
+        "goods_id": goods_id,
+        "block_id": block_id,
+        "hits": 1,
+        "planned_hits": planned_hits,
+        "raw_replies": [],
+        "raw_reply": None,
+        "after_board": after_board,
+        "confirmed": confirmed,
+        "confirmation": confirmation,
+        "error": error,
+        "refresh_attempts": refresh_attempts,
+    }
+
+
+def plan_current_board(
+    client: WSGameClient,
+    inventory: Dict[str, int],
+    *,
+    execute: bool = False,
+    max_steps: int = 1,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
+    timeout: Optional[float] = None,
+    max_depth: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Read the current board, run the planner, and optionally execute steps."""
+    board = mining.read_board(client, timeout=timeout)
+    plan_result = mining_adapter.plan(board, inventory, max_depth=max_depth)
+    limit = max(0, int(max_steps))
+    plans = [plan_result]
+    candidate_steps = list(plan_result.get("ws_steps", []))[:limit] if not execute else []
+
+    executed = []
+    if execute:
+        current_board = board
+        current_plan = plan_result
+        remaining_inventory = dict(inventory)
+        for idx in range(limit):
+            steps = list(current_plan.get("ws_steps", []))
+            if not steps:
+                break
+            step = steps[0]
+            candidate_steps.append(step)
+            item = execute_plan_step(
+                client,
+                step,
+                allow_bomb=allow_bomb,
+                allow_drill=allow_drill,
+                timeout=timeout,
+                before_board=current_board,
+            )
+            executed.append(item)
+            if not item.get("confirmed"):
+                break
+            _decrement_inventory(remaining_inventory, int(item["goods_id"]), int(item["hits"]))
+            current_board = item.get("after_board")
+            if current_board is None:
+                break
+            if idx + 1 < limit:
+                current_plan = mining_adapter.plan(
+                    current_board,
+                    remaining_inventory,
+                    max_depth=max_depth,
+                )
+                plans.append(current_plan)
+
+    return {
+        "board": board,
+        "plan": plan_result,
+        "plans": plans,
+        "candidate_steps": candidate_steps,
+        "executed": executed,
+    }
+
+
+def mine_until_pickaxe_empty(
+    client: WSGameClient,
+    tracker: mining.InventoryTracker,
+    *,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
+    max_steps: int = 200,
+    timeout: Optional[float] = None,
+    max_depth: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Re-plan and execute one confirmed step at a time until pickaxes reach 0.
+
+    庫存必須先由 0x0402 snapshot/update 建立；如果沒有看過鎬子現量，直接
+    skip，避免把 ``max_num`` 或預設 0 誤當成真實庫存。
+    """
+    if not tracker.has_item(mining.GOODS_PICKAXE):
+        return {
+            "skipped": "inventory snapshot missing",
+            "initial_inventory": tracker.as_props(),
+            "final_inventory": tracker.as_props(),
+            "plans": [],
+            "candidate_steps": [],
+            "executed": [],
+        }
+
+    inventory = dict(tracker.as_props())
+    initial_inventory = dict(inventory)
+    plans: list[Dict[str, Any]] = []
+    candidate_steps: list[Dict[str, Any]] = []
+    executed: list[Dict[str, Any]] = []
+    limit = max(0, int(max_steps))
+    stopped_reason = "max_steps"
+
+    current_board = mining.read_board(client, timeout=timeout)
+    _log_board_trace(current_board, inventory, phase="initial", step_index=0)
+    for _idx in range(limit):
+        if int(inventory.get("pickaxe", 0)) <= 0:
+            stopped_reason = "pickaxe_empty"
+            break
+
+        plan_result = mining_adapter.plan(
+            current_board,
+            inventory,
+            max_depth=max_depth,
+        )
+        plans.append(plan_result)
+        _log_plan_trace(plan_result, inventory, step_index=_idx)
+        steps = list(plan_result.get("ws_steps", []))
+        if not steps:
+            stopped_reason = "no_steps"
+            break
+
+        step = steps[0]
+        candidate_steps.append(step)
+        item = execute_plan_step(
+            client,
+            step,
+            allow_bomb=allow_bomb,
+            allow_drill=allow_drill,
+            timeout=timeout,
+            before_board=current_board,
+        )
+        executed.append(item)
+        if not item.get("confirmed"):
+            _log_execute_trace(item, step_index=_idx, inventory=inventory)
+            stopped_reason = "unconfirmed"
+            break
+
+        _decrement_inventory(
+            inventory,
+            int(item["goods_id"]),
+            int(item.get("hits") or 1),
+        )
+        _log_execute_trace(item, step_index=_idx, inventory=inventory)
+        if int(inventory.get("pickaxe", 0)) <= 0:
+            stopped_reason = "pickaxe_empty"
+            break
+
+        next_board = item.get("after_board")
+        if next_board is None:
+            stopped_reason = "missing_after_board"
+            break
+        current_board = next_board
+        _log_board_trace(current_board, inventory, phase="after_execute",
+                         step_index=_idx)
+    else:
+        if int(inventory.get("pickaxe", 0)) <= 0:
+            stopped_reason = "pickaxe_empty"
+
+    return {
+        "initial_inventory": initial_inventory,
+        "final_inventory": inventory,
+        "plans": plans,
+        "candidate_steps": candidate_steps,
+        "executed": executed,
+        "stopped_reason": stopped_reason,
+    }
+
+
+def _format_step(step: Dict[str, Any]) -> str:
+    return (
+        f"{step.get('type')}:{step.get('item', 'pickaxe')} "
+        f"pos=({step.get('row')},{step.get('col')}) "
+        f"block_id={step.get('block_id')} cost={step.get('step_cost')}"
+    )
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--device", required=True)
+    parser.add_argument("--pickaxe-count", type=int, default=None)
+    parser.add_argument("--drill-count", type=int, default=0)
+    parser.add_argument("--bomb-count", type=int, default=0)
+    parser.add_argument("--max-steps", type=int, default=1)
+    parser.add_argument("--max-depth", type=int, default=None)
+    parser.add_argument("--execute", action="store_true")
+    parser.add_argument("--allow-bomb", action="store_true")
+    parser.add_argument(
+        "--confirm-live-dig",
+        action="store_true",
+        help="required with --execute; confirms real mining items may be consumed",
+    )
+    args = parser.parse_args(argv)
+
+    if args.execute and not args.confirm_live_dig:
+        print("[mining] --execute requires --confirm-live-dig", flush=True)
+        return 2
+
+    creds = load_creds(args.device)
+    client = WSGameClient(creds)
+    tracker = mining.InventoryTracker()
+    client.set_push_handler(tracker.on_push)
+    info = client.connect()
+    print(
+        f"[mining] device={args.device} login code={info['code']} "
+        f"role_id={info['role_id']}",
+        flush=True,
+    )
+    try:
+        inventory = tracker.as_props()
+        if args.pickaxe_count is not None:
+            inventory["pickaxe"] = int(args.pickaxe_count)
+        inventory["drill"] = int(args.drill_count)
+        inventory["bomb"] = int(args.bomb_count)
+
+        result = plan_current_board(
+            client,
+            inventory,
+            execute=args.execute,
+            max_steps=args.max_steps,
+            allow_bomb=args.allow_bomb,
+            timeout=8.0,
+            max_depth=args.max_depth,
+        )
+        board = result["board"]
+        plan_result = result["plan"]
+        print(
+            f"[mining] board area={board.area} baseline={board.baseline} "
+            f"blocks={len(board.blocks)} actives={len(board.actives)} "
+            f"inventory={inventory}",
+            flush=True,
+        )
+        print(f"[mining] plan: {plan_result.get('message')}", flush=True)
+        for step in result["candidate_steps"]:
+            print(f"  candidate {_format_step(step)}", flush=True)
+        for item in result["executed"]:
+            print(
+                f"  executed goods_id={item['goods_id']} "
+                f"block_id={item['block_id']} hits={item['hits']}/{item['planned_hits']} "
+                f"confirmation={item['confirmation']}",
+                flush=True,
+            )
+            if item.get("error"):
+                print(f"    error={item['error']}", flush=True)
+        if args.execute and any(not item.get("confirmed") for item in result["executed"]):
+            return 3
+        return 0
+    finally:
+        client.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
