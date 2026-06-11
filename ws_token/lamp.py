@@ -285,9 +285,9 @@ def open_lamp(
     active_tab = parse_tab_info(client.call(CMD_TAB_INFO, b""))
     set_map, lian_shan_tabs, worn = derive_set_map(
         client.call(CMD_EQUIP_INFO, b""), parser)
-    logger.info("ws_token lamp: active_tab=%s sets=%s lian=%s",
-                active_tab, {"".join(sorted(k)): v for k, v in set_map.items()},
-                lian_shan_tabs)
+    logger.debug("ws_token lamp: active_tab=%s sets=%s lian=%s",
+                 active_tab, {"".join(sorted(k)): v for k, v in set_map.items()},
+                 lian_shan_tabs)
 
     drops: dict[int, dict] = {}
     lock = threading.Lock()
@@ -340,8 +340,8 @@ def open_lamp(
                     left.append((uid, "no drop detail"))
                     continue
                 d = decide_v2(detail, set_map, worn, lian_shan_tabs, config, parser)
-                logger.info("ws_token lamp uid=%s -> %s (%s)", uid, d.action.upper(), d.reason)
                 if d.action == "equip":
+                    logger.info("ws_token lamp uid=%s -> EQUIP (%s)", uid, d.reason)
                     equipped.append((d.tab, uid, d.reason))
                     batch_equips.append((d.tab, uid))
                     worn.setdefault(d.tab, {})[detail["slot"]] = detail  # new worn baseline
@@ -349,9 +349,11 @@ def open_lamp(
                         sold.append((d.displaced_uid, "displaced by " + str(uid)))
                         batch_sells.append(d.displaced_uid)
                 elif d.action == "sell":
+                    logger.debug("ws_token lamp uid=%s -> SELL (%s)", uid, d.reason)
                     sold.append((uid, d.reason))
                     batch_sells.append(uid)
                 else:
+                    logger.debug("ws_token lamp uid=%s -> LEAVE (%s)", uid, d.reason)
                     left.append((uid, "".join(sorted(
                         frozenset(e.code for e in drop_to_equipment(detail, parser).entries)))))
 
@@ -374,8 +376,12 @@ def open_lamp(
     finally:
         client.set_push_handler(None)
 
-    logger.info("ws_token lamp: opened=%d equipped=%d sold=%d left=%d dry_run=%s",
-                opened, len(equipped), len(sold), len(left), dry_run)
+    if equipped or left:
+        logger.info("ws_token lamp: opened=%d equipped=%d left=%d dry_run=%s",
+                    opened, len(equipped), len(left), dry_run)
+    else:
+        logger.debug("ws_token lamp: opened=%d equipped=0 sold=%d left=0 dry_run=%s",
+                     opened, len(sold), dry_run)
     return {"opened": opened, "equipped": equipped, "sold": sold, "left": left,
             "dry_run": dry_run}
 
