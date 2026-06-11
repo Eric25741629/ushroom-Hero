@@ -401,7 +401,8 @@ def run_device(device: str, *, spend: bool = False,
                couple_gifts: bool = True,
                forge_ring: bool = False,
                workshop_rotate: bool = True,
-               mining_config: Optional[dict] = None) -> RunReport:
+               mining_config: Optional[dict] = None,
+               progress=None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -436,6 +437,12 @@ def run_device(device: str, *, spend: bool = False,
       - ``mining_config`` ``{enabled, allow_bomb, allow_drill, max_steps}``
         enables pure-WS mining. It consumes mining tools and therefore stays
         OFF by default. Missing 0x0402 inventory snapshot -> skip, not guess.
+
+    ``progress`` (optional) is a ``(task_name, status, detail)`` callback fired
+    per task: ``("xxx", "start", "")`` before, ``("xxx", "ok", "")`` /
+    ``("xxx", "error", "<err>")`` after — callers wire it to the dashboard
+    state and the per-device log. A raising callback is swallowed; it can
+    never abort the run.
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
@@ -487,34 +494,46 @@ def run_device(device: str, *, spend: bool = False,
     logger.info("ws_token runner: %s login ok role_id=%s spend=%s",
                 device, role_id_hint, spend)
 
+    def _notify(name: str, status: str, detail: str = "") -> None:
+        if progress is None:
+            return
+        try:
+            progress(name, status, detail)
+        except Exception:  # noqa: BLE001 — 回報壞掉不可中斷任務
+            logger.debug("ws_token runner: %s progress callback raised", device,
+                         exc_info=True)
+
+    def _step(name: str, fn) -> None:
+        _safe(tasks, errors, name, fn, notify=_notify)
+
     try:
-        _safe(tasks, errors, "main_tasks", lambda: _run_main_tasks(client, collector))
-        _safe(tasks, errors, "league_solo", lambda: _run_league_solo(client))
-        _safe(tasks, errors, "redpack", lambda: _run_redpack(client))
-        _safe(tasks, errors, "idle_reward", lambda: _run_idle_reward(client, idle_offline))
-        _safe(tasks, errors, "turntable", lambda: _run_turntable(client))
-        _safe(tasks, errors, "farm",
+        _step("main_tasks", lambda: _run_main_tasks(client, collector))
+        _step("league_solo", lambda: _run_league_solo(client))
+        _step("redpack", lambda: _run_redpack(client))
+        _step("idle_reward", lambda: _run_idle_reward(client, idle_offline))
+        _step("turntable", lambda: _run_turntable(client))
+        _step("farm",
               lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config))
-        _safe(tasks, errors, "dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
-        _safe(tasks, errors, "guild", lambda: _run_guild(client, spend=spend))
-        _safe(tasks, errors, "steward",
+        _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
+        _step("guild", lambda: _run_guild(client, spend=spend))
+        _step("steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
                                    sweep_list=sweep))
-        _safe(tasks, errors, "carpark",
+        _step("carpark",
               lambda: _run_carpark(client, target=carpark_target))
-        _safe(tasks, errors, "spirit", lambda: _run_spirit(client))
+        _step("spirit", lambda: _run_spirit(client))
         if workshop_rotate:
-            _safe(tasks, errors, "workshop",
+            _step("workshop",
                   lambda: _run_workshop(client, device=device))
-        _safe(tasks, errors, "couple",
+        _step("couple",
               lambda: _run_couple(client, gifts=couple_gifts,
                                   forge_ring=forge_ring))
         if mining_config and mining_config.get("enabled"):
-            _safe(tasks, errors, "mining",
+            _step("mining",
                   lambda: _run_mining(client, inventory_tracker,
                                       mining_config=mining_config))
         if open_lamp:
-            _safe(tasks, errors, "lamp", lambda: _run_lamp(client))
+            _step("lamp", lambda: _run_lamp(client))
     finally:
         # Read the kick flag BEFORE close() — a deliberate close never sets it,
         # so this captures only a real 異地登入 / server-drop during the run.
@@ -536,17 +555,24 @@ def run_device(device: str, *, spend: bool = False,
                      tasks=tasks, errors=errors, kicked=kicked)
 
 
-def _safe(tasks: dict, errors: dict, name: str, fn) -> None:
+def _safe(tasks: dict, errors: dict, name: str, fn, notify=None) -> None:
     """Run one task with its own error boundary; record result OR error.
 
     Any exception (WSTimeoutError, parse errors, etc.) is caught so the next
-    task still runs. The error is summarised onto ``errors[name]``.
+    task still runs. The error is summarised onto ``errors[name]``. ``notify``
+    (already exception-safe at the caller) reports start / ok / error.
     """
+    if notify:
+        notify(name, "start", "")
     try:
         tasks[name] = fn()
+        if notify:
+            notify(name, "ok", "")
     except Exception as exc:  # noqa: BLE001 — per-task isolation is the whole point
         errors[name] = f"{type(exc).__name__}: {exc}"
         logger.warning("ws_token runner: task %s failed: %s", name, exc, exc_info=True)
+        if notify:
+            notify(name, "error", f"{type(exc).__name__}: {exc}")
 
 
 # --- CLI --------------------------------------------------------------------

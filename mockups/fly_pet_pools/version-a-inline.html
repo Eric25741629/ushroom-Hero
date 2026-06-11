@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>版型 A：行內堆疊式 - 飛寵池 + 配對約束</title>
+<style>
+  :root {
+    --bg:#0f1218; --surface:#171c24; --surface2:#202734; --surface3:#28313f;
+    --border:#334052; --border2:#475569; --text:#edf2f7; --text2:#9aa6b2; --muted:#6f7b89;
+    --accent:#6ee7b7; --accent-h:#a7f3d0; --accent-soft:rgba(110,231,183,0.12);
+    --danger:#f87171; --warn:#fbbf24; --blue:#60a5fa;
+    --eq3:#42a5f5; --eq5:#7e57c2; --eq6:#e040fb; --eq7:#26a69a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(180deg,#131923 0,var(--bg) 300px);color:var(--text);line-height:1.5;padding:24px;}
+  h1{font-size:1.1em;margin-bottom:4px}
+  .note{color:var(--muted);font-size:.8em;margin-bottom:18px}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;max-width:760px}
+  .panel h2{font-size:.95em;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .tag{font-size:.7em;background:var(--accent-soft);color:var(--accent-h);padding:2px 8px;border-radius:10px;font-weight:600}
+  .btn{padding:6px 12px;border:1px solid transparent;border-radius:6px;font-size:.82em;cursor:pointer;font-weight:650;background:var(--surface3);color:var(--text2)}
+  .btn-primary{background:var(--accent);color:#0b1713}
+  .btn-ghost{background:rgba(255,255,255,.02);border-color:var(--border);color:var(--text2)}
+  .btn-danger-ghost{background:transparent;border-color:rgba(248,113,113,.4);color:var(--danger)}
+  .btn-sm{padding:4px 9px;font-size:.76em}
+  select,input{background:var(--surface3);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:6px;font-size:.85em}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .sep{height:1px;background:var(--border);margin:12px 0;opacity:.6}
+  .pool-line{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--surface2)}
+  .pool-line .nm{font-weight:700;font-size:.9em}
+  .pool-line .cnt{font-size:.75em;color:var(--text2)}
+  .pool-line .sp{margin-left:auto;display:flex;gap:6px}
+  .members{padding:8px 12px;border-left:2px solid var(--accent-soft);margin:0 0 10px 14px;font-size:.8em;color:var(--text2);display:flex;flex-wrap:wrap;gap:6px}
+  .chip{background:var(--surface3);border:1px solid var(--border);border-radius:12px;padding:2px 9px;font-size:.9em}
+  .constraint{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px}
+  .constraint .ename{font-weight:650;font-size:.86em;color:var(--eq3)}
+  .nseg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .nseg button{border:0;background:transparent;color:var(--text2);padding:4px 12px;font-size:.78em;cursor:pointer}
+  .nseg button.on{background:var(--accent-soft);color:var(--accent-h);font-weight:700}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:.76em;color:var(--text2);margin-bottom:5px;letter-spacing:.5px}
+  .selbar{position:relative;background:var(--surface2);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;display:flex;align-items:center;gap:12px;max-width:760px;margin-bottom:16px}
+  .pop{position:absolute;top:calc(100% + 8px);left:120px;background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:12px;width:330px;box-shadow:0 16px 40px rgba(0,0,0,.5);z-index:5}
+  .pop h3{font-size:.85em;margin-bottom:8px}
+  .hint{font-size:.72em;color:var(--muted)}
+  .demo-label{font-size:.72em;color:var(--warn);letter-spacing:1px;margin:20px 0 6px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<h1>版型 A：行內堆疊式</h1>
+<div class="note">全部 UI 內嵌在繁殖頁現有「方案」區塊裡，由上往下：方案編輯器 → 飛寵池管理（可摺疊）。列表頁勾選後出現浮動工具列。優點：不跳窗、一眼全覽；缺點：頁面較長。</div>
+
+<div class="demo-label">▼ 列表頁：勾選後的動作列（新增「存為飛寵池」）</div>
+<div class="selbar">
+  <span style="font-size:.85em"><b style="color:var(--accent)">12</b> 隻已選</span>
+  <button class="btn btn-ghost btn-sm">取消選取</button>
+  <button class="btn btn-ghost btn-sm">批次上鎖</button>
+  <button class="btn btn-primary btn-sm">存為飛寵池 ▾</button>
+  <span class="hint">上限 50 隻</span>
+  <div class="pop">
+    <h3>存為飛寵池</h3>
+    <div class="field"><label>建立新池</label><div class="row"><input placeholder="輸入名稱，例：禁速候選一軍" style="flex:1"><button class="btn btn-primary btn-sm">建立</button></div></div>
+    <div class="field" style="margin-bottom:0"><label>或覆蓋更新既有池的成員</label><div class="row"><select style="flex:1"><option>禁速候選一軍（18 隻）</option><option>重拳系備選（7 隻）</option></select><button class="btn btn-ghost btn-sm">覆蓋</button></div></div>
+  </div>
+</div>
+
+<div class="demo-label">▼ 繁殖頁：方案編輯器（展開中）</div>
+<div class="panel">
+  <h2>編輯方案：禁速x重拳 <span class="tag">巢位 1 使用中</span></h2>
+  <div class="field"><label>方案名稱</label><input value="禁速x重拳" style="width:240px"></div>
+  <div class="field"><label>飛寵池（自動配對只從池內挑；不選 = 全部飛寵）</label>
+    <select style="width:260px"><option>禁速候選一軍（18 隻）</option><option>重拳系備選（7 隻）</option><option value="">— 不限（全部飛寵）—</option></select>
+  </div>
+  <div class="field"><label>配對詞條約束（兩隻加總，多條 AND）</label>
+    <div class="constraint"><span class="ename">禁止超速</span><span class="hint">至少出現</span>
+      <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+      <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+    <div class="constraint"><span class="ename" style="color:var(--eq6)">重拳反擊</span><span class="hint">至少出現</span>
+      <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+      <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+    <div class="row"><select style="width:200px"><option>選擇詞條…</option><option>連擊強化</option><option>急速隱身</option></select><button class="btn btn-ghost btn-sm">+ 加一條</button></div>
+  </div>
+  <div class="sep"></div>
+  <div class="row"><span class="hint">品質/數量門檻、低代優先 等原有條件照舊放這下面…</span></div>
+  <div class="row" style="margin-top:10px"><button class="btn btn-primary">儲存方案</button><button class="btn btn-ghost">取消</button></div>
+</div>
+
+<div class="demo-label">▼ 繁殖頁：飛寵池管理（可摺疊區塊）</div>
+<div class="panel">
+  <h2>飛寵池管理 <span class="hint" style="font-weight:400">成員到「飛寵列表」勾選後重新儲存</span></h2>
+  <div class="pool-line"><span class="nm">禁速候選一軍</span><span class="cnt">18 / 50 隻</span>
+    <span class="sp"><button class="btn btn-ghost btn-sm">收合成員 ▴</button><button class="btn btn-ghost btn-sm">改名</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+  <div class="members"><span class="chip">小翠 Lv32</span><span class="chip">阿風 Lv30</span><span class="chip">默默 Lv28</span><span class="chip">皮皮 Lv28</span><span class="chip">＋14 隻…</span></div>
+  <div class="pool-line"><span class="nm">重拳系備選</span><span class="cnt">7 / 50 隻</span>
+    <span class="sp"><button class="btn btn-ghost btn-sm">展開成員 ▾</button><button class="btn btn-ghost btn-sm">改名</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+</div>
+</body>
+</html>

@@ -21,6 +21,10 @@ class Signal(Enum):
 # forgetting — see clear_offline_devices / sweep_stale_states).
 _signals: Dict[str, set[Signal]] = {}
 
+# 手動喚醒時間覆寫。value 是 epoch seconds；由睡眠 loop / 啟動倒數 loop
+# consume 後即清除，避免下一輪重複套用。
+_wake_overrides: Dict[str, float] = {}
+
 
 def raise_signal(ip: str, sig: Signal) -> None:
     with _global_lock:
@@ -149,8 +153,39 @@ def set_offline(ip: str, reason: str = "正常結束"):
                 _states[ip]["offline_since"] = time.time()
             _states[ip]["status"] = "OFFLINE"
             _states[ip]["step"] = reason
+            # dashboard 倒數只看 next_wake_at 是否過期（過期顯示「喚醒中...」），
+            # 離線裝置必須清掉，否則卡片永遠顯示喚醒中。
+            _states[ip].pop("next_wake_at", None)
             _states[ip]["last_update"] = time.time()
     logger.info(f"[BotState] 設備 {ip} 已離線：{reason}")
+
+
+def set_online(ip: str, reason: str = "設備恢復連線"):
+    """標記設備重新上線（OFFLINE → ONLINE）並清除離線時間戳。
+
+    用於「裝置斷線被判離線後又回到 ADB 清單、且 thread 還活著」的恢復路徑。
+    沒有既有狀態時不做事（thread 重啟時 init_device 會建立）。
+    """
+    with get_device_lock(ip):
+        if ip not in _states:
+            return
+        _states[ip]["status"] = "ONLINE"
+        _states[ip]["step"] = reason
+        _states[ip].pop("offline_since", None)
+        _states[ip]["last_update"] = time.time()
+    logger.info(f"[BotState] 設備 {ip} 已恢復上線：{reason}")
+
+
+def clear_offline_anchor(ip: str):
+    """清除離線時間戳但保留 OFFLINE 狀態。
+
+    讓 device_scan_service 的 3 小時 dead-device 重啟封鎖放行：
+    裝置回到 ADB 清單後即可重啟 thread，不必等人工介入。
+    """
+    with get_device_lock(ip):
+        st = _states.get(ip)
+        if st is not None:
+            st.pop("offline_since", None)
 
 
 def get_offline_since(ip: str) -> float | None:
@@ -169,9 +204,14 @@ def update_state(
     next_wake_at: Optional[float] = None,
     paused: Optional[bool] = None,
     step_deadline: Optional[float] = None,
+    status: Optional[str] = None,
 ):
     """
     更新設備的當前狀態。
+
+    `status` 供 master ingest 直通 worker 回報的上/離線狀態使用；轉入 OFFLINE
+    時記 offline_since 並清 next_wake_at、離開 OFFLINE 時清 offline_since
+    （與 set_offline / set_online 語義一致）。一般任務更新不要傳。
 
     `step_deadline` 是「這個步驟」的倒數截止時間戳 (epoch seconds)。前端從它
     倒數即可，不必拿會被背景心跳刷新的 `last_update` 當錨點。它的生命週期綁在
@@ -195,7 +235,17 @@ def update_state(
 
         state = _states[ip]
         state["last_update"] = time.time()
-        
+
+        if status is not None:
+            new_status = str(status).upper()
+            if new_status != state.get("status"):
+                if new_status == "OFFLINE":
+                    state["offline_since"] = time.time()
+                    state.pop("next_wake_at", None)
+                else:
+                    state.pop("offline_since", None)
+                state["status"] = new_status
+
         if task is not None:
             state["task"] = task
             # Once a device resumes active work, any previously scheduled wake time
@@ -439,12 +489,24 @@ def is_online_check_checker(ip: str) -> bool:
 
 
 def set_skip_sleep(ip: str):
-    """Mark that the given device should skip its next sleep cycle (one-shot).
+    """Mark that the given device should skip sleep and wake immediately.
 
     Called by the control panel or remote command. Workers should call
     `check_skip_sleep(ip)` to consume the flag.
     """
-    raise_signal(ip, Signal.SKIP_SLEEP)
+    wake_ts = time.time()
+    with _global_lock:
+        _signals.setdefault(ip, set()).add(Signal.SKIP_SLEEP)
+        _wake_overrides[ip] = wake_ts
+        st = _states.get(ip)
+        if st is not None:
+            current_task = str(st.get("task") or "")
+            current_step = str(st.get("step") or "")
+            if current_task in {"休眠中", "啟動後休眠"} or "秒後開始執行" in current_step:
+                st["task"] = current_task or "休眠中"
+                st["step"] = "跳過睡眠：立即開始"
+                st["next_wake_at"] = wake_ts
+                st["last_update"] = time.time()
 
 
 def request_force_sleep(ip: str, reason: str = "強制休眠"):
@@ -454,6 +516,7 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
         sigs.add(Signal.FORCE_SLEEP)
         sigs.discard(Signal.SKIP_SLEEP)
         sigs.discard(Signal.MANUAL_RELEASE)
+        _wake_overrides.pop(ip, None)
         req = _web_launch_requests.get(ip)
         if req and req.get("status") == "pending":
             req["status"] = "cancelled"
@@ -495,8 +558,9 @@ def clear_skip_sleep(ip: str):
     """Clear skip_sleep flag for device without consuming it."""
     with _global_lock:
         s = _signals.get(ip)
-        if s:
+        if s and Signal.SKIP_SLEEP in s:
             s.discard(Signal.SKIP_SLEEP)
+            _wake_overrides.pop(ip, None)
 
 
 def check_skip_sleep(ip: str) -> bool:
@@ -504,7 +568,52 @@ def check_skip_sleep(ip: str) -> bool:
 
     Returns True if a skip was requested, otherwise False.
     """
-    return consume_signal(ip, Signal.SKIP_SLEEP)
+    with _global_lock:
+        s = _signals.get(ip)
+        if s and Signal.SKIP_SLEEP in s:
+            s.discard(Signal.SKIP_SLEEP)
+            _wake_overrides.pop(ip, None)
+            return True
+        return False
+
+
+def set_wake_override(ip: str, delay_sec: float = 0) -> float:
+    """Set a one-shot manual wake timestamp for a sleeping/startup device."""
+    try:
+        delay = float(delay_sec)
+    except Exception:
+        delay = 0.0
+    delay = max(0.0, delay)
+    wake_ts = time.time() + delay
+    delay_display = int(round(delay))
+
+    with _global_lock:
+        _wake_overrides[ip] = wake_ts
+        st = _states.get(ip)
+        if st is not None:
+            current_task = str(st.get("task") or "")
+            current_step = str(st.get("step") or "")
+            if delay_display <= 0:
+                step = "手動調整喚醒：立即開始"
+            else:
+                step = f"手動調整喚醒：{delay_display} 秒後開始"
+            if current_task in {"休眠中", "啟動後休眠"} or "秒後開始執行" in current_step:
+                st["task"] = current_task or "休眠中"
+                st["step"] = step
+                st["next_wake_at"] = wake_ts
+                st["last_update"] = time.time()
+    return wake_ts
+
+
+def consume_wake_override(ip: str) -> Optional[float]:
+    """Consume and return a one-shot manual wake timestamp, if present."""
+    with _global_lock:
+        wake_ts = _wake_overrides.pop(ip, None)
+        if wake_ts is not None:
+            s = _signals.get(ip)
+            if s:
+                s.discard(Signal.SKIP_SLEEP)
+        return wake_ts
 
 
 def set_manual_release(ip: str):
@@ -587,8 +696,10 @@ def _signal_all_checkers_locked() -> None:
         checkers = config_manager.get_online_check_checkers()
     except Exception:
         checkers = ["emulator-5554"]
+    wake_ts = time.time()
     for checker in checkers:
         _signals.setdefault(checker, set()).add(Signal.SKIP_SLEEP)
+        _wake_overrides[checker] = wake_ts
 
 
 def submit_online_check_request(
@@ -812,6 +923,7 @@ def clear_offline_devices():
         # 即清掉所有 one-shot 通道（skip/force/web_close/manual_release），不會漏。
         with _global_lock:
             _signals.pop(ip, None)
+            _wake_overrides.pop(ip, None)
             _screenshot_windows.pop(ip, None)
             _locks.pop(ip, None)
 
@@ -850,4 +962,39 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
                 # 所有 one-shot 通道（skip/force/web_close/manual_release）。
                 with _global_lock:
                     _signals.pop(ip, None)
+                    _wake_overrides.pop(ip, None)
                     _locks.pop(ip, None)
+
+
+def sweep_stale_remote_devices(offline_after_sec: float = 3600.0):
+    """Remote (worker_id:ip) 裝置超過 `offline_after_sec` 未回報 → 標 OFFLINE。
+
+    掉線判離線 fix (2026-06-11)：worker 的同步迴圈只回報還在 `adb devices`
+    的裝置，手機斷線後 master 端的 last_update 就凍結 → 卡片永遠 ONLINE。
+    本函式由 master 的 scan loop 週期呼叫。
+
+    - 只動 remote key（帶冒號且非本機）。本機裝置睡眠期間不更新心跳，
+      絕不能用 staleness 判離線（會誤殺所有正常休眠的裝置）。
+    - 只標記、不刪 entry（使用者要看到「離線」卡片，而不是卡片消失）。
+    - worker 恢復回報後，ingest 的 status 直通會自動翻回 ONLINE。
+    """
+    now = time.time()
+    with _global_lock:
+        ips = list(_states.keys())
+
+    for ip in ips:
+        if ":" not in ip or is_local_device(ip):
+            continue
+        with get_device_lock(ip):
+            st = _states.get(ip)
+            if not st or st.get("status") == "OFFLINE":
+                continue
+            last = float(st.get("last_update", 0) or 0)
+            age = max(0.0, now - last)
+            if age < offline_after_sec:
+                continue
+            st["status"] = "OFFLINE"
+            st["offline_since"] = now
+            st["step"] = f"Worker 超過 {int(age // 60)} 分鐘未回報，判定離線"
+            st.pop("next_wake_at", None)
+        logger.warning(f"[BotState] 遠端設備 {ip} 超過 {int(age // 60)} 分鐘未回報，判定離線")

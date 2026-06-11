@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>版型 C：彈窗精簡式 - 飛寵池 + 配對約束</title>
+<style>
+  :root {
+    --bg:#0f1218; --surface:#171c24; --surface2:#202734; --surface3:#28313f;
+    --border:#334052; --border2:#475569; --text:#edf2f7; --text2:#9aa6b2; --muted:#6f7b89;
+    --accent:#6ee7b7; --accent-h:#a7f3d0; --accent-soft:rgba(110,231,183,0.12);
+    --danger:#f87171; --warn:#fbbf24; --eq3:#42a5f5; --eq6:#e040fb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(180deg,#131923 0,var(--bg) 300px);color:var(--text);line-height:1.5;padding:24px;}
+  h1{font-size:1.1em;margin-bottom:4px}
+  .note{color:var(--muted);font-size:.8em;margin-bottom:18px;max-width:980px}
+  .btn{padding:6px 12px;border:1px solid transparent;border-radius:6px;font-size:.82em;cursor:pointer;font-weight:650;background:var(--surface3);color:var(--text2)}
+  .btn-primary{background:var(--accent);color:#0b1713}
+  .btn-ghost{background:rgba(255,255,255,.02);border-color:var(--border);color:var(--text2)}
+  .btn-danger-ghost{background:transparent;border-color:rgba(248,113,113,.4);color:var(--danger)}
+  .btn-sm{padding:4px 9px;font-size:.76em}
+  select,input{background:var(--surface3);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:6px;font-size:.85em}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .hint{font-size:.72em;color:var(--muted)}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;max-width:760px}
+  .panel h2{font-size:.92em;margin-bottom:10px}
+  .preset-line{display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--surface2);font-size:.86em}
+  .preset-line .pills{display:flex;gap:5px}
+  .pill{font-size:.72em;background:var(--accent-soft);color:var(--accent-h);padding:1px 8px;border-radius:10px}
+  .pill.gray{background:var(--surface3);color:var(--text2)}
+  .preset-line .sp{margin-left:auto;display:flex;gap:6px}
+  .overlay{position:relative;margin-top:24px;background:rgba(8,10,14,.72);border-radius:14px;padding:36px;display:flex;justify-content:center;max-width:980px}
+  .modal{background:var(--surface);border:1px solid var(--border2);border-radius:12px;width:520px;box-shadow:0 24px 70px rgba(0,0,0,.6)}
+  .modal .mh{display:flex;align-items:center;padding:13px 16px;border-bottom:1px solid var(--border)}
+  .modal .mh h3{font-size:.95em}
+  .modal .mh .x{margin-left:auto;color:var(--muted);cursor:pointer;font-size:1.1em}
+  .modal .mb{padding:14px 16px}
+  .modal .mf{padding:12px 16px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+  .steps{display:flex;gap:0;margin-bottom:14px;font-size:.74em}
+  .steps span{flex:1;text-align:center;padding:5px 0;background:var(--surface2);border:1px solid var(--border);color:var(--muted)}
+  .steps span.on{background:var(--accent-soft);color:var(--accent-h);font-weight:700;border-color:var(--accent)}
+  .steps span:first-child{border-radius:6px 0 0 6px}
+  .steps span:last-child{border-radius:0 6px 6px 0}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:.76em;color:var(--text2);margin-bottom:5px}
+  .constraint{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px}
+  .constraint .ename{font-weight:650;font-size:.86em;color:var(--eq3)}
+  .nseg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .nseg button{border:0;background:transparent;color:var(--text2);padding:4px 12px;font-size:.78em;cursor:pointer}
+  .nseg button.on{background:var(--accent-soft);color:var(--accent-h);font-weight:700}
+  .demo-label{font-size:.72em;color:var(--warn);letter-spacing:1px;margin:20px 0 6px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<h1>版型 C：彈窗精簡式</h1>
+<div class="note">繁殖頁本體只保留一條極簡「方案清單」（每列顯示池/約束摘要 pill），所有編輯都開置中彈窗：方案編輯彈窗分「基本 / 飛寵池 / 詞條約束」三段步驟條，飛寵池管理是另一顆按鈕開獨立彈窗。優點：主頁面最乾淨、跟現有詳情彈窗風格一致；缺點：資訊要點進彈窗才看得到。</div>
+
+<div class="demo-label">▼ 繁殖頁：方案區（平常狀態，只有摘要列）</div>
+<div class="panel">
+  <h2>配對方案</h2>
+  <div class="preset-line"><b>禁速x重拳</b>
+    <span class="pills"><span class="pill">池：禁速候選一軍(18)</span><span class="pill">約束 2 條</span><span class="pill gray">巢位 1</span></span>
+    <span class="sp"><button class="btn btn-ghost btn-sm">編輯</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+  <div class="preset-line"><b>低代純化</b>
+    <span class="pills"><span class="pill gray">池：不限</span><span class="pill">約束 1 條</span></span>
+    <span class="sp"><button class="btn btn-ghost btn-sm">編輯</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+  <div class="row"><button class="btn btn-primary btn-sm">+ 新增方案</button><button class="btn btn-ghost btn-sm">管理飛寵池（2 個）</button></div>
+</div>
+
+<div class="demo-label">▼ 點「編輯」後的方案彈窗（步驟 3／詞條約束 段）</div>
+<div class="overlay">
+  <div class="modal">
+    <div class="mh"><h3>編輯方案：禁速x重拳</h3><span class="x">✕</span></div>
+    <div class="mb">
+      <div class="steps"><span>1 基本條件</span><span>2 飛寵池</span><span class="on">3 詞條約束</span></div>
+      <div class="field"><label>配對詞條約束（兩隻加總，多條 AND）</label>
+        <div class="constraint"><span class="ename">禁止超速</span><span class="hint">至少出現</span>
+          <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+          <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+        <div class="constraint"><span class="ename" style="color:var(--eq6)">重拳反擊</span><span class="hint">至少出現</span>
+          <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+          <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+        <div class="row"><select style="flex:1"><option>選擇詞條…</option></select><button class="btn btn-ghost btn-sm">+ 加一條</button></div>
+      </div>
+      <div class="hint">提示：「至少 2 次」= 兩隻爸媽都必須有該詞條。</div>
+    </div>
+    <div class="mf"><button class="btn btn-ghost">上一步</button><button class="btn btn-primary">儲存方案</button></div>
+  </div>
+</div>
+
+<div class="demo-label">▼ 「管理飛寵池」彈窗</div>
+<div class="overlay">
+  <div class="modal">
+    <div class="mh"><h3>飛寵池管理</h3><span class="x">✕</span></div>
+    <div class="mb">
+      <div class="preset-line"><b>禁速候選一軍</b><span class="pills"><span class="pill gray">18 / 50 隻</span></span>
+        <span class="sp"><button class="btn btn-ghost btn-sm">成員</button><button class="btn btn-ghost btn-sm">改名</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+      <div class="preset-line"><b>重拳系備選</b><span class="pills"><span class="pill gray">7 / 50 隻</span></span>
+        <span class="sp"><button class="btn btn-ghost btn-sm">成員</button><button class="btn btn-ghost btn-sm">改名</button><button class="btn btn-danger-ghost btn-sm">刪除</button></span></div>
+      <div class="hint">要增減成員：到「飛寵列表」勾選 → 存為飛寵池 → 覆蓋更新。</div>
+    </div>
+    <div class="mf"><button class="btn btn-ghost">關閉</button></div>
+  </div>
+</div>
+</body>
+</html>

@@ -21,6 +21,18 @@ class WakeLoopInterrupted(Exception):
     pass
 
 
+class PhoneUnreachableError(Exception):
+    """手機 ADB 連線逾時，本輪降級為純 WS。
+
+    Raised from `_wait_for_phone_connection` when the wifi-adb 手機
+    (serial 含 'fc65396d' / '192.168') 在 bounded wait 內始終連不上。主迴圈
+    應跳過本輪 ADB 任務與喚醒後清理，照常進入對齊休眠；WS 階段在 ADB 喚醒前
+    已跑完，因此本輪自然降級為純 WS。手機回到 wifi 後下一輪自動恢復完整流程。
+    """
+
+    pass
+
+
 CONNECT_FAILURE_COUNTS = {}
 _connect_failure_lock = threading.Lock()
 NON_RESTARTABLE_DEVICE_KEYWORDS = ("7fe98fc6", "fc65396d")
@@ -107,6 +119,8 @@ def handle_connect_failure(
 
 def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
     """Returns True when interrupted early, False when wake_ts is reached."""
+    from runtime_services.wake_override_service import apply_manual_wake_override
+
     while True:
         time.sleep(1)
         # Force-sleep requested while the device is already sleeping is
@@ -133,6 +147,12 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
 
         if bot_state.check_skip_sleep(ip):
             logger_obj.info(f"[{ip}] 收到跳過休眠指令，立即喚醒")
+            return True
+
+        wake_ts, should_wake_now = apply_manual_wake_override(
+            ip, wake_ts, logger_obj, task="休眠中"
+        )
+        if should_wake_now:
             return True
 
         if bot_state.has_pending_web_launch_request(ip):

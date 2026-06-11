@@ -869,7 +869,7 @@ class PlaywrightGameDevice:
         )
 
     def _open_game_url(self) -> bool:
-        """Navigate to game URL then force one refresh for stability.
+        """Navigate to game URL, optionally reloading when configured.
 
         Returns:
             bool: True when at least one navigation attempt succeeded.
@@ -912,23 +912,24 @@ class PlaywrightGameDevice:
                 )
                 return False
 
-        # Pass an explicit timeout to reload — the historical no-timeout call could
-        # block indefinitely in headless mode when the page never reaches DCL.
-        reload_t0 = time.time()
-        try:
-            self._page.reload(
-                wait_until="domcontentloaded", timeout=nav_timeout_ms
-            )
-            self.logger.info(
-                f"[{self.device_id}] web_h5 reload ok in "
-                f"{(time.time() - reload_t0) * 1000:.0f}ms"
-            )
-        except Exception as reload_err:
-            # Some pages may transiently reject reload; keep the first successful navigation.
-            self.logger.warning(
-                f"[{self.device_id}] web_h5 reload skipped after "
-                f"{(time.time() - reload_t0) * 1000:.0f}ms: {reload_err}"
-            )
+        if bool(self.cfg.get("web_reload_after_goto", False)):
+            # Pass an explicit timeout to reload — the historical no-timeout call could
+            # block indefinitely in headless mode when the page never reaches DCL.
+            reload_t0 = time.time()
+            try:
+                self._page.reload(
+                    wait_until="domcontentloaded", timeout=nav_timeout_ms
+                )
+                self.logger.info(
+                    f"[{self.device_id}] web_h5 reload ok in "
+                    f"{(time.time() - reload_t0) * 1000:.0f}ms"
+                )
+            except Exception as reload_err:
+                # Some pages may transiently reject reload; keep the first successful navigation.
+                self.logger.warning(
+                    f"[{self.device_id}] web_h5 reload skipped after "
+                    f"{(time.time() - reload_t0) * 1000:.0f}ms: {reload_err}"
+                )
         return True
 
     def is_alive(self) -> bool:

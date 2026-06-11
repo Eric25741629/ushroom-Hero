@@ -98,6 +98,9 @@ def fresh_handler(monkeypatch):
     """Import wake_up_handler with a fake bot_state injected."""
     fake_state = _FakeBotState()
     # wake_up_handler does `import bot_state` at top — patch before import.
+    # teardown 還原原模組物件而非 pop（pop 會造成跨檔 bot_state 參照分裂，
+    # 汙染之後才 lazy import device_wrapper 的測試，如 test_pause_routing）。
+    orig_bot_state = sys.modules.get("bot_state")
     sys.modules.pop("utils.wake_up_handler", None)
     sys.modules["bot_state"] = fake_state  # type: ignore[assignment]
     import utils.wake_up_handler as wuh  # noqa: E402
@@ -106,7 +109,10 @@ def fresh_handler(monkeypatch):
     assert wuh.bot_state is fake_state
     yield wuh, fake_state
     sys.modules.pop("utils.wake_up_handler", None)
-    sys.modules.pop("bot_state", None)
+    if orig_bot_state is not None:
+        sys.modules["bot_state"] = orig_bot_state
+    else:
+        sys.modules.pop("bot_state", None)
 
 
 def test_honor_dashboard_controls_noop_when_idle(fresh_handler):

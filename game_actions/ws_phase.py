@@ -34,11 +34,12 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _run_device(ip: str, cfg: dict):
+def _run_device(ip: str, cfg: dict, progress=None):
     """間接層：lazy import + 參數展開，tests monkeypatch 這裡。"""
     from ws_token.runner import run_device
     return run_device(
         ip,
+        progress=progress,
         spend=bool(cfg.get("spend", False)),
         open_lamp=bool(cfg.get("open_lamp", False)),
         farm_config=cfg.get("farm") or None,
@@ -58,8 +59,26 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
     if not cfg.get("enabled", False):
         return frozenset()
     started = time.time()
+
+    def _progress(name: str, status: str, detail: str = "") -> None:
+        """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
+        if status == "start":
+            step = f"WS 任務執行中: {name}"
+            log.info("[%s] WS 任務開始: %s", ip, name)
+        elif status == "ok":
+            step = f"WS 任務完成: {name}"
+            log.info("[%s] WS 任務完成: %s", ip, name)
+        else:
+            step = f"WS 任務失敗: {name}"
+            log.warning("[%s] WS 任務失敗: %s (%s)", ip, name, detail)
+        try:
+            import bot_state
+            bot_state.update_state(ip, task="WS 階段", step=step)
+        except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
+            log.debug("[%s] WS 階段 update_state 失敗", ip, exc_info=True)
+
     try:
-        report = _run_device(ip, cfg)
+        report = _run_device(ip, cfg, _progress)
     except Exception as exc:  # noqa: BLE001 — WS 階段失敗必須降級、不能炸 wake loop
         log.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
                     exc_info=True)

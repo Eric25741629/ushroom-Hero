@@ -970,7 +970,6 @@ function cardHTML(p) {
           '<div class="card-meta">' +
             '<span class="mbadge lv">Lv ' + (p.level || 0) + '</span>' +
             '<span class="mbadge gen">' + (p.generation || 0) + '代</span>' +
-            '<span class="mbadge">階' + (p.step || 0) + '</span>' +
             '<span class="mbadge">成長 ' + growth + '</span>' +
           '</div>' +
           '<div class="star-row">' + stars + '</div>' +
@@ -1278,7 +1277,7 @@ function openDetail(id) {
       '<div class="mb-grid">' +
         '<div class="mb-cell"><div class="k">等級</div><div class="v">Lv ' + (p.level || 0) + '</div></div>' +
         '<div class="mb-cell"><div class="k">代數</div><div class="v">' + (p.generation || 0) + ' 代</div></div>' +
-        '<div class="mb-cell"><div class="k">成長 / 階</div><div class="v">' + growth + ' · 階' + (p.step || 0) + '</div></div>' +
+        '<div class="mb-cell"><div class="k">成長</div><div class="v">' + growth + '</div></div>' +
         '<div class="mb-cell"><div class="k">ID</div><div class="v">#' + p.id + '</div></div>' +
       '</div>' +
       '<h4 style="margin:0 0 10px;font-size:12px;color:var(--fg-txt-dim);letter-spacing:1px;">詞條（' + (p.entries || []).length + '）</h4>' +

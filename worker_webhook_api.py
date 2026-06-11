@@ -60,6 +60,8 @@ def apply_remote_commands(ips, commands: dict):
             bot_state.set_manual_release(ip)
         if cmd.get("force_sleep"):
             bot_state.request_force_sleep(ip)
+        if "wake_delay_sec" in cmd:
+            bot_state.set_wake_override(ip, cmd.get("wake_delay_sec", 0))
         if cmd.get("recover"):
             try:
                 reset_screen_settings(ip)

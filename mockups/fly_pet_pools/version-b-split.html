@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<title>版型 B：雙欄工作區 - 飛寵池 + 配對約束</title>
+<style>
+  :root {
+    --bg:#0f1218; --surface:#171c24; --surface2:#202734; --surface3:#28313f;
+    --border:#334052; --border2:#475569; --text:#edf2f7; --text2:#9aa6b2; --muted:#6f7b89;
+    --accent:#6ee7b7; --accent-h:#a7f3d0; --accent-soft:rgba(110,231,183,0.12);
+    --danger:#f87171; --warn:#fbbf24; --blue:#60a5fa; --eq3:#42a5f5; --eq6:#e040fb;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',system-ui,sans-serif;background:linear-gradient(180deg,#131923 0,var(--bg) 300px);color:var(--text);line-height:1.5;padding:24px;}
+  h1{font-size:1.1em;margin-bottom:4px}
+  .note{color:var(--muted);font-size:.8em;margin-bottom:18px;max-width:980px}
+  .wrap{display:grid;grid-template-columns:340px 1fr;gap:16px;max-width:1080px}
+  .col{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
+  .col h2{font-size:.92em;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .btn{padding:6px 12px;border:1px solid transparent;border-radius:6px;font-size:.82em;cursor:pointer;font-weight:650;background:var(--surface3);color:var(--text2)}
+  .btn-primary{background:var(--accent);color:#0b1713}
+  .btn-ghost{background:rgba(255,255,255,.02);border-color:var(--border);color:var(--text2)}
+  .btn-danger-ghost{background:transparent;border-color:rgba(248,113,113,.4);color:var(--danger)}
+  .btn-sm{padding:4px 9px;font-size:.76em}
+  select,input{background:var(--surface3);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:6px;font-size:.85em}
+  .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .hint{font-size:.72em;color:var(--muted)}
+  .pool-card{border:1px solid var(--border);border-radius:8px;padding:10px;margin-bottom:10px;background:var(--surface2);cursor:pointer}
+  .pool-card.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+  .pool-card .hd{display:flex;align-items:center;gap:8px}
+  .pool-card .nm{font-weight:700;font-size:.9em}
+  .pool-card .cnt{margin-left:auto;font-size:.74em;color:var(--text2);background:var(--surface3);padding:1px 8px;border-radius:10px}
+  .avatars{display:flex;margin-top:8px}
+  .av{width:30px;height:30px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3b4a5e,#222b38);border:2px solid var(--surface2);margin-left:-8px;display:flex;align-items:center;justify-content:center;font-size:.62em;color:var(--text2)}
+  .av:first-child{margin-left:0}
+  .av.more{background:var(--surface3);color:var(--accent-h);font-weight:700}
+  .usedby{margin-top:7px;font-size:.7em;color:var(--muted)}
+  .usedby b{color:var(--accent-h);font-weight:600}
+  .field{margin-bottom:12px}
+  .field label{display:block;font-size:.76em;color:var(--text2);margin-bottom:5px}
+  .constraint{display:flex;align-items:center;gap:8px;padding:7px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:8px;margin-bottom:6px}
+  .constraint .ename{font-weight:650;font-size:.86em;color:var(--eq3)}
+  .nseg{display:flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+  .nseg button{border:0;background:transparent;color:var(--text2);padding:4px 12px;font-size:.78em;cursor:pointer}
+  .nseg button.on{background:var(--accent-soft);color:var(--accent-h);font-weight:700}
+  .preview{margin-top:12px;border:1px dashed var(--border2);border-radius:8px;padding:10px;font-size:.8em;color:var(--text2)}
+  .preview b{color:var(--accent-h)}
+  .tabs{display:flex;gap:6px;margin-bottom:12px}
+  .tabs .t{padding:5px 14px;border-radius:6px 6px 0 0;font-size:.8em;background:var(--surface2);border:1px solid var(--border);border-bottom:0;color:var(--text2);cursor:pointer}
+  .tabs .t.on{background:var(--surface);color:var(--accent-h);font-weight:700}
+  .demo-label{font-size:.72em;color:var(--warn);letter-spacing:1px;margin:20px 0 6px;text-transform:uppercase}
+</style>
+</head>
+<body>
+<h1>版型 B：雙欄工作區</h1>
+<div class="note">繁殖頁新增一個「配對設定」分頁（與現有巢位畫面切分頁）。左欄是飛寵池卡片（含成員頭像預覽、被哪些方案引用），右欄是選中方案的編輯器，底部即時預覽「目前池內符合約束的可配對數」。優點：池與方案關係一目了然、有即時回饋；缺點：版面較寬、實作量最大。</div>
+
+<div class="tabs"><span class="t">巢位總覽</span><span class="t on">配對設定</span></div>
+<div class="wrap">
+  <div class="col">
+    <h2>飛寵池 <button class="btn btn-ghost btn-sm" style="margin-left:auto">去列表頁挑選 ↗</button></h2>
+    <div class="pool-card active">
+      <div class="hd"><span class="nm">禁速候選一軍</span><span class="cnt">18 / 50</span></div>
+      <div class="avatars"><span class="av">翠</span><span class="av">風</span><span class="av">默</span><span class="av">皮</span><span class="av">茸</span><span class="av more">+13</span></div>
+      <div class="usedby">被引用：<b>禁速x重拳</b>、<b>低代純化</b></div>
+    </div>
+    <div class="pool-card">
+      <div class="hd"><span class="nm">重拳系備選</span><span class="cnt">7 / 50</span></div>
+      <div class="avatars"><span class="av">朵</span><span class="av">岩</span><span class="av">星</span><span class="av more">+4</span></div>
+      <div class="usedby">未被任何方案引用</div>
+    </div>
+    <div class="row" style="margin-top:4px"><button class="btn btn-ghost btn-sm">改名</button><button class="btn btn-ghost btn-sm">檢視成員</button><button class="btn btn-danger-ghost btn-sm">刪除</button></div>
+  </div>
+
+  <div class="col">
+    <h2>方案：禁速x重拳 <select style="margin-left:auto;width:170px"><option>禁速x重拳</option><option>低代純化</option><option>+ 新增方案</option></select></h2>
+    <div class="field"><label>飛寵池</label>
+      <select style="width:240px"><option>禁速候選一軍（18 隻）</option><option>重拳系備選（7 隻）</option><option>— 不限（全部飛寵）—</option></select>
+    </div>
+    <div class="field"><label>配對詞條約束（兩隻加總，多條 AND）</label>
+      <div class="constraint"><span class="ename">禁止超速</span><span class="hint">至少出現</span>
+        <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+        <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+      <div class="constraint"><span class="ename" style="color:var(--eq6)">重拳反擊</span><span class="hint">至少出現</span>
+        <div class="nseg"><button class="on">1 次</button><button>2 次</button></div>
+        <button class="btn btn-danger-ghost btn-sm" style="margin-left:auto">移除</button></div>
+      <div class="row"><select style="width:190px"><option>選擇詞條…</option></select><button class="btn btn-ghost btn-sm">+ 加一條</button></div>
+    </div>
+    <div class="field"><label>原有條件（品質門檻 / 低代優先…）照舊</label><span class="hint">…略…</span></div>
+    <div class="preview">即時檢查：池內可用 <b>15</b> 隻（3 隻冷卻/出戰中），滿足全部約束的組合 <b>6</b> 對 ✓</div>
+    <div class="row" style="margin-top:12px"><button class="btn btn-primary">儲存方案</button><button class="btn btn-ghost">取消</button></div>
+  </div>
+</div>
+
+<div class="demo-label">▼ 列表頁勾選動作列（同版型 A，三版共用）</div>
+<div class="row" style="background:var(--surface2);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;max-width:760px">
+  <span style="font-size:.85em"><b style="color:var(--accent)">12</b> 隻已選</span>
+  <button class="btn btn-ghost btn-sm">取消選取</button>
+  <button class="btn btn-primary btn-sm">存為飛寵池 ▾</button>
+  <span class="hint">上限 50 隻</span>
+</div>
+</body>
+</html>

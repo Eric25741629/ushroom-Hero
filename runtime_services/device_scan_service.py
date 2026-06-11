@@ -19,6 +19,55 @@ _missing_devices = set()
 # 裝置連續斷線超過此秒數後，自動停止嘗試重啟 thread（直到下次掃描偵測到設備恢復）
 _DEAD_DEVICE_TIMEOUT_SEC = 3 * 3600
 
+# 裝置從 ADB 清單消失超過此秒數後，直接判定離線（dashboard 顯示 OFFLINE）。
+# 使用者需求 (2026-06-11)：wifi ADB 手機帶出門 → 1 小時後卡片要轉離線而非永遠 ONLINE。
+_ADB_ABSENT_OFFLINE_SEC = 3600
+_adb_last_seen: dict[str, float] = {}
+_adb_absence_offlined: set[str] = set()
+
+
+def _apply_adb_absence_rule(adb_present: set, running_threads: dict, logger_obj, now: Optional[float] = None):
+    """掉線超過 1 小時 → set_offline；回到清單 → 恢復 ONLINE / 解除重啟封鎖。
+
+    只追蹤「曾出現在 raw ADB 掃描」的序號；web_h5 / ws_token 裝置從不進
+    ADB 清單，自然不受影響。
+    """
+    if now is None:
+        now = time.time()
+
+    for ip in adb_present:
+        _adb_last_seen[ip] = now
+        if ip in _adb_absence_offlined:
+            _adb_absence_offlined.discard(ip)
+            with _running_threads_lock:
+                th = running_threads.get(ip)
+            if th is not None and th.is_alive():
+                bot_state.set_online(ip, reason="ADB 重新連線，恢復上線")
+                logger_obj.info(f"[Watchdog] [{ip}] 重新出現在 ADB，thread 存活，恢復 ONLINE")
+            else:
+                # thread 已退出：清離線時間戳，讓 3 小時 dead-device 重啟 gate 放行
+                bot_state.clear_offline_anchor(ip)
+                logger_obj.info(f"[Watchdog] [{ip}] 重新出現在 ADB，解除離線重啟封鎖，等待重啟")
+
+    states = bot_state.get_all_states()
+    for ip, last_seen in list(_adb_last_seen.items()):
+        if ip in adb_present or ip in _adb_absence_offlined:
+            continue
+        if now - last_seen < _ADB_ABSENT_OFFLINE_SEC:
+            continue
+        st = states.get(ip)
+        if st is None:
+            _adb_absence_offlined.add(ip)
+            continue
+        if str(st.get("status")) == "OFFLINE":
+            # 已因其他原因離線（如 thread exit）：不覆寫原因，但登記起來，
+            # 回連時才會清 anchor 解除重啟封鎖。
+            _adb_absence_offlined.add(ip)
+            continue
+        bot_state.set_offline(ip, reason=f"ADB 斷線超過 {_ADB_ABSENT_OFFLINE_SEC // 60} 分鐘，判定離線")
+        _adb_absence_offlined.add(ip)
+        logger_obj.warning(f"[Watchdog] [{ip}] 從 ADB 清單消失超過 {_ADB_ABSENT_OFFLINE_SEC // 60} 分鐘，判定離線")
+
 
 def refresh_adb_server(running_threads: dict, logger_obj, hard_reset: bool = False, exclude_device: Optional[str] = None):
     """刷新 ADB devices；hard_reset=True 時會先暫停其他裝置，再 kill-server，最後恢復。"""
@@ -156,6 +205,7 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
     try:
         current_devices = get_adb_devices()
         current_devices = [d for d in current_devices if d != "emulator-5562"]
+        adb_present = set(current_devices)
         if not is_worker_mode and allow_web_backend:
             for web_ip in get_web_backend_devices(logger_obj):
                 if web_ip not in current_devices:
@@ -179,6 +229,8 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
     except Exception as e:
         print(f"[System] 掃描 ADB 失敗: {e}")
         return
+
+    _apply_adb_absence_rule(adb_present, running_threads, logger_obj)
 
     if _is_infinite_host():
         fixed_set = set(_FIXED_EMULATORS + _FIXED_PHONES)

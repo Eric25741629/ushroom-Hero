@@ -236,8 +236,26 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
 
     run_device = _load_run_device()
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
+
+    def _progress(name: str, status: str, detail: str = "") -> None:
+        """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
+        if status == "start":
+            step = f"WS 任務執行中: {name}"
+            logger_obj.info(f"[{ip}] ws_token 任務開始: {name}")
+        elif status == "ok":
+            step = f"WS 任務完成: {name}"
+            logger_obj.info(f"[{ip}] ws_token 任務完成: {name}")
+        else:
+            step = f"WS 任務失敗: {name}"
+            logger_obj.warning(f"[{ip}] ws_token 任務失敗: {name} ({detail})")
+        try:
+            bot_state.update_state(ip, task="WS 任務", step=step)
+        except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
+            logger_obj.debug(f"[{ip}] ws_token update_state 失敗", exc_info=True)
+
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
+                            progress=_progress,
                             open_lamp=open_lamp, farm_config=farm_config,
                             dungeon_sweeps=dungeon_sweeps,
                             carpark_target=carpark_target,

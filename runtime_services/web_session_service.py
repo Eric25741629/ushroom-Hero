@@ -185,7 +185,12 @@ def _run_checker_protocol_only(ip, target_pid, requester_ip, logger_obj):
         return True, f"check_failed:{e}"
 
 
-def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
+def initialize_runtime_device(
+    ip: str,
+    device_logger,
+    connect_device_fn,
+    before_web_device_start=None,
+):
     device_cfg = config_manager.get_device_config(ip)
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     checker_ip = str(device_cfg.get("startup_checker_ip", "")).strip() or "emulator-5554"
@@ -214,6 +219,14 @@ def initialize_runtime_device(ip: str, device_logger, connect_device_fn):
         wait_for_checker_gate_before_start(ip, device_logger, checker_ip=checker_ip)
         if is_requester:
             skip_online_check_once = True
+
+    if (
+        backend_kind == "web_h5"
+        and not has_manual_web_launch_request
+        and callable(before_web_device_start)
+    ):
+        # h5+ws 需要先跑純 WS，再啟動同帳號 H5；否則剛開的 H5 session 會被 WS 登入踢掉。
+        before_web_device_start()
 
     web_device = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=device_logger)
     if web_device is not None:

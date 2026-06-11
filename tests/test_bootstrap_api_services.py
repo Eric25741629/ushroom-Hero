@@ -155,6 +155,33 @@ def test_start_all_worker_calls_push_webhook_and_sync(api_mod, monkeypatch):
 # scan_loop
 # ---------------------------------------------------------------------------
 
+def test_scan_loop_sweeps_stale_remote_devices_each_iteration(api_mod, monkeypatch):
+    """掉線判離線 fix: scan_loop 每輪呼叫 bot_state.sweep_stale_remote_devices()."""
+    sweep_calls: list = []
+    scan_calls: list = []
+
+    def fake_scan(*args, **kw):
+        scan_calls.append(True)
+        if len(scan_calls) >= 2:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(api_mod, "scan_and_start_devices", fake_scan)
+    monkeypatch.setattr(
+        api_mod.bot_state,
+        "sweep_stale_remote_devices",
+        lambda *a, **kw: sweep_calls.append(True),
+        raising=False,
+    )
+    monkeypatch.setattr(api_mod.bot_state, "check_refresh_needed", lambda: True)
+    monkeypatch.setattr(api_mod, "shutdown_web_devices", lambda log: None)
+    monkeypatch.setattr(api_mod.time, "sleep", lambda s: None)
+
+    fake_log = SimpleNamespace(info=lambda msg: None)
+    api_mod.scan_loop(lambda: None, {}, None, None, None, 1, fake_log)
+
+    assert len(sweep_calls) >= 1
+
+
 def test_scan_loop_calls_scan_and_exits_on_keyboard_interrupt(api_mod, monkeypatch):
     """scan_loop calls scan_and_start_devices and exits cleanly on KeyboardInterrupt."""
     scan_calls: list = []

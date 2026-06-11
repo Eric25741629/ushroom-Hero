@@ -18,6 +18,8 @@ pipeline runs, so pause stayed defeated for the whole cycle.
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 import bot_state
@@ -32,6 +34,7 @@ def _cleanup(ip: str) -> None:
         bot_state._states.pop(ip, None)
         bot_state._pause_events.pop(ip, None)
         bot_state._signals.pop(ip, None)
+        bot_state._wake_overrides.pop(ip, None)
         bot_state._locks.pop(ip, None)
         bot_state._web_launch_requests.pop(ip, None)
         local_ids = getattr(bot_state, "_local_device_ids", None)
@@ -153,6 +156,121 @@ def test_queue_command_still_routes_real_remote_to_queue(monkeypatch):
         with cpa._commands_lock:
             cpa._remote_commands.pop(rid, None)
         _cleanup(rid)
+
+
+def test_wake_delay_api_routes_seconds_to_local_wake_override(monkeypatch):
+    import control_panel_app as cpa
+
+    ip = "test-wake-delay-local-5554"
+    _cleanup(ip)
+    bot_state.init_device(ip)
+
+    calls = []
+    monkeypatch.setattr(
+        bot_state,
+        "set_wake_override",
+        lambda i, delay_sec=0: calls.append((i, delay_sec)) or 123.0,
+        raising=False,
+    )
+
+    try:
+        resp = cpa.app.test_client().post(
+            f"/api/wake_delay/{ip}",
+            json={"delay_sec": 15},
+        )
+        body = resp.get_json()
+        assert resp.status_code == 200
+        assert body["status"] == "ok"
+        assert body["delay_sec"] == 15.0
+        assert calls == [(ip, 15.0)]
+    finally:
+        _cleanup(ip)
+
+
+def test_queue_command_routes_remote_wake_delay_to_queue(monkeypatch):
+    import control_panel_app as cpa
+
+    rid = "deskmate:emulator-5554"
+    _cleanup(rid)
+    monkeypatch.setattr(cpa, "_push_remote_command_if_possible", lambda i: None)
+    with cpa._commands_lock:
+        cpa._remote_commands.pop(rid, None)
+
+    try:
+        cpa.queue_command(rid, "wake_delay_sec", 5.0)
+        with cpa._commands_lock:
+            assert cpa._remote_commands.get(rid, {}).get("wake_delay_sec") == 5.0
+    finally:
+        with cpa._commands_lock:
+            cpa._remote_commands.pop(rid, None)
+        _cleanup(rid)
+
+
+def test_poll_commands_consumes_remote_wake_delay_once():
+    import control_panel_app as cpa
+
+    worker_id = "deskmate"
+    device_ip = "emulator-5554"
+    rid = f"{worker_id}:{device_ip}"
+    with cpa._commands_lock:
+        cpa._remote_commands[rid] = {"wake_delay_sec": 9.0}
+
+    try:
+        client = cpa.app.test_client()
+        first = client.post(
+            "/api/poll_commands",
+            json={"worker_id": worker_id, "ips": [device_ip]},
+        ).get_json()
+        second = client.post(
+            "/api/poll_commands",
+            json={"worker_id": worker_id, "ips": [device_ip]},
+        ).get_json()
+        assert first["commands"][device_ip]["wake_delay_sec"] == 9.0
+        assert second["commands"].get(device_ip, {}).get("wake_delay_sec") is None
+    finally:
+        with cpa._commands_lock:
+            cpa._remote_commands.pop(rid, None)
+
+
+def test_push_remote_command_consumes_wake_delay_after_success(monkeypatch):
+    import control_panel_app as cpa
+
+    rid = "deskmate:emulator-5554"
+    with cpa._commands_lock:
+        cpa._remote_commands[rid] = {"wake_delay_sec": 11.0}
+    monkeypatch.setattr(cpa, "_push_to_worker_webhook", lambda worker_id, payload: True)
+
+    try:
+        cpa._push_remote_command_if_possible(rid)
+        with cpa._commands_lock:
+            assert "wake_delay_sec" not in cpa._remote_commands.get(rid, {})
+    finally:
+        with cpa._commands_lock:
+            cpa._remote_commands.pop(rid, None)
+
+
+def test_worker_webhook_applies_wake_delay(monkeypatch):
+    # test_bootstrap_api_services 在收集期會把無 __file__ 的 stub
+    # worker_webhook_api 塞進 sys.modules（apply_remote_commands 是 no-op）。
+    # 這裡要測真模組：暫時逐出 stub，monkeypatch 會在測後還原它。
+    _wwa = sys.modules.get("worker_webhook_api")
+    if _wwa is not None and not getattr(_wwa, "__file__", None):
+        monkeypatch.delitem(sys.modules, "worker_webhook_api")
+    import worker_webhook_api
+
+    calls = []
+    monkeypatch.setattr(
+        bot_state,
+        "set_wake_override",
+        lambda ip, delay_sec=0: calls.append((ip, delay_sec)) or 456.0,
+        raising=False,
+    )
+
+    worker_webhook_api.apply_remote_commands(
+        ["emulator-5554"],
+        {"emulator-5554": {"wake_delay_sec": 7.0}},
+    )
+    assert calls == [("emulator-5554", 7.0)]
 
 
 # --------------------------------------------------------------------------

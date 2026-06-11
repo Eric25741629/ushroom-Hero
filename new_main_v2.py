@@ -48,6 +48,7 @@ warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 import requests
 requests.packages.urllib3.disable_warnings()
 from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
+from utils.log_paths import LogPaths
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 import config_manager
 
@@ -60,6 +61,7 @@ from runtime_services.device_scan_service import (
 )
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
+    PhoneUnreachableError,
     WakeLoopInterrupted,
     handle_connect_failure,
     is_emulator_serial,
@@ -93,6 +95,20 @@ from game_actions.ws_phase import run_ws_phase
 atexit.register(lambda: shutdown_web_devices(logger))
 
 
+def _run_ws_phase_for_wake(ip, logger_obj):
+    """執行單輪 WS-first 階段，並寫入裝置專屬 log。"""
+    ws_cfg = config_manager.get_device_config(ip).get("ws_token") or {}
+    if not ws_cfg.get("enabled", False):
+        return frozenset()
+    try:
+        bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
+        logger_obj.info(f"[{ip}] WS 階段開始（純 WS，開 H5/APP 前）")
+        return run_ws_phase(ip, logger_obj=logger_obj)
+    except Exception as ws_exc:
+        logger_obj.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
+        return frozenset()
+
+
 
 
 def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
@@ -122,6 +138,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
     force_sleep_now = False
+    pre_runtime_ws_done = None
     
     try:
         # 為該設備設定獨立的 logger（按 IP 分檔），先建立 logger 以便連線階段可記錄
@@ -132,12 +149,18 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 
         _handle_startup_sleep(ip, device_logger)
 
+        def _run_initial_ws_phase_before_web_start():
+            nonlocal pre_runtime_ws_done
+            if pre_runtime_ws_done is None:
+                pre_runtime_ws_done = _run_ws_phase_for_wake(ip, device_logger)
+
         while True:
             try:
                 d_orig, d, backend_kind, skip_online_check_once = initialize_runtime_device(
                     ip,
                     device_logger,
                     connect_u2_with_retries,
+                    before_web_device_start=_run_initial_ws_phase_before_web_start,
                 )
                 reset_connect_failure(ip)
                 break
@@ -191,7 +214,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         clf = ClassifierCNN(model=oracle_cnn_model, classes=oracle_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
 
         # 建立 RL 記錄器（記錄但不自動訓練）
-        rl_logs_dir = os.path.join("miner", "rl_logs", ip.replace(":", "_"))
+        rl_logs_dir = os.path.join("miner", "rl_logs", LogPaths.safe_device_id(ip))
         os.makedirs(rl_logs_dir, exist_ok=True)
         rl_recorder = RLRecorder(
             log_dir=rl_logs_dir,
@@ -204,6 +227,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             forced_wake_ts = None
             sleep_policy = "aligned_window"
             sleep_reason = "常規對齊喚醒"
+            skip_phone_cleanup = False
             try:
                 if bot_state.check_force_sleep(ip):
                     raise ForceSleepRequested("force sleep requested from dashboard")
@@ -230,12 +254,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 
                 # --- WS 階段：純 WS 先跑（瀏覽器啟動前；WS 登入會踢頁面，順序不可反）---
                 # ws_token.enabled=False 時 run_ws_phase 直接回空集合，零影響。
-                ws_done = frozenset()
-                try:
-                    bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
-                    ws_done = run_ws_phase(ip)
-                except Exception as ws_exc:
-                    logger.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
+                if pre_runtime_ws_done is not None:
+                    ws_done = pre_runtime_ws_done
+                    pre_runtime_ws_done = None
+                else:
+                    ws_done = _run_ws_phase_for_wake(ip, device_logger)
 
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
@@ -334,6 +357,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         if backend_kind == "web_h5":
                             from utils.ws_ticket_refresh import refresh_from_device
                             refresh_from_device(d, ip)
+                        elif backend_kind == "adb":
+                            # 即使本裝置 ws_token 未啟用，也順手被動撈一份 ws login
+                            # ticket，方便日後切 adb+ws 時已有可用 token。best-effort，
+                            # 自身不拋例外（不重啟 App、不做 WS verify）。
+                            from utils.adb_token_scrape import refresh_from_adb_device
+                            refresh_from_adb_device(d, ip)
                     else:
                         logger.warning(f"[{ip}] 遊戲啟動失敗，避讓休眠 30 分鐘...")
                         # 計算 30 分鐘後的喚醒時間
@@ -377,6 +406,21 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 logger.warning(f"[{ip}] 收到強制休眠請求，終止當前任務並進入休眠: {e}")
                 stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
+            except PhoneUnreachableError as e:
+                # 直連手機（fc65396d / 192.168）喚醒時 ADB 連線逾時 → 跳過本輪
+                # ADB 任務與喚醒後清理（清理會嘗試重連，手機不在時會慢慢卡死），
+                # 照常進入對齊休眠。WS 階段在 ADB 喚醒前已跑完，本輪自然降級純 WS；
+                # 手機回到 wifi 後下一輪自動恢復完整流程。
+                skip_phone_cleanup = True
+                sleep_policy = "phone_offline_ws_only"
+                sleep_reason = "手機離線降級"
+                logger.warning(
+                    f"[{ip}] 手機 ADB 連線逾時，跳過本輪 ADB 任務，僅保留 WS 階段結果: {e}"
+                )
+                bot_state.update_state(
+                    ip, task="手機離線", step="手機離線，本輪僅執行 WS，照常排程休眠"
+                )
+
             except StartupBypassError as e:
                 forced_wake_ts = time.time() + 1800
                 sleep_policy = "startup_bypass_30m"
@@ -406,7 +450,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 # 不需要額外處理，後續代碼會處理釋放鎖和休眠
 
             end = time.time()
-            if 'fc65396d' in ip or '192.168' in ip:
+            if (not skip_phone_cleanup) and ('fc65396d' in ip or '192.168' in ip):
                 reset_screen_settings(ip, logger=logger)
                 time.sleep(1)
                 try:
@@ -468,27 +512,29 @@ _running_threads = {} # {ip: Thread}
 def temporary_reset_cycles():
     """臨時重置函數：強制將本週設為活動週期的開始"""
     import os
-    import json
     from device import get_adb_devices
-    
+    from json_manager import JsonDataManager
+
     logger.info("[System] 執行臨時週期重置 (重置週專用)...")
     try:
         devices = get_adb_devices()
         for ip in devices:
             filename = f"{ip}.json"
-            if os.path.exists(filename):
-                with open(filename, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                
-                # 僅清除衝刺紀錄，讓 json_manager 判定這週為衝刺執行週
-                keys_to_reset = ["衝刺-發條"]
-                for key in keys_to_reset:
-                    if key in data:
-                        del data[key]
-                        logger.info(f"  - [{ip}] 已清除 {key}")
-                
-                with open(filename, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, indent=4, ensure_ascii=False)
+            # 沒有檔案就沒有衝刺紀錄可清，跳過（避免 load_data 建立空檔）。
+            if not os.path.exists(filename):
+                continue
+            mgr = JsonDataManager(ip)
+            data = mgr.load_data()
+
+            # 僅清除衝刺紀錄，讓 json_manager 判定這週為衝刺執行週
+            keys_to_reset = ["衝刺-發條"]
+            for key in keys_to_reset:
+                if key in data:
+                    del data[key]
+                    logger.info(f"  - [{ip}] 已清除 {key}")
+
+            # 原子寫回（temp + os.replace），取代原本非原子的直接覆寫。
+            mgr.save_data(data)
         logger.info("[System] 週期重置完成。")
     except Exception as e:
         logger.error(f"[System] 重置失敗：{e}")

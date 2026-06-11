@@ -1,0 +1,81 @@
+from __future__ import annotations
+
+import ast
+import sys
+import types
+from pathlib import Path
+from types import SimpleNamespace
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _name(node: ast.AST | None) -> str:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return ""
+
+
+def _main_function() -> ast.FunctionDef:
+    source = (ROOT / "new_main_v2.py").read_text(encoding="utf-8-sig")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == "main":
+            return node
+    raise AssertionError("main() not found")
+
+
+def test_initialize_runtime_device_runs_hook_before_web_device_creation(monkeypatch):
+    """h5+ws must run pure WS before Playwright opens the H5 session."""
+    sys.modules.setdefault("cv2", types.ModuleType("cv2"))
+    from runtime_services import web_session_service as svc
+
+    order: list[str] = []
+    fake_web = SimpleNamespace()
+    cfg = {"backend": "web_h5", "web_url": "https://example.invalid"}
+
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda _ip: cfg)
+    monkeypatch.setattr(svc.bot_state, "has_pending_web_launch_request", lambda _ip: False)
+    monkeypatch.setattr(
+        svc,
+        "create_web_device_if_enabled",
+        lambda *a, **k: order.append("create_web") or fake_web,
+    )
+    monkeypatch.setattr(
+        svc,
+        "MonitoredDevice",
+        lambda device, ip: SimpleNamespace(device=device, ip=ip),
+    )
+
+    def before_web_start() -> None:
+        order.append("ws_phase")
+
+    d_orig, d, backend_kind, skip_online = svc.initialize_runtime_device(
+        "web-ws",
+        SimpleNamespace(info=lambda *a, **k: None),
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("ADB must not be used")),
+        before_web_device_start=before_web_start,
+    )
+
+    assert d_orig is fake_web
+    assert d.device is fake_web
+    assert backend_kind == "web_h5"
+    assert skip_online is False
+    assert order == ["ws_phase", "create_web"]
+
+
+def test_main_passes_pre_web_start_hook_to_runtime_init():
+    """The main wake loop must use the pre-web hook during first web_h5 init."""
+    main_fn = _main_function()
+    init_calls = [
+        node
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.Call) and _name(node.func) == "initialize_runtime_device"
+    ]
+    assert init_calls, "initialize_runtime_device() call not found"
+    assert any(
+        any(keyword.arg == "before_web_device_start" for keyword in call.keywords)
+        for call in init_calls
+    ), "main() must pass before_web_device_start so h5+ws can run WS before opening H5"

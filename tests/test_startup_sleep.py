@@ -47,6 +47,12 @@ def fake_bot_state(monkeypatch, startup_mod):
     updates: list[dict] = []
     monkeypatch.setattr(startup_mod.bot_state, "has_pending_online_check_request", lambda ip: state["pending_online"])
     monkeypatch.setattr(startup_mod.bot_state, "has_pending_web_launch_request", lambda ip: state["pending_web_launch"])
+    monkeypatch.setattr(
+        startup_mod.bot_state,
+        "consume_wake_override",
+        lambda ip: None,
+        raising=False,
+    )
     monkeypatch.setattr(startup_mod.bot_state, "update_state", lambda ip, **kw: updates.append({"ip": ip, **kw}))
     state["_updates"] = updates
     return state
@@ -83,6 +89,22 @@ def test_handle_startup_sleep_counts_down(startup_mod, fake_bot_state, zero_slee
     startup_mod._handle_startup_sleep("emu-1", logging.getLogger("t"))
     assert len(fake_bot_state["_updates"]) == 3
     assert all(u["task"] == "啟動後休眠" for u in fake_bot_state["_updates"])
+
+
+def test_handle_startup_sleep_manual_wake_override_starts_now(
+    startup_mod, fake_bot_state, zero_sleep, monkeypatch,
+):
+    monkeypatch.setattr(startup_mod, "STARTUP_SLEEP_SEC_BY_DEVICE", {"emu-1": 30})
+    monkeypatch.setattr(startup_mod, "PROCESS_START_TS", startup_mod.time.time())
+    monkeypatch.setattr(
+        startup_mod.bot_state,
+        "consume_wake_override",
+        lambda ip: startup_mod.time.time(),
+        raising=False,
+    )
+    startup_mod._handle_startup_sleep("emu-1", logging.getLogger("t"))
+    assert len(fake_bot_state["_updates"]) == 1
+    assert fake_bot_state["_updates"][0]["step"] == "手動調整喚醒：立即開始"
 
 
 def test_handle_startup_sleep_early_exits_on_web_launch(

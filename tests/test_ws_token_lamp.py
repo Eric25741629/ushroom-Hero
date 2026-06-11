@@ -253,6 +253,68 @@ def test_open_lamp_v2_dry_run_sends_no_actions():
         c.close()
 
 
+def test_open_lamp_v2_sells_twenty_rejects_in_one_request():
+    info = _standard_worn_info()
+    uids = list(range(401, 421))
+    drops = _change_body([
+        _p_equip(uid, _tmpl(5, 1), {A_K: 100, A_Y: 100})
+        for uid in uids
+    ])
+    c, fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c(uids)),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_SELL: lambda _b: [s2c(CMD_SELL, b"")],
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=20, max_batches=1)
+        assert {uid for uid, _reason in res["sold"]} == set(uids)
+        sell_bodies = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_SELL]
+        assert len(sell_bodies) == 1
+        assert sell_bodies[0] == lamp.build_sell(uids)
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_waits_after_sell_before_next_command(monkeypatch):
+    info = _standard_worn_info()
+    uid = 430
+    drops = _change_body([_p_equip(uid, _tmpl(5, 1), {A_K: 100, A_Y: 100})])
+    events = []
+
+    def open_reply(_body):
+        events.append("open")
+        return [
+            s2c(CMD_EQUIP_CHANGE, drops),
+            s2c(CMD_OPEN_ALL, _open_all_s2c([uid])),
+        ]
+
+    def sell_reply(_body):
+        events.append("sell")
+        return [s2c(CMD_SELL, b"")]
+
+    def choose_reply(_body):
+        events.append("choose")
+        return [s2c(CMD_CHOOSE_TAB, b"")]
+
+    monkeypatch.setattr(lamp.time, "sleep", lambda seconds: events.append(("sleep", seconds)))
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: open_reply,
+        CMD_SELL: sell_reply,
+        CMD_CHOOSE_TAB: choose_reply,
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=1)
+        assert {sold_uid for sold_uid, _reason in res["sold"]} == {uid}
+        assert events == ["open", "sell", ("sleep", 0.3), "choose"]
+    finally:
+        c.close()
+
+
 def test_open_lamp_v2_survives_open_exception():
     # a connection drop mid-run raises a non-timeout error on the open send;
     # the loop must stop gracefully (return partial), not crash.
@@ -272,6 +334,38 @@ def test_open_lamp_v2_survives_open_exception():
     try:
         res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=3)
         assert res["opened"] == 0  # stopped gracefully
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_waits_between_batches(monkeypatch):
+    info = _standard_worn_info()
+    opened_batches = []
+
+    def open_reply(_body):
+        idx = len(opened_batches)
+        opened_batches.append(idx)
+        return [s2c(CMD_OPEN_ALL, _open_all_s2c([400 + idx]))]
+
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: open_reply,
+    })
+    sleep_calls = []
+    monkeypatch.setattr(lamp.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    try:
+        res = lamp.open_lamp(
+            c,
+            dry_run=True,
+            batch_num=1,
+            max_batches=2,
+            batch_delay=0.2,
+            push_wait=0,
+        )
+        assert res["opened"] == 2
+        assert sleep_calls == [0.2]
     finally:
         c.close()
 

@@ -1062,3 +1062,41 @@ def test_run_spirit_draws_free(monkeypatch):
     monkeypatch.setattr(runner.spirit, "draw_all_free",
                         lambda c: {"pools_drawn": 2, "rewards": {}, "results": []})
     assert runner._run_spirit(object())["pools_drawn"] == 2
+
+
+# --- progress callback --------------------------------------------------------
+
+def test_progress_callback_reports_each_task(patched):
+    """progress(name, status, detail) fires start+ok per task, in TASK_ORDER."""
+    _calls, _ = patched
+    events: list[tuple[str, str]] = []
+
+    run_device("dev", spend=False,
+               progress=lambda name, status, detail="": events.append((name, status)))
+
+    started = [n for n, s in events if s == "start"]
+    assert started == [n for n in runner.TASK_ORDER
+                       if n in started]  # follows TASK_ORDER
+    assert ("main_tasks", "start") in events
+    assert ("main_tasks", "ok") in events
+    assert ("couple", "ok") in events
+
+
+def test_progress_callback_reports_error_and_never_breaks_run(patched, monkeypatch):
+    """A failing task reports 'error'; a raising callback must not abort tasks."""
+    _calls, _ = patched
+    events: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(runner.redpack, "grab_claimable",
+                        lambda c, **k: (_ for _ in ()).throw(WSTimeoutError("boom")))
+
+    def cb(name, status, detail=""):
+        events.append((name, status, detail))
+        if name == "guild":
+            raise RuntimeError("callback bug")  # must be swallowed
+
+    rep = run_device("dev", spend=False, progress=cb)
+
+    assert any(n == "redpack" and s == "error" and "boom" in d
+               for n, s, d in events)
+    assert "redpack" in rep.errors
+    assert "couple" in rep.tasks  # tasks after the raising callback still ran

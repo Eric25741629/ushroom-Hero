@@ -38,6 +38,7 @@ def _fake_state(**overrides):
         check_force_sleep=lambda ip: False,
         check_pause=lambda ip: False,
         check_skip_sleep=lambda ip: False,
+        consume_wake_override=lambda ip: None,
         has_pending_web_launch_request=lambda ip: False,
         has_pending_online_check_request=lambda ip: False,
         # Default checker list == legacy default config (only 5554 is a checker),
@@ -80,3 +81,24 @@ def test_non_5554_does_not_early_wake_on_online_check_flag(drs):
         "emulator-5560", past, logging.getLogger("t")
     )
     assert result is False
+
+
+def test_manual_wake_override_interrupts_sleep_now(drs):
+    mod, monkeypatch = drs
+    from runtime_services import wake_override_service as wake_override
+
+    updates = []
+    now_values = iter([100.0, 100.0, 100.0])
+    monkeypatch.setattr(mod.time, "time", lambda: next(now_values))
+    fake_state = _fake_state(
+        consume_wake_override=lambda ip: 100.0,
+        update_state=lambda ip, **kw: updates.append({"ip": ip, **kw}),
+    )
+    monkeypatch.setattr(mod, "bot_state", fake_state)
+    monkeypatch.setattr(wake_override, "bot_state", fake_state)
+    far_future = 10_000.0
+    result = mod.sleep_until_wake_or_interrupt(
+        "emulator-5554", far_future, logging.getLogger("t")
+    )
+    assert result is True
+    assert updates[-1]["next_wake_at"] == 100.0

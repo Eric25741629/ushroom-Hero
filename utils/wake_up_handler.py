@@ -11,8 +11,13 @@ import bot_state # 引入狀態管理
 import config_manager # 引入設定管理
 from runtime_services.device_runtime_service import (
     ForceSleepRequested,
+    PhoneUnreachableError,
     WakeLoopInterrupted,
 )
+
+# 直連手機（fc65396d / 192.168）喚醒時等連線的上限秒數。喚醒窗只有 :00~:20，
+# 不該為了等已帶出門的手機而吃掉整個窗 → 3 次 60 秒重試後放棄、降級純 WS。
+PHONE_CONNECT_MAX_WAIT_SEC = 180
 
 
 def _match_any(target: str, patterns) -> bool:
@@ -187,6 +192,53 @@ def release_wakeup_lock(ip):
     if 'emulator-5554' in ip or '3a8d31f2' in ip:
         _wakeup_lock = False
 
+def _wait_for_phone_connection(d, ip, logger, max_wait_sec=None):
+    """Block until the direct-connect phone's u2 session answers again.
+
+    掉線判離線 fix (2026-06-11)：原本這段是無限 while True 重試但完全不更新
+    bot_state、也不理 dashboard 控制 → 手機帶出門後儀表板凍結。現在每輪：
+    更新狀態（連線中斷）、honor 暫停/強制休眠/開網頁、嘗試重連，60 秒重試
+    — 手機回到 wifi 後自動接上（保留自癒語義）。
+
+    手機離線降級 (Task A)：`max_wait_sec` 給定時，超過上限就 raise
+    PhoneUnreachableError，讓主迴圈跳過本輪 ADB 任務、降級為純 WS（喚醒前 WS
+    階段已跑），照常進入對齊休眠；`max_wait_sec=None`（預設）維持無限重試的
+    原行為，向後相容其他呼叫端/測試。
+
+    deadline 檢查刻意放在 while 迴圈頂端（在 try 之外），否則 `except Exception`
+    會吞掉 raise。`started` 在迴圈前設定，故首輪 elapsed≈0 一定先嘗試一次連線。
+    """
+    started = time.time()
+    while True:
+        if max_wait_sec is not None and (time.time() - started) >= max_wait_sec:
+            mins = int((time.time() - started) // 60)
+            bot_state.update_state(
+                ip,
+                task="連線中斷",
+                step=f"手機連線逾時 {mins} 分鐘，放棄本輪 ADB，降級為純 WS",
+            )
+            logger.warning(
+                f"[{ip}] 手機 ADB 連線逾時（已中斷 {mins} 分鐘），放棄本輪喚醒，降級純 WS"
+            )
+            raise PhoneUnreachableError(
+                f"[{ip}] phone unreachable after {max_wait_sec}s — degrade to WS-only"
+            )
+        try:
+            d.info.get('screenOn')
+            return d
+        except Exception as e:
+            logger.error(f"[{ip}] 檢查螢幕狀態時發生錯誤: {e}")
+            _honor_dashboard_controls(ip)
+            mins = int((time.time() - started) // 60)
+            bot_state.update_state(ip, task="連線中斷", step=f"手機連線失敗，60 秒後重試（已中斷 {mins} 分鐘）")
+            try:
+                new_d = connect_u2_with_retries(ip, logger=logger)
+                if new_d is not None:
+                    d = new_d
+            except Exception as e2:
+                logger.warning(f"[wake_up_handler] 例外: {e2}")
+            time.sleep(60)
+
 def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_online_check_once: bool = False):
     """
     Handles the device wake-up, unlock, and synchronization logic.
@@ -298,17 +350,7 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
 
         logger.info(f"[{ip}] 檢查螢幕狀態...")
 
-        while True:
-            try:
-                d.info.get('screenOn')
-                break
-            except Exception as e:
-                logger.error(f"[{ip}] 檢查螢幕狀態時發生錯誤: {e}")
-                try:
-                    d = connect_u2_with_retries(ip, logger=logger)
-                except Exception as e:
-                    logger.warning(f"[wake_up_handler] 例外: {e}")
-                time.sleep(60)
+        d = _wait_for_phone_connection(d, ip, logger, max_wait_sec=PHONE_CONNECT_MAX_WAIT_SEC)
 
         while d.info.get('screenOn'):
             logger.warning(f"[{ip}] 偵測到螢幕開啟 (人為操作中)，每 5 秒自動檢測一次...")

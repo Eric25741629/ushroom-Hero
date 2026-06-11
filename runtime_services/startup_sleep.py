@@ -19,6 +19,7 @@ from typing import Dict, List, Optional
 
 import bot_state
 import config_manager
+from runtime_services.wake_override_service import apply_manual_wake_override
 
 
 # Explicit per-device overrides (seconds). Empty by default: every device's
@@ -125,7 +126,18 @@ def _handle_startup_sleep(ip: str, device_logger) -> None:
     elapsed_sec = int(time.time() - PROCESS_START_TS)
     remaining_startup_sleep = max(0, startup_sleep_sec - elapsed_sec)
     if remaining_startup_sleep > 0:
-        for remain in range(remaining_startup_sleep, 0, -1):
+        wake_ts = time.time() + remaining_startup_sleep
+        while remaining_startup_sleep > 0:
+            next_wake_ts, should_wake_now = apply_manual_wake_override(
+                ip, wake_ts, device_logger, task="啟動後休眠"
+            )
+            if should_wake_now:
+                break
+            if next_wake_ts != wake_ts:
+                wake_ts = next_wake_ts
+                remaining_startup_sleep = max(0, int(wake_ts - time.time()))
+                if remaining_startup_sleep <= 0:
+                    break
             if bot_state.is_online_check_checker(ip):
                 if (
                     bot_state.has_pending_online_check_request(ip)
@@ -136,5 +148,11 @@ def _handle_startup_sleep(ip: str, device_logger) -> None:
             if bot_state.has_pending_web_launch_request(ip):
                 device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
                 break
-            bot_state.update_state(ip, task="啟動後休眠", step=f"{remain} 秒後開始執行")
+            bot_state.update_state(
+                ip,
+                task="啟動後休眠",
+                step=f"{remaining_startup_sleep} 秒後開始執行",
+                next_wake_at=wake_ts,
+            )
             time.sleep(1)
+            remaining_startup_sleep -= 1

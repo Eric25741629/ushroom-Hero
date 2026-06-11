@@ -60,6 +60,11 @@ def scan_loop(
                 ocr,
                 log,
             )
+            # 掉線判離線：remote (worker) 裝置逾 1 小時未回報 → 標 OFFLINE。
+            try:
+                bot_state.sweep_stale_remote_devices()
+            except Exception as sweep_err:
+                log.info(f"[System] 清掃逾時遠端裝置失敗: {sweep_err}")
             for _ in range(300):  # 0.1s × 300 = 30 s
                 if bot_state.check_refresh_needed():
                     log.info("[System] 收到立即掃描請求！")

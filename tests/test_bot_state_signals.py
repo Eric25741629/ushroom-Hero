@@ -19,6 +19,7 @@ def _cleanup(ip: str) -> None:
         bot_state._states.pop(ip, None)
         bot_state._pause_events.pop(ip, None)
         bot_state._signals.pop(ip, None)
+        bot_state._wake_overrides.pop(ip, None)
         bot_state._locks.pop(ip, None)
 
 
@@ -33,6 +34,45 @@ def test_skip_sleep_is_one_shot():
     try:
         bot_state.set_skip_sleep(ip)
         assert bot_state.check_skip_sleep(ip) is True
+        assert bot_state.check_skip_sleep(ip) is False
+    finally:
+        _cleanup(ip)
+
+
+def test_skip_sleep_also_requests_immediate_wake():
+    ip = "test-signals-skip-wake-5554"
+    _cleanup(ip)
+    try:
+        before = time.time()
+        bot_state.set_skip_sleep(ip)
+        wake_ts = bot_state.consume_wake_override(ip)
+        after = time.time()
+
+        assert wake_ts is not None
+        assert before <= wake_ts <= after
+    finally:
+        _cleanup(ip)
+
+
+def test_check_skip_sleep_consumes_associated_wake_override():
+    ip = "test-signals-skip-consume-wake-5554"
+    _cleanup(ip)
+    try:
+        bot_state.set_skip_sleep(ip)
+
+        assert bot_state.check_skip_sleep(ip) is True
+        assert bot_state.consume_wake_override(ip) is None
+    finally:
+        _cleanup(ip)
+
+
+def test_consume_wake_override_consumes_associated_skip_sleep():
+    ip = "test-signals-wake-consume-skip-5554"
+    _cleanup(ip)
+    try:
+        bot_state.set_skip_sleep(ip)
+
+        assert bot_state.consume_wake_override(ip) is not None
         assert bot_state.check_skip_sleep(ip) is False
     finally:
         _cleanup(ip)
@@ -125,6 +165,19 @@ def test_clear_offline_devices_clears_web_close_and_manual_release():
         _cleanup(ip)
 
 
+def test_clear_offline_devices_clears_wake_override():
+    ip = "test-signals-offline-wake-override"
+    _cleanup(ip)
+    try:
+        bot_state.init_device(ip)
+        bot_state.set_wake_override(ip, 30)
+        bot_state.set_offline(ip)
+        bot_state.clear_offline_devices()
+        assert bot_state.consume_wake_override(ip) is None
+    finally:
+        _cleanup(ip)
+
+
 def test_sweep_stale_states_clears_manual_release_and_web_close_for_remote():
     """sweep_stale_states() removal branch must clear ALL signal channels for a
     stale remote device, not just skip/force.
@@ -166,14 +219,17 @@ def test_request_force_sleep_raises_force_and_clears_skip_and_manual():
         bot_state.init_device(ip)
         bot_state.set_skip_sleep(ip)
         bot_state.set_manual_release(ip)
+        assert bot_state.consume_wake_override(ip) is not None
+        bot_state.set_skip_sleep(ip)
 
         bot_state.request_force_sleep(ip, reason="強制休眠")
 
         # FORCE is raised and one-shot consumable
         assert bot_state.check_force_sleep(ip) is True
         assert bot_state.check_force_sleep(ip) is False
-        # SKIP and MANUAL were cleared by request_force_sleep
+        # SKIP, its immediate wake override, and MANUAL were cleared by request_force_sleep
         assert bot_state.check_skip_sleep(ip) is False
+        assert bot_state.consume_wake_override(ip) is None
         assert bot_state.check_manual_release(ip) is False
     finally:
         _cleanup(ip)

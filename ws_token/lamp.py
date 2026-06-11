@@ -48,7 +48,8 @@ CMD_CHOOSE_TAB = 0x0511
 CMD_ERROR = 0x0201
 
 _COMPANION_AFFIXES = {4001, 4005}
-_SELL_CHUNK = 10            # sell <=N uids per 0x0505 (avoids the bulk-sell timeout)
+_SELL_CHUNK = 20            # 遊戲一次可賣 20 件以下，對齊單批開燈上限。
+_SELL_DELAY_SEC = 0.3       # 賣出後等伺服器處理完，再送下一個指令。
 _BS = frozenset({"爆", "閃"})  # 爆閃
 _LS = frozenset({"連", "閃"})  # 連閃
 
@@ -267,6 +268,7 @@ def open_lamp(
     dry_run: bool = True,
     batch_num: int = 20,
     max_batches: int = 1,
+    batch_delay: float = 0.0,
     quality: int = 0,
     push_wait: float = 2.0,
     sell_timeout: float = 8.0,
@@ -302,7 +304,7 @@ def open_lamp(
     left: list[tuple[int, str]] = []
     opened = 0
     try:
-        for _ in range(max_batches):
+        for batch_index in range(max_batches):
             try:
                 cmd, s2c = client.call_for(
                     CMD_OPEN_ALL, build_open_all(batch_num, quality),
@@ -361,6 +363,10 @@ def open_lamp(
                     chunk = batch_sells[i:i + _SELL_CHUNK]
                     _try_call(client, CMD_SELL, build_sell(chunk),
                               timeout=sell_timeout, what=f"sell {chunk}")
+                    time.sleep(_SELL_DELAY_SEC)
+
+            if batch_delay > 0 and batch_index < max_batches - 1:
+                time.sleep(batch_delay)
 
         if not dry_run and active_tab:
             _try_call(client, CMD_CHOOSE_TAB, build_choose_tab(active_tab),

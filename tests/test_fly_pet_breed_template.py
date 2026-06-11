@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "templates" / "fly_pet.html"
-CONTROL_PANEL = Path(__file__).resolve().parents[1] / "control_panel_app.py"
+CONTROL_PANEL = Path(__file__).resolve().parents[1] / "control_panel" / "routes_fly_pet.py"
 
 
 def _template_text() -> str:

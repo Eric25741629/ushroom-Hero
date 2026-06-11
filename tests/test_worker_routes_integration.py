@@ -238,6 +238,48 @@ class TestWorkerRoutesIntegration(unittest.TestCase):
         finally:
             self.cpa.requests.post = original_post
 
+    # ------------------------------------------------------------------
+    # Test 5 — report_status must pass the worker-reported status through
+    # (掉線判離線 fix: master 以前永遠把 remote 裝置顯示成 ONLINE).
+    # ------------------------------------------------------------------
+    def test_report_status_passes_status_through(self) -> None:
+        import bot_state
+
+        remote_id = "w_test_status:emulator-9999"
+
+        def _cleanup() -> None:
+            with bot_state._global_lock:
+                bot_state._states.pop(remote_id, None)
+                bot_state._pause_events.pop(remote_id, None)
+                bot_state._locks.pop(remote_id, None)
+
+        _cleanup()
+        try:
+            # Act — worker reports the device as OFFLINE.
+            payload = {
+                remote_id: {
+                    "status": "OFFLINE",
+                    "task": "休眠中",
+                    "step": "thread exit",
+                    "logs": [],
+                }
+            }
+            resp = self.client.post("/api/report_status", json=payload)
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(
+                bot_state.get_all_states()[remote_id]["status"], "OFFLINE"
+            )
+
+            # Act — worker reports it back ONLINE → master must flip back.
+            payload[remote_id]["status"] = "ONLINE"
+            resp = self.client.post("/api/report_status", json=payload)
+            self.assertEqual(resp.status_code, 200)
+            st = bot_state.get_all_states()[remote_id]
+            self.assertEqual(st["status"], "ONLINE")
+            self.assertNotIn("offline_since", st)
+        finally:
+            _cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

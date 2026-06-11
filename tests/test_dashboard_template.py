@@ -71,6 +71,13 @@ def test_opengold_v2_dead_flag_toggle_removed():
     assert "use_opengold_v2" not in html
 
 
+def test_skip_sleep_button_replaces_manual_wake_adjustment():
+    html = _html()
+    assert "調整喚醒" not in html
+    assert "adjustWakeDelay" not in html
+    assert "/api/wake_delay/" not in html
+
+
 def _fly_pet_nav_tag(html: str) -> str:
     """Return the opening <a ...> tag of the 飛寵管理 side-rail entry."""
     match = re.search(r'<a[^>]*href="/fly-pet"[^>]*>', html)
