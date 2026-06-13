@@ -1127,77 +1127,12 @@
 
         <div class="checkbox-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 
-          <div style="grid-column:span 2;">
+          <!-- 登入網址：固定值，預設隱藏；保留 input 供啟動/儲存讀取 -->
+          <div style="grid-column:span 2; display:none;">
 
             <label style="font-size:0.8em;">登入網址</label>
 
             <input type="text" id="editWebUrl" class="form-control" placeholder="https://mushroomh5.acenetgame.com">
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">Canvas Selector</label>
-
-            <input type="text" id="editCanvasSelector" class="form-control" placeholder="canvas">
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">Browser Channel</label>
-
-            <input type="text" id="editWebChannel" class="form-control" placeholder="chrome">
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">Profile 目錄</label>
-
-            <input type="text" id="editWebProfileDir" class="form-control" placeholder="playwright_profile/{device_id}">
-
-            <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">留空或填共用根目錄時，系統會自動依裝置分出獨立 cookies 資料夾</div>
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">State 檔案</label>
-
-            <input type="text" id="editWebStateFile" class="form-control" placeholder="auth_state/{device_id}.json">
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">停止策略（web_stop_mode）</label>
-
-            <select id="editWebStopMode" class="form-control">
-
-              <option value="keep_page">keep_page（保留頁面）</option>
-
-              <option value="blank">blank（跳到空白頁）</option>
-
-              <option value="close_browser">close_browser（關閉瀏覽器）</option>
-
-            </select>
-
-          </div>
-
-          <div>
-
-            <label style="font-size:0.8em;">截圖方法（web_screenshot_method）</label>
-
-            <select id="editWebScreenshotMethod" class="form-control">
-
-              <option value="playwright">Playwright（預設）</option>
-
-              <option value="canvas_capture">Canvas Capture</option>
-
-            </select>
-
-            <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">Canvas Capture 適用於某些 Playwright 截圖異常的情境</div>
 
           </div>
 
@@ -1237,6 +1172,55 @@
           <label class="checkbox-item" style="grid-column:span 2;"><input type="checkbox" id="chkWebClearCookies">啟動時清除 Cookies</label>
 
         </div>
+
+        <details class="web-advanced" style="margin-top:8px;">
+
+          <summary style="cursor:pointer; font-size:0.8em; color:#9fb3c8;">進階設定（很少需要調整）</summary>
+
+          <div class="checkbox-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+
+            <div>
+              <label style="font-size:0.8em;">Canvas Selector</label>
+              <input type="text" id="editCanvasSelector" class="form-control" placeholder="canvas">
+            </div>
+
+            <div>
+              <label style="font-size:0.8em;">Browser Channel</label>
+              <input type="text" id="editWebChannel" class="form-control" placeholder="chrome">
+            </div>
+
+            <div>
+              <label style="font-size:0.8em;">Profile 目錄</label>
+              <input type="text" id="editWebProfileDir" class="form-control" placeholder="playwright_profile/{device_id}">
+              <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">留空或填共用根目錄時，系統會自動依裝置分出獨立 cookies 資料夾</div>
+            </div>
+
+            <div>
+              <label style="font-size:0.8em;">State 檔案</label>
+              <input type="text" id="editWebStateFile" class="form-control" placeholder="auth_state/{device_id}.json">
+            </div>
+
+            <div>
+              <label style="font-size:0.8em;">停止策略（web_stop_mode）</label>
+              <select id="editWebStopMode" class="form-control">
+                <option value="keep_page">keep_page（保留頁面）</option>
+                <option value="blank">blank（跳到空白頁）</option>
+                <option value="close_browser">close_browser（關閉瀏覽器）</option>
+              </select>
+            </div>
+
+            <div>
+              <label style="font-size:0.8em;">截圖方法（web_screenshot_method）</label>
+              <select id="editWebScreenshotMethod" class="form-control">
+                <option value="playwright">Playwright（預設）</option>
+                <option value="canvas_capture">Canvas Capture</option>
+              </select>
+              <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">Canvas Capture 適用於某些 Playwright 截圖異常的情境</div>
+            </div>
+
+          </div>
+
+        </details>
 
         <div class="action-bar" style="margin-top:10px;">
 
