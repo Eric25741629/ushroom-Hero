@@ -26,14 +26,21 @@ _adb_last_seen: dict[str, float] = {}
 _adb_absence_offlined: set[str] = set()
 
 
-def _apply_adb_absence_rule(adb_present: set, running_threads: dict, logger_obj, now: Optional[float] = None):
+def _apply_adb_absence_rule(adb_present: set, running_threads: dict, logger_obj, now: Optional[float] = None, exempt: Optional[set] = None):
     """掉線超過 1 小時 → set_offline；回到清單 → 恢復 ONLINE / 解除重啟封鎖。
 
     只追蹤「曾出現在 raw ADB 掃描」的序號；web_h5 / ws_token 裝置從不進
     ADB 清單，自然不受影響。
+
+    ``exempt`` 是 offline_fallback 裝置序號集合：這些是 backend=adb 的實體手機，
+    上線時會出現在 raw ADB 掃描（因而進過 ``_adb_last_seen``），但離線時改跑純
+    WS 掛機（new_main_v2 的 WS fallback 迴圈，「不放棄、不判離線」）。對這些序號
+    絕不可因 ADB 缺席判離線，否則 dashboard 會在 1h 後誤標離線，甚至觸發 3h
+    dead-device 重啟封鎖。
     """
     if now is None:
         now = time.time()
+    exempt = exempt or set()
 
     for ip in adb_present:
         _adb_last_seen[ip] = now
@@ -51,6 +58,13 @@ def _apply_adb_absence_rule(adb_present: set, running_threads: dict, logger_obj,
 
     states = bot_state.get_all_states()
     for ip, last_seen in list(_adb_last_seen.items()):
+        if ip in exempt:
+            # offline_fallback 裝置：純 WS 掛機中，絕不能因 ADB 缺席判離線。
+            # 順手清掉殘留時間戳 + offlined 登記，避免日後關閉 fallback 時
+            # 用舊 timestamp 立即觸發缺席規則。
+            _adb_last_seen.pop(ip, None)
+            _adb_absence_offlined.discard(ip)
+            continue
         if ip in adb_present or ip in _adb_absence_offlined:
             continue
         if now - last_seen < _ADB_ABSENT_OFFLINE_SEC:
@@ -176,6 +190,57 @@ def is_ws_runner_device(ip: str) -> bool:
         return False
 
 
+def _is_ws_fallback_cfg(dcfg) -> bool:
+    """True when an ADB device opts into the offline pure-WS fallback.
+
+    Condition: backend == "adb" AND ws_token.enabled AND
+    ws_token.offline_fallback. When the phone goes offline the ADB scan stops
+    emitting its serial, so the serial must be injected from config like the
+    ws_runner devices — otherwise the thread never spawns and WS never runs.
+    """
+    dcfg = dcfg or {}
+    if str(dcfg.get("backend", "adb")).strip().lower() != "adb":
+        return False
+    ws_cfg = dcfg.get("ws_token") or {}
+    return bool(ws_cfg.get("enabled", False)) and bool(ws_cfg.get("offline_fallback", False))
+
+
+def get_ws_fallback_devices(logger_obj) -> list[str]:
+    """ADB devices that should keep running pure-WS while offline.
+
+    Mirrors ``get_ws_runner_devices``: these serials may be absent from the ADB
+    scan (phone away), so they're injected from config. Disabled devices
+    (enabled=false) are skipped; a missing key reads as enabled.
+
+    Host gate (``ws_fallback_host_allowed``): master + worker share the same
+    NAS-synced bot_config.json — without it BOTH hosts would inject the serial,
+    and the host the phone never pairs with would loop init-fail -> WS fallback
+    -> hourly WS login, kicking the phone session while the right host drives
+    it normally. ``ws_token.fallback_host`` pins one hostname (case-insensitive);
+    unset -> only the resolved-mode=="master" host injects.
+    """
+    try:
+        # ws_fallback_service is import-light (sleep_service is lazy-loaded
+        # inside it); lazy import here just avoids a top-level coupling.
+        from runtime_services.ws_fallback_service import ws_fallback_host_allowed
+
+        cfg = config_manager.load_config()
+        devices = cfg.get("devices", {}) if isinstance(cfg, dict) else {}
+        result = []
+        for serial, dcfg in devices.items():
+            if not _is_ws_fallback_cfg(dcfg):
+                continue
+            if not bool((dcfg or {}).get("enabled", True)):
+                continue
+            if not ws_fallback_host_allowed((dcfg or {}).get("ws_token")):
+                continue
+            result.append(serial)
+        return sorted(set(result))
+    except Exception as e:
+        logger_obj.warning(f"[System] Failed to load ws fallback devices from config: {e}")
+        return []
+
+
 def use_phone_ocr_lamp_mode(ip: str) -> bool:
     try:
         cfg = config_manager.get_device_config(ip)
@@ -202,6 +267,7 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
 
     refresh_adb_server(running_threads, logger_obj, hard_reset=False)
 
+    fb_devices: set = set()
     try:
         current_devices = get_adb_devices()
         current_devices = [d for d in current_devices if d != "emulator-5562"]
@@ -221,6 +287,16 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
             if ws_ip not in current_devices:
                 current_devices.append(ws_ip)
 
+        # offline_fallback ADB devices: when the phone is unreachable the ADB
+        # scan drops its serial, so inject it from config like ws_runner. The
+        # device thread spawns, init connect fails, and new_main_v2 runs the
+        # pure-WS wait round (see runtime_services.ws_fallback_service) instead
+        # of dying. When the phone returns, init succeeds and full flow resumes.
+        fb_devices = set(get_ws_fallback_devices(logger_obj))
+        for fb_ip in fb_devices:
+            if fb_ip not in current_devices:
+                current_devices.append(fb_ip)
+
         if not allow_web_backend:
             skipped_web_devices = [d for d in current_devices if is_web_backend_device(d)]
             if skipped_web_devices:
@@ -230,7 +306,7 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
         print(f"[System] 掃描 ADB 失敗: {e}")
         return
 
-    _apply_adb_absence_rule(adb_present, running_threads, logger_obj)
+    _apply_adb_absence_rule(adb_present, running_threads, logger_obj, exempt=fb_devices)
 
     if _is_infinite_host():
         fixed_set = set(_FIXED_EMULATORS + _FIXED_PHONES)

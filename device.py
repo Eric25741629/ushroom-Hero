@@ -5,6 +5,7 @@ import time
 import subprocess
 
 from utils.main_page_guard import is_main_page_with_popup
+from runtime_services.device_runtime_service import ForceSleepRequested, WakeLoopInterrupted
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,15 @@ def close_notification(d):
             if not d.xpath('//*[@content-desc="勿擾模式"]').info.get("checked"):
                 d.xpath('//*[@content-desc="勿擾模式"]').click()  
             d.click(0.71, 0.016) # 點擊空白處返回
+            # 先確保通知欄/快捷選單收起，再偵測 Messenger；否則會在下拉選單前景
+            # 狀態下誤判並嘗試掃氣泡。
+            press_fn = getattr(d, "press", None)
+            if callable(press_fn):
+                press_fn("home")
+                time.sleep(0.5)
+        except (ForceSleepRequested, WakeLoopInterrupted):
+            # 暫停/開網頁/強制休眠是控制流訊號，必須即時 unwind，不可降級為 warning。
+            raise
         except Exception as e:
             logger.warning(f"[device] 例外: {e}")
 
@@ -106,10 +116,14 @@ def close_notification(d):
                         logger.debug(f"掃除氣泡於: ({mid_x}, {mid_y}) -> 底部")
                         d.swipe(mid_x, mid_y, screen_w / 2, screen_h - 10, duration=0.2)
                         time.sleep(0.5)
+                except (ForceSleepRequested, WakeLoopInterrupted):
+                    raise
                 except Exception as e:
                     logger.warning(f"[device] 例外: {e}")
                     continue
                     
+    except (ForceSleepRequested, WakeLoopInterrupted):
+        raise
     except Exception as e:
         logger.error(f"清理遮擋物時發生錯誤: {e}")
 def open_notification(d):

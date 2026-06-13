@@ -47,11 +47,46 @@ logger = logging.getLogger(__name__)
 
 CMD_LOT_INFO = 12801          # car_park.car_park_info (c2s == s2c id)
 CMD_CAR_INFO = 12802          # car_park.car_park_car_info -> my mounts
+CMD_SEARCH = 12808            # car_park.car_park_search {type,park_name} -> null_space
+CMD_CROSS_PREVIEW = 12830     # car_park.cross_car_park_preview -> lot list (legacy)
+CMD_CROSS_INFO = 12831        # car_park.cross_car_park_info {id} -> lot detail (legacy)
+
+# car_park_search type enum (client ParkingListName): the NEW cross flow lists
+# parkable lots via search type=4 (crossSpaceList) -> null_space, NOT preview.
+SEARCH_TYPE_CROSS = 4
 CMD_CROSS_OLD_START = 12832   # car_park.cross_car_park_parking_start (legacy)
 CMD_CROSS_NEW_START = 12847   # car_park.cross_car_park_new_parking_start
+CMD_COLLECT_BAG = 12846       # car_park.car_park_collect_all_bag_rewards (一鍵領倉庫
+                              # 停車收益; UI ParkingWareHouseView 的「一鍵領取」,
+                              # docs/protocol/CARPARK_GUILD_NODES.md)
 CMD_ERROR = 0x0201            # error.error_info_s2c {error_code#1}
 
 CROSS_TYPE = 3                # park type that marks a cross-server (跨界) lot
+# A cross lot holds 10 slots, pos is 1-based (1..10). The s2c space_list for a
+# cross lot lists ONLY occupied slots — empty positions are absent — so a free
+# pos is derived as {1..capacity} minus the occupied set (LIVE-verified on 小寶:
+# null_num == capacity - len(occupied); pos values seen up to 10, never 0).
+CROSS_LOT_CAPACITY = 10       # config park_cross_each_num
+
+# --- 泊銀 (silver tier of the cross park) ------------------------------------
+# 泊銀 is NOT a separate park: it is pool id=3 of the 跨界 (cross) park. The
+# same verified protocol applies (search 12808 type=4 lists ALL pools' lots;
+# info 12801 type=3; park 12847). Pool membership is encoded in ``ceng``
+# (== master_id % 1000): configCross_parking_lot dump 2026-05-20 gives silver
+# internal lot ids 5..34 == user-visible 鉑銀1..30; LIVE re-confirmed 2026-06-13
+# on 小寶 (search type=4 returned ceng 1..68 contiguous, master_id 1001001NNN).
+SILVER_CENG_BASE = 5          # ceng of 鉑銀1
+SILVER_LOT_COUNT = 30         # 鉑銀1 .. 鉑銀30
+SILVER_PREFERRED_LEVELS = (9, 10)  # user policy 2026-06-13: 鉑銀9/10 first
+
+
+def silver_level_to_ceng(level: int) -> int:
+    """User-visible 鉑銀 level (1..30) -> internal ceng (5..34)."""
+    return SILVER_CENG_BASE + int(level) - 1
+
+
+def is_silver_ceng(ceng: int) -> bool:
+    return SILVER_CENG_BASE <= ceng < SILVER_CENG_BASE + SILVER_LOT_COUNT
 
 
 @dataclass(frozen=True)
@@ -61,6 +96,10 @@ class Space:
     pos: int            # #1
     role_id: int        # #2 (0 -> empty)
     occupied: bool      # derived: role_id != 0
+    # role attr values from info_list#6 (p_role_change.kv) + ext#8 (p_key_value
+    # list), flattened {k: v}. Used to spot same-server occupants (one of the
+    # attrs carries the occupant's server id == 本服 master_id, e.g. 1467).
+    attrs: dict = field(compare=False, default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -76,6 +115,62 @@ class CarParkLot:
     @property
     def is_cross(self) -> bool:
         return self.type == CROSS_TYPE
+
+    def free_positions(self) -> list[int]:
+        return [s.pos for s in self.spaces if not s.occupied]
+
+    def first_free_pos(self) -> int | None:
+        free = self.free_positions()
+        return free[0] if free else None
+
+    def occupied_positions(self) -> set[int]:
+        return {s.pos for s in self.spaces if s.occupied}
+
+    def first_free_cross_pos(self, capacity: int = CROSS_LOT_CAPACITY) -> int | None:
+        """First empty 1-based pos for a CROSS lot (space_list lists only the
+        occupied slots, so derive free = {1..capacity} minus occupied)."""
+        occ = self.occupied_positions()
+        for p in range(1, capacity + 1):
+            if p not in occ:
+                return p
+        return None
+
+
+@dataclass(frozen=True)
+class NullSpace:
+    """One entry of car_park_search_s2c.null_space (p_car_park_null).
+
+    The NEW cross flow's authoritative lot list. ``null_num`` is the count of
+    EMPTY slots in that lot (a lot has 10 slots); ``master_id`` + ``ceng`` are
+    what car_park_info(type=3) needs to read the per-slot detail, and what
+    new_parking_start needs as ``park_id`` (= master_id).
+    """
+
+    park_type: int      # #1
+    master_id: int      # #2 (== park_id for new_parking_start)
+    null_num: int       # #3 (empty-slot count; >0 means parkable)
+    ceng: int           # #7
+
+
+@dataclass(frozen=True)
+class CrossLotPreview:
+    """One entry of cross_car_park_preview_s2c.park_list (p_cross_car_park_preview)."""
+
+    id: int             # #1
+    server_id: int      # #2
+    protect_end: int    # #3 (epoch; lot under protection until then)
+    def_num: int        # #4
+    atk_num: int        # #5
+
+
+@dataclass(frozen=True)
+class CrossLotDetail:
+    """cross_car_park_info_s2c.park_info (p_cross_car_park)."""
+
+    id: int                         # #1
+    server_id: int                  # #2
+    spaces: tuple[Space, ...]       # #3 space_list
+    raw: dict = field(compare=False, default_factory=dict)
 
     def free_positions(self) -> list[int]:
         return [s.pos for s in self.spaces if not s.occupied]
@@ -109,10 +204,50 @@ class ParkResult:
 
 # --- parsing ----------------------------------------------------------------
 
+def _parse_kv_list(container: bytes, *, kv_field: int = 1) -> dict:
+    """Flatten repeated p_key_value {k#1, v#2} sub-messages into {k: v}."""
+    out: dict = {}
+    for fn, v in codec.walk(container):
+        if fn != kv_field or not isinstance(v, (bytes, bytearray)):
+            continue
+        kv = codec.walk_dict(bytes(v))
+        k = kv.get(1)
+        if isinstance(k, int):
+            out[k] = kv.get(2)
+    return out
+
+
 def _parse_space(entry: bytes) -> Space:
     d = codec.walk_dict(entry)
     role_id = _as_int(d.get(2))
-    return Space(pos=_as_int(d.get(1)), role_id=role_id, occupied=role_id != 0)
+    attrs: dict = {}
+    for fn, v in codec.walk(entry):
+        if fn == 6 and isinstance(v, (bytes, bytearray)):   # info_list (p_role_change)
+            attrs.update(_parse_kv_list(bytes(v)))
+        elif fn == 8 and isinstance(v, (bytes, bytearray)):  # ext (p_key_value)
+            kv = codec.walk_dict(bytes(v))
+            k = kv.get(1)
+            if isinstance(k, int):
+                attrs[k] = kv.get(2)
+    return Space(pos=_as_int(d.get(1)), role_id=role_id,
+                 occupied=role_id != 0, attrs=attrs)
+
+
+def count_same_server(lot: CarParkLot, server_id: int) -> int:
+    """Count occupied slots whose role attrs carry ``server_id`` (本服抱團).
+
+    p_car_park_space has no dedicated server field; the occupant's server id
+    rides in the info_list/ext role attrs (value == 本服 master_id, e.g. 1467).
+    Generic value-match keeps this schema-tolerant; a lot with no attr data
+    counts 0, so callers degrade to plain occupancy ranking.
+    """
+    if not server_id:
+        return 0
+    n = 0
+    for s in lot.spaces:
+        if s.occupied and any(v == server_id for v in s.attrs.values()):
+            n += 1
+    return n
 
 
 def parse_car_park_info(body: bytes) -> CarParkLot:
@@ -169,6 +304,51 @@ def parse_my_mounts(body: bytes) -> list[Mount]:
     return [m for m in mounts if not m.parking]
 
 
+def parse_null_spaces(body: bytes) -> list[NullSpace]:
+    """Decode car_park_search_s2c.null_space (#1) -> [NullSpace]."""
+    out = []
+    for fnum, v in codec.walk(body):
+        if fnum != 1 or not isinstance(v, (bytes, bytearray)):
+            continue
+        d = codec.walk_dict(bytes(v))
+        out.append(NullSpace(
+            park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
+            null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
+        ))
+    return out
+
+
+def parse_cross_preview(body: bytes) -> list[CrossLotPreview]:
+    """Decode cross_car_park_preview_s2c.park_list -> [CrossLotPreview]."""
+    lots = []
+    for fnum, v in codec.walk(body):
+        if fnum != 1 or not isinstance(v, (bytes, bytearray)):
+            continue
+        d = codec.walk_dict(bytes(v))
+        lots.append(CrossLotPreview(
+            id=_as_int(d.get(1)), server_id=_as_int(d.get(2)),
+            protect_end=_as_int(d.get(3)), def_num=_as_int(d.get(4)),
+            atk_num=_as_int(d.get(5)),
+        ))
+    return lots
+
+
+def parse_cross_info(body: bytes) -> CrossLotDetail:
+    """Decode cross_car_park_info_s2c.park_info -> CrossLotDetail."""
+    park = b""
+    for fnum, v in codec.walk(body):
+        if fnum == 1 and isinstance(v, (bytes, bytearray)):
+            park = bytes(v)
+            break
+    d = codec.walk_dict(park)
+    spaces = tuple(
+        _parse_space(bytes(v)) for fnum, v in codec.walk(park)
+        if fnum == 3 and isinstance(v, (bytes, bytearray))
+    )
+    return CrossLotDetail(id=_as_int(d.get(1)), server_id=_as_int(d.get(2)),
+                          spaces=spaces, raw=d)
+
+
 # --- c2s body builders ------------------------------------------------------
 
 def build_lot_info_body(*, type_: int, master_id: int, ceng: int = 0) -> bytes:
@@ -195,7 +375,48 @@ def build_cross_old_start_body(*, id_: int, mount_id: int, pos: int) -> bytes:
             + codec.pb_uint(3, pos))
 
 
+def build_cross_info_body(*, id_: int) -> bytes:
+    """cross_car_park_info_c2s {id#1}."""
+    return codec.pb_uint(1, id_)
+
+
+def build_search_body(*, type_: int, park_name: str = "") -> bytes:
+    """car_park_search_c2s {type#1, park_name#2}."""
+    out = codec.pb_uint(1, type_)
+    if park_name:
+        out += codec.pb_str(2, park_name)
+    return out
+
+
 # --- reads ------------------------------------------------------------------
+
+def read_cross_null_spaces(client: WSGameClient, *,
+                           timeout: float | None = None) -> list[NullSpace]:
+    """List parkable cross lots via car_park_search (12808, type=4).
+
+    This is the NEW cross flow's authoritative source (the client fires it as
+    ``reqParkSearch(crossSpaceList, "")`` when entering the cross view). Returns
+    the null_space entries; filter on ``null_num > 0`` for lots with a free slot.
+    """
+    body = client.call(CMD_SEARCH,
+                       build_search_body(type_=SEARCH_TYPE_CROSS),
+                       timeout=timeout)
+    return parse_null_spaces(body)
+
+
+def read_cross_preview(client: WSGameClient, *,
+                       timeout: float | None = None) -> list[CrossLotPreview]:
+    """Fetch the cross lot list via cross_car_park_preview (12830; empty c2s)."""
+    return parse_cross_preview(client.call(CMD_CROSS_PREVIEW, b"", timeout=timeout))
+
+
+def read_cross_info(client: WSGameClient, *, id_: int,
+                    timeout: float | None = None) -> CrossLotDetail:
+    """Fetch one cross lot's detail via cross_car_park_info (12831)."""
+    return parse_cross_info(client.call(CMD_CROSS_INFO, build_cross_info_body(id_=id_),
+                                        timeout=timeout))
+
+
 
 def read_lot(client: WSGameClient, *, type: int = CROSS_TYPE, master_id: int,
              ceng: int = 0, timeout: float | None = None) -> CarParkLot:
@@ -210,6 +431,32 @@ def read_my_mounts(client: WSGameClient, *,
                    timeout: float | None = None) -> list[Mount]:
     """Fetch my mount list via car_park_car_info (12802), excluding busy mounts."""
     return parse_my_mounts(client.call(CMD_CAR_INFO, b"", timeout=timeout))
+
+
+def collect_bag_rewards(client: WSGameClient, *,
+                        timeout: float | None = None) -> dict:
+    """一鍵領取停車倉庫收益 (car_park_collect_all_bag_rewards, 12846).
+
+    Free claim of already-earned parking income (本服 + 跨界 cars both deposit
+    here). Idempotent: with nothing to claim the server declines with 0x0201
+    error_code=173 (LIVE 小寶 2026-06-13; the list cmd 12845
+    car_park_bag_rewards answered empty at the same moment) — reported as
+    success=False, never raised. Returns {success, response_cmd, fields,
+    error_code}.
+    """
+    cmd, body = client.call_for(CMD_COLLECT_BAG, b"",
+                                expect_cmds=(CMD_COLLECT_BAG, CMD_ERROR),
+                                timeout=timeout)
+    f = codec.walk_dict(body)
+    if cmd == CMD_COLLECT_BAG:
+        logger.info("ws_token carpark: warehouse collect ok fields=%s", f)
+        return {"success": True, "response_cmd": cmd, "fields": f,
+                "error_code": None}
+    ec = f.get(1)
+    ec = int(ec) if isinstance(ec, int) else None
+    logger.info("ws_token carpark: warehouse collect declined code=%s", ec)
+    return {"success": False, "response_cmd": cmd, "fields": f,
+            "error_code": ec}
 
 
 # --- park -------------------------------------------------------------------
@@ -287,6 +534,206 @@ def auto_park_cross(client: WSGameClient, *, target_id: int, new: bool = True,
                 mount_id, target_id, pos)
     return {"parked": True, "reason": "ok", "pos": pos, "mount_id": mount_id,
             "lot": lot, "result": result}
+
+
+def auto_select_and_park(client: WSGameClient, *, new: bool = True,
+                         timeout: float | None = None) -> dict:
+    """Fully automatic cross parking: search -> per-lot detail -> park.
+
+    Reads my mounts first (cheap short-circuit), then lists parkable cross lots
+    via car_park_search (type=4 -> null_space; the NEW cross flow's source). For
+    each lot with ``null_num > 0`` it reads the slot detail to pick the exact
+    free pos, then attempts ONE park. A rejected park (race / protected) falls
+    through to the next lot. Strictly park-only, cross-only.
+
+    ``park_id`` for new_parking_start is the lot's ``master_id`` (verified from
+    the client: btn click -> reqParkingInfo(3, master_id, ceng), then
+    reqNewCrossParkingStart(park_id=master_id, ...)).
+
+    Returns {parked, reason, target_id, pos, mount_id, attempts, lots, result}.
+    """
+    mounts = read_my_mounts(client, timeout=timeout)
+    if not mounts:
+        logger.info("ws_token carpark: no available (non-parking) mount")
+        return {"parked": False, "reason": "no_available_mount", "target_id": None,
+                "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
+                "result": None}
+    mount_id = mounts[0].mount_id
+
+    lots = read_cross_null_spaces(client, timeout=timeout)
+    parkable = [lot for lot in lots if lot.null_num > 0]
+    if not parkable:
+        logger.info("ws_token carpark: search returned %d lot(s), 0 parkable",
+                    len(lots))
+        return {"parked": False, "reason": "no_cross_lot", "target_id": None,
+                "pos": None, "mount_id": mount_id, "attempts": 0,
+                "lots": len(lots), "result": None}
+
+    attempts = 0
+    last_result: ParkResult | None = None
+    for lot in parkable:
+        detail = read_lot(client, type=CROSS_TYPE, master_id=lot.master_id,
+                          ceng=lot.ceng, timeout=timeout)
+        pos = detail.first_free_cross_pos()
+        if pos is None:
+            continue
+        attempts += 1
+        result = park_into_cross(client, target_id=lot.master_id, pos=pos,
+                                 mount_id=mount_id, new=new, timeout=timeout)
+        last_result = result
+        if result.success:
+            logger.info("ws_token carpark: parked mount=%s into cross %s pos=%s "
+                        "(auto-selected, attempt %s)", mount_id, lot.master_id,
+                        pos, attempts)
+            return {"parked": True, "reason": "ok", "target_id": lot.master_id,
+                    "pos": pos, "mount_id": mount_id, "attempts": attempts,
+                    "lots": len(parkable), "result": result}
+        logger.warning("ws_token carpark: park rejected lot=%s pos=%s code=%s; "
+                       "trying next lot", lot.master_id, pos, result.error_code)
+
+    reason = "park_failed" if attempts else "no_free_slot"
+    logger.info("ws_token carpark: auto-select done parked=False reason=%s "
+                "lots=%s attempts=%s", reason, len(parkable), attempts)
+    return {"parked": False, "reason": reason, "target_id": None, "pos": None,
+            "mount_id": mount_id, "attempts": attempts, "lots": len(parkable),
+            "result": last_result}
+
+
+# 同服抱團排序時最多預讀幾個候選 lot 的格位詳情（每讀一次 ~1 RTT，搶位要快）。
+_CLUSTER_PROBE_LOTS = 8
+
+
+def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
+                              silver_only: bool = True,
+                              prefer_levels: tuple[int, ...] | list[int]
+                              = SILVER_PREFERRED_LEVELS,
+                              cluster_server_id: int | None = None,
+                              new: bool = True,
+                              timeout: float | None = None) -> dict:
+    """Park up to ``count`` of my idle mounts into 跨界 silver lots.
+
+    Multi-mount core for the day/night carpark plan (ws_token/carpark_plan.py):
+    reads my mounts ONCE (read_my_mounts already excludes mounts that are
+    parking), lists the cross lots via car_park_search (type=4 returns ALL
+    pools), keeps only silver-tier lots (``silver_only``; user policy 跨界限定
+    泊銀), orders them 鉑銀``prefer_levels`` first then the rest by ceng
+    (退而求其次), then walks each parkable lot's free positions pairing the
+    next mount, spilling to the next lot when one fills. A rejected park
+    (race / protected) abandons that lot and falls through to the next.
+    Strictly park-only.
+
+    Returns {parked_count, requested, reason, results: [per-park dict]}.
+    """
+    requested = max(0, int(count))
+    out: dict = {"parked_count": 0, "requested": requested, "reason": "ok",
+                 "results": []}
+    if requested == 0:
+        out["reason"] = "zero_quota"
+        return out
+
+    mounts = read_my_mounts(client, timeout=timeout)
+    if not mounts:
+        logger.info("ws_token carpark: no available (non-parking) mount")
+        out["reason"] = "no_available_mount"
+        return out
+    mount_queue = [m.mount_id for m in mounts]
+
+    lots = read_cross_null_spaces(client, timeout=timeout)
+    parkable = [lot for lot in lots if lot.null_num > 0
+                and (not silver_only or is_silver_ceng(lot.ceng))]
+    if not parkable:
+        logger.info("ws_token carpark: %d lot(s), 0 parkable "
+                    "(silver_only=%s)", len(lots), silver_only)
+        out["reason"] = "no_parkable_lot"
+        return out
+
+    preferred = {silver_level_to_ceng(lv) for lv in (prefer_levels or ())}
+
+    def _rank(lot: NullSpace) -> tuple[int, int, int]:
+        # 鉑銀 prefer_levels first; within each group prefer fuller lots
+        # (fewest free slots), then lower ceng as the tiebreaker.
+        return (0 if lot.ceng in preferred else 1, lot.null_num, lot.ceng)
+
+    parkable.sort(key=_rank)
+
+    # 同服抱團 (user 2026-06-13: 抱團 = 跟「同服」的人停同一 lot): pre-read the
+    # top candidates' slot details and re-rank by how many 本服 occupants each
+    # lot already has. Lots whose attrs carry no server info count 0, which
+    # degrades to the occupancy order above. Probe is capped — 搶位要快.
+    details: dict[int, CarParkLot] = {}
+    if cluster_server_id:
+        for lot in parkable[:_CLUSTER_PROBE_LOTS]:
+            try:
+                details[lot.master_id] = read_lot(
+                    client, type=CROSS_TYPE, master_id=lot.master_id,
+                    ceng=lot.ceng, timeout=timeout)
+            except Exception:  # noqa: BLE001 — 一個 lot 讀失敗不擋整體
+                logger.debug("ws_token carpark: probe read_lot %s failed",
+                             lot.master_id, exc_info=True)
+
+        def _rank_cluster(lot: NullSpace) -> tuple[int, int, int, int]:
+            d = details.get(lot.master_id)
+            same = count_same_server(d, cluster_server_id) if d else 0
+            return (0 if lot.ceng in preferred else 1, -same,
+                    lot.null_num, lot.ceng)
+
+        parkable.sort(key=_rank_cluster)
+        if details:
+            logger.info(
+                "ws_token carpark: cluster probe (server=%s): %s",
+                cluster_server_id,
+                [(lot.ceng, count_same_server(details[lot.master_id],
+                                              cluster_server_id))
+                 for lot in parkable[:_CLUSTER_PROBE_LOTS]
+                 if lot.master_id in details])
+
+    for lot in parkable:
+        if out["parked_count"] >= requested or not mount_queue:
+            break
+        try:
+            detail = details.get(lot.master_id) or read_lot(
+                client, type=CROSS_TYPE, master_id=lot.master_id,
+                ceng=lot.ceng, timeout=timeout)
+        except Exception:  # noqa: BLE001 — 讀單一 lot 失敗(非 mutating)，跳過該 lot 即可，不可中斷已停車的持久化
+            logger.warning("ws_token carpark: read_lot %s failed; skip lot",
+                           lot.master_id, exc_info=True)
+            continue
+        occupied = detail.occupied_positions()
+        for pos in range(1, CROSS_LOT_CAPACITY + 1):
+            if pos in occupied:
+                continue
+            if out["parked_count"] >= requested or not mount_queue:
+                break
+            mount_id = mount_queue[0]
+            try:
+                result = park_into_cross(client, target_id=lot.master_id, pos=pos,
+                                         mount_id=mount_id, new=new, timeout=timeout)
+            except Exception:  # noqa: BLE001 — park 逾時可能其實已落地伺服器端；停手並回傳已確認的 parked_count，讓 runner 持久化配額
+                logger.warning("ws_token carpark: park_into_cross timed out "
+                               "lot=%s pos=%s mount=%s; stopping, returning partial",
+                               lot.master_id, pos, mount_id, exc_info=True)
+                out["reason"] = "park_timeout"
+                return out
+            entry = {"target_id": lot.master_id, "pos": pos,
+                     "mount_id": mount_id, "success": result.success,
+                     "error_code": result.error_code}
+            out["results"].append(entry)
+            if result.success:
+                mount_queue.pop(0)
+                out["parked_count"] += 1
+                logger.info("ws_token carpark: parked mount=%s lot=%s "
+                            "pos=%s ceng=%s (%d/%d)", mount_id, lot.master_id,
+                            pos, lot.ceng, out["parked_count"], requested)
+            else:
+                logger.warning("ws_token carpark: park rejected lot=%s "
+                               "pos=%s code=%s; next lot",
+                               lot.master_id, pos, result.error_code)
+                break  # abandon this lot, fall through to the next
+
+    if out["parked_count"] < requested:
+        out["reason"] = ("no_more_mounts" if not mount_queue
+                         else "quota_unfilled")
+    return out
 
 
 def _as_int(v) -> int:
