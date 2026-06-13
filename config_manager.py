@@ -36,6 +36,7 @@ DEFAULT_DEVICE_CONFIG = {
     "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
     "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
     "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
+    "ws_token_kungfu_guess": False,  # True => 菇菇武道會競猜商店用粉鑽把競猜幣 4 檔買到上限 (活動沒開時伺服器擋下=no-op)，預設 off
     "ws_token_mining": None,  # {"enabled": bool, "allow_bomb": bool, "allow_drill": bool, "max_steps": int}
     "web_url": "",
     "web_canvas_selector": "canvas",
@@ -117,6 +118,7 @@ class DeviceConfig:
     ws_token_spend: bool = False
     ws_token_sweep_list: list = field(default_factory=list)
     ws_token_open_lamp: bool = False
+    ws_token_kungfu_guess: bool = False
     ws_token_mining: Optional[dict] = None
 
     # Web H5 settings
@@ -770,6 +772,11 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["ws_token_open_lamp"] = _to_bool(
             current.get("ws_token_open_lamp", DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"]),
             DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"],
+        )
+        current["ws_token_kungfu_guess"] = _to_bool(
+            current.get("ws_token_kungfu_guess",
+                        DEFAULT_DEVICE_CONFIG["ws_token_kungfu_guess"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_kungfu_guess"],
         )
         current["ws_token_mining"] = _sanitize_mining_config(current.get("ws_token_mining"))
         current["ws_token"] = _merge_ws_token_phase_config(current.get("ws_token"))
