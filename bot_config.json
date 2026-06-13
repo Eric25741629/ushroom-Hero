@@ -257,7 +257,12 @@
                 "enabled": true,
                 "spend": true,
                 "open_lamp": true,
-                "farm": null,
+                "farm": {
+                    "buy": [
+                        {"shop_id": 407, "target": 4},
+                        {"shop_id": 408, "target": 4}
+                    ]
+                },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "couple_gifts": true,

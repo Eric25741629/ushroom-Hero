@@ -189,7 +189,7 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
     live-confirm config values, so they run ONLY when ``farm_config`` supplies them
     (empty seed_used_seq = 用免費種子 = 不買種). Returns ``{harvest, plant, work}``.
     """
-    summary: dict = {"harvest": None, "plant": None, "work": None}
+    summary: dict = {"harvest": None, "plant": None, "work": None, "buy": None}
     # The live server answers home_farm_info only ONCE per session, so read the
     # farm a single time and reuse the snapshot for both harvest and plant.
     info = farm.read_farm(client, role_id)
@@ -197,10 +197,16 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
     if farm_config:
         seed_id = farm_config.get("seed_id")
         team_cfg_id = farm_config.get("team_cfg_id")
+        buy_list = farm_config.get("buy")
         if seed_id:
             summary["plant"] = farm.plant_empty(client, role_id, int(seed_id), info=info)
         if team_cfg_id:
             summary["work"] = farm.start_work(client, int(team_cfg_id))
+        # 莊園購買: buy each configured farm-shop item UP TO its daily target.
+        # Reads today's count first, so an item already bought in the GUI is
+        # respected (buys only the remainder; nothing if already at target).
+        if buy_list:
+            summary["buy"] = farm.buy_farm_shop(client, buy_list)
     return summary
 
 

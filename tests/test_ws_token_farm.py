@@ -36,24 +36,40 @@ from ws_token import codec  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.farm import (  # noqa: E402
     CMD_ERROR,
+    CMD_FERTILIZE,
+    CMD_GET_OTHER_WORKER,
     CMD_HARVEST,
     CMD_INFO,
     CMD_PLANT,
     CMD_SHOP_BUY,
+    CMD_SHOP_INFO,
     CMD_WORKER_SETTING,
+    FARM_SHOP_TYPE,
+    FARM_WORKER_TEAM_CFG_ID,
+    FERTILIZER_ID_HIGH_YIELD,
+    SEED_ID_FREE,
     STATE_GROWING,
     STATE_MATURE,
     STATE_NOT_EXIT,
     FarmInfo,
     FarmLand,
+    build_fertilize_body,
+    build_get_other_worker_body,
     build_harvest_body,
     build_plant_body,
     build_shop_buy_body,
+    build_shop_info_body,
     build_worker_setting_body,
+    buy_farm_shop,
+    buy_to_daily_target,
+    fertilize_lands,
     harvest_ready,
     parse_farm_info,
+    parse_shop_counts,
     plant_empty,
     read_farm,
+    read_shop_counts,
+    read_work_status,
     start_work,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
@@ -390,9 +406,235 @@ def test_start_work_handles_0x0201_rejection_without_crashing():
         c.close()
 
 
+# --- build_fertilize_body: role_id#1, land_id#2, fertilizer_id#3, num#4 -----
+
+def test_build_fertilize_body_wire_order():
+    # role_id#1=0, land_id#2=3, fertilizer_id#3=111, num#4=1 (live capture)
+    body = build_fertilize_body(3, 111)
+    assert codec.walk(body) == [(1, 0), (2, 3), (3, 111), (4, 1)]
+
+
+def test_build_fertilize_body_respects_num_and_role():
+    body = build_fertilize_body(5, 111, num=2, role_id=777)
+    assert codec.walk_dict(body) == {1: 777, 2: 5, 3: 111, 4: 2}
+
+
+# --- build_get_other_worker_body: role_id#1, team_cfg_id#2:repeated ---------
+
+def test_build_get_other_worker_body_repeats_team_ids():
+    body = build_get_other_worker_body(777, (7001,))
+    assert codec.walk(body) == [(1, 777), (2, 7001)]
+    multi = build_get_other_worker_body(1, (7001, 7002))
+    assert [v for fn, v in codec.walk(multi) if fn == 2] == [7001, 7002]
+
+
+# --- fertilize_lands: per-land, only non-empty lands ------------------------
+
+def test_fertilize_lands_only_targets_non_empty():
+    lands = [_land(1),  # empty -> skip
+             _land(2, _crop(1, 1, SEED_ID_FREE, 6011, STATE_GROWING, end=9e9)),
+             _land(3, _crop(2, 1, SEED_ID_FREE, 6012, STATE_MATURE, end=1))]
+    info_body = _info_body(1, "x", 1, 0, lands=lands)
+    fert_ok = codec.pb_uint(1, 0) + codec.pb_uint(2, 1) + codec.pb_msg(3, _land(2))
+    c, fake = _client({
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, info_body)],
+        CMD_FERTILIZE: lambda _b: [s2c(CMD_FERTILIZE, fert_ok)],
+    })
+    try:
+        summary = fertilize_lands(c, role_id=1, fertilizer_id=FERTILIZER_ID_HIGH_YIELD)
+        assert summary["attempted"] == 2  # lands 2 and 3 (not the empty land 1)
+        assert summary["fertilized"] == 2
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_FERTILIZE]
+        assert {d[2] for d in sent} == {2, 3}            # land_id#2
+        assert all(d[3] == FERTILIZER_ID_HIGH_YIELD for d in sent)  # fertilizer_id#3
+        assert all(d[1] == 0 and d[4] == 1 for d in sent)          # role_id#1=0, num#4=1
+    finally:
+        c.close()
+
+
+def test_fertilize_lands_handles_0x0201_rejection():
+    lands = [_land(2, _crop(1, 1, SEED_ID_FREE, 6011, STATE_GROWING, end=9e9))]
+    info_body = _info_body(1, "x", 1, 0, lands=lands)
+    c, _ = _client({
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, info_body)],
+        CMD_FERTILIZE: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 159))],
+    })
+    try:
+        summary = fertilize_lands(c, role_id=1, fertilizer_id=111)
+        assert summary["attempted"] == 1
+        assert summary["fertilized"] == 0
+        assert summary["results"][0]["ok"] is False
+        assert summary["results"][0]["code"] == 159
+    finally:
+        c.close()
+
+
+# --- read_work_status: 打工偵測 via get_other_role_info (pure read) ----------
+
+def _other_worker(role_id, team_cfg_id, worker_status):
+    # p_other_worker {role_id#1, team_cfg_id#2, pet_info#3, worker_status#4, ...}
+    return (codec.pb_uint(1, role_id) + codec.pb_uint(2, team_cfg_id)
+            + codec.pb_uint(4, worker_status))
+
+
+def test_read_work_status_running():
+    # team_list#1: p_other_worker[] ; worker_status#4 = 1 -> running
+    body = codec.pb_msg(1, _other_worker(777, FARM_WORKER_TEAM_CFG_ID, 1))
+    c, fake = _client({CMD_GET_OTHER_WORKER: lambda _b: [s2c(CMD_GET_OTHER_WORKER, body)]})
+    try:
+        result = read_work_status(c, role_id=777)
+        assert result["running"] is True
+        assert result["worker_status"] == 1
+        assert result["found"] is True
+        assert result["team_cfg_id"] == FARM_WORKER_TEAM_CFG_ID
+        # c2s carries our own role_id#1 + team_cfg_id#2 = 7001
+        sent = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_GET_OTHER_WORKER]
+        assert codec.walk(sent[0]) == [(1, 777), (2, FARM_WORKER_TEAM_CFG_ID)]
+    finally:
+        c.close()
+
+
+def test_read_work_status_stopped():
+    body = codec.pb_msg(1, _other_worker(777, FARM_WORKER_TEAM_CFG_ID, 0))
+    c, _ = _client({CMD_GET_OTHER_WORKER: lambda _b: [s2c(CMD_GET_OTHER_WORKER, body)]})
+    try:
+        result = read_work_status(c, role_id=777)
+        assert result["running"] is False
+        assert result["worker_status"] == 0
+        assert result["found"] is True
+    finally:
+        c.close()
+
+
+def test_read_work_status_empty_team_list_not_found():
+    # empty team_list -> found=False, not running (mirrors live: wrong/empty id)
+    c, _ = _client({CMD_GET_OTHER_WORKER: lambda _b: [s2c(CMD_GET_OTHER_WORKER, b"")]})
+    try:
+        result = read_work_status(c, role_id=777)
+        assert result["found"] is False
+        assert result["running"] is False
+    finally:
+        c.close()
+
+
+# --- shop_info / buy-to-daily-target (莊園購買 4/4) -------------------------
+
+def _shop_info_body(shop_type, counts):
+    # shop_info_s2c {shop_type#1, item#2:repeated {shop_id#1, count#2}}
+    out = codec.pb_uint(1, shop_type)
+    for sid, cnt in counts.items():
+        out += codec.pb_msg(2, codec.pb_uint(1, sid) + codec.pb_uint(2, cnt))
+    return out
+
+
+def test_build_shop_info_body():
+    assert build_shop_info_body(4) == codec.pb_uint(1, 4)
+
+
+def test_parse_shop_counts_maps_shop_id_to_count():
+    body = _shop_info_body(4, {407: 4, 408: 1})
+    assert parse_shop_counts(body) == {407: 4, 408: 1}
+    # absent shop_ids simply don't appear (caller defaults to 0)
+    assert parse_shop_counts(_shop_info_body(4, {})) == {}
+
+
+def test_read_shop_counts_sends_shop_type():
+    body = _shop_info_body(4, {407: 2})
+    c, fake = _client({CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, body)]})
+    try:
+        counts = read_shop_counts(c, FARM_SHOP_TYPE)
+        assert counts == {407: 2}
+        sent = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_SHOP_INFO]
+        assert codec.walk_dict(sent[0]) == {1: 4}  # shop_type#1
+    finally:
+        c.close()
+
+
+def test_buy_to_daily_target_buys_remainder_only():
+    # already bought 1 today, target 4 -> buy num=3 in one call
+    info = _shop_info_body(4, {407: 1})
+    buy_ok = codec.pb_uint(1, 407) + codec.pb_uint(2, 3)  # shop_buy_s2c {shop_id, num}
+    c, fake = _client({
+        CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, info)],
+        CMD_SHOP_BUY: lambda _b: [s2c(CMD_SHOP_BUY, buy_ok)],
+    })
+    try:
+        r = buy_to_daily_target(c, 407, 4)
+        assert r["before"] == 1 and r["need"] == 3 and r["bought"] == 3 and r["ok"] is True
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_SHOP_BUY]
+        assert sent == [{1: 4, 2: 407, 3: 3}]  # shop_type, shop_id, num=remainder
+    finally:
+        c.close()
+
+
+def test_buy_to_daily_target_skips_when_already_at_target():
+    # GUI 已買滿 4/4 -> need=0, NO shop_buy sent (respects manual purchase)
+    info = _shop_info_body(4, {407: 4})
+    c, fake = _client({CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, info)]})
+    try:
+        r = buy_to_daily_target(c, 407, 4)
+        assert r["before"] == 4 and r["need"] == 0 and r["bought"] == 0 and r["ok"] is True
+        assert [cmd for _s, cmd, _b in fake.framed_sent() if cmd == CMD_SHOP_BUY] == []
+    finally:
+        c.close()
+
+
+def test_buy_to_daily_target_zero_bought_buys_full_target():
+    info = _shop_info_body(4, {})  # 408 absent -> 0 bought
+    buy_ok = codec.pb_uint(1, 408) + codec.pb_uint(2, 4)
+    c, fake = _client({
+        CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, info)],
+        CMD_SHOP_BUY: lambda _b: [s2c(CMD_SHOP_BUY, buy_ok)],
+    })
+    try:
+        r = buy_to_daily_target(c, 408, 4)
+        assert r["before"] == 0 and r["need"] == 4 and r["bought"] == 4
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_SHOP_BUY]
+        assert sent == [{1: 4, 2: 408, 3: 4}]
+    finally:
+        c.close()
+
+
+def test_buy_to_daily_target_handles_0x0201():
+    info = _shop_info_body(4, {})
+    c, _ = _client({
+        CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, info)],
+        CMD_SHOP_BUY: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 90))],
+    })
+    try:
+        r = buy_to_daily_target(c, 407, 4)
+        assert r["ok"] is False and r["code"] == 90 and r["bought"] == 0
+    finally:
+        c.close()
+
+
+def test_buy_farm_shop_one_info_read_both_items():
+    # seed 407 at 4/4 (skip), fertilizer 408 at 0 -> buy 4
+    info = _shop_info_body(4, {407: 4})
+    buy_ok = codec.pb_uint(1, 408) + codec.pb_uint(2, 4)
+    c, fake = _client({
+        CMD_SHOP_INFO: lambda _b: [s2c(CMD_SHOP_INFO, info)],
+        CMD_SHOP_BUY: lambda _b: [s2c(CMD_SHOP_BUY, buy_ok)],
+    })
+    try:
+        results = buy_farm_shop(c, [{"shop_id": 407, "target": 4},
+                                    {"shop_id": 408, "target": 4}])
+        assert results[0]["shop_id"] == 407 and results[0]["bought"] == 0  # skipped
+        assert results[1]["shop_id"] == 408 and results[1]["bought"] == 4
+        # only ONE shop_info read for both items
+        assert len([1 for _s, cmd, _b in fake.framed_sent() if cmd == CMD_SHOP_INFO]) == 1
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_SHOP_BUY]
+        assert sent == [{1: 4, 2: 408, 3: 4}]  # only the fertilizer buy fired
+    finally:
+        c.close()
+
+
 def test_cmd_constants_match_recon():
     assert CMD_INFO == 3077
     assert CMD_PLANT == 3078
+    assert CMD_FERTILIZE == 3079
     assert CMD_HARVEST == 3081
     assert CMD_WORKER_SETTING == 18689
+    assert CMD_GET_OTHER_WORKER == 18690
+    assert CMD_SHOP_INFO == 6913
     assert CMD_SHOP_BUY == 6914
