@@ -35,6 +35,7 @@ from opengold_v2.skill_evaluator import SkillEvaluator
 from utils.equipment_cache import parse_equipment_lamp_drops
 from utils.web_game_api import EQUIP_AFFIX, decode_equip_template
 from ws_token import codec
+from ws_token.abort import WSRunAborted
 from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
@@ -335,6 +336,7 @@ def open_lamp(
     lamp_min_keep: int = 0,
     initial_count: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    should_abort: Callable[[], bool] | None = None,
 ) -> dict:
     """Open boxes and auto-equip winners into their matching 套裝.
 
@@ -421,6 +423,9 @@ def open_lamp(
     opened = 0
     try:
         for batch_index in range(max_batches):
+            # 開瀏覽器請求優先：每批前讓出，已開的箱是伺服器端已落地，續做時接續。
+            if should_abort is not None and should_abort():
+                raise WSRunAborted("開神燈中途收到中斷請求（開啟瀏覽器）")
             try:
                 cmd, s2c = client.call_for(
                     CMD_OPEN_ALL, build_open_all(batch_num, quality),

@@ -627,3 +627,15 @@ control_panel/
 - `miner/v5/runtime/*.json`（已存在的線上累積檔）內含舊污染語意的 vertical 計數，會持續
   以 ≤20% 上限輕微影響 merge。如要丟棄可刪除這些檔或重跑 `tools/build_v5_priors.py`。
 - `tools/tmp_*.py`（5 支 scratch/probe）為未追蹤檔，建議勿 `git add -A` 進版控或加入 gitignore。
+
+## WS 階段可被「開啟瀏覽器」中斷 + 持久化續做 (2026-06-15, worktree)
+
+Spec: `docs/superpowers/specs/2026-06-15-ws-phase-interruptible-resume-design.md`
+在 worktree `worktree-ws-phase-interruptible-resume`（base=overnight checkpoint）實作，完成後 merge 回 `feat/overnight-2026-06-14`。
+
+- [ ] `ws_token/abort.py`：`WSRunAborted(Exception)`（零相依，避免循環匯入）。
+- [ ] `ws_token/runner.py`：`RunReport.aborted`；`run_device(should_abort, skip_tasks)`（預設 None=不變）；`_step` 檢查 aborted/should_abort()/skip_set；`_safe` re-raise `WSRunAborted`；`should_abort` 透傳 lamp/mining。TDD：`tests/test_ws_runner_abort.py`。
+- [ ] `ws_token/lamp.py` `open_lamp` + `ws_token/mining_supervised.py` `mine_until_pickaxe_empty`：加 `should_abort=None`，迴圈內命中即 `raise WSRunAborted`。
+- [ ] `game_actions/ws_phase.py`：ledger（ws_resume；date+ts TTL 30min；EXEMPT={carpark,idle_reward}）→ skip_tasks；`_substantive_done`；`effective_done` 重算 pipeline-skip + farm/dungeon；abort 寫入、完整完成清空、abort 時 update_state；全程 best-effort。TDD：`tests/test_ws_phase_resume.py`。
+- [ ] `new_main_v2.py`：WS 區塊後 `if has_pending_web_launch_request(ip): continue`；init `_run_initial_ws_phase_before_web_start` 被中斷則不快取 `pre_runtime_ws_done`。
+- [ ] 驗證：focused pytest + py_compile；commit；merge 回 overnight 分支。
