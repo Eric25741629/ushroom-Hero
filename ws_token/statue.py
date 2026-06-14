@@ -58,24 +58,25 @@ def spend_fruit(
 ) -> dict:
     """home_farm_spend_fruit: consume ``amount`` fruit/vegetable tributes.
 
-    Sends {spend_num#1=amount}, waits for a success reply (3107) OR an error
-    reply (0x0201).  Returns::
+    Live-verified 2026-06-15 (emulator-5556, amount=1):
+    - c2s: cmd 3107 {spend_num#1=amount}
+    - s2c: server replies on cmd 3089 (CMD_STATUE_INFO) with updated statue
+      state, NOT on 3107. Error replies still land on 0x0201.
+    - Side-push: cmd 0x0302 (inventory update) arrives simultaneously.
 
-      {ok: bool, result: int, amount: int}              # on success
-      {ok: bool, result: int, amount: int,
-       error_code: int}                                  # on rejection
+    Returns::
 
-    ``ok=True`` iff the server replied on 3107 with result#1==0.  Non-zero
-    result or a 0x0201 rejection both yield ``ok=False``.
+      {ok, amount, level, exp}         # on success — exp is the new value
+      {ok: False, error_code, amount}  # on 0x0201 rejection
     """
     if amount <= 0:
         logger.info("ws_token statue: spend_fruit skipped (amount=%s)", amount)
-        return {"ok": False, "result": -1, "amount": amount, "skipped": True}
+        return {"ok": False, "amount": amount, "skipped": True}
 
     reply_cmd, reply = client.call_for(
         CMD_SPEND_FRUIT,
         build_spend_body(amount),
-        expect_cmds=(CMD_SPEND_FRUIT, CMD_ERROR),
+        expect_cmds=(CMD_STATUE_INFO, CMD_ERROR),  # server replies on 3089!
         timeout=timeout,
     )
     if reply_cmd == CMD_ERROR:
@@ -84,12 +85,14 @@ def spend_fruit(
             "ws_token statue: spend_fruit rejected 0x0201 code=%s amount=%s",
             code, amount,
         )
-        return {"ok": False, "result": code, "amount": amount, "error_code": code}
+        return {"ok": False, "amount": amount, "error_code": code}
 
-    result = int(codec.walk_dict(reply).get(1) or 0)
-    ok = result == 0
+    # reply is home_farm_statue_info_s2c {level#1, exp#2, ...}
+    d = codec.walk_dict(reply)
+    level = int(d.get(1) or 0)
+    exp = int(d.get(2) or 0)
     logger.info(
-        "ws_token statue: spend_fruit amount=%s result=%s ok=%s",
-        amount, result, ok,
+        "ws_token statue: spend_fruit ok amount=%s new_level=%s new_exp=%s",
+        amount, level, exp,
     )
-    return {"ok": ok, "result": result, "amount": amount}
+    return {"ok": True, "amount": amount, "level": level, "exp": exp}
