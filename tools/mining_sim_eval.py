@@ -10,14 +10,6 @@ Reuses `miner.v3.actions` for dig/bomb/drill mechanics and
 `miner.v3.board.promote_after_dig` for reachability propagation, so the sim
 sees the same physics the planner reasons about.
 
-FAIR INFO (only mode, 2026-06-15): the board handed to the planner is passed
-through `_fog_project` so it carries only what the real pipeline
-(`mining_adapter.board_to_grid`) would reveal — buried (unreachable) cells have
-their terrain TYPE hidden, so no planner can foresee buried pits. The previous
-"raw tape" behaviour leaked `unreachable_pit` and systematically over-credited
-v1's full-board A* (which routes toward buried clusters it could never see
-live); see the planner-eval skill. Old raw-tape sim numbers are superseded.
-
 Usage:
     python tools/mining_sim_eval.py --runs 20
     python tools/mining_sim_eval.py --runs 100 --seed 42
@@ -454,37 +446,6 @@ class MiningSim:
 # ----------------------------------------------------------------------
 # Driver
 # ----------------------------------------------------------------------
-# Air pockets carry no treasure, so revealing an unreachable air cell is not a
-# foresight leak — keep their type visible (the real board likewise shows
-# open-but-unreached space). Every other unreachable SOLID is masked opaque.
-_FOG_VISIBLE_UNREACHABLE = ("unreachable_empty", "unreachable_void")
-
-
-def _fog_project(board: List[List[str]]) -> List[List[str]]:
-    """Project the sim's true board into what a planner would actually see live.
-
-    The real pipeline (``mining_adapter.board_to_grid``) never reveals the
-    terrain TYPE of undug, not-yet-reachable cells — buried pits/dirt/stone all
-    look like a generic undug solid until the frontier reaches them. The raw sim
-    tape instead exposes ``unreachable_pit``/``unreachable_dirt``/... which lets
-    a global planner (v1's A*) route toward buried clusters it could never see
-    live (god-mode). Mask every unreachable solid to one opaque
-    ``unreachable_rock`` so no planner can foresee buried terrain; reachable
-    cells (incl. ``reachable_pit``) pass through unchanged, modelling the real
-    frontier reveal. Air pockets stay visible (no treasure to leak).
-    """
-    return [
-        [
-            "unreachable_rock"
-            if (cell.startswith("unreachable_")
-                and cell not in _FOG_VISIBLE_UNREACHABLE)
-            else cell
-            for cell in row
-        ]
-        for row in board
-    ]
-
-
 def play_one_game(
     seed: Optional[int] = None,
     max_iter: int = 2000,
@@ -523,14 +484,10 @@ def play_one_game(
             break
         if action_budget is not None and actions_taken >= action_budget:
             break
-        raw_board = sim.get_board()
-        # Standing pit density measured on the TRUE board (before fog masking).
-        pit_in_view = sum(1 for row in raw_board for cell in row if is_pit(cell))
+        board = sim.get_board()
+        # Standing pit density in the visible viewport (calibration check).
+        pit_in_view = sum(1 for row in board for cell in row if is_pit(cell))
         pit_density_samples.append(pit_in_view / (ROWS * COLS))
-        # FAIR INFO: the planner only sees what the real game would reveal —
-        # buried (unreachable) terrain type is hidden so no planner can foresee
-        # buried pits. The sim's own truth (raw_board) still drives apply_step.
-        board = _fog_project(raw_board)
         plan_calls += 1
         t0 = time.perf_counter()
         plan = plan_fn(
