@@ -54,7 +54,7 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 from ws_token import (
     carpark, couple, dungeon, farm, gacha, guild, idle_reward, kungfu_store,
     league_solo, main_tasks, mining, mining_supervised, redpack, relic, rogue,
-    spirit, steward, turntable, tycoon, workshop,
+    spirit, statue, steward, turntable, tycoon, workshop,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -77,7 +77,7 @@ LOGIN_TASK = "login"
 # 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
-    "turntable", "tycoon", "farm", "dungeon", "rogue", "guild", "steward",
+    "turntable", "tycoon", "farm", "dungeon", "rogue", "statue", "guild", "steward",
     "relic", "gacha", "kungfu_store", "spirit", "workshop", "couple",
     "mining", "lamp")
 
@@ -92,6 +92,8 @@ _WORKSHOP_ROTATE_S: float = 12 * 3600.0
 # 萬神試煉 本周積分獎勵：每週五領一次（使用者 2026-06-13 指定）。
 # Python weekday(): Mon=0 … Fri=4 … Sun=6.
 _ROGUE_WEEKDAY: int = 4
+# 菇菇雕像 每週五消耗果蔬：同樣週五一次。
+_STATUE_WEEKDAY: int = 4
 
 
 @dataclass(frozen=True)
@@ -418,6 +420,60 @@ def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
         ws_state.save_state(device, st, **kw)
     return {"claimed_run": True, "success": r.success, "claimed": list(r.claimed),
             "rewards": r.rewards, "error_code": r.error_code}
+
+
+def _record_statue_executed(device: str) -> None:
+    """Write json_manager record so statue_weekly.py sees this Friday as done.
+
+    Lazy-imported to avoid circular imports (game_actions → ws_token).
+    """
+    try:
+        from json_manager import time_recording
+        from game_actions.statue_weekly import _RECORD_NAME
+        time_recording(device, name=_RECORD_NAME)
+    except Exception as exc:
+        logger.warning("statue: failed to write json_manager record: %s", exc)
+
+
+def _run_statue(
+    client: WSGameClient,
+    *,
+    device: str,
+    amount: int = 7000,
+    state_dir=None,
+    now=None,
+) -> dict:
+    """菇菇雕像 每週五一鍵消耗果蔬貢品 — Friday only, once per Friday.
+
+    Consumes ``amount`` fruits/vegetables at the mushroom statue via pure WS
+    (home_farm_spend_fruit, cmd 3107).  Gated to run once per Friday: the date
+    is persisted in ws_state/<device>.json ``{"statue": {"last_date": ...}}``.
+    Also writes the json_manager record (``statue_weekly_last_execution``) so
+    the Playwright/ADB pipeline task (daily_pipeline Task 13.5) skips the UI
+    flow on the same day.
+
+    NOT yet live-verified (2026-06-15); protocol confirmed from game client JS.
+
+    Returns ``{claimed_run: False, reason}`` when skipped, else
+    ``{claimed_run: True, ok, result, amount}``.
+    """
+    from datetime import datetime
+    now = datetime.now() if now is None else now
+    if now.weekday() != _STATUE_WEEKDAY:
+        return {"claimed_run": False, "reason": f"not Friday (weekday={now.weekday()})"}
+
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    today = now.strftime("%Y-%m-%d")
+    st = ws_state.load_state(device, **kw)
+    if (st.get("statue") or {}).get("last_date") == today:
+        return {"claimed_run": False, "reason": f"already spent {today}"}
+
+    r = statue.spend_fruit(client, amount)
+    if r.get("ok"):
+        st["statue"] = {"last_date": today, "amount": amount, "last_ts": now.timestamp()}
+        ws_state.save_state(device, st, **kw)
+        _record_statue_executed(device)
+    return {"claimed_run": True, **r}
 
 
 def _run_carpark(client, *, target: Optional[int], auto: bool = False,
@@ -870,6 +926,7 @@ def run_device(device: str, *, spend: bool = False,
                tycoon_max_rolls: int = 50,
                gacha_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
+               statue_amount: int = 7000,
                progress=None,
                should_abort: Optional[Callable[[], bool]] = None,
                skip_tasks: Optional[Iterable[str]] = None) -> RunReport:
@@ -1064,6 +1121,7 @@ def run_device(device: str, *, spend: bool = False,
                                 inventory_tracker=inventory_tracker))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
+        _step("statue", lambda: _run_statue(client, device=device, amount=statue_amount))
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,

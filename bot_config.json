@@ -53,8 +53,8 @@
             },
             "statue_weekly": {
                 "enabled": true,
-                "amount": 1,
-                "_comment": "amount 暫設 1 為測試值，驗證穩定後改 7000"
+                "amount": 7000,
+                "_comment": "WS runner + UI fallback; amount confirmed 2026-06-15"
             },
             "enable_mount_sprint": true,
             "mount_sprint_quantity": 3200,
@@ -79,6 +79,8 @@
                 "fallback_host": "",
                 "spend": true,
                 "open_lamp": true,
+                "lamp_percent": 1.0,
+                "lamp_min_keep": 500000,
                 "farm": {
                     "buy": [
                         {
@@ -113,22 +115,44 @@
                             "10:00"
                         ],
                         "cross": 0
-                    }
+                    },
+                    "cluster_min": 3,
+                    "grab_window_seconds": 60,
+                    "grab_poll_seconds": 1.0,
+                    "grab_attempts": 8,
+                    "allow_low_noncluster": true
                 },
                 "couple_gifts": true,
                 "forge_ring": false,
                 "workshop_rotate": true,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
                 "mining": {
                     "enabled": true,
                     "allow_bomb": false,
                     "allow_drill": false,
                     "max_steps": 200
                 },
-                "lamp_percent": 1,
-                "lamp_min_keep": 500000
+                "gacha": {
+                    "enabled": false,
+                    "types": [
+                        1,
+                        2
+                    ],
+                    "mode": "drain",
+                    "count": 999,
+                    "batches": 1
+                }
             },
             "ws_token_sweep_list": [],
-            "web_reload_after_goto": false
+            "web_reload_after_goto": false,
+            "ws_token_kungfu_guess": true
         },
         "emulator-5556": {
             "wake_hour_parity": "even",
@@ -184,7 +208,87 @@
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30,
-            "online_check_interval": 5
+            "online_check_interval": 5,
+            "enabled": true,
+            "use_ws_runner": false,
+            "ws_token_spend": true,
+            "ws_token_open_lamp": false,
+            "ws_token_kungfu_guess": true,
+            "ws_token_mining": {
+                "enabled": true,
+                "allow_bomb": false,
+                "allow_drill": false,
+                "max_steps": 200
+            },
+            "ws_token": {
+                "enabled": true,
+                "bootstrap_token": true,
+                "offline_fallback": false,
+                "fallback_host": "",
+                "spend": true,
+                "open_lamp": false,
+                "lamp_percent": 0.0,
+                "lamp_min_keep": 0,
+                "farm": null,
+                "dungeon_sweeps": [],
+                "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": false,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    },
+                    "cluster_min": 3,
+                    "grab_window_seconds": 60,
+                    "grab_poll_seconds": 1.0,
+                    "grab_attempts": 8,
+                    "allow_low_noncluster": true
+                },
+                "couple_gifts": true,
+                "forge_ring": false,
+                "workshop_rotate": true,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
+                "mining": {
+                    "enabled": true,
+                    "allow_bomb": false,
+                    "allow_drill": false,
+                    "max_steps": 200
+                },
+                "gacha": {
+                    "enabled": false,
+                    "types": [
+                        1,
+                        2
+                    ],
+                    "mode": "drain",
+                    "count": 999,
+                    "batches": 1
+                }
+            },
+            "ws_token_sweep_list": [],
+            "web_reload_after_goto": false
         },
         "emulator-5558": {
             "wake_hour_parity": "even",
@@ -255,7 +359,7 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v4",
+            "mining_planner_version": "v5",
             "mining_save_samples": true,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
@@ -263,7 +367,87 @@
             "sleep_max_hours": 1.0,
             "web_screenshot_method": "playwright",
             "online_check_interval_sec": 30,
-            "online_check_interval": 5
+            "online_check_interval": 5,
+            "enabled": true,
+            "use_ws_runner": false,
+            "ws_token_spend": true,
+            "ws_token_open_lamp": true,
+            "ws_token_kungfu_guess": true,
+            "ws_token_mining": {
+                "enabled": true,
+                "allow_bomb": false,
+                "allow_drill": false,
+                "max_steps": 200
+            },
+            "ws_token": {
+                "enabled": true,
+                "bootstrap_token": true,
+                "offline_fallback": false,
+                "fallback_host": "",
+                "spend": true,
+                "open_lamp": true,
+                "lamp_percent": 0.0,
+                "lamp_min_keep": 0,
+                "farm": null,
+                "dungeon_sweeps": [],
+                "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": false,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    },
+                    "cluster_min": 3,
+                    "grab_window_seconds": 60,
+                    "grab_poll_seconds": 1.0,
+                    "grab_attempts": 8,
+                    "allow_low_noncluster": true
+                },
+                "couple_gifts": true,
+                "forge_ring": false,
+                "workshop_rotate": true,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
+                "mining": {
+                    "enabled": true,
+                    "allow_bomb": false,
+                    "allow_drill": false,
+                    "max_steps": 200
+                },
+                "gacha": {
+                    "enabled": false,
+                    "types": [
+                        1,
+                        2
+                    ],
+                    "mode": "drain",
+                    "count": 999,
+                    "batches": 1
+                }
+            },
+            "ws_token_sweep_list": [],
+            "web_reload_after_goto": false
         },
         "7fe98fc6": {
             "wake_hour_parity": "odd",
@@ -327,6 +511,8 @@
                 "fallback_host": "",
                 "spend": true,
                 "open_lamp": true,
+                "lamp_percent": 0.0,
+                "lamp_min_keep": 0,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -355,6 +541,14 @@
                 "couple_gifts": true,
                 "forge_ring": false,
                 "workshop_rotate": true,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
                 "mining": {
                     "enabled": true,
                     "allow_bomb": false,
@@ -373,7 +567,8 @@
                 "max_steps": 200
             },
             "ws_token_sweep_list": [],
-            "web_reload_after_goto": false
+            "web_reload_after_goto": false,
+            "ws_token_kungfu_guess": true
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
             "wake_hour_parity": "odd",
@@ -410,8 +605,8 @@
             "mining_save_samples": false,
             "statue_weekly": {
                 "enabled": true,
-                "amount": 1,
-                "_comment": "ADB device — flow uses OCR. amount=1 for first weeks until verified live."
+                "amount": 7000,
+                "_comment": "ADB device; WS runner will try first, OCR fallback. amount confirmed 2026-06-15."
             },
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
