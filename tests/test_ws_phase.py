@@ -85,6 +85,82 @@ def test_run_device_passes_mining_config(monkeypatch):
     assert captured["mining_config"] == {"enabled": True, "allow_drill": True}
 
 
+def test_run_device_passes_lamp_percent_and_min_keep(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return _report({"lamp": {}})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    cfg = {"enabled": True, "open_lamp": True,
+           "lamp_percent": 1.0, "lamp_min_keep": 500000}
+    ws_phase._run_device("dev", cfg)
+
+    assert captured["lamp_percent"] == 1.0
+    assert captured["lamp_min_keep"] == 500000
+
+
+def test_run_device_lamp_knobs_default_zero(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return _report({})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    ws_phase._run_device("dev", {"enabled": True})
+
+    assert captured["lamp_percent"] == 0
+    assert captured["lamp_min_keep"] == 0
+
+
+def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
+    """ws_phase 內 _progress(..., 'progress', '12/34') → step 'WS 開神燈 (12/34)'。"""
+    _cfg(monkeypatch, {"enabled": True, "open_lamp": True})
+    import bot_state
+    steps: list[tuple] = []
+    monkeypatch.setattr(bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured = {}
+
+    def fake_run_device(ip, cfg, progress=None):
+        captured["progress"] = progress
+        return _report({"lamp": {}})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+
+    progress = captured["progress"]
+    assert callable(progress)
+    progress("lamp", "progress", "12/34")
+    assert ("dev", "WS 開神燈 (12/34)") in steps
+
+
+def test_run_device_passes_carpark_plan_and_auto(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return _report({})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    plan = {"enabled": True,
+            "day": {"window": ["08:00", "20:00"], "cross": 1, "silver": 5}}
+    ws_phase._run_device("dev", {"enabled": True, "carpark_plan": plan,
+                                 "carpark_auto": True})
+
+    assert captured["carpark_plan"] == plan
+    assert captured["carpark_auto"] is True
+
+
 def test_errored_task_not_skipped(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
@@ -173,6 +249,52 @@ def test_web_h5_backend_does_not_adb_bootstrap(monkeypatch):
 
     assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
     assert bootstrap_calls == []
+
+
+def _patch_time_recording(monkeypatch):
+    """攔截 json_manager.time_recording，回傳呼叫紀錄 list[(ip, name)]。"""
+    import json_manager
+    calls = []
+    monkeypatch.setattr(json_manager, "time_recording",
+                        lambda ip, name="": calls.append((ip, name)))
+    return calls
+
+
+def test_ws_success_records_daily_keys_for_dashboard(monkeypatch):
+    """WS 成功的任務要回寫 JsonDataManager 當日紀錄，dashboard 徽章才會 ✅。"""
+    _cfg(monkeypatch, {"enabled": True, "dungeon_sweeps": [[23, 1081, 1]]})
+    calls = _patch_time_recording(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report({
+        "steward": {}, "guild": {}, "mining": {}, "dungeon": {},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert set(calls) == {
+        ("dev", "Store"),          # 商店購買
+        ("dev", "donate_family"),  # 家族任務
+        ("dev", "挖礦"),           # 挖礦
+        ("dev", "萬神試煉"),
+    }
+
+
+def test_ws_errored_or_self_skipped_tasks_not_recorded(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    calls = _patch_time_recording(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
+        {"steward": {"skipped": "nothing to buy"}, "redpack": {}},
+        errors={"guild": "WSTimeoutError"}))
+    skips = ws_phase.run_ws_phase("dev")
+    assert calls == []          # redpack 成功但 dashboard 沒追蹤該 key
+    assert "紅包檢查" in skips  # skip-set 行為不受影響
+
+
+def test_record_failure_does_not_break_skip_set(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    import json_manager
+    monkeypatch.setattr(json_manager, "time_recording",
+                        lambda ip, name="": (_ for _ in ()).throw(OSError("disk")))
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None: _report({"steward": {}}))
+    assert "商店購買" in ws_phase.run_ws_phase("dev")
 
 
 def test_adb_login_failure_refreshes_once_and_retries(monkeypatch):

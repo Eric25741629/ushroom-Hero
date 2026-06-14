@@ -88,6 +88,10 @@ from runtime_services.sleep_service import (
     stop_runtime_device_for_sleep,
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
+from runtime_services.ws_fallback_service import (
+    run_ws_fallback_wait_round,
+    should_ws_fallback,
+)
 from game_actions import daily_pipeline
 from game_actions.ws_phase import run_ws_phase
 
@@ -192,6 +196,21 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     return
                 handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
                 device_logger.error(f"[{ip}] connect init failed: {e}")
+                # offline_fallback ADB 裝置：手機不在 ADB 上時不放棄、不判離線，
+                # 改跑一輪純 WS（idle reward/lamp/mining）+ 對齊休眠，下一輪 continue
+                # 重試連線。手機回線 → init 成功 → break 進正常主迴圈，行為與今日相同。
+                # 旗標關閉時（預設）走原 set_offline + return，零行為差異。
+                if should_ws_fallback(ip, backend_kind):
+                    device_logger.warning(
+                        f"[{ip}] 手機 ADB 不可達，啟用離線純 WS 備援，跑一輪 WS 後等待回線重試"
+                    )
+                    run_ws_fallback_wait_round(
+                        ip,
+                        device_logger,
+                        run_ws_phase_fn=_run_ws_phase_for_wake,
+                        enable_dungeon_manager=enable_dungeon_manager,
+                    )
+                    continue
                 bot_state.set_offline(ip, reason=f"init failed: {e}")
                 return
         
@@ -328,14 +347,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         
                         time.sleep(1)
                         try:
-                            if d.xpath_click('//*[@text="菇勇者傳說"]'):
-                                logger.info(f"[{ip}] 找到遊戲圖示,點擊啟動")
-                                time.sleep(2 + random.random())
-                                set_screen_for_game(ip, logger=logger)
-                            else:
-                                raise Exception("未找到遊戲圖示")
+                            launched_by_icon = start_game_by_icon(d, ip, logger=device_logger)
+                            if not launched_by_icon and not check_in_game(d):
+                                raise Exception("圖示/預設 app_start 未進入遊戲")
+                            set_screen_for_game(ip, logger=logger)
                         except Exception as e:
-                            logger.exception(f"[{ip}] launch_clone fallback failed, trying clone launch. error={e}")
+                            logger.exception(f"[{ip}] 共用桌面啟動失敗，改用 clone launch. error={e}")
                             output = launch_clone("com.mxdzz.tw.and", 2,device_serial=ip)
                             set_screen_for_game(ip, logger=logger)
                         time.sleep(1)

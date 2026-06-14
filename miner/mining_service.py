@@ -21,6 +21,7 @@ from miner.planning.executor import (
     execute_plan_steps,
 )
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
+from miner.depth_tracker import DepthTracker
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
 from miner.planning.item_planner import find_tool_candidate
 from miner.planning.planner import (
@@ -32,6 +33,7 @@ from miner.planning.planner import (
 from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
+from miner.v5.planner import plan_v5
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
@@ -294,8 +296,20 @@ def _dispatch_planner(
     blocked_actions: Set[Tuple[Any, ...]],
     planner_version: str,
     miner_logger,
+    depth: Optional[int] = None,
+    device: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Route to the correct planner version and return (plan, plan_title)."""
+    if planner_version == "v5":
+        plan = plan_v5(
+            board,
+            shovels=shovels,
+            items=items,
+            blocked_actions={sig[:3] for sig in blocked_actions},
+            depth=depth,
+            device=device,
+        )
+        return plan, "V5 規劃 (Miner V5, priors-driven)"
     if planner_version == "v4":
         plan = plan_v4(board, shovels=shovels, items=items, blocked_actions={sig[:3] for sig in blocked_actions})
         return plan, "V4 規劃 (Miner V4, 3-step bounded)"
@@ -321,13 +335,16 @@ def _log_planner_stats(
     plan_elapsed_ms: float,
     blocked_count: int,
     miner_logger,
+    depth: Optional[int] = None,
 ) -> None:
-    if planner_version not in {"v3", "v4"}:
+    if planner_version not in {"v3", "v4", "v5"}:
         return
+    depth_str = "?" if depth is None else str(depth)
     miner_logger.info(
-        "[MiningService] planner=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
+        "[MiningService] planner=%s depth=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
         % (
             planner_version,
+            depth_str,
             plan_elapsed_ms,
             plan.get("elapsed_ms", "?"),
             plan.get("explored_nodes", "?"),
@@ -421,10 +438,10 @@ def run(
     # efficient alternative; v3 is cluster-aware. v2 was removed (violated the
     # <300 ms budget on 18.8% of real boards). Override per-device with
     # `mining_planner_version` in config.
-    planner_version = str(device_cfg.get("mining_planner_version", "v4")).strip().lower()
+    planner_version = str(device_cfg.get("mining_planner_version", "v5")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
-    if planner_version not in {"v1", "v3", "v4"}:
-        planner_version = "v4"
+    if planner_version not in {"v1", "v3", "v4", "v5"}:
+        planner_version = "v5"
 
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
@@ -471,6 +488,19 @@ def run(
     # 同一個非法操作或無效道具在同版面下只會被嘗試一次；直到版面真的變化才清空。
     blocked_action_signatures: Set[Tuple[Any, Any, Any, Any, Any]] = set()
     last_board_signature: Optional[Tuple[Tuple[str, ...], ...]] = None
+
+    # 追蹤本 session 捲動深度（純觀測），並在 v5 下線上累積垂直轉移 priors。
+    depth_tracker = DepthTracker()
+    priors_accumulator = None
+    if planner_version == "v5":
+        try:
+            from miner.v5.priors_runtime import PriorsAccumulator
+
+            priors_accumulator = PriorsAccumulator(device=ip)
+        except Exception as exc:  # never let priors bookkeeping break mining
+            miner_logger.warning(f"[MiningService] priors accumulator init failed: {exc}")
+            priors_accumulator = None
+    prev_board: Optional[List[List[str]]] = None
 
     iterations = 0
     consecutive_empty_plans = 0
@@ -521,6 +551,23 @@ def run(
         board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
         miner_logger.info(f"\n[MiningService] Current Board:\n{get_visual_board(board)}")
         _log_board_validation(ip, board, miner_logger)
+        shifted = depth_tracker.update(board)
+        if depth_tracker.last_uncertain:
+            miner_logger.info(
+                f"[MiningService] depth={depth_tracker.depth} (scroll uncertain)"
+            )
+        else:
+            miner_logger.info(
+                f"[MiningService] depth={depth_tracker.depth} (+{shifted})"
+            )
+        # Online priors: a confirmed scroll reveals fresh bottom rows whose
+        # vertical transitions feed the v5 runtime accumulator.
+        if priors_accumulator is not None and shifted > 0 and prev_board is not None:
+            try:
+                priors_accumulator.observe_scroll(prev_board, board, shifted)
+            except Exception as exc:
+                miner_logger.warning(f"[MiningService] observe_scroll failed: {exc}")
+        prev_board = board
         state_signature = _board_signature(board)
         if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
             miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")
@@ -530,10 +577,11 @@ def run(
         current_items = items_available.copy() if USE_ITEMS else {"drill": 0, "bomb": 0}
         plan_started_at = time.perf_counter()
         plan, plan_title = _dispatch_planner(
-            board, count, current_items, blocked_action_signatures, planner_version, miner_logger
+            board, count, current_items, blocked_action_signatures, planner_version, miner_logger,
+            depth=depth_tracker.depth, device=ip,
         )
         plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
-        _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger)
+        _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger, depth_tracker.depth)
 
         _check_force_sleep(ip)
 
@@ -600,6 +648,12 @@ def run(
         count = _apply_partial(exec_result, count, items_available, miner_logger)
 
 
+
+    if priors_accumulator is not None:
+        try:
+            priors_accumulator.close()
+        except Exception as exc:
+            miner_logger.warning(f"[MiningService] priors accumulator flush failed: {exc}")
 
     if rl_recorder:
         rl_recorder.flush()

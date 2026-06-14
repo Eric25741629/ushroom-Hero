@@ -21,18 +21,24 @@ if str(ROOT) not in sys.path:
 from ws_token import codec  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.idle_reward import (  # noqa: E402
+    AD_QUICK_2H_CONFIG_ID,
+    CMD_AD_REWARD,
     CMD_CLAIM_REWARD,
+    CMD_ERROR,
     CMD_REWARD_INFO,
     TYPE_OFFLINE,
     TYPE_ONLINE,
     ClaimResult,
     IdleReward,
+    QuickClaimResult,
+    build_ad_reward_body,
     build_claim_body,
     build_reward_info_body,
     claim,
     claim_offline,
     claim_offline_from_push,
     claim_online,
+    claim_quick_2h,
     parse_reward_info,
     read_online,
 )
@@ -222,6 +228,61 @@ def test_claim_offline_from_push_skips_empty_push():
         assert res is None
         assert [cmd for _sid, cmd, _b in fake.framed_sent()
                 if cmd == CMD_CLAIM_REWARD] == []
+    finally:
+        c.close()
+
+
+# --- quick 2h income (主頁掛機彈窗左鈕 btnAd) via ad.ad_reward 0x1602 ----------
+# Live (小寶 2026-06-11): tx ad_reward_c2s {config_id#1:4, is_free#3:1} → server
+# grants directly (no ad SDK); replies ad_reward_s2c {new_ad#1:p_ad}. Declines
+# (30min冷卻 / 一天3次上限) arrive as 0x0201 {error_code#1}.
+
+def _p_ad(id_=4, count=2):
+    return codec.pb_msg(1, codec.pb_uint(1, id_) + codec.pb_uint(2, count))
+
+
+def test_build_ad_reward_body_has_config_id_and_is_free():
+    # Arrange / Act
+    body = build_ad_reward_body()
+    # Assert
+    assert codec.walk_dict(body) == {1: AD_QUICK_2H_CONFIG_ID, 3: 1}
+
+
+def test_claim_quick_2h_success_round_trip():
+    # Arrange
+    c, fake = _client({CMD_AD_REWARD: lambda _b: [s2c(CMD_AD_REWARD, _p_ad())]})
+    try:
+        # Act
+        res = claim_quick_2h(c)
+        # Assert
+        assert isinstance(res, QuickClaimResult)
+        assert res.success is True and res.error_code is None
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_AD_REWARD]
+        assert codec.walk_dict(sent[0]) == {1: AD_QUICK_2H_CONFIG_ID, 3: 1}
+    finally:
+        c.close()
+
+
+def test_claim_quick_2h_declined_by_0201_returns_error_code():
+    # Arrange — cooldown / daily-cap decline comes back as 0x0201 {error_code#1}
+    c, _fake = _client({CMD_AD_REWARD: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 90))]})
+    try:
+        # Act
+        res = claim_quick_2h(c)
+        # Assert
+        assert res.success is False and res.error_code == 90
+    finally:
+        c.close()
+
+
+def test_claim_quick_2h_timeout_returns_failure():
+    # Arrange — server never replies
+    c, _fake = _client({})
+    try:
+        # Act
+        res = claim_quick_2h(c, timeout=0.2)
+        # Assert
+        assert res.success is False and res.error_code is None
     finally:
         c.close()
 

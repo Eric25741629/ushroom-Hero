@@ -196,6 +196,79 @@ def get_device_data(ip):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
+def _fmt_ts(ts):
+    if not ts:
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(float(ts)).strftime(
+            "%m-%d %H:%M:%S")
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+@bp.route("/api/carpark/<ip>", methods=["GET"])
+def get_carpark(ip):
+    """跨界車位快照 (唯讀 ws_state，bot 的 WS 階段每輪寫入)。
+
+    顯示當前在停跨界車 + 各車 start_time / 已停時長 / 距 8h 自動收回，
+    以及下次重停喚醒時刻。同時做 start_time epoch 校準判斷 (--parked 的
+    dashboard 版)。**不從面板主動 WS 登入** (會踢掉裝置 session)。
+    """
+    real = ip.split(":")[-1] if ":" in ip else ip
+    try:
+        cfg = config_manager.get_device_config(real) or {}
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"enabled": False, "error": str(exc)})
+    plan = (cfg.get("ws_token") or {}).get("carpark_plan") or {}
+    if not plan.get("enabled"):
+        return jsonify({"enabled": False})
+
+    try:
+        from ws_token import state as ws_state
+        snap = (ws_state.load_state(real) or {}).get("carpark_repark") or {}
+    except Exception as exc:  # noqa: BLE001 — advisory display only
+        return jsonify({"enabled": True, "captured": False, "error": str(exc)})
+
+    if not snap:
+        return jsonify({"enabled": True, "captured": False,
+                        "note": "尚無快照 (bot 還沒跑過 carpark 任務)"})
+
+    now = time.time()
+    park_max = float(snap.get("park_max") or 28800)
+    offset = int(snap.get("offset") or 0)
+    cars = []
+    worst_remaining = None
+    epoch_sane = True
+    for c in (snap.get("cars") or []):
+        start = int(c.get("start_time") or 0) + offset
+        elapsed = now - start
+        remaining = park_max - elapsed
+        # unix-epoch sanity: a real parked car has elapsed in [~0, park_max].
+        sane = (-600 <= elapsed <= park_max + 3600)
+        epoch_sane = epoch_sane and sane
+        cars.append({
+            "mount_id": c.get("mount_id"), "master_id": c.get("master_id"),
+            "pos": c.get("pos"), "start_time": c.get("start_time"),
+            "start_dt": _fmt_ts(start), "elapsed_h": round(elapsed / 3600, 2),
+            "remaining_h": round(remaining / 3600, 2), "epoch_sane": sane,
+        })
+        if worst_remaining is None or remaining < worst_remaining:
+            worst_remaining = remaining
+
+    return jsonify({
+        "enabled": True, "captured": True,
+        "window": snap.get("window"), "target": snap.get("target"),
+        "current": len(cars), "cars": cars,
+        "next_ts": snap.get("next_ts"), "next_dt": _fmt_ts(snap.get("next_ts")),
+        "captured_ts": snap.get("captured_ts"),
+        "captured_dt": _fmt_ts(snap.get("captured_ts")),
+        "park_max_h": round(park_max / 3600, 2), "offset": offset, "now": now,
+        "worst_remaining_h": (round(worst_remaining / 3600, 2)
+                              if worst_remaining is not None else None),
+        "epoch_sane": epoch_sane if cars else None,
+    })
+
+
 @bp.route("/api/daily_progress/<ip>", methods=["GET"])
 def get_daily_progress(ip):
     """獲取設備的今日進度統計"""
@@ -287,8 +360,10 @@ def get_status():
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
         info["ws_enabled"] = bool((cfg.get("ws_token") or {}).get("enabled"))
+        info["carpark_plan_enabled"] = bool(
+            ((cfg.get("ws_token") or {}).get("carpark_plan") or {}).get("enabled"))
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
-        info["mining_planner_version"] = cfg.get("mining_planner_version", "v4")
+        info["mining_planner_version"] = cfg.get("mining_planner_version", "v5")
         info["live_view_available"] = bool(
             live_view_enabled
             and info["backend"] == "web_h5"

@@ -273,6 +273,21 @@ def read_dungeon_setting(
     return parse_dungeon_setting(client.call(CMD_DUNGEON_SETTING_INFO, b"", timeout=timeout))
 
 
+def derive_sweep_list(setting: dict[int, dict[int, int]]) -> list[tuple[int, int, int]]:
+    """由 dungeon_setting_info 的遊戲內設定自動組 sweep_list。
+
+    setting 形如 {chapter: {level: times}}（live 觀測值為 0/1；0 = 該層停用）。
+    只收 times >= 1 的 (chapter, level, times)，免去手動維護章節清單。
+    """
+    out: list[tuple[int, int, int]] = []
+    for chapter in sorted(setting):
+        for level in sorted(setting[chapter]):
+            times = setting[chapter][level]
+            if times >= 1:
+                out.append((chapter, level, times))
+    return out
+
+
 def run_dungeon_sweep(
     client: WSGameClient,
     sweep_list: Iterable[Sequence[int]],

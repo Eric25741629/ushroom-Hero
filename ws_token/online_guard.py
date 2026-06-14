@@ -125,6 +125,44 @@ def parse_friend_list(body: bytes) -> List[FriendEntry]:
     return friends
 
 
+def friend_presence(
+    client: WSGameClient,
+    target_role_id: int,
+    *,
+    threshold_sec: int = _DEFAULT_THRESHOLD_SEC,
+    timeout: Optional[float] = None,
+    now: NowFn = time.time,
+) -> Optional[bool]:
+    """Friend-list presence of ``target_role_id`` with tri-state semantics.
+
+    Sends the friend list (tab=1), finds the entry whose player_id matches, then
+    applies the same presence rule as web_game_api.is_player_online:
+      last_login_ts == 0           -> online (True)
+      (now - last_login_ts) < thr  -> online (True)
+      (now - last_login_ts) >= thr -> offline (False)
+      no ts / not in list          -> **None** (undetermined)
+
+    Unlike :func:`is_role_online`, a target that is simply absent from the friend
+    list (or has no timestamp) returns ``None`` rather than ``False`` — the
+    protection gate must never read "I can't see them" as "they're offline / safe
+    to run". Callers can then fall back (guild members) or skip conservatively.
+
+    ``now`` is injectable so threshold behaviour is testable without the wall
+    clock.
+    """
+    body = client.call(CMD_FRIEND_LIST, build_friend_list_body(), timeout=timeout)
+    for friend in parse_friend_list(body):
+        if friend.player_id != target_role_id:
+            continue
+        ts = friend.last_login_ts
+        if ts is None:
+            return None
+        if ts == 0:
+            return True
+        return (int(now()) - ts) < int(threshold_sec)
+    return None
+
+
 def is_role_online(
     client: WSGameClient,
     target_role_id: int,
@@ -135,27 +173,15 @@ def is_role_online(
 ) -> bool:
     """True if ``target_role_id`` is currently online per the friend list.
 
-    Sends the friend list (tab=1), finds the entry whose player_id matches, then
-    applies the same presence rule as web_game_api.is_player_online:
-      last_login_ts == 0           -> online
-      (now - last_login_ts) < thr  -> online
-      no ts / not in list          -> offline (False)
-
-    ``now`` is injectable so threshold behavior is testable without the wall
-    clock. Returns False on any timeout/parse miss (fail-safe: do not assume the
-    protected player is offline when we cannot tell — see note below).
+    Backward-compatible bool wrapper over :func:`friend_presence`: an
+    undetermined result (not in list / no ts) collapses to ``False``. Prefer
+    :func:`friend_presence` when "undetermined" must be distinguished from
+    "offline".
     """
-    body = client.call(CMD_FRIEND_LIST, build_friend_list_body(), timeout=timeout)
-    for friend in parse_friend_list(body):
-        if friend.player_id != target_role_id:
-            continue
-        ts = friend.last_login_ts
-        if ts is None:
-            return False
-        if ts == 0:
-            return True
-        return (int(now()) - ts) < int(threshold_sec)
-    return False
+    presence = friend_presence(
+        client, target_role_id, threshold_sec=threshold_sec,
+        timeout=timeout, now=now)
+    return bool(presence)
 
 
 # ── guild members (fallback) ────────────────────────────────────────────────

@@ -71,6 +71,59 @@ def test_opengold_v2_dead_flag_toggle_removed():
     assert "use_opengold_v2" not in html
 
 
+def test_dashboard_exposes_ws_lamp_toggle():
+    """WS 開神燈已存在於 config，但不能只藏在 JSON 裡。"""
+    html = _html()
+    assert '<option value="ws_token">' in html
+    assert 'id="chkWsOpenLamp"' in html
+    assert "WS 開神燈" in html
+    assert "config.ws_token_open_lamp" in html
+    assert "_existingWsToken.open_lamp" in html
+    assert "ws_token_open_lamp: wsOpenLamp" in html
+    assert "ws_token_spend: wsSelected" in html
+    assert "spend: wsSelected" in html
+    assert "open_lamp: wsOpenLamp" in html
+    assert "function isWsPlanSelected" in html
+    # WS 開神燈 / WS 挖礦是「需 +ws 方案」的獨立 opt-in：方案只控 enable/disable，
+    # 不可強制打勾（regression 2026-06-14：強制打勾讓「取消勾選 WS 挖礦」存不起來，
+    # 一開設定窗就被打回勾選）。
+    assert "chkWsOpenLamp.checked = wsSelected" not in html
+    assert "chkWsMining.checked = wsSelected" not in html
+    assert "chkWsMining.disabled = !wsSelected" in html
+    assert "chkWsOpenLamp.disabled = !wsSelected" in html
+
+
+def test_dashboard_exposes_ws_lamp_percent_and_min_keep_inputs():
+    """WS 開神燈的「百分比」與「最低保留神燈數」兩個數值輸入必須出現在設定窗，
+    且在 loadConfig / saveConfig 都有讀寫對應的巢狀欄位。"""
+    html = _html()
+    # 兩個輸入框存在 + 文案
+    assert 'id="inpWsLampPercent"' in html
+    assert 'id="inpWsLampMinKeep"' in html
+    assert "開神燈百分比" in html
+    assert "最低保留神燈數" in html
+    # loadConfig 從巢狀 ws_token 載入既有值
+    assert "_existingWsToken.lamp_percent" in html
+    assert "_existingWsToken.lamp_min_keep" in html
+    # saveConfig 把值寫進 ws_token merge（不洗掉其他欄位）
+    assert "lamp_percent: lampPercent" in html
+    assert "lamp_min_keep: lampMinKeep" in html
+
+
+def test_dashboard_exposes_ws_offline_fallback_toggle():
+    """手機離線純 WS 掛機備援 per-device 開關必須出現在設定窗，並只在 adb+ws 方案生效。"""
+    html = _html()
+    # checkbox 存在 + 文案
+    assert 'id="chkWsOfflineFallback"' in html
+    assert "離線備援" in html
+    # openSettings 載入既有值
+    assert "_existingWsToken.offline_fallback" in html
+    # saveConfig 把值寫進 ws_token merge（不洗掉其他欄位）
+    assert "offline_fallback:" in html
+    # 只在 adb+ws 方案生效（不是泛 wsSelected）
+    assert "adb+ws" in html
+
+
 def test_skip_sleep_button_replaces_manual_wake_adjustment():
     html = _html()
     assert "調整喚醒" not in html
@@ -115,3 +168,39 @@ def test_nav_btn_class_pins_deterministic_box_model():
     assert "box-sizing: border-box" in rule
     # the class also kills the anchor underline so no inline override is needed
     assert "text-decoration: none" in rule
+
+
+def test_interrupt_buttons_route_through_locked_control():
+    """暫停 / 恢復 / 強制休眠 must go through the debounced deviceControl entry,
+    not the bare callApi/forceSleep that allowed rapid double-clicks.
+
+    Regression: pressing these repeatedly fired duplicate /api requests because
+    the buttons had no lock. They now carry data-ctrlbtn + a lock marker that
+    survives the per-poll re-render (same pattern as the open/close-web btns).
+    """
+    html = _html()
+    # the three interrupt buttons dispatch via deviceControl with an action
+    assert "deviceControl('${ip}','pause')" in html
+    assert "deviceControl('${ip}','resume')" in html
+    assert "deviceControl('${ip}','force_sleep')" in html
+    # the old un-debounced entrypoints are no longer wired to these buttons
+    assert "onclick=\"callApi('/api/pause/${ip}')\"" not in html
+    assert "onclick=\"forceSleep('${ip}')\"" not in html
+    # lock marker is emitted into the button so it persists across re-render
+    assert "data-ctrlbtn=" in html
+    assert "ctrlBtnLocked(ip)" in html
+
+
+def test_control_button_lock_and_animation_helpers_present():
+    """The press feedback (spinner+pulse animation) and the debounce lock that
+    blocks repeated presses must both exist."""
+    html = _html()
+    # debounce lock helpers
+    assert "function ctrlBtnLocked" in html
+    assert "function lockCtrlBtn" in html
+    assert "async function deviceControl" in html
+    assert "if (!ip || ctrlBtnLocked(ip)) return;" in html
+    # animation: spinner + pulse keyframes and the pending class
+    assert "btn-pending" in html
+    assert "@keyframes btnSpin" in html
+    assert "@keyframes btnPulse" in html

@@ -181,12 +181,30 @@ class CrossLotDetail:
 
 
 @dataclass(frozen=True)
+class ParkingInfo:
+    """p_car_park_parking (#5 of p_car_park_car) — where/when a mount is parked.
+
+    Present-but-all-zero for an IDLE mount (the live server always sends the
+    sub-message); a non-zero one means the mount is actually parked. ``type``
+    mirrors the lot type (``CROSS_TYPE`` == 跨界); ``start_time`` is the parked-at
+    epoch second (counts UP — elapsed = now - start_time; the game auto-collects
+    the car at park_max_seconds, default 8h).
+    """
+
+    type: int           # #1 (3 == cross)
+    master_id: int      # #2 (the lot)
+    pos: int            # #3 (1-based slot)
+    start_time: int     # #4 (epoch seconds the car was parked)
+
+
+@dataclass(frozen=True)
 class Mount:
     """One of my mounts (p_car_park_car)."""
 
     mount_id: int       # #1
     car_lev: int        # #2
     parking: bool       # derived: parking_data (#5) present
+    parking_info: ParkingInfo | None = None  # populated only when actually parked
 
 
 @dataclass(frozen=True)
@@ -286,22 +304,50 @@ def _is_parking(parking_data: object) -> bool:
     return False
 
 
+def _parse_parking_data(parking_data: object) -> ParkingInfo | None:
+    """Decode p_car_park_parking (#5). Returns None when the sub-message is
+    absent or all-zero (idle mount); else the parked location + start_time."""
+    if not isinstance(parking_data, (bytes, bytearray)):
+        return None
+    d = codec.walk_dict(bytes(parking_data))
+    info = ParkingInfo(
+        type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
+        pos=_as_int(d.get(3)), start_time=_as_int(d.get(4)),
+    )
+    if info == ParkingInfo(type=0, master_id=0, pos=0, start_time=0):
+        return None
+    return info
+
+
 def _parse_car(entry: bytes) -> Mount:
     d = codec.walk_dict(entry)
+    pdata = d.get(5)
     return Mount(
         mount_id=_as_int(d.get(1)),
         car_lev=_as_int(d.get(2)),
-        parking=_is_parking(d.get(5)),
+        parking=_is_parking(pdata),
+        parking_info=_parse_parking_data(pdata),
     )
+
+
+def parse_all_cars(body: bytes) -> list[Mount]:
+    """Decode car_park_car_info_s2c.car_list — ALL mounts (idle + parked)."""
+    return [
+        _parse_car(bytes(v)) for fnum, v in codec.walk(body)
+        if fnum == 1 and isinstance(v, (bytes, bytearray))
+    ]
 
 
 def parse_my_mounts(body: bytes) -> list[Mount]:
     """Decode car_park_car_info_s2c.car_list; excludes mounts already parking."""
-    mounts = [
-        _parse_car(bytes(v)) for fnum, v in codec.walk(body)
-        if fnum == 1 and isinstance(v, (bytes, bytearray))
-    ]
-    return [m for m in mounts if not m.parking]
+    return [m for m in parse_all_cars(body) if not m.parking]
+
+
+def parse_parked_cross(body: bytes) -> list[Mount]:
+    """My cars currently parked in a CROSS lot (type==3), each with
+    ``parking_info.start_time`` — the source for 8h auto-collect re-park timing."""
+    return [m for m in parse_all_cars(body)
+            if m.parking_info is not None and m.parking_info.type == CROSS_TYPE]
 
 
 def parse_null_spaces(body: bytes) -> list[NullSpace]:
@@ -431,6 +477,17 @@ def read_my_mounts(client: WSGameClient, *,
                    timeout: float | None = None) -> list[Mount]:
     """Fetch my mount list via car_park_car_info (12802), excluding busy mounts."""
     return parse_my_mounts(client.call(CMD_CAR_INFO, b"", timeout=timeout))
+
+
+def read_parked_cross(client: WSGameClient, *,
+                      timeout: float | None = None) -> list[Mount]:
+    """My cars currently parked in CROSS lots via car_park_car_info (12802).
+
+    Each returned Mount carries ``parking_info.start_time`` (parked-at epoch) so
+    the carpark plan can tell how many cross cars are live and when the earliest
+    one hits the 8h auto-collect — the trigger to wake and re-park.
+    """
+    return parse_parked_cross(client.call(CMD_CAR_INFO, b"", timeout=timeout))
 
 
 def collect_bag_rewards(client: WSGameClient, *,

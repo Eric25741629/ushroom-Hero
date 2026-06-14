@@ -461,8 +461,11 @@
       .flypet-gallery .grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 11px; }
     }
     @media (max-width: 767px) {
+      /* 手機: 防止 gallery 離屏面板 (translateX(±100%)) 撐寬整頁造成水平亂滑 */
+      .main { overflow-x: clip; }
       .flypet-gallery .fg-quick { display: none; }
-      .flypet-gallery .fg-body { position: relative; }
+      /* overflow:hidden 夾住滑出畫面外的 species/result 面板; min-height 放大固定矮窗緩解雙重捲動 */
+      .flypet-gallery .fg-body { position: relative; overflow: hidden; min-height: 64vh; }
       .flypet-gallery .species-pane { position: absolute; inset: 0; width: 100%; flex-basis: auto; z-index: 10; max-height: none; transform: translateX(0); transition: transform .26s ease; margin-left: 0 !important; opacity: 1; pointer-events: auto; }
       .flypet-gallery .result-pane { position: absolute; inset: 0; z-index: 11; transform: translateX(100%); transition: transform .26s ease; background: var(--fg-bg-2); }
       .flypet-gallery.flat .species-pane { transform: translateX(-100%); }

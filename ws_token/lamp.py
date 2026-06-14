@@ -26,6 +26,7 @@ import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
+from typing import Callable
 
 from opengold_v2.config import OpenGoldConfig
 from opengold_v2.models import Equipment
@@ -46,6 +47,10 @@ CMD_OPEN_ALL = 0x0509
 CMD_TAB_INFO = 0x0510
 CMD_CHOOSE_TAB = 0x0511
 CMD_ERROR = 0x0201
+CMD_INVENTORY_PUSH = 0x0402  # item/currency delta push (shares mining's value)
+
+ITEM_LAMP = 1001            # 神燈 item_id (EQUIPMENT_SCHEMA §9-10)
+_LAMP_BATCH = 20            # one auto-open consumes 20 lamps
 
 _COMPANION_AFFIXES = {4001, 4005}
 _SELL_CHUNK = 20            # 遊戲一次可賣 20 件以下，對齊單批開燈上限。
@@ -75,6 +80,60 @@ def build_choose_tab(tab: int) -> bytes:
 def parse_tab_info(body: bytes) -> int:
     """equip_tab_info_s2c {tab#1=active}."""
     return _as_int(codec.walk_dict(body).get(1))
+
+
+# --- 神燈 數量 / 百分比 + 最低保留 ------------------------------------------
+
+def round_to_nearest_20(n: float) -> int:
+    """Nearest NON-NEGATIVE multiple of 20.
+
+    e.g. 10001->10000, 10011->10020, 19->20, 9->0, -5->0. The half-step (10)
+    rounds up to 20 (banker's-rounding-free ``int(round())`` keeps it simple).
+    """
+    if n <= 0:
+        return 0
+    return int((n + 10) // 20) * 20
+
+
+def extract_lamp_count(body: bytes) -> int | None:
+    """神燈(item 1001) 當前剩餘 from a 0x0402 body, or None if absent.
+
+    Mirrors ``mining.InventoryTracker.on_push``: ``walk`` yields (fnum, val)
+    with f1=evt_type and f2(repeated)=item sub bytes; within a sub,
+    ``walk_dict`` gives field1=item_id and field3=current count. Works for ANY
+    evt_type (the 1001006 consume push AND a login snapshot that carries 1001).
+    """
+    for fnum, val in codec.walk(body):
+        if fnum != 2 or not isinstance(val, (bytes, bytearray)):
+            continue
+        d = codec.walk_dict(bytes(val))
+        if d.get(1) == ITEM_LAMP:
+            qty = d.get(3)
+            if isinstance(qty, int):
+                return qty
+    return None
+
+
+def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
+                        max_open: int) -> int:
+    """Lamps to open this run: a multiple of 20 clamped to ``[0, max_open]``.
+
+    floor_cap = max(0, total - lamp_min_keep)
+    - both percent & min_keep set -> raw = min(percent_amt, floor_cap)
+    - percent only                -> raw = percent_amt
+    - min_keep only               -> raw = floor_cap
+    - neither                     -> raw = total (open the whole lot)
+    """
+    floor_cap = max(0, total - lamp_min_keep)
+    if lamp_percent > 0 and lamp_min_keep > 0:
+        raw: float = min(total * lamp_percent / 100.0, floor_cap)
+    elif lamp_percent > 0:
+        raw = total * lamp_percent / 100.0
+    elif lamp_min_keep > 0:
+        raw = floor_cap
+    else:
+        raw = total
+    return min(max(0, round_to_nearest_20(raw)), max_open)
 
 
 # --- p_equip parsing --------------------------------------------------------
@@ -272,15 +331,64 @@ def open_lamp(
     quality: int = 0,
     push_wait: float = 2.0,
     sell_timeout: float = 8.0,
+    lamp_percent: float = 0.0,
+    lamp_min_keep: int = 0,
+    initial_count: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """Open boxes and auto-equip winners into their matching 套裝.
 
     Returns {opened, equipped:[(tab,uid,reason)], sold:[(uid,reason)],
-    left:[(uid,combo)], dry_run}. dry_run (default) computes + logs everything
-    but sends no wear/sell/choose-tab.
+    left:[(uid,combo)], dry_run, target, initial_count, remaining}. dry_run
+    (default) computes + logs everything but sends no wear/sell/choose-tab.
+
+    Percent / min-keep (feature ON when ``lamp_percent > 0`` OR
+    ``lamp_min_keep > 0``):
+      - ``target`` = how many lamps to open this run, a multiple of 20 capped
+        at ``max_batches * batch_num`` (see :func:`compute_lamp_target`).
+      - ``total`` comes from ``initial_count`` when given; otherwise it is
+        derived lazily after the first batch from that batch's 1001006 push
+        (``total = remaining + lamps_opened_in_first_batch``). In that fallback
+        the min-keep floor may overshoot by up to one batch (20), because the
+        true total is only known once a batch has already been opened.
+      - The loop stops on ANY of: ``opened >= target``; out-of-lamps (the
+        existing timeout / CMD_ERROR / empty-drops paths); or, when
+        ``lamp_min_keep > 0`` and ``remaining`` is known,
+        ``remaining <= lamp_min_keep``.
+      - ``on_progress(opened, target)`` fires after each batch once target is
+        known (a raising callback never aborts the loop).
+
+    Feature OFF (both <= 0): byte-for-byte the legacy behaviour — open up to
+    ``max_batches`` and stop when the server runs out of lamps; ``target`` is
+    reported as ``max_batches * batch_num`` and no count is required.
     """
     config = config or OpenGoldConfig()
     parser = OCRParser(config)
+
+    feature_on = lamp_percent > 0 or lamp_min_keep > 0
+    max_open = max_batches * batch_num
+    # remaining = last-known 神燈 現量 from a 0x0402 push (None until first seen).
+    remaining: int | None = None
+    # total used for the target: the resolved/used 神燈 count (None until known).
+    total: int | None = initial_count if feature_on else None
+    # target: known up-front when feature OFF or initial_count given; otherwise
+    # derived after the first batch. -1 = "not yet known" sentinel for progress.
+    if not feature_on:
+        target = max_open
+    elif initial_count is not None:
+        target = compute_lamp_target(initial_count, lamp_percent=lamp_percent,
+                                     lamp_min_keep=lamp_min_keep,
+                                     max_open=max_open)
+    else:
+        target = -1  # derive lazily from the first batch's 1001006 push
+
+    # initial_count known and nothing to open this run -> return before any RPC.
+    if feature_on and target == 0:
+        logger.info("ws_token lamp: target=0 (total=%s percent=%s min_keep=%s); "
+                    "open nothing", initial_count, lamp_percent, lamp_min_keep)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": dry_run, "target": 0, "initial_count": initial_count,
+                "remaining": None}
 
     active_tab = parse_tab_info(client.call(CMD_TAB_INFO, b""))
     set_map, lian_shan_tabs, worn = derive_set_map(
@@ -291,12 +399,20 @@ def open_lamp(
 
     drops: dict[int, dict] = {}
     lock = threading.Lock()
+    # one-element holder so the reader-thread push handler and the main loop
+    # share the live 神燈 現量 without nonlocal juggling.
+    remaining_box: list[int | None] = [None]
 
     def _push(cmd: int, body: bytes) -> None:
         if cmd == CMD_EQUIP_CHANGE:
             with lock:
                 for d in parse_drops(body):
                     drops[d["uid"]] = d
+        elif cmd == CMD_INVENTORY_PUSH:
+            qty = extract_lamp_count(body)
+            if qty is not None:
+                with lock:
+                    remaining_box[0] = qty
 
     client.set_push_handler(_push)
     equipped: list[tuple[int, int, str]] = []
@@ -324,12 +440,33 @@ def open_lamp(
                 break
             opened += len(new_uids)
 
+            # Wait for this batch's drop details AND (feature ON) its 1001006
+            # 神燈 現量 push, so the min-keep guard and lazy total are accurate.
+            need_remaining = feature_on
             deadline = time.time() + push_wait
             while time.time() < deadline:
                 with lock:
-                    if all(u in drops for u in new_uids):
-                        break
+                    have_drops = all(u in drops for u in new_uids)
+                    have_remaining = remaining_box[0] is not None
+                if have_drops and (have_remaining or not need_remaining):
+                    break
                 time.sleep(0.02)
+            with lock:
+                remaining = remaining_box[0]
+
+            # Lazy total derivation (initial_count was None): the first batch's
+            # remaining + the lamps it just opened = the pre-run total. The
+            # min-keep floor can overshoot by up to one batch here, since the
+            # true total is only known after a batch has already been opened.
+            if feature_on and target < 0:
+                if remaining is not None:
+                    total = remaining + len(new_uids)
+                    target = compute_lamp_target(
+                        total, lamp_percent=lamp_percent,
+                        lamp_min_keep=lamp_min_keep, max_open=max_open)
+                else:  # no count ever arrived — fall back to opening once
+                    total = opened
+                    target = opened
 
             batch_equips: list[tuple[int, int]] = []
             batch_sells: list[int] = []
@@ -367,6 +504,21 @@ def open_lamp(
                               timeout=sell_timeout, what=f"sell {chunk}")
                     time.sleep(_SELL_DELAY_SEC)
 
+            if feature_on and target >= 0 and on_progress is not None:
+                try:
+                    on_progress(opened, target)
+                except Exception:  # a raising callback must never abort the open
+                    logger.exception("ws_token lamp: on_progress callback failed")
+
+            # Per-batch stop conditions (any one ends the run).
+            if feature_on and target >= 0 and opened >= target:
+                break
+            if (lamp_min_keep > 0 and remaining is not None
+                    and remaining <= lamp_min_keep):
+                logger.info("ws_token lamp: remaining=%d <= min_keep=%d; stop",
+                            remaining, lamp_min_keep)
+                break
+
             if batch_delay > 0 and batch_index < max_batches - 1:
                 time.sleep(batch_delay)
 
@@ -376,14 +528,17 @@ def open_lamp(
     finally:
         client.set_push_handler(None)
 
+    # Lazy target that never resolved (out of lamps before any count) -> 0.
+    reported_target = target if target >= 0 else 0
     if equipped or left:
-        logger.info("ws_token lamp: opened=%d equipped=%d left=%d dry_run=%s",
-                    opened, len(equipped), len(left), dry_run)
+        logger.info("ws_token lamp: opened=%d/%d equipped=%d left=%d dry_run=%s",
+                    opened, reported_target, len(equipped), len(left), dry_run)
     else:
-        logger.debug("ws_token lamp: opened=%d equipped=0 sold=%d left=0 dry_run=%s",
-                     opened, len(sold), dry_run)
+        logger.debug("ws_token lamp: opened=%d/%d equipped=0 sold=%d left=0 "
+                     "dry_run=%s", opened, reported_target, len(sold), dry_run)
     return {"opened": opened, "equipped": equipped, "sold": sold, "left": left,
-            "dry_run": dry_run}
+            "dry_run": dry_run, "target": reported_target,
+            "initial_count": total, "remaining": remaining}
 
 
 def _as_int(v) -> int:

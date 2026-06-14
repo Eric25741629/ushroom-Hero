@@ -151,3 +151,11 @@ found_matches/
 trash/
 20??-??-?? ??????/
 miner/rl/rl_logs/
+
+# v5 online priors accumulation (per-device runtime counts; not version-controlled)
+miner/v5/runtime/
+
+# Playwright/app recovery state + decompiled APK + app private_data (secrets, large binaries)
+auth_state/
+# Per-host runtime daily-task tracking (JsonDataManager output, not source)
+dev.json

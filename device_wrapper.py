@@ -21,15 +21,109 @@ _WEB_DEVICE_REGISTRY: Dict[str, "PlaywrightGameDevice"] = {}
 # call sites. 500 ms is the operator-set ceiling for "something's wrong".
 _SLOW_SCREENSHOT_MS = 500
 
+# web_h5 launch recovery: Chrome exits 21 (CHROME_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED)
+# when a freshly-spawned process finds an existing browser already holding this
+# --user-data-dir, forwards its command line to that instance, then exits. Playwright
+# surfaces it as a launch failure. It is transient — the previous browser for the profile
+# is still tearing down — so we wait and retry the SAME (logged-in) profile instead of
+# switching to a separate, login-less fallback profile dir (which used to trigger a long
+# "未知頁面" loop + an extra game restart on emulator-5554, 2026-06-13).
+_PROFILE_IN_USE_MAX_RETRIES = 3
+_PROFILE_IN_USE_WAIT_SEC = 2.0
+
+
+def _is_profile_in_use_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "exitcode=21" in text
+        or "process_notified" in text
+        or "already in use" in text
+        or ("profile" in text and "in use" in text)
+    )
+
+
+def _launch_with_profile_recovery(
+    *,
+    profile_dir: str,
+    fallback_profile_dir: str,
+    launch_fn,
+    logger_obj: logging.Logger,
+    device_id: str,
+    sleep_fn=time.sleep,
+    max_in_use_retries: int = _PROFILE_IN_USE_MAX_RETRIES,
+    in_use_wait_sec: float = _PROFILE_IN_USE_WAIT_SEC,
+):
+    """Launch a persistent context, preferring the original (logged-in) profile.
+
+    Attempt order: original(channel) -> original(no-channel) -> fallback(channel).
+    A profile-in-use failure (Chrome exit 21) on the original profile is treated as
+    transient: wait and retry the SAME profile up to `max_in_use_retries` times before
+    moving on. The different-profile fallback — which loses the game login state — is a
+    last resort only. Non profile-in-use errors never trigger the wait/retry loop.
+
+    `launch_fn(target_profile, use_channel) -> context` performs the real launch.
+    Returns `(context, used_profile_dir)`; raises the last error if every attempt fails.
+    """
+    attempts = [(profile_dir, True), (profile_dir, False)]
+    if fallback_profile_dir and os.path.abspath(
+        fallback_profile_dir
+    ) != os.path.abspath(profile_dir):
+        attempts.append((fallback_profile_dir, True))
+
+    last_err: Optional[Exception] = None
+    for target_profile, use_channel in attempts:
+        is_original = os.path.abspath(target_profile) == os.path.abspath(profile_dir)
+        retries_left = max_in_use_retries if is_original else 0
+        while True:
+            try:
+                context = launch_fn(target_profile, use_channel)
+                if not is_original:
+                    logger_obj.warning(
+                        f"[{device_id}] web_h5 switched profile dir to fallback: {target_profile}"
+                    )
+                return context, target_profile
+            except Exception as exc:
+                last_err = exc
+                if _is_profile_in_use_error(exc) and is_original and retries_left > 0:
+                    retries_left -= 1
+                    attempt_no = max_in_use_retries - retries_left
+                    logger_obj.warning(
+                        f"[{device_id}] web_h5 profile in use (chrome exit 21); "
+                        f"retrying SAME profile in {in_use_wait_sec}s "
+                        f"({attempt_no}/{max_in_use_retries})"
+                    )
+                    sleep_fn(in_use_wait_sec)
+                    continue
+                logger_obj.warning(
+                    f"[{device_id}] web_h5 launch failed "
+                    f"(profile={target_profile}, use_channel={use_channel}): {exc}"
+                )
+                break
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError(
+        f"[{device_id}] web_h5 launch failed without detailed exception"
+    )
+
 
 def _reset_thread_event_loop() -> None:
     # Playwright sync API rejects start() when the calling thread's event loop
     # reports is_running()==True. A previous _playwright.stop() whose dispatcher
-    # fiber didn't fully shut down (e.g. Chrome was force-killed) can leave that
-    # flag stuck, which then poisons every subsequent restart in the same thread
-    # — exactly the 5554 failure mode in logs/emulator-5554/main.log (~210
-    # "Sync API inside the asyncio loop" errors). Installing a fresh loop here
-    # guarantees the next sync_playwright().start() sees a clean slate.
+    # fiber didn't fully shut down (e.g. Chrome was force-killed, or an 異地-kicked
+    # tab went unresponsive) can leave that flag stuck, which then poisons every
+    # subsequent restart in the same thread — exactly the 5554 failure mode in
+    # logs/emulator-5554/main.log (260 "Sync API inside the asyncio loop" errors
+    # on 2026-06-13). Playwright reads asyncio.get_running_loop(); that is backed
+    # by asyncio's C-level _running_loop thread-state, which set_event_loop() does
+    # NOT touch. So we must clear _running_loop explicitly first — installing a
+    # fresh default loop alone never rescued the poisoned thread (proven against
+    # Python 3.10.18). Clearing the leftover loop is safe here: the device thread
+    # is always synchronous, and any loop still registered as "running" belongs to
+    # a dead/abandoned Playwright session we are about to replace.
+    try:
+        asyncio.events._set_running_loop(None)
+    except Exception as e:
+        logger.debug(f"asyncio _set_running_loop(None) failed: {e}")
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
     except Exception as e:
@@ -273,7 +367,7 @@ class MonitoredDevice:
     def _to_px(self, x, y):
         """支援座標比率或絕對座標。
 
-        若 $0 \le x,y < 1$，視為螢幕比例；否則視為絕對座標。
+        若 0 <= x,y < 1，視為螢幕比例；否則視為絕對座標。
         """
         if (
             isinstance(x, (int, float))
@@ -654,37 +748,27 @@ class PlaywrightGameDevice:
         )
 
         self._playwright = sync_playwright().start()
-        last_err: Optional[Exception] = None
-        launch_attempts = [(profile_dir, True)]
-        if fallback_profile_dir and os.path.abspath(
-            fallback_profile_dir
-        ) != os.path.abspath(profile_dir):
-            launch_attempts.append((fallback_profile_dir, True))
-        # Last fallback: same profile, but no channel ("chrome") to avoid channel-specific startup issues.
-        launch_attempts.append((profile_dir, False))
 
-        for target_profile, use_channel in launch_attempts:
-            try:
-                os.makedirs(target_profile, exist_ok=True)
-                _clear_chrome_singleton_locks(target_profile)
-                launch_kwargs = _build_launch_kwargs(
-                    target_profile, use_channel=use_channel
-                )
-                self._context = self._playwright.chromium.launch_persistent_context(
-                    **launch_kwargs
-                )
-                if target_profile != profile_dir:
-                    self.logger.warning(
-                        f"[{self.device_id}] web_h5 switched profile dir to fallback: {target_profile}"
-                    )
-                break
-            except Exception as exc:
-                last_err = exc
-                self.logger.warning(
-                    f"[{self.device_id}] web_h5 launch failed "
-                    f"(profile={target_profile}, use_channel={use_channel}): {exc}"
-                )
-                self._context = None
+        def _launch_fn(target_profile: str, use_channel: bool):
+            os.makedirs(target_profile, exist_ok=True)
+            _clear_chrome_singleton_locks(target_profile)
+            launch_kwargs = _build_launch_kwargs(
+                target_profile, use_channel=use_channel
+            )
+            return self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+
+        last_err: Optional[Exception] = None
+        try:
+            self._context, _ = _launch_with_profile_recovery(
+                profile_dir=profile_dir,
+                fallback_profile_dir=fallback_profile_dir,
+                launch_fn=_launch_fn,
+                logger_obj=self.logger,
+                device_id=self.device_id,
+            )
+        except Exception as exc:
+            last_err = exc
+            self._context = None
 
         if self._context is None:
             # Ensure Playwright process is cleaned if all attempts fail.
@@ -806,16 +890,40 @@ class PlaywrightGameDevice:
             logger.debug(f"[{self.device_id}] non-blank-page fallback iter failed: {e}")
         return False
 
-    def _ensure_browser_session(self, reason: str = "") -> None:
-        """Best-effort self-heal for transient web_h5 browser/page loss."""
+    def _ensure_browser_session(self, reason: str = "") -> bool:
+        """Best-effort self-heal for transient web_h5 browser/page loss.
+
+        Returns True when this call rebuilt the Playwright session.
+        """
         if (not self._is_session_unavailable()) and self._sync_active_page():
-            return
+            return False
         suffix = f" ({reason})" if reason else ""
         self.logger.warning(
             f"[{self.device_id}] web_h5 session unavailable{suffix}, restarting browser session..."
         )
         self._restart_browser_session()
         self._sync_active_page()
+        return True
+
+    def _current_page_matches_game_url(self) -> bool:
+        """Return True when the active page is already on the configured game URL."""
+        if not self.web_url or self._page is None:
+            return False
+        try:
+            current_url = str(getattr(self._page, "url", "") or "").strip()
+        except Exception:
+            return False
+        game_url = str(self.web_url or "").strip()
+        if not current_url or not game_url:
+            return False
+        if current_url == game_url:
+            return True
+        if not current_url.startswith(game_url):
+            return False
+        if game_url.endswith(("/", "?", "#")):
+            return True
+        suffix = current_url[len(game_url): len(game_url) + 1]
+        return suffix in {"/", "?", "#"}
 
     def _restart_browser_session(self) -> None:
         """Recreate playwright context/page in-place after browser/page was closed."""
@@ -1128,13 +1236,20 @@ class PlaywrightGameDevice:
 
     def app_start(self, *args, **kwargs):
         force_headful = bool(kwargs.pop("force_headful", False))
+        session_restarted = False
         if force_headful:
             self.restart_with_headful(reason="manual web launch")
-        self._ensure_browser_session("app_start")
+            session_restarted = True
+        session_restarted = bool(self._ensure_browser_session("app_start")) or session_restarted
 
         if self.web_url and self._page is not None:
             try:
-                self._open_game_url()
+                if session_restarted and self._current_page_matches_game_url():
+                    self.logger.info(
+                        f"[{self.device_id}] web_h5 app_start reused game url loaded during restart"
+                    )
+                else:
+                    self._open_game_url()
             except Exception as e:
                 logger.warning(f"[{self.device_id}] app_start: _open_game_url failed: {e}")
         self._in_game = True

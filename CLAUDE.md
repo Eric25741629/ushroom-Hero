@@ -46,7 +46,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | File | Purpose |
 |------|--------|
 | `new_main_v2.py` | Main entry - scans devices, spawns threads per device |
-| `control_panel_app.py` | Flask-based central control dashboard (port 5002) |
+| `control_panel_app.py` | Flask central control dashboard (port 5002); now a thin façade — routes live in `control_panel/` blueprints (`routes_status/control/config/worker/web_session/live_view/labeler/fly_pet/pages` + `shared/`) |
 | `config_manager.py` | Configuration loader with host-specific overrides |
 
 ## Core Architecture
@@ -81,8 +81,8 @@ Each device thread runs an independent automation loop with:
 | Wake-up handler | `utils/wake_up_handler.py` | Screen wake/ unlock, connection locking |
 | OCR | `img_tools.py` | Multi-server fallback with circuit breaker |
 | Lamp (開神燈) | `opengold_v2/` | 唯一 live 路徑：`game_actions/lamp_scheduler.py` → `opengold_v2.LampService`。V1 `Open_gold_paddle_ocr.py` 已廢棄 |
-| Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v4**，v1/v3/v4 可切（config `mining_planner_version`）。v2 已移除 (2026-06-05，真實 board 18.8% 破 0.3s)。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
-| Mining planner v3/v4 | `miner/v3,v4/` | v3 cluster-aware actions (有 230ms deadline)、v4（預設）bounded 3-step DFS + branch-and-bound (250ms deadline) |
+| Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v5**，v1/v3/v4/v5 可切（config `mining_planner_version`）。v2 已移除 (2026-06-05，真實 board 18.8% 破 0.3s)。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
+| Mining planner v3/v4/v5 | `miner/v3,v4,v5/` | v3 cluster-aware actions (230ms deadline)、v4 bounded 3-step DFS + branch-and-bound (250ms deadline)、v5（預設）= v4 骨架 + 343-session 歷史機率先驗（`miner/v5/priors.json`，見 [`docs/MINING_V5_PRIORS.md`](docs/MINING_V5_PRIORS.md)）：期望成本下行選欄、pit 續挖 bias、貼底緣殘缺正方 cluster 炸彈延遲；真實 board empty-plan 0.96%（四套最低）。深度追蹤：`miner/depth_tracker.py`（row-shift 偵測 + WS baseline 校準口） |
 | OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
 | Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
 | Task sandbox | `task_sandbox/` | 通用任務開發/驗證框架，以神燈為第一個實作，基於 NavTarget 導航 |
@@ -102,7 +102,7 @@ Each device thread runs an independent automation loop with:
 
 ## Mining Module (`miner/`)
 
-Search-based automation (planner default **v4** = bounded DFS; v1 = A*). Shared mechanics:
+Search-based automation (planner default **v5** = bounded DFS + 歷史機率先驗; v1 = A*). Shared mechanics:
 - 7-row viewport, scroll-triggered when row 6 cleared
 - Props: bomb (3x3 + cross), drill (vertical + bottom row)
 - Cost model: pickaxe=1.0；v1 props=2.99；v4 rarity weights drill=2.5 / bomb=3.5 (源頭 `miner/v4/planner.py`)
@@ -115,12 +115,16 @@ Key files:
 - `miner/models/classifier.py` - CNN block classifier
 - `miner/core/mechanics.py` - prop effect calculations (source of truth)
 
-### Miner planners v1 / v3 / v4 (wired; v4 is the default)
+### Miner planners v1 / v3 / v4 / v5 (wired; v5 is the default)
 
-`mining_service.py` dispatches on `mining_planner_version` (default **v4**, see `config_manager.py` `DEFAULT_DEVICE_CONFIG`). Selectable per device:
-- `miner/v3/` — cluster-aware action model (`clusters`/`actions`/`board`); v4 reuses `v3.actions`. 有 230ms wall-clock deadline。
-- `miner/v4/` — **current default**: bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。真實 board 最快 (mean 1.1ms / max 46ms)。
-- v1 (`miner/planning/smart_planner.py`, A*) — 最省鏟、看得最遠的效率替代，`mining_planner_version='v1'` 可切。
+`mining_service.py` dispatches on `mining_planner_version` (default **v5**, see `config_manager.py` `DEFAULT_DEVICE_CONFIG`). Selectable per device:
+- `miner/v5/` — **current default** (2026-06-12): v4 骨架 + 真實歷史先驗（P(air|air)=27.9% 期望成本下行、
+  P(pit|pit)=42.5% 續挖 bias、貼底殘缺正方 cluster 炸彈延遲 w2/w3→43%/77%）。priors 來源
+  `miner/v5/priors.json`（`tools/build_v5_priors.py` 可重算，報告 `docs/MINING_V5_PRIORS.md`）。
+  真實 board：empty-plan 0.96%（四套最低）、ms_max 26ms。接受 `depth=` 參數（`miner/depth_tracker.py` 餵入）。
+- `miner/v4/` — bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。
+- `miner/v3/` — cluster-aware action model (`clusters`/`actions`/`board`); v4/v5 reuse `v3.actions`. 有 230ms wall-clock deadline。
+- v1 (`miner/planning/smart_planner.py`, A*) — sim score 最高、最省鏟（看整盤），`mining_planner_version='v1'` 可切。
 
 > **v2 已移除** (2026-06-05)：真實 board 重放 18.8% 超過 0.3s、max 1841ms、歷史會 stuck。
 > `miner/v2/` 套件保留，因 `classifier.py / service.py / types.py / visualization.py` 是 v3/v4
@@ -249,8 +253,8 @@ python -m pytest tests/test_carpark_auto.py tests/test_game_initialization.py -q
 python -m py_compile utils/carpark_auto.py game_initialization.py tests/test_carpark_auto.py tests/test_game_initialization.py
 
 # Single file / single test
-python -m pytest tests/test_miner_v2_planner.py -q
-python -m pytest tests/test_miner_v2_planner.py::test_name -q
+python -m pytest tests/test_miner_v5_planner.py -q
+python -m pytest tests/test_miner_v5_planner.py::test_name -q
 ```
 
 Tests live in `tests/` with fixtures under `tests/fixtures/` and screenshot fixtures under `tests/images/`. Notable areas: miner v2 (`test_miner_v2_*`), MuMu watchdog (`test_mumu_*`), instance-flow guards, biweekly scheduler, OCR utils.

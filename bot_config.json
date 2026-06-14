@@ -29,7 +29,7 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v4",
+            "mining_planner_version": "v5",
             "mining_save_samples": false,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
@@ -61,7 +61,68 @@
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "online_check_interval_sec": 30,
-            "online_check_interval": 5
+            "online_check_interval": 5,
+            "enabled": true,
+            "use_ws_runner": false,
+            "ws_token_spend": true,
+            "ws_token_open_lamp": true,
+            "ws_token_mining": {
+                "enabled": true,
+                "allow_bomb": false,
+                "allow_drill": false,
+                "max_steps": 200
+            },
+            "ws_token": {
+                "enabled": true,
+                "bootstrap_token": true,
+                "offline_fallback": false,
+                "fallback_host": "",
+                "spend": true,
+                "open_lamp": true,
+                "farm": {
+                    "buy": [
+                        {"shop_id": 407, "target": 4},
+                        {"shop_id": 408, "target": 4}
+                    ]
+                },
+                "dungeon_sweeps": [],
+                "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": false,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    }
+                },
+                "couple_gifts": true,
+                "forge_ring": false,
+                "workshop_rotate": true,
+                "mining": {
+                    "enabled": true,
+                    "allow_bomb": false,
+                    "allow_drill": false,
+                    "max_steps": 200
+                },
+                "lamp_percent": 1,
+                "lamp_min_keep": 500000
+            },
+            "ws_token_sweep_list": [],
+            "web_reload_after_goto": false
         },
         "emulator-5556": {
             "wake_hour_parity": "even",
@@ -229,7 +290,7 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 300,
             "mining_duration_min": 6,
-            "mining_planner_version": "v4",
+            "mining_planner_version": "v5",
             "mining_save_samples": true,
             "web_screenshot_method": "playwright",
             "experimental_cocos_navigation": true,
@@ -255,16 +316,36 @@
             "online_check_interval": 5,
             "ws_token": {
                 "enabled": true,
+                "bootstrap_token": true,
+                "offline_fallback": false,
+                "fallback_host": "",
                 "spend": true,
                 "open_lamp": true,
-                "farm": {
-                    "buy": [
-                        {"shop_id": 407, "target": 4},
-                        {"shop_id": 408, "target": 4}
-                    ]
-                },
+                "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": false,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    }
+                },
                 "couple_gifts": true,
                 "forge_ring": false,
                 "workshop_rotate": true,
@@ -274,7 +355,19 @@
                     "allow_drill": false,
                     "max_steps": 200
                 }
-            }
+            },
+            "enabled": true,
+            "use_ws_runner": false,
+            "ws_token_spend": true,
+            "ws_token_open_lamp": true,
+            "ws_token_mining": {
+                "enabled": true,
+                "allow_bomb": false,
+                "allow_drill": false,
+                "max_steps": 200
+            },
+            "ws_token_sweep_list": [],
+            "web_reload_after_goto": false
         },
         "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
             "wake_hour_parity": "odd",
@@ -307,7 +400,7 @@
             "lamp_check_interval": 2,
             "lamp_duration_sec": 2400,
             "mining_duration_min": 6,
-            "mining_planner_version": "v4",
+            "mining_planner_version": "v5",
             "mining_save_samples": false,
             "statue_weekly": {
                 "enabled": true,
@@ -320,21 +413,58 @@
             "enabled": true,
             "online_check_interval": 5,
             "ws_token": {
-                "carpark_target": null,
-                "couple_gifts": true,
-                "dungeon_sweeps": [],
                 "enabled": true,
+                "bootstrap_token": true,
+                "offline_fallback": true,
+                "fallback_host": "infinite",
+                "spend": true,
+                "open_lamp": true,
                 "farm": null,
+                "dungeon_sweeps": [],
+                "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": true,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    }
+                },
+                "couple_gifts": true,
                 "forge_ring": false,
-                "open_lamp": false,
-                "spend": false,
-                "workshop_rotate": true
+                "workshop_rotate": true,
+                "mining": {
+                    "enabled": false,
+                    "allow_bomb": false,
+                    "allow_drill": false,
+                    "max_steps": 200
+                }
             },
             "use_ws_runner": false,
-            "ws_token_spend": false,
+            "ws_token_spend": true,
             "ws_token_sweep_list": [],
-            "ws_token_open_lamp": false,
-            "web_reload_after_goto": false
+            "ws_token_open_lamp": true,
+            "web_reload_after_goto": false,
+            "ws_token_mining": {
+                "enabled": false,
+                "allow_bomb": false,
+                "allow_drill": false,
+                "max_steps": 200
+            }
         },
         "web-001": {
             "name": "寶兒",

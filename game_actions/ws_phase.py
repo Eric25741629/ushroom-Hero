@@ -33,6 +33,32 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "mining": ("挖礦任務",),
 }
 
+# pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
+# WS 做完 → ADB/Playwright 跳過 → 舊實作不會寫紀錄 → 徽章永遠 ⏳，
+# 所以 WS 成功時要替它回寫。只列 record-dict schema 的 key；
+# `mission_timestamp`（每日任務）是 flat scalar schema（Mission.py），
+# time_recording 會把它巢狀化破壞讀側，刻意不回寫。
+SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
+    "商店購買": ("Store",),
+    "家族任務": ("donate_family",),
+    "挖礦任務": ("挖礦",),
+    "萬神試煉": ("萬神試煉",),
+}
+
+
+def _record_daily_done(ip: str, skips: set[str], log) -> None:
+    """WS 成功替代掉的 pipeline 任務 → 回寫 dashboard 追蹤的當日紀錄。
+    best-effort：寫入失敗只記 log，不影響 skip-set。"""
+    import json_manager
+    for skip_name, record_keys in SKIP_TO_DAILY_RECORD.items():
+        if skip_name not in skips:
+            continue
+        for key in record_keys:
+            try:
+                json_manager.time_recording(ip, name=key)
+            except Exception:  # noqa: BLE001 — 紀錄失敗不能影響 WS 階段
+                log.warning("[%s] WS 回寫當日紀錄失敗: %s", ip, key, exc_info=True)
+
 
 def _run_device(ip: str, cfg: dict, progress=None):
     """間接層：lazy import + 參數展開，tests monkeypatch 這裡。"""
@@ -42,9 +68,13 @@ def _run_device(ip: str, cfg: dict, progress=None):
         progress=progress,
         spend=bool(cfg.get("spend", False)),
         open_lamp=bool(cfg.get("open_lamp", False)),
+        lamp_percent=cfg.get("lamp_percent", 0),
+        lamp_min_keep=cfg.get("lamp_min_keep", 0),
         farm_config=cfg.get("farm") or None,
         dungeon_sweeps=cfg.get("dungeon_sweeps") or None,
         carpark_target=cfg.get("carpark_target") or None,
+        carpark_auto=bool(cfg.get("carpark_auto", False)),
+        carpark_plan=cfg.get("carpark_plan") or None,
         couple_gifts=bool(cfg.get("couple_gifts", True)),
         workshop_rotate=bool(cfg.get("workshop_rotate", True)),
         forge_ring=bool(cfg.get("forge_ring", False)),
@@ -82,6 +112,9 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
         elif status == "ok":
             step = f"WS 任務完成: {name}"
             log.info("[%s] WS 任務完成: %s", ip, name)
+        elif status == "progress":
+            step = f"WS 開神燈 ({detail})"
+            log.info("[%s] WS 開神燈進度: %s", ip, detail)
         else:
             step = f"WS 任務失敗: {name}"
             log.warning("[%s] WS 任務失敗: %s (%s)", ip, name, detail)
@@ -136,6 +169,8 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
     if "dungeon" in report.tasks and "dungeon" not in report.errors \
             and cfg.get("dungeon_sweeps"):
         skips.add("萬神試煉")
+
+    _record_daily_done(ip, skips, log)
 
     log.info(
         "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s skip=%s",

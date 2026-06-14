@@ -1,0 +1,1019 @@
+{
+  "family": "rogue",
+  "module": 76,
+  "feature_name": "萬神試煉Beta (副本頁 RogueView, roguelike 週期制)",
+  "note": "cmd ids: c2s/s2c 同 id。",
+  "cmd_ids": {
+    "rogue.rogue_info_c2s": 19457,
+    "rogue.rogue_main_enter_c2s": 19458,
+    "rogue.rogue_main_over_c2s": 19459,
+    "rogue.rogue_main_combat_c2s": 19460,
+    "rogue.rogue_main_result_c2s": 19461,
+    "rogue.rogue_bag_c2s": 19463,
+    "rogue.rogue_reports_c2s": 19464,
+    "rogue.rogue_attr_up_c2s": 19465,
+    "rogue.rogue_branch_enter_c2s": 19466,
+    "rogue.rogue_branch_exit_c2s": 19467,
+    "rogue.rogue_branch_meet_c2s": 19468,
+    "rogue.rogue_branch_choose_c2s": 19469,
+    "rogue.rogue_branch_enemy_c2s": 19470,
+    "rogue.rogue_branch_combat_c2s": 19471,
+    "rogue.rogue_branch_result_c2s": 19472,
+    "rogue.rogue_branch_shop_c2s": 19473,
+    "rogue.rogue_branch_buy_c2s": 19474,
+    "rogue.rogue_truntable_info_c2s": 19475,
+    "rogue.rogue_truntable_draw_c2s": 19476,
+    "rogue.rogue_truntable_count_reward_c2s": 19477,
+    "rogue.rogue_science_info_c2s": 19478,
+    "rogue.rogue_science_research_c2s": 19479,
+    "rogue.rogue_science_finish_c2s": 19480,
+    "rogue.rogue_science_reset_c2s": 19481,
+    "rogue.rogue_week_reward_c2s": 19482,
+    "rogue.rogue_rank_report_c2s": 19483,
+    "rogue.rogue_skill_ext_c2s": 19484,
+    "rogue.rogue_copy_skill_c2s": 19485,
+    "rogue.rogue_set_skill_c2s": 19486,
+    "rogue.rogue_red_point_c2s": 19487,
+    "rogue.rogue_status_c2s": 19488,
+    "rogue.rogue_report_collect_c2s": 19489,
+    "rogue.rogue_role_sp_cmp_c2s": 19490,
+    "rogue.rogue_branch_type_c2s": 19491
+  },
+  "schema": {
+    "nested": {
+      "rogue_info_c2s": {
+        "fields": {}
+      },
+      "rogue_info_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "point": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "end_time": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "score": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "get_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 5,
+            "options": {
+              "packed": false
+            }
+          },
+          "rank": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 6
+          },
+          "attr_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          },
+          "ext_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 8
+          }
+        }
+      },
+      "rogue_main_enter_c2s": {
+        "fields": {
+          "return_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_main_enter_s2c": {
+        "fields": {
+          "other_info": {
+            "rule": "required",
+            "type": "type.p_other_role_info",
+            "id": 1
+          },
+          "skill_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_skill",
+            "id": 2
+          },
+          "my_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_skill",
+            "id": 3
+          },
+          "level": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "ext_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 6
+          }
+        }
+      },
+      "rogue_main_over_c2s": {
+        "fields": {
+          "return_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_main_over_s2c": {
+        "fields": {
+          "rogue_report": {
+            "rule": "required",
+            "type": "type.p_rogue_report",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "rogue_main_combat_c2s": {
+        "fields": {}
+      },
+      "rogue_main_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 2
+          },
+          "atk_data": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 3
+          },
+          "def_data": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 4
+          }
+        }
+      },
+      "rogue_main_result_c2s": {
+        "fields": {
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "precent": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_main_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "precent": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "def_role": {
+            "rule": "required",
+            "type": "type.p_common_role",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "rogue_bag_c2s": {
+        "fields": {}
+      },
+      "rogue_bag_s2c": {
+        "fields": {
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "rogue_reports_c2s": {
+        "fields": {}
+      },
+      "rogue_reports_s2c": {
+        "fields": {
+          "report_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_report",
+            "id": 1
+          }
+        }
+      },
+      "rogue_attr_up_c2s": {
+        "fields": {}
+      },
+      "rogue_attr_up_s2c": {
+        "fields": {
+          "attr_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          },
+          "rogue_attrs": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "rogue_branch_enter_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_enter_s2c": {
+        "fields": {
+          "branch_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_branch_exit_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_exit_s2c": {
+        "fields": {}
+      },
+      "rogue_branch_meet_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_meet_s2c": {
+        "fields": {
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "rogue_branch_choose_c2s": {
+        "fields": {
+          "item_id": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "rogue_branch_choose_s2c": {
+        "fields": {
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 1
+          }
+        }
+      },
+      "rogue_branch_enemy_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_enemy_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "other_info": {
+            "rule": "required",
+            "type": "type.p_other_role_info",
+            "id": 3
+          },
+          "skill_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_skill",
+            "id": 4
+          },
+          "rouge_item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "item_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          }
+        }
+      },
+      "rogue_branch_combat_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_combat_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "seed": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 3
+          },
+          "atk_data": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 4
+          },
+          "def_data": {
+            "rule": "repeated",
+            "type": "type.p_battle_role",
+            "id": 5
+          }
+        }
+      },
+      "rogue_branch_result_c2s": {
+        "fields": {
+          "result": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_branch_result_s2c": {
+        "fields": {
+          "code": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "is_win": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "def_role": {
+            "rule": "required",
+            "type": "type.p_common_role",
+            "id": 4
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 5
+          },
+          "ext": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 7
+          }
+        }
+      },
+      "rogue_branch_shop_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_branch_shop_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "max": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "goods_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          },
+          "sub_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          }
+        }
+      },
+      "rogue_branch_buy_c2s": {
+        "fields": {
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_branch_buy_s2c": {
+        "fields": {
+          "goods_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "num": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "rogue_truntable_info_c2s": {
+        "fields": {}
+      },
+      "rogue_truntable_info_s2c": {
+        "fields": {
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count_reward_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          },
+          "lucky_list": {
+            "rule": "repeated",
+            "type": "type.p_key_string",
+            "id": 3
+          },
+          "remain_draw": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          },
+          "get_drop": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 5
+          },
+          "choose_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 6
+          },
+          "guaranteed_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 7
+          }
+        }
+      },
+      "rogue_truntable_draw_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_truntable_draw_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "drop_id_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 2,
+            "options": {
+              "packed": false
+            }
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "rogue_truntable_count_reward_c2s": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_truntable_count_reward_s2c": {
+        "fields": {
+          "id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "rogue_science_info_c2s": {
+        "fields": {}
+      },
+      "rogue_science_info_s2c": {
+        "fields": {
+          "science_info": {
+            "rule": "repeated",
+            "type": "type.p_science_tree",
+            "id": 1
+          },
+          "science_point": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "point_max": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "rogue_science_research_c2s": {
+        "fields": {
+          "science_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "science_lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_science_finish_s2c": {
+        "fields": {
+          "science_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "science_lv": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "point_max": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          }
+        }
+      },
+      "rogue_science_reset_c2s": {
+        "fields": {}
+      },
+      "rogue_science_reset_s2c": {
+        "fields": {}
+      },
+      "rogue_week_reward_c2s": {
+        "fields": {}
+      },
+      "rogue_week_reward_s2c": {
+        "fields": {
+          "get_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          },
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 2
+          }
+        }
+      },
+      "rogue_rank_report_c2s": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "report_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_rank_report_s2c": {
+        "fields": {
+          "role_id": {
+            "rule": "required",
+            "type": "uint64",
+            "id": 1
+          },
+          "role_info": {
+            "rule": "required",
+            "type": "type.p_common_role",
+            "id": 2
+          },
+          "rogue_report": {
+            "rule": "required",
+            "type": "type.p_rogue_report",
+            "id": 3
+          }
+        }
+      },
+      "rogue_skill_ext_c2s": {
+        "fields": {
+          "plan_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_skill_ext_s2c": {
+        "fields": {
+          "skill_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_skill",
+            "id": 1
+          },
+          "type_source_list": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          }
+        }
+      },
+      "rogue_copy_skill_c2s": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_copy_skill_s2c": {
+        "fields": {
+          "type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "skill_data": {
+            "rule": "required",
+            "type": "type.p_passive_skill",
+            "id": 2
+          }
+        }
+      },
+      "rogue_set_skill_c2s": {
+        "fields": {
+          "plan_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "plan_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "skill_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "rogue_set_skill_s2c": {
+        "fields": {
+          "plan_type": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "plan_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "source": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "skill_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 4
+          }
+        }
+      },
+      "rogue_red_point_c2s": {
+        "fields": {}
+      },
+      "rogue_red_point_s2c": {
+        "fields": {}
+      },
+      "rogue_status_c2s": {
+        "fields": {}
+      },
+      "rogue_status_s2c": {
+        "fields": {
+          "status": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_report_collect_c2s": {
+        "fields": {
+          "report_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_coll": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_report_collect_s2c": {
+        "fields": {
+          "report_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "is_coll": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          }
+        }
+      },
+      "rogue_role_sp_cmp_c2s": {
+        "fields": {
+          "type": {
+            "type": "uint32",
+            "id": 1
+          }
+        }
+      },
+      "rogue_role_sp_cmp_s2c": {
+        "fields": {
+          "type": {
+            "type": "uint32",
+            "id": 1
+          },
+          "my_attr": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 2
+          },
+          "my_attr_obj": {
+            "rule": "repeated",
+            "type": "type.p_attr_obj",
+            "id": 3
+          },
+          "target_attr": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 4
+          },
+          "target_attr_obj": {
+            "rule": "repeated",
+            "type": "type.p_attr_obj",
+            "id": 5
+          }
+        }
+      },
+      "rogue_branch_type_c2s": {
+        "fields": {}
+      },
+      "rogue_branch_type_s2c": {
+        "fields": {
+          "branch_id": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 1
+          },
+          "count": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "weight": {
+            "rule": "repeated",
+            "type": "type.p_key_value",
+            "id": 3
+          }
+        }
+      },
+      "rogue_start_reward_info_c2s": {
+        "fields": {}
+      },
+      "rogue_start_reward_info_s2c": {
+        "fields": {
+          "base_reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 1
+          },
+          "drop_reward_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_start_reward",
+            "id": 2
+          },
+          "refresh_times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 3
+          },
+          "cost_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 4
+          }
+        }
+      },
+      "rogue_start_reward_refresh_c2s": {
+        "fields": {
+          "pos_list": {
+            "rule": "repeated",
+            "type": "uint32",
+            "id": 1,
+            "options": {
+              "packed": false
+            }
+          }
+        }
+      },
+      "rogue_start_reward_refresh_s2c": {
+        "fields": {
+          "drop_reward_list": {
+            "rule": "repeated",
+            "type": "type.p_rogue_start_reward",
+            "id": 1
+          },
+          "refresh_times": {
+            "rule": "required",
+            "type": "uint32",
+            "id": 2
+          },
+          "cost_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 3
+          }
+        }
+      },
+      "rogue_start_reward_confirm_c2s": {
+        "fields": {}
+      },
+      "rogue_start_reward_confirm_s2c": {
+        "fields": {
+          "reward_list": {
+            "rule": "repeated",
+            "type": "type.p_reward",
+            "id": 1
+          }
+        }
+      }
+    }
+  },
+  "types": {},
+  "types_referenced": [
+    "p_attr_obj",
+    "p_battle_role",
+    "p_common_role",
+    "p_key_string",
+    "p_key_value",
+    "p_other_role_info",
+    "p_passive_skill",
+    "p_reward",
+    "p_rogue_report",
+    "p_rogue_skill",
+    "p_rogue_start_reward",
+    "p_science_tree"
+  ],
+  "types_missing_from_TYPE_SCHEMA": []
+}

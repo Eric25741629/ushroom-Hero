@@ -6,6 +6,43 @@
 
 ---
 
+> ⚠ 2026-06-14 注意：本檔曾被郵件 subagent 誤用 Write 覆寫，已 `git checkout` 還原到最後提交版（493 行）。
+> 你「header 之後、下面 `## 🔒 另一 session` 之前」的未提交 WIP 段落（2026-06-13/14 莊園/飛寵/carpark/lamp/
+> rogue/exit-21 等完成紀錄）目前缺；那些段落的完整原文仍在本次 Claude session context，可隨時「reconstruct todo」原樣補回。所述工作本身皆已在 git 近期 commit + docs/ 內，未遺失。
+
+---
+
+## 🌙 2026-06-14 夜間自主批次：9 大需求 + 全面重構 + dashboard 重設計（branch `feat/overnight-2026-06-14`）
+
+使用者夜間下 9 項需求 + 「全部接入 / 直接驗證 / 全面重構+改名 / 階段 commit / dashboard 5-8 方案」。
+策略：WS 優先、一裝置一領域並行（5554/9230、7fe98fc6/9226、5556/9223），subagent 管 context。
+**2 階段 commit 在 branch `feat/overnight-2026-06-14`（只加本批次動到的檔，排除 auth_state 機密 + ~80 無關 WIP；未 push）。**
+
+| # | 需求 | 狀態 | 關鍵交付 / 協議 |
+|---|------|------|------|
+| 1 | 重構/複用稽核 | ✅ | `docs/REFACTOR_AUDIT_2026-06-14.md`；抽 `runtime_services/wake_parity.py` + `utils/protobuf_walk.py`；`oralce_manger→oracle_manager` 改名；hot-path 列待監督 |
+| 2 | 花+奶茶每日一次 | ✅ | `runner._run_couple` 每日日期閘（`ws_state.couple.gift_date`） |
+| 3 | 神器附魔倉庫 | ✅讀+GUI / ⏳分解動作 | `/inventory` 頁；module53 `info 0x3501`（live 2515 顆）；過濾=聯合搜索/賣最低/分解勾選；`split 0x350A` 推導，body 待 1 次 live 觸發 |
+| 4 | 守護靈倉庫+詞條過濾 | ✅ | `ws_token/spirit.py read_spirit_info`（module77 `19713`，live 372 隻）；`/inventory` 過濾 |
+| 5 | 每日郵件+滿判定 | ✅ | `ws_token/mail.py`+scheduler；`list 5377{mail_id=0=all}`/`claim 5380{0}=領全部 empty-safe`；武魂/gem 無真上限→best-effort 仍領 |
+| 6 | 車友商行裝飾 CP | ✅演算 / ⏳白天 | `ws_token/carpark_decoration.py` CP=邊際屬性/成本；`car_park_skin_up 12817`、`configParking_design`；catalog dump 待 10:00-22:00 |
+| 7 | 傳奇大亨擲骰 | ✅ | `ws_token/tycoon.py`（act module24 `dice 0x18A9` server-auth，live 驗證）；opt-in 預設關 |
+| 8 | 煩惱消 | ✅ | 真相=左右消除(非2048)、client→Playwright；`fannaoxiao_solver/driver/scheduler`（daily_pipeline 14.6，預設關）；live 124>100 |
+| 9 | 遺物平均點法 | ✅ | `ws_token/relic.py`（module17 `relic_up 0x1103` server-auth，live 驗證）；balanced=升最低等已裝備；opt-in+max_steps |
+
+### ⚠ 待辦 / 提醒
+- [ ] **重啟 `new_main_v2.py` + `control_panel_app.py`** 全部生效（含 `/inventory`、`/dashboard-redesigns/`）。
+- [ ] **挑 dashboard 方案**：`docs/dashboard_redesigns/index.html`（7 個）；回「用 N 號」→ 做成正式 `templates/dashboard.html`。
+- [ ] **開旗標**（皆預設關）：`ws_token.relic_upgrade`/`tycoon`/`mail_claim`、`enable_fannaoxiao`。relic 消耗碎片（有 max_steps/floor）。
+- [ ] **神器附魔分解/賣**：route 先回 501，需 live 觸發一次擷取 `split` body。
+- [ ] **車友裝飾**：白天商店開窗跑 catalog dump + buy round-trip 欄位號（`docs/protocol/CARPARK_DECORATION_SHOP.md`）。
+- [ ] **重構待監督 pass**：device_wrapper 內部 / carpark JS / Flask envelope 21x / `STARTUP_SLEEP_SEC_BY_DEVICE` 改名 / `ws_token/codec` walker / `gold_mananer` 改名。
+
+### Review
+9 項全以 WS 優先 + 一裝置一領域並行完成，協議皆 live 驗證；2 階段 commit（機密/無關 WIP 已排除，未 push）。新測試全綠（relic18/tycoon15/mail19/spirit22/inventory11/carpark13/fannaoxiao8+21/scheduling10/protobuf24 + runner132）。`docs/protocol/` 新增 5 份 recon；memory 補 8 條。
+
+---
+
 ## 🔒 另一 session 進行中（本 session 勿動）
 
 - **挖礦 WS**：由另一個 Claude session 處理中（2026-06-11）。涉及 `ws_token/mining*.py`

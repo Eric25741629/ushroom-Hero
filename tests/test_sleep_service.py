@@ -284,6 +284,78 @@ def sleep_cycle_env(monkeypatch, sleep_mod):
     return state_updates
 
 
+# ---------------------------------------------------------------------------
+# carpark re-park / 09:59 grab wake clamp
+# ---------------------------------------------------------------------------
+
+def test_carpark_repark_pulls_wake_earlier(sleep_mod):
+    cur = 1_700_000_000.0
+    wake = cur + 3600          # aligned wake an hour out
+    next_ts = cur + 300        # car frees / window opens in 5 min
+    out = sleep_mod._apply_carpark_repark_wake(
+        "dev1", wake, cur, logging.getLogger("t"),
+        next_ts_loader=lambda ip: next_ts)
+    assert out == next_ts
+
+
+def test_carpark_repark_never_pushes_wake_later(sleep_mod):
+    cur = 1_700_000_000.0
+    wake = cur + 600           # aligned wake sooner than the carpark event
+    out = sleep_mod._apply_carpark_repark_wake(
+        "dev1", wake, cur, logging.getLogger("t"),
+        next_ts_loader=lambda ip: cur + 5000)
+    assert out == wake
+
+
+def test_carpark_repark_ignores_past_next_ts(sleep_mod):
+    cur = 1_700_000_000.0
+    wake = cur + 3600
+    out = sleep_mod._apply_carpark_repark_wake(
+        "dev1", wake, cur, logging.getLogger("t"),
+        next_ts_loader=lambda ip: cur - 10)
+    assert out == wake
+
+
+def test_carpark_repark_none_is_noop(sleep_mod):
+    cur = 1_700_000_000.0
+    wake = cur + 3600
+    out = sleep_mod._apply_carpark_repark_wake(
+        "dev1", wake, cur, logging.getLogger("t"),
+        next_ts_loader=lambda ip: None)
+    assert out == wake
+
+
+def test_load_carpark_next_ts_gated_on_enabled(sleep_mod, monkeypatch):
+    monkeypatch.setattr(sleep_mod, "_load_ws_state",
+                        lambda ip: {"carpark_repark": {"next_ts": 1234.0}})
+    monkeypatch.setattr(sleep_mod.config_manager, "get_device_config",
+                        lambda ip: {"ws_token": {"carpark_plan": {"enabled": False}}})
+    assert sleep_mod._load_carpark_next_ts("dev1") is None
+    monkeypatch.setattr(sleep_mod.config_manager, "get_device_config",
+                        lambda ip: {"ws_token": {"carpark_plan": {"enabled": True}}})
+    assert sleep_mod._load_carpark_next_ts("dev1") == 1234.0
+
+
+def test_run_sleep_cycle_clamps_to_carpark_next_ts(sleep_mod, sleep_cycle_env,
+                                                   monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(sleep_mod, "_load_carpark_next_ts", lambda ip: now + 300)
+    monkeypatch.setattr(sleep_mod.random, "uniform", lambda a, b: a)
+    wake_ts, _, _ = sleep_mod.run_sleep_cycle("emu-x", logging.getLogger("t"))
+    assert wake_ts == now + 300
+
+
+def test_run_sleep_cycle_forced_wake_not_clamped_by_carpark(sleep_mod,
+                                                            sleep_cycle_env,
+                                                            monkeypatch):
+    forced = time.time() + 1800
+    monkeypatch.setattr(sleep_mod, "_load_carpark_next_ts",
+                        lambda ip: time.time() + 60)  # earlier, but forced wins
+    wake_ts, _, _ = sleep_mod.run_sleep_cycle(
+        "emu-1", logging.getLogger("t"), forced_wake_ts=forced)
+    assert wake_ts == forced
+
+
 def test_run_sleep_cycle_honors_forced_wake_ts(sleep_mod, sleep_cycle_env):
     forced = time.time() + 1800
     wake_ts, interrupted, _ = sleep_mod.run_sleep_cycle(

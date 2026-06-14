@@ -22,6 +22,12 @@ def fight_test(d):
             time.sleep(1.5 + random.uniform(0, 0.5))
             img_tools.click_str_by_server(d, '開始')
             time.sleep(1 + random.uniform(0, 0.5))
+            # 兩次「開始」後若彈出「刷新」提示，需先「進入遊戲」再重按一次「開始」
+            if img_tools.check_str_in_region(d, '刷新'):
+                img_tools.click_str_by_server(d, '進入遊戲')
+                time.sleep(1.5 + random.uniform(0, 0.5))
+                img_tools.click_str_by_server(d, '開始')
+                time.sleep(1 + random.uniform(0, 0.5))
             img_tools.click_str_by_server(d, '確定')
             time.sleep(1.5)
             d.click(446, 81)

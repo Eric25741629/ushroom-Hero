@@ -52,9 +52,21 @@
 - **長時間盯著**：建議優先試 7（淺色柔光）、2（Swiss）、5（Bento）。
 - **個性強度**：粗獷(3)最強；柔光(7)/Swiss(2)最低調耐看。
 
+## 融合實驗（2 + 5 三種混血，2026-06-14）
+
+使用者最喜歡 2 號（Swiss）與 5 號（Bento），要看兩者融合的樣子。三套沿「紀律 ↔ 溫暖」光譜，共用同一份 8 台假裝置資料與全部區塊/modal/互動，只交叉授粉這兩套的字族，方便直接比較。
+
+| slug | 名稱 | 配比 | 一句話 |
+|------|------|------|--------|
+| `fusion-1-tatami-grid` | 榻榻米網格 Tatami Grid | 70% Swiss / 30% Bento | 瑞士零間距髮絲網格 + 數字主角，鋪在暖榻榻米紙、單一柿紅、狀態色降到極淡 |
+| `fusion-2-bento-ledger` | 便當帳本 Bento Ledger | 50 / 50（真中點） | Bento 大小不一圓角磚的構圖，磚內用瑞士髮絲帳本列 + tabular 大數字 + 收斂雙色 |
+| `fusion-3-warm-swiss` | 暖色瑞士 Warm Swiss | 30% Swiss / 70% Bento | Bento 漆面暖磚 / emoji / 錶盤全留，但收進嚴格等距網格 + 字級層級 + 索引數字紀律 |
+
+開 `index.html` 即可在最下方「融合實驗」區塊比較三套，或回覆 **「用 融合N」/「用 fusion-N」** 落地。
+
 ## 選定之後
 
-挑好後回覆 **「用 N 號」**（例如「用 1 號」/「用 7 號」）。我會把該方案落地成正式 `templates/dashboard.html`：
+挑好後回覆 **「用 N 號」**（例如「用 1 號」/「用 7 號」，融合案用「用 融合2」）。我會把該方案落地成正式 `templates/dashboard.html`：
 
 - **完整保留現有 JS / data hook**：element ID、status class、`data-*` 屬性、polling 節奏與 optimistic / pending button-lock 行為一律不動。
 - **只替換視覺層（HTML 結構 + CSS）**，不動後端、不動裝置輪詢與 control panel 路由邏輯。
@@ -72,5 +84,8 @@ docs/dashboard_redesigns/
 ├── editorial-magazine.html # 4
 ├── bento-modular.html      # 5
 ├── retro-terminal.html     # 6
-└── light-soft-ops.html     # 7
+├── light-soft-ops.html     # 7
+├── fusion-1-tatami-grid.html   # 融合 2+5 · Swiss 主
+├── fusion-2-bento-ledger.html  # 融合 2+5 · 50/50
+└── fusion-3-warm-swiss.html    # 融合 2+5 · Bento 主
 ```

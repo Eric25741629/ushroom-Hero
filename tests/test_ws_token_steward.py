@@ -418,3 +418,16 @@ def test_run_dungeon_active_but_no_sweep_list_skips_sweep():
         assert CMD_DUNGEON_SWEEP not in fake.sent_cmds()
     finally:
         c.close()
+
+
+# --- derive_sweep_list (2026-06-12 auto-derive from in-game setting) --------
+
+def test_derive_sweep_list_keeps_enabled_levels_only():
+    from ws_token.steward import derive_sweep_list
+    setting = {1: {2: 1}, 7: {1: 1, 3: 0}, 12: {1: 1}}
+    assert derive_sweep_list(setting) == [(1, 2, 1), (7, 1, 1), (12, 1, 1)]
+
+
+def test_derive_sweep_list_empty_setting_returns_empty():
+    from ws_token.steward import derive_sweep_list
+    assert derive_sweep_list({}) == []

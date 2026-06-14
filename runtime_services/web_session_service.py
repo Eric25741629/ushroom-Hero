@@ -4,6 +4,7 @@ import bot_state
 import config_manager
 from device_wrapper import MonitoredDevice, close_all_web_devices, create_web_device_if_enabled
 from runtime_services.device_runtime_service import ForceSleepRequested
+from runtime_services.ws_online_checker import check_via_ws
 
 
 LOGIN_CONFLICT_SLEEP_SEC = 30 * 60
@@ -38,6 +39,54 @@ def check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip: str 
         return True, f"check_failed:{e}"
 
 
+# 互檢 gate 等待 checker 結果時的輪詢分片：把單一 60s 盲等切成 0.5s 一片，
+# 讓「開啟網頁」/ force-sleep 最慢 ~0.5s 就能中斷，而非卡滿整段 timeout。
+_GATE_RESULT_POLL_SEC = 0.5
+
+
+def _web_launch_release_requested(ip: str, logger_obj, checker_ip: str) -> bool:
+    """放行互檢 gate：使用者按「開啟瀏覽器」是最高優先的手動介入，絕不能卡在
+    跨裝置互檢等待後面。回傳後 caller 會重讀 has_pending_web_launch_request，
+    使 WS pre-phase 被跳過、瀏覽器立即開啟。"""
+    if bot_state.has_pending_web_launch_request(ip):
+        logger_obj.info(
+            f"[{ip}] 手動開啟網頁請求進來，放行互檢 gate（{checker_ip} online-check）"
+        )
+        return True
+    return False
+
+
+def _wait_online_check_result_interruptible(
+    ip: str,
+    req_id: str,
+    logger_obj,
+    checker_ip: str,
+    total_timeout_sec: float = 60.0,
+):
+    """等 checker 回應，但以 0.5s 分片輪詢，讓手動開網頁 / force-sleep 能即時中斷。
+
+    回傳 result 快照；若期間使用者按了「開啟網頁」則回傳 None（caller 應放行）。
+    force-sleep 期間照常拋出 ForceSleepRequested。
+    """
+    deadline = time.time() + max(_GATE_RESULT_POLL_SEC, float(total_timeout_sec))
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            # 逾時：回最後一張快照（多半仍 pending），由 caller 視為 incomplete→busy。
+            return bot_state.wait_online_check_result(req_id, timeout_sec=0.1)
+        slice_sec = min(_GATE_RESULT_POLL_SEC, remaining)
+        result = bot_state.wait_online_check_result(req_id, timeout_sec=slice_sec)
+        if str(result.get("status", "pending")) != "pending":
+            return result
+        if bot_state.check_force_sleep(ip):
+            logger_obj.warning(
+                f"[{ip}] force sleep requested while waiting for {checker_ip} online-check result"
+            )
+            raise ForceSleepRequested()
+        if _web_launch_release_requested(ip, logger_obj, checker_ip):
+            return None
+
+
 def wait_for_checker_gate_before_start(
     ip: str,
     logger_obj,
@@ -47,6 +96,8 @@ def wait_for_checker_gate_before_start(
         if bot_state.check_force_sleep(ip):
             logger_obj.warning(f"[{ip}] force sleep requested while waiting for {checker_ip} online-check")
             raise ForceSleepRequested()
+        if _web_launch_release_requested(ip, logger_obj, checker_ip):
+            return
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
@@ -56,7 +107,10 @@ def wait_for_checker_gate_before_start(
                 checker_ip=checker_ip,
                 target_pid=target_pid,
             )
-            result = bot_state.wait_online_check_result(req_id, timeout_sec=60.0)
+            result = _wait_online_check_result_interruptible(ip, req_id, logger_obj, checker_ip)
+            if result is None:
+                # 手動開網頁，放行 gate。
+                return
             status = str(result.get("status", "pending"))
             if status == "done":
                 is_busy = bool(result.get("result_busy", True))
@@ -68,6 +122,8 @@ def wait_for_checker_gate_before_start(
                     f"[{ip}] {checker_ip} online-check incomplete: status={status}, error={result.get('error', '')}"
                 )
                 is_busy = True
+        except ForceSleepRequested:
+            raise
         except Exception as e:
             logger_obj.error(f"[{ip}] online-check request to {checker_ip} failed: {e}")
             is_busy = True
@@ -83,6 +139,8 @@ def wait_for_checker_gate_before_start(
             if bot_state.check_force_sleep(ip):
                 logger_obj.warning(f"[{ip}] force sleep requested during checker retry backoff")
                 raise ForceSleepRequested()
+            if _web_launch_release_requested(ip, logger_obj, checker_ip):
+                return
             bot_state.update_state(ip, task="等待互檢", step=f"{checker_ip} 忙碌中，{remain} 秒後重試")
             time.sleep(1)
 
@@ -121,9 +179,14 @@ def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_
                 task="互檢中",
                 step=f"處理 {requester_ip} 的上線檢查",
             )
-            is_busy, reason = _run_checker_protocol_only(
-                ip, target_pid, requester_ip, logger_obj
-            )
+            if _checker_uses_ws(ip):
+                is_busy, reason = _run_checker_via_ws(
+                    ip, target_pid, requester_ip, logger_obj
+                )
+            else:
+                is_busy, reason = _run_checker_protocol_only(
+                    ip, target_pid, requester_ip, logger_obj
+                )
             if is_busy is None:
                 # Cannot determine on this checker (e.g. target not in friend
                 # list). Fail so the requester retries and another checker can
@@ -144,6 +207,67 @@ def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_
         except Exception as e:
             logger_obj.error(f"[{ip}] online-check request failed: req={req_id}, err={e}")
             bot_state.fail_online_check_request(req_id, str(e))
+
+
+def _checker_uses_ws(ip) -> bool:
+    """True iff this checker should answer online-check over pure WS.
+
+    Gated by the checker's own device config ``online_check_via_ws`` (default
+    False → legacy browser path). Any config error is treated as off.
+    """
+    try:
+        return bool(config_manager.get_device_config(ip).get("online_check_via_ws", False))
+    except Exception:
+        return False
+
+
+def _resolve_check_target_pid(target_pid, requester_ip):
+    """target_pid off the request, falling back to the requester's config pid."""
+    pid = target_pid
+    if not pid:
+        try:
+            pid = config_manager.get_device_config(requester_ip).get("online_check_target_pid")
+        except Exception:
+            pid = None
+    return pid
+
+
+def _run_checker_via_ws(ip, target_pid, requester_ip, logger_obj):
+    """Pure-WS online check on this checker (no browser session needed).
+
+    Returns ``(is_busy, reason)`` with the same contract as
+    :func:`_run_checker_protocol_only`: ``is_busy`` is ``None`` when the result is
+    undetermined (caller fails the request so another checker / a retry can claim
+    it). A WS ``True/False`` maps straight to busy/not-busy. Threshold comes from
+    the requester's config (matching the browser path); an optional checker-side
+    ``online_check_guild_id`` enables the guild-member fallback.
+    """
+    pid = _resolve_check_target_pid(target_pid, requester_ip)
+    if not pid:
+        return None, "online_check_target_pid not set"
+
+    threshold_sec = 60
+    try:
+        threshold_sec = int(
+            config_manager.get_device_config(requester_ip).get(
+                "online_check_threshold_sec", 60
+            )
+        )
+    except Exception:
+        threshold_sec = 60
+
+    guild_id = None
+    try:
+        guild_id = config_manager.get_device_config(ip).get("online_check_guild_id") or None
+    except Exception:
+        guild_id = None
+
+    presence = check_via_ws(
+        ip, int(pid), logger_obj, guild_id=guild_id, threshold_sec=threshold_sec
+    )
+    if presence is None:
+        return None, "ws online-check undetermined (not visible to this checker)"
+    return presence, f"ws online-check by {ip} (busy={presence})"
 
 
 def _run_checker_protocol_only(ip, target_pid, requester_ip, logger_obj):
@@ -219,6 +343,11 @@ def initialize_runtime_device(
         wait_for_checker_gate_before_start(ip, device_logger, checker_ip=checker_ip)
         if is_requester:
             skip_online_check_once = True
+        # Gate 可能因等待期間使用者按了「開啟網頁」而放行。重讀 live flag，
+        # 讓底下的 WS pre-phase 被跳過、瀏覽器立即開啟（與「進函式前就 pending」
+        # 的 fast-path 一致）。
+        if bot_state.has_pending_web_launch_request(ip):
+            has_manual_web_launch_request = True
 
     if (
         backend_kind == "web_h5"
