@@ -727,3 +727,22 @@ control_panel/
 - `miner/v5/runtime/*.json`（已存在的線上累積檔）內含舊污染語意的 vertical 計數，會持續
   以 ≤20% 上限輕微影響 merge。如要丟棄可刪除這些檔或重跑 `tools/build_v5_priors.py`。
 - `tools/tmp_*.py`（5 支 scratch/probe）為未追蹤檔，建議勿 `git add -A` 進版控或加入 gitignore。
+
+## WS 階段可被「開啟瀏覽器」中斷 + 持久化續做 (2026-06-15, worktree)
+
+Spec: `docs/superpowers/specs/2026-06-15-ws-phase-interruptible-resume-design.md`
+在 worktree `worktree-ws-phase-interruptible-resume`（base=overnight checkpoint）實作，完成後 merge 回 `feat/overnight-2026-06-14`。
+
+- [x] `ws_token/abort.py`：`WSRunAborted(Exception)`（零相依，避免循環匯入）。
+- [x] `ws_token/runner.py`：`RunReport.aborted`；`run_device(should_abort, skip_tasks)`（預設 None=不變）；`_step` 檢查 aborted/should_abort()/skip_set；`_safe` re-raise `WSRunAborted`；`should_abort` 透傳 lamp/mining。TDD：`tests/test_ws_runner_abort.py`（10）。
+- [x] `ws_token/lamp.py` `open_lamp` + `ws_token/mining_supervised.py` `mine_until_pickaxe_empty`：加 `should_abort=None`，迴圈內命中即 `raise WSRunAborted`。real-raise 測試各 1。
+- [x] `game_actions/ws_phase.py`：ledger（ws_resume；date+ts TTL 30min；EXEMPT={carpark,idle_reward}）→ skip_tasks；`_substantive_done`；`effective_done` 重算 pipeline-skip + farm/dungeon；abort 寫入、完整完成清空、abort 時 update_state；全程 best-effort。TDD：`tests/test_ws_phase_resume.py`（8）。
+- [x] `new_main_v2.py`：WS 區塊後 `if backend=="web_h5" and has_pending_web_launch_request: continue`；init 被中斷則不快取 `pre_runtime_ws_done`。安全閘：web_h5 only（adb 無瀏覽器，避免緊迴圈）。
+- [x] 驗證：focused pytest + py_compile；3 個 milestone commit。
+
+### Review
+- 三層：機制（runner，純機制；should_abort/skip_tasks 預設 None=零行為差異）、政策（ws_phase ledger）、接線（new_main_v2，web_h5-gated）。
+- 安全：should_abort 與迴圈 continue 都僅 web_h5；adb（含手機fc offline_fallback）零影響。長任務（開神燈/挖礦）每批/每步讓出，已落地結果不重複。
+- ledger 99% 為空（只存在於 abort→resume 之間）；TTL 30min + 完整完成清空 雙保險，避免跨喚醒誤跳 regen 任務。
+- 測試限制：new_main_v2.main() 迴圈無既有 unit 測試框架且 import 全套 device/cv2 棧；兩個 guard 以 py_compile + 細讀驗證，其依賴的 primitives（has_pending_web_launch_request、run_ws_phase ledger）已全測。
+- 待 live 驗證：web_h5+ws 裝置 WS 階段（mining 進行中）按「開啟瀏覽器」→ 即時開頁 → 用完重新上線續做。需重啟 master+worker 生效。

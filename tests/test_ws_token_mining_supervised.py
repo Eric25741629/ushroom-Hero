@@ -364,6 +364,26 @@ def test_mine_until_pickaxe_empty_skips_when_pickaxe_count_unknown():
     assert result["executed"] == []
 
 
+def test_mine_until_pickaxe_empty_should_abort_raises(monkeypatch):
+    """should_abort true at the step-loop top -> WSRunAborted before any plan /
+    execute, so the in-progress mining task is left pending for the resume."""
+    from ws_token.abort import WSRunAborted
+
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 5}
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: _board(actives=[16239104]))
+
+    def fail_plan(*a, **k):
+        raise AssertionError("plan must not run after abort")
+
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", fail_plan)
+
+    with pytest.raises(WSRunAborted):
+        mining_supervised.mine_until_pickaxe_empty(
+            object(), tracker, max_steps=5, should_abort=lambda: True)
+
+
 def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
     monkeypatch,
     caplog,

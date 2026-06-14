@@ -18,6 +18,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -371,5 +373,28 @@ def test_open_lamp_progress_callback_exception_does_not_abort():
                              push_wait=0.5, on_progress=boom)
         assert res["opened"] == 60                # loop still completed
         assert res["target"] == 60
+    finally:
+        c.close()
+
+
+# --- should_abort (interruptible WS phase) ----------------------------------
+
+def test_open_lamp_should_abort_raises_before_first_batch():
+    """should_abort true at the loop top -> WSRunAborted before any open RPC,
+    so the in-progress lamp task is left pending for the resume."""
+    from ws_token.abort import WSRunAborted
+
+    sent = {"n": 0}
+
+    def open_reply(_b):
+        sent["n"] += 1                            # must NOT be reached
+        return [s2c(CMD_OPEN_ALL, _open_all_s2c([1001]))]
+
+    c, _fake = _client(_base_extra(open_reply))
+    try:
+        with pytest.raises(WSRunAborted):
+            lamp.open_lamp(c, dry_run=True, batch_num=1, max_batches=5,
+                           push_wait=0, should_abort=lambda: True)
+        assert sent["n"] == 0                      # no batch was opened
     finally:
         c.close()

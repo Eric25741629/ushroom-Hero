@@ -35,7 +35,7 @@ def test_disabled_returns_empty(monkeypatch):
 
 def test_success_tasks_map_to_pipeline_names(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report({
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
         "redpack": {}, "farm": {}, "idle_reward": {}, "guild": {},
         "spirit": {}, "steward": {}, "main_tasks": {}, "couple": {},
         "lamp": {}, "turntable": {}, "mining": {},
@@ -52,18 +52,18 @@ def test_success_tasks_map_to_pipeline_names(monkeypatch):
 def test_farm_skips_only_with_seed_id(monkeypatch):
     _cfg(monkeypatch, {"enabled": True, "farm": {"seed_id": 4001}})
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"farm": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"farm": {}}))
     assert "農場任務" in ws_phase.run_ws_phase("dev")
 
 
 def test_dungeon_skips_only_with_sweeps_configured(monkeypatch):
     _cfg(monkeypatch, {"enabled": True, "dungeon_sweeps": [[2, 100, 3]]})
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"dungeon": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"dungeon": {}}))
     assert "萬神試煉" in ws_phase.run_ws_phase("dev")
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"dungeon": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"dungeon": {}}))
     assert "萬神試煉" not in ws_phase.run_ws_phase("dev")
 
 
@@ -129,7 +129,7 @@ def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
 
     captured = {}
 
-    def fake_run_device(ip, cfg, progress=None):
+    def fake_run_device(ip, cfg, progress=None, **_kw):
         captured["progress"] = progress
         return _report({"lamp": {}})
 
@@ -163,7 +163,7 @@ def test_run_device_passes_carpark_plan_and_auto(monkeypatch):
 
 def test_errored_task_not_skipped(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
         {"redpack": {}}, errors={"lamp": "WSTimeoutError: x"}))
     skips = ws_phase.run_ws_phase("dev")
     assert "紅包檢查" in skips and "開神燈" not in skips
@@ -171,7 +171,7 @@ def test_errored_task_not_skipped(monkeypatch):
 
 def test_task_self_skipped_not_mapped(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
         {"couple": {"skipped": "no partner"}, "redpack": {}}))
     skips = ws_phase.run_ws_phase("dev")
     assert "好友每日禮物" not in skips and "紅包檢查" in skips
@@ -179,14 +179,14 @@ def test_task_self_skipped_not_mapped(monkeypatch):
 
 def test_login_failure_returns_empty(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
         {}, errors={"login": "boom"}, login_ok=False))
     assert ws_phase.run_ws_phase("dev") == frozenset()
 
 
 def test_any_exception_returns_empty(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
-    def _boom(ip, cfg, progress=None):
+    def _boom(ip, cfg, progress=None, **_kw):
         raise RuntimeError("creds missing")
     monkeypatch.setattr(ws_phase, "_run_device", _boom)
     assert ws_phase.run_ws_phase("dev") == frozenset()
@@ -211,7 +211,7 @@ def test_adb_missing_creds_bootstraps_then_runs(tmp_path, monkeypatch):
     monkeypatch.setattr(bootstrap, "refresh_creds", fake_refresh)
     monkeypatch.setattr(bootstrap.subprocess, "run", fake_adb)
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"redpack": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"redpack": {}}))
 
     skips = ws_phase.run_ws_phase("dev")
 
@@ -233,7 +233,7 @@ def test_adb_bootstrap_refresh_failure_returns_empty(tmp_path, monkeypatch):
                         lambda *a, **k: type("P", (), {"returncode": 0})())
     run_calls = []
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: run_calls.append(ip) or _report({}))
+                        lambda ip, cfg, progress=None, **_kw:run_calls.append(ip) or _report({}))
 
     assert ws_phase.run_ws_phase("dev") == frozenset()
     assert run_calls == []
@@ -245,7 +245,7 @@ def test_web_h5_backend_does_not_adb_bootstrap(monkeypatch):
     monkeypatch.setattr(ws_phase, "_bootstrap_token",
                         lambda ip, log, force=False: bootstrap_calls.append(force) or True)
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"redpack": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"redpack": {}}))
 
     assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
     assert bootstrap_calls == []
@@ -264,7 +264,7 @@ def test_ws_success_records_daily_keys_for_dashboard(monkeypatch):
     """WS 成功的任務要回寫 JsonDataManager 當日紀錄，dashboard 徽章才會 ✅。"""
     _cfg(monkeypatch, {"enabled": True, "dungeon_sweeps": [[23, 1081, 1]]})
     calls = _patch_time_recording(monkeypatch)
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report({
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
         "steward": {}, "guild": {}, "mining": {}, "dungeon": {},
     }))
     ws_phase.run_ws_phase("dev")
@@ -279,7 +279,7 @@ def test_ws_success_records_daily_keys_for_dashboard(monkeypatch):
 def test_ws_errored_or_self_skipped_tasks_not_recorded(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
     calls = _patch_time_recording(monkeypatch)
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None: _report(
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
         {"steward": {"skipped": "nothing to buy"}, "redpack": {}},
         errors={"guild": "WSTimeoutError"}))
     skips = ws_phase.run_ws_phase("dev")
@@ -293,7 +293,7 @@ def test_record_failure_does_not_break_skip_set(monkeypatch):
     monkeypatch.setattr(json_manager, "time_recording",
                         lambda ip, name="": (_ for _ in ()).throw(OSError("disk")))
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None: _report({"steward": {}}))
+                        lambda ip, cfg, progress=None, **_kw:_report({"steward": {}}))
     assert "商店購買" in ws_phase.run_ws_phase("dev")
 
 
@@ -308,7 +308,7 @@ def test_adb_login_failure_refreshes_once_and_retries(monkeypatch):
     ])
     run_calls = []
 
-    def fake_run(ip, cfg, progress=None):
+    def fake_run(ip, cfg, progress=None, **_kw):
         run_calls.append(ip)
         return next(reports)
 
