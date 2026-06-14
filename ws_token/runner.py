@@ -24,9 +24,9 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
   7. workshop    — 加工坊 12h 配方輪換 (rotate_team_recipes, parity alternates;
                    cadence persisted in ws_state/<device>.json; gated by
                    ``workshop_rotate``, default on).
-  8. couple      — 伴侶: 奶茶+玫瑰送光 (give_all_in_hand, batches of 20;
-                   ``couple_gifts`` default on) + 戒指錘鍊 (``forge_ring``
-                   opt-in, default off). Skipped without a partner.
+  8. couple      — 伴侶: 奶茶+玫瑰一天送一次 (give_all_in_hand; 日期閘存在
+                   ws_state/<device>.json; ``couple_gifts`` default on) + 戒指錘鍊
+                   (``forge_ring`` opt-in, default off). Skipped without a partner.
   9. mining      — 挖礦: opt-in (``mining_config.enabled=True``) only. Uses the
                    login-time 0x0402 inventory snapshot; skips instead of
                    guessing when the pickaxe count is unknown. Re-plans after
@@ -52,8 +52,9 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Optional, Sequence
 
 from ws_token import (
-    carpark, couple, dungeon, farm, guild, idle_reward, league_solo, main_tasks,
-    mining, mining_supervised, redpack, spirit, steward, turntable, workshop,
+    carpark, couple, dungeon, farm, guild, idle_reward, kungfu_store,
+    league_solo, main_tasks, mining, mining_supervised, redpack, relic, rogue,
+    spirit, steward, turntable, tycoon, workshop,
 )
 from ws_token import state as ws_state
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
@@ -71,10 +72,12 @@ _PUSH_SETTLE_S: float = 1.5
 _TREASURE_PROBE_S: float = 6.0
 
 LOGIN_TASK = "login"
+# carpark 排第一：跨界車位要搶（10:00 開窗即被掃空），登入後最先送停車，
+# 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
 TASK_ORDER: tuple[str, ...] = (
-    "main_tasks", "league_solo", "redpack", "idle_reward", "turntable", "farm",
-    "dungeon", "guild", "steward", "carpark", "spirit", "workshop", "couple",
-    "mining", "lamp")
+    "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
+    "turntable", "tycoon", "farm", "dungeon", "rogue", "guild", "steward",
+    "relic", "kungfu_store", "spirit", "workshop", "couple", "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -83,6 +86,10 @@ _LAMP_BATCH_DELAY_SEC: float = 0.2
 
 # workshop 12h 配方輪換間隔（使用者 2026-06-10 指定：兩類別 12hr 切一次）
 _WORKSHOP_ROTATE_S: float = 12 * 3600.0
+
+# 萬神試煉 本周積分獎勵：每週五領一次（使用者 2026-06-13 指定）。
+# Python weekday(): Mon=0 … Fri=4 … Sun=6.
+_ROGUE_WEEKDAY: int = 4
 
 
 @dataclass(frozen=True)
@@ -154,21 +161,45 @@ def _run_redpack(client) -> dict:
     return redpack.grab_claimable(client)
 
 
+def _run_mail(client, *, device: str, gem_threshold: Optional[int] = None,
+              skill_threshold: Optional[int] = None, state_dir=None,
+              now=None) -> dict:
+    """每日自動領取全部郵件附件 — 每日一次 (free; once-daily gated in mail_scheduler).
+
+    Delegates to game_actions.mail_scheduler.run_mail_claim_if_due: skips without
+    sending when already claimed today, else reads an optional capacity advisory
+    (武魂 / 神器附魔寶石 thresholds — never blocks, client has no hard cap) then
+    sends the in-game 一鍵領取全部附件 (mail_claim_c2s {mail_id:0}). The date marker
+    is persisted in ws_state/<device>.json only on a successful reply.
+    """
+    from game_actions import mail_scheduler
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    return mail_scheduler.run_mail_claim_if_due(
+        client, device=device, gem_threshold=gem_threshold,
+        skill_threshold=skill_threshold, now=now, **kw)
+
+
 def _run_idle_reward(client, offline_pushes: list) -> dict:
     """Free: claim ONLINE accrual (claim{1}) + the OFFLINE reward pushed at login.
 
     The OFFLINE reward arrives as a reward_info_s2c{type:2} PUSH right after login;
     ``offline_pushes`` collects those bodies (see the composite push handler in
     run_device). claim_online / claim_offline_from_push are no-ops when nothing is
-    claimable (returns None), so this is safe to run unconditionally. There is no
-    "看廣告加倍" over WS — only the base amount. Returns
-    ``{online, offline}`` booleans (True = claimed).
+    claimable (returns None), so this is safe to run unconditionally.
+
+    Also claims the「2小時收益」quick income (ad_reward 0x1602, pure WS with
+    is_free=1 — no ad SDK needed). Server gates it at 30min cooldown / 3 per
+    day and declines with 0x0201, which claim_quick_2h absorbs; the hourly wake
+    cadence collects all 3 daily claims naturally. Returns
+    ``{online, offline, quick_2h}`` booleans (True = claimed).
     """
     online = idle_reward.claim_online(client)
     summary: dict = {"online": bool(online and online.success), "offline": None}
     if offline_pushes:
         off = idle_reward.claim_offline_from_push(client, offline_pushes[0])
         summary["offline"] = bool(off and off.success)
+    quick = idle_reward.claim_quick_2h(client)
+    summary["quick_2h"] = quick.success
     return summary
 
 
@@ -179,6 +210,24 @@ def _run_turntable(client) -> dict:
     consumes turns the account already has. Returns ``{spun, results}``.
     """
     return turntable.spin_all_free(client)
+
+
+def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
+    """傳奇大亨 (大富翁) 自動擲骰: opt-in, default off; FREE dice → pure gain.
+
+    Only reached when ``enabled`` (gated by run_device). Delegates to
+    tycoon.auto_play, which rolls act_monopoly_dice (0x18A9 {act_type=4003}) until
+    the server rejects (out of dice) on 0x0201 or ``max_rolls`` is hit — each
+    roll's landed-tile reward is auto-granted server-side (no claim cmd). When the
+    activity is closed the FIRST roll returns 0x0201 and auto_play stops, so a
+    closed event is a safe no-op. The dice are free (regen from a timer), so this
+    is a pure-gain free task but stays opt-in to avoid touching the board outside
+    the player's intent. Returns tycoon.auto_play's summary
+    ``{rolls, total_rewards, last_pos, last_circle, stopped_reason}``.
+    """
+    if not enabled:
+        return {"skipped": "tycoon disabled (set ws_token.tycoon=True)"}
+    return tycoon.auto_play(client, max_rolls=max_rolls)
 
 
 def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
@@ -231,22 +280,188 @@ def _run_dungeon(client, *, sweeps: Sequence[Sequence[int]]) -> dict:
     return {"sweeps": results}
 
 
-def _run_carpark(client, *, target: Optional[int]) -> dict:
-    """跨界停車 (只停不收): auto-park one free CROSS slot when a target is set.
+def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
+    """萬神試煉 本周積分獎勵一鍵領取 — 每週五一次 (使用者 2026-06-13 指定).
 
-    Cross-parking is event-gated — when no cross event is live the lot read times
-    out — and the target lot id is a live-confirm value, so this runs ONLY when
-    ``carpark_target`` is configured. Returns auto_park_cross's summary
-    (``{parked, reason, pos, mount_id, ...}``) or a skip note.
+    rogue_week_reward (cmd 19482, empty body) claims every currently-eligible 積分
+    里程碑 in one shot (free — only grants earned rewards, no item/currency cost).
+    Gated to run once per Friday: the date of the last claimed Friday is persisted
+    in ws_state/<device>.json ``{"rogue": {"last_date": "YYYY-MM-DD"}}`` so repeated
+    hourly wakes on the same Friday only claim once. Non-Friday wakes skip without
+    sending anything. The week marker is written ONLY on a successful reply, so a
+    transient failure (0x0201 / timeout) retries on the next Friday wake.
+
+    Returns ``{claimed_run, reason?}`` when skipped, else
+    ``{claimed_run, success, claimed, rewards, error_code}``.
     """
-    if not target:
-        return {"skipped": "no carpark_target configured (event-gated)"}
-    return carpark.auto_park_cross(client, target_id=int(target))
+    from datetime import datetime
+    now = datetime.now() if now is None else now
+    if now.weekday() != _ROGUE_WEEKDAY:
+        return {"claimed_run": False, "reason": f"not Friday (weekday={now.weekday()})"}
+
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    today = now.strftime("%Y-%m-%d")
+    st = ws_state.load_state(device, **kw)
+    if (st.get("rogue") or {}).get("last_date") == today:
+        return {"claimed_run": False, "reason": f"already claimed {today}"}
+
+    r = rogue.claim_week_reward(client)
+    if r.success:
+        st["rogue"] = {"last_date": today, "last_ts": now.timestamp()}
+        ws_state.save_state(device, st, **kw)
+    return {"claimed_run": True, "success": r.success, "claimed": list(r.claimed),
+            "rewards": r.rewards, "error_code": r.error_code}
+
+
+def _run_carpark(client, *, target: Optional[int], auto: bool = False,
+                 plan_cfg: Optional[dict] = None, device: str = "",
+                 state_dir=None, now=None, sleep_fn=None,
+                 cluster_server_id: Optional[int] = None) -> dict:
+    """停車 (只停不收) — plan 模式 (current-parked + 8h 重停 + 09:59 搶位) 或 legacy.
+
+    Plan 模式 (``plan_cfg.enabled``; 2026-06-13 手機fc 方案):
+      1. 倉庫收益每輪先領 (免費已賺，與窗口無關)。
+      2. 若醒在「開窗前 open_lead 秒內」→ 等到開窗 (``sleep_fn``) 再停 (搶 10:00)。
+      3. 開窗內 (``win.cross > 0``)：讀 read_parked_cross 得「當前在停跨界車數」→
+         need = target − current → need>0 才 auto_select_and_park_many
+         (跨界限定泊銀, 優先鉑銀 ``silver_levels``)。搶位時對「lot 還沒鋪好」
+         短重試。8h 被遊戲自動收回後 current 歸 0，下次喚醒自動補停 (自我修正,
+         不需每日配額)。
+      4. 算下次該醒的時刻 (最早到期車 8h / 下個開窗−lead) 寫
+         ``ws_state.carpark_repark.next_ts``，sleep_service 會把喚醒往前 clamp。
+      本服/好友車位遊戲內建自動化，不在此範圍。
+
+    Legacy 模式 (plan 缺/關):
+      - explicit ``target``: park into that specific cross lot's first free slot.
+      - ``auto``: list parkable cross lots via car_park_search, park one mount.
+    Skipped entirely when neither is set.
+    """
+    if plan_cfg and plan_cfg.get("enabled"):
+        import time as _time
+        from datetime import datetime as _dt
+        from ws_token import carpark_plan as cp
+        now = _dt.now() if now is None else now
+        sleep_fn = sleep_fn or _time.sleep
+        plans = cp.parse_plan(plan_cfg)
+        max_sec = cp.park_max_seconds(plan_cfg)
+        open_lead = cp.open_lead_seconds(plan_cfg)
+        margin = cp.repark_margin_seconds(plan_cfg)
+        offset = cp.start_time_offset(plan_cfg)
+        levels = tuple(int(v) for v in (plan_cfg.get("silver_levels") or
+                                        carpark.SILVER_PREFERRED_LEVELS))
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+
+        # 倉庫收益每輪先領 — 免費已賺收益，與窗口無關。
+        collect: dict | None = None
+        try:
+            collect = carpark.collect_bag_rewards(client)
+        except Exception as exc:  # noqa: BLE001 — 領收益失敗不可擋停車
+            logger.warning("ws_token carpark: %s warehouse collect failed: %s",
+                           device, exc)
+            collect = {"success": False, "error": str(exc)}
+
+        # 09:59 搶位：醒在開窗前 open_lead 內 → 等到開窗瞬間再停。
+        grabbing = False
+        wait = cp.cross_open_wait(plans, now, open_lead)
+        if wait is not None:
+            secs, open_dt, _w = wait
+            if secs > 0:
+                logger.info("ws_token carpark: %s pre-open wait %.0fs until %s "
+                            "(grab)", device, secs, open_dt)
+                sleep_fn(secs)
+            now = open_dt
+            grabbing = True
+
+        def _store_next(parked_cross, *, window_name: str = "none",
+                        target: int = 0) -> dict:
+            next_ts = cp.carpark_wake_ts(parked_cross, plans, now,
+                                         max_sec=max_sec, open_lead=open_lead,
+                                         margin=margin, offset=offset)
+            # 快照寫進 ws_state，供 dashboard 唯讀顯示 + start_time epoch 校準
+            # (不從面板主動 WS 登入，以免踢掉裝置 session)。
+            cars = [{"mount_id": m.mount_id,
+                     "master_id": m.parking_info.master_id,
+                     "pos": m.parking_info.pos,
+                     "start_time": m.parking_info.start_time}
+                    for m in parked_cross if m.parking_info is not None]
+            st = ws_state.load_state(device, **kw)
+            st["carpark_repark"] = {
+                "next_ts": next_ts,
+                "captured_ts": now.timestamp(),
+                "park_max": max_sec,
+                "offset": offset,
+                "window": window_name,
+                "target": int(target),
+                "cars": cars,
+            }
+            ws_state.save_state(device, st, **kw)
+            return {"next_repark_ts": next_ts}
+
+        win = cp.active_window(plans, now)
+        if win is None or win.cross <= 0:
+            out = {"collect": collect,
+                   "skipped": f"carpark plan: no open cross window "
+                              f"({win.name if win else 'none'})"}
+            out.update(_store_next([], window_name=(win.name if win else "none")))
+            return out
+
+        target_n = win.cross
+        parked = carpark.read_parked_cross(client)
+        current = len(parked)
+        need = max(0, target_n - current)
+        out = {"window": win.name, "target": target_n, "current": current,
+               "collect": collect, "grab": grabbing}
+
+        if need <= 0:
+            out["skipped"] = f"already {current}/{target_n} cross parked"
+            out.update(_store_next(parked, window_name=win.name, target=target_n))
+            return out
+
+        attempts = cp.grab_attempts(plan_cfg) if grabbing else 1
+        poll = cp.grab_poll_seconds(plan_cfg)
+        res: dict | None = None
+        for i in range(max(1, attempts)):
+            res = carpark.auto_select_and_park_many(
+                client, count=need, prefer_levels=levels,
+                cluster_server_id=cluster_server_id)
+            if int(res.get("parked_count") or 0) > 0:
+                break
+            # 只有「沒 lot 可停 (開窗瞬間 server 還沒鋪好)」才重試；
+            # 沒車/被拒等硬失敗不重試。
+            if res.get("reason") not in ("no_parkable_lot", "no_cross_lot"):
+                break
+            if i < attempts - 1:
+                sleep_fn(poll)
+        out["cross"] = res
+        if int((res or {}).get("parked_count") or 0) > 0:
+            parked = carpark.read_parked_cross(client)  # refresh start_times
+            out["current"] = len(parked)
+        out.update(_store_next(parked, window_name=win.name, target=target_n))
+        return out
+
+    if target:
+        return carpark.auto_park_cross(client, target_id=int(target))
+    if auto:
+        return carpark.auto_select_and_park(client)
+    return {"skipped": "carpark disabled (set carpark_target or carpark_auto)"}
 
 
 def _run_spirit(client) -> dict:
     """守護靈免費召喚: draw_all_free 只用 free_times, 不買招喚貨幣 (800003 不存在)."""
     return spirit.draw_all_free(client)
+
+
+def _run_kungfu_store(client) -> dict:
+    """菇菇武道會 競猜商店: 用粉鑽把 4 個競猜幣檔位(免費/600/1500/3000)買到上限.
+
+    Server-gated: the 競猜商店 only opens during 武道會 循環賽/淘汰賽 (= 膜拜前一周);
+    outside that window every tier rejects on the first attempt (0x0201) and the
+    pass is a cheap idempotent no-op. Per-period caps are server-enforced, so a
+    repeat run never over-buys. Spends up to 12,600 粉鑽/week when fully open.
+    """
+    rep = kungfu_store.claim_guess_coins(client)
+    return {"coins": rep.coins, "diamonds_spent": rep.diamonds_spent,
+            "bought": rep.bought, "stopped": rep.stopped}
 
 
 def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
@@ -283,11 +498,19 @@ def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
     return {"rotated": True, **out}
 
 
-def _run_couple(client, *, gifts: bool, forge_ring: bool) -> dict:
-    """伴侶: 奶茶+玫瑰送光 (give_all_in_hand, 每批20封頂) + 戒指錘鍊 (spend 類).
+def _run_couple(client, *, gifts: bool, forge_ring: bool,
+                device: str = "", state_dir=None, now=None) -> dict:
+    """伴侶: 奶茶+玫瑰一天送一次 (give_all_in_hand) + 戒指錘鍊 (spend 類).
+
+    花/奶茶 每日只送一次 (使用者 2026-06-14 指定)：用
+    ws_state/<device>.json ``{"couple": {"gift_date": "YYYY-MM-DD"}}`` 當日期閘，
+    同一天多次喚醒只送一次；隔日自動重送。兩種禮物共用一個日期閘 (一起送或一起跳過)。
+    日期在「送禮步驟完成」後寫入 (give_all_in_hand 對缺貨回 dict 不 raise，視為完成；
+    連線錯誤會 raise → 不寫 → 下次喚醒重送)。
 
     默契考驗 (Marry type 6) 已由 _run_main_tasks 的 claim_marry_tasks 領取。
-    無伴侶 (favor list 空且 lover_id=0) → skip。
+    forge_ring (戒指錘鍊) 為獨立 opt-in，不受每日閘影響。
+    無伴侶 (favor list 空且 lover_id=0) → skip (不寫日期閘)。
     """
     partners = couple.read_favor_info(client)
     friend_id = partners[0].role_id if partners else couple.read_partner(client)
@@ -296,23 +519,40 @@ def _run_couple(client, *, gifts: bool, forge_ring: bool) -> dict:
     if not friend_id:
         return {**summary, "skipped": "no partner"}
     if gifts:
-        summary["milk_tea"] = couple.give_all_in_hand(
-            client, friend_id=friend_id, flower_id=couple.MILK_TEA)
-        summary["flower"] = couple.give_all_in_hand(
-            client, friend_id=friend_id, flower_id=couple.FLOWER)
+        from datetime import datetime
+        now = datetime.now() if now is None else now
+        today = now.strftime("%Y-%m-%d")
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+        st = ws_state.load_state(device, **kw)
+        if (st.get("couple") or {}).get("gift_date") == today:
+            summary["gifts_skipped"] = f"already gifted {today}"
+        else:
+            summary["milk_tea"] = couple.give_all_in_hand(
+                client, friend_id=friend_id, flower_id=couple.MILK_TEA)
+            summary["flower"] = couple.give_all_in_hand(
+                client, friend_id=friend_id, flower_id=couple.FLOWER)
+            st["couple"] = {"gift_date": today, "gift_ts": now.timestamp()}
+            ws_state.save_state(device, st, **kw)
     if forge_ring:
         summary["ring"] = couple.forge_ring_until_empty(client)
     return summary
 
 
-def _run_lamp(client) -> dict:
+def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
+              initial_count: Optional[int] = None, on_progress=None) -> dict:
     """開神燈: sequentially open up to 10000 boxes and auto-equip/sell drops.
 
     Only reached when ``open_lamp=True`` (gated by run_device); it consumes 神燈
     items. The server accepts at most 20 per OPEN_ALL call, so this runs a
     single-threaded 20-item batch loop capped at 500 batches (10000 total) and
     stops early when the server reports no lamps left. Returns
-    lamp.open_lamp's summary ``{opened, equipped, sold, left, dry_run}``.
+    lamp.open_lamp's summary ``{opened, equipped, sold, left, dry_run, target,
+    initial_count, remaining}``.
+
+    ``lamp_percent`` (>0 = 依當前神燈總數百分比決定本輪目標) / ``lamp_min_keep``
+    (>0 = 剩餘神燈硬地板) 啟用百分比/保留模式；兩者皆 0 時維持舊行為（開到沒燈）。
+    ``initial_count`` 是登入快照撈到的神燈現量（None = 由 lamp 第一批反推）；
+    ``on_progress(opened, target)`` 每批回報進度。
     """
     return _load_lamp().open_lamp(
         client,
@@ -320,6 +560,10 @@ def _run_lamp(client) -> dict:
         batch_num=_LAMP_BATCH_NUM,
         max_batches=_LAMP_MAX_BATCHES,
         batch_delay=_LAMP_BATCH_DELAY_SEC,
+        lamp_percent=lamp_percent,
+        lamp_min_keep=lamp_min_keep,
+        initial_count=initial_count,
+        on_progress=on_progress,
     )
 
 
@@ -389,24 +633,110 @@ def _run_steward(client, *, spend: bool, serv_time: int,
     if shopping_active:
         summary["shopping"] = steward.run_shopping(client)
 
-    if sweep_list:
+    # caller 沒給 sweep_list 時，從遊戲內掃蕩設定自動推導章節（2026-06-12）。
+    effective_sweeps: Sequence[Sequence[int]] = sweep_list
+    if not effective_sweeps:
+        effective_sweeps = steward.derive_sweep_list(
+            steward.read_dungeon_setting(client))
+        summary["sweep_derived"] = list(effective_sweeps)
+    if effective_sweeps:
         dungeon_active = steward.ensure_active(
             client, steward.SERVICE_DUNGEON, serv_time=serv_time, renew=True)
         summary["dungeon_active"] = dungeon_active
         if dungeon_active:
-            summary["sweep"] = steward.run_dungeon_sweep(client, sweep_list)
+            summary["sweep"] = steward.run_dungeon_sweep(client, effective_sweeps)
     return summary
+
+
+def _run_relic(client, tracker: mining.InventoryTracker, *, enabled: bool,
+               max_steps: int, fragment_floor: int = 0) -> dict:
+    """遺物 平均強化: opt-in, default off; SPENDS 遺物碎片 → bounded by max_steps.
+
+    Only reached when ``enabled`` (gated by run_device). 遺物碎片 (item 100022) is
+    a grind currency the server deducts authoritatively on each ``relic_up`` step,
+    so this is a SPEND task and stays OFF by default + hard-capped by ``max_steps``.
+
+    Strategy (matches relic.plan_balanced_upgrades 平均 distribution): always
+    upgrade the LOWEST-level EQUIPPED relic. The live per-level cost lives in
+    configRelic (not exposed client-side) — the server alone deducts it — so the
+    plan uses a flat unit cost purely to ORDER/cap the steps; the real budget gate
+    is the live 遺物碎片 count from the 0x0402 inventory snapshot (``tracker``): we
+    re-check it after each step and STOP when it drops below ``fragment_floor`` or
+    when the server rejects with 0x0201 (out of fragments / level cap). ``max_steps``
+    caps total upgrades regardless.
+
+    The fragment count is only known when the login-time 0x0402 snapshot carried
+    item 100022; if it never did we skip the floor gate (the server-side 0x0201
+    rejection still bounds spend) but keep the ``max_steps`` cap. Returns
+    ``{upgraded, steps, planned, stopped_reason, fragments?}`` or ``{skipped}``.
+    """
+    if not enabled:
+        return {"skipped": "relic disabled (set ws_token.relic_upgrade=True)"}
+
+    info = relic.read_relics(client)
+    if not info.success:
+        return {"upgraded": 0, "steps": [], "planned": 0,
+                "stopped_reason": f"read failed (cmd=0x{info.response_cmd:04x})",
+                "error_code": info.error_code}
+
+    equipped = [(r.uid, r.level) for r in info.equipped]
+    fragments = tracker.counts.get(relic.RELIC_FRAGMENT_ITEM)
+    floor = max(0, int(fragment_floor))
+    # Flat unit cost: the budget here only ORDERS the balanced plan + caps it to
+    # at most ``fragments`` (when known) or ``max_steps``. The server deducts the
+    # real cost; we re-read the live count each step for the floor gate.
+    budget = int(fragments) if fragments is not None else max_steps
+    planned = relic.plan_balanced_upgrades(
+        equipped, budget, cost_at=lambda _lv: 1, max_steps=max_steps)
+
+    upgraded = 0
+    steps: list[int] = []
+    stopped_reason = "plan_exhausted"
+    for uid in planned:
+        if fragments is not None and fragments < floor:
+            stopped_reason = f"fragments<{floor}"
+            break
+        res = relic.upgrade_relic(client, uid)
+        if not res.success:
+            stopped_reason = f"error_code={res.error_code}"
+            break
+        upgraded += 1
+        steps.append(uid)
+        # Re-read the live fragment count from the inventory tracker (the server
+        # pushes a 0x0402 consume after each relic_up; the tracker tees it).
+        fragments = tracker.counts.get(relic.RELIC_FRAGMENT_ITEM, fragments)
+
+    out: dict = {"upgraded": upgraded, "steps": steps, "planned": len(planned),
+                 "stopped_reason": stopped_reason}
+    if fragments is not None:
+        out["fragments"] = fragments
+    return out
 
 
 def run_device(device: str, *, spend: bool = False,
                sweep_list: Optional[Iterable[Sequence[int]]] = None,
                open_lamp: bool = False,
+               lamp_percent: float = 0.0,
+               lamp_min_keep: int = 0,
                farm_config: Optional[dict] = None,
                dungeon_sweeps: Optional[Iterable[Sequence[int]]] = None,
                carpark_target: Optional[int] = None,
+               carpark_auto: bool = False,
+               carpark_plan: Optional[dict] = None,
+               carpark_state_dir=None,
+               carpark_now=None,
                couple_gifts: bool = True,
                forge_ring: bool = False,
                workshop_rotate: bool = True,
+               kungfu_guess: bool = False,
+               mail_claim: bool = False,
+               mail_gem_threshold: Optional[int] = None,
+               mail_skill_threshold: Optional[int] = None,
+               relic_upgrade: bool = False,
+               relic_max_steps: int = 10,
+               relic_fragment_floor: int = 0,
+               tycoon: bool = False,
+               tycoon_max_rolls: int = 50,
                mining_config: Optional[dict] = None,
                progress=None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
@@ -426,6 +756,9 @@ def run_device(device: str, *, spend: bool = False,
     auto-equips/sells the drops — it consumes 神燈 items, so it is gated behind
     its own flag rather than ``spend`` and is OFF by default (legacy behaviour is
     unchanged: only the free redpack step is added for non-lamp devices).
+    ``lamp_percent`` (>0 = 依當前神燈總數百分比決定本輪目標) / ``lamp_min_keep``
+    (>0 = 剩餘神燈硬地板) 設定百分比/最低保留；兩者皆 0（預設）= 開到沒燈。本輪
+    開燈進度 (opened/target) 透過 ``progress(\"lamp\", \"progress\", ...)`` 回報。
 
     The other new daily tasks split by safety:
       - idle_reward (掛機/離線獎勵) + turntable (轉盤免費次數) + farm harvest run
@@ -443,6 +776,20 @@ def run_device(device: str, *, spend: bool = False,
       - ``mining_config`` ``{enabled, allow_bomb, allow_drill, max_steps}``
         enables pure-WS mining. It consumes mining tools and therefore stays
         OFF by default. Missing 0x0402 inventory snapshot -> skip, not guess.
+      - ``mail_claim`` (default False) enables 每日自動領取郵件附件 (一鍵領取,
+        once-daily gated). Free (only takes earned attachments); skipped without
+        the flag. ``mail_gem_threshold`` / ``mail_skill_threshold`` (optional)
+        add a best-effort 神器附魔寶石 / 武魂 "full" advisory log before claiming —
+        they NEVER block the claim (client has no hard cap; server is authoritative).
+      - ``relic_upgrade`` (default False) enables 遺物 平均強化 — it SPENDS 遺物碎片
+        (server-authoritative deduct), so it is OFF by default and hard-capped by
+        ``relic_max_steps`` (default 10). ``relic_fragment_floor`` (default 0) stops
+        upgrading once the live 遺物碎片 count drops below it. Always upgrades the
+        lowest-level equipped relic; stops on 0x0201 / floor / cap.
+      - ``tycoon`` (default False) enables 傳奇大亨 (大富翁) auto-dice. The dice are
+        FREE (regen from a timer) so this is pure gain, but stays opt-in; bounded
+        by ``tycoon_max_rolls`` (default 50). A closed activity makes the first
+        roll return 0x0201 and auto_play stops (safe no-op).
 
     ``progress`` (optional) is a ``(task_name, status, detail)`` callback fired
     per task: ``("xxx", "start", "")`` before, ``("xxx", "ok", "")`` /
@@ -465,6 +812,13 @@ def run_device(device: str, *, spend: bool = False,
     inventory_tracker = mining.InventoryTracker()
     idle_offline: list[bytes] = []
 
+    # 開神燈百分比/最低保留需要「登入快照的神燈現量」。只在 open_lamp 時 lazy import
+    # lamp（非開燈裝置不該載入開燈相依），並在 _push 內把 0x0402 帶 1001 的 frame
+    # tee 進 holder。lamp 是最後一個任務，open_lamp 會在開第一批前接管 push_handler，
+    # 所以登入時的 0x0402 快照（若有）必在 handler 被換掉之前先被這裡攔到。
+    lamp = _load_lamp() if open_lamp else None
+    lamp_count_holder: dict[str, Optional[int]] = {"count": None}
+
     def _push(cmd: int, body: bytes) -> None:
         collector(cmd, body)
         try:
@@ -479,6 +833,14 @@ def run_device(device: str, *, spend: bool = False,
                     idle_offline.append(bytes(body))
             except Exception:  # noqa: BLE001 — a malformed push must not break login
                 logger.debug("ws_token runner: %s idle offline push parse failed",
+                             device, exc_info=True)
+        if lamp is not None and cmd == 0x0402:
+            try:
+                c = lamp.extract_lamp_count(body)
+                if c is not None:
+                    lamp_count_holder["count"] = c
+            except Exception:  # noqa: BLE001 — 壞掉的神燈快照不該中斷登入
+                logger.debug("ws_token runner: %s lamp count push parse failed",
                              device, exc_info=True)
 
     client = _make_client(creds, push_handler=_push)
@@ -512,34 +874,64 @@ def run_device(device: str, *, spend: bool = False,
     def _step(name: str, fn) -> None:
         _safe(tasks, errors, name, fn, notify=_notify)
 
+    def _lamp_progress(opened: int, target: int) -> None:
+        """逐批開燈進度 → 走既有 _notify（runner 不直接依賴 bot_state）。"""
+        _notify("lamp", "progress", f"{opened}/{target}")
+
     try:
+        # 跨界車位要搶 — 登入後最先跑（plan 未啟用時內部立即 skip）。
+        _step("carpark",
+              lambda: _run_carpark(client, target=carpark_target,
+                                   auto=carpark_auto, plan_cfg=carpark_plan,
+                                   device=device, state_dir=carpark_state_dir,
+                                   now=carpark_now,
+                                   cluster_server_id=int(
+                                       login.get("server_id") or 0) or None))
         _step("main_tasks", lambda: _run_main_tasks(client, collector))
         _step("league_solo", lambda: _run_league_solo(client))
         _step("redpack", lambda: _run_redpack(client))
+        if mail_claim:
+            _step("mail",
+                  lambda: _run_mail(client, device=device,
+                                    gem_threshold=mail_gem_threshold,
+                                    skill_threshold=mail_skill_threshold))
         _step("idle_reward", lambda: _run_idle_reward(client, idle_offline))
         _step("turntable", lambda: _run_turntable(client))
+        _step("tycoon",
+              lambda: _run_tycoon(client, enabled=tycoon,
+                                  max_rolls=tycoon_max_rolls))
         _step("farm",
               lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
+        _step("rogue", lambda: _run_rogue(client, device=device))
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
                                    sweep_list=sweep))
-        _step("carpark",
-              lambda: _run_carpark(client, target=carpark_target))
+        _step("relic",
+              lambda: _run_relic(client, inventory_tracker,
+                                 enabled=relic_upgrade,
+                                 max_steps=relic_max_steps,
+                                 fragment_floor=relic_fragment_floor))
+        if kungfu_guess:
+            _step("kungfu_store", lambda: _run_kungfu_store(client))
         _step("spirit", lambda: _run_spirit(client))
         if workshop_rotate:
             _step("workshop",
                   lambda: _run_workshop(client, device=device))
         _step("couple",
               lambda: _run_couple(client, gifts=couple_gifts,
-                                  forge_ring=forge_ring))
+                                  forge_ring=forge_ring, device=device))
         if mining_config and mining_config.get("enabled"):
             _step("mining",
                   lambda: _run_mining(client, inventory_tracker,
                                       mining_config=mining_config))
         if open_lamp:
-            _step("lamp", lambda: _run_lamp(client))
+            _step("lamp",
+                  lambda: _run_lamp(client, lamp_percent=lamp_percent,
+                                    lamp_min_keep=lamp_min_keep,
+                                    initial_count=lamp_count_holder["count"],
+                                    on_progress=_lamp_progress))
     finally:
         # Read the kick flag BEFORE close() — a deliberate close never sets it,
         # so this captures only a real 異地登入 / server-drop during the run.
@@ -630,6 +1022,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--open-lamp", dest="open_lamp", action="store_true",
                     help="also 開神燈 (REAL): opens one bounded batch and "
                          "auto-equips/sells drops. Consumes 神燈 items. Default: off.")
+    ap.add_argument("--lamp-percent", type=float, default=0.0, metavar="PCT",
+                    help="開神燈: 依當前神燈總數的百分比決定本輪目標 (0=不依百分比，開到沒燈)")
+    ap.add_argument("--lamp-min-keep", type=int, default=0, metavar="N",
+                    help="開神燈: 剩餘神燈硬地板 (0=無下限)")
     ap.add_argument("--farm-seed", type=int, default=None, metavar="SEED_ID",
                     help="農場: plant this seed_id on empty lands (live-confirm value)")
     ap.add_argument("--farm-team", type=int, default=None, metavar="TEAM_CFG_ID",
@@ -639,12 +1035,36 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="深淵/萬神 掃蕩 (repeatable; 掃蕩 only, never battle)")
     ap.add_argument("--carpark-target", type=int, default=None, metavar="MASTER_ID",
                     help="跨界停車: cross lot master_id to park into (只停不收)")
+    ap.add_argument("--carpark-auto", action="store_true",
+                    help="跨界停車: auto-pick a parkable cross lot via search "
+                         "(只停不收; ignored when --carpark-target is set)")
     ap.add_argument("--no-couple-gifts", dest="couple_gifts", action="store_false",
                     help="伴侶送禮 (奶茶+玫瑰送光) 預設開; 此旗標關閉")
     ap.add_argument("--forge-ring", action="store_true",
                     help="戒指錘鍊: 消耗全部真愛之石 (預設關)")
     ap.add_argument("--no-workshop", dest="workshop_rotate", action="store_false",
                     help="加工坊 12h 配方輪換預設開; 此旗標關閉")
+    ap.add_argument("--kungfu-guess", dest="kungfu_guess", action="store_true",
+                    help="菇菇武道會 競猜商店: 用粉鑽把競猜幣 4 檔位買到上限 "
+                         "(活動沒開時伺服器擋下，安全 no-op; 預設關)")
+    ap.add_argument("--mail", dest="mail_claim", action="store_true",
+                    help="每日自動領取全部郵件附件 (一鍵領取, 每日一次; 預設關)")
+    ap.add_argument("--mail-gem-threshold", type=int, default=None, metavar="N",
+                    help="郵件: 神器附魔寶石 best-effort 滿門檻 (僅 log 警告, 不擋領取)")
+    ap.add_argument("--mail-skill-threshold", type=int, default=None, metavar="N",
+                    help="郵件: 武魂 best-effort 滿門檻 (僅 log 警告, 不擋領取)")
+    ap.add_argument("--relic-upgrade", dest="relic_upgrade", action="store_true",
+                    help="遺物 平均強化: 消耗遺物碎片強化最低等級的已裝備遺物 (預設關, "
+                         "max-steps 上限)")
+    ap.add_argument("--relic-max-steps", type=int, default=10, metavar="N",
+                    help="遺物強化最多送出的步數上限 (預設 10)")
+    ap.add_argument("--relic-fragment-floor", type=int, default=0, metavar="N",
+                    help="遺物強化: 剩餘遺物碎片低於此值即停 (0=無下限)")
+    ap.add_argument("--tycoon", dest="tycoon", action="store_true",
+                    help="傳奇大亨 (大富翁) 自動擲骰: 免費骰子純收益 (活動沒開時 "
+                         "首擲被擋=no-op; 預設關)")
+    ap.add_argument("--tycoon-max-rolls", type=int, default=50, metavar="N",
+                    help="傳奇大亨最多擲骰次數上限 (預設 50)")
     ap.add_argument("--mine", action="store_true",
                     help="挖礦 opt-in: 依 0x0402 庫存現量挖到鎬子用完")
     ap.add_argument("--mine-allow-bomb", action="store_true",
@@ -680,11 +1100,22 @@ def main(argv: Optional[list[str]] = None) -> int:
           f"mining_config={mining_config}",
           flush=True)
     rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
-                     open_lamp=args.open_lamp, farm_config=farm_config,
+                     open_lamp=args.open_lamp, lamp_percent=args.lamp_percent,
+                     lamp_min_keep=args.lamp_min_keep, farm_config=farm_config,
                      dungeon_sweeps=dungeon_sweeps,
                      carpark_target=args.carpark_target,
+                     carpark_auto=args.carpark_auto,
                      couple_gifts=args.couple_gifts, forge_ring=args.forge_ring,
                      workshop_rotate=args.workshop_rotate,
+                     kungfu_guess=args.kungfu_guess,
+                     mail_claim=args.mail_claim,
+                     mail_gem_threshold=args.mail_gem_threshold,
+                     mail_skill_threshold=args.mail_skill_threshold,
+                     relic_upgrade=args.relic_upgrade,
+                     relic_max_steps=args.relic_max_steps,
+                     relic_fragment_floor=args.relic_fragment_floor,
+                     tycoon=args.tycoon,
+                     tycoon_max_rolls=args.tycoon_max_rolls,
                      mining_config=mining_config)
     print(_format_report(rep), flush=True)
     return 0 if rep.login_ok else 1

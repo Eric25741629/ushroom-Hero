@@ -12,6 +12,7 @@ bp = Blueprint("pages", __name__)
 # 路徑常數：原始檔以 ``Path(__file__).resolve().parent`` 計算 repo root，但本檔位於
 # control_panel/ 子目錄，必須改用 ``parents[1]`` 才能維持指向 repo 根目錄的同一路徑。
 _WAR_ROOM_DIR = Path(__file__).resolve().parents[1] / "push_project" / "web"
+_REDESIGN_DIR = Path(__file__).resolve().parents[1] / "docs" / "dashboard_redesigns"
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _README_PATH = _REPO_ROOT / "README.md"
 _UPDATE_PATH = _REPO_ROOT / "update.txt"
@@ -85,6 +86,18 @@ def war_room_index():
 @bp.route("/war-room/<path:filename>")
 def war_room_static(filename):
     return send_from_directory(str(_WAR_ROOM_DIR), filename)
+
+
+@bp.route("/dashboard-redesigns")
+@bp.route("/dashboard-redesigns/")
+def dashboard_redesigns_index():
+    """比較頁：7 個 dashboard 重新設計方案（2026-06-14，待使用者挑選一個做正式主控台）。"""
+    return send_from_directory(str(_REDESIGN_DIR), "index.html")
+
+
+@bp.route("/dashboard-redesigns/<path:filename>")
+def dashboard_redesigns_file(filename):
+    return send_from_directory(str(_REDESIGN_DIR), filename)
 
 
 @bp.route("/fly-pet/login", methods=["GET", "POST"])

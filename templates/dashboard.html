@@ -423,8 +423,27 @@
     .card.PAUSED { border-top-color: var(--warn-color); }
 
     .card.OFFLINE { opacity: 0.6; filter: grayscale(0.8); }
+
+    /* 實體手機掉線後改跑純 WS 掛機 = 降級狀態，用青色標示且不灰階 */
+    .card.DEGRADED { border-top-color: #29b6f6; opacity: 0.85; }
+    .card.DEGRADED .status-text { background: #29b6f6; color: #07212e; }
     /* 開啟/關閉網頁 toggle: 點擊後鎖 3 秒時的外觀 */
     .btn-locked, .btn:disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+
+    /* 暫停 / 強制休眠 等控制鈕：按下後的「處理中」動畫特效 (脈衝 + 旋轉 spinner)，
+       搭配 .btn-locked 鎖住避免連點。動畫在卡片每輪重繪時靠 ctrlBtnLocked() 持續套用。 */
+    @keyframes btnPulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(120, 160, 255, 0.0); }
+      50%      { box-shadow: 0 0 0 4px rgba(120, 160, 255, 0.45); }
+    }
+    @keyframes btnSpin { to { transform: rotate(360deg); } }
+    .btn-pending { position: relative; animation: btnPulse 0.9s ease-in-out infinite; }
+    .btn-pending::after {
+      content: ''; display: inline-block; box-sizing: border-box;
+      width: 0.85em; height: 0.85em; margin-left: 6px; vertical-align: -0.12em;
+      border: 2px solid rgba(0, 0, 0, 0.25); border-top-color: currentColor;
+      border-radius: 50%; animation: btnSpin 0.6s linear infinite;
+    }
 
 
 
@@ -843,6 +862,7 @@
     <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📢 <span class="nav-label">更新公告</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
     <a href="/fly-pet" class="nav-btn">&#x1F985; <span class="nav-label">飛寵管理</span></a>
+    <a href="/inventory" class="nav-btn">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></a>
 
   </div>
 
@@ -1115,6 +1135,8 @@
 
           <option value="web_h5+ws">h5 + WS（WS 先跑，瀏覽器補跑）</option>
 
+          <option value="ws_token">ws_token（純 WS，不開 App/瀏覽器）</option>
+
         </select>
 
       </div>
@@ -1300,11 +1322,11 @@
 
               <option value="v1">v1（原始 SmartPlanner）</option>
 
-              <option value="v2">v2（修補版）</option>
-
               <option value="v3">v3（cluster-aware）</option>
 
-              <option value="v4">v4（5-step bounded，道具稀缺感知）</option>
+              <option value="v4">v4（3-step bounded，道具稀缺感知）</option>
+
+              <option value="v5">v5（機率先驗，預設）</option>
 
             </select>
 
@@ -1328,7 +1350,33 @@
 
           <label class="checkbox-item"><input type="checkbox" id="chkMining">啟用挖礦（Mining）</label>
 
+          <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">WS 開神燈（純 WS，消耗神燈道具；選 WS 方案自動啟用）</label>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
+
+            <div>
+
+              <label style="font-size:0.8em;">開神燈百分比 %（0=不依百分比）</label>
+
+              <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
+
+            </div>
+
+            <div>
+
+              <label style="font-size:0.8em;">最低保留神燈數（0=無下限）</label>
+
+              <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
+
+            </div>
+
+          </div>
+
           <label class="checkbox-item"><input type="checkbox" id="chkWsMining">WS 挖礦（純 WS，挖到鎬子用完；需方案含 +ws）</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用地城（螺旋/秘境）</label>
 
@@ -1634,6 +1682,48 @@
     }
 
 
+
+    async function fetchCarpark(ip) {
+      try {
+        const res = await fetch(`/api/carpark/${ip}`);
+        return await res.json();
+      } catch {
+        return null;
+      }
+    }
+
+    function renderCarpark(ip, data) {
+      const el = document.getElementById(`carpark-${ip}`);
+      if (!el) return;
+      if (!data || !data.enabled) { el.textContent = '--'; return; }
+      if (!data.captured) { el.textContent = data.note || '尚無快照'; return; }
+      const worst = data.worst_remaining_h;
+      let txt = `${data.current}/${data.target} 跨界`;
+      if (data.current > 0 && worst != null) txt += ` · 最快收車剩 ${worst.toFixed(1)}h`;
+      txt += ` · 下次 ${data.next_dt || '--'}`;
+      if (data.epoch_sane === false) txt += ' ⚠epoch';
+      el.textContent = txt;
+      const det = document.getElementById(`carpark-detail-${ip}`);
+      if (det) {
+        let rows = (data.cars || []).map(c =>
+          `<div>mount ${c.mount_id} @lot ${c.master_id} pos ${c.pos}`
+          + ` · start_time=${c.start_time} (${c.start_dt || '???'})`
+          + ` · 已停 ${c.elapsed_h}h · 剩 ${c.remaining_h}h`
+          + (c.epoch_sane ? '' : ' ⚠非unix-epoch') + `</div>`).join('');
+        if (!rows) rows = '<div>目前無跨界車在停</div>';
+        const cal = (data.epoch_sane === false)
+          ? '<div style="color:#e0a030;">⚠ start_time 不像 unix epoch → 設 carpark_plan.start_time_offset 校正</div>'
+          : (data.current > 0 ? '<div style="color:#5fb35f;">✓ start_time 校準正常 (elapsed 在合理範圍)</div>' : '');
+        det.innerHTML =
+          `<div>視窗 ${data.window || '-'} · 目標 ${data.target} · park_max ${data.park_max_h}h`
+          + ` · offset ${data.offset} · 擷取 ${data.captured_dt || '-'}</div>` + rows + cal;
+      }
+    }
+
+    function toggleCarparkDetail(ip) {
+      const det = document.getElementById(`carpark-detail-${ip}`);
+      if (det) det.style.display = det.style.display === 'none' ? 'block' : 'none';
+    }
 
     async function fetchStatus() {
 
@@ -2226,21 +2316,26 @@
 
         const isDisabled = info.enabled === false;
 
+        const showRecover = info.is_real_phone || ip.includes('fc65396d');
+
         let statusClass = info.status || 'OFFLINE';
 
         if (isPaused && statusClass === 'ONLINE') statusClass = 'PAUSED';
 
         if (isDisabled) statusClass = 'DISABLED';
 
+        // 實體手機離線時不顯示 OFFLINE，改為「降級」(掉線後改跑純 WS 掛機)，用不同顏色。
+        if (statusClass === 'OFFLINE' && showRecover && !isDisabled) statusClass = 'DEGRADED';
+
         const statusText = isDisabled
           ? '🚫 已停用 (未啟用掛機)'
-          : (isPaused ? '已暫停 (PAUSED)' : statusClass);
+          : (isPaused
+              ? '已暫停 (PAUSED)'
+              : (statusClass === 'DEGRADED' ? '降級 (純 WS 掛機)' : statusClass));
 
         const logs = (info.logs || []).slice().reverse().slice(0, 3);
 
         const logsHtml = logs.map(l => `<div>${l}</div>`).join('');
-
-        const showRecover = info.is_real_phone || ip.includes('fc65396d');
 
 
 
@@ -2290,7 +2385,11 @@
 
               <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">後端：<span id="backend-${ip}">${(info.backend || 'adb') + (info.ws_enabled ? ' +WS' : '')}</span></span>
 
+              ${info.carpark_plan_enabled ? `<span class="label">🅿 車位</span><span id="carpark-${ip}" style="cursor:pointer;" onclick="toggleCarparkDetail('${ip}')" title="點擊展開各車 start_time 校準">--</span>` : ''}
+
             </div>
+
+            ${info.carpark_plan_enabled ? `<div class="carpark-detail" id="carpark-detail-${ip}" style="display:none; font-size:0.75em; color:var(--text-secondary); padding:4px 8px; line-height:1.5;"></div>` : ''}
 
             <div class="progress-container" id="progress-${ip}"><span class="task-badge">讀取每日進度中...</span></div>
 
@@ -2383,6 +2482,8 @@
 
 
 
+        if (info.carpark_plan_enabled) fetchCarpark(ip).then(d => renderCarpark(ip, d));
+
         fetchProgress(ip, info.last_update).then(progress => {
 
           if (!progress) return;
@@ -2441,9 +2542,9 @@
 
             ${isPaused
 
-              ? `<button class="btn btn-resume" onclick="callApi('/api/resume/${ip}')">恢復</button>`
+              ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">恢復</button>`
 
-              : `<button class="btn btn-pause" onclick="callApi('/api/pause/${ip}')">暫停</button>`
+              : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">暫停</button>`
 
             }
 
@@ -2457,7 +2558,7 @@
 
             <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
 
-            <button class="btn btn-force" onclick="forceSleep('${ip}')">強制休眠</button>
+            <button class="btn btn-force${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','force_sleep')">強制休眠</button>
 
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
@@ -2487,6 +2588,11 @@
       if (chk && sel) sel.disabled = !chk.checked;
     }
 
+    function isWsPlanSelected(value) {
+      const backend = value || document.getElementById('editBackend').value || 'adb';
+      return backend === 'ws_token' || backend.endsWith('+ws');
+    }
+
     function toggleBackendInputs() {
 
       const backend = document.getElementById('editBackend').value || 'adb';
@@ -2494,6 +2600,30 @@
       const webGroup = document.getElementById('webBackendGroup');
 
       webGroup.style.display = backend.startsWith('web_h5') ? 'block' : 'none';
+
+      const wsSelected = isWsPlanSelected(backend);
+      // WS 開神燈 / WS 挖礦是「需 +ws 方案」的獨立 opt-in（會消耗道具）：方案只負責
+      // enable/disable，不可強制打勾，否則使用者取消勾選後一開設定窗就又被打回勾選、
+      // 存不起來（regression 2026-06-14）。非 +ws 方案才清掉勾選。
+      const chkWsOpenLamp = document.getElementById('chkWsOpenLamp');
+      const chkWsMining = document.getElementById('chkWsMining');
+      if (chkWsOpenLamp) {
+        chkWsOpenLamp.disabled = !wsSelected;
+        if (!wsSelected) chkWsOpenLamp.checked = false;
+      }
+      if (chkWsMining) {
+        chkWsMining.disabled = !wsSelected;
+        if (!wsSelected) chkWsMining.checked = false;
+      }
+
+      // 離線備援只在 adb+ws 方案有效（手機離線才有意義，web_h5+ws/ws_token 不適用）。
+      const adbWsSelected = backend === 'adb+ws';
+      const chkWsOfflineFallback = document.getElementById('chkWsOfflineFallback');
+      if (chkWsOfflineFallback) {
+        chkWsOfflineFallback.closest('.checkbox-item').style.display = adbWsSelected ? '' : 'none';
+        chkWsOfflineFallback.disabled = !adbWsSelected;
+        if (!adbWsSelected) chkWsOfflineFallback.checked = false;
+      }
 
     }
 
@@ -2794,6 +2924,48 @@
       }, 3000);
     }
 
+    // ── 暫停 / 恢復 / 強制休眠 控制鈕：按下動畫特效 + 鎖定防連點 ───────────
+    // 後端把訊號交給裝置 thread 後是非同步生效的 (下一輪 guard 才真正暫停/休眠)，
+    // 連點會重複送請求造成問題；按下後立即上鎖 + 顯示 spinner 動畫，鎖在卡片每輪
+    // 重繪時靠 ctrlBtnLocked() 持續套用 (與開/關網頁鈕同模式)。
+    const _ctrlBtnLockMs = 2000;
+    const _ctrlBtnLockUntil = {};   // ip -> 鎖定到期時間戳 (ms)
+    const _CTRL_ENDPOINT = {
+      pause: '/api/pause/', resume: '/api/resume/', force_sleep: '/api/force_sleep/',
+    };
+
+    function ctrlBtnLocked(ip) {
+      return (_ctrlBtnLockUntil[ip] || 0) > Date.now();
+    }
+
+    function lockCtrlBtn(ip) {
+      _ctrlBtnLockUntil[ip] = Date.now() + _ctrlBtnLockMs;
+      document.querySelectorAll(`[data-ctrlbtn="${ip}"]`).forEach(b => {
+        b.disabled = true; b.classList.add('btn-locked', 'btn-pending');
+      });
+      setTimeout(() => {
+        if (!ctrlBtnLocked(ip)) {
+          document.querySelectorAll(`[data-ctrlbtn="${ip}"]`).forEach(b => {
+            b.disabled = false; b.classList.remove('btn-locked', 'btn-pending');
+          });
+        }
+      }, _ctrlBtnLockMs);
+    }
+
+    async function deviceControl(ip, action) {
+      if (!ip || ctrlBtnLocked(ip)) return;   // 已鎖定 → 忽略連點
+      const endpoint = _CTRL_ENDPOINT[action];
+      if (!endpoint) return;
+      lockCtrlBtn(ip);
+      try {
+        await fetch(endpoint + ip, { method: 'POST' });
+      } catch (e) {
+        console.error(e);
+      } finally {
+        fetchStatus();
+      }
+    }
+
     async function closeWebPage(ip) {
       if (!ip || webBtnLocked(ip)) return;
       lockWebBtn(ip);
@@ -2894,6 +3066,7 @@
     let _lvIp = null;
     let _existingCarpark = {};
     let _existingWsToken = {};
+    let _existingWsTokenMining = {};
     // Live-view decode pipeline: single-slot pending, dropping older frames if
     // a newer one arrives before the current decode finishes. Combined with
     // createImageBitmap (off-main-thread JPEG decode), this caps decode-queue
@@ -3081,9 +3254,9 @@
 
         if (plannerSelect) {
 
-          const plannerVer = String(config.mining_planner_version || 'v4').toLowerCase();
+          const plannerVer = String(config.mining_planner_version || 'v5').toLowerCase();
 
-          plannerSelect.value = ['v1','v2','v3','v4'].includes(plannerVer) ? plannerVer : 'v4';
+          plannerSelect.value = ['v1','v3','v4','v5'].includes(plannerVer) ? plannerVer : 'v5';
 
         }
 
@@ -3091,12 +3264,37 @@
         // 避免 saveConfig 淺併時把 spend/open_lamp/... 等巢狀欄位整顆蓋掉
         // (同 _existingCarpark 的 stash-and-spread 模式)。
         _existingWsToken = (config.ws_token && typeof config.ws_token === 'object') ? config.ws_token : {};
-        const plan = (config.backend || 'adb') + (_existingWsToken.enabled === true ? '+ws' : '');
+        _existingWsTokenMining =
+          (config.ws_token_mining && typeof config.ws_token_mining === 'object')
+            ? config.ws_token_mining : {};
+        const baseBackend = config.backend || 'adb';
+        const plan = baseBackend === 'ws_token'
+          ? 'ws_token'
+          : baseBackend + (_existingWsToken.enabled === true ? '+ws' : '');
         document.getElementById('editBackend').value = plan;
 
+        const wsSelected = isWsPlanSelected(plan);
+        const chkWsOpenLamp = document.getElementById('chkWsOpenLamp');
+        // 反映存檔值（不被 +ws 方案強制打勾）；方案只在 toggleBackendInputs 控 enable。
+        chkWsOpenLamp.checked = config.ws_token_open_lamp === true || _existingWsToken.open_lamp === true;
+
+        // WS 競猜幣採購（菇菇武道會競猜商店；用粉鑽，活動沒開時伺服器擋下 = no-op）。
+        document.getElementById('chkWsKungfuGuess').checked = config.ws_token_kungfu_guess === true;
+
+        // 開神燈百分比 / 最低保留神燈數：純使用者數值，不隨方案選擇強制變動，只 load/save。
+        document.getElementById('inpWsLampPercent').value =
+          (typeof _existingWsToken.lamp_percent === 'number') ? _existingWsToken.lamp_percent : 0;
+        document.getElementById('inpWsLampMinKeep').value =
+          (typeof _existingWsToken.lamp_min_keep === 'number') ? _existingWsToken.lamp_min_keep : 0;
+
         const wsMining = _existingWsToken.mining;
-        document.getElementById('chkWsMining').checked =
-          !!(wsMining && typeof wsMining === 'object' && wsMining.enabled === true);
+        const chkWsMining = document.getElementById('chkWsMining');
+        // 反映存檔值（不被 +ws 方案強制打勾）；取消勾選 WS 挖礦才能存得起來。
+        chkWsMining.checked =
+          !!(wsMining && typeof wsMining === 'object' && wsMining.enabled === true) ||
+          !!(config.ws_token_mining && typeof config.ws_token_mining === 'object' && config.ws_token_mining.enabled === true);
+
+        document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
 
         document.getElementById('editWebUrl').value = config.web_url || '';
 
@@ -3148,6 +3346,14 @@
 
       const ip = document.getElementById('editIp').value;
 
+      const selectedBackendPlan = document.getElementById('editBackend').value || 'adb';
+
+      const wsSelected = isWsPlanSelected(selectedBackendPlan);
+
+      const wsOpenLamp = wsSelected && document.getElementById('chkWsOpenLamp').checked;
+
+      const wsKungfuGuess = wsSelected && document.getElementById('chkWsKungfuGuess').checked;
+
       const payload = {
 
         name: document.getElementById('editName').value,
@@ -3176,9 +3382,17 @@
 
         sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
-        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v4',
+        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v5',
 
-        backend: (document.getElementById('editBackend').value || 'adb').replace('+ws', ''),
+        backend: selectedBackendPlan.replace('+ws', ''),
+
+        use_ws_runner: selectedBackendPlan === 'ws_token',
+
+        ws_token_spend: wsSelected,
+
+        ws_token_open_lamp: wsOpenLamp,
+
+        ws_token_kungfu_guess: wsKungfuGuess,
 
         web_url: document.getElementById('editWebUrl').value.trim(),
 
@@ -3230,14 +3444,35 @@
       // ws_token: 方案 select 的 "+ws" 後綴 → ws_token.enabled。巢狀 dict 在
       // 後端是整顆替換，所以 merge 進 openSettings 暫存的 _existingWsToken，
       // 保留 spend/open_lamp/farm/dungeon_sweeps/... 等其餘欄位。
-      const wsEnabled = document.getElementById('editBackend').value.endsWith('+ws');
+      const wsEnabled = wsSelected;
       // WS 挖礦 opt-in：merge 進既有 mining dict，保留 allow_bomb/allow_drill/max_steps。
-      const wsMiningEnabled = document.getElementById('chkWsMining').checked;
+      const wsMiningEnabled = wsEnabled && document.getElementById('chkWsMining').checked;
       const existingWsMining =
         (_existingWsToken.mining && typeof _existingWsToken.mining === 'object')
           ? _existingWsToken.mining : {};
+      const existingTopLevelWsMining =
+        (_existingWsTokenMining && typeof _existingWsTokenMining === 'object')
+          ? _existingWsTokenMining : {};
+      payload.ws_token_mining = Object.assign(
+        { allow_bomb: false, allow_drill: false, max_steps: 200 },
+        existingTopLevelWsMining,
+        { enabled: wsMiningEnabled });
+      // 離線備援只在 adb+ws 方案有效（手機離線才有意義）。
+      const wsOfflineFallback =
+        selectedBackendPlan === 'adb+ws' && document.getElementById('chkWsOfflineFallback').checked;
+      // 開神燈百分比（float）/ 最低保留神燈數（int）：使用者直接輸入，與方案無關。
+      // NaN/空字串 -> 0，下限 0。
+      let lampPercent = parseFloat(document.getElementById('inpWsLampPercent').value);
+      if (!(lampPercent >= 0)) lampPercent = 0;
+      let lampMinKeep = parseInt(document.getElementById('inpWsLampMinKeep').value, 10);
+      if (!(lampMinKeep >= 0)) lampMinKeep = 0;
       payload.ws_token = Object.assign({}, _existingWsToken, {
         enabled: wsEnabled,
+        spend: wsSelected,
+        open_lamp: wsOpenLamp,
+        lamp_percent: lampPercent,
+        lamp_min_keep: lampMinKeep,
+        offline_fallback: wsOfflineFallback,
         mining: Object.assign(
           { allow_bomb: false, allow_drill: false, max_steps: 200 },
           existingWsMining,

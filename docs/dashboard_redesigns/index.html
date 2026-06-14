@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>菇勇者控制台 · 7 套儀表板改版方案比較</title>
+<style>
+  :root {
+    --bg: #0c0f1a;
+    --bg-2: #11152470;
+    --panel: #161b2e;
+    --panel-2: #1c2236;
+    --edge: #2a3150;
+    --edge-soft: #232a44;
+    --ink: #eef1fb;
+    --ink-2: #b6bdda;
+    --ink-3: #7d86ab;
+    --accent: #6c8cff;
+    --accent-2: #b07bff;
+    --lime: #5cf2a0;
+    --amber: #ffb338;
+    --radius: 16px;
+    --shadow: 0 10px 30px rgba(0,0,0,.45);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: "Noto Sans TC", "Segoe UI", system-ui, sans-serif;
+    color: var(--ink);
+    background:
+      radial-gradient(1200px 700px at 12% -8%, rgba(108,140,255,.14), transparent 60%),
+      radial-gradient(1000px 600px at 92% 4%, rgba(176,123,255,.12), transparent 60%),
+      var(--bg);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---- Hero / Intro ---- */
+  header.hero {
+    padding: 64px 0 28px;
+    border-bottom: 1px solid var(--edge-soft);
+  }
+  .eyebrow {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .28em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 52px);
+    line-height: 1.1;
+    margin: 0 0 18px;
+    font-weight: 800;
+    letter-spacing: -.02em;
+    background: linear-gradient(100deg, #fff 10%, #b6bdda 55%, #8b7bff 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+  .lede {
+    max-width: 760px;
+    font-size: 16px;
+    color: var(--ink-2);
+    margin: 0 0 8px;
+  }
+  .lede strong { color: var(--ink); }
+
+  /* ---- How to choose ---- */
+  .howto {
+    margin: 26px 0 6px;
+    display: grid;
+    grid-template-columns: 1.3fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 820px) { .howto { grid-template-columns: 1fr; } }
+  .howto-card {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: var(--radius);
+    padding: 18px 20px;
+  }
+  .howto-card h3 {
+    margin: 0 0 10px;
+    font-size: 14px;
+    letter-spacing: .04em;
+    color: var(--ink);
+  }
+  .howto-card p, .howto-card li { color: var(--ink-2); font-size: 14px; }
+  .howto-card ul { margin: 0; padding-left: 18px; }
+  .pick-call {
+    margin-top: 12px;
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 14px;
+    background: linear-gradient(120deg, rgba(108,140,255,.16), rgba(176,123,255,.16));
+    border: 1px solid var(--edge);
+    border-radius: 12px;
+    padding: 12px 14px;
+    color: var(--ink);
+  }
+  .pick-call b { color: var(--lime); }
+
+  /* ---- Quick index (numbered jump list) ---- */
+  .toc {
+    margin: 22px 0 8px;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 10px;
+  }
+  .toc a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 12px;
+    padding: 11px 14px;
+    transition: transform .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .toc a:hover { transform: translateY(-2px); border-color: var(--accent); background: var(--panel-2); }
+  .toc .num {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--accent);
+    min-width: 28px;
+  }
+  .toc .tname { font-size: 14px; font-weight: 600; color: var(--ink); }
+  .toc .tslug { font-size: 11px; color: var(--ink-3); font-family: "Space Mono", ui-monospace, monospace; }
+
+  /* ---- Section heads ---- */
+  .section-title {
+    margin: 48px 0 18px;
+    font-size: 13px;
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-family: "Space Mono", ui-monospace, monospace;
+  }
+
+  /* ---- Design cards ---- */
+  .design {
+    background: linear-gradient(180deg, var(--panel), var(--bg-2));
+    border: 1px solid var(--edge);
+    border-radius: 20px;
+    padding: 24px;
+    margin: 0 0 30px;
+    box-shadow: var(--shadow);
+    scroll-margin-top: 24px;
+  }
+  .design-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+  .badge-num {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-weight: 700;
+    font-size: 26px;
+    width: 56px; height: 56px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 14px;
+    color: #0c0f1a;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    flex: 0 0 auto;
+    box-shadow: 0 6px 18px rgba(108,140,255,.4);
+  }
+  .design-head .meta { flex: 1 1 320px; min-width: 240px; }
+  .design-head h2 {
+    margin: 0 0 4px;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: -.01em;
+  }
+  .design-head .slug {
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 12px;
+    color: var(--ink-3);
+  }
+  .open-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 15px;
+    color: #0c0f1a;
+    background: linear-gradient(120deg, var(--lime), #7dffc0);
+    border: none;
+    border-radius: 12px;
+    padding: 13px 22px;
+    box-shadow: 0 8px 22px rgba(92,242,160,.32);
+    transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+    flex: 0 0 auto;
+    align-self: center;
+  }
+  .open-btn:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(92,242,160,.45); filter: brightness(1.05); }
+  .open-btn:active { transform: translateY(0); }
+  .open-btn .arrow { font-size: 18px; }
+
+  .summary {
+    color: var(--ink-2);
+    font-size: 14.5px;
+    margin: 0 0 18px;
+  }
+
+  /* ---- Detail grid: palette / type / moves ---- */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 18px;
+  }
+  @media (max-width: 760px) { .detail-grid { grid-template-columns: 1fr; } }
+  .detail-box {
+    background: var(--panel-2);
+    border: 1px solid var(--edge-soft);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .detail-box h4 {
+    margin: 0 0 8px;
+    font-size: 11px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-family: "Space Mono", ui-monospace, monospace;
+  }
+  .detail-box p { margin: 0; font-size: 13px; color: var(--ink-2); }
+  .moves { grid-column: 1 / -1; }
+  .moves ul { margin: 0; padding-left: 18px; }
+  .moves li { font-size: 13px; color: var(--ink-2); margin-bottom: 6px; }
+
+  /* ---- Preview frame ---- */
+  .preview {
+    position: relative;
+    border: 1px solid var(--edge);
+    border-radius: 14px;
+    overflow: hidden;
+    background: #05060c;
+    height: 460px;
+  }
+  .preview-label {
+    position: absolute;
+    top: 10px; left: 12px;
+    z-index: 3;
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 11px;
+    letter-spacing: .1em;
+    color: var(--ink-2);
+    background: rgba(8,10,20,.7);
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    padding: 4px 10px;
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+  }
+  /* scaled iframe trick: render at 1440 wide, scale to fit */
+  .scaler {
+    position: absolute;
+    top: 0; left: 0;
+    width: 1440px;
+    height: 1314px;            /* 460 / 0.35 ≈ 1314 */
+    transform: scale(.35);
+    transform-origin: top left;
+    border: 0;
+  }
+  .preview .ph {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--ink-3);
+    font-family: "Space Mono", ui-monospace, monospace;
+    font-size: 13px;
+    z-index: 1;
+  }
+  .preview .open-overlay {
+    position: absolute;
+    bottom: 12px; right: 12px;
+    z-index: 3;
+    text-decoration: none;
+    font-size: 12px;
+    font-family: "Space Mono", ui-monospace, monospace;
+    color: var(--ink);
+    background: rgba(8,10,20,.78);
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    padding: 6px 12px;
+    backdrop-filter: blur(6px);
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .preview .open-overlay:hover { border-color: var(--lime); color: var(--lime); }
+
+  footer {
+    border-top: 1px solid var(--edge-soft);
+    margin-top: 40px;
+    padding: 28px 0 60px;
+    color: var(--ink-3);
+    font-size: 13px;
+  }
+  footer code {
+    font-family: "Space Mono", ui-monospace, monospace;
+    color: var(--ink-2);
+    background: var(--panel);
+    border: 1px solid var(--edge-soft);
+    border-radius: 6px;
+    padding: 2px 7px;
+  }
+
+  /* swatch row */
+  .swatches { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .swatches span {
+    width: 18px; height: 18px; border-radius: 5px;
+    border: 1px solid rgba(255,255,255,.18);
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Dashboard Redesign · Pick One</p>
+    <h1>菇勇者控制台 — 7 套儀表板改版方案</h1>
+    <p class="lede">這是同一份 dashboard 的 <strong>7 種完整視覺方向</strong>，每一套都是可獨立開啟的 standalone HTML，內含 8 台假裝置（涵蓋 ONLINE / PAUSED / OFFLINE / DEGRADED / DISABLED 各種狀態）、所有 modal、倒數計時、泊車展開、每日進度與 live-view 等真實結構，並保留了原儀表板的所有 element ID、status class 與按鈕 pending lock 語意。</p>
+    <p class="lede">下方每個方案都附 <strong>一行摘要、signature moves、配色與字體說明</strong>，加上「開啟此方案」連結與一個內嵌縮放預覽。看完後直接回覆 <strong>「用 N 號」</strong> 即可，我會把那一套實作成正式的 <code style="font-family:'Space Mono',monospace;color:#eef1fb;background:#161b2e;border:1px solid #2a3150;border-radius:6px;padding:2px 6px;">templates/dashboard.html</code>。</p>
+
+    <div class="howto">
+      <div class="howto-card">
+        <h3>怎麼挑</h3>
+        <ul>
+          <li><strong>氛圍偏好</strong>：要深色科技感（1/7 號）、極簡紙感（2 號）、還是溫暖明亮（5/8 號）。</li>
+          <li><strong>資訊密度</strong>：座艙/終端機資訊最密；Swiss/編輯風最克制好讀。</li>
+          <li><strong>個性強度</strong>：粗獷主義最張揚；柔光 / Swiss 最低調耐看。</li>
+          <li><strong>長時間盯著看</strong>：建議優先試淺色柔光、Swiss、Bento 三套。</li>
+        </ul>
+      </div>
+      <div class="howto-card">
+        <h3>選定之後</h3>
+        <p>我會把選定方案落地成正式 <code>templates/dashboard.html</code>，<strong>保留全部 JS / data hook</strong>（element ID、status class、polling 節奏、optimistic button-lock），只換視覺層，不動後端與輪詢邏輯。</p>
+        <div class="pick-call">回覆範例 → <b>用 1 號</b> / <b>用 5 號</b></div>
+      </div>
+    </div>
+
+    <nav class="toc" aria-label="方案快速跳轉">
+      <a href="#d1"><span class="num">1</span><span><span class="tname">深色玻璃座艙</span><br><span class="tslug">dark-glass-cockpit</span></span></a>
+      <a href="#d2"><span class="num">2</span><span><span class="tname">Swiss / International</span><br><span class="tslug">swiss-grid</span></span></a>
+      <a href="#d3"><span class="num">3</span><span><span class="tname">新粗獷主義中控台</span><br><span class="tslug">neo-brutalist</span></span></a>
+      <a href="#d4"><span class="num">4</span><span><span class="tname">The Daily Dispatch 報刊</span><br><span class="tslug">editorial-magazine</span></span></a>
+      <a href="#d5"><span class="num">5</span><span><span class="tname">Bento 模組</span><br><span class="tslug">bento-modular</span></span></a>
+      <a href="#d6"><span class="num">6</span><span><span class="tname">復古終端機 CRT</span><br><span class="tslug">retro-terminal</span></span></a>
+      <a href="#d7"><span class="num">7</span><span><span class="tname">淺色柔光 Soft Ops</span><br><span class="tslug">light-soft-ops</span></span></a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <p class="section-title">// 七套方案 · 逐一比較</p>
+
+  <!-- ============ 1 ============ -->
+  <article class="design" id="d1">
+    <div class="design-head">
+      <div class="badge-num">1</div>
+      <div class="meta">
+        <h2>深色玻璃座艙 (Dark Glass Cockpit)</h2>
+        <div class="slug">dark-glass-cockpit.html</div>
+      </div>
+      <a class="open-btn" href="dark-glass-cockpit.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">真正分層玻璃擬態（不是平面深色模式）：深藍紫漸層底打上青/洋紅/紫的徑向光池、SVG 雜訊顆粒與緩慢飄移的掃描光帶。每一層面板都是半透明玻璃（backdrop-blur+saturate）配內高光/外陰影雙重陰影與髮絲邊框，深度靠堆疊與模糊呈現。8 台裝置各帶會發光脈動的狀態環、依狀態著色的頂部 accent rail、雙列任務讀數與琥珀色倒數 chip、2x2 遙測格、可展開泊車進度條與 monospace 日誌框。完整按鈕互動狀態系統（hover 上浮+光掃、focus neon ring、active 按壓、disabled、pending spinner）。Playwright 1440/390 驗過、零 JS error。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>深淵藍黑底 #060810 / #0a0e1f / #11162e 上打徑向光池。Neon 語意色：青 #34e7ff（主色/ADB）、洋紅 #ff4fd8（H5/警示）、紫 #8b7bff（泊車/WS）、萊姆 #5cf2a0（ONLINE）、琥珀 #ffb338（PAUSED/倒數）、紅 #ff5d6c（危險）。</p>
+        <div class="swatches"><span style="background:#34e7ff"></span><span style="background:#ff4fd8"></span><span style="background:#8b7bff"></span><span style="background:#5cf2a0"></span><span style="background:#ffb338"></span><span style="background:#ff5d6c"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>三聲部：Display = Sora（漸層標題、裝置名、大遙測數字）；Body = Noto Sans TC（繁中 UI）；Mono = Space Mono（所有遙測：IP、日誌、倒數、狀態碼），強化儀表讀數感、把機器資料與人類標籤分開。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>真正分層玻璃擬態：多徑向漸層底 + backdrop-blur/saturate + 內高光/外陰影 + 髮絲邊 + SVG 顆粒 + 飄移掃描光帶。</li>
+          <li>發光脈動狀態環：裝置肖像帶依狀態著色的環，ONLINE/DEGRADED 會 compositor-only 脈動，配狀態 accent rail 與心跳脈點。</li>
+          <li>完整按鈕狀態系統：青/洋紅/琥珀/萊姆/危險/ghost/漸層 tonal 變體，各含 hover 光掃、上浮、focus neon ring、active 縮放、pending spinner。</li>
+          <li>破格編輯式排版：非對稱頂部列（漸層標題 + mono OCR 狀態條 / 程式資訊卡 + 分段控制群），4-up 遙測條含 SVG sparkline。</li>
+          <li>資料視覺化即系統：sparkline、青→洋紅泊車進度條、寶石品質直方圖、會動的挖礦 live-view canvas。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="dark-glass-cockpit.html" loading="lazy" title="dark-glass-cockpit 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="dark-glass-cockpit.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 2 ============ -->
+  <article class="design" id="d2">
+    <div class="design-head">
+      <div class="badge-num">2</div>
+      <div class="meta">
+        <h2>Swiss / International</h2>
+        <div class="slug">swiss-grid.html</div>
+      </div>
+      <a class="open-btn" href="swiss-grid.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">嚴格的國際主義排版控制面：可見的模組化網格，每張裝置卡都與鄰卡共用同一條 1px ink 髮絲線（零間距），主導性的窄體 grotesque 報頭（其中一個詞用朱紅），數字被當成主要設計材料——超大 tabular-mono 倒數、每段/每台的索引號（00-08）、比例排版（05/08、04/06）。近單色米白紙 #F2F0E9 + 近黑 ink #15140E，只有唯一 accent 國際朱紅 #E63916（幾乎只用在主要動作與 live pulse）。狀態靠卡片左緣 2px 垂直「脊」髮絲線表達而非色塊，配色維持紀律。14 個 spec 區塊全數到位，零圓角、零陰影、淡 SVG 紙顆粒。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>紙 #F2F0E9 / #EAE7DD / #FBFAF6；ink #15140E 配多階灰；髮絲線 #15140E + 柔線 #C9C5B6；唯一 accent 朱紅 #E63916。狀態近單色：PAUSED 赭 #B07A0C、OFFLINE 灰 #9C9A8B、DEGRADED 暗青 #1E6E63。</p>
+        <div class="swatches"><span style="background:#F2F0E9"></span><span style="background:#15140E"></span><span style="background:#E63916"></span><span style="background:#B07A0C"></span><span style="background:#1E6E63"></span><span style="background:#9C9A8B"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>四角色 Swiss：Archivo（800/900）大標題與裝置名；Archivo Narrow（600/700）小型大寫 tracked 標籤與按鈕；Space Mono 所有數字（倒數/IP/比例/索引/日誌）做 tabular 對齊；Noto Sans TC 作 CJK 夥伴。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>零間距模組化網格：裝置卡共用單條 1px ink 髮絲線，整支機隊讀成一張有刻度的帳本，網格是可見而非隱含的。</li>
+          <li>數字當主角：超大 Space-Mono tabular 倒數（分/秒單位字縮小）、區塊與卡片索引號 00-08、比例排版、報頭旁巨大低對比 ghost「00」。</li>
+          <li>單 accent 紀律 + 狀態脊：朱紅幾乎只出現在主 CTA 與 live pulse；裝置狀態用左緣 2px 垂直色脊 + 髮絲邊 tracked tag，配色永不氾濫。</li>
+          <li>編輯式非對稱報頭：clamp 76px 窄體標題、髮絲 tick kicker 列、mono 日期，配右對齊 OCR 狀態堆疊。</li>
+          <li>單一按鈕語言的完整互動狀態：髮絲分隔按鈕 hover 反轉成實心 ink、主按鈕 accent 填色、async 進入真實 pending（pulse + 旋轉 mono spinner）。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="swiss-grid.html" loading="lazy" title="swiss-grid 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="swiss-grid.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 3 ============ -->
+  <article class="design" id="d3">
+    <div class="design-head">
+      <div class="badge-num">3</div>
+      <div class="meta">
+        <h2>新粗獷主義中控台 (Neo-Brutalist Control Deck)</h2>
+        <div class="slug">neo-brutalist.html</div>
+      </div>
+      <a class="open-btn" href="neo-brutalist.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">徹底的 neo-brutalist 改版：每個表面都用 4-6px 純黑 ink 邊框、零模糊硬偏移投影、高飽和原色平塗塊，鋪在暖色點點報紙紙理上，Archivo Black 大寫 display + Space Mono 標籤。7 台裝置涵蓋全部五種狀態，旋轉貼紙狀態標、backend chip（adb/+ws/h5/真機/v5）、可展開泊車列含迷你進度條、終端綠日誌框、貼紙式每日進度徽章。每顆按鈕 :active 會實體下壓（位移 + 陰影歸零），含斜紋 disabled 與脈動 spinner pending。所有區塊、Labeler/Readme/倉庫頁與 6 個 modal 全保留；headless 驗過 HTTP 200、響應式 1440/1024/768/390 + reduced-motion fallback。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>Ink #0d0d0d 鋪報紙紙 #f4ecd8 / #ece1c4 與純白塊。高飽和：黃 #ffd400、粉 #ff5da2、青 #1fd6c9(DEGRADED)、萊姆 #b4ff39(ONLINE)、橘 #ff6b35(PAUSED)、藍 #2d6cff、紅 #ff2e2e、紫 #9b6bff(H5)。OFFLINE 去飽和 #b8b0a0、DISABLED 斜紋 #cfc6b2。</p>
+        <div class="swatches"><span style="background:#ffd400"></span><span style="background:#ff5da2"></span><span style="background:#1fd6c9"></span><span style="background:#b4ff39"></span><span style="background:#ff6b35"></span><span style="background:#9b6bff"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>Archivo Black（厚重 grotesk 大寫）所有 display 標題與大數字，報頭帶白色 text-shadow；Space Mono（700/400）所有標籤/按鈕/chip/日誌/表格/表單，強化原始機器感；Noto Sans TC 700 撐繁中內文。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>會實體下壓的按鈕：每顆 .btn 靠 4px 硬偏移陰影，:active 位移 +4/+4px 同時陰影歸零，配斜紋 disabled 與雙 keyframe pending spinner。</li>
+          <li>滿版旋轉貼紙標：狀態徽章 3deg 傾斜浮在卡片上方各帶 ink 邊與偏移陰影；每日進度徽章交替 ±1deg，整頁讀起來像手工貼上。</li>
+          <li>暖報紙原始結構構圖：固定徑向點紙理、ink 側欄黃底線、飽和黃報頭白陰影標題、非對稱 5 塊摘要條（各不同平塗色，一塊內含 ink 迷你長條圖）。</li>
+          <li>可見內部結構：裝置資訊是真實 2 欄 ink 分隔格，日誌是黑終端貼紙配萊姆 mono 與「› 」提示符，泊車列展開顯示每掛載剩餘時間條。</li>
+          <li>氛圍 + 目的性動態維持 compositor-friendly：斜紋 modal scrim、頁面/modal 只用 transform/opacity、live-view 只在開啟時跑動畫挖礦 canvas，全部 gated 在 prefers-reduced-motion。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="neo-brutalist.html" loading="lazy" title="neo-brutalist 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="neo-brutalist.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 4 ============ -->
+  <article class="design" id="d4">
+    <div class="design-head">
+      <div class="badge-num">4</div>
+      <div class="meta">
+        <h2>The Daily Dispatch（編輯報刊風）</h2>
+        <div class="slug">editorial-magazine.html</div>
+      </div>
+      <a class="open-btn" href="editorial-magazine.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">把控制面重新想像成高級印刷報紙——「The Daily Dispatch, Autopilot Edition」。頂部變成真正的報頭：旗線帶中文數字日期與「edition」戳記、置中斜體 Playfair Display 報名框在三重橫線裡，下方四欄控制條載 OCR 狀態、版本「byline」與指令群。內文跑在編號式編輯脊（01 數字看板、02 田野報告），朱紅 display 數字標記、mono kicker、粗底線。每台裝置都當成一篇雜誌文章：狀態邊條當欄邊線、serif「導言」寫當前任務、髮絲帳本式統計表、每日進度當「Daily Contents」清單、反白 ink「WIRE」日誌。全 modal、按鈕 lock/spinner、泊車展開與動畫 live-view canvas 都實作；響應式 + reduced-motion + 焦點狀態齊全。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>暖報紙 #f4efe4 / 卡紙 #fbf8f0 / 深紙 #ece4d3；近黑 ink #1c1812 配多階灰；髮絲線 #c9bfa8。編輯式 accent 節制使用：朱紅 #c2401c（旗/警示/offline）、森綠 #2f6b41（online）、赭 #b9831f（paused）、青 #1f6b6b（degraded/WS）、靛 #2a3b66（連結）。</p>
+        <div class="swatches"><span style="background:#c2401c"></span><span style="background:#2f6b41"></span><span style="background:#b9831f"></span><span style="background:#1f6b6b"></span><span style="background:#2a3b66"></span><span style="background:#f4efe4"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>Playfair Display（900/700 斜體）報名/區段數字/卡片標題/modal 頭；Spectral serif 導言/步驟/表單輸入；Archivo grotesque sans 作 UI 標籤/按鈕；JetBrains Mono kicker/IP/WIRE 日誌/metadata；Noto Serif TC 作 CJK fallback。靠極端尺度對比（78px 斜體報名 vs 9px mono kicker）。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>報頭即頭版：旗線（中文數字日期 + edition 戳 + 框價）、置中 78px 斜體 Playfair 報名、三重橫線框、四欄 ruled 控制條，讀成報紙 folio 而非 header bar。</li>
+          <li>編號式編輯脊：超大朱紅斜體 display 數字 01/02 配 mono kicker 與粗底線，右對齊斜體 standfirst 打破對稱網格。</li>
+          <li>裝置卡渲染成雜誌文章：狀態欄邊條、serif「Now Running」導言、髮絲帳本統計表、「Daily Contents」清單、反白 ink「WIRE」日誌。</li>
+          <li>編輯式按鈕系統：hover 由底向上 scaleY ink 填充、完整 pending/spinner 透明字 wipe、語意色變體、設計過的 disabled/active/focus-visible。</li>
+          <li>資料視覺化融入設計語言：「By the Numbers」資訊條 40px 斜體數字 + 編輯式 sparkline 條，泊車進度條在 grid-row 模板的展開列裡。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="editorial-magazine.html" loading="lazy" title="editorial-magazine 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="editorial-magazine.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 5 ============ -->
+  <article class="design" id="d5">
+    <div class="design-head">
+      <div class="badge-num">5</div>
+      <div class="meta">
+        <h2>Bento 模組 (Bento Grid)</h2>
+        <div class="slug">bento-modular.html</div>
+      </div>
+      <a class="open-btn" href="bento-modular.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">溫暖「榻榻米」便當盒儀表板：米白紙底（帶淡 SVG 顆粒）上放刻意大小不一的漆面圓角磚塊，排在 12 欄網格上。8 台裝置各自成磚，配友善 emoji 頭像、依狀態著色的左緣「漆框」、色相暈染標頭、便當分隔格放任務/步驟/backend/planner 資料、會動的 SVG 喚醒倒數錶盤。Feature 磚跨 6 欄內嵌挖礦深度長條圖；寬磚、高磚與標準磚製造節奏與破格變化。多色相但和諧（薄荷/天藍/蜜桃/薰衣草/琥珀/玫瑰/石板），全部柔化成暖調。每顆按鈕 hover-lift / active-press / focus-ring / disabled / pending-spinner 齊全；響應式含手機抽屜 + FAB。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>畫布暖榻榻米米白 #f4efe6 / #efe8db；暖近黑 ink #2b2620；表面 #fff / #faf6ee。七組和諧磚色：薄荷 #3fb389、天藍 #4aa0dd、蜜桃 #e8895a、薰衣草 #9a7ee0、琥珀 #e0a939、玫瑰 #e26b86、石板 #9aa3b2。狀態 ok/warn/off/degraded/danger 對應其中。</p>
+        <div class="swatches"><span style="background:#3fb389"></span><span style="background:#4aa0dd"></span><span style="background:#e8895a"></span><span style="background:#9a7ee0"></span><span style="background:#e0a939"></span><span style="background:#e26b86"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>Sora（display：幾何有個性）標題/裝置名/大數字/喚醒錶盤讀數，大字負字距；Manrope（人文 sans）內文/標籤/按鈕，小字高可讀；JetBrains Mono ID/IP/時戳/ms/日誌，標示機器資料。兩 display/body + 一 mono，符合 prose 兩字族規則。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>大小不一便當網格：真實 12 欄、刻意混合 span（6 欄 feature 磚含挖礦深度長條圖、6 欄寬磚 4-up 分隔、高磚與標準磚），非均一 auto-fill 卡網格。</li>
+          <li>漆面狀態系統：每磚左緣色框 hover 變寬，標頭後有遮罩色相暈染，狀態當「材質/顏色」瞬讀而非重著色徽章。</li>
+          <li>會動的 SVG 喚醒倒數錶盤：stroke-dashoffset 環配 emoji 中心，每秒跳動，醒/睡/離線間切主題（😴/🟢/💤），把下次喚醒計時器變成裝置焦點指標。</li>
+          <li>便當「分隔格」圖標：每日任務進度與裝置資訊渲染成小子盒/chip 各帶專屬 emoji（🔥🌾⛏️🪔🅿️），強化便當盒隱喻與可掃描層次。</li>
+          <li>完整互動狀態含真實 pending-spinner：每顆按鈕 hover-lift / press-inset / focus-ring / disabled，control/web 進入脈動 spinner lock（2s/3s）鏡像真實 debounce，含 web 開↔關 label/icon 互換。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="bento-modular.html" loading="lazy" title="bento-modular 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="bento-modular.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 6 ============ -->
+  <article class="design" id="d6">
+    <div class="design-head">
+      <div class="badge-num">6</div>
+      <div class="meta">
+        <h2>復古終端機 (Retro-Futuristic CRT Control Terminal)</h2>
+        <div class="slug">retro-terminal.html</div>
+      </div>
+      <a class="open-btn" href="retro-terminal.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">賽博龐克 CRT 作戰室終端機。一切都是 monospace 磷光鋪在近黑上，框成命令列：標題是 <code style="font-family:'Space Mono',monospace;font-size:12px;background:#11152470;border:1px solid #232a44;border-radius:5px;padding:1px 5px;color:#b6bdda;">root@ops_</code> 提示符配閃爍游標，每顆按鈕帶 sigil（$ || ▶ ⟳）與指令式標籤，modal 是終端視窗含紅綠燈點與 <code style="font-family:'Space Mono',monospace;font-size:12px;background:#11152470;border:1px solid #232a44;border-radius:5px;padding:1px 5px;color:#b6bdda;">cfg@&lt;ip&gt; :: edit</code> 提示，區段標題是 ASCII 橫線分隔（<code style="font-family:'Space Mono',monospace;font-size:12px;background:#11152470;border:1px solid #232a44;border-radius:5px;padding:1px 5px;color:#b6bdda;">// DEVICE_MATRIX</code>）。裝置卡成「unit」配脈動 LED 狀態點（ONLINE 擴張環、PAUSED 閃爍）、2 欄讀數格、可展開泊車列含水平時間條、<code style="font-family:'Space Mono',monospace;font-size:12px;background:#11152470;border:1px solid #232a44;border-radius:5px;padding:1px 5px;color:#b6bdda;">[x]/[ ]</code> 每日進度、彩色 INFO/WARN/ERR 日誌。數值用 VT323 CRT 字大尺寸呈現。層疊 CRT 氛圍：掃描線、動態顆粒、滾動掃描光暈、暈影管面曲率。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>近黑底 #04070a / #0a1014 疊淡徑向綠/青暈。三磷光語意色：綠 #39ffb0（主/ONLINE）、琥珀 #ffb454（警/PAUSED）、青 #5ad9ff（資訊/DEGRADED/泊車）。洋紅 #ff5db1（破壞/警示）、紫 #b58bff（build/planner）、紅 #ff5a52（錯誤）。內文去飽和薄荷 #cfeede。</p>
+        <div class="swatches"><span style="background:#39ffb0"></span><span style="background:#ffb454"></span><span style="background:#5ad9ff"></span><span style="background:#ff5db1"></span><span style="background:#b58bff"></span><span style="background:#04070a"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>雙 monospace：JetBrains Mono（400-800 + 斜體）所有 UI/標籤/內文，乾淨終端個性、寬權重；VT323（真 bitmap CRT 字）只用在大數值讀出（倒數/ms/機隊統計/寶石品質/等級），數字像七段顯示般發光，與內文 mono 強尺度對比。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>命令列框架即核心設計語言：提示符標題配閃爍游標、每顆按鈕前綴終端 sigil、modal 渲染成終端視窗（紅綠燈 + 提示符）、ASCII 重複虛線作區段分隔。</li>
+          <li>從頭打造的層疊 CRT 氛圍：multiply 掃描線、SVG 顆粒用 steps() 動畫、緩慢 translateY 滾動掃描光暈、暈影 + 內陰影偽造管面曲率，全 compositor-friendly 且 reduced-motion 停用。</li>
+          <li>狀態即實體 LED 硬體：每 unit 發光 LED 點，ONLINE 發擴張脈動環、PAUSED 用 steps() 硬閃；OFFLINE/DISABLED 去飽和變暗像死頻道，accent 色由單一 --accent CSS var 驅動。</li>
+          <li>雙字族排版層次：VT323 bitmap 數字 18-34px 所有 live 資料對 JetBrains Mono 內文，尺度對比 + 真七段讀出感。</li>
+          <li>資料視覺化融入系統：摘要區機隊 sparkline 條、可展開泊車列水平剩餘時間條、倉庫 CRT 數字 chip 寶石品質直方圖。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="retro-terminal.html" loading="lazy" title="retro-terminal 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="retro-terminal.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+  <!-- ============ 7 ============ -->
+  <article class="design" id="d7">
+    <div class="design-head">
+      <div class="badge-num">7</div>
+      <div class="meta">
+        <h2>淺色柔光 · Soft Ops (Light Luxury / Soft UI)</h2>
+        <div class="slug">light-soft-ops.html</div>
+      </div>
+      <a class="open-btn" href="light-soft-ops.html" target="_blank" rel="noopener"><span class="arrow">↗</span> 開啟此方案</a>
+    </div>
+    <p class="summary">通透、高級消費級的「Soft Ops」控制面，是深色座艙的刻意對立面。暖去飽和紙底配多層粉彩漸層氛圍（右上蜜桃、左上藍、底玫瑰）與淡 multiply 顆粒，讓平面也有質地。每個凸起表面用一致的雙光源 neumorphic 陰影（左上高光、右下柔棕影）與超大圓角（最高 30px）。版面重組成：可收合左側狀態欄（74/230px）、編輯式 sticky 頂欄含超大 Fraunces serif 標題、非對稱機隊總覽條（健康條 + 甜甜圈 + sparkline 式資料視覺化）、便當但不均一的裝置網格（第一張卡用 1.3fr 跨更寬）、守護靈/神器附魔的倉庫入口橫幅。8 台裝置涵蓋全狀態，6 個 modal 用 inset soft-UI 表單。1440px 與 375px 都 live-verified。</p>
+    <div class="detail-grid">
+      <div class="detail-box">
+        <h4>Palette</h4>
+        <p>暖紙畫布 #f4f0ea / #efe9e1 / #fbf8f3 / inset #e9e2d8；ink #33302b / #6f685d / #a39b8d 配 #e3dccf 髮絲。六組柔寶石語意對：鼠尾草 #7d9b76(online)、琥珀 #cf9a52(paused/accent)、玫瑰 #c97f7f(警示)、石板 #7e8aa3(web/adb)、青 #5fa3a0(degraded)、淡紫 #9487b5(ws)。招牌漸層 #f0c378→#e29b6f→#cf85a0。</p>
+        <div class="swatches"><span style="background:#7d9b76"></span><span style="background:#cf9a52"></span><span style="background:#c97f7f"></span><span style="background:#7e8aa3"></span><span style="background:#5fa3a0"></span><span style="background:#9487b5"></span></div>
+      </div>
+      <div class="detail-box">
+        <h4>Typography</h4>
+        <p>Fraunces（光學尺寸 serif，360-800 含真斜體）所有 display：品牌/頁標題/裝置名/區段頭/modal 標題/大數字，給「light luxury」編輯個性；Manrope（人文幾何 sans，400-800）內文/標籤/按鈕/導覽；Spline Sans Mono 所有機器資料（IP/倒數/ms/日誌）。serif/sans/mono 三元建立尺度對比層次。</p>
+      </div>
+      <div class="detail-box moves">
+        <h4>Signature Moves</h4>
+        <ul>
+          <li>一致雙光源 neumorphic 陰影系統（--sh-up / --sh-in / --sh-float）套在每個表面，深度是真設計語言；pressed/inset 狀態真的看起來凹陷、卡片浮起，含設計過的 .btn:active 翻成 inset。</li>
+          <li>機隊總覽條把資料視覺化當系統：分段 soft-inset 健康條配語意圖例、SVG 漸層甜甜圈表 OCR 成功率、進度條，取代通用 KPI 數字卡列。</li>
+          <li>編輯式排版構圖：超大 Fraunces 標題含斜體玫瑰「em」字與大寫 tracked eyebrow、非對稱第一張裝置卡（1.3fr）、左狀態欄呼吸點，破格而非均一。</li>
+          <li>每裝置狀態同時多層線索：左上色相徑向弧光暈、左緣狀態珠、呼吸語意 pill、offline/disabled 去飽和，全由單一 status class 驅動。</li>
+          <li>滿版互動狀態：漸層主按鈕 hover 光掃、gear icon hover 轉 60deg、ghost 按鈕上浮加柔影、.btn-pending spinner 隱字保留 lock 語意、可存取自訂 soft toggle :active 加寬。</li>
+        </ul>
+      </div>
+    </div>
+    <div class="preview">
+      <span class="preview-label">即時預覽 · 縮放至 35%</span>
+      <div class="ph">載入預覽中…</div>
+      <iframe class="scaler" data-src="light-soft-ops.html" loading="lazy" title="light-soft-ops 預覽" scrolling="no"></iframe>
+      <a class="open-overlay" href="light-soft-ops.html" target="_blank" rel="noopener">全螢幕開啟 ↗</a>
+    </div>
+  </article>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>7 套方案皆為自包含 standalone HTML，位於 <code>docs/dashboard_redesigns/</code>。預覽以 iframe 縮放至 35% 呈現，可能與全螢幕略有差異，請點「全螢幕開啟」看完整效果。</p>
+    <p>挑好後回覆 <strong style="color:#5cf2a0;">「用 N 號」</strong>，我會把該方案落地成正式 <code>templates/dashboard.html</code>，完整保留現有 JS / data hook（element ID、status class、polling 節奏、optimistic button-lock），只替換視覺層。</p>
+  </div>
+</footer>
+
+<script>
+  // Lazy-load iframes only when they scroll near the viewport, so opening
+  // index.html doesn't fire 7 full dashboards at once.
+  (function () {
+    var frames = document.querySelectorAll('iframe.scaler[data-src]');
+    function load(frame) {
+      if (frame.dataset.loaded) return;
+      frame.dataset.loaded = '1';
+      frame.src = frame.getAttribute('data-src');
+      frame.addEventListener('load', function () {
+        var ph = frame.parentElement.querySelector('.ph');
+        if (ph) ph.style.display = 'none';
+      });
+    }
+    if ('IntersectionObserver' in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { load(e.target); io.unobserve(e.target); }
+        });
+      }, { rootMargin: '300px 0px' });
+      frames.forEach(function (f) { io.observe(f); });
+    } else {
+      frames.forEach(load);
+    }
+  })();
+</script>
+
+</body>
+</html>

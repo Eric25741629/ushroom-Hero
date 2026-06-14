@@ -66,23 +66,44 @@ DEFAULT_DEVICE_CONFIG = {
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v4",  # v1 / v3 / v4 (v4 default — planner-eval 2026-06-05; v2 removed)
+    "mining_planner_version": "v5",  # v1 / v3 / v4 / v5 (v5 default — priors-driven, planner-eval 2026-06-12; v2 removed)
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
         "enabled": False,       # 喚醒後先跑純 WS 任務，成功項由 Playwright 階段跳過
         "bootstrap_token": True, # ADB 裝置缺 capture/登入失敗時主動冷啟 App 撈 token
-        "spend": False,         # 家族捐獻/管家代購/掃蕩/續約 等花費類
-        "open_lamp": False,     # WS 開神燈（一批，取代 Playwright 開神燈）
+        "offline_fallback": False, # 手機 ADB 不可達時改跑純 WS 等待迴圈（離線備援），預設 off
+        "fallback_host": "",    # 限定哪台主機跑離線備援（hostname，不分大小寫）；空 = 只有 master（防 NAS 同步雙主機注入互踢）
+        # 2026-06-12 使用者指示：enabled 開了就代表全要 → 子功能預設全開
+        "spend": True,          # 家族捐獻/管家代購/掃蕩/續約 等花費類
+        "open_lamp": True,      # WS 開神燈（一批，取代 Playwright 開神燈）
+        "lamp_percent": 0,      # WS 開神燈：依當前神燈總數的百分比決定本輪目標（0 = 不依百分比，開到沒燈）
+        "lamp_min_keep": 0,     # WS 開神燈：剩餘神燈硬地板（0 = 無下限）
         "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
         "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
-        "carpark_target": None, # 跨界停車 master_id（只停不收）
+        "carpark_target": None, # 跨界停車 master_id（只停不收；legacy 單停模式）
+        "carpark_auto": False,  # 跨界自動掃可停 lot（legacy 單停模式）
+        "carpark_plan": {       # 日/夜窗口跨界停車（限定泊銀、優先鉑銀9/10、抱團優先；窗口內持續補停）
+            "enabled": False,
+            "silver_levels": [9, 10],  # 優先鉑銀 lot 等級；滿了退其他泊銀 lot
+            # 跨界車位只開放台灣 10:00-22:00；夜窗 cross=0（本服車位遊戲內建自動化）
+            "day":   {"window": ["10:00", "22:00"], "cross": 1},
+            "night": {"window": ["22:00", "10:00"], "cross": 0},
+        },
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
         "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
-        "mining": {             # WS 挖礦 opt-in；成功後可跳過 Playwright 挖礦任務
-            "enabled": False,
+        "mail_claim": False,    # 每日自動領取全部郵件附件（一鍵領取，每日一次；預設關，加法功能）
+        "mail_gem_threshold": None,   # 神器附魔寶石 best-effort 滿門檻（僅 log，不擋領取；None=不查）
+        "mail_skill_threshold": None,  # 武魂 best-effort 滿門檻（僅 log，不擋領取；None=不查）
+        "relic_upgrade": False,  # 遺物 平均強化（消耗遺物碎片強化最低等級已裝備遺物）；預設關，加法功能
+        "relic_max_steps": 10,   # 遺物強化每輪步數上限
+        "relic_fragment_floor": 0,  # 遺物強化：剩餘遺物碎片低於此值即停（0=無下限）
+        "tycoon": False,         # 傳奇大亨（大富翁）自動擲骰；免費骰子純收益，活動沒開=no-op；預設關
+        "tycoon_max_rolls": 50,  # 傳奇大亨每輪擲骰次數上限
+        "mining": {             # WS 挖礦；成功後可跳過 Playwright 挖礦任務
+            "enabled": True,
             "allow_bomb": False,
             "allow_drill": False,
             "max_steps": 200,
@@ -156,7 +177,7 @@ class DeviceConfig:
     lamp_check_interval: int = 2
     lamp_duration_sec: int = 300
     mining_duration_min: int = 6
-    mining_planner_version: str = "v4"
+    mining_planner_version: str = "v5"
     mining_save_samples: bool = False
 
     # Sleep schedule
@@ -382,6 +403,44 @@ def _sanitize_mining_config(v: Any) -> Optional[dict]:
     return out
 
 
+def _merge_carpark_plan(v: Any, default: dict) -> dict:
+    """Coerce ws_token.carpark_plan; malformed input degrades to defaults.
+
+    enabled -> bool; each window needs ["HH:MM", "HH:MM"] (else that window
+    falls back to the default); cross clamped to 0..10; silver_levels kept
+    only when a list of ints in 1..30 (鉑銀1..30).
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    levels = v.get("silver_levels")
+    if isinstance(levels, (list, tuple)):
+        clean = [int(x) for x in levels
+                 if isinstance(x, (int, float)) and 1 <= int(x) <= 30]
+        if clean:
+            out["silver_levels"] = clean
+
+    def _hhmm_ok(s: Any) -> bool:
+        if not isinstance(s, str) or s.count(":") != 1:
+            return False
+        h, _, m = s.partition(":")
+        return (h.isdigit() and m.isdigit()
+                and 0 <= int(h) <= 23 and 0 <= int(m) <= 59)
+
+    for name in ("day", "night"):
+        w = v.get(name)
+        if not isinstance(w, dict):
+            continue
+        win = w.get("window")
+        if (isinstance(win, (list, tuple)) and len(win) == 2
+                and _hhmm_ok(win[0]) and _hhmm_ok(win[1])):
+            out[name]["window"] = [str(win[0]), str(win[1])]
+        out[name]["cross"] = _clamp_int(w.get("cross"), 0, 10,
+                                        default[name]["cross"])
+    return out
+
+
 def _merge_ws_token_phase_config(v: Any) -> dict:
     """Merge nested ws_token config with defaults, including mining defaults."""
     default = copy.deepcopy(DEFAULT_DEVICE_CONFIG["ws_token"])
@@ -393,8 +452,32 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
         merged.get("bootstrap_token"),
         default["bootstrap_token"],
     )
+    merged["offline_fallback"] = _to_bool(
+        merged.get("offline_fallback"),
+        default["offline_fallback"],
+    )
     mining_cfg = _sanitize_mining_config(merged.get("mining"))
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
+    # 開神燈百分比 / 最低保留：防呆轉型（壞值退回預設 0）。
+    merged["lamp_percent"] = max(
+        0.0, _to_float(merged.get("lamp_percent"), default["lamp_percent"]))
+    merged["lamp_min_keep"] = max(
+        0, _to_int(merged.get("lamp_min_keep"), default["lamp_min_keep"]))
+    merged["carpark_auto"] = _to_bool(merged.get("carpark_auto"),
+                                      default["carpark_auto"])
+    merged["carpark_plan"] = _merge_carpark_plan(merged.get("carpark_plan"),
+                                                 default["carpark_plan"])
+    # 遺物強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：防呆轉型，壞值退回預設。
+    merged["relic_upgrade"] = _to_bool(merged.get("relic_upgrade"),
+                                       default["relic_upgrade"])
+    merged["relic_max_steps"] = max(
+        0, _to_int(merged.get("relic_max_steps"), default["relic_max_steps"]))
+    merged["relic_fragment_floor"] = max(
+        0, _to_int(merged.get("relic_fragment_floor"),
+                   default["relic_fragment_floor"]))
+    merged["tycoon"] = _to_bool(merged.get("tycoon"), default["tycoon"])
+    merged["tycoon_max_rolls"] = max(
+        0, _to_int(merged.get("tycoon_max_rolls"), default["tycoon_max_rolls"]))
     return merged
 
 
@@ -760,9 +843,13 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
 
         current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5", "ws_token"}, "adb")
         current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
-        current["use_ws_runner"] = _to_bool(
-            current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
-            DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+        current["use_ws_runner"] = (
+            True
+            if current["backend"] == "ws_token"
+            else _to_bool(
+                current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
+                DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+            )
         )
         current["ws_token_spend"] = _to_bool(
             current.get("ws_token_spend", DEFAULT_DEVICE_CONFIG["ws_token_spend"]),
@@ -838,7 +925,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         )
         current["mining_planner_version"] = _enum_str(
             current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
-            {"v1", "v3", "v4"},
+            {"v1", "v3", "v4", "v5"},
             "v1",
         )
         current["mining_save_samples"] = _to_bool(

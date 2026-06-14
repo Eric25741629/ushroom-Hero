@@ -111,11 +111,20 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("redpack", "grab_claimable"))
                                         or {"attempted": 0, "claimed": 0, "results": []}))
 
+    # mail (每日領郵件附件; gated on mail_claim, OFF by default). Patch the runner's
+    # _run_mail step directly so we don't need ws_state / mail_scheduler internals.
+    monkeypatch.setattr(runner, "_run_mail",
+                        lambda c, **k: (calls.append(("mail", "claim_all"))
+                                        or {"claimed_run": True, "success": True,
+                                            "claimed_count": 0}))
+
     # idle_reward (free; always runs). claim_* return a result with .success or None.
     monkeypatch.setattr(runner.idle_reward, "claim_online",
                         lambda c, **k: (calls.append(("idle_reward", "claim_online")) or _ClaimOK()))
     monkeypatch.setattr(runner.idle_reward, "claim_offline_from_push",
                         lambda c, b, **k: (calls.append(("idle_reward", "claim_offline")) or _ClaimOK()))
+    monkeypatch.setattr(runner.idle_reward, "claim_quick_2h",
+                        lambda c, **k: (calls.append(("idle_reward", "claim_quick_2h")) or _ClaimOK()))
 
     # turntable (free; always runs)
     monkeypatch.setattr(runner.turntable, "spin_all_free",
@@ -141,6 +150,10 @@ def patched(monkeypatch):
     # dungeon (掃蕩 only; gated on dungeon_sweeps)
     monkeypatch.setattr(runner.dungeon, "run_sweep",
                         lambda c, **k: (calls.append(("dungeon", "run_sweep")) or _SweepOK()))
+
+    # rogue (萬神試煉 本周積分獎勵一鍵領取; free; always runs)
+    monkeypatch.setattr(runner.rogue, "claim_week_reward",
+                        lambda c, **k: (calls.append(("rogue", "claim_week_reward")) or _RogueOK()))
 
     # carpark (只停不收; gated on carpark_target)
     monkeypatch.setattr(runner.carpark, "auto_park_cross",
@@ -230,6 +243,14 @@ class _SweepOK:
     error_code = 0
 
 
+class _RogueOK:
+    """rogue.claim_week_reward result with the fields _run_rogue reads."""
+    success = True
+    claimed: tuple = ()
+    rewards: dict = {}
+    error_code = None
+
+
 # --- RunReport shape --------------------------------------------------------
 
 def test_run_report_is_frozen_dataclass():
@@ -261,6 +282,11 @@ def test_run_device_runs_tasks_in_fixed_order(patched):
     assert "dungeon" not in task_order   # no dungeon_sweeps -> skipped
     assert "carpark" not in task_order   # no carpark_target -> skipped
     assert "lamp" not in task_order
+    assert "mail" not in task_order      # mail_claim OFF by default -> skipped
+    # rogue (萬神試煉 本周積分獎勵) is Friday-gated, so it may or may not invoke
+    # claim_week_reward depending on the real weekday — but the STEP always runs
+    # and records a summary on the report.
+    assert "rogue" in rep.tasks
     assert rep.login_ok is True
 
 
@@ -307,6 +333,28 @@ def test_spend_true_adds_cost_actions(patched):
     assert ("guild", "donate_until_capped") in actions
     assert ("steward", "run_shopping") in actions
     assert ("steward", "run_dungeon_sweep") in actions
+
+
+# --- mail gate (opt-in via mail_claim; runs after redpack) ------------------
+
+def test_mail_skipped_without_flag(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False)  # mail_claim defaults to False
+
+    assert "mail" not in [t for t, _a in calls]
+
+
+def test_mail_runs_after_redpack_when_enabled(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False, mail_claim=True)
+
+    task_order = [t for t, _a in calls]
+    assert "mail" in task_order
+    # mail step sits between redpack and idle_reward (TASK_ORDER).
+    assert task_order.index("redpack") < task_order.index("mail")
+    assert task_order.index("mail") < task_order.index("idle_reward")
 
 
 def test_spend_true_skips_sweep_without_chapter_list(patched):
@@ -404,6 +452,150 @@ def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
     assert captured.get("batch_delay") == runner._LAMP_BATCH_DELAY_SEC
 
 
+def test_lamp_percent_min_keep_passed_with_initial_count_and_progress(
+        patched, monkeypatch):
+    """run_device(open_lamp=True, lamp_percent, lamp_min_keep) must forward the
+    two knobs + the login-snapshot initial_count + a callable on_progress into
+    lamp.open_lamp, and the lamp-count tee in _push must populate the holder."""
+    from ws_token import lamp
+
+    captured: dict = {}
+
+    def spy_open(c, **k):
+        captured.update(k)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": k.get("dry_run", True),
+                "target": 0, "initial_count": k.get("initial_count"),
+                "remaining": None}
+
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(
+                            open_lamp=spy_open,
+                            extract_lamp_count=lamp.extract_lamp_count))
+
+    _calls, spy_holder = patched
+
+    # A 0x0402 frame carrying item 1001 (神燈) with current qty 123. Mirrors the
+    # consume push shape: f2 sub { f1=item_id, f3=current_count }.
+    sub = codec.pb_uint(1, lamp.ITEM_LAMP) + codec.pb_uint(3, 123)
+    frame_1001 = codec.pb_msg(2, sub)
+
+    events: list[tuple[str, str, str]] = []
+
+    rep = run_device(
+        "dev", spend=False, open_lamp=True,
+        lamp_percent=1.0, lamp_min_keep=500000,
+        progress=lambda name, status, detail="": events.append(
+            (name, status, detail)))
+
+    # The runner mounted a composite push handler before connect; feed the
+    # login-time 0x0402 snapshot through it to prove the tee captured the count.
+    push = spy_holder["push_handler"]
+    assert push is not None
+    push(0x0402, frame_1001)
+
+    # NOTE: in this fixture the count is fed AFTER run_device returns (the spy
+    # client does not emit pushes), so assert the holder mechanism directly via a
+    # second, count-first scenario below; here assert the knobs + callable wiring.
+    assert captured.get("lamp_percent") == 1.0
+    assert captured.get("lamp_min_keep") == 500000
+    assert callable(captured.get("on_progress"))
+    assert "initial_count" in captured
+
+    # _lamp_progress routes through the progress callback as ("lamp","progress",..)
+    captured["on_progress"](123, 456)
+    assert ("lamp", "progress", "123/456") in events
+
+
+def test_lamp_count_tee_populates_initial_count(monkeypatch):
+    """When a 0x0402 snapshot with item 1001 lands BEFORE the lamp task runs, the
+    runner passes that count as initial_count into open_lamp."""
+    from ws_token import codec as _codec
+    from ws_token import lamp
+
+    captured: dict = {}
+
+    def spy_open(c, **k):
+        captured.update(k)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": False, "target": 0,
+                "initial_count": k.get("initial_count"), "remaining": None}
+
+    sub = _codec.pb_uint(1, lamp.ITEM_LAMP) + _codec.pb_uint(3, 777)
+    frame_1001 = _codec.pb_msg(2, sub)
+
+    class _PushAtLoginClient:
+        """Emits the 0x0402 lamp snapshot into the mounted push_handler on connect,
+        exactly like the login-time inventory snapshot does in production."""
+
+        def __init__(self, push_handler=None, **_kw):
+            self._push = push_handler
+
+        def connect(self):
+            if self._push:
+                self._push(0x0402, frame_1001)
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client",
+                        lambda creds, **k: _PushAtLoginClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(
+                            open_lamp=spy_open,
+                            extract_lamp_count=lamp.extract_lamp_count))
+
+    run_device("dev", spend=False, open_lamp=True,
+               lamp_percent=2.0, lamp_min_keep=10)
+
+    assert captured.get("initial_count") == 777
+    assert captured.get("lamp_percent") == 2.0
+    assert captured.get("lamp_min_keep") == 10
+
+
+def test_lamp_count_tee_not_loaded_when_open_lamp_false(monkeypatch):
+    """Non-lamp devices must NOT import lamp: _load_lamp is never called and a
+    0x0402 push is a harmless no-op (no lamp parse)."""
+    load_calls: list[int] = []
+    real_load = runner._load_lamp
+
+    def counting_load():
+        load_calls.append(1)
+        return real_load()
+
+    monkeypatch.setattr(runner, "_load_lamp", counting_load)
+
+    class _NoLampClient:
+        def __init__(self, push_handler=None, **_kw):
+            self._push = push_handler
+
+        def connect(self):
+            # Even if a 0x0402 frame arrives, the non-lamp path must ignore it.
+            if self._push:
+                self._push(0x0402, b"\x12\x04\x08\xe9\x07\x18\x05")
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client",
+                        lambda creds, **k: _NoLampClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+
+    rep = run_device("dev", spend=False, open_lamp=False)
+
+    assert rep.login_ok is True
+    assert load_calls == []  # lamp never imported for a non-lamp device
+
+
 def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
     calls, _ = patched
 
@@ -459,6 +651,216 @@ def test_mining_runs_when_config_enabled(patched, monkeypatch):
     assert captured["allow_drill"] is True
     assert captured["max_steps"] == 35
     assert "mining" in rep.tasks
+
+
+# --- relic (opt-in via relic_upgrade; SPENDS 遺物碎片) -----------------------
+
+def test_relic_skipped_when_relic_upgrade_false(patched):
+    """Default relic_upgrade=False must self-skip (no relics read, no spend)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert "relic" in rep.tasks                       # step always runs ...
+    assert rep.tasks["relic"]["skipped"]              # ... but self-skips
+    # even spend=True alone must not enable relic upgrades (independent flag)
+    rep2 = run_device("dev", spend=True, sweep_list=[(1, 5, 10)])
+    assert rep2.tasks["relic"]["skipped"]
+
+
+def test_relic_runs_calls_plan_and_upgrade_bounded(patched, monkeypatch):
+    """relic_upgrade=True reads relics, plans the balanced upgrade, and executes
+    each planned uid via upgrade_relic — bounded by relic_max_steps."""
+    from ws_token import relic
+
+    seen: dict = {}
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        # two equipped relics (location>0) at different levels + one unequipped
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),
+                    relic.Relic(uid=2, cfg_id=4002, quality=2, location=2, level=12))
+
+    def fake_plan(relics, fragments, *, cost_at, max_steps=None, **k):
+        seen["relics"] = list(relics)
+        seen["fragments"] = fragments
+        seen["max_steps"] = max_steps
+        # honour the cap the runner passes through
+        return [1, 1, 2][:(max_steps if max_steps is not None else 3)]
+
+    upgraded: list[int] = []
+
+    def fake_upgrade(client, uid, **k):
+        upgraded.append(uid)
+        return types.SimpleNamespace(success=True, relic=None, response_cmd=relic.CMD_RELIC_UP,
+                                     error_code=None)
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades", fake_plan)
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True, relic_max_steps=2)
+
+    assert seen["relics"] == [(1, 10), (2, 12)]   # equipped only, (uid, level)
+    assert seen["max_steps"] == 2                  # cap forwarded
+    assert upgraded == [1, 1]                       # exactly the (bounded) plan
+    assert rep.tasks["relic"]["upgraded"] == 2
+    assert rep.tasks["relic"]["steps"] == [1, 1]
+
+
+def test_relic_stops_on_0x0201(patched, monkeypatch):
+    """A server rejection (0x0201) on a relic_up step stops the loop safely."""
+    from ws_token import relic
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),)
+
+    calls_made: list[int] = []
+
+    def fake_upgrade(client, uid, **k):
+        calls_made.append(uid)
+        # first step ok, second rejected (out of fragments / cap)
+        ok = len(calls_made) == 1
+        return types.SimpleNamespace(
+            success=ok, relic=None, response_cmd=(relic.CMD_RELIC_UP if ok else relic.CMD_ERROR),
+            error_code=(None if ok else 25))
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades",
+                        lambda *a, **k: [1, 1, 1])
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True, relic_max_steps=10)
+
+    assert calls_made == [1, 1]                          # stopped after the rejection
+    assert rep.tasks["relic"]["upgraded"] == 1
+    assert rep.tasks["relic"]["stopped_reason"] == "error_code=25"
+
+
+def test_relic_stops_at_fragment_floor(patched, monkeypatch):
+    """When the live 遺物碎片 count (from the inventory tracker) drops below the
+    configured floor, the relic loop stops before the next upgrade."""
+    from ws_token import codec, relic
+    from ws_token.mining import (
+        CMD_INVENTORY_PUSH, INV_EVT_CONSUME, INV_EVT_SNAPSHOT,
+    )
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),)
+
+    # The runner threads its inventory_tracker into _run_relic. Seed the fragment
+    # count to 100 at login, then have each upgrade push a 0x0402 dropping it to 40
+    # (below the floor of 50) so the loop stops after one upgrade.
+    upgraded: list[int] = []
+
+    def _frag_push(count, evt_type):
+        # one item sub {id=100022, count} under a recognised inventory evt type
+        sub = codec.pb_uint(1, relic.RELIC_FRAGMENT_ITEM) + codec.pb_uint(3, count)
+        return codec.pb_uint(1, evt_type) + codec.pb_msg(2, sub)
+
+    def fake_upgrade(client, uid, **k):
+        upgraded.append(uid)
+        # simulate the server's post-upgrade 0x0402 consume push lowering the count
+        client._push_handler(CMD_INVENTORY_PUSH, _frag_push(40, INV_EVT_CONSUME))
+        return types.SimpleNamespace(success=True, relic=None,
+                                     response_cmd=relic.CMD_RELIC_UP, error_code=None)
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades",
+                        lambda *a, **k: [1, 1, 1, 1])
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    # Build a client whose push_handler is the runner's composite handler; the
+    # login snapshot seeds 100 fragments before the relic task runs.
+    class _FragClient:
+        def __init__(self, push_handler=None, **_kw):
+            self._push_handler = push_handler
+
+        def connect(self):
+            if self._push_handler:
+                self._push_handler(CMD_INVENTORY_PUSH,
+                                   _frag_push(100, INV_EVT_SNAPSHOT))
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client", lambda creds, **k: _FragClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True,
+                     relic_max_steps=10, relic_fragment_floor=50)
+
+    assert upgraded == [1]                                   # stopped at the floor
+    assert rep.tasks["relic"]["upgraded"] == 1
+    assert rep.tasks["relic"]["stopped_reason"] == "fragments<50"
+
+
+def test_relic_task_order_after_steward_before_kungfu():
+    order = list(runner.TASK_ORDER)
+    assert order.index("steward") < order.index("relic") < order.index("kungfu_store")
+
+
+# --- tycoon (傳奇大亨 大富翁 auto-dice; opt-in via tycoon) --------------------
+
+def test_tycoon_skipped_when_disabled(patched):
+    """Default tycoon=False must self-skip (no auto_play, no rolls)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert "tycoon" in rep.tasks
+    assert rep.tasks["tycoon"]["skipped"]
+
+
+def test_tycoon_runs_calls_auto_play_with_max_rolls(patched, monkeypatch):
+    """tycoon=True calls tycoon.auto_play with the configured max_rolls."""
+    seen: dict = {}
+
+    def fake_auto_play(client, *, max_rolls, **k):
+        seen["max_rolls"] = max_rolls
+        return {"rolls": 3, "total_rewards": {1401: 60}, "last_pos": 7,
+                "last_circle": 0, "stopped_reason": "error_code=25"}
+
+    monkeypatch.setattr(runner.tycoon, "auto_play", fake_auto_play)
+
+    rep = run_device("dev", spend=False, tycoon=True, tycoon_max_rolls=12)
+
+    assert seen["max_rolls"] == 12
+    assert rep.tasks["tycoon"]["rolls"] == 3
+    # a closed/exhausted activity stops on 0x0201 — surfaced as stopped_reason
+    assert rep.tasks["tycoon"]["stopped_reason"] == "error_code=25"
+
+
+def test_tycoon_closed_activity_is_safe_noop(patched, monkeypatch):
+    """When the activity is closed the first roll returns 0x0201 and auto_play
+    stops with rolls=0 — a safe no-op that records a summary, not an error."""
+    def fake_auto_play(client, *, max_rolls, **k):
+        return {"rolls": 0, "total_rewards": {}, "last_pos": 0,
+                "last_circle": 0, "stopped_reason": "error_code=173"}
+
+    monkeypatch.setattr(runner.tycoon, "auto_play", fake_auto_play)
+
+    rep = run_device("dev", spend=False, tycoon=True)
+
+    assert "tycoon" not in rep.errors
+    assert rep.tasks["tycoon"]["rolls"] == 0
+
+
+def test_tycoon_task_order_after_turntable():
+    order = list(runner.TASK_ORDER)
+    assert order.index("turntable") < order.index("tycoon")
 
 
 # --- new free tasks: idle_reward / turntable / farm-harvest -----------------
@@ -914,6 +1316,9 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
+    # 競猜商店 is opt-in (kungfu_guess defaults False) so it must NOT have run —
+    # this also proves the gated task never sends a stray shop_buy on a free pass.
+    assert "kungfu_store" not in rep.tasks
 
 
 # --- spirit / workshop / couple wiring ---------------------------------------
@@ -925,6 +1330,123 @@ def test_task_order_has_home_features_before_lamp():
     assert order.index("mining") > order.index("couple")
     assert order.index("mining") < order.index("lamp")
     assert order[-5:] == ["spirit", "workshop", "couple", "mining", "lamp"]
+    # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
+    assert order.index("dungeon") < order.index("rogue") < order.index("guild")
+    # 競猜商店 (粉鑽 買競猜幣) sits with the shopping/cost group: after steward,
+    # before the spirit/workshop/couple/mining/lamp tail.
+    assert order.index("steward") < order.index("kungfu_store") < order.index("spirit")
+
+
+class _FakeKungfuClient:
+    """Scripts shop_buy success for the 競猜商店 wiring test."""
+
+    def __init__(self, accept_all=True):
+        self.accept_all = accept_all
+        self.calls: list = []
+
+    def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        from ws_token import kungfu_store as ks
+        self.calls.append((cmd, bytes(body)))
+        if self.accept_all:
+            return ks.CMD_SHOP_BUY, b""
+        return ks.CMD_ERR, b""
+
+
+def test_run_kungfu_store_helper_buys_to_cap():
+    from ws_token import runner
+    client = _FakeKungfuClient(accept_all=True)
+    summary = runner._run_kungfu_store(client)
+    # all four tiers to cap: 100 + 200 + 300*2 + 500*3 = 2400 競猜幣
+    assert summary["coins"] == 2400
+    assert summary["diamonds_spent"] == 12600
+    assert summary["bought"] == {15001: 1, 15002: 1, 15003: 2, 15004: 3}
+
+
+def test_run_kungfu_store_helper_noop_when_event_closed():
+    from ws_token import runner
+    client = _FakeKungfuClient(accept_all=False)
+    summary = runner._run_kungfu_store(client)
+    assert summary["coins"] == 0
+    assert summary["bought"] == {}
+    # one probe per tier then stop -> exactly 4 calls, never over-tries
+    assert len(client.calls) == 4
+
+
+# --- rogue (萬神試煉 本周積分獎勵) Friday gate --------------------------------
+
+class _FakeRogueClient:
+    """Minimal client: records call_for and returns a scripted (cmd, body)."""
+
+    def __init__(self, reply):
+        self._reply = reply
+        self.calls: list = []
+
+    def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        self.calls.append((cmd, bytes(body)))
+        return self._reply
+
+
+def _a_friday():
+    from datetime import datetime, timedelta
+    d = datetime(2026, 6, 1, 9, 0, 0)
+    while d.weekday() != 4:  # 4 = Friday
+        d += timedelta(days=1)
+    return d
+
+
+def _reward_reply():
+    from ws_token import rogue
+    body = b"".join(codec.pb_uint(1, i) for i in (1, 2, 3))
+    body += codec.pb_msg(2, codec.pb_uint(1, 1501) + codec.pb_uint(2, 200))
+    return (rogue.CMD_WEEK_REWARD, body)
+
+
+def test_run_rogue_claims_once_on_friday(tmp_path):
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=_a_friday())
+    assert out["claimed_run"] is True
+    assert out["success"] is True
+    assert out["claimed"] == [1, 2, 3]
+    assert out["rewards"] == {1501: 200}
+    # the request is cmd 19482 with an EMPTY body
+    assert client.calls == [(runner.rogue.CMD_WEEK_REWARD, b"")]
+
+
+def test_run_rogue_skips_when_not_friday(tmp_path):
+    from datetime import timedelta
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    saturday = _a_friday() + timedelta(days=1)
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=saturday)
+    assert out["claimed_run"] is False
+    assert "not Friday" in out["reason"]
+    assert client.calls == []  # nothing sent on a non-Friday
+
+
+def test_run_rogue_same_friday_claims_only_once(tmp_path):
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    friday = _a_friday()
+    first = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    second = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert first["claimed_run"] is True
+    assert second["claimed_run"] is False
+    assert "already claimed" in second["reason"]
+    assert len(client.calls) == 1  # persisted last_date gates the 2nd hourly wake
+
+
+def test_run_rogue_failure_not_persisted_so_retries(tmp_path):
+    from ws_token import rogue, runner
+    client = _FakeRogueClient((rogue.CMD_ERROR, codec.pb_uint(1, 173)))
+    friday = _a_friday()
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert out["claimed_run"] is True
+    assert out["success"] is False
+    assert out["error_code"] == 173
+    # no last_date written on failure -> the next Friday wake retries (sends again).
+    runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert len(client.calls) == 2
 
 
 def test_run_couple_no_partner_skips(monkeypatch):
@@ -935,7 +1457,9 @@ def test_run_couple_no_partner_skips(monkeypatch):
     assert out["skipped"] == "no partner"
 
 
-def test_run_couple_gifts_milk_tea_then_flower(monkeypatch):
+def test_run_couple_gifts_milk_tea_then_flower(monkeypatch, tmp_path):
+    from datetime import datetime
+
     from ws_token import couple, runner
 
     sent = []
@@ -946,13 +1470,87 @@ def test_run_couple_gifts_milk_tea_then_flower(monkeypatch):
         runner.couple, "give_all_in_hand",
         lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
         or {"batches_ok": 1, "stopped_reason": "error_code=3"})
-    out = runner._run_couple(object(), gifts=True, forge_ring=False)
+    out = runner._run_couple(object(), gifts=True, forge_ring=False,
+                             device="dev", state_dir=tmp_path,
+                             now=datetime(2026, 6, 14, 9, 0, 0))
     assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER)]
     assert out["ring"] is None
+    assert out.get("gifts_skipped") is None
 
 
-def test_run_couple_forge_ring_gated(monkeypatch):
+def test_run_couple_gifts_once_per_calendar_day(monkeypatch, tmp_path):
+    # 使用者 2026-06-14: 花跟奶茶 一天只送一次。同一天第二次喚醒不再送。
+    from datetime import datetime
+
     from ws_token import couple, runner
+
+    sent = []
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
+        or {"batches_ok": 1, "stopped_reason": "error_code=3"})
+    day = datetime(2026, 6, 14, 9, 0, 0)
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path, now=day)
+    second = runner._run_couple(object(), gifts=True, forge_ring=False,
+                                device="dev", state_dir=tmp_path,
+                                now=day.replace(hour=15))
+    # only the FIRST wake sent the two gifts; the 2nd same-day wake skipped them
+    assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER)]
+    assert "already gifted 2026-06-14" in second["gifts_skipped"]
+
+
+def test_run_couple_gifts_resend_next_calendar_day(monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from ws_token import couple, runner
+
+    sent = []
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
+        or {"batches_ok": 1, "stopped_reason": "error_code=3"})
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path,
+                       now=datetime(2026, 6, 14, 9, 0, 0))
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path,
+                       now=datetime(2026, 6, 15, 9, 0, 0))
+    # two gifts each day -> 4 sends across two calendar days
+    assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER),
+                    (111, couple.MILK_TEA), (111, couple.FLOWER)]
+
+
+def test_run_couple_no_partner_does_not_write_gate(monkeypatch, tmp_path):
+    # No partner -> skip BEFORE the gate; nothing persisted (so a partner that
+    # appears later the same day still gets that day's gift).
+    from datetime import datetime
+
+    from ws_token import runner
+    from ws_token import state as ws_state
+
+    monkeypatch.setattr(runner.couple, "read_favor_info", lambda c: [])
+    monkeypatch.setattr(runner.couple, "read_partner", lambda c: 0)
+    out = runner._run_couple(object(), gifts=True, forge_ring=False,
+                             device="dev", state_dir=tmp_path,
+                             now=datetime(2026, 6, 14, 9, 0, 0))
+    assert out["skipped"] == "no partner"
+    assert ws_state.load_state("dev", state_dir=tmp_path).get("couple") is None
+
+
+def test_run_couple_forge_ring_independent_of_gift_gate(monkeypatch, tmp_path):
+    # forge_ring (戒指錘鍊) is NOT day-gated: even when the gifts are gate-skipped
+    # for today, an opted-in forge still runs.
+    from datetime import datetime
+
+    from ws_token import couple, runner
+
     monkeypatch.setattr(
         runner.couple, "read_favor_info",
         lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
@@ -962,10 +1560,15 @@ def test_run_couple_forge_ring_gated(monkeypatch):
     called = []
     monkeypatch.setattr(runner.couple, "forge_ring_until_empty",
                         lambda c: called.append(1) or {"forges": 2})
-    runner._run_couple(object(), gifts=True, forge_ring=False)
+    day = datetime(2026, 6, 14, 9, 0, 0)
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path, now=day)
     assert called == []
-    runner._run_couple(object(), gifts=True, forge_ring=True)
+    # same day: gifts gate-skipped, but forge_ring still runs when opted in
+    out = runner._run_couple(object(), gifts=True, forge_ring=True,
+                             device="dev", state_dir=tmp_path, now=day)
     assert called == [1]
+    assert "already gifted" in out["gifts_skipped"]
 
 
 def _switched_entry(team, food, *, chosen_ok=True, timeout=False):

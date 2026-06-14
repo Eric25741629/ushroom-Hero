@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>倉庫檢視 · 守護靈 / 神器附魔</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #161d2e; --panel2: #1d2740; --line: #2a3550;
+    --text: #e6ebf5; --muted: #8a96b0; --accent: #5b8cff; --accent2: #36d399;
+    --warn: #ffb454; --danger: #ff5d6c;
+    --q3:#9aa6c0; --q4:#5ec8ff; --q5:#7c5bff; --q6:#c061ff; --q7:#ff8f3c; --q8:#ffd23c;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 "Segoe UI",system-ui,"PingFang TC","Microsoft JhengHei",sans-serif; }
+  header { padding:14px 20px; background:linear-gradient(180deg,#1a2236,#131a2a);
+           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.5px; }
+  header .home { color:var(--muted); text-decoration:none; font-size:13px; }
+  header .home:hover { color:var(--accent); }
+  .wrap { padding:18px 20px 60px; max-width:1500px; margin:0 auto; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  select, input[type=text], input[type=number] {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:7px 10px; font-size:13px; }
+  input[type=number] { width:84px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px;
+           padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+  button:hover { filter:brightness(1.08); }
+  button.ghost { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button.warn { background:var(--warn); color:#1a1300; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tabs button { background:var(--panel2); color:var(--muted); border:1px solid var(--line);
+                 border-radius:10px 10px 0 0; padding:10px 18px; }
+  .tabs button.on { background:var(--panel); color:var(--text); border-bottom-color:var(--panel); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:0 12px 12px 12px; padding:16px; }
+  .meta { color:var(--muted); font-size:12.5px; margin:6px 0 12px; }
+  .hist { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 14px; }
+  .chip { font-size:12px; padding:3px 9px; border-radius:999px; background:var(--panel2);
+          border:1px solid var(--line); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:10px; }
+  .card { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card.locked { border-color:var(--warn); }
+  .card .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .card .nm { font-weight:600; }
+  .card .sub { color:var(--muted); font-size:12px; }
+  .lvl { color:var(--accent2); font-weight:700; }
+  .lockbadge { color:var(--warn); font-size:11px; border:1px solid var(--warn);
+               border-radius:6px; padding:0 5px; }
+  .affixes { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
+  .arow { display:flex; gap:6px; align-items:center; font-size:12.5px; }
+  .apos { color:var(--muted); width:42px; flex:none; }
+  .atag { background:#0e1626; border:1px solid var(--line); border-radius:6px;
+          padding:1px 7px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th,td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); cursor:pointer; }
+  td.attrs { white-space:normal; }
+  tr.sell { background:rgba(255,93,108,.10); }
+  .qbadge { display:inline-block; min-width:20px; text-align:center; border-radius:6px;
+            padding:0 6px; font-weight:700; color:#0b1020; }
+  .note { color:var(--warn); font-size:12.5px; margin-top:10px; }
+  .err { color:var(--danger); }
+  .tablewrap { max-height:70vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .spin { color:var(--muted); }
+  label.inline { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:12.5px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 倉庫檢視</h1>
+  <a class="home" href="/">← 回主控台</a>
+  <div class="controls" style="margin:0">
+    <label class="inline">裝置
+      <select id="dev"></select>
+    </label>
+    <span id="status" class="spin"></span>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tabs">
+    <button id="tabSpirit" class="on" onclick="showTab('spirit')">🛡 守護靈詞條</button>
+    <button id="tabGem" onclick="showTab('gem')">💎 神器附魔石</button>
+  </div>
+
+  <!-- 守護靈 -->
+  <section id="secSpirit" class="panel">
+    <div class="controls">
+      <button onclick="loadSpirit()">讀取守護靈</button>
+      <input type="text" id="spAffix" placeholder="詞條過濾（如 crit / hp / counter）" oninput="renderSpirit()">
+      <label class="inline">最低等級 <input type="number" id="spMinLv" value="0" min="0" oninput="renderSpirit()"></label>
+      <label class="inline">鎖
+        <select id="spLock" onchange="renderSpirit()">
+          <option value="all">全部</option><option value="1">已鎖</option><option value="0">未鎖</option>
+        </select>
+      </label>
+      <label class="inline">排序
+        <select id="spSort" onchange="renderSpirit()">
+          <option value="level">等級↓</option><option value="config">編號</option>
+        </select>
+      </label>
+    </div>
+    <div id="spMeta" class="meta"></div>
+    <div id="spGrid" class="grid"></div>
+  </section>
+
+  <!-- 神器附魔石 -->
+  <section id="secGem" class="panel" style="display:none">
+    <div class="controls">
+      <button onclick="loadGem()">讀取神器附魔石</button>
+      <span class="meta" style="margin:0">聯合搜索：</span>
+      <input type="text" id="gAttr" placeholder="屬性過濾（如 att / hp / resist）" oninput="renderGem()">
+      <label class="inline">品質≤ <input type="number" id="gMaxQ" value="8" min="1" max="20" oninput="renderGem()"></label>
+      <label class="inline">套裝 <input type="number" id="gSuit" placeholder="全部" oninput="renderGem()"></label>
+      <label class="inline"><input type="checkbox" id="gUnlockOnly" onchange="renderGem()"> 只看未鎖</label>
+      <label class="inline"><input type="checkbox" id="gHasRand" onchange="renderGem()"> 有隨機詞條</label>
+    </div>
+    <div id="gMeta" class="meta"></div>
+    <div id="gHist" class="hist"></div>
+    <div class="controls">
+      <label class="inline">標記最低品質的前 <input type="number" id="gSellN" value="50" min="0" oninput="renderGem()"> 顆（賣最低候選）</label>
+      <button class="ghost" onclick="selectSellCandidates()">勾選候選</button>
+      <button class="warn" onclick="doDecompose()">分解勾選 (<span id="gSelCount">0</span>)</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="gAll" onclick="toggleAll(this)"></th>
+          <th onclick="gemSort('quality')">品質</th><th onclick="gemSort('suit')">套裝</th>
+          <th onclick="gemSort('pos')">位置</th><th onclick="gemSort('lv')">等級</th>
+          <th>主屬</th><th>隨機詞條</th><th>鎖</th><th>id</th>
+        </tr></thead>
+        <tbody id="gBody"></tbody>
+      </table>
+    </div>
+    <div id="gActionMsg" class="note"></div>
+  </section>
+</div>
+
+<script>
+const QCOLORS = {3:'var(--q3)',4:'var(--q4)',5:'var(--q5)',6:'var(--q6)',7:'var(--q7)',8:'var(--q8)'};
+let SPIRITS = [], GEMS = [], gemSortKey = 'quality', gemSortDir = 1;
+const $ = id => document.getElementById(id);
+function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
+
+async function loadDevices(){
+  try {
+    const r = await fetch('/api/status'); const j = await r.json();
+    const bots = (j.bots)||{}; const sel = $('dev'); sel.innerHTML='';
+    Object.keys(bots).forEach(ip => {
+      const b = bots[ip];
+      if (b.backend !== 'web_h5') return;
+      const o = document.createElement('option');
+      o.value = ip; o.textContent = `${b.name||ip} (${ip})`;
+      sel.appendChild(o);
+    });
+    if ([...sel.options].some(o=>o.value==='emulator-5554')) sel.value='emulator-5554';
+  } catch(e){ setStatus('裝置清單讀取失敗', true); }
+}
+
+function dev(){ return $('dev').value; }
+
+async function loadSpirit(){
+  setStatus('讀取守護靈中…');
+  try {
+    const r = await fetch(`/api/spirit_list/${encodeURIComponent(dev())}`);
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus('守護靈讀取失敗: '+(j.message||''), true); return; }
+    const d = j.data||{};
+    if (d.error){ setStatus('解析失敗: '+d.error, true); return; }
+    SPIRITS = d.spirits||[];
+    setStatus(`守護靈 ${SPIRITS.length} 隻（reshape ${d.reshape_times} 次）`);
+    renderSpirit();
+  } catch(e){ setStatus('守護靈讀取錯誤: '+e, true); }
+}
+
+function renderSpirit(){
+  const q = ($('spAffix').value||'').trim().toLowerCase();
+  const minLv = parseInt($('spMinLv').value||'0',10);
+  const lock = $('spLock').value;
+  let list = SPIRITS.filter(s => {
+    if (s.level < minLv) return false;
+    if (lock!=='all' && String(s.lock)!==lock) return false;
+    if (q){
+      const hit = (s.positions||[]).some(p => (p.affixes||[]).some(a => (a.name||'').toLowerCase().includes(q)));
+      if (!hit) return false;
+    }
+    return true;
+  });
+  list.sort((a,b)=> $('spSort').value==='config' ? a.config_id-b.config_id : (b.level-a.level||a.config_id-b.config_id));
+  $('spMeta').textContent = `顯示 ${list.length} / ${SPIRITS.length} 隻`;
+  const g = $('spGrid'); g.innerHTML='';
+  list.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'card' + (s.lock?' locked':'');
+    let aff = (s.positions||[]).map(p => {
+      const chips = (p.affixes||[]).map(a=>`<span class="atag" title="${a.attr_id}">${a.name}=${a.value}</span>`).join(' ');
+      return `<div class="arow"><span class="apos">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
+    }).join('');
+    card.innerHTML = `<div class="top"><span class="nm">${s.name}</span>
+        <span>${s.lock?'<span class=lockbadge>鎖</span> ':''}<span class="lvl">Lv${s.level}</span></span></div>
+      <div class="sub">#${s.config_id} · id ${s.id}</div>
+      <div class="affixes">${aff}</div>`;
+    g.appendChild(card);
+  });
+}
+
+async function loadGem(){
+  setStatus('讀取神器附魔石中…');
+  try {
+    const r = await fetch(`/api/artifact_gem_list/${encodeURIComponent(dev())}`);
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus('神器附魔讀取失敗: '+(j.message||''), true); return; }
+    const d = j.data||{};
+    if (d.error){ setStatus('解析失敗: '+d.error, true); return; }
+    GEMS = (d.gems||[]).map(g=>({...g, _sel:false}));
+    setStatus(`神器附魔石 ${GEMS.length} 顆`);
+    renderGem();
+  } catch(e){ setStatus('神器附魔讀取錯誤: '+e, true); }
+}
+
+function gemFiltered(){
+  const q = ($('gAttr').value||'').trim().toLowerCase();
+  const maxQ = parseInt($('gMaxQ').value||'99',10);
+  const suit = $('gSuit').value!=='' ? parseInt($('gSuit').value,10) : null;
+  const unlockOnly = $('gUnlockOnly').checked;
+  const hasRand = $('gHasRand').checked;
+  let list = GEMS.filter(g => {
+    if (g.quality>maxQ) return false;
+    if (suit!==null && g.suit!==suit) return false;
+    if (unlockOnly && g.is_lock) return false;
+    if (hasRand && !(g.rand_attr&&g.rand_attr.length)) return false;
+    if (q){
+      const all = [...(g.base_attr||[]),...(g.rand_attr||[])];
+      if (!all.some(a=>(a.name||'').toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
+  list.sort((a,b)=>{ const k=gemSortKey; return (a[k]-b[k])*gemSortDir; });
+  return list;
+}
+
+function attrStr(arr){ return (arr||[]).map(a=>`${a.name}=${a.value}`).join(', ') || '—'; }
+
+function renderGem(){
+  const list = gemFiltered();
+  // histogram over ALL gems
+  const hist={}; GEMS.forEach(g=>hist[g.quality]=(hist[g.quality]||0)+1);
+  $('gHist').innerHTML = Object.keys(hist).sort((a,b)=>a-b).map(q=>
+    `<span class="chip"><span class="qbadge" style="background:${QCOLORS[q]||'#888'}">${q}</span> ×${hist[q]}</span>`).join('');
+  $('gMeta').textContent = `顯示 ${list.length} / ${GEMS.length} 顆（已勾選 ${GEMS.filter(g=>g._sel).length}）`;
+  const body=$('gBody'); body.innerHTML='';
+  const sellSet = new Set(); // visual hint: lowest-quality first N among filtered
+  list.forEach(g=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML = `<td><input type="checkbox" ${g._sel?'checked':''} onchange="toggleSel('${g.id}',this.checked)"></td>
+      <td><span class="qbadge" style="background:${QCOLORS[g.quality]||'#888'}">${g.quality}</span></td>
+      <td>${g.suit}</td><td>${g.pos}</td><td>${g.lv}</td>
+      <td class="attrs">${attrStr(g.base_attr)}</td>
+      <td class="attrs">${attrStr(g.rand_attr)}</td>
+      <td>${g.is_lock?'<span class=lockbadge>鎖</span>':''}</td>
+      <td class="sub">${g.id}</td>`;
+    if (g._sel) tr.classList.add('sell');
+    body.appendChild(tr);
+  });
+  $('gSelCount').textContent = GEMS.filter(g=>g._sel).length;
+}
+
+function toggleSel(id, on){ const g=GEMS.find(x=>x.id===id); if(g) g._sel=on; renderGem(); }
+function toggleAll(cb){ gemFiltered().forEach(g=>{ if(!g.is_lock) g._sel=cb.checked; }); renderGem(); }
+function gemSort(k){ if(gemSortKey===k) gemSortDir*=-1; else {gemSortKey=k; gemSortDir=1;} renderGem(); }
+
+function selectSellCandidates(){
+  const n = parseInt($('gSellN').value||'0',10);
+  // lowest quality, then lowest level, skip locked
+  const cand = GEMS.filter(g=>!g.is_lock).slice().sort((a,b)=> a.quality-b.quality || a.lv-b.lv).slice(0,n);
+  const set = new Set(cand.map(g=>g.id));
+  GEMS.forEach(g=> g._sel = set.has(g.id));
+  renderGem();
+}
+
+async function doDecompose(){
+  const ids = GEMS.filter(g=>g._sel).map(g=>g.id);
+  if (!ids.length){ $('gActionMsg').textContent='未勾選任何寶石。'; return; }
+  $('gActionMsg').textContent='送出分解請求…';
+  try {
+    const r = await fetch(`/api/artifact_gem_action/${encodeURIComponent(dev())}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action:'split', ids})
+    });
+    const j = await r.json();
+    $('gActionMsg').textContent = `[${r.status}] ${j.message||JSON.stringify(j)}`;
+  } catch(e){ $('gActionMsg').textContent='錯誤: '+e; }
+}
+
+function showTab(t){
+  $('secSpirit').style.display = t==='spirit'?'block':'none';
+  $('secGem').style.display = t==='gem'?'block':'none';
+  $('tabSpirit').classList.toggle('on', t==='spirit');
+  $('tabGem').classList.toggle('on', t==='gem');
+}
+
+loadDevices();
+</script>
+</body>
+</html>

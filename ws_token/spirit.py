@@ -40,6 +40,7 @@ from ws_token.client import WSGameClient
 logger = logging.getLogger(__name__)
 
 # --- cmd ids (c2s and s2c share the same id; FAILURES reply on 0x0201) -------
+CMD_INFO = 19713          # spirit.spirit_info (module 77; empty c2s body) — 倉庫+詞條
 CMD_DRAW_INFO = 19743     # spirit.spirit_draw_info (module 77; empty c2s body)
 CMD_DRAW = 19744          # spirit.spirit_draw
 CMD_BUY_SUMMON = 6914     # shop_buy (招喚貨幣; shop module 27)
@@ -92,6 +93,114 @@ def _parse_rewards(body: bytes) -> dict[int, int]:
             gtid = _as_int(r.get(1))
             rewards[gtid] = rewards.get(gtid, 0) + _as_int(r.get(2))
     return rewards
+
+
+# --- 守護靈倉庫 + 詞條 (spirit_info) ------------------------------------------
+
+@dataclass(frozen=True)
+class SpiritPosition:
+    """One p_spirit_pos — a slot on a spirit carrying its current/reshape 詞條.
+
+    ``cur_attrs`` is the LIVE 詞條 (affix_id -> value) the dashboard filters on;
+    ``reshape_attrs`` is the reshape (重塑) preview slot, empty when not reshaping.
+    """
+
+    pos: int                              # #1
+    cur_id: int                           # #2 — current affix-set config id
+    cur_attrs: dict[int, int]             # #3 cur_attr_list p_key_value[] -> {affix_id: value}
+    reshape_id: int                       # #4
+    reshape_attrs: dict[int, int]         # #5 reshape_attr_list
+
+
+@dataclass(frozen=True)
+class SpiritCard:
+    """One p_spirit_card — a 守護靈 instance with level, lock, and per-position 詞條."""
+
+    id: int                               # #1 uint64 (instance id)
+    config_id: int                        # #2 uint32 (spirit type; name/icon via configSpirit)
+    level: int                            # #3
+    is_lock: bool                         # #4
+    positions: tuple[SpiritPosition, ...]  # #5 pos_list
+
+
+@dataclass(frozen=True)
+class SpiritInventory:
+    """spirit_info_s2c — the full 守護靈 inventory snapshot (read-only)."""
+
+    reset_times: int                      # #1
+    reshape_times: int                    # #2
+    tab: int                              # #3
+    spirits: tuple[SpiritCard, ...]       # #5 spirit_list
+
+
+def _parse_kv_pairs(body: bytes, field_num: int) -> dict[int, int]:
+    """Collect every repeated p_key_value {k#1, v#2} at ``field_num`` -> {k: v}.
+
+    ``walk_dict`` keeps only the LAST value for a repeated field, so the 詞條
+    lists (repeated p_key_value) must be walked explicitly to keep them all.
+    """
+    out: dict[int, int] = {}
+    for fnum, val in codec.walk(body):
+        if fnum == field_num and isinstance(val, (bytes, bytearray)):
+            d = codec.walk_dict(bytes(val))
+            out[_as_int(d.get(1))] = _as_int(d.get(2))
+    return out
+
+
+def _parse_spirit_pos(entry: bytes) -> SpiritPosition:
+    """One p_spirit_pos -> SpiritPosition (cur/reshape 詞條 as {affix_id: value})."""
+    d = codec.walk_dict(entry)
+    return SpiritPosition(
+        pos=_as_int(d.get(1)),
+        cur_id=_as_int(d.get(2)),
+        cur_attrs=_parse_kv_pairs(entry, 3),
+        reshape_id=_as_int(d.get(4)),
+        reshape_attrs=_parse_kv_pairs(entry, 5),
+    )
+
+
+def _parse_spirit_card(entry: bytes) -> SpiritCard:
+    """One p_spirit_card -> SpiritCard with its pos_list#5 positions."""
+    d = codec.walk_dict(entry)
+    positions = tuple(
+        _parse_spirit_pos(bytes(v)) for fnum, v in codec.walk(entry)
+        if fnum == 5 and isinstance(v, (bytes, bytearray)))
+    return SpiritCard(
+        id=_as_int(d.get(1)),
+        config_id=_as_int(d.get(2)),
+        level=_as_int(d.get(3)),
+        is_lock=bool(_as_int(d.get(4))),
+        positions=positions,
+    )
+
+
+def parse_spirit_info(body: bytes) -> SpiritInventory:
+    """spirit_info_s2c {reset_times#1, reshape_times#2, tab#3, spirit_list#5} -> inventory."""
+    d = codec.walk_dict(body)
+    spirits = tuple(
+        _parse_spirit_card(bytes(v)) for fnum, v in codec.walk(body)
+        if fnum == 5 and isinstance(v, (bytes, bytearray)))
+    return SpiritInventory(
+        reset_times=_as_int(d.get(1)),
+        reshape_times=_as_int(d.get(2)),
+        tab=_as_int(d.get(3)),
+        spirits=spirits,
+    )
+
+
+def read_spirit_info(
+    client: WSGameClient, *, timeout: Optional[float] = None
+) -> SpiritInventory:
+    """Send spirit_info (cmd 19713, empty body) and parse the full 倉庫 + 詞條.
+
+    Read-only: lists every owned 守護靈 with its level, lock state and per-position
+    詞條 (cur_attr_list). Backs the dashboard 守護靈 inventory view (Task 4).
+    """
+    body = client.call(CMD_INFO, b"", timeout=timeout)
+    inv = parse_spirit_info(body)
+    logger.info("ws_token spirit: spirit_info %d spirit(s) reset=%s reshape=%s tab=%s",
+                len(inv.spirits), inv.reset_times, inv.reshape_times, inv.tab)
+    return inv
 
 
 # --- body builders ----------------------------------------------------------

@@ -229,10 +229,48 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     farm_config = cfg.get("ws_token_farm_config") or None
     dungeon_sweeps = cfg.get("ws_token_dungeon_sweeps") or None
     carpark_target = cfg.get("ws_token_carpark_target") or None
+    carpark_auto = bool(cfg.get("ws_token_carpark_auto", False))
+    _ws_nested = cfg.get("ws_token") or {}
+    if not isinstance(_ws_nested, dict):
+        _ws_nested = {}
+    carpark_plan = _ws_nested.get("carpark_plan") or None
     couple_gifts = bool(cfg.get("ws_token_couple_gifts", True))
     forge_ring = bool(cfg.get("ws_token_forge_ring", False))
     workshop_rotate = bool(cfg.get("ws_token_workshop_rotate", True))
+    kungfu_guess = bool(cfg.get("ws_token_kungfu_guess", False))
+    # 每日自動領郵件附件：單一真相在巢狀 ws_token dict（mail_claim 預設關）。
+    mail_claim = bool(_ws_nested.get("mail_claim", False))
+
+    def _opt_int(key: str):
+        try:
+            v = _ws_nested.get(key)
+            return int(v) if v not in (None, "", 0) else None
+        except (TypeError, ValueError):
+            return None
+    mail_gem_threshold = _opt_int("mail_gem_threshold")
+    mail_skill_threshold = _opt_int("mail_skill_threshold")
+    # 遺物 平均強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：單一真相在巢狀 ws_token dict。
+    relic_upgrade = bool(_ws_nested.get("relic_upgrade", False))
+    tycoon = bool(_ws_nested.get("tycoon", False))
+
+    def _nested_int(key: str, default: int) -> int:
+        try:
+            return int(_ws_nested.get(key, default))
+        except (TypeError, ValueError):
+            return default
+    relic_max_steps = _nested_int("relic_max_steps", 10)
+    relic_fragment_floor = _nested_int("relic_fragment_floor", 0)
+    tycoon_max_rolls = _nested_int("tycoon_max_rolls", 50)
     mining_config = cfg.get("ws_token_mining") or None
+    # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
+    try:
+        lamp_percent = max(0.0, float(_ws_nested.get("lamp_percent", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_percent = 0.0
+    try:
+        lamp_min_keep = max(0, int(_ws_nested.get("lamp_min_keep", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_min_keep = 0
 
     run_device = _load_run_device()
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
@@ -245,6 +283,9 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         elif status == "ok":
             step = f"WS 任務完成: {name}"
             logger_obj.info(f"[{ip}] ws_token 任務完成: {name}")
+        elif status == "progress":
+            step = f"WS 開神燈 ({detail})"
+            logger_obj.info(f"[{ip}] ws_token 開神燈進度: {detail}")
         else:
             step = f"WS 任務失敗: {name}"
             logger_obj.warning(f"[{ip}] ws_token 任務失敗: {name} ({detail})")
@@ -256,11 +297,23 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
                             progress=_progress,
-                            open_lamp=open_lamp, farm_config=farm_config,
+                            open_lamp=open_lamp, lamp_percent=lamp_percent,
+                            lamp_min_keep=lamp_min_keep, farm_config=farm_config,
                             dungeon_sweeps=dungeon_sweeps,
                             carpark_target=carpark_target,
+                            carpark_auto=carpark_auto,
+                            carpark_plan=carpark_plan,
                             couple_gifts=couple_gifts, forge_ring=forge_ring,
                             workshop_rotate=workshop_rotate,
+                            kungfu_guess=kungfu_guess,
+                            mail_claim=mail_claim,
+                            mail_gem_threshold=mail_gem_threshold,
+                            mail_skill_threshold=mail_skill_threshold,
+                            relic_upgrade=relic_upgrade,
+                            relic_max_steps=relic_max_steps,
+                            relic_fragment_floor=relic_fragment_floor,
+                            tycoon=tycoon,
+                            tycoon_max_rolls=tycoon_max_rolls,
                             mining_config=mining_config)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)

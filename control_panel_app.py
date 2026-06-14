@@ -64,6 +64,7 @@ from control_panel import (  # noqa: E402
     routes_config,
     routes_control,
     routes_fly_pet,
+    routes_inventory,
     routes_labeler,
     routes_live_view,
     routes_pages,
@@ -82,6 +83,7 @@ for _mod in (
     routes_live_view,
     routes_labeler,
     routes_fly_pet,
+    routes_inventory,
 ):
     app.register_blueprint(_mod.bp)
 
