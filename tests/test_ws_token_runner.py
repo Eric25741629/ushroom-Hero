@@ -131,7 +131,14 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("turntable", "spin_all_free"))
                                         or {"spun": 0, "results": []}))
 
-    # farm (harvest free + always; plant/work gated on farm_config).
+    # farm (harvest free; plant/work/buy gated on farm_config).
+    # _run_farm first reads 打工 status (worker module 73, reliable) to decide
+    # whether manual home-module harvest is needed; default to NOT running so the
+    # manual harvest/plant path runs (matches the pre-refactor behaviour).
+    monkeypatch.setattr(runner.farm, "read_work_status",
+                        lambda c, rid, **k: (calls.append(("farm", "read_work_status"))
+                                             or {"running": False, "worker_status": 0,
+                                                 "team_cfg_id": 7001, "found": True}))
     # read_farm is read ONCE in _run_farm and the snapshot reused (server answers
     # home_farm_info once per session), so stub it too.
     monkeypatch.setattr(runner.farm, "read_farm",
@@ -146,6 +153,9 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.farm, "start_work",
                         lambda c, tid, **k: (calls.append(("farm", "start_work"))
                                              or {"running": True, "worker_status": 1, "raw": {}}))
+    monkeypatch.setattr(runner.farm, "buy_farm_shop",
+                        lambda c, bl, **k: (calls.append(("farm", "buy_farm_shop"))
+                                            or [{"shop_id": 407, "bought": 0, "ok": True}]))
 
     # dungeon (掃蕩 only; gated on dungeon_sweeps)
     monkeypatch.setattr(runner.dungeon, "run_sweep",
@@ -904,6 +914,63 @@ def test_farm_plant_and_work_run_with_config(patched):
     assert ("farm", "start_work") in actions
 
 
+def test_farm_reads_work_status_first(patched):
+    """_run_farm probes 打工 status (worker module 73, reliable) before touching
+    the flaky home module — recorded on the summary."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("farm", "read_work_status") in {(t, a) for t, a in calls}
+    assert rep.tasks["farm"]["work_status"]["running"] is False
+
+
+def test_farm_skips_manual_harvest_when_worker_running(patched, monkeypatch):
+    """打工 running -> 管家 auto-harvests; skip the flaky/racy manual home-module
+    read + harvest entirely (avoids the cmd=3081 no-reply timeout)."""
+    calls, _ = patched
+
+    monkeypatch.setattr(runner.farm, "read_work_status",
+                        lambda c, rid, **k: (calls.append(("farm", "read_work_status"))
+                                             or {"running": True, "worker_status": 1,
+                                                 "team_cfg_id": 7001, "found": True}))
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"seed_id": 102, "buy": [{"shop_id": 407, "target": 4}]})
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "read_farm") not in actions      # home module not touched
+    assert ("farm", "harvest_ready") not in actions
+    assert ("farm", "plant_empty") not in actions    # 管家 auto-plants too
+    assert "farm" not in rep.errors
+    assert "skipped" in rep.tasks["farm"]["harvest"]
+    # buy (shop module, reliable) still runs independent of 打工 status
+    assert ("farm", "buy_farm_shop") in actions
+
+
+def test_farm_read_timeout_still_runs_buy(patched, monkeypatch):
+    """home_farm_info (3077) timing out must NOT fail the whole farm task — the
+    reliable 莊園購買 (shop module) still runs. Regression: read_farm raised and
+    the buy was silently lost on ~50% of wakes (5554 live, 2026-06-14)."""
+    calls, _ = patched
+
+    def boom(c, rid, **k):
+        calls.append(("farm", "read_farm"))
+        raise WSTimeoutError("no response for cmd=3077 (expected one of (3077,))")
+
+    monkeypatch.setattr(runner.farm, "read_farm", boom)
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"buy": [{"shop_id": 407, "target": 4}]})
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "read_farm") in actions          # attempted ...
+    assert ("farm", "harvest_ready") not in actions   # ... but the read failed
+    assert "farm" not in rep.errors                   # task did NOT abort
+    assert "skipped" in rep.tasks["farm"]["harvest"]  # harvest degraded gracefully
+    assert ("farm", "buy_farm_shop") in actions       # the buy was NOT lost
+
+
 def test_dungeon_sweep_skipped_without_config(patched):
     """No dungeon_sweeps -> dungeon task is skipped (run_sweep never called)."""
     calls, _ = patched
@@ -1244,6 +1311,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         # turntable: info -> num=0 (no free spins)
         turntable.CMD_INFO: lambda b: [
             s2c(turntable.CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
+        # farm: 打工偵測 -> empty team_list (worker NOT running -> manual path)
+        farm.CMD_GET_OTHER_WORKER: lambda b: [s2c(farm.CMD_GET_OTHER_WORKER, b"")],
         # farm: home_farm_info -> empty (no lands -> 0 harvested)
         farm.CMD_INFO: lambda b: [s2c(farm.CMD_INFO, b"")],
         # guild: empty help list, no treasure round

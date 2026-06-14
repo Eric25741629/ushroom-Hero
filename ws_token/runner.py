@@ -230,32 +230,73 @@ def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
     return tycoon.auto_play(client, max_rolls=max_rolls)
 
 
-def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
-    """農場/打工: harvest ready crops (free); plant / 打工 only when configured.
+# home module(12) home_farm_info(3077)/harvest(3081) is intermittently UNanswered
+# over a pure-WS session (~50% timeout live, 5554 2026-06-14). Bound the home-module
+# calls so a flaky read fails fast and degrades instead of burning the full 15s
+# call_timeout — and never lets that timeout abort the reliable buy/打工 steps.
+_FARM_HOME_TIMEOUT_S = 5.0
 
-    harvest_ready claims every MATURE land (free reward) and always runs. Planting
-    needs a ``seed_id`` and starting 打工 needs a ``team_cfg_id`` — both are
-    live-confirm config values, so they run ONLY when ``farm_config`` supplies them
-    (empty seed_used_seq = 用免費種子 = 不買種). Returns ``{harvest, plant, work}``.
+
+def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
+    """農場/打工: 收成 (免費) + 種植 / 打工 / 莊園購買 (依設定)。
+
+    home module(12) 的 read_farm/harvest 在純 WS 下回應不穩，且當 server 端管家
+    (打工) 運作中時手動收成既多餘、又會與管家搶同一塊地造成 no-reply timeout
+    (= 使用者回報的 cmd=3081)。因此分三段、可靠模組與 flaky 模組解耦：
+
+      1. 先用可靠的 worker module(73) ``read_work_status`` 判打工是否運作。
+      2. 打工運作中 → 跳過手動 read_farm/harvest/plant（管家代收+代種）。
+         打工關 → best-effort 手動收成/種植（短 timeout + try/except；timeout 記
+         skipped 不 raise），避免 home-module flaky 連帶吞掉後面可靠的 buy。
+      3. ``start_work``（worker）與 ``buy``（shop）走可靠模組，獨立於 home module
+         之外照跑 —— 修掉「read_farm 一 timeout 就連每日種子/肥料購買都漏掉」。
+
+    Returns ``{work_status, harvest, plant, work, buy}``。
     """
-    summary: dict = {"harvest": None, "plant": None, "work": None, "buy": None}
-    # The live server answers home_farm_info only ONCE per session, so read the
-    # farm a single time and reuse the snapshot for both harvest and plant.
-    info = farm.read_farm(client, role_id)
-    summary["harvest"] = farm.harvest_ready(client, role_id, info=info)
-    if farm_config:
-        seed_id = farm_config.get("seed_id")
-        team_cfg_id = farm_config.get("team_cfg_id")
-        buy_list = farm_config.get("buy")
+    cfg = farm_config or {}
+    seed_id = cfg.get("seed_id")
+    team_cfg_id = cfg.get("team_cfg_id")
+    buy_list = cfg.get("buy")
+    summary: dict = {"work_status": None, "harvest": None, "plant": None,
+                     "work": None, "buy": None}
+
+    # 1) 打工偵測 (worker module 73, reliable) — 決定是否需要手動收成。
+    worker_running = False
+    try:
+        status = farm.read_work_status(client, role_id, timeout=_FARM_HOME_TIMEOUT_S)
+        summary["work_status"] = status
+        worker_running = bool(status.get("running"))
+    except WSError as exc:
+        summary["work_status"] = {"skipped": f"read_work_status 失敗: {exc}"}
+
+    # 2) 手動收成/種植 (home module 12, flaky；打工運作時多餘) — best-effort。
+    if worker_running:
+        summary["harvest"] = {"skipped": "打工運作中，管家代收"}
         if seed_id:
-            summary["plant"] = farm.plant_empty(client, role_id, int(seed_id), info=info)
-        if team_cfg_id:
-            summary["work"] = farm.start_work(client, int(team_cfg_id))
-        # 莊園購買: buy each configured farm-shop item UP TO its daily target.
-        # Reads today's count first, so an item already bought in the GUI is
-        # respected (buys only the remainder; nothing if already at target).
-        if buy_list:
-            summary["buy"] = farm.buy_farm_shop(client, buy_list)
+            summary["plant"] = {"skipped": "打工運作中，管家代種"}
+    else:
+        # The live server answers home_farm_info only ONCE per session, so read the
+        # farm a single time and reuse the snapshot for both harvest and plant.
+        try:
+            info = farm.read_farm(client, role_id, timeout=_FARM_HOME_TIMEOUT_S)
+            summary["harvest"] = farm.harvest_ready(
+                client, role_id, info=info, timeout=_FARM_HOME_TIMEOUT_S)
+            if seed_id:
+                summary["plant"] = farm.plant_empty(
+                    client, role_id, int(seed_id), info=info,
+                    timeout=_FARM_HOME_TIMEOUT_S)
+        except WSError as exc:
+            logger.info("ws_token farm: home_farm 不可用，本輪跳過手動收成 (%s)", exc)
+            summary["harvest"] = {"skipped": f"home_farm 不可用: {exc}"}
+
+    # 3) 打工設定 + 莊園購買 (worker/shop module, reliable) — 獨立於 home module。
+    if team_cfg_id and not worker_running:
+        summary["work"] = farm.start_work(client, int(team_cfg_id))
+    # 莊園購買: buy each configured farm-shop item UP TO its daily target. Reads
+    # today's count first, so an item already bought in the GUI is respected
+    # (buys only the remainder; nothing if already at target).
+    if buy_list:
+        summary["buy"] = farm.buy_farm_shop(client, buy_list)
     return summary
 
 
