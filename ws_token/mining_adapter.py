@@ -44,14 +44,17 @@ GRID_COLS = 6
 
 EMPTY = "empty"
 
-# terrain config_id -> planner label. Only 201/202/401 are live-verified;
-# see gap #1. count is consulted to distinguish 1-hit vs >=2-hit rock.
+# terrain config_id -> planner label. Only 201/202/401 are live-verified
+# (see gap #1). p_mine_block.f5 ("count") is NOT consulted: its semantic is
+# unverified (MINING_SCHEMA §6) and live capture (2026-06-15) shows it is 0 on
+# a fresh stone and only goes 0->1 AFTER the first hit, so it is not "hits
+# remaining" — using it would mislabel every fresh stone as a 1-hit rock.
 TERRAIN_DIRT = 201
 TERRAIN_STONE = 202
 TERRAIN_PIT = 401
 
 
-def _block_label(config_id: int, count: int, is_reward: int) -> str:
+def _block_label(config_id: int, is_reward: int) -> str:
     """Map a WS block's terrain to a DEFAULT_CLASSES label."""
     if config_id == TERRAIN_PIT or is_reward:
         # Single-snapshot reachability is unknown -> assume reachable; the
@@ -60,9 +63,11 @@ def _block_label(config_id: int, count: int, is_reward: int) -> str:
     if config_id == TERRAIN_DIRT:
         return "dirt"
     if config_id == TERRAIN_STONE:
-        # 石頭 needs >=2 hits; a partially-dug stone with 1 hit left is a
-        # one_hit_rock to the planner cost model.
-        return "one_hit_rock" if count <= 1 else "rock"
+        # 石頭 needs >=2 hits (verified). We cannot trust f5 as the remaining
+        # hit count (see note above), so always use the conservative >=2-hit
+        # "rock" cost. The rolling one-step re-plan + confirm-by-board-diff
+        # handles a partially-dug stone correctly regardless.
+        return "rock"
     # Unknown terrain -> treat as a generic solid obstacle (gap #1).
     logger.debug("ws_token mining_adapter: unknown config_id=%s -> rock", config_id)
     return "rock"
@@ -124,7 +129,7 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
                 "reason": "+".join(reasons) or "unknown",
             })
             continue
-        grid[row][col] = _block_label(blk.config_id, blk.count, blk.is_reward)
+        grid[row][col] = _block_label(blk.config_id, blk.is_reward)
     return grid, dropped_blocks, dropped_actives
 
 

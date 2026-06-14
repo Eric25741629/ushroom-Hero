@@ -266,6 +266,17 @@ def test_board_to_grid_rock_terrain_label():
     assert grid[0][0] == "rock"
 
 
+def test_board_to_grid_stone_ignores_unverified_count_field():
+    # p_mine_block.f5 ("count") 語意未驗證 (MINING_SCHEMA §6); live 2026-06-15
+    # 實測新石頭 f5=0 (第一次挖後才 0->1)，所以它不是「剩餘 hits」。石頭(202)
+    # 一律當 ≥2-hit 的 "rock"，不可因 count<=1 被誤降成 one_hit_rock (cost 1)。
+    for count in (0, 1, 2):
+        blk = MineBlock(block_id=16238301, x=1, y=162383, config_id=202,
+                        count=count, is_reward=0)
+        grid = board_to_grid(_board(162388, [blk]))
+        assert grid[0][0] == "rock", f"stone count={count} should be rock"
+
+
 def test_board_to_grid_pit_terrain_label():
     # config_id 401 = 礦洞 -> reachable_pit (planner reward target)
     blk = MineBlock(block_id=16238303, x=3, y=162383, config_id=401, count=1, is_reward=1)
