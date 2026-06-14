@@ -191,7 +191,10 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     now = started if now is None else now
 
     def _should_abort() -> bool:
-        """開瀏覽器請求 = 最高優先中斷（adb 永遠 False）。讀失敗視為不中斷。"""
+        """開瀏覽器請求 = 最高優先中斷。僅 web_h5（adb 沒有瀏覽器可開，不中斷）；
+        讀失敗視為不中斷。"""
+        if backend_kind != "web_h5":
+            return False
         try:
             import bot_state
             return bool(bot_state.has_pending_web_launch_request(ip))
