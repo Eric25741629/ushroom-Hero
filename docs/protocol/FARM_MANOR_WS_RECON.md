@@ -46,8 +46,10 @@ s2c `{shop_id#1, num#2}`。買到的東西用 **`item_change` (cmd 1030, 0x0406)
 > 買初級種子：`shop_buy {shop_type:4, shop_id:407, num:N}`
 > 買高產肥料：`shop_buy {shop_type:4, shop_id:408, num:N}`（每次給 5 個）
 > ⚠ 階梯價：當日第 N 次購買價格遞增（[0,20,30,…]，index = 當日已買次數）。
-> ⚠ **豐收卡（菜園豐收卡）不在 farm shop(type4)**：依舊例在跨界停車商店，shop_type/shop_id 待抓
-> （`ws_token/farm.py` `HARVEST_CARD_SHOP_TYPE/ID` 仍 None）。
+> **豐收卡（菜園豐收卡）live-confirmed 2026-06-15**：
+> `configMall row 1604` → `_data = [1604, 11, [240006,1], [201,40000], ...]`
+> ⇒ **shop_type = 11, shop_id = 1604, item 240006 ×1, 粉鑽 201 × 40000**。
+> `ws_token/farm.py` `HARVEST_CARD_SHOP_TYPE=11 / HARVEST_CARD_SHOP_ID=1604` 已更新。
 
 ### 買到每日上限「4/4」— num 語意 + shop_info 讀計數（live 驗證）
 - **`num` = 單次購買數量**（live：`shop_buy{4,407,3}` → rx 1030 給 item102 **×3**、當日計數 1→4）。不需逐次買。
@@ -140,10 +142,52 @@ farm_worker_info#6:p_worker_farm_info, …}`。seed_used_seq 空 = 用免費種�
 | DEFAULT_FERTILIZER_ID = None | → **111**（高產肥料） |
 | DEFAULT_TEAM_CFG_ID = None | → **7001** |
 | CMD_SHOP_BUY 6914 {shop_type,shop_id,num} | ✅；種子 type4/id407、高產肥料 type4/id408 |
-| HARVEST_CARD_SHOP_TYPE/ID = None | ❌ 仍缺（豐收卡在跨界停車商店，待抓） |
+| HARVEST_CARD_SHOP_TYPE/ID = None | ✅ **live-confirmed 2026-06-15**：type=11 / id=1604（粉鑽 201×40000） |
 | **打工偵測（缺）** | ➕ 本次補：get_other_role_info 18690 讀 worker_status |
 
+---
+
+## 4) 取消打工 / 簡易開始打工 — 已 live 驗證 (2026-06-15, 小寶 7fe98fc6)
+
+**純 WS 方式停用 / 啟用打工同伴**（不需 Playwright 點擊）：
+
+| 動作 | cmd (hex) | module | body |
+|------|----------|--------|------|
+| 開始打工（簡易）| **18177** (0x4701) | 71 | `{field1: 1001}` = `08 e9 07` |
+| 取消打工 | **18178** (0x4702) | 71 | `{field1: 1001}` = `08 e9 07` |
+
+> Live 實證（tools/_farm_full_capture.py, CDP 9226）：
+> - startBtn「開始打工」點擊 → `tx cmd=18177 hex=08 e9 07`
+> - cancelBtn「取消打工」點擊 → `tx cmd=18178 hex=08 e9 07`
+>
+> 兩者 body 完全相同；cmd 本身區分開始 vs 取消。
+> 解碼：`08` = field 1 varint, `e9 07` = varint 1001（field 1 = 1001）。
+>
+> 注意：這是 **module 71** 的 cmd，與 `worker_setting` (18689, module 73) **不同**。
+> 18177/18178 = 簡易開/關（不改配置）；18689 = 改設定+開始（改同伴/肥料）。
+
+`ws_token/farm.py` 已補：`CMD_WORKER_START=18177`, `CMD_WORKER_CANCEL=18178`,
+`FARM_WORK_ID=1001`, `stop_work()`, `start_work_simple()`, `run_harvest_card_cycle()`。
+
+---
+
+## 5) 豐收卡完整流程 `run_harvest_card_cycle`
+
+```
+stop_work()                     # cmd 18178 {1:1001}
+fertilize_lands()               # cmd 3079 per-land
+harvest_ready()                 # cmd 3081 per-land（best-effort，~50% timeout）
+buy_to_daily_target(1604, n)    # shop_buy cmd 6914 {shop_type=11, shop_id=1604, num}
+plant_empty(seed_id=103)        # cmd 3078 {seed_id=103, land_id}
+start_work_simple()             # cmd 18177 {1:1001}
+```
+
+特級種子 seed_id = **103**（`configGoods id=103`，live-confirmed）。
+實作：`ws_token/farm.py::run_harvest_card_cycle`。
+觸發：`ws_token.farm_config["harvest_card_cycle_enabled"] = true`（待接 runner）。
+
+---
+
 ## 仍待 live 補
-- 豐收卡 shop_type/shop_id（跨界停車商店）。
 - 普通肥料 / 友情肥料 item id（FertilizeSelectView 缺貨未觸發）。
 - 一筆真實 `plant` c2s（本次以管家 replant 的 s2c 反推 seed_id；c2s 欄序已由 schema+cmd map 確認）。

@@ -91,8 +91,13 @@ DEFAULT_SEED_ID: Optional[int] = SEED_ID_FREE        # 管家/種菜預設用免
 DEFAULT_FERTILIZER_ID: Optional[int] = FERTILIZER_ID_HIGH_YIELD
 DEFAULT_TEAM_CFG_ID: Optional[int] = FARM_WORKER_TEAM_CFG_ID
 # 豐收卡 still unverified: 不在 farm shop(type4)，依舊例在跨界停車商店。live-confirm.
-HARVEST_CARD_SHOP_TYPE: Optional[int] = None
-HARVEST_CARD_SHOP_ID: Optional[int] = None
+HARVEST_CARD_SHOP_TYPE: int = 11
+HARVEST_CARD_SHOP_ID: int = 1604
+SEED_ID_PREMIUM = 103         # 特級種子 (configGoods id=103, live-confirmed)
+# Simple start/cancel cmds (module 71; distinct from worker_setting 18689 which configures):
+CMD_WORKER_START = 18177      # start farm work (body {field1: 1001})
+CMD_WORKER_CANCEL = 18178     # cancel farm work (body {field1: 1001})
+FARM_WORK_ID = 1001           # work identifier in cmd body (live-captured 2026-06-15)
 
 
 # --- dataclasses ------------------------------------------------------------
@@ -219,6 +224,11 @@ def build_worker_setting_body(
         k, v = entry[0], entry[1]
         out += codec.pb_msg(4, codec.pb_uint(1, k) + codec.pb_uint(2, v))
     return out
+
+
+def build_worker_start_cancel_body(work_id: int = FARM_WORK_ID) -> bytes:
+    """Body for CMD_WORKER_START (18177) / CMD_WORKER_CANCEL (18178): {work_id#1}."""
+    return codec.pb_uint(1, work_id)
 
 
 def build_shop_buy_body(shop_type: int, shop_id: int, num: int) -> bytes:
@@ -516,6 +526,126 @@ def start_work(
     logger.info("ws_token farm: start_work team_cfg_id=%s worker_status=%d running=%s",
                 team_cfg_id, status, running)
     return {"running": running, "worker_status": status, "raw": reply}
+
+
+def stop_work(
+    client: WSGameClient,
+    *,
+    work_id: int = FARM_WORK_ID,
+    timeout: Optional[float] = None,
+) -> dict:
+    """Cancel farm 打工 (companion worker) via CMD_WORKER_CANCEL (18178).
+
+    Live-verified 2026-06-15 on 7fe98fc6: clicking '取消打工' sends cmd=18178
+    with body {field1=1001}. Returns {ok, error_code}. Use start_work_simple()
+    to re-enable after the harvest-card flow completes.
+    """
+    reply_cmd, reply = client.call_for(
+        CMD_WORKER_CANCEL,
+        build_worker_start_cancel_body(work_id),
+        expect_cmds=(CMD_WORKER_CANCEL, CMD_ERROR),
+        timeout=timeout,
+    )
+    if reply_cmd == CMD_ERROR:
+        code = _as_int(codec.walk_dict(reply).get(1))
+        logger.warning('ws_token farm: stop_work rejected 0x0201 code=%s', code)
+        return {'ok': False, 'error_code': code}
+    logger.info('ws_token farm: stop_work ok')
+    return {'ok': True, 'error_code': 0}
+
+
+def start_work_simple(
+    client: WSGameClient,
+    *,
+    work_id: int = FARM_WORK_ID,
+    timeout: Optional[float] = None,
+) -> dict:
+    """Start farm 打工 using CMD_WORKER_START (18177) — simple re-enable.
+
+    Does NOT change companion/fertilizer config (unlike worker_setting 18689).
+    Use this to re-enable work after stop_work() in the harvest-card flow.
+    Live-verified 2026-06-15 on 7fe98fc6: clicking '開始打工' sends cmd=18177
+    with body {field1=1001}.
+    """
+    reply_cmd, reply = client.call_for(
+        CMD_WORKER_START,
+        build_worker_start_cancel_body(work_id),
+        expect_cmds=(CMD_WORKER_START, CMD_ERROR),
+        timeout=timeout,
+    )
+    if reply_cmd == CMD_ERROR:
+        code = _as_int(codec.walk_dict(reply).get(1))
+        logger.warning('ws_token farm: start_work_simple rejected 0x0201 code=%s', code)
+        return {'ok': False, 'error_code': code}
+    logger.info('ws_token farm: start_work_simple ok')
+    return {'ok': True, 'error_code': 0}
+
+
+def run_harvest_card_cycle(
+    client: WSGameClient,
+    role_id: int,
+    *,
+    harvest_card_shop_type: int = HARVEST_CARD_SHOP_TYPE,
+    harvest_card_shop_id: int = HARVEST_CARD_SHOP_ID,
+    premium_seed_id: int = SEED_ID_PREMIUM,
+    num_cards: int = 3,
+    fertilizer_id: int = FERTILIZER_ID_HIGH_YIELD,
+    land_ids: Sequence[int] = (),
+    timeout: Optional[float] = None,
+) -> dict:
+    """豐收卡 harvest-card cycle via pure WS.
+
+    Flow (per project_farm_mechanics memory 2026-05-28):
+      1. Stop companion worker (cancel 打工)
+      2. Fertilize all plots to force-ripen crops
+      3. Harvest all ready crops (best-effort; 3077 has ~50% timeout)
+      4. Buy harvest cards (shop_type=11, shop_id=1604)
+      5. Plant premium seeds (seed_id=103) on every empty plot
+      6. Re-enable companion worker
+    """
+    result = {
+        'stopped_work': False,
+        'fertilized': 0,
+        'harvested': 0,
+        'cards_bought': 0,
+        'planted': 0,
+        'restarted_work': False,
+        'ok': False,
+    }
+
+    # 1. Stop companion worker
+    sw = stop_work(client, timeout=timeout)
+    result['stopped_work'] = sw.get('ok', False)
+
+    # 2. Fertilize to force-ripen
+    fert = fertilize_lands(client, role_id, fertilizer_id, timeout=timeout)
+    result['fertilized'] = fert.get('fertilized', 0)
+
+    # 3. Harvest ready crops (best-effort; 3077 may timeout)
+    try:
+        harv = harvest_ready(client, role_id, timeout=5.0)
+        result['harvested'] = harv.get('harvested', 0)
+    except Exception as exc:
+        logger.info('ws_token farm: harvest_ready skipped (%s)', exc)
+
+    # 4. Buy harvest cards up to num_cards
+    card_result = buy_to_daily_target(
+        client, harvest_card_shop_id, num_cards,
+        shop_type=harvest_card_shop_type, timeout=timeout,
+    )
+    result['cards_bought'] = card_result.get('bought', 0)
+
+    # 5. Plant premium seeds on empty plots
+    plant = plant_empty(client, role_id, premium_seed_id, timeout=timeout)
+    result['planted'] = plant.get('planted', 0)
+
+    # 6. Re-enable companion worker
+    rs = start_work_simple(client, timeout=timeout)
+    result['restarted_work'] = rs.get('ok', False)
+    result['ok'] = True
+
+    logger.info('ws_token farm: run_harvest_card_cycle %s', result)
+    return result
 
 
 def read_shop_counts(

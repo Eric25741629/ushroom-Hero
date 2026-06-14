@@ -303,8 +303,10 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
     seed_id = cfg.get("seed_id")
     team_cfg_id = cfg.get("team_cfg_id")
     buy_list = cfg.get("buy")
+    hcc_cfg = cfg.get("harvest_card_cycle")
+    hcc_enabled = isinstance(hcc_cfg, dict) and bool(hcc_cfg.get("enabled"))
     summary: dict = {"work_status": None, "harvest": None, "plant": None,
-                     "work": None, "buy": None}
+                     "work": None, "buy": None, "harvest_card_cycle": None}
 
     # 1) 打工偵測 (worker module 73, reliable) — 決定是否需要手動收成。
     worker_running = False
@@ -336,13 +338,28 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
             summary["harvest"] = {"skipped": f"home_farm 不可用: {exc}"}
 
     # 3) 打工設定 + 莊園購買 (worker/shop module, reliable) — 獨立於 home module。
-    if team_cfg_id and not worker_running:
+    # 若 harvest_card_cycle 啟用，skip 這裡的 start_work（cycle 自己管開/關）。
+    if team_cfg_id and not worker_running and not hcc_enabled:
         summary["work"] = farm.start_work(client, int(team_cfg_id))
     # 莊園購買: buy each configured farm-shop item UP TO its daily target. Reads
     # today's count first, so an item already bought in the GUI is respected
     # (buys only the remainder; nothing if already at target).
     if buy_list:
         summary["buy"] = farm.buy_farm_shop(client, buy_list)
+
+    # 4) 豐收卡循環 (可選；獨立完整流程：停打工→施肥→收成→買卡→種特級種子→恢復打工)
+    #    觸發方式：ws_token.farm.harvest_card_cycle.enabled = true
+    #    可選：num_cards（預設 3），fertilizer_id（預設 111）
+    if hcc_enabled:
+        num_cards = int(hcc_cfg.get("num_cards", 3))
+        fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
+        try:
+            summary["harvest_card_cycle"] = farm.run_harvest_card_cycle(
+                client, role_id, num_cards=num_cards, fertilizer_id=fert_id)
+        except Exception as exc:
+            logger.warning("ws_token farm: harvest_card_cycle skipped (%s)", exc)
+            summary["harvest_card_cycle"] = {"skipped": str(exc)}
+
     return summary
 
 
