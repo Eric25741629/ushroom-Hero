@@ -32,11 +32,24 @@ from ws_token.client import WSGameClient
 logger = logging.getLogger(__name__)
 
 CMD_DRAW = 0x0902      # 2306  c2s {type,count} -> s2c {items} | 0x0201
+CMD_FREE_DRAW = 0x1602 # 5634  c2s {slot#1, flag#3=1} -> server push 0x0902 | 0x0201
 CMD_ERROR = 0x0201     # error.error_info_s2c { error_code#1 }
 
 DRAW_TYPE_SKILL = 1
 DRAW_TYPE_COMPANION = 2
 DRAW_TYPE_NAME = {DRAW_TYPE_SKILL: "技能", DRAW_TYPE_COMPANION: "同伴"}
+
+# Free ad-summon slot ids (0x1602 field#1).
+SLOT_SKILL = 8       # 技能召喚
+SLOT_COMPANION = 7   # 同伴召喚
+# slot -> human name (mirrors DRAW_TYPE_NAME for logging)
+SLOT_NAME = {SLOT_SKILL: "技能", SLOT_COMPANION: "同伴"}
+
+# Server error code when the daily free-draw limit is exhausted.
+_ERROR_FREE_LIMIT = 89
+
+# In-game UI cap: 3 free 35-draws per slot per day.
+_FREE_DRAW_DAILY_LIMIT = 3
 
 # Draw-ticket currency item_id per type (LIVE 2026-06-15 via 0x0402 diff).
 TICKET_ITEM = {DRAW_TYPE_SKILL: 1012, DRAW_TYPE_COMPANION: 1013}
@@ -210,3 +223,73 @@ def run_gacha(
                 name, total, bundles, stopped or "done")
     return GachaReport(draw_type, name, mode, total, bundles,
                        stopped_reason=stopped)
+
+
+# ---------------------------------------------------------------------------
+# Free ad-summon (0x1602) — 3×35 free draws per slot per day, no real ad.
+# ---------------------------------------------------------------------------
+
+def free_draw_once(
+    client: WSGameClient, slot: int, *, timeout: float | None = None
+) -> DrawResult:
+    """Send 0x1602 {slot#1, flag#3=1}; server responds with 0x0902 (draw) or 0x0201.
+
+    Live-verified 2026-06-15 (emulator-5556): error code 89 = daily limit hit.
+    """
+    body = codec.pb_uint(1, slot) + codec.pb_uint(3, 1)
+    cmd, reply = client.call_for(
+        CMD_FREE_DRAW, body,
+        expect_cmds=(CMD_DRAW, CMD_ERROR),
+        timeout=timeout,
+    )
+    return parse_draw_result(cmd, reply)
+
+
+def free_draw_slot(
+    client: WSGameClient,
+    slot: int,
+    *,
+    max_times: int = _FREE_DRAW_DAILY_LIMIT,
+    timeout: float | None = None,
+) -> dict:
+    """Claim all available free draws for one slot.
+
+    Loops until daily limit (error 89) or other error. Returns a summary dict.
+    """
+    name = SLOT_NAME.get(slot, str(slot))
+    total = 0
+    attempts = 0
+    stopped = None
+    for _ in range(max(1, max_times)):
+        r = free_draw_once(client, slot, timeout=timeout)
+        attempts += 1
+        if r.success and r.drawn > 0:
+            total += r.drawn
+        else:
+            if r.error_code == _ERROR_FREE_LIMIT:
+                stopped = "daily_limit"
+            else:
+                stopped = f"error:{r.error_code}"
+            break
+    logger.info("ws_token gacha free[%s] slot=%s -> drawn=%s attempts=%s (%s)",
+                name, slot, total, attempts, stopped or "done")
+    return {"slot": slot, "name": name, "drawn": total, "stopped": stopped}
+
+
+def free_draw_all(
+    client: WSGameClient,
+    *,
+    slots: tuple[int, ...] = (SLOT_SKILL, SLOT_COMPANION),
+    timeout: float | None = None,
+) -> dict:
+    """Claim all daily free draws for both skill and companion slots.
+
+    Returns a dict keyed by slot name ("技能", "同伴") with per-slot summaries.
+    """
+    results: dict = {}
+    for slot in slots:
+        name = SLOT_NAME.get(slot, str(slot))
+        results[name] = free_draw_slot(client, slot, timeout=timeout)
+    total = sum(v["drawn"] for v in results.values())
+    logger.info("ws_token gacha free_draw_all -> total=%s results=%s", total, results)
+    return results

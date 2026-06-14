@@ -78,7 +78,7 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "turntable", "tycoon", "farm", "dungeon", "rogue", "statue", "guild", "steward",
-    "relic", "gacha", "kungfu_store", "spirit", "workshop", "couple",
+    "relic", "gacha", "gacha_free", "kungfu_store", "spirit", "workshop", "couple",
     "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
@@ -276,6 +276,29 @@ def _run_gacha(client, inventory_tracker, *,
             "drawn": rep.total_drawn, "bundles": rep.bundles,
             "stopped": rep.stopped_reason}
     return out or {"skipped": "no valid gacha types"}
+
+
+def _run_gacha_free(client, *, device: str, state_dir=None, now=None) -> dict:
+    """每日免費召喚 (0x1602): 技能 slot=8 + 同伴 slot=7, 最多 3 次/slot/日.
+
+    Gated by ws_state gacha_free.last_date to avoid re-running the same day.
+    Error 89 = daily limit hit (server-side guard); we stop cleanly on that.
+    """
+    from datetime import datetime
+    now_dt = datetime.now() if now is None else now
+    today = now_dt.strftime("%Y-%m-%d")
+    kw: dict = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw)
+    gf = st.get("gacha_free") or {}
+    if gf.get("last_date") == today:
+        return {"skipped": f"already done {today}"}
+    results = gacha.free_draw_all(client)
+    total = sum(v.get("drawn", 0) for v in results.values())
+    gf["last_date"] = today
+    gf["last_total"] = total
+    st["gacha_free"] = gf
+    ws_state.save_state(device, st, **kw)
+    return {"free_draws": results, "total": total}
 
 
 # home module(12) home_farm_info(3077)/harvest(3081) is intermittently UNanswered
@@ -1135,6 +1158,9 @@ def run_device(device: str, *, spend: bool = False,
             _step("gacha",
                   lambda: _run_gacha(client, inventory_tracker,
                                      gacha_config=gacha_config))
+        if gacha_config and gacha_config.get("free_daily"):
+            _step("gacha_free",
+                  lambda: _run_gacha_free(client, device=device))
         if kungfu_guess:
             _step("kungfu_store", lambda: _run_kungfu_store(client))
         _step("spirit", lambda: _run_spirit(client))

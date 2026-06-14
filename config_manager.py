@@ -115,12 +115,13 @@ DEFAULT_DEVICE_CONFIG = {
             "allow_drill": False,
             "max_steps": 200,
         },
-        "gacha": {              # WS 抽卡（技能/同伴 衝刺抽完）；消耗抽卡券，預設關
-            "enabled": False,
+        "gacha": {              # WS 抽卡；預設關
+            "enabled": False,   # 付費抽（消耗抽卡券 1012/1013）
             "types": [1, 2],    # 1=技能, 2=同伴
             "mode": "drain",    # drain=抽到券盡 | fixed=每批 count×batches
             "count": 999,       # fixed 模式每批抽數 (15/35/999)
             "batches": 1,       # fixed 模式批數
+            "free_daily": False,  # 每日免費召喚 (0x1602, 3×35/type/日，不需廣告)
         },
     },
 }
@@ -257,8 +258,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "worker_sync_timeout_sec": 10.0,
     "worker_sync_failure_backoff_sec": 6.0,
     # 跨裝置 online-check 的 checker 候選清單。任一在此清單、目前空閒、且好友
-    # 列表含 target 的帳號都可代為查線。預設只有 emulator-5554，與舊行為一致
-    # （5558 仍只被 5554 服務）。
+    # 列表含 target 的帳號都可代為查線。"*" 表示所有未設 online_check_target_pid
+    # 的裝置皆可做 checker（任一台暫停不影響其他台）。預設仍為 ["emulator-5554"]
+    # 以保留舊行為相容性。
     "online_check_checkers": ["emulator-5554"],
     "ocr": copy.deepcopy(DEFAULT_OCR_CONFIG),
     # 針對特定電腦名稱的設定 (解決 NAS 共用檔案問題)
@@ -437,6 +439,7 @@ def _sanitize_gacha_config(v: Any, default: dict) -> dict:
     count = _to_int(v.get("count"), default["count"])
     out["count"] = count if count in (15, 35, 999) else default["count"]
     out["batches"] = _clamp_int(v.get("batches"), 1, 2000, default["batches"])
+    out["free_daily"] = _to_bool(v.get("free_daily"), default["free_daily"])
     return out
 
 
@@ -706,6 +709,11 @@ def get_online_check_checkers() -> "list[str]":
     Source of truth: global config `online_check_checkers`. Defaults to
     `["emulator-5554"]` (legacy behaviour) when missing or malformed. Entries
     are trimmed and de-duplicated while preserving order.
+
+    Special value ``"*"`` expands to every configured device that does NOT
+    have ``online_check_target_pid`` set (i.e. all non-requester devices).
+    This lets any idle device serve as a checker without maintaining a manual
+    list — if 5554 is paused, 5556/5560/… pick up the request automatically.
     """
     try:
         raw = get_global_config().get("online_check_checkers")
@@ -722,6 +730,19 @@ def get_online_check_checkers() -> "list[str]":
             checkers.append(ip)
     if not checkers:
         return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+
+    # Expand the wildcard "*" to all non-requester devices.
+    if "*" in checkers:
+        try:
+            devices = load_config().get("devices", {}) or {}
+            expanded = [
+                dev_ip for dev_ip, cfg in devices.items()
+                if isinstance(cfg, dict) and not cfg.get("online_check_target_pid")
+            ]
+            return expanded if expanded else list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+        except Exception:
+            return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+
     return checkers
 
 
