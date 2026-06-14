@@ -2760,10 +2760,10 @@ select.form-control {
             <div class="wake-block">
               <div class="wake-dial">
                 <svg viewBox="0 0 64 64"><circle class="ring-bg" cx="32" cy="32" r="27"></circle><circle class="ring-fg" id="dial-${ip}" cx="32" cy="32" r="27" stroke-dasharray="169.6" stroke-dashoffset="169.6"></circle></svg>
-                <span class="wake-emoji">⏰</span>
+                <span class="wake-emoji" id="wake-emoji-${ip}">⏰</span>
               </div>
               <div class="wake-text">
-                <span class="label">下次喚醒</span>
+                <span class="label" id="wake-label-${ip}">下次喚醒</span>
                 <span class="wake-num" id="countdown-${ip}">--</span>
               </div>
             </div>
@@ -2826,10 +2826,19 @@ select.form-control {
 
 
         const countdownEl = document.getElementById(`countdown-${ip}`);
+        const wakeLabelEl = document.getElementById(`wake-label-${ip}`);
+        const wakeEmojiEl = document.getElementById(`wake-emoji-${ip}`);
+
+        // 倒數卡語意：睡眠中才講「下次喚醒」；正在執行任務 (ONLINE/DEGRADED 且尚未排定
+        // next_wake_at) 改顯示「執行中」，避免出現無意義的「下次喚醒 --」。
+        const isRunningState = statusClass === 'ONLINE' || statusClass === 'DEGRADED';
 
         if (info.next_wake_at) {
 
           const diff = Math.floor(info.next_wake_at - Math.floor(Date.now() / 1000));
+
+          if (wakeLabelEl) wakeLabelEl.innerText = '下次喚醒';
+          if (wakeEmojiEl) wakeEmojiEl.innerText = '⏰';
 
           if (diff > 0) {
 
@@ -2845,7 +2854,19 @@ select.form-control {
 
           }
 
+        } else if (isRunningState) {
+
+          if (wakeLabelEl) wakeLabelEl.innerText = '目前狀態';
+          if (wakeEmojiEl) wakeEmojiEl.innerText = '⚙️';
+
+          countdownEl.innerText = '執行中';
+
+          countdownEl.style.color = 'var(--safe-color)'; setDial(ip, 1, 'var(--safe-color)');
+
         } else {
+
+          if (wakeLabelEl) wakeLabelEl.innerText = '下次喚醒';
+          if (wakeEmojiEl) wakeEmojiEl.innerText = '⏰';
 
           countdownEl.innerText = '--';
 
