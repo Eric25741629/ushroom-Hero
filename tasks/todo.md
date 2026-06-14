@@ -12,6 +12,106 @@
 
 ---
 
+## 🌾 2026-06-15 WS farm 任務不穩 + 漏買種子/肥料修復（✅ 已修，使用者核可穩健版）
+
+根因（log + 程式碼證據，已確認）：
+- `_run_farm`（`ws_token/runner.py:233`）第一行無條件 `farm.read_farm`（home module **3077**），
+  接著 `harvest_ready`（**3081**）。home module(12) 在純 WS session 下回應**間歇性消失**
+  （非被前面任務用掉 — grep 確認全 run_device 序列只有 farm 碰 3077；冷呼叫第一發也會 timeout）。
+- 對照組：worker module 73（`read_work_status`/`start_work`）與 shop 6913/6914 recon 均註明「每次都可靠回應」。
+- 後果（5554，`ws_token.farm` 只設 `buy=[{407,4},{408,4}]`、無 seed_id/team_cfg_id）：
+  `read_farm` 一 timeout 就整個 raise → `_safe` 標記 farm error → **連可靠的種子/肥料每日購買都沒跑到**。
+- log 量化（5554 active main.log，2026-06-14~15）：farm 約 **50% 失敗**，失敗都剛好 15s（=call_timeout），
+  cmd 在 `3077`(read) 與 `3081`(harvest，使用者貼的錯誤) 兩處交替；偶發一次 kick(異地登入)。
+
+修法（最小侵入、對齊根因；**不改協議/cmd，它們是對的**）：使用者 2026-06-15 核可「穩健版」。
+- [x] 1. TDD（先 RED）：`tests/test_ws_token_runner.py` 加 3 案 —
+      `test_farm_reads_work_status_first`、`test_farm_skips_manual_harvest_when_worker_running`、
+      `test_farm_read_timeout_still_runs_buy`；fixture 補 `read_work_status`/`buy_farm_shop` stub、
+      end-to-end 補 18690 responder。RED traceback 正指 `runner.py:244 read_farm` raise → farm 失敗 → buy 漏。
+- [x] 2. `ws_token/runner.py` `_run_farm` 重構（GREEN）：
+      - 先 `farm.read_work_status`（reliable, module 73，5s timeout + try/except）判打工是否運作。
+      - 打工運作中 → 跳過 home-module 手動收成/種植（記 `{"skipped": "打工運作中，管家代收/代種"}`）。
+      - 打工關 → `read_farm`+`harvest_ready`+(`plant_empty` if seed_id) 包 try/except `WSError`，
+        timeout 記 skipped 不 raise；`_FARM_HOME_TIMEOUT_S=5.0` 讓 flaky 快速降級、不吃滿 15s。
+      - `start_work`（打工關才送）/ `buy` 獨立於 home-module 之外照跑（解除「read 失敗連帶吞掉 buy」）。
+- [x] 3. 驗證：`test_ws_token_runner`+`test_ws_token_farm`+`test_ws_phase`+`test_ws_runner_wiring`
+      **163 passed**；`py_compile` runner/farm/test OK。farm 既有 2 測（無設定只收成 / 有設定種+打工）續綠。
+- [ ] 4. 提醒：master `new_main_v2.py` 需重啟生效（sys.modules cache）。
+- [ ] 5.（選配）live 驗一輪：5554 manual-hold，看 farm 不再進 errors[]、buy 有跑、harvest 視打工狀態跳過/收成。
+
+#### Review（2026-06-15）
+- 根因不是協議錯（farm 有時 0-2s 就成功）；是 home module(12) 純 WS 間歇不回應 + `read_farm` 在 `_run_farm`
+  第一行無條件先跑，一 timeout 整段 raise → `_safe` 標 farm error → 連可靠的 shop 購買都沒跑到。
+- 真正被修掉的功能 bug：5554（farm 只設 buy）約 50% 喚醒漏買種子/肥料。穩健版讓 buy 與 home-module 解耦。
+- 順帶解掉使用者貼的 `cmd=3081`：打工運作時直接不送手動 harvest（管家代收），避開與管家搶地的 no-reply。
+- TDD 完整 RED→GREEN；改動集中（runner `_run_farm` 一處 + 一常數 + 測試 fixture/3 新測）。不動其他任務。
+- 兩個隔離 subagent 佐證：log 分析確認 farm 是唯一壞掉任務（5554 ~39% 失敗，cmd=3077 為主、43 次跨三台）；
+  欄位盤點確認協議 cmd 正確、無未驗證值被送出（farm 的 None 常數 `HARVEST_CARD_*` gate 的 `buy_harvest_card`
+  runner 不呼叫）。
+
+> 註：home module 3077 為何純 WS 間歇不回應，精確 server 機制需開窗 live 抓包才能 100% 確認
+> （疑似與管家/被踢 App 重連爭用同子系統）；上述修法對該機制 robust，不依賴其確切原因。
+
+#### 衍生發現（本次不動，列待辦/建議）
+- [ ] 自我觸發重登 race：5558 跨裝置 online-check 逼 5554 在前一輪 WS phase 結束 17s 後又開第二個 phase →
+      WS 登入踢掉自己 socket（`emulator-5554/main.log:6300-6327`，kicked=True）。建議在 online-check 中斷
+      喚醒時，加「距上次 WS 登入 < N 秒就不立即重登」的護欄。
+- [ ] `steward.py:51 RENEW_DAY_NUM=30`：`buy_service.day_num` 語意（字面天數 vs 階梯 index）未驗證，
+      且 spend=True 時可達、花家園幣。建議 live 抓一次續費 c2s 確認。
+- [ ] 刪 4 殘檔：`ws_token/lamp.sync-conflict-*.py`×2、`ws_token/mining_adapter.sync-conflict-*.py`×2
+      （避免被誤 import 到含「assume reachable」的舊邏輯副本）。
+- 觀察（非 bug）：WS phase ~4 分鐘幾乎全是 lamp 每輪開 7680 顆（~85% 時間）；若覺得太頻繁可調 lamp 儲備/批次策略。
+
+---
+
+## 🚗 2026-06-15 每日 10:00 搶車位：喚醒打斷加固（spec `docs/superpowers/specs/2026-06-15-carpark-1000-grab-wake-design.md`，使用者已核可）
+
+範圍：讓 5554 / 7fe98fc6（皆有 WS 後端）每天 09:59 醒、10:00 搶跨界泊銀車位。手機fc 已啟用不動；5556/5560/5558 本輪不處理。
+
+- [x] Part 1 config：`bot_config.json` 5554 + 7fe98fc6 `ws_token.carpark_plan.enabled` false→true（scaffold 已備、與手機fc 一致）。手機fc（adb-fc65396d，line 427）已 true 不動。已驗：JSON 合法、三台 carpark_plan.enabled 皆 True、無殘留 false。
+- [x] Part 2 code（TDD）：`runtime_services/sleep_service.py` `_maybe_resume_sleep` 兩條返回休眠分支（checker / 非 checker）進睡前套 `_apply_carpark_repark_wake`，補上「中斷後返回休眠睡過 10:00」漏拍。只提前不延後，對非車位裝置 no-op。
+- [x] Part 3 reconcile 共存（規劃期定案）：`carpark_auto.reconcile()` 純加法（`:1237` 只在 cross<target 補停、`:1254` 超額僅 log「recall delegated」、從不搬走跨界車）→ 依 spec 決策規則「保留 `daytime_cross:1` 當 fallback，不改 reconcile config」。WS 10:00 先搶（ws_phase 在瀏覽器啟動前跑），reconcile 後跑見 cross 已達標 → while 不執行；WS 搶輸時 reconcile 當 fallback 補搶。spec Part 3 已回填定案。
+- [x] Part 4 驗證（單測/語法）：新增 3 個 `_maybe_resume_sleep` clamp test（非 checker / checker 兩分支 + 無 next_ts no-op pin），TDD 先 RED（傳 resume_ts ≠ next_ts）後 GREEN；`tests/test_sleep_service.py` 33 passed；`py_compile` sleep_service + 測試檔 OK；wake-loop 消費端 19 測綠。
+- [ ] Part 4 驗證（live，待停機窗）：5554 manual-hold 觀察 log「跨界車位排程：喚醒提前 …」（09:59）+ 10:00 `pre-open wait … (grab)` + 實際搶位結果。
+- [ ] 提醒：master `new_main_v2.py` 需重啟才生效（sys.modules cache + config 重讀）。
+
+#### Review（2026-06-15）
+- 4 個工作面全落地：config 兩台啟用、`_maybe_resume_sleep` 兩分支 clamp、Part 3 定案不改 reconcile、單測+語法驗證綠。改動最小（sleep_service 兩處各 +3 行、config 2 處旗標、3 個新測試）。
+- TDD 完整走 RED→GREEN：先確認 2 個 clamp 測試因「未 clamp」失敗，實作後 33 passed。
+- 既有 `_apply_carpark_repark_wake`（只提前不延後、無 next_ts no-op、enabled gate）直接沿用，非車位裝置與一般返回休眠零影響。
+- ⚠ 非本案問題（pre-existing 測試順序污染）：`tests/test_wake_ws_fallback.py` 與 `test_wake_home_order.py` 等同跑時，後者把 `config_manager` 換成缺 `get_hostname` 的 fake module 未還原 → ws_fallback 的 `_patch_host` 7 個測試 AttributeError。單跑 `test_wake_ws_fallback.py` 12 passed、`config_manager.get_hostname` 確實存在（`config_manager.py:269`）→ 確認與本案無關，屬 todo.md 已記錄的同類污染。
+
+---
+
+## 🚗 2026-06-15（追加需求，待使用者過目後實作）搶位選位分層策略 + 10:00:00 每秒重試
+
+使用者 2026-06-15 兩段新需求（澄清後定案）。範圍：三台 WS 車位裝置（5554/7fe98fc6/手機fc）共用的 WS 搶位邏輯。動到 live 關鍵路徑（`ws_token/runner.py` `_run_carpark` + `ws_token/carpark.py` `auto_select_and_park_many`）。
+
+**搶位優先序（每次嘗試內由高到低）**：
+1. 鉑銀 9/10（主目標，有空位無條件停）。
+2. 高獎勵低編號區（鉑銀1-8）：**只有同服1467抱團 ≥3** 才停；由編號小→大，找到第一個達標且有空位的就停。
+3. 低編號區沒抱團 → 鉑銀11-20，有空位就停（編號小→大）。
+4. 鉑銀21-30：隨便停（有空位就停）。
+5.（判斷項，需確認）絕對最後手段：上面全不適用但低編號(1-8)仍有非抱團空位 → 傾向使用者語意「避開無抱團低位」=**預設不停，到 10:01 沒搶到就放棄**。← 請確認。
+
+**門檻**：同服(1467)占用 ≥3 算抱團（`cluster_min`，預設3）。
+**時間/重試**：10:00:00.000 開搶（現行已對準）；**只有整輪 `parked_count==0`（完全沒停到）才**每秒重試（poll 1s），到 **10:01:00**（`grab_window_seconds` 預設60）止；停到任何車即停止。隨便停(T4)屬單輪優先序內，達到就當下停、不再等。
+
+**實作（TDD）**：
+- [ ] `carpark_plan.py`：新增 `cluster_min`(預設3)、`grab_window_seconds`(預設60) getter；`grab_poll_seconds` 預設 0.3→1.0；保留 `grab_attempts` 當安全上限。
+- [ ] `carpark.py` `auto_select_and_park_many`：加 `cluster_min` 參數，改分層 ranking（preferred→低編號抱團≥min→11-20→21-30→[T4 視確認]）。抱團 pre-read 僅在 9/10 滿、需評估 fallback 時才付出（9/10 有位則最少 RTT 直接停，搶位要快）。純 ranking 抽可測函式。
+- [ ] `runner.py` `_run_carpark`：搶位迴圈由次數型改時間型——`grabbing` 時從 open_dt 迴圈到 open_dt+grab_window，每輪 park，`parked_count>0` 即停否則 `sleep_fn(1s)`；放寬重試條件為 parked_count==0（不再限 no_parkable_lot；每輪重算 need/current 防重複停）；非 grabbing 維持單次。park_timeout 不重試（靠 read_my_mounts 排除已停 mount 防雙停）。傳 cluster_min。
+- [ ] `config_manager.py` DEFAULT + `_merge_carpark_plan` sanitizer 補新欄位與型別清洗。
+- [ ] bot_config.json：預設即符合需求，三台不需逐台填（除非個別微調）。
+- [ ] 測試：`test_carpark_many.py`（分層 ranking + ≥3 gate + tier 內排序 + T4）、`test_carpark_plan.py`（新 getter）、`test_carpark_runner_plan.py`（時間型重試：parked==0 才重試/到窗尾停/poll 間隔；注入 sleep_fn+now）。
+- [ ] py_compile + focused pytest（carpark 全系列）。
+- [ ] ⚠ master `new_main_v2.py` 需重啟才生效。Live：5554 manual-hold 看 10:00 分層選位 + 每秒重試 log。
+
+**判斷項待確認**：(a) T4 絕對最後手段是否要停無抱團低位（預設否）；(b) poll/window 共用預設 = 手機fc 也套此搶位行為（合理，它也搶位）。
+
+---
+
 ## 🌙 2026-06-14 夜間自主批次：9 大需求 + 全面重構 + dashboard 重設計（branch `feat/overnight-2026-06-14`）
 
 使用者夜間下 9 項需求 + 「全部接入 / 直接驗證 / 全面重構+改名 / 階段 commit / dashboard 5-8 方案」。
@@ -627,3 +727,22 @@ control_panel/
 - `miner/v5/runtime/*.json`（已存在的線上累積檔）內含舊污染語意的 vertical 計數，會持續
   以 ≤20% 上限輕微影響 merge。如要丟棄可刪除這些檔或重跑 `tools/build_v5_priors.py`。
 - `tools/tmp_*.py`（5 支 scratch/probe）為未追蹤檔，建議勿 `git add -A` 進版控或加入 gitignore。
+
+## WS 階段可被「開啟瀏覽器」中斷 + 持久化續做 (2026-06-15, worktree)
+
+Spec: `docs/superpowers/specs/2026-06-15-ws-phase-interruptible-resume-design.md`
+在 worktree `worktree-ws-phase-interruptible-resume`（base=overnight checkpoint）實作，完成後 merge 回 `feat/overnight-2026-06-14`。
+
+- [x] `ws_token/abort.py`：`WSRunAborted(Exception)`（零相依，避免循環匯入）。
+- [x] `ws_token/runner.py`：`RunReport.aborted`；`run_device(should_abort, skip_tasks)`（預設 None=不變）；`_step` 檢查 aborted/should_abort()/skip_set；`_safe` re-raise `WSRunAborted`；`should_abort` 透傳 lamp/mining。TDD：`tests/test_ws_runner_abort.py`（10）。
+- [x] `ws_token/lamp.py` `open_lamp` + `ws_token/mining_supervised.py` `mine_until_pickaxe_empty`：加 `should_abort=None`，迴圈內命中即 `raise WSRunAborted`。real-raise 測試各 1。
+- [x] `game_actions/ws_phase.py`：ledger（ws_resume；date+ts TTL 30min；EXEMPT={carpark,idle_reward}）→ skip_tasks；`_substantive_done`；`effective_done` 重算 pipeline-skip + farm/dungeon；abort 寫入、完整完成清空、abort 時 update_state；全程 best-effort。TDD：`tests/test_ws_phase_resume.py`（8）。
+- [x] `new_main_v2.py`：WS 區塊後 `if backend=="web_h5" and has_pending_web_launch_request: continue`；init 被中斷則不快取 `pre_runtime_ws_done`。安全閘：web_h5 only（adb 無瀏覽器，避免緊迴圈）。
+- [x] 驗證：focused pytest + py_compile；3 個 milestone commit。
+
+### Review
+- 三層：機制（runner，純機制；should_abort/skip_tasks 預設 None=零行為差異）、政策（ws_phase ledger）、接線（new_main_v2，web_h5-gated）。
+- 安全：should_abort 與迴圈 continue 都僅 web_h5；adb（含手機fc offline_fallback）零影響。長任務（開神燈/挖礦）每批/每步讓出，已落地結果不重複。
+- ledger 99% 為空（只存在於 abort→resume 之間）；TTL 30min + 完整完成清空 雙保險，避免跨喚醒誤跳 regen 任務。
+- 測試限制：new_main_v2.main() 迴圈無既有 unit 測試框架且 import 全套 device/cv2 棧；兩個 guard 以 py_compile + 細讀驗證，其依賴的 primitives（has_pending_web_launch_request、run_ws_phase ledger）已全測。
+- 待 live 驗證：web_h5+ws 裝置 WS 階段（mining 進行中）按「開啟瀏覽器」→ 即時開頁 → 用完重新上線續做。需重啟 master+worker 生效。

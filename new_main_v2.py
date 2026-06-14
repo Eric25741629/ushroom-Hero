@@ -156,7 +156,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         def _run_initial_ws_phase_before_web_start():
             nonlocal pre_runtime_ws_done
             if pre_runtime_ws_done is None:
-                pre_runtime_ws_done = _run_ws_phase_for_wake(ip, device_logger)
+                result = _run_ws_phase_for_wake(ip, device_logger)
+                # 若這輪 WS 被「開啟瀏覽器」中斷，別快取半套結果：留 None，讓主迴圈
+                # 重跑 WS 階段（讀 ledger 續做未完成），而非沿用部分 skip-set。
+                if not bot_state.has_pending_web_launch_request(ip):
+                    pre_runtime_ws_done = result
 
         while True:
             try:
@@ -278,6 +282,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     pre_runtime_ws_done = None
                 else:
                     ws_done = _run_ws_phase_for_wake(ip, device_logger)
+
+                # WS 階段可能因「開啟瀏覽器」請求被中斷（已記錄進度到 ledger）：
+                # 立即回頂端讓 handle_pending_web_launch 開瀏覽器，使用者用完重新上線
+                # 後下一輪 WS 階段會讀 ledger 續做未完成（ws_done 此時作廢丟棄）。
+                # 僅 web_h5：adb 沒有瀏覽器可開，handle_pending_web_launch 不消費請求，
+                # 無條件 continue 會變成緊迴圈。
+                if backend_kind == "web_h5" and \
+                        bot_state.has_pending_web_launch_request(ip):
+                    device_logger.info(
+                        f"[{ip}] WS 階段偵測到開啟瀏覽器請求，回頂端處理開瀏覽器")
+                    continue
 
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")

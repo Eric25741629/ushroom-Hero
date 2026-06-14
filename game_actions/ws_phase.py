@@ -60,7 +60,82 @@ def _record_daily_done(ip: str, skips: set[str], log) -> None:
                 log.warning("[%s] WS 回寫當日紀錄失敗: %s", ip, key, exc_info=True)
 
 
-def _run_device(ip: str, cfg: dict, progress=None):
+# --- 續做 ledger（中斷後持久化進度；瀏覽器用完重新上線只跑未完成）-------------
+# 中斷時把「本輪已實質完成的任務」寫進 ws_state[device]["ws_resume"]；下一輪 WS
+# 階段（resume）讀回來跳過它們，完整跑完即清空。有效視窗 30 分鐘 + 同日，逾時/隔日
+# 視為 stale（resume 安全地全跑）。詳見
+# docs/superpowers/specs/2026-06-15-ws-phase-interruptible-resume-design.md。
+_RESUME_KEY = "ws_resume"
+_RESUME_TTL_SEC = 30 * 60
+# 時間窗（10:00 搶車位）/ 每輪累積收益類任務即使本輪稍早做過，resume 仍要重跑，
+# 不被 ledger 跳過。
+_RESUME_EXEMPT = frozenset({"carpark", "idle_reward"})
+
+
+def _substantive_done(report) -> set[str]:
+    """本輪「真的做了事」的任務名：在 tasks 且非 ``{"skipped": ...}`` dict。
+
+    errors 與 tasks 互斥（不在 tasks），所以不需另外排除。回 {"skipped"} 的任務
+    （如 couple 無伴侶、dungeon 沒配掃蕩、carpark 沒開窗）視為「本輪沒做事」，
+    不進 ledger，resume 時照常重跑（便宜且結果相同）。
+    """
+    done: set[str] = set()
+    for name, result in report.tasks.items():
+        if isinstance(result, dict) and "skipped" in result:
+            continue
+        done.add(name)
+    return done
+
+
+def _resume_today(now: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(now))
+
+
+def _load_resume_done(ip: str, now: float, log, state_dir=None) -> set[str]:
+    """有效（同日 + TTL 內 + 非空）ledger 的已完成任務集合；否則空集合。best-effort。"""
+    try:
+        from ws_token import state as ws_state
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+        led = (ws_state.load_state(ip, **kw).get(_RESUME_KEY)) or {}
+    except Exception:  # noqa: BLE001 — 讀 ledger 壞掉 → 不續做、全跑
+        log.debug("[%s] WS resume ledger 讀取失敗（忽略，全跑）", ip, exc_info=True)
+        return set()
+    done = set(led.get("done") or ())
+    if (led.get("date") != _resume_today(now)
+            or (now - float(led.get("ts") or 0)) >= _RESUME_TTL_SEC
+            or not done):
+        return set()
+    return done
+
+
+def _save_resume(ip: str, done: set[str], now: float, log, state_dir=None) -> None:
+    """中斷時寫入續做 ledger（best-effort：失敗只記 log，不影響 skip-set）。"""
+    try:
+        from ws_token import state as ws_state
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+        st = ws_state.load_state(ip, **kw)
+        st[_RESUME_KEY] = {"date": _resume_today(now), "ts": now,
+                           "done": sorted(done)}
+        ws_state.save_state(ip, st, **kw)
+    except Exception:  # noqa: BLE001
+        log.warning("[%s] WS resume ledger 寫入失敗（忽略）", ip, exc_info=True)
+
+
+def _clear_resume(ip: str, log, state_dir=None) -> None:
+    """完整跑完後清空續做 ledger（best-effort；沒有 key 則不寫）。"""
+    try:
+        from ws_token import state as ws_state
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+        st = ws_state.load_state(ip, **kw)
+        if _RESUME_KEY in st:
+            st.pop(_RESUME_KEY, None)
+            ws_state.save_state(ip, st, **kw)
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] WS resume ledger 清除失敗（忽略）", ip, exc_info=True)
+
+
+def _run_device(ip: str, cfg: dict, progress=None, *,
+                should_abort=None, skip_tasks=None):
     """間接層：lazy import + 參數展開，tests monkeypatch 這裡。"""
     from ws_token.runner import run_device
     return run_device(
@@ -79,6 +154,8 @@ def _run_device(ip: str, cfg: dict, progress=None):
         workshop_rotate=bool(cfg.get("workshop_rotate", True)),
         forge_ring=bool(cfg.get("forge_ring", False)),
         mining_config=cfg.get("mining") or None,
+        should_abort=should_abort,
+        skip_tasks=skip_tasks,
     )
 
 
@@ -93,8 +170,16 @@ def _should_bootstrap(backend_kind: str, cfg: dict) -> bool:
     return backend_kind == "adb" and bool(cfg.get("bootstrap_token", True))
 
 
-def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
-    """跑 WS 階段並回傳本輪 pipeline 的 skip-set；任何失敗回空集合。"""
+def run_ws_phase(ip: str, logger_obj=None, *, now=None,
+                 state_dir=None) -> frozenset[str]:
+    """跑 WS 階段並回傳本輪 pipeline 的 skip-set；任何失敗回空集合。
+
+    WS 階段可被「開啟瀏覽器」請求即時中斷（``should_abort`` 輪詢
+    ``bot_state.has_pending_web_launch_request``）：中斷時把已實質完成的任務寫進
+    持久化 ledger，主迴圈讓位去開瀏覽器；使用者用完重新上線，下一輪 WS 階段讀
+    ledger 只續做未完成的任務（``skip_tasks``）。完整跑完即清空 ledger。
+    ``now`` / ``state_dir`` 供測試注入（預設 ``time.time()`` / 預設 ws_state 路徑）。
+    """
     log = logger_obj or logger
     device_cfg = config_manager.get_device_config(ip)
     cfg = device_cfg.get("ws_token") or {}
@@ -103,6 +188,24 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     can_bootstrap = _should_bootstrap(backend_kind, cfg)
     started = time.time()
+    now = started if now is None else now
+
+    def _should_abort() -> bool:
+        """開瀏覽器請求 = 最高優先中斷。僅 web_h5（adb 沒有瀏覽器可開，不中斷）；
+        讀失敗視為不中斷。"""
+        if backend_kind != "web_h5":
+            return False
+        try:
+            import bot_state
+            return bool(bot_state.has_pending_web_launch_request(ip))
+        except Exception:  # noqa: BLE001
+            return False
+
+    # 續做：讀有效 ledger（中斷後 30 分鐘內、同日）→ 跳過已完成的任務。
+    prior_done = _load_resume_done(ip, now, log, state_dir)
+    skip_tasks = prior_done - _RESUME_EXEMPT
+    if skip_tasks:
+        log.info("[%s] WS 續做：跳過先前已完成 %s", ip, sorted(skip_tasks))
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
@@ -128,7 +231,8 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
         return frozenset()
 
     def _run_once():
-        return _run_device(ip, cfg, _progress)
+        return _run_device(ip, cfg, _progress,
+                           should_abort=_should_abort, skip_tasks=skip_tasks)
 
     try:
         report = _run_once()
@@ -154,26 +258,41 @@ def run_ws_phase(ip: str, logger_obj=None) -> frozenset[str]:
                         ip, report.errors.get("login"))
             return frozenset()
 
+    # effective_done = 本輪實質完成 ∪ 先前 ledger 已完成（resume 跳過的那些也算數），
+    # 確保續做跳過的任務同樣讓 daily_pipeline 正確略過，不會用瀏覽器重做一次。
+    effective_done = prior_done | _substantive_done(report)
     skips: set[str] = set()
     for key, names in WS_TO_PIPELINE_SKIPS.items():
-        result = report.tasks.get(key)
-        if key not in report.tasks or key in report.errors:
-            continue
-        if isinstance(result, dict) and "skipped" in result:
-            continue  # 任務自己宣告本輪沒做事（如 couple 無伴侶）→ 不替代 Playwright
-        skips.update(names)
+        if key in effective_done:
+            skips.update(names)
     # 條件式：WS farm 沒配種子就只收成 → Playwright 農場照跑補種
-    if "farm" in report.tasks and (cfg.get("farm") or {}).get("seed_id"):
+    if "farm" in effective_done and (cfg.get("farm") or {}).get("seed_id"):
         skips.add("農場任務")
     # 條件式：有配掃蕩才算把萬神試煉做完
-    if "dungeon" in report.tasks and "dungeon" not in report.errors \
-            and cfg.get("dungeon_sweeps"):
+    if "dungeon" in effective_done and cfg.get("dungeon_sweeps"):
         skips.add("萬神試煉")
+
+    # 續做 ledger：被中斷 → 寫入已完成清單 + 狀態回報；完整跑完 → 清空（下一個
+    # 喚醒週期回到全新狀態，避免跨喚醒誤跳會 regen 的任務）。
+    if report.aborted:
+        _save_resume(ip, effective_done, now, log, state_dir)
+        try:
+            import bot_state
+            bot_state.update_state(
+                ip, task="WS 階段",
+                step=f"WS 已暫停(開啟瀏覽器)，已完成 {len(effective_done)} 項，"
+                     f"重新上線後續做")
+        except Exception:  # noqa: BLE001 — 狀態回報失敗不影響流程
+            log.debug("[%s] WS 中斷狀態回報失敗", ip, exc_info=True)
+        log.info("[%s] WS 階段被中斷（開啟瀏覽器），已完成 %s，待續",
+                 ip, sorted(effective_done))
+    else:
+        _clear_resume(ip, log, state_dir)
 
     _record_daily_done(ip, skips, log)
 
     log.info(
-        "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s skip=%s",
+        "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s aborted=%s skip=%s",
         ip, time.time() - started, list(report.tasks), list(report.errors),
-        report.kicked, sorted(skips))
+        report.kicked, report.aborted, sorted(skips))
     return frozenset(skips)

@@ -49,7 +49,7 @@ from __future__ import annotations
 import argparse
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Callable, Iterable, Optional, Sequence
 
 from ws_token import (
     carpark, couple, dungeon, farm, guild, idle_reward, kungfu_store,
@@ -57,6 +57,7 @@ from ws_token import (
     spirit, steward, turntable, tycoon, workshop,
 )
 from ws_token import state as ws_state
+from ws_token.abort import WSRunAborted
 from ws_token.client import WSGameClient, WSError, WSLoginError, WSTimeoutError
 from ws_token.creds import load_creds
 
@@ -106,6 +107,11 @@ class RunReport:
     in-flight tasks usually fail (connection gone) and land in ``errors``; this
     flag lets the loop tell "kicked" apart from an ordinary task failure so it
     can back off (30-min cooldown) instead of hammering.
+
+    ``aborted`` is True iff the run was stopped early by an external
+    ``should_abort`` signal (e.g. a pending「開啟瀏覽器」request). The
+    in-progress + remaining tasks are left pending (absent from both ``tasks``
+    and ``errors``); the caller persists what got done and resumes the rest.
     """
 
     device: str
@@ -114,6 +120,7 @@ class RunReport:
     tasks: dict[str, Any] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     kicked: bool = False
+    aborted: bool = False
 
 
 def _make_client(creds, **kwargs) -> WSGameClient:
@@ -600,7 +607,8 @@ def _run_couple(client, *, gifts: bool, forge_ring: bool,
 
 
 def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
-              initial_count: Optional[int] = None, on_progress=None) -> dict:
+              initial_count: Optional[int] = None, on_progress=None,
+              should_abort: Optional[Callable[[], bool]] = None) -> dict:
     """開神燈: sequentially open up to 10000 boxes and auto-equip/sell drops.
 
     Only reached when ``open_lamp=True`` (gated by run_device); it consumes 神燈
@@ -625,11 +633,13 @@ def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
         lamp_min_keep=lamp_min_keep,
         initial_count=initial_count,
         on_progress=on_progress,
+        should_abort=should_abort,
     )
 
 
 def _run_mining(client, tracker: mining.InventoryTracker, *,
-                mining_config: Optional[dict]) -> dict:
+                mining_config: Optional[dict],
+                should_abort: Optional[Callable[[], bool]] = None) -> dict:
     """挖礦 opt-in: 用 0x0402 庫存現量，一步一刷新，鎬子用完即停。"""
     cfg = mining_config or {}
     return mining_supervised.mine_until_pickaxe_empty(
@@ -637,6 +647,7 @@ def _run_mining(client, tracker: mining.InventoryTracker, *,
         tracker,
         allow_bomb=bool(cfg.get("allow_bomb")),
         allow_drill=bool(cfg.get("allow_drill")),
+        should_abort=should_abort,
         max_steps=int(cfg.get("max_steps") or 200),
         timeout=cfg.get("timeout"),
         max_depth=cfg.get("max_depth"),
@@ -799,7 +810,9 @@ def run_device(device: str, *, spend: bool = False,
                tycoon: bool = False,
                tycoon_max_rolls: int = 50,
                mining_config: Optional[dict] = None,
-               progress=None) -> RunReport:
+               progress=None,
+               should_abort: Optional[Callable[[], bool]] = None,
+               skip_tasks: Optional[Iterable[str]] = None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -857,9 +870,19 @@ def run_device(device: str, *, spend: bool = False,
     ``("xxx", "error", "<err>")`` after — callers wire it to the dashboard
     state and the per-device log. A raising callback is swallowed; it can
     never abort the run.
+
+    ``should_abort`` (optional) is polled at every task boundary (and threaded
+    into the 開神燈/挖礦 loops); once it returns True the run stops ASAP, the
+    in-progress + remaining tasks are left pending (absent from both ``tasks``
+    and ``errors``) and the report carries ``aborted=True``. Used by the WS
+    phase to yield to a pending「開啟瀏覽器」request. ``skip_tasks`` (optional)
+    is a set of task names already done in a prior interrupted run that are
+    bypassed this pass (resume). Both default None -> behaviour unchanged.
     """
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
+    skip_set = set(skip_tasks or ())   # 續做：本輪要跳過（先前已完成）的任務
+    aborted = False                    # 被 should_abort 中斷 → 剩餘任務留 pending
     sweep: tuple[Sequence[int], ...] = tuple(sweep_list or ())
     dsweeps: tuple[Sequence[int], ...] = tuple(dungeon_sweeps or ())
     role_id_hint = 0
@@ -933,7 +956,22 @@ def run_device(device: str, *, spend: bool = False,
                          exc_info=True)
 
     def _step(name: str, fn) -> None:
-        _safe(tasks, errors, name, fn, notify=_notify)
+        nonlocal aborted
+        if aborted:
+            return                       # 已中斷 → 後續任務全部不跑（留 pending）
+        if should_abort is not None and should_abort():
+            aborted = True
+            _notify(name, "aborted", "pending web launch")
+            return                       # 任務邊界中斷：本任務未跑 → pending
+        if name in skip_set:
+            _notify(name, "skip", "resume: already done")
+            return                       # 續做：已完成 → 不重跑、不記錄
+        try:
+            _safe(tasks, errors, name, fn, notify=_notify)
+        except WSRunAborted:
+            # 長任務（開神燈/挖礦）迴圈內中斷：不記為完成/錯誤 → 留 pending。
+            aborted = True
+            _notify(name, "aborted", "in-task")
 
     def _lamp_progress(opened: int, target: int) -> None:
         """逐批開燈進度 → 走既有 _notify（runner 不直接依賴 bot_state）。"""
@@ -986,13 +1024,15 @@ def run_device(device: str, *, spend: bool = False,
         if mining_config and mining_config.get("enabled"):
             _step("mining",
                   lambda: _run_mining(client, inventory_tracker,
-                                      mining_config=mining_config))
+                                      mining_config=mining_config,
+                                      should_abort=should_abort))
         if open_lamp:
             _step("lamp",
                   lambda: _run_lamp(client, lamp_percent=lamp_percent,
                                     lamp_min_keep=lamp_min_keep,
                                     initial_count=lamp_count_holder["count"],
-                                    on_progress=_lamp_progress))
+                                    on_progress=_lamp_progress,
+                                    should_abort=should_abort))
     finally:
         # Read the kick flag BEFORE close() — a deliberate close never sets it,
         # so this captures only a real 異地登入 / server-drop during the run.
@@ -1008,10 +1048,11 @@ def run_device(device: str, *, spend: bool = False,
     if kicked:
         logger.warning("ws_token runner: %s 連線在執行中被踢（異地登入/伺服器斷線）",
                        device)
-    logger.info("ws_token runner: %s done — %d task(s) ok, %d error(s), kicked=%s",
-                device, len(tasks), len(errors), kicked)
+    logger.info(
+        "ws_token runner: %s done — %d task(s) ok, %d error(s), kicked=%s aborted=%s",
+        device, len(tasks), len(errors), kicked, aborted)
     return RunReport(device=device, login_ok=True, spend=spend,
-                     tasks=tasks, errors=errors, kicked=kicked)
+                     tasks=tasks, errors=errors, kicked=kicked, aborted=aborted)
 
 
 def _safe(tasks: dict, errors: dict, name: str, fn, notify=None) -> None:
@@ -1027,6 +1068,9 @@ def _safe(tasks: dict, errors: dict, name: str, fn, notify=None) -> None:
         tasks[name] = fn()
         if notify:
             notify(name, "ok", "")
+    except WSRunAborted:
+        # 中斷不是任務錯誤：往上拋給 _step，讓該任務維持 pending（不記 errors）。
+        raise
     except Exception as exc:  # noqa: BLE001 — per-task isolation is the whole point
         errors[name] = f"{type(exc).__name__}: {exc}"
         logger.warning("ws_token runner: task %s failed: %s", name, exc, exc_info=True)

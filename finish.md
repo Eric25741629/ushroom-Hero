@@ -2649,3 +2649,159 @@ Spec 自我審查:無 placeholder、各 Part 一致、範圍聚焦三台、Part 
 
 ---
 
+## 2026-06-15 00:19:33  ·  session 6d042cda
+
+bot_config.json 剛被外部(使用者/linter,已知為刻意:展開 farm.buy inline + 補 5554 的 lamp_percent/min_keep)重新格式化。需確認我的 carpark_plan flip 在重排後仍完整(5554 line 98 已見 true)。重新解析驗證三台狀態。
+
+---
+
+## 2026-06-15 00:26:15  ·  session 829be59e
+
+關於你發現的「正在載入裝置資料...」：
+
+對，它本來就該在裝置載入後消失，這是一個**既有 bug**（不是這次反皮造成的）。`#grid` 一開始放一個靜態佔位 `<div>正在載入裝置資料...</div>`，但 `renderGrid` 清除舊節點的迴圈只刪「有 `data-ip`」的子節點，佔位 div 沒有 `data-ip` → 永遠不會被刪，於是卡片出現後它還賴在那。已修：把判斷改成「沒有 `data-ip` 或裝置已不在」就移除，第一輪有裝置時佔位就清掉（空機隊時仍走「目前沒有在線裝置」那條，不受影響）。截圖裡可以看到載入後已無殘留。
+
+順帶把你選的**暖色瑞士**也落地到正式 `templates/dashboard.html` 了：
+
+## 做了什麼
+- **整段換掉 inline `<style>`** → 暖色瑞士（榻榻米暖底 + 珊瑚柿主色 + Sora/Manrope/Space Mono + 漆面圓角卡 + 狀態左漆框 + 紙紋），所有舊 selector 名與 `--warn/safe/text-secondary` 變數保留。
+- **加 emoji 頭像 + SVG 喚醒錶盤**：renderGrid 小幅 additive 改動（`deviceEmoji` / `setDial`），每張卡頭像 + 環形倒數錶盤（手機 fc 自動 📱）；錶盤隨倒數每秒填充，顏色沿用 warn/safe。
+- DOM 結構、所有 element id、6 個 modal、按鈕 pending-lock、Jinja 變數、輪詢全部不動。
+- 順手修上面那個載入佔位 bug。
+
+## 驗證
+- 守門測試 `test_dashboard_template.py` + `test_dashboard_web_toggle.py` → **19 passed**。
+- 契約檢查腳本：**53 個必含字串 + 12 個禁含字串全通過**（function 名、`data-ctrlbtn`、`@keyframes btnSpin/btnPulse`、ws_token 全套、`info.step_deadline`、`/fly-pet` nav-btn… 等）。
+- 假資料 live 渲染（Playwright 1440 / 設定 modal / 390 手機）→ 0 console error（僅 favicon 404 無害）；五種狀態漆框、頭像、錶盤、車位展開、warm task badge、tonal 動作鈕、pending 都正常（見截圖）。
+- `git status` 只動到 `templates/dashboard.html`。
+
+## 提醒
+- **重啟中控（`control_panel_app.py` / `new_main_v2.py`）** 才會在真實 dashboard 生效（Flask template 快取）。實機看到的會是真資料；emoji 頭像目前用 ip 雜湊 + 手機→📱 規則，若想要每台指定 emoji 再跟我說。
+- 尚未 commit（依慣例等你指示）。要我 commit 就說一聲。
+
+---
+
+## 2026-06-15 00:26:56  ·  session 6d042cda
+
+全部完成並驗證。重排後三台 `carpark_plan.enabled` 仍皆 True、JSON 合法,我的改動完整保留。
+
+## 實作完成總結
+
+依 spec `2026-06-15-carpark-1000-grab-wake-design.md` 四個工作面全部落地:
+
+**Part 1 — Config(`bot_config.json`)**
+- `emulator-5554`、`7fe98fc6` 的 `ws_token.carpark_plan.enabled` false→true(用 `replace_all` 精準命中這兩台;手機fc 已 true 未動)。
+- 驗證:JSON 合法、三台 `carpark_plan.enabled` 皆 True、無殘留 false(外部 linter 重排後再驗一次仍完整)。
+
+**Part 2 — Code(`runtime_services/sleep_service.py`,TDD)**
+- `_maybe_resume_sleep` 的 checker / 非 checker 兩條返回休眠分支,進睡前各套 `_apply_carpark_repark_wake(ip, resume_sleep_until_ts, time.time(), logger_obj)`,clamp 後 `wake_time_str`/state/log 都反映提前的 09:59。
+- 只提前不延後語意沿用既有 helper(無 next_ts / next_ts 已過 / 晚於原 wake 時 no-op),對非車位裝置與一般返回休眠零影響。
+
+**Part 3 — reconcile 共存(規劃期定案)**
+- 讀 `carpark_auto.reconcile()` 確認對跨界位**純加法**:`:1237` 只在 `cross<target` 補停、`:1254` 超額僅 log「recall delegated」、從不搬走跨界車。
+- 採 spec 第一條規則:**保留 `carpark.daytime_cross:1` 當 fallback,不改 reconcile config**。WS 階段在瀏覽器啟動前先跑 → 10:00 由 WS 搶到後 reconcile 見 cross 已達標、`while` 不執行;WS 搶輸時 reconcile 自動補搶。已回填 spec Part 3。
+
+**Part 4 — 驗證**
+- TDD 走完 RED→GREEN:先確認 2 個 clamp 測試因「未 clamp、傳 resume_ts≠next_ts」失敗,實作後 `tests/test_sleep_service.py` **33 passed**(30 既有 + 3 新:非 checker / checker 兩分支 + 無 next_ts no-op pin)。
+- `py_compile` sleep_service + 測試檔 OK;wake-loop 消費端 19 測綠;carpark_plan/config 相關 41 測綠。
+
+**一個需告知的既有問題(非本案造成)**:`tests/test_wake_ws_fallback.py` 與 `test_wake_home_order.py` 等**同跑**時,後者把 `config_manager` 換成缺 `get_hostname` 的 fake module 未還原 → ws_fallback 的 `_patch_host` 7 個測試 AttributeError。但該檔**單跑 12 passed**、`config_manager.get_hostname` 確實存在(`config_manager.py:269`)→ 屬 todo.md 已記錄的測試順序污染類別,與本次改動無關,未擴大範圍去動別 session 的測試檔。
+
+**待辦**
+- Live 驗證(待停機窗):5554 manual-hold 觀察 log「跨界車位排程:喚醒提前 …」(09:59)+ 10:00 grab。
+- ⚠ master `new_main_v2.py` 需**重啟**才生效(sys.modules cache + config 重讀)。
+
+未提交(依慣例等你指示才 commit)。
+
+---
+
+## 2026-06-15 00:30:39  ·  session 829be59e
+
+Committed as `ed812837`. Updating the memory index for the new standing rule.
+
+---
+
+## 2026-06-15 00:40:39  ·  session 0238a4d0
+
+診斷完成。寫入記憶 + 教訓,再給結論。
+
+---
+
+## 2026-06-15 00:51:19  ·  session 6d042cda
+
+我的車位 wake 區段與 Review 完整保留。把新的「搶位選位分層策略」plan 插在 Review 之後、2026-06-14 區段之前。
+
+---
+
+## 2026-06-15 00:52:26  ·  session 0238a4d0
+
+已提交,只含 2 個檔、無 attribution、在 feature branch。更新先前那筆記憶,把「nit」改成「已修」。
+
+---
+
+## 2026-06-15 00:55:00  ·  session 543bb6e1
+
+farm 修復已實作完成,GREEN(farm 5 測全過)。完整回歸測試在背景跑(`b9ymcuw4y`),完成後我會接著確認結果並做最終總結。
+
+目前進度:
+- 根因查清:home module(12) 純 WS 下間歇不回應 → `_run_farm` 第一行 `read_farm` raise → 連可靠的種子/肥料購買都漏掉(每約半數喚醒)。
+- 已用 TDD 修復:先判打工狀態(可靠 module 73)→ 打工開著跳過手動收成(避開 racy 3081);打工關才 best-effort 手動收成(短 timeout + try/except);buy/start_work 獨立照跑。
+- 等回歸測試 + py_compile 結果。
+
+等背景測試回來再給你完整總結(含兩個 subagent 的全面 log/欄位分析,以及我建議但尚未動的其他項)。
+
+---
+
+## 2026-06-15 00:55:24  ·  session 85199316
+
+Now the long-term memory:
+
+---
+
+## 2026-06-15 00:59:24  ·  session 0238a4d0
+
+sim 對比完成(與文件一致)。現單獨跑真實 board 重放(timing/empty% 的權威來源)。
+
+---
+
+## 2026-06-15 00:59:53  ·  session 543bb6e1
+
+更新 memory:原文「farm step 每次 WS 階段本來就跑 read_farm+harvest」已被本次修復改寫,且 home module 不穩這個關鍵可靠度事實要補進去。
+
+---
+
+## 2026-06-15 01:04:28  ·  session 0238a4d0
+
+`is_over()` 只有「鎬子+炸彈+鑽頭全部歸零」才結束,而 `cost` stat 就是「累計消耗的鎬子數」(挖石頭 2 下=2 鎬)。所以我那輪 seed-200×30 的數據已經直接是「誰花幾支鎬子」——我換成成本視角給你,不用再跑。
+
+你說得對,我先前用 score/empty% 當主軸是偏了。以**鎬子成本**重排同一份數據(seed 200×30,全程):
+
+| planner | 花的鎬子(cost) | pits | depth | **鎬子/pit**(越低越省) | **pit/100鎬** | depth/100鎬 |
+|---|---|---|---|---|---|---|
+| **v1** | **186** | **47.8** | **164.9** | **3.89** | **25.7** | **88.6** |
+| v3 | 201 | 46.9 | 162.0 | 4.29 | 23.3 | 80.6 |
+| v4 | 200 | 46.8 | 160.8 | 4.27 | 23.4 | 80.4 |
+| v5 | 202 | 46.3 | 160.2 | 4.36 | 22.9 | 79.3 |
+
+**老實講:在模擬器裡,以鎬子成本論,v1 最省、v5 最不省。** v1 花最少鎬子(186)卻挖最深(164.9)、清最多 pit(47.8)——三項全勝,是嚴格碾壓;v5 花最多鎬子(202)、輸出最低。所以「v5 比 v1-v4 省鎬子」這件事,**在 sim 裡並不成立**。
+
+## 為什麼 sim 看不出 v5 的成本優勢(三個結構性原因)
+
+1. **v1 的全盤 A* 在 sim 裡能「精算一顆炸彈清掉完整 3x3」**,省下大量鎬子。但這依賴「整個 3x3 在單一畫面完整可見」——真實遊戲 3x3 跨 3 row、隨下捲逐步收集,**從不完整出現**。所以 v1 在 sim 的省鎬優勢,live 兌現不了。
+2. **v5 的省鎬機制來自 343 場真實 session 的先驗**(P(pit|pit)=42.5% 續挖 bias、期望成本選欄),目的就是「別把鎬子浪費在會枯竭的欄」。但 sim 的礦物 spawn 是**合成校正版**,不符合那些先驗的真實分佈,所以先驗在 sim 裡幫不上忙、甚至略拖。
+3. **sim 沒餵 `depth=` 給 v5**(`compare_planners` 只傳 board/shovels/items),所以 v5 的深度校正邏輯在 sim 裡是停用的——它在 sim 跑的是「半殘」狀態。
+
+換句話說:**sim 是 v5 的主場劣勢**。要證明 v5 真的更省鎬子,只能看真實資料。
+
+## 真正能回答「誰花最少鎬子」的 ground truth
+
+是**真實挖礦 session 的 log**——`tools/analyze_mining_logs.py` 會從 `miner.log` 統計每場的鎬子消耗 / 每 pit 成本 / 道具利用率。你的裝置本來就跑 v5(`mining_planner_version=v5`,screenshot+tap 路徑),所以**已經有 v5 的真實 log 可以算**。
+
+不過要注意:真實 log 只能算「實際在跑的那一套(v5)」的成本,**沒辦法在同一批真實 board 上回放 v1-v4 做 A/B**(log 沒存完整 board 狀態)。同盤 A/B 只有 sim / `replay_real_boards` 能做,而那兩個正好是 v5 的劣勢場。
+
+要不要我:
+1. 跑 `analyze_mining_logs.py` 把你裝置 **v5 真實 session 的鎬子成本** 算出來(實測,不是 sim)?
+2. 還是改用 `--action-budget`(模擬真實 ~6 分鐘一場、每動作 ~7-8s)再跑一次 sim 對比,看「一場固定時間內誰花最少鎬子、挖最多」?
+
+---
+

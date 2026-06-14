@@ -1,5 +1,29 @@
 # Lessons learned
 
+## 2026-06-15 多個 Claude Code 實例並行加功能 → 每個 session 要開分支+專屬 worktree (User 指正)
+
+- **根因不是「subagent 不能用」。User 澄清:「我的意思並非指不能使用 subagents,歸根原因是因為使用者同時使用多個 Claude Code 在加入新功能。」** 真正問題:**User 會同時開好幾個 Claude Code 實例**,各自在同一個 working tree 上改 code,彼此 last-write-wins 互相覆蓋,所以「重複覆蓋」很明顯。
+- **Rule(我這個 session 的自我隔離)**:
+  - 只要這次工作會**修改程式碼/檔案**,預設先把自己關進**專屬分支 + 專屬 git worktree**(`superpowers:using-git-worktrees` 或 `git worktree add ../<slug> -b <branch>`),在隔離資料夾裡做完、commit,**最後才 merge 回 main**。不要直接在共用的主 working tree 上改,因為旁邊可能有別的 Claude Code 實例同時在改。
+  - 開工前先 `git status` 看清楚:工作區可能已有別的實例留下的未提交改動,**別 `git add -A`、別覆蓋不是我動的檔**(本 repo 常態 ~80 個 WIP + auth_state secrets,見 [[feedback_commit_after_milestone]])。
+  - subagent **照常使用**(研究/探索/平行分析);要點只是「寫檔的工作放進隔離 worktree」,不是少用子代理。
+  - 唯讀任務(grep/讀檔/報告)不需隔離。檔案層級的防覆蓋規則見 [[feedback_subagent_file_ownership]]。
+
+## 2026-06-15 挖礦 WS 診斷 session
+
+- **驗證一個系統的「狀態有沒有變」時,要用該系統「自己的比對邏輯」,不要自己另寫 proxy 比對。**
+  我測純 WS dig 是否生效時,自己只比了 board 的 `cells`(f5)+`events`(f6),得到「沒變 → R2 重現」
+  的**錯誤結論**;但 ws_token 真正用的是 `mining_supervised._board_signature`(含 f7 blocks 的
+  config_id/count)。單次 dig 只動 f7,不動 f5/f6,所以我的 proxy 比對天生看不到變化。改用系統
+  自己的 signature 後,3 步全 confirmed,系統其實正常。**Rule**:重現/驗證某模組行為時,直接 import
+  並呼叫它真正的判定函式(signature/confirm/compare),別憑直覺另寫一份簡化比對 — 簡化版會漏掉
+  該模組關心的欄位,給出假陰性。
+- **NAS 同步資料夾的檔案會在我讀取之間被背景改掉;關鍵事實要在動手前重讀、用 git diff/mtime 對時。**
+  我第一次 Read bot_config 看到 `mining.enabled=false`,稍後 git diff 卻顯示 working tree 是 true
+  — 中間檔案被 sync/使用者改過(00:18)。**Rule**:在 `nas同步_project` 下,config/log 這類會被
+  dashboard 或他機同步改動的檔,判讀前重讀一次;log「停在某時間」先懷疑是同步舊副本,用 mtime +
+  正在跑的 process 佐證,別當成 bot 已停。
+
 ## 2026-06-13 memory 查核/清理 session
 
 - **記憶內容一律用英文寫,從第一筆編輯就用英文,別先用中文起草再回頭翻。** 本專案 CLAUDE.md

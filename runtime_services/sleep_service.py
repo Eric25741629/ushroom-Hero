@@ -268,6 +268,11 @@ def _maybe_resume_sleep(
             time.sleep(0.2)
             return resume_sleep_until_ts, resume_sleep_reason, True
         if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+            # Returning to sleep must also honor the 跨界車位 09:59 grab clamp
+            # (only-earlier), mirroring run_sleep_cycle — else an interrupted
+            # device can oversleep the daily 10:00 搶車位 window.
+            resume_sleep_until_ts = _apply_carpark_repark_wake(
+                ip, resume_sleep_until_ts, time.time(), logger_obj)
             wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
             remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
             detail = resume_sleep_reason or "返回休眠"
@@ -283,6 +288,9 @@ def _maybe_resume_sleep(
                 return None, "", True
             return None, "", False
     elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+        # Same 跨界車位 09:59 grab clamp on the non-checker resume path.
+        resume_sleep_until_ts = _apply_carpark_repark_wake(
+            ip, resume_sleep_until_ts, time.time(), logger_obj)
         wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
         remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
         detail = resume_sleep_reason or "返回休眠"

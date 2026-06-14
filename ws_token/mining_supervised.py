@@ -11,9 +11,10 @@ import argparse
 import logging
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ws_token import mining, mining_adapter
+from ws_token.abort import WSRunAborted
 from ws_token.client import WSGameClient
 from ws_token.creds import load_creds
 
@@ -305,6 +306,7 @@ def mine_until_pickaxe_empty(
     max_steps: int = 200,
     timeout: Optional[float] = None,
     max_depth: Optional[int] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
     """Re-plan and execute one confirmed step at a time until pickaxes reach 0.
 
@@ -332,6 +334,10 @@ def mine_until_pickaxe_empty(
     current_board = mining.read_board(client, timeout=timeout)
     _log_board_trace(current_board, inventory, phase="initial", step_index=0)
     for _idx in range(limit):
+        # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
+        # 續做時讀當前 board 接續，不會重複。
+        if should_abort is not None and should_abort():
+            raise WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
         if int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
