@@ -435,3 +435,69 @@ def test_maybe_resume_interrupted_returns_continue_true(sleep_mod, resume_env, m
     )
     assert ts is None
     assert cont is True
+
+
+# ---------------------------------------------------------------------------
+# _maybe_resume_sleep — carpark 09:59 grab clamp (mirrors run_sleep_cycle)
+# ---------------------------------------------------------------------------
+# The resume-sleep path (interrupted device returning to sleep) must pull its
+# wake EARLIER to the carpark grab time too, so a device that got interrupted
+# before 10:00 doesn't oversleep the daily 搶車位 window.
+
+
+def test_maybe_resume_non_checker_clamps_to_carpark_next_ts(sleep_mod, resume_env, monkeypatch):
+    now = time.time()
+    resume_ts = now + 3600         # would otherwise sleep an hour
+    next_ts = now + 300            # carpark window opens in 5 min
+    monkeypatch.setattr(sleep_mod, "_load_carpark_next_ts", lambda ip: next_ts)
+    captured = {}
+
+    def _capture(ip, ts, log):
+        captured["ts"] = ts
+        return False
+    monkeypatch.setattr(sleep_mod, "sleep_until_wake_or_interrupt", _capture)
+
+    sleep_mod._maybe_resume_sleep(
+        "emu-other", object(), resume_ts, "reason", logging.getLogger("t"),
+    )
+    assert captured["ts"] == next_ts
+
+
+def test_maybe_resume_checker_branch_clamps_to_carpark_next_ts(sleep_mod, resume_env, monkeypatch):
+    # 5554 is both the online-check checker AND a carpark device, so its
+    # (separate) resume-sleep branch must clamp to the grab time too.
+    now = time.time()
+    resume_ts = now + 3600
+    next_ts = now + 300
+    monkeypatch.setattr(sleep_mod.bot_state, "is_online_check_priority_active", lambda ip: False)
+    monkeypatch.setattr(sleep_mod, "_load_carpark_next_ts", lambda ip: next_ts)
+    captured = {}
+
+    def _capture(ip, ts, log):
+        captured["ts"] = ts
+        return False
+    monkeypatch.setattr(sleep_mod, "sleep_until_wake_or_interrupt", _capture)
+
+    sleep_mod._maybe_resume_sleep(
+        "emulator-5554", object(), resume_ts, "reason", logging.getLogger("t"),
+    )
+    assert captured["ts"] == next_ts
+
+
+def test_maybe_resume_no_carpark_next_ts_keeps_resume_ts(sleep_mod, resume_env, monkeypatch):
+    # No stored carpark next_ts → clamp is a no-op, resume sleeps to the
+    # original ts (non-carpark devices / normal resume unaffected).
+    now = time.time()
+    resume_ts = now + 600
+    monkeypatch.setattr(sleep_mod, "_load_carpark_next_ts", lambda ip: None)
+    captured = {}
+
+    def _capture(ip, ts, log):
+        captured["ts"] = ts
+        return False
+    monkeypatch.setattr(sleep_mod, "sleep_until_wake_or_interrupt", _capture)
+
+    sleep_mod._maybe_resume_sleep(
+        "emu-other", object(), resume_ts, "reason", logging.getLogger("t"),
+    )
+    assert captured["ts"] == resume_ts

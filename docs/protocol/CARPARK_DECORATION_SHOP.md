@@ -1,9 +1,9 @@
 # 車友商行 / 裝飾 (Parking Decoration) — Recon Recipe + Offline Groundwork (2026-06-14)
 
-> 狀態：**離線推導完成，live capture 待白天 (台灣 10:00-22:00) 車友商行開放時補。**
-> 接 action 前 **必須** 先完成本文件 §5 的 live 採樣 (確認 cmd round-trip body
-> field number、catalog 行真實 cost/benefit、currency goods id)。在那之前
-> `ws_token/carpark_decoration.py` 只是 **純 picker**，沒有任何 WS 動作被 wire。
+> 狀態：**catalog + 成本模型 live 定案 (2026-06-15, 5556/CDP 9223) — 見 §9。**
+> 屬性曲線、碎片成本、貨幣、限購、顯示 % 換算皆已 live 校準。WS buy/upgrade
+> round-trip (12817 body field number) 仍待採樣 (需實際花碎片，見 §5.2)。
+> **重大更正：目前服務端設定封頂 15 星 (不是 20，見 §9.1)。**
 
 本文件依 `docs/protocol/CARPARK_GUILD_NODES.md` §C 的 JS-bundle 法，從
 `docs/game_client_sources/mushroomh5.acenetgame.com_assets_script_index.966f5.js`
@@ -242,3 +242,89 @@ cost-per-benefit，尊重 budget 與兩個 attempt cap，跳過滿級/零效益�
 - `farm_v2/operations/harvest_card.py` — 車位 shop 導航 dual-backend 範本。
 - `docs/protocol/CARPARK_GUILD_NODES.md` §A.3/§C — 車位節點 + JS-bundle 反推法。
 - `docs/protocol/CARPARK_AUTOMATION.md` — 車位自動化總設計。
+- `docs/protocol/PARKING_DESIGN_CATALOG.json` — live catalog dump (983 行, 2026-06-15)。
+- `tools/dump_parking_design.py` / `analyze_parking_design.py` / `scan_decor_inventory.py` — 本次 live 工具。
+
+---
+
+## 9. LIVE 定案 (2026-06-15, 5556 / CDP 9223)
+
+工具：`tools/dump_parking_design.py`（catalog dump）、`analyze_parking_design.py`
+（曲線/成本）、`nav_parking_decorate.py` + `read_detail_fields.py` + `read_star_slots.py`
+（live UI 校準）、`scan_decor_inventory.py`（持有盤點）。
+
+### 9.1 重大更正：目前封頂 15 星，不是 20
+
+三重證據一致：
+1. `configParking_design.getDatas()` = 983 行 / 68 裝飾。標準裝飾 `level` 只到 0..15
+   （16 行），活動款 0..10。983 = 54×16 + 9×11 + 1×16 + 4×1，剛好對齊，無缺漏。
+2. `getDataByKeys('id',10002,'level',N)` 在 N=16..21 全回 `null`。
+3. UI 星級 = 5 顆星，每顆 fill 子節點只有 `one/two/three/dark`（無 `four`）= 5×3 = **15 段**。
+   花門當前 lv8 顯示 pip = 2+2+2+1+1 = 8。
+
+→ 「20 星」在 5556 當前載入的服務端設定裡**不存在**。可能：使用者記憶/目測誤差、
+   或別台裝置/別服較新設定、或未來改版。**接 action 前需與使用者確認來源。**
+
+### 9.2 屬性加成曲線（標準款 54 個共用同一條；活動 9 款封 lv10）
+
+- 顯示「攻擊/生命/防禦加成 %」= `own_attrs` 原始值 / 100。三圍各自獨立同值。
+- 每星「擁有即加」(裝扮擁有效果，對**所有持有**裝飾累加，非僅裝備中)：
+
+| 星 | 每圍加成% | 升此星需碎片 | 累計碎片 | 戰力(power) |
+|---|---|---|---|---|
+| 1 | 320% | 1 (買=解鎖) | 1 | 20000 |
+| 2 | 480% | 1 | 2 | 26500 |
+| 3 | 640% | 2 | 4 | 33600 |
+| 4 | 800% | 2 | 6 | 41300 |
+| 5 | 960% | 3 | 9 | 49600 |
+| 6 | 1120% | 3 | 12 | 58500 |
+| 7 | 1280% | 4 | 16 | 67900 |
+| 8 | 1440% | 4 | 20 | 78000 |
+| 9 | 1600% | 5 | 25 | 88700 |
+| 10 | 1760% | 5 | 30 | 100000 |
+| 11 | 1920% | 10 | 40 | 111900 |
+| 12 | 2080% | 10 | 50 | 124400 |
+| 13 | 2240% | 20 | 70 | 137500 |
+| 14 | 2400% | 20 | 90 | 151200 |
+| 15 | 2560% | 30 | 120 | 165500 |
+
+- 邊際：lv1 一次 +320%/圍（最划算，1 碎片）；lv2~15 每星固定 +160%/圍 (+48000 原始三圍合計)。
+- live 對齊：花門 lv8=1440%、中式庭院大門 lv6=1120%、卡通大門 lv10=1760%，皆 = 表值。
+
+### 9.3 成本模型（live 校準，**修正離線假設**）
+
+- **每個裝飾吃自己的同名碎片**（花門吃「花門」碎片 goods 60102…），**無共用貨幣**。
+  → 離線 picker 把 budget 當單一貨幣是**錯的**；真實 budget 是「每碎片各自庫存/可買量」。
+- 升級 lv N→N+1 需碎片 = `expend(row N)`：1,1,2,2,3,3,4,4,5,5,10,10,20,20,30（封頂累計 120）。
+  live 對齊：花門 lv8 詳情顯示「0/5」= 持 0、需 5 = expend(row8)=5。✓
+- **碎片來源 = 詳情頁「購買」鈕**，花 **菇車幣** 買，單價隨裝飾不同（實測 100k~600k/個），
+  且每裝飾有 **限購 X/120 終身上限**。
+- `own_attrs` 是**累計總值**（64/64 單調遞增）→ picker 必須 `cumulative_benefit=True`
+  （邊際 = own_attrs(target) − own_attrs(from)）。離線預設 False 會算錯。
+
+### 9.4 特殊「裝扮加成」(effect 欄；**固定，不隨星成長**)
+
+`effect = [[coin,?],[exp,?],[spec,?],[protect,?]]`，值/100 = %（protect 為分鐘）：
+- coin = 私人車位 菇車幣收益%、exp = 改裝點收益%、spec = 額外奇遇機率%、protect = 坐騎停車保護分鐘。
+- 部分裝飾 effect 為空、desc 為「車位戰鬥時 攻/生/防 提高」= 車位 PVP 戰鬥加成（吃 pvp_effect）。
+- lv1 == max（不成長），與會成長的「基礎攻/生/防 屬性」是兩套獨立加成。
+  範例：花門 +5% 菇車幣、中式庭院大門 +奇遇%、迎春來 +坐騎保護分鐘、萬事興 戰鬥攻+生+防。
+
+### 9.5 持有現況 (5556, 2026-06-15)
+
+- 菇車幣餘額 ≈ **4.15 億**。
+- **所有裝飾「現有碎片」皆 0**（要先買碎片才能升）。
+- 已持有裝飾多在 **lv6~10**，無一封頂；各裝飾限購已用 **90~108/120**（剩 12~30 可買）。
+  例：花門 lv8(100/120,單價20萬)、中式庭院大門 lv6(108/120,30萬)、卡通大門 lv10(90/120,10萬)。
+
+### 9.6 成本效益結論（actionable）
+
+真實指標 = **coin-per-attr = (碎片數 × 該裝飾碎片單價) ÷ 邊際屬性**，由低到高貪婪：
+1. **買「未擁有」裝飾到 lv1** 最划算：1 碎片 → +96000 三圍合計（單價/96000 coin/attr）。
+2. 低星升級（lv6→7=4 碎片）通常優於高星（lv10→11=10、lv12→13=20、lv14→15=30 碎片）。
+3. **但碎片單價差異大**（卡通大門 10 萬 vs 場景款 60 萬），便宜單價的高星可能比貴單價的低星更划算
+   → 不能只看星級，必須 coin-per-attr 綜合排序。
+4. 約束：每裝飾限購 120 上限、coin 餘額、每喚醒嘗試次數（bounded）。
+
+→ picker 接線需改：cost 餵 `frags×price`(coin)、benefit 餵邊際屬性、`cumulative_benefit=True`、
+   加 per-deco 限購 cap。詳見 §6 安全規則。

@@ -81,15 +81,21 @@
                 "open_lamp": true,
                 "farm": {
                     "buy": [
-                        {"shop_id": 407, "target": 4},
-                        {"shop_id": 408, "target": 4}
+                        {
+                            "shop_id": 407,
+                            "target": 4
+                        },
+                        {
+                            "shop_id": 408,
+                            "target": 4
+                        }
                     ]
                 },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "carpark_auto": false,
                 "carpark_plan": {
-                    "enabled": false,
+                    "enabled": true,
                     "silver_levels": [
                         9,
                         10
@@ -326,7 +332,7 @@
                 "carpark_target": null,
                 "carpark_auto": false,
                 "carpark_plan": {
-                    "enabled": false,
+                    "enabled": true,
                     "silver_levels": [
                         9,
                         10
@@ -419,6 +425,8 @@
                 "fallback_host": "infinite",
                 "spend": true,
                 "open_lamp": true,
+                "lamp_percent": 1.0,
+                "lamp_min_keep": 500000,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -447,8 +455,16 @@
                 "couple_gifts": true,
                 "forge_ring": false,
                 "workshop_rotate": true,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
                 "mining": {
-                    "enabled": false,
+                    "enabled": true,
                     "allow_bomb": false,
                     "allow_drill": false,
                     "max_steps": 200
@@ -460,11 +476,12 @@
             "ws_token_open_lamp": true,
             "web_reload_after_goto": false,
             "ws_token_mining": {
-                "enabled": false,
+                "enabled": true,
                 "allow_bomb": false,
                 "allow_drill": false,
                 "max_steps": 200
-            }
+            },
+            "ws_token_kungfu_guess": true
         },
         "web-001": {
             "name": "寶兒",

@@ -40,7 +40,15 @@ WS 車位 plan 路徑已經把「09:59 醒、10:00 搶」設計好了,只是兩�
 - 只提前不延後的語意不變(`_apply_carpark_repark_wake` 內已保證 `next_ts <= cur_ts or next_ts >= wake_ts` 時 no-op),所以對非車位裝置與一般返回休眠零影響。
 - poll 迴圈逐秒重讀 next_ts 的自我修正:**不做**(YAGNI)。兩條進睡路徑都套上 clamp 後,因為睡眠期間沒有任何程式會改寫 `next_ts`,clamp-at-entry 已足夠。
 
-### Part 3 — reconcile 共存(待規劃期驗證後定案)
+### Part 3 — reconcile 共存(已定案 2026-06-15:reconcile 純加法 → 不改 reconcile config)
+
+**定案**:讀 `utils/carpark_auto.py` `reconcile()` 確認其對跨界位**純加法**:
+- `carpark_auto.py:1237` `while snap.cross_count < tgt.cross_count:` — 只在低於 target 時 `park_one_silver` 補停。
+- `carpark_auto.py:1254` 超額時**僅** `actions.append("excess cross observed … (recall delegated)")`,從不 recall/搬走跨界車(註解明示「Recall is NOT bot's job」)。
+
+→ 採第一條規則:**保留 5554 / 7fe98fc6 的 `carpark.daytime_cross:1` 當 fallback,不改 reconcile config**。WS 階段在瀏覽器啟動前先跑,10:00 由 WS 搶到後 reconcile 看到 cross 已達標 → `while` 不執行;WS 搶輸時 reconcile 的 `park_one_silver` 自動補搶。兩套不打架。
+
+原決策規則(保留供追溯):
 
 5554 / 7fe98fc6 仍開著 Playwright 的 `carpark.enabled: true`(reconcile,`daytime_cross:1 / daytime_total:6`)。手機fc 無此層。WS plan 啟用後兩套都想管那 1 個跨界位,需確認不打架。
 
