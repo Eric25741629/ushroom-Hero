@@ -356,7 +356,7 @@ def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
 
 def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                  plan_cfg: Optional[dict] = None, device: str = "",
-                 state_dir=None, now=None, sleep_fn=None,
+                 state_dir=None, now=None, sleep_fn=None, time_fn=None,
                  cluster_server_id: Optional[int] = None) -> dict:
     """停車 (只停不收) — plan 模式 (current-parked + 8h 重停 + 09:59 搶位) 或 legacy.
 
@@ -383,11 +383,14 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
         from ws_token import carpark_plan as cp
         now = _dt.now() if now is None else now
         sleep_fn = sleep_fn or _time.sleep
+        time_fn = time_fn or _time.monotonic
         plans = cp.parse_plan(plan_cfg)
         max_sec = cp.park_max_seconds(plan_cfg)
         open_lead = cp.open_lead_seconds(plan_cfg)
         margin = cp.repark_margin_seconds(plan_cfg)
         offset = cp.start_time_offset(plan_cfg)
+        cluster_min = cp.cluster_min(plan_cfg)
+        allow_low = cp.allow_low_noncluster(plan_cfg)
         levels = tuple(int(v) for v in (plan_cfg.get("silver_levels") or
                                         carpark.SILVER_PREFERRED_LEVELS))
         kw = {"state_dir": state_dir} if state_dir is not None else {}
@@ -458,25 +461,42 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
             out.update(_store_next(parked, window_name=win.name, target=target_n))
             return out
 
-        attempts = cp.grab_attempts(plan_cfg) if grabbing else 1
+        # 搶位重試 (2026-06-15)：grabbing 時時間型——從開窗瞬間迴圈到開窗+grab_window
+        # (10:01)，每輪 park；parked_count>0 即停，park_timeout 不重試 (靠 park_many
+        # 內 read_my_mounts 排除已停 mount 防雙停)，其餘 parked_count==0 每隔 poll 重試
+        # 並重讀 parked_cross 重算 need (防前一輪其實已落地 server 端而重複停)。
+        # 非 grabbing (一般補停) 維持單次。
         poll = cp.grab_poll_seconds(plan_cfg)
+        grab_window = cp.grab_window_seconds(plan_cfg)
+        hard_cap = max(1, cp.grab_attempts(plan_cfg))
+        if grabbing:
+            hard_cap = max(hard_cap, int(grab_window / poll) + 2)
+        deadline = time_fn() + grab_window
         res: dict | None = None
-        for i in range(max(1, attempts)):
+        round_i = 0
+        while True:
+            round_i += 1
             res = carpark.auto_select_and_park_many(
                 client, count=need, prefer_levels=levels,
-                cluster_server_id=cluster_server_id)
+                cluster_server_id=cluster_server_id, cluster_min=cluster_min,
+                allow_low_noncluster=allow_low)
             if int(res.get("parked_count") or 0) > 0:
                 break
-            # 只有「沒 lot 可停 (開窗瞬間 server 還沒鋪好)」才重試；
-            # 沒車/被拒等硬失敗不重試。
-            if res.get("reason") not in ("no_parkable_lot", "no_cross_lot"):
+            if res.get("reason") == "park_timeout":
                 break
-            if i < attempts - 1:
-                sleep_fn(poll)
+            if not grabbing:
+                break
+            if round_i >= hard_cap or time_fn() >= deadline:
+                break
+            sleep_fn(poll)
+            parked = carpark.read_parked_cross(client)   # 重算 need 防重複停
+            current = len(parked)
+            need = max(0, target_n - current)
+            if need <= 0:
+                break
         out["cross"] = res
-        if int((res or {}).get("parked_count") or 0) > 0:
-            parked = carpark.read_parked_cross(client)  # refresh start_times
-            out["current"] = len(parked)
+        parked = carpark.read_parked_cross(client)        # refresh start_times
+        out["current"] = len(parked)
         out.update(_store_next(parked, window_name=win.name, target=target_n))
         return out
 

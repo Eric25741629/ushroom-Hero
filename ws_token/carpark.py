@@ -79,10 +79,23 @@ SILVER_CENG_BASE = 5          # ceng of 鉑銀1
 SILVER_LOT_COUNT = 30         # 鉑銀1 .. 鉑銀30
 SILVER_PREFERRED_LEVELS = (9, 10)  # user policy 2026-06-13: 鉑銀9/10 first
 
+# 搶位分層 (user 2026-06-15)：preferred(9/10) > 低編號抱團(1..LOW_MAX, 同服>=min)
+# > 中編號(LOW_MAX+1..MID_MAX, 即 11..20) > 高編號(MID_MAX+1..30) > 低編號非抱團
+# (最後手段)。preferred 不在低/中/高任何一層 (9/10 介於低與中之間)。
+SILVER_LOW_MAX_LEVEL = 8      # 高獎勵低編號區 鉑銀1..8 (需同服抱團才停)
+SILVER_MID_MAX_LEVEL = 20     # 中編號區 鉑銀11..20 (扣掉 preferred 9/10)
+DEFAULT_CLUSTER_MIN = 3       # 同服占用 >= this 算抱團
+DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空位 (使用者拍板)
+
 
 def silver_level_to_ceng(level: int) -> int:
     """User-visible 鉑銀 level (1..30) -> internal ceng (5..34)."""
     return SILVER_CENG_BASE + int(level) - 1
+
+
+def silver_ceng_to_level(ceng: int) -> int:
+    """Internal ceng (5..34) -> user-visible 鉑銀 level (1..30)."""
+    return ceng - SILVER_CENG_BASE + 1
 
 
 def is_silver_ceng(ceng: int) -> bool:
@@ -656,8 +669,60 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
             "result": last_result}
 
 
-# 同服抱團排序時最多預讀幾個候選 lot 的格位詳情（每讀一次 ~1 RTT，搶位要快）。
-_CLUSTER_PROBE_LOTS = 8
+def _silver_level(ceng: int) -> int:
+    return silver_ceng_to_level(ceng)
+
+
+def tiered_lot_order(
+    parkable: list[NullSpace], *,
+    preferred_cengs: set[int],
+    cluster_min: int,
+    same_counts: dict[int, int],
+    allow_low_noncluster: bool = DEFAULT_ALLOW_LOW_NONCLUSTER,
+) -> list[tuple[NullSpace, str]]:
+    """Order silver cross lots by grab priority, each tagged with its tier.
+
+    Tiers (high to low, user 2026-06-15):
+      preferred (鉑銀9/10) -> low_cluster (鉑銀1..8 with 同服 occupants
+      >= ``cluster_min``) -> mid (鉑銀11..20) -> high (鉑銀21..30) ->
+      low_noncluster (鉑銀1..8 below the 抱團 gate; absolute last resort, kept
+      only when ``allow_low_noncluster``).
+
+    ``same_counts`` maps ``master_id`` -> that lot's 同服 occupant count (0 /
+    absent for lots not probed). Within every tier lots are ordered by ceng
+    ascending (編號小->大). Pure — no I/O — so the ranking is unit-testable.
+    """
+    preferred: list[NullSpace] = []
+    low_cluster: list[NullSpace] = []
+    mid: list[NullSpace] = []
+    high: list[NullSpace] = []
+    low_noncluster: list[NullSpace] = []
+    for lot in parkable:
+        if lot.ceng in preferred_cengs:
+            preferred.append(lot)
+            continue
+        lv = _silver_level(lot.ceng)
+        if lv <= SILVER_LOW_MAX_LEVEL:
+            if same_counts.get(lot.master_id, 0) >= cluster_min:
+                low_cluster.append(lot)
+            else:
+                low_noncluster.append(lot)
+        elif lv <= SILVER_MID_MAX_LEVEL:
+            mid.append(lot)
+        else:
+            high.append(lot)
+
+    tiers: list[tuple[list[NullSpace], str]] = [
+        (preferred, "preferred"), (low_cluster, "low_cluster"),
+        (mid, "mid"), (high, "high")]
+    if allow_low_noncluster:
+        tiers.append((low_noncluster, "low_noncluster"))
+
+    out: list[tuple[NullSpace, str]] = []
+    for lots_in_tier, name in tiers:
+        for lot in sorted(lots_in_tier, key=lambda l: l.ceng):
+            out.append((lot, name))
+    return out
 
 
 def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
@@ -665,19 +730,26 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
                               prefer_levels: tuple[int, ...] | list[int]
                               = SILVER_PREFERRED_LEVELS,
                               cluster_server_id: int | None = None,
+                              cluster_min: int = DEFAULT_CLUSTER_MIN,
+                              allow_low_noncluster: bool
+                              = DEFAULT_ALLOW_LOW_NONCLUSTER,
                               new: bool = True,
                               timeout: float | None = None) -> dict:
-    """Park up to ``count`` of my idle mounts into 跨界 silver lots.
+    """Park up to ``count`` of my idle mounts into 跨界 silver lots, tiered.
 
     Multi-mount core for the day/night carpark plan (ws_token/carpark_plan.py):
     reads my mounts ONCE (read_my_mounts already excludes mounts that are
     parking), lists the cross lots via car_park_search (type=4 returns ALL
-    pools), keeps only silver-tier lots (``silver_only``; user policy 跨界限定
-    泊銀), orders them 鉑銀``prefer_levels`` first then the rest by ceng
-    (退而求其次), then walks each parkable lot's free positions pairing the
-    next mount, spilling to the next lot when one fills. A rejected park
-    (race / protected) abandons that lot and falls through to the next.
-    Strictly park-only.
+    pools), keeps only silver-tier lots (``silver_only``; 跨界限定泊銀).
+
+    Selection is tiered (user 2026-06-15): 鉑銀``prefer_levels`` (9/10) first and
+    unconditionally — a free preferred lot is parked with the FEWEST round-trips
+    (no 抱團 probe). Only when preferred can't fill ``count`` does it pay to read
+    the 低編號 (鉑銀1..8) lots' details to count 同服 occupants and apply the
+    抱團 gate (``cluster_min``), then fall through 中編號(11..20) ->
+    高編號(21..30) -> (last resort) 低編號非抱團 (``allow_low_noncluster``). See
+    ``tiered_lot_order``. A rejected park abandons that lot and falls through to
+    the next. Strictly park-only.
 
     Returns {parked_count, requested, reason, results: [per-park dict]}.
     """
@@ -704,88 +776,98 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         out["reason"] = "no_parkable_lot"
         return out
 
-    preferred = {silver_level_to_ceng(lv) for lv in (prefer_levels or ())}
-
-    def _rank(lot: NullSpace) -> tuple[int, int, int]:
-        # 鉑銀 prefer_levels first; within each group prefer fuller lots
-        # (fewest free slots), then lower ceng as the tiebreaker.
-        return (0 if lot.ceng in preferred else 1, lot.null_num, lot.ceng)
-
-    parkable.sort(key=_rank)
-
-    # 同服抱團 (user 2026-06-13: 抱團 = 跟「同服」的人停同一 lot): pre-read the
-    # top candidates' slot details and re-rank by how many 本服 occupants each
-    # lot already has. Lots whose attrs carry no server info count 0, which
-    # degrades to the occupancy order above. Probe is capped — 搶位要快.
+    preferred_cengs = {silver_level_to_ceng(lv) for lv in (prefer_levels or ())}
     details: dict[int, CarParkLot] = {}
-    if cluster_server_id:
-        for lot in parkable[:_CLUSTER_PROBE_LOTS]:
-            try:
-                details[lot.master_id] = read_lot(
-                    client, type=CROSS_TYPE, master_id=lot.master_id,
-                    ceng=lot.ceng, timeout=timeout)
-            except Exception:  # noqa: BLE001 — 一個 lot 讀失敗不擋整體
-                logger.debug("ws_token carpark: probe read_lot %s failed",
-                             lot.master_id, exc_info=True)
 
-        def _rank_cluster(lot: NullSpace) -> tuple[int, int, int, int]:
-            d = details.get(lot.master_id)
-            same = count_same_server(d, cluster_server_id) if d else 0
-            return (0 if lot.ceng in preferred else 1, -same,
-                    lot.null_num, lot.ceng)
+    def _read_detail(lot: NullSpace) -> CarParkLot:
+        d = details.get(lot.master_id)
+        if d is None:
+            d = read_lot(client, type=CROSS_TYPE, master_id=lot.master_id,
+                         ceng=lot.ceng, timeout=timeout)
+            details[lot.master_id] = d
+        return d
 
-        parkable.sort(key=_rank_cluster)
-        if details:
-            logger.info(
-                "ws_token carpark: cluster probe (server=%s): %s",
-                cluster_server_id,
-                [(lot.ceng, count_same_server(details[lot.master_id],
-                                              cluster_server_id))
-                 for lot in parkable[:_CLUSTER_PROBE_LOTS]
-                 if lot.master_id in details])
-
-    for lot in parkable:
-        if out["parked_count"] >= requested or not mount_queue:
-            break
-        try:
-            detail = details.get(lot.master_id) or read_lot(
-                client, type=CROSS_TYPE, master_id=lot.master_id,
-                ceng=lot.ceng, timeout=timeout)
-        except Exception:  # noqa: BLE001 — 讀單一 lot 失敗(非 mutating)，跳過該 lot 即可，不可中斷已停車的持久化
-            logger.warning("ws_token carpark: read_lot %s failed; skip lot",
-                           lot.master_id, exc_info=True)
-            continue
-        occupied = detail.occupied_positions()
-        for pos in range(1, CROSS_LOT_CAPACITY + 1):
-            if pos in occupied:
-                continue
+    def _attempt(lots_in_order: list[NullSpace]) -> bool:
+        """Park queued mounts into ``lots_in_order``. Returns True if a park
+        timed out (caller must stop and return the confirmed partial)."""
+        for lot in lots_in_order:
             if out["parked_count"] >= requested or not mount_queue:
                 break
-            mount_id = mount_queue[0]
             try:
-                result = park_into_cross(client, target_id=lot.master_id, pos=pos,
-                                         mount_id=mount_id, new=new, timeout=timeout)
-            except Exception:  # noqa: BLE001 — park 逾時可能其實已落地伺服器端；停手並回傳已確認的 parked_count，讓 runner 持久化配額
-                logger.warning("ws_token carpark: park_into_cross timed out "
-                               "lot=%s pos=%s mount=%s; stopping, returning partial",
-                               lot.master_id, pos, mount_id, exc_info=True)
-                out["reason"] = "park_timeout"
-                return out
-            entry = {"target_id": lot.master_id, "pos": pos,
-                     "mount_id": mount_id, "success": result.success,
-                     "error_code": result.error_code}
-            out["results"].append(entry)
-            if result.success:
-                mount_queue.pop(0)
-                out["parked_count"] += 1
-                logger.info("ws_token carpark: parked mount=%s lot=%s "
-                            "pos=%s ceng=%s (%d/%d)", mount_id, lot.master_id,
-                            pos, lot.ceng, out["parked_count"], requested)
-            else:
-                logger.warning("ws_token carpark: park rejected lot=%s "
-                               "pos=%s code=%s; next lot",
-                               lot.master_id, pos, result.error_code)
-                break  # abandon this lot, fall through to the next
+                detail = _read_detail(lot)
+            except Exception:  # noqa: BLE001 — 讀單一 lot 失敗(非 mutating)，跳過該 lot；不可中斷已停車持久化
+                logger.warning("ws_token carpark: read_lot %s failed; skip lot",
+                               lot.master_id, exc_info=True)
+                continue
+            occupied = detail.occupied_positions()
+            for pos in range(1, CROSS_LOT_CAPACITY + 1):
+                if pos in occupied:
+                    continue
+                if out["parked_count"] >= requested or not mount_queue:
+                    break
+                mount_id = mount_queue[0]
+                try:
+                    result = park_into_cross(client, target_id=lot.master_id,
+                                             pos=pos, mount_id=mount_id,
+                                             new=new, timeout=timeout)
+                except Exception:  # noqa: BLE001 — park 逾時可能已落地 server 端；停手回傳已確認 parked_count，讓 runner 持久化
+                    logger.warning("ws_token carpark: park_into_cross timed out "
+                                   "lot=%s pos=%s mount=%s; stopping, partial",
+                                   lot.master_id, pos, mount_id, exc_info=True)
+                    out["reason"] = "park_timeout"
+                    return True
+                out["results"].append({
+                    "target_id": lot.master_id, "pos": pos,
+                    "mount_id": mount_id, "success": result.success,
+                    "error_code": result.error_code})
+                if result.success:
+                    mount_queue.pop(0)
+                    out["parked_count"] += 1
+                    logger.info("ws_token carpark: parked mount=%s lot=%s "
+                                "pos=%s ceng=%s (%d/%d)", mount_id,
+                                lot.master_id, pos, lot.ceng,
+                                out["parked_count"], requested)
+                else:
+                    logger.warning("ws_token carpark: park rejected lot=%s "
+                                   "pos=%s code=%s; next lot", lot.master_id,
+                                   pos, result.error_code)
+                    break  # abandon this lot, fall through to the next
+        return False
+
+    # Phase A — preferred (鉑銀9/10) 快路徑：有空位最少 RTT 直接停，不付抱團預讀。
+    preferred_lots = sorted((lot for lot in parkable
+                             if lot.ceng in preferred_cengs),
+                            key=lambda l: l.ceng)
+    if _attempt(preferred_lots):
+        return out
+
+    # Phase B — preferred 滿/搶輸才評估 fallback：預讀低編號 lot 算同服抱團，
+    # 再分層走訪 (低區抱團 > 中 > 高 > 低區非抱團)。
+    if out["parked_count"] < requested and mount_queue:
+        same_counts: dict[int, int] = {}
+        nonpref = [lot for lot in parkable if lot.ceng not in preferred_cengs]
+        if cluster_server_id:
+            for lot in nonpref:
+                if _silver_level(lot.ceng) > SILVER_LOW_MAX_LEVEL:
+                    continue
+                try:
+                    same_counts[lot.master_id] = count_same_server(
+                        _read_detail(lot), cluster_server_id)
+                except Exception:  # noqa: BLE001 — 一個 lot 讀失敗不擋整體
+                    logger.debug("ws_token carpark: probe read_lot %s failed",
+                                 lot.master_id, exc_info=True)
+            if same_counts:
+                logger.info("ws_token carpark: 低編號抱團 probe (server=%s): %s",
+                            cluster_server_id,
+                            {silver_ceng_to_level(lot.ceng):
+                             same_counts.get(lot.master_id, 0)
+                             for lot in nonpref
+                             if lot.master_id in same_counts})
+        order = tiered_lot_order(
+            nonpref, preferred_cengs=preferred_cengs, cluster_min=cluster_min,
+            same_counts=same_counts, allow_low_noncluster=allow_low_noncluster)
+        if _attempt([lot for lot, _tier in order]):
+            return out
 
     if out["parked_count"] < requested:
         out["reason"] = ("no_more_mounts" if not mount_queue

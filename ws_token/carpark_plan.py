@@ -43,8 +43,11 @@ WINDOW_NAMES = ("day", "night")
 DEFAULT_PARK_MAX_SECONDS = 28800        # 8h — the game's cross auto-collect
 DEFAULT_OPEN_LEAD_SECONDS = 60          # wake 60s before open to win the rush
 DEFAULT_REPARK_MARGIN_SECONDS = 30      # wake 30s after expiry (car is freed)
-DEFAULT_GRAB_ATTEMPTS = 8               # at open, retry search+park while empty
-DEFAULT_GRAB_POLL_SECONDS = 0.3         # spacing between grab retries
+DEFAULT_GRAB_ATTEMPTS = 8               # safety upper bound on grab retry rounds
+DEFAULT_GRAB_POLL_SECONDS = 1.0         # spacing between grab retries (every ~1s)
+DEFAULT_GRAB_WINDOW_SECONDS = 60        # keep retrying until open + this (10:01)
+DEFAULT_CLUSTER_MIN = 3                 # 同服占用 >= this counts as 抱團 (低區 gate)
+DEFAULT_ALLOW_LOW_NONCLUSTER = True     # last resort: park 鉑銀1-8 非抱團空位
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,25 @@ def grab_poll_seconds(cfg: dict | None) -> float:
     except (TypeError, ValueError):
         return DEFAULT_GRAB_POLL_SECONDS
     return f if f > 0 else DEFAULT_GRAB_POLL_SECONDS
+
+
+def grab_window_seconds(cfg: dict | None) -> int:
+    """How long after the cross open to keep retrying the grab (open->10:01)."""
+    return _pos_int((cfg or {}).get("grab_window_seconds"),
+                    DEFAULT_GRAB_WINDOW_SECONDS)
+
+
+def cluster_min(cfg: dict | None) -> int:
+    """同服占用達此數才算抱團 (高獎勵低編號區 鉑銀1-8 的停車門檻)。"""
+    return _pos_int((cfg or {}).get("cluster_min"), DEFAULT_CLUSTER_MIN)
+
+
+def allow_low_noncluster(cfg: dict | None) -> bool:
+    """絕對最後手段：preferred/抱團/中/高區皆無位時，仍停進鉑銀1-8 非抱團空位。"""
+    v = (cfg or {}).get("allow_low_noncluster")
+    if v is None:
+        return DEFAULT_ALLOW_LOW_NONCLUSTER
+    return bool(v)
 
 
 # --- open-window timing ------------------------------------------------------

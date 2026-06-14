@@ -36,6 +36,13 @@ GAP = datetime(2026, 6, 13, 13, 0)   # in window for PLAN; use a gap plan below
 CLIENT = object()
 
 
+def _call(count=1, csid=None, cmin=3, allow=True):
+    """Expected recorded auto_select_and_park_many call (default plan kwargs)."""
+    return {"count": count, "prefer_levels": (9, 10),
+            "cluster_server_id": csid, "cluster_min": cmin,
+            "allow_low_noncluster": allow}
+
+
 def _parked(start_dt, mount_id=101, master_id=900, pos=1):
     return Mount(mount_id=mount_id, car_lev=1, parking=True,
                  parking_info=ParkingInfo(type=3, master_id=master_id, pos=pos,
@@ -60,7 +67,10 @@ def _stub_park(monkeypatch, calls, results):
     state = {"i": 0}
 
     def fake(client, *, count, prefer_levels=(9, 10), **kw):
-        calls.append({"count": count, "prefer_levels": tuple(prefer_levels)})
+        calls.append({"count": count, "prefer_levels": tuple(prefer_levels),
+                      "cluster_server_id": kw.get("cluster_server_id"),
+                      "cluster_min": kw.get("cluster_min"),
+                      "allow_low_noncluster": kw.get("allow_low_noncluster")})
         i = min(state["i"], len(results) - 1)
         state["i"] += 1
         r = results[i]
@@ -113,7 +123,7 @@ def test_plan_in_window_no_car_parks_target(monkeypatch, tmp_path):
                               device="dev1", state_dir=tmp_path, now=NOON)
     assert out["window"] == "day"
     assert out["target"] == 1
-    assert calls == [{"count": 1, "prefer_levels": (9, 10)}]
+    assert calls == [_call()]
     st = ws_state.load_state("dev1", state_dir=tmp_path)
     # next_ts = parked car expiry (start + 8h + 30s margin), inside the window
     assert st["carpark_repark"]["next_ts"] == \
@@ -166,7 +176,7 @@ def test_plan_after_autocollect_reparks(monkeypatch, tmp_path):
     _stub_reads(monkeypatch, [[], [_parked(NOON)]])  # 0 now -> park -> 1
     runner._run_carpark(CLIENT, target=None, plan_cfg=PLAN,
                         device="dev1", state_dir=tmp_path, now=NOON)
-    assert calls == [{"count": 1, "prefer_levels": (9, 10)}]
+    assert calls == [_call()]
 
 
 # --- night window (cross=0): never parks, schedules the morning open ---------
@@ -197,20 +207,22 @@ def test_plan_grab_waits_until_open_then_parks(monkeypatch, tmp_path):
     assert slept == [60.0]                   # waited 60s to 10:00
     assert out["window"] == "day"
     assert out.get("grab") is True
-    assert calls == [{"count": 1, "prefer_levels": (9, 10)}]
+    assert calls == [_call()]
 
 
-# --- grab retries while the server's lots are still empty at open ------------
+# --- grab retries every second while parked_count==0 (time-based) ------------
 
-def test_plan_grab_retries_on_empty_lots(monkeypatch, tmp_path):
+def test_plan_grab_retries_while_parked_count_zero(monkeypatch, tmp_path):
+    # 2026-06-15: retry on ANY parked_count==0 (not just no_parkable_lot); each
+    # round re-reads parked_cross (stays empty here) and re-parks until success.
     calls = []
     _stub_park(monkeypatch, calls,
                [{"parked_count": 0, "reason": "no_parkable_lot"},
-                {"parked_count": 0, "reason": "no_parkable_lot"},
+                {"parked_count": 0, "reason": "quota_unfilled"},
                 {"parked_count": 1, "reason": "ok"}])
-    _stub_reads(monkeypatch, [[], [_parked(datetime(2026, 6, 13, 10, 0))]])
+    _stub_reads(monkeypatch, [[]])           # stays empty until a park lands
     slept = []
-    grab_plan = dict(PLAN, grab_attempts=5, grab_poll_seconds=0.2)
+    grab_plan = dict(PLAN, grab_poll_seconds=0.2)
     runner._run_carpark(CLIENT, target=None, plan_cfg=grab_plan,
                         device="dev1", state_dir=tmp_path,
                         now=BEFORE_OPEN, sleep_fn=lambda s: slept.append(s))
@@ -219,17 +231,69 @@ def test_plan_grab_retries_on_empty_lots(monkeypatch, tmp_path):
     assert slept == [60.0, 0.2, 0.2]
 
 
-def test_plan_grab_stops_retry_on_hard_failure(monkeypatch, tmp_path):
+def test_plan_grab_stops_retry_on_park_timeout(monkeypatch, tmp_path):
+    # park_timeout = the park may have landed server-side; do NOT retry (avoid
+    # double-park). Other parked_count==0 reasons keep retrying (see above).
     calls = []
     _stub_park(monkeypatch, calls,
-               [{"parked_count": 0, "reason": "no_available_mount"}])
+               [{"parked_count": 0, "reason": "park_timeout"}])
     _stub_reads(monkeypatch, [[]])
     slept = []
     runner._run_carpark(CLIENT, target=None, plan_cfg=PLAN,
                         device="dev1", state_dir=tmp_path,
                         now=BEFORE_OPEN, sleep_fn=lambda s: slept.append(s))
-    assert len(calls) == 1                    # no_available_mount -> no retry
+    assert len(calls) == 1                    # park_timeout -> no retry
     assert slept == [60.0]                    # only the open-wait
+
+
+def test_plan_grab_stops_at_window_end(monkeypatch, tmp_path):
+    # park never succeeds -> retry every poll until open + grab_window (10:01),
+    # then give up. Inject a clock that sleep_fn advances.
+    calls = []
+    _stub_park(monkeypatch, calls,
+               [{"parked_count": 0, "reason": "no_parkable_lot"}])  # repeats
+    _stub_reads(monkeypatch, [[]])
+    clock = {"t": 1000.0}
+    slept = []
+
+    def sleep_fn(s):
+        slept.append(s)
+        clock["t"] += s
+
+    grab_plan = dict(PLAN, grab_poll_seconds=1.0, grab_window_seconds=5)
+    out = runner._run_carpark(CLIENT, target=None, plan_cfg=grab_plan,
+                              device="dev1", state_dir=tmp_path, now=BEFORE_OPEN,
+                              sleep_fn=sleep_fn, time_fn=lambda: clock["t"])
+    # deadline = loop-start + 5s; 1s polls -> 6 park attempts (t=0..5), then stop
+    assert len(calls) == 6
+    assert out["cross"]["parked_count"] == 0
+    # the open-wait (60s) advanced the clock too; 5 poll gaps of 1s each
+    assert slept.count(1.0) == 5
+
+
+def test_plan_non_grab_single_attempt(monkeypatch, tmp_path):
+    # In-window but NOT a grab wake (woke at noon): a failed park is not retried.
+    calls = []
+    _stub_park(monkeypatch, calls,
+               [{"parked_count": 0, "reason": "no_parkable_lot"}])
+    _stub_reads(monkeypatch, [[]])
+    slept = []
+    runner._run_carpark(CLIENT, target=None, plan_cfg=PLAN, device="dev1",
+                        state_dir=tmp_path, now=NOON,
+                        sleep_fn=lambda s: slept.append(s))
+    assert len(calls) == 1                    # non-grab -> single attempt
+    assert slept == []
+
+
+def test_plan_forwards_cluster_min_and_allow_low(monkeypatch, tmp_path):
+    # cluster_server_id + cluster_min + allow_low_noncluster flow to park_many.
+    calls = []
+    _stub_park(monkeypatch, calls, [{"parked_count": 1}])
+    _stub_reads(monkeypatch, [[], [_parked(NOON)]])
+    plan = dict(PLAN, cluster_min=4, allow_low_noncluster=False)
+    runner._run_carpark(CLIENT, target=None, plan_cfg=plan, device="dev1",
+                        state_dir=tmp_path, now=NOON, cluster_server_id=1467)
+    assert calls == [_call(csid=1467, cmin=4, allow=False)]
 
 
 # --- legacy paths unchanged when plan off ------------------------------------

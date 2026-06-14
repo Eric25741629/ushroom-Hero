@@ -91,6 +91,12 @@ DEFAULT_DEVICE_CONFIG = {
             # 跨界車位只開放台灣 10:00-22:00；夜窗 cross=0（本服車位遊戲內建自動化）
             "day":   {"window": ["10:00", "22:00"], "cross": 1},
             "night": {"window": ["22:00", "10:00"], "cross": 0},
+            # 搶位分層 + 10:00 每秒重試（2026-06-15）
+            "cluster_min": 3,            # 同服占用 >= 此值算抱團（高獎勵低編號區門檻）
+            "grab_window_seconds": 60,   # 開窗後持續搶位到 開窗+此秒（10:01）
+            "grab_poll_seconds": 1.0,    # 搶位每輪間隔（每秒重試）
+            "grab_attempts": 8,          # 搶位重試輪數安全上限
+            "allow_low_noncluster": True,  # 最後手段：停鉑銀1-8 非抱團空位（不空手）
         },
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
@@ -440,6 +446,14 @@ def _merge_carpark_plan(v: Any, default: dict) -> dict:
             out[name]["window"] = [str(win[0]), str(win[1])]
         out[name]["cross"] = _clamp_int(w.get("cross"), 0, 10,
                                         default[name]["cross"])
+
+    # 搶位分層 + 每秒重試欄位：複用 carpark_plan getter 作為唯一清洗來源（壞值退預設）。
+    from ws_token import carpark_plan as _cp
+    out["cluster_min"] = _cp.cluster_min(v)
+    out["grab_window_seconds"] = _cp.grab_window_seconds(v)
+    out["grab_poll_seconds"] = _cp.grab_poll_seconds(v)
+    out["grab_attempts"] = _cp.grab_attempts(v)
+    out["allow_low_noncluster"] = _cp.allow_low_noncluster(v)
     return out
 
 

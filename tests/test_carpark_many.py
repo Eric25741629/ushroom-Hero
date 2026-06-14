@@ -22,10 +22,12 @@ from ws_token.carpark import (  # noqa: E402
     CMD_LOT_INFO,
     CMD_SEARCH,
     SILVER_PREFERRED_LEVELS,
+    NullSpace,
     auto_select_and_park_many,
     collect_bag_rewards,
     is_silver_ceng,
     silver_level_to_ceng,
+    tiered_lot_order,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
     CREDS,
@@ -257,13 +259,13 @@ def test_many_falls_back_to_other_silver_when_preferred_full():
         c.close()
 
 
-def test_many_prefers_cluster_within_preferred_levels():
-    # 鉑銀9 (ceng 13) nearly empty vs 鉑銀10 (ceng 14) with only 2 free slots:
-    # the cluster (fewest free = most occupied) wins within the preferred group.
-    search = _search_body([_null_entry(909, null_num=9, ceng=13),
-                           _null_entry(910, null_num=2, ceng=14)])
-    details = {910: _lot_body(3, 910, [_space(p, p + 50) for p in range(1, 9)],
-                              ceng=14)}
+def test_many_preferred_parked_by_ceng_ascending():
+    # Both 鉑銀9 (ceng13) and 鉑銀10 (ceng14) free: preferred is unconditional and
+    # ordered by ceng ascending (9 before 10) — no fullness/cluster preference.
+    search = _search_body([_null_entry(910, null_num=10, ceng=14),
+                           _null_entry(909, null_num=10, ceng=13)])
+    details = {909: _lot_body(3, 909, [], ceng=13),
+               910: _lot_body(3, 910, [], ceng=14)}
     c, fake = _client({
         CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
         CMD_LOT_INFO: lambda b: [s2c(CMD_LOT_INFO,
@@ -276,9 +278,62 @@ def test_many_prefers_cluster_within_preferred_levels():
         assert out["parked_count"] == 1
         sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
                 if cmd == CMD_CROSS_NEW_START]
-        assert sent[0][1] == 910 and sent[0][2] == 9  # first free pos
+        assert sent[0][1] == 909 and sent[0][2] == 1   # 鉑銀9 first, pos 1
     finally:
         c.close()
+
+
+# --- tiered_lot_order: pure ranking (preferred > 低區抱團 > 11-20 > 21-30 >
+#     低區非抱團) ---------------------------------------------------------------
+
+def _ns(master_id, ceng, null_num=10):
+    return NullSpace(park_type=3, master_id=master_id, null_num=null_num,
+                     ceng=ceng)
+
+
+PREFERRED_CENGS = {13, 14}   # 鉑銀9/10
+
+
+def test_tiered_order_groups_high_to_low():
+    lots = [_ns(1, 15),    # mid (鉑銀11)
+            _ns(2, 13),    # preferred (鉑銀9)
+            _ns(3, 5),     # low 抱團 (鉑銀1)
+            _ns(4, 25),    # high (鉑銀21)
+            _ns(5, 6)]     # low 非抱團 (鉑銀2)
+    same = {3: 3, 5: 0}    # lot3 clustered, lot5 not
+    order = tiered_lot_order(lots, preferred_cengs=PREFERRED_CENGS,
+                             cluster_min=3, same_counts=same,
+                             allow_low_noncluster=True)
+    assert [(l.ceng, t) for l, t in order] == [
+        (13, "preferred"), (5, "low_cluster"), (15, "mid"),
+        (25, "high"), (6, "low_noncluster")]
+
+
+def test_tiered_order_low_gate_demotes_noncluster_low():
+    # both low; only the one with 同服 >= cluster_min ranks as 抱團.
+    lots = [_ns(1, 5), _ns(2, 8)]
+    same = {1: 2, 2: 3}
+    order = tiered_lot_order(lots, preferred_cengs=PREFERRED_CENGS,
+                             cluster_min=3, same_counts=same,
+                             allow_low_noncluster=True)
+    assert [(l.ceng, t) for l, t in order] == [
+        (8, "low_cluster"), (5, "low_noncluster")]
+
+
+def test_tiered_order_within_tier_ceng_ascending():
+    lots = [_ns(1, 24), _ns(2, 15), _ns(3, 20)]   # all mid
+    order = tiered_lot_order(lots, preferred_cengs=PREFERRED_CENGS,
+                             cluster_min=3, same_counts={},
+                             allow_low_noncluster=True)
+    assert [l.ceng for l, _t in order] == [15, 20, 24]
+
+
+def test_tiered_order_excludes_low_noncluster_when_disallowed():
+    lots = [_ns(1, 5), _ns(2, 15)]   # low 非抱團 + mid
+    order = tiered_lot_order(lots, preferred_cengs=PREFERRED_CENGS,
+                             cluster_min=3, same_counts={1: 0},
+                             allow_low_noncluster=False)
+    assert [l.ceng for l, _t in order] == [15]   # low 非抱團 dropped
 
 
 def _space_with_server(pos, role_id, server_id):
@@ -302,18 +357,16 @@ def test_count_same_server_counts_matching_attr_values():
     assert count_same_server(lot, 0) == 0
 
 
-def test_many_cluster_prefers_lot_with_same_server_occupants():
-    # Both 鉑銀9 (ceng13) and 鉑銀10 (ceng14) parkable; 13 fuller (null=5) but
-    # its occupants are FOREIGN; 14 (null=7) has 2 same-server (1467) cars ->
-    # cluster_server_id=1467 must pick 14 despite lower occupancy.
-    search = _search_body([_null_entry(913, null_num=5, ceng=13),
-                           _null_entry(914, null_num=7, ceng=14)])
+def test_many_low_cluster_outranks_mid_and_high():
+    # Preferred 9/10 full. A 低編號 lot 鉑銀3 (ceng7) with 3 同服 (1467) cars is
+    # 抱團 -> outranks 鉑銀12 (ceng16, mid) despite the low lot's high-reward gate.
+    search = _search_body([_null_entry(916, null_num=10, ceng=16),
+                           _null_entry(907, null_num=7, ceng=7)])
     details = {
-        913: _lot_body(3, 913, [_space_with_server(p, p + 50, 8888)
-                                for p in range(1, 6)], ceng=13),
-        914: _lot_body(3, 914, [_space_with_server(1, 61, 1467),
+        907: _lot_body(3, 907, [_space_with_server(1, 61, 1467),
                                 _space_with_server(2, 62, 1467),
-                                _space_with_server(3, 63, 8888)], ceng=14),
+                                _space_with_server(3, 63, 1467)], ceng=7),
+        916: _lot_body(3, 916, [], ceng=16),
     }
     c, fake = _client({
         CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
@@ -327,20 +380,18 @@ def test_many_cluster_prefers_lot_with_same_server_occupants():
         assert out["parked_count"] == 1
         sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
                 if cmd == CMD_CROSS_NEW_START]
-        assert sent[0][1] == 914  # same-server cluster wins
-        assert sent[0][2] == 4    # first free pos (1-3 occupied)
+        assert sent[0][1] == 907 and sent[0][2] == 4   # 抱團 low lot, first free
     finally:
         c.close()
 
 
-def test_many_cluster_no_attr_data_degrades_to_occupancy():
-    # No server attrs anywhere -> counts all 0 -> fuller lot (13) wins as before.
-    search = _search_body([_null_entry(913, null_num=5, ceng=13),
-                           _null_entry(914, null_num=10, ceng=14)])
-    details = {
-        913: _lot_body(3, 913, [_space(p, p + 50) for p in range(1, 6)], ceng=13),
-        914: _lot_body(3, 914, [], ceng=14),
-    }
+def test_many_low_noncluster_is_last_resort_below_mid():
+    # 低編號 鉑銀1 (ceng5) WITHOUT 抱團 (< cluster_min) ranks below 鉑銀11 (ceng15,
+    # mid) -> mid parked first.
+    search = _search_body([_null_entry(905, null_num=10, ceng=5),
+                           _null_entry(915, null_num=10, ceng=15)])
+    details = {905: _lot_body(3, 905, [_space_with_server(1, 61, 8888)], ceng=5),
+               915: _lot_body(3, 915, [], ceng=15)}
     c, fake = _client({
         CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
         CMD_LOT_INFO: lambda b: [s2c(CMD_LOT_INFO,
@@ -353,7 +404,64 @@ def test_many_cluster_no_attr_data_degrades_to_occupancy():
         assert out["parked_count"] == 1
         sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
                 if cmd == CMD_CROSS_NEW_START]
-        assert sent[0][1] == 913
+        assert sent[0][1] == 915   # mid beats low 非抱團
+    finally:
+        c.close()
+
+
+def test_many_low_noncluster_parked_when_only_option():
+    # Only a 低編號 非抱團 lot exists -> still parked (allow_low_noncluster default
+    # True, user 2026-06-15 「停進去當保底」).
+    search = _search_body([_null_entry(905, null_num=10, ceng=5)])
+    c, fake = _client({
+        CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
+        CMD_LOT_INFO: lambda _b: [s2c(CMD_LOT_INFO, _lot_body(3, 905, [], ceng=5))],
+        CMD_CAR_INFO: lambda _b: [s2c(CMD_CAR_INFO, _car_list_body([_car(11)]))],
+        CMD_CROSS_NEW_START: _ok_start,
+    })
+    try:
+        out = auto_select_and_park_many(c, count=1, cluster_server_id=1467)
+        assert out["parked_count"] == 1
+    finally:
+        c.close()
+
+
+def test_many_low_noncluster_skipped_when_disallowed():
+    # allow_low_noncluster=False: a lone 低編號 非抱團 lot is NOT parked.
+    search = _search_body([_null_entry(905, null_num=10, ceng=5)])
+    c, _ = _client({
+        CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
+        CMD_LOT_INFO: lambda _b: [s2c(CMD_LOT_INFO, _lot_body(3, 905, [], ceng=5))],
+        CMD_CAR_INFO: lambda _b: [s2c(CMD_CAR_INFO, _car_list_body([_car(11)]))],
+        CMD_CROSS_NEW_START: _ok_start,
+    })
+    try:
+        out = auto_select_and_park_many(c, count=1, cluster_server_id=1467,
+                                        allow_low_noncluster=False)
+        assert out["parked_count"] == 0
+    finally:
+        c.close()
+
+
+def test_many_preferred_free_skips_cluster_probe():
+    # 鉑銀9 (preferred) free -> park immediately; the 低編號 lot's detail is never
+    # read (no cluster probe paid — 搶位要快).
+    search = _search_body([_null_entry(909, null_num=10, ceng=13),
+                           _null_entry(905, null_num=10, ceng=5)])
+    c, fake = _client({
+        CMD_SEARCH: lambda _b: [s2c(CMD_SEARCH, search)],
+        CMD_LOT_INFO: lambda b: [s2c(CMD_LOT_INFO,
+                                     _lot_body(3, codec.walk_dict(b)[2], [],
+                                               ceng=13))],
+        CMD_CAR_INFO: lambda _b: [s2c(CMD_CAR_INFO, _car_list_body([_car(11)]))],
+        CMD_CROSS_NEW_START: _ok_start,
+    })
+    try:
+        out = auto_select_and_park_many(c, count=1, cluster_server_id=1467)
+        assert out["parked_count"] == 1
+        read = [codec.walk_dict(b)[2] for _s, cmd, b in fake.framed_sent()
+                if cmd == CMD_LOT_INFO]
+        assert read == [909]          # only the preferred lot's detail read
     finally:
         c.close()
 

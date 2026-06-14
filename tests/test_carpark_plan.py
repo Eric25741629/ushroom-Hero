@@ -17,11 +17,19 @@ if str(ROOT) not in sys.path:
 
 from ws_token.carpark import Mount, ParkingInfo  # noqa: E402
 from ws_token.carpark_plan import (  # noqa: E402
+    DEFAULT_CLUSTER_MIN,
+    DEFAULT_GRAB_POLL_SECONDS,
+    DEFAULT_GRAB_WINDOW_SECONDS,
     DEFAULT_OPEN_LEAD_SECONDS,
     DEFAULT_PARK_MAX_SECONDS,
     active_window,
+    allow_low_noncluster,
     carpark_wake_ts,
+    cluster_min,
     cross_open_wait,
+    grab_attempts,
+    grab_poll_seconds,
+    grab_window_seconds,
     next_cross_open_dt,
     open_lead_seconds,
     park_max_seconds,
@@ -84,6 +92,42 @@ def test_config_getters_overrides():
     assert open_lead_seconds(cfg) == 90
     assert repark_margin_seconds(cfg) == 5
     assert start_time_offset(cfg) == -3
+
+
+# --- grab/cluster getters (2026-06-15 搶位分層 + 每秒重試) -------------------
+
+def test_grab_getters_defaults():
+    # poll default raised 0.3 -> 1.0 for the every-second grab retry
+    assert grab_poll_seconds({}) == DEFAULT_GRAB_POLL_SECONDS == 1.0
+    assert grab_window_seconds({}) == DEFAULT_GRAB_WINDOW_SECONDS == 60
+    assert cluster_min({}) == DEFAULT_CLUSTER_MIN == 3
+    assert grab_attempts({}) == 8
+    # last-resort: park low non-cluster slots by default (user 2026-06-15)
+    assert allow_low_noncluster({}) is True
+
+
+def test_grab_getters_overrides():
+    cfg = {"grab_poll_seconds": 0.5, "grab_window_seconds": 120,
+           "cluster_min": 5, "grab_attempts": 20,
+           "allow_low_noncluster": False}
+    assert grab_poll_seconds(cfg) == 0.5
+    assert grab_window_seconds(cfg) == 120
+    assert cluster_min(cfg) == 5
+    assert grab_attempts(cfg) == 20
+    assert allow_low_noncluster(cfg) is False
+
+
+def test_grab_getters_sanitize_bad_values():
+    # non-positive / unparsable -> fall back to defaults
+    bad = {"grab_poll_seconds": 0, "grab_window_seconds": -1,
+           "cluster_min": "x", "grab_attempts": 0}
+    assert grab_poll_seconds(bad) == 1.0
+    assert grab_window_seconds(bad) == 60
+    assert cluster_min(bad) == 3
+    assert grab_attempts(bad) == 8
+    # allow_low_noncluster coerces truthy/falsey config values to bool
+    assert allow_low_noncluster({"allow_low_noncluster": 0}) is False
+    assert allow_low_noncluster({"allow_low_noncluster": 1}) is True
 
 
 # --- next_cross_open_dt: next time a cross (cross>0) window opens -------------
