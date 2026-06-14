@@ -1,8 +1,11 @@
 # 車友商行 / 裝飾 (Parking Decoration) — Recon Recipe + Offline Groundwork (2026-06-14)
 
-> 狀態：**catalog + 成本模型 live 定案 (2026-06-15, 5556/CDP 9223) — 見 §9。**
-> 屬性曲線、碎片成本、貨幣、限購、顯示 % 換算皆已 live 校準。WS buy/upgrade
-> round-trip (12817 body field number) 仍待採樣 (需實際花碎片，見 §5.2)。
+> 狀態：**catalog + 成本模型 live 定案 (2026-06-15) — 見 §9。**
+> 屬性曲線、碎片成本、貨幣、限購、顯示 % 換算皆已 live 校準。
+> **純 WS read+write 全解並接進 dashboard (§10)：** read=skin_list(12801 type0)
+> + shop_info(6913 type11) + 菇車幣(role attr 201)；write=buy(shop_buy 6914
+> {11,shop_id,num}) + upgrade(car_park_skin_up 12817 {type:0,skin_id})。live 驗
+> 一次真實 buy+upgrade 通過(異世之界 lv1→2,扣 20 萬菇車幣 exact)。
 > **重大更正：目前服務端設定封頂 15 星 (不是 20，見 §9.1)。**
 
 本文件依 `docs/protocol/CARPARK_GUILD_NODES.md` §C 的 JS-bundle 法，從
@@ -375,3 +378,63 @@ rx 0x3211(12817) body = {1: code=0(成功), 2:{1: skin_id=10003, 2: skin_lev=7, 
 
 接線者：buy=shop_buy(6914){11, item_id, qty}（先查 item_id 表）；upgrade=send 0x3801 JSON
 `{"type":0,"skin_id":id}`；序列化、等 0x3211 code=0 再送下一個、收 0x0201 code≠0 即停。
+
+---
+
+## 10. 純 WS read+write 全解 + dashboard 接線 (live 定案 2026-06-15)
+
+把 dashboard 車位裝飾工具（工具優化類分頁）的 read+write 全換成純 WS，移除慢速
+cocos 掃描(~90s) 與 cocos 買升 UI。協議全 live 採到並驗證；工具
+`tools/read_carpark_ws.py`（唯讀 read snapshot）。
+
+### 10.1 READ（已擁有 + 等級 + 碎片店 + 菇車幣）
+
+- **skin_list = `car_park.car_park_info` (12801)**，c2s `{type:0, master_id:<我的
+  role_id>, ceng:0}`。home/私人車位 = **type 0**（bundle `reqParkingInfo(0,
+  GetRoleId())`；先前猜 type 1 是錯的，server 不回 12801）。s2c `skin_list#8`
+  repeated `p_car_park_skin {skin_id#1, skin_lev#2, pos#3, x#4, y#5}`。
+  `skin_lev==0` = 免費初始款 (if_initial)。
+- **item_id/碎片單價/限購上限 在 client config `configMall`，不在 WS 包**。每列
+  `_data=[shop_id#0, shop_type#1, [frag_goods,qty]#2, [currency,price]#3, ...,
+  cap#8]`；裝飾碎片列 = `_data[1]===11` 且 `_data[2][0]` ∈
+  `configParking_design.expend[0][0]`（碎片 goods，如花門 60102 / 中式庭院大門
+  60103）。shop_type 11 是混合店，務必用「frag ∈ parking」過濾。場景款(position5,
+  29/68) 碎片不在任何 shop（活動取得）→ shop_id null，picker 自動跳過。
+- **已買數 = WS `shop.shop_info` (6913)** `{shop_type:11}` → `buy_info#2` repeated
+  `p_key_value{k=shop_id, v=已買數}`（未買過的不在列＝0）。限購剩餘 = cap − 已買。
+- **菇車幣 = role attribute 201**（goods<1000 ⇒ role 屬性）：`roleModel.GetRoleAttr(201)`
+  == `roleInfo[201]`。roleModel = 全域 `IS()` singleton accessor 取出（具
+  GetRoleAttr+GetRoleId 者；`roleControl` 只是網路 handler），暫時 wrap `IS` 攔下；
+  `GetRoleId()` 同源可當 master_id。role_id fallback = localStorage 出現最多次的
+  12+ 位尾碼數字。
+
+### 10.2 WRITE（買碎片 + 升級，逐步）
+
+**修正 §9.8 對升級 cmd 的解讀**：升級 c2s = **`car_park.car_park_skin_up_c2s`
+(12817) protobuf `{type:0, skin_id}`**（bundle `btnUnlock → reqSkinUp(type,
+decID) → netManager.send("car_park.car_park_skin_up_c2s", {type, skin_id})`）。
+§9.8 看到的 `0x3801`(14337) 是 `json_proto.json_proto_c2s` 通用 JSON 封套，
+netManager 會自行決定傳輸，邏輯 cmd 仍是 12817；s2c 回 `car_park_skin_up_s2c`
+(12817) 或失敗 `0x0201`(513)。
+
+每步（`EXEC_STEP_WS_JS`，args `[shop_id, skin_id, frags, do_upgrade]`）：
+1. **買碎片 = `shop.shop_buy_c2s` (6914)** `{shop_type:11, shop_id, num:frags}` →
+   等 6914 成功 / 0x0201 失敗（花菇車幣）。
+2. **升級 = `car_park.car_park_skin_up_c2s` (12817)** `{type:0, skin_id}` → 等 12817
+   成功 / 0x0201 失敗（只耗碎片）。
+3. **再讀一次 car_park_info 確認等級真的 +1**（ground-truth，不依賴升級回包形狀）。
+   回 `{ok, bought, name, before_level, after_level, err?}`；buy 成立但升級失敗時
+   `bought=true` → routes 誠實計入已花菇車幣。
+
+序列化、逐步 stop-on-failure，與舊 cocos executor 同 contract。
+
+### 10.3 Dashboard 接線 + 驗證
+
+- `control_panel/carpark_tools_js.py`：新增 `READ_STATE_WS_JS`（= READ snapshot）
+  + `EXEC_STEP_WS_JS`（買升）。`control_panel/routes_tools_optimize.py`：`_read_state`
+  改用 WS read、`cat/cell` 全換 `shop_id`、`_exec_step` args `[shop_id, id, frags,
+  True]`。gacha 分頁不動。`_READ_TIMEOUT` 90→25（WS read ~3-4s）。
+- TDD：`tests/test_carpark_ws_io.py`（payload 結構 + routes shop_id 接線 + exec args）；
+  全測 27 passed。
+- **live 驗證**：異世之界(30092, shop1759, lv1→2, 1 碎片) 真實 buy+upgrade，菇車幣
+  88,643,235 → 88,443,235（−200,000 exact）、等級 1→2、已買 1→2。success path 通過。

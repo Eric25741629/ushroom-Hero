@@ -3,8 +3,9 @@
 Two tools, both driving the device's live H5 page via the shared raw-CDP JS path
 (``control_panel_app._cdp_evaluate``):
 
-1. 最佳升級車位裝飾 — runs the SAME cocos buy/upgrade UI a human uses (verified
-   2026-06-15, see docs/protocol/CARPARK_DECORATION_SHOP.md §9). Injected JS in
+1. 最佳升級車位裝飾 — reads + buys + upgrades purely over the game WebSocket
+   (car_park_info / shop_info / shop_buy / car_park_skin_up); see
+   docs/protocol/CARPARK_DECORATION_SHOP.md §10. Injected JS in
    ``control_panel.carpark_tools_js``; brain = ``ws_token.carpark_decoration``.
 2. 一鍵抽卡 (技能/同伴) — PURE WS: sends draw cmd ``0x0902`` straight over the
    game WebSocket (no cocos UI / animation), injected JS in
@@ -23,7 +24,7 @@ import uuid
 from flask import Blueprint, jsonify, render_template, request
 
 import bot_state
-from control_panel.carpark_tools_js import EXEC_STEP_JS, READ_STATE_JS
+from control_panel.carpark_tools_js import EXEC_STEP_WS_JS, READ_STATE_WS_JS
 from control_panel.gacha_tools_js import DRAW_ONCE_JS
 from control_panel.shared.auth import _fly_pet_auth
 from ws_token import gacha as gacha_logic
@@ -34,7 +35,7 @@ bp = Blueprint("tools_optimize", __name__)
 # Safety bounds for the auto-spend executor.
 _DEFAULT_MAX_STEPS = 30
 _HARD_MAX_STEPS = 80
-_READ_TIMEOUT = 90      # the walk reads ~16 decorations, ~1-2s each
+_READ_TIMEOUT = 25      # WS read is ~3-4s, not a 90s cocos walk
 _EXEC_TIMEOUT = 45      # one buy(up to 30 frags)+upgrade step
 
 # --- gacha (抽卡) pure-WS; ladder/cost/ids brain lives in ws_token.gacha ---
@@ -104,11 +105,11 @@ def _cdp_json(ip: str, expression: str, timeout: int):
 
 
 def _read_state(ip: str):
-    return _cdp_json(ip, f"({READ_STATE_JS})()", _READ_TIMEOUT)
+    return _cdp_json(ip, f"({READ_STATE_WS_JS})()", _READ_TIMEOUT)
 
 
 def _build_decos(state: dict):
-    """state.decos -> (list[DecoUpgradeState], {id:(cat,cell,name,price,level)})."""
+    """state.decos -> (list[DecoUpgradeState], {id:(shop_id,name,price,level)})."""
     decos = []
     meta = {}
     for d in state.get("decos", []):
@@ -120,7 +121,7 @@ def _build_decos(state: dict):
             price_per_frag=int(d.get("price", 0)),
             limit_remaining=int(d.get("limit_remaining", 0)),
             steps=tuple(tuple(int(x) for x in s) for s in steps)))
-        meta[d["id"]] = {"cat": d.get("cat"), "cell": d.get("cell"),
+        meta[d["id"]] = {"shop_id": d.get("shop_id"),
                          "name": d.get("name"), "price": d.get("price"),
                          "level": d.get("level")}
     return decos, meta
@@ -132,8 +133,9 @@ def _plan(state: dict, budget: int, max_steps: int):
     eff_budget = min(budget if budget > 0 else coin, coin)
     plan = plan_upgrades(decos, budget=eff_budget, max_steps=max_steps)
     steps = [{
-        "id": s.id, "name": s.name, "cat": meta.get(s.id, {}).get("cat"),
-        "cell": meta.get(s.id, {}).get("cell"), "from_level": s.from_level,
+        "id": s.id, "name": s.name,
+        "shop_id": meta.get(s.id, {}).get("shop_id"),
+        "from_level": s.from_level,
         "to_level": s.to_level, "frags": s.frags, "coin": s.coin,
         "attr_gain": s.attr_gain,
         "coin_per_attr": round(s.coin_per_attr, 3),
@@ -165,9 +167,8 @@ def _run_plan_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
 
 
 def _exec_step(ip: str, step: dict):
-    args = [int(step["cat"]), int(step["cell"]), int(step["frags"]), True,
-            step.get("name")]
-    return _cdp_json(ip, f"({EXEC_STEP_JS})({json.dumps(args)})", _EXEC_TIMEOUT)
+    args = [int(step["shop_id"]), int(step["id"]), int(step["frags"]), True]
+    return _cdp_json(ip, f"({EXEC_STEP_WS_JS})({json.dumps(args)})", _EXEC_TIMEOUT)
 
 
 def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
