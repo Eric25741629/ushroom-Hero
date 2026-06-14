@@ -328,3 +328,50 @@ cost-per-benefit，尊重 budget 與兩個 attempt cap，跳過滿級/零效益�
 
 → picker 接線需改：cost 餵 `frags×price`(coin)、benefit 餵邊際屬性、`cumulative_benefit=True`、
    加 per-deco 限購 cap。詳見 §6 安全規則。
+
+### 9.7 取得 vs 升級 流程 (live 2026-06-15) — 修正「可自由買任意裝飾」假設
+
+- **升級面板 (車位→底部 btnSkin → `ParkingDecorateView`) 只列「已擁有」裝飾。**
+  grid cell 數 = 已擁有數 (例 大門 5 格 = 已有 拱門/花門/中式庭院大門/卡通大門/凱旋門)；
+  detail 的 ◀▶ (`nodeShow/btnLeft|btnRight`) 只在已擁有間循環，到尾即 wrap。**未擁有裝飾不在此面板。**
+- **取得新裝飾 = 車友商行 (`ParkingMainView/bottom/btnShop`) → `ParkingDecorateSelectView`「装扮自选」**，
+  是「(1/3) 限定自選」chooser，只有 `content/btnUse`(選用)、**無「購買」鈕/無標價** → 像活動/登入
+  免費三選一，**非任意付費購買**。(本次見到的當期 = 菇菇保安亭/保護時間+20 分。)
+- **升級面板的「購買」鈕 = 用菇車幣買「已擁有」裝飾的碎片**(非買新裝飾)，再按「升級」
+  (`btnUnlock`, skin_up 0x3211=12817) 消耗碎片升星。`限購 X/120` = 每裝飾終身碎片購買上限。
+- 結論：使用者原想的「買未擁有裝飾」**非自由商店行為**；新裝飾要走 装扮自选 限定自選，否則只能
+  升級已有裝飾。WS 的 buy(碎片) / skin_up cmd body 仍待「實際升級一次已擁有裝飾」才採得到
+  (本次 probe 已裝 `window.__probe_inst`，但未實際花費，故未採到 round-trip body)。
+- 可復用 live 工具：`tools/rawcdp.py`(raw 單頁 CDP，繞過 Playwright 多 target attach 卡死)、
+  `tools/carpark_rawverify.py`(survey/walk/shop/tree/probe-install/full-buy)。
+
+### 9.8 WS round-trip 定案 (live 採到, 2026-06-15) — **修正 §2 的 12817-as-request**
+
+實測：在 5556 把「中式庭院大門」(id 10003) lv6→7（買 4 碎片 + 升級），WS probe 採到完整 round-trip。
+
+**A. 買碎片 = Mall `shop.shop_buy` `0x1b02`(6914)** — 點升級面板「購買」開 `MallTipsView`
+(數量 +/− 對話框, btnAdd/btnMinus/btnAddTen(±5)/btnBuy/EditBox/price)，確認後送：
+```
+tx 0x1b02(6914) body = {1: shop_type=11, 2: shop_item_id=1705, 3: qty=4}   # 變長 varint
+rx 0x0302(770) 貨幣更新 / 0x0402(1026)+0x0406(1030) 道具數更新 / 0x1b02 rx {2:1705,...,qty} / 0x1b01(6913) shop list
+```
+→ 花菇車幣、得碎片。`shop_type=11`、`shop_item_id` 非 goods id(60103) 而是「商城內項目索引」(此款=1705)，
+   接線需先從 0x1b01 shop list 建 decoration→shop_item_id 對照(LIVE-TODO：補各款 item_id)。
+
+**B. 升級 = req `0x3801`(14337) JSON body → resp `0x3211`(12817 car_park_skin_up_s2c)**：
+```
+tx 0x3801(14337) body = ASCII JSON  {"type":0,"skin_id":10003,...}     # 非 protobuf, 是 JSON 字串!
+rx 0x3211(12817) body = {1: code=0(成功), 2:{1: skin_id=10003, 2: skin_lev=7, ...}}
+   (錢/碎片不足時 rx 0x0201(513) {1: code=3} = 失敗)
+```
+→ **§2 的「12817 = c2s 買+升級扣貨幣」是錯的。** 真實：c2s 升級走 **0x3801 JSON `{type, skin_id}`**
+   (只消耗已有碎片，不碰貨幣)；**12817 是 s2c 回包**(帶新 skin_lev)；貨幣只在 A 的 shop_buy 花掉。
+
+**C. 限購數字 = 剩餘可買量 (非已買)**：升級前 `限購 108/120`、買 4 碎片後 `104/120`(108−4)。
+   即 `X = 120 − 已消耗碎片`；120 剛好 = 0→15 滿級累計碎片，故「限購上限=正好能單款滿級一次」。
+   中式庭院大門 lv6 累計 12 碎片 → 120−12=108 ✓；升到 lv7(累計16) → 104 ✓。
+
+**D. 加成增量 live 確認**：lv6 1120% → lv7 1280%（三圍各 +160%），與 §9.2 表值完全一致。
+
+接線者：buy=shop_buy(6914){11, item_id, qty}（先查 item_id 表）；upgrade=send 0x3801 JSON
+`{"type":0,"skin_id":id}`；序列化、等 0x3211 code=0 再送下一個、收 0x0201 code≠0 即停。

@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>工具 優化類</title>
+<style>
+  :root{
+    --bg:#0b1020; --panel:#141a2e; --line:#243049; --muted:#8aa0c6; --text:#e6edf7;
+    --accent:#5b9dff; --good:#37d39b; --warn:#ffcf5c; --danger:#ff5d6c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 system-ui,"Segoe UI",sans-serif}
+  header{display:flex;align-items:center;gap:16px;padding:12px 18px;background:var(--panel);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0}
+  a.home{color:var(--accent);text-decoration:none;font-size:13px}
+  .wrap{max-width:1040px;margin:18px auto;padding:0 16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
+  .panel h2{font-size:15px;margin:0 0 12px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  label.inline{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
+  select,input{background:#0d1426;color:var(--text);border:1px solid var(--line);
+    border-radius:7px;padding:6px 9px;font:inherit}
+  input[type=number]{width:130px}
+  button{background:var(--accent);color:#04122e;border:0;border-radius:8px;padding:8px 14px;
+    font-weight:700;cursor:pointer}
+  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button.warn{background:var(--warn);color:#3a2a00}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .spin{color:var(--muted);font-size:13px}
+  .err{color:var(--danger)}
+  .good{color:var(--good)}
+  .kpi{display:flex;gap:22px;flex-wrap:wrap;margin:10px 0;font-size:13px}
+  .kpi b{font-size:18px;color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+  th:nth-child(2),td:nth-child(2){text-align:left}
+  thead th{color:var(--muted);font-weight:600;position:sticky;top:0;background:var(--panel)}
+  .tablewrap{max-height:54vh;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:10px}
+  .log{background:#0a0f1e;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+    margin-top:12px;max-height:30vh;overflow:auto;font:12.5px/1.55 ui-monospace,Consolas,monospace}
+  .log div{white-space:pre-wrap}
+  .note{color:var(--muted);font-size:12.5px;margin-top:10px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#1c2742;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛠 工具 優化類</h1>
+  <a class="home" href="/">← 回主控台</a>
+  <label class="inline">帳號/裝置 <select id="dev"></select></label>
+  <span id="status" class="spin"></span>
+</header>
+
+<div class="wrap">
+
+  <!-- 工具一：最佳升級車位裝飾 -->
+  <section class="panel">
+    <h2>最佳升級車位裝飾 <span class="pill">最大化屬性 / 預覽後執行</span></h2>
+    <div class="controls">
+      <label class="inline">預算上限(菇車幣)
+        <input type="number" id="budget" placeholder="留空=全部" min="0" step="100000">
+      </label>
+      <label class="inline">本次最多升幾星
+        <input type="number" id="maxSteps" value="30" min="1" max="80">
+      </label>
+      <button id="btnPlan" onclick="doPlan()">讀取並預覽計畫</button>
+      <button id="btnExec" class="warn" onclick="doExecute()" disabled>執行計畫（會花菇車幣）</button>
+    </div>
+    <div class="note">說明：只優化「已擁有」裝飾（新裝飾要走「裝扮自選」，不能自由買）。
+      指標＝每點屬性最便宜（碎片數×該裝飾單價÷屬性）。執行時會暫停該裝置 bot loop、逐星序列化、失敗即停。</div>
+
+    <div id="kpi" class="kpi" style="display:none">
+      <div>菇車幣 <b id="kCoin">-</b></div>
+      <div>計畫步數 <b id="kSteps">-</b></div>
+      <div>總花費 <b id="kCost">-</b></div>
+      <div>+總屬性 <b id="kAttr">-</b></div>
+      <div>剩餘 <b id="kLeft">-</b></div>
+    </div>
+
+    <div id="tableWrap" class="tablewrap" style="display:none">
+      <table>
+        <thead><tr>
+          <th>#</th><th>裝飾</th><th>星級</th><th>碎片</th><th>花費</th>
+          <th>+屬性</th><th>每屬性幣</th><th>累計花費</th>
+        </tr></thead>
+        <tbody id="planBody"></tbody>
+      </table>
+    </div>
+
+    <div id="log" class="log" style="display:none"></div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const fmt = n => (n==null?'-':Number(n).toLocaleString());
+function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
+function dev(){ return $('dev').value; }
+
+async function loadDevices(){
+  try{
+    const r = await fetch('/api/status'); const j = await r.json();
+    const bots = j.bots||{}; const sel = $('dev'); sel.innerHTML='';
+    Object.keys(bots).forEach(ip => {
+      const b = bots[ip]; if (b.backend !== 'web_h5') return;
+      const o = document.createElement('option');
+      o.value = ip; o.textContent = `${b.name||ip} (${ip})`; sel.appendChild(o);
+    });
+    if ([...sel.options].some(o=>o.value==='emulator-5554')) sel.value='emulator-5554';
+    if (!sel.options.length) setStatus('沒有 web_h5 裝置', true);
+  }catch(e){ setStatus('讀取裝置失敗：'+e, true); }
+}
+
+function logLines(lines){
+  const el = $('log'); el.style.display='block';
+  el.innerHTML = (lines||[]).map(l=>`<div>${l.replace(/</g,'&lt;')}</div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+async function pollJob(jid, onUpdate){
+  while(true){
+    await new Promise(r=>setTimeout(r,1200));
+    let j;
+    try{ const r = await fetch(`/api/carpark/job/${jid}`); j = await r.json(); }
+    catch(e){ setStatus('輪詢失敗：'+e, true); return null; }
+    if (j.status!=='ok'){ setStatus(j.message||'job error', true); return null; }
+    const job = j.job;
+    if (onUpdate) onUpdate(job);
+    if (job.status!=='running') return job;
+  }
+}
+
+function renderPlan(res){
+  if (!res){ return; }
+  $('kpi').style.display='flex';
+  $('kCoin').textContent = fmt(res.coin);
+  $('kSteps').textContent = (res.steps||[]).length;
+  $('kCost').textContent = fmt(res.total_coin);
+  $('kAttr').textContent = '+'+fmt(res.total_attr);
+  $('kLeft').textContent = fmt((res.coin||0) - (res.total_coin||0));
+  const body = $('planBody'); body.innerHTML='';
+  let cum = 0;
+  (res.steps||[]).forEach((s,i)=>{
+    cum += s.coin;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${i+1}</td><td>${s.name}</td>`+
+      `<td>★${s.from_level}→${s.to_level}</td><td>${s.frags}</td>`+
+      `<td>${fmt(s.coin)}</td><td class="good">+${fmt(s.attr_gain)}</td>`+
+      `<td>${s.coin_per_attr}</td><td>${fmt(cum)}</td>`;
+    body.appendChild(tr);
+  });
+  $('tableWrap').style.display = (res.steps||[]).length ? 'block':'none';
+  if (!(res.steps||[]).length){
+    setStatus('沒有可升級步驟：'+(res.skipped_reason||'—'), false);
+  }
+}
+
+let LAST_PLAN = null;
+
+async function doPlan(){
+  if (!dev()){ setStatus('請先選裝置', true); return; }
+  $('btnPlan').disabled = true; $('btnExec').disabled = true;
+  setStatus('讀取狀態並計算中…（約 30 秒）');
+  const budget = $('budget').value||0, maxSteps = $('maxSteps').value||30;
+  try{
+    const r = await fetch(`/api/carpark/plan/${encodeURIComponent(dev())}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({budget:Number(budget), max_steps:Number(maxSteps)})});
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus(j.message||'plan 失敗', true); return; }
+    const job = await pollJob(j.job_id, job=>{ if(job.log) logLines(job.log); setStatus('狀態：'+job.phase); });
+    if (job && job.status==='done'){ LAST_PLAN = job.result; renderPlan(job.result);
+      setStatus('預覽完成，可按「執行計畫」'); $('btnExec').disabled = !(job.result.steps||[]).length; }
+    else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
+  }catch(e){ setStatus('plan 例外：'+e, true); }
+  finally{ $('btnPlan').disabled = false; }
+}
+
+async function doExecute(){
+  if (!LAST_PLAN || !(LAST_PLAN.steps||[]).length){ setStatus('請先預覽計畫', true); return; }
+  const n = LAST_PLAN.steps.length, cost = LAST_PLAN.total_coin;
+  if (!confirm(`確定執行？將升 ${n} 星、花費約 ${fmt(cost)} 菇車幣，並暫停該裝置 bot loop。`)) return;
+  $('btnPlan').disabled = true; $('btnExec').disabled = true;
+  setStatus('執行中…（請勿關閉本頁）');
+  const budget = $('budget').value||0, maxSteps = $('maxSteps').value||30;
+  try{
+    const r = await fetch(`/api/carpark/execute/${encodeURIComponent(dev())}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({budget:Number(budget), max_steps:Number(maxSteps)})});
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus(j.message||'execute 失敗', true); return; }
+    const job = await pollJob(j.job_id, job=>{ if(job.log) logLines(job.log); setStatus('狀態：'+job.phase); });
+    if (job && job.status==='done'){
+      const res = job.result||{}; const done = (res.executed||[]).filter(s=>s.ok).length;
+      setStatus(`執行完成：成功 ${done} 星，花費 ${fmt(res.spent)} 菇車幣`+
+        (res.stopped_reason?`（停止：${res.stopped_reason}）`:''), false);
+      if (res.steps) renderPlan(res);
+    } else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
+  }catch(e){ setStatus('execute 例外：'+e, true); }
+  finally{ $('btnPlan').disabled = false; $('btnExec').disabled = false; }
+}
+
+loadDevices();
+</script>
+</body>
+</html>

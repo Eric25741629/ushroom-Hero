@@ -315,3 +315,174 @@ def _to_int(v: object) -> int:
         return int(v)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return 0
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Price/limit-aware upgrade planner (dashboard "一鍵最佳升級車位裝飾").
+#
+# Models the REAL live economy captured 2026-06-15 (see
+# docs/protocol/CARPARK_DECORATION_SHOP.md §9):
+#   - Each decoration is upgraded one STAR at a time; reaching star m needs
+#     ``frags`` fragments of THAT decoration's own item.
+#   - Fragments are bought from the Mall with 菇車幣 at a PER-DECORATION price
+#     (``price_per_frag`` differs 100k–600k between decorations).
+#   - Per decoration there is a remaining purchase quota ``limit_remaining``
+#     (限購 X/120 = how many MORE fragments can still be bought).
+#   - The cost-effectiveness metric is coin-per-attr =
+#     (frags × price_per_frag) / marginal_attr — lowest first (使用者 2026-06-15:
+#     目標＝最大化屬性). Greedy by that ratio, bounded by a coin budget, a
+#     per-decoration fragment quota, and a total max-steps cap.
+# This is the OFFLINE brain; the dashboard read layer supplies the live numbers
+# and the executor applies the returned steps via the cocos buy/upgrade UI.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class DecoUpgradeState:
+    """One owned decoration's plannable state.
+
+    ``steps`` is the ordered ladder of remaining single-star upgrades, each a
+    ``(to_level, frags, attr_gain)`` tuple from the current level upward (the
+    read layer builds it from configParking_design: frags = expend of the
+    departing level, attr_gain = own_attrs delta of that star).
+    """
+
+    id: int
+    name: str
+    price_per_frag: int
+    limit_remaining: int
+    steps: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True)
+class UpgradeStep:
+    """One committed +1 star upgrade in the plan."""
+
+    id: int
+    name: str
+    from_level: int
+    to_level: int
+    frags: int
+    coin: int
+    attr_gain: int
+
+    @property
+    def coin_per_attr(self) -> float:
+        return self.coin / self.attr_gain if self.attr_gain > 0 else float("inf")
+
+
+@dataclass(frozen=True)
+class UpgradePlan:
+    """The bounded, budget-respecting ordered set of star upgrades."""
+
+    steps: tuple[UpgradeStep, ...] = ()
+    total_coin: int = 0
+    total_attr: int = 0
+    total_frags: int = 0
+    skipped_reason: str | None = None
+
+
+def _coin_per_attr(coin: int, attr: int) -> float:
+    return coin / attr if attr > 0 else float("inf")
+
+
+def plan_upgrades(decos, *, budget, max_steps):
+    """Greedy price/limit-aware plan of the most attr-efficient star upgrades.
+
+    Args:
+        decos: iterable of DecoUpgradeState (one per owned decoration). Each
+            carries its per-fragment coin price, remaining purchase quota, and
+            the ordered ladder of its remaining single-star upgrades.
+        budget: max total 菇車幣 to spend (cumulative coin never exceeds it).
+        max_steps: max number of single-star upgrades to commit (bound on how
+            many actions the executor will perform per run).
+
+    Returns:
+        UpgradePlan. Steps are ordered by commit order (globally cheapest
+        coin-per-attr first), each respecting the coin budget, the owning
+        decoration's remaining fragment quota, and the total max-steps cap.
+        Zero/negative attr_gain steps are skipped. ``skipped_reason`` is set
+        when the plan is empty (no_decos / zero_quota / no_budget / no_candidate).
+    """
+    budget = max(0, _to_int(budget))
+    max_steps = max(0, _to_int(max_steps))
+
+    decos = [d for d in (decos or ()) if isinstance(d, DecoUpgradeState)]
+    if not decos:
+        return UpgradePlan(skipped_reason="no_decos")
+    if max_steps == 0:
+        return UpgradePlan(skipped_reason="zero_quota")
+    if budget == 0:
+        return UpgradePlan(skipped_reason="no_budget")
+
+    # Mutable per-decoration cursor into its step ladder + remaining quota.
+    state = {
+        d.id: {"deco": d, "idx": 0, "level": _start_level(d),
+               "frags_left": max(0, _to_int(d.limit_remaining))}
+        for d in decos
+    }
+
+    chosen: list[UpgradeStep] = []
+    spent = 0
+    while len(chosen) < max_steps:
+        best = _best_affordable_step(state, budget - spent)
+        if best is None:
+            break
+        chosen.append(best)
+        spent += best.coin
+        st = state[best.id]
+        st["idx"] += 1
+        st["level"] = best.to_level
+        st["frags_left"] -= best.frags
+
+    if not chosen:
+        return UpgradePlan(skipped_reason="no_candidate")
+    return UpgradePlan(
+        steps=tuple(chosen),
+        total_coin=spent,
+        total_attr=sum(s.attr_gain for s in chosen),
+        total_frags=sum(s.frags for s in chosen),
+    )
+
+
+def _start_level(d: DecoUpgradeState) -> int:
+    """Level the decoration sits at before its first remaining step."""
+    if d.steps:
+        first_to = _to_int(d.steps[0][0])
+        return first_to - 1
+    return 0
+
+
+def _candidate_step(st: dict, remaining_budget: int) -> UpgradeStep | None:
+    """The next affordable+in-quota upgrade for one decoration, or None."""
+    deco: DecoUpgradeState = st["deco"]
+    idx = st["idx"]
+    if idx >= len(deco.steps):
+        return None
+    to_level, frags, attr_gain = (
+        _to_int(deco.steps[idx][0]), _to_int(deco.steps[idx][1]),
+        _to_int(deco.steps[idx][2]))
+    if attr_gain <= 0:
+        return None  # cosmetic / no stat — never worth coin
+    coin = frags * max(0, _to_int(deco.price_per_frag))
+    if coin > remaining_budget:
+        return None
+    if frags > st["frags_left"]:
+        return None  # would exceed 限購 remaining quota
+    return UpgradeStep(id=deco.id, name=deco.name, from_level=st["level"],
+                       to_level=to_level, frags=frags, coin=coin,
+                       attr_gain=attr_gain)
+
+
+def _best_affordable_step(state: dict, remaining_budget: int) -> UpgradeStep | None:
+    """Lowest coin-per-attr step across all decorations; tie -> lower coin, id."""
+    best: UpgradeStep | None = None
+    best_key: tuple[float, int, int] | None = None
+    for rid, st in state.items():
+        step = _candidate_step(st, remaining_budget)
+        if step is None:
+            continue
+        key = (step.coin_per_attr, step.coin, rid)
+        if best_key is None or key < best_key:
+            best, best_key = step, key
+    return best

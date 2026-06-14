@@ -11,8 +11,13 @@ from flask import jsonify
 import config_manager
 
 
-def _cdp_evaluate(ip, expression, await_promise=False):
-    """Execute JS on a web_h5 device via CDP. Returns (result_dict, error_str)."""
+def _cdp_evaluate(ip, expression, await_promise=False, timeout=15):
+    """Execute JS on a web_h5 device via CDP. Returns (result_dict, error_str).
+
+    ``timeout`` bounds BOTH the ws connect and the result-wait loop; raise it for
+    long-running injected flows (e.g. the carpark walk/execute that drives the UI
+    over many seconds). Defaults to 15s to preserve existing callers' behaviour.
+    """
     import websocket as _ws
     from runtime_services.live_view_bridge import find_game_page_target
 
@@ -28,7 +33,7 @@ def _cdp_evaluate(ip, expression, await_promise=False):
         return None, f"no CDP target on port {debug_port}"
 
     try:
-        ws = _ws.create_connection(ws_url, timeout=15, suppress_origin=True)
+        ws = _ws.create_connection(ws_url, timeout=timeout, suppress_origin=True)
         payload = json.dumps({
             "id": 1,
             "method": "Runtime.evaluate",
@@ -39,7 +44,7 @@ def _cdp_evaluate(ip, expression, await_promise=False):
             },
         })
         ws.send(payload)
-        deadline = time.time() + 15
+        deadline = time.time() + timeout
         while time.time() < deadline:
             raw = ws.recv()
             msg = json.loads(raw)
@@ -52,9 +57,9 @@ def _cdp_evaluate(ip, expression, await_promise=False):
         return None, str(exc)
 
 
-def _cdp_json_response(ip, expression, await_promise=False, data_key="data"):
+def _cdp_json_response(ip, expression, await_promise=False, data_key="data", timeout=15):
     """Helper: evaluate JS, parse JSON string result, return Flask response."""
-    result, err = _cdp_evaluate(ip, expression, await_promise=await_promise)
+    result, err = _cdp_evaluate(ip, expression, await_promise=await_promise, timeout=timeout)
     if err:
         code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
         return jsonify({"status": "error", "message": err}), code

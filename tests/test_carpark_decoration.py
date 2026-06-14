@@ -206,3 +206,108 @@ def test_accepts_skin_list_owned_shape():
     # Assert: recognised as owned L1 -> only the L1->L2 upgrade planned.
     assert plan.upgrades == 1
     assert plan.steps[0].to_level == 2
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# plan_upgrades — price/limit-aware planner for the dashboard one-click tool.
+# ───────────────────────────────────────────────────────────────────────────
+
+from ws_token.carpark_decoration import (  # noqa: E402
+    DecoUpgradeState,
+    plan_upgrades,
+)
+
+
+def _deco(id, name, price, limit, steps):
+    return DecoUpgradeState(id=id, name=name, price_per_frag=price,
+                            limit_remaining=limit, steps=tuple(steps))
+
+
+def test_plan_picks_lowest_coin_per_attr_first():
+    # Arrange: A frag cheaper (100) than B (300); same attr/frags per star.
+    decos = [
+        _deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000)]),
+        _deco(2, "B", price=300, limit=999, steps=[(7, 4, 48000)]),
+    ]
+    # Act
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=1)
+    # Assert: A is cheaper per attr (400 vs 1200) -> chosen.
+    assert [s.id for s in plan.steps] == [1]
+    assert plan.steps[0].coin == 400
+    assert plan.total_attr == 48000
+
+
+def test_plan_interleaves_by_coin_per_attr_across_decos():
+    # A: 1st star 4 frags@100=400, 2nd star 6 frags@100=600.
+    # B: 1st star 10 frags@50=500.  Order by coin: A1(400) < B1(500) < A2(600).
+    decos = [
+        _deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000), (8, 6, 48000)]),
+        _deco(2, "B", price=50, limit=999, steps=[(11, 10, 48000)]),
+    ]
+    # Act
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=5)
+    # Assert: interleaved A,B,A by ascending coin-per-attr.
+    assert [(s.id, s.coin) for s in plan.steps] == [(1, 400), (2, 500), (1, 600)]
+    assert plan.total_coin == 1500
+
+
+def test_plan_respects_budget():
+    decos = [
+        _deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000), (8, 6, 48000)]),
+    ]
+    # Act: only 500 coin -> first star (400) fits, second (600) does not.
+    plan = plan_upgrades(decos, budget=500, max_steps=9)
+    # Assert
+    assert [s.coin for s in plan.steps] == [400]
+    assert plan.total_coin == 400
+
+
+def test_plan_respects_limit_remaining():
+    # Only 5 fragments may still be bought for this deco; star1=4 fits, star2=6
+    # would need 6 (only 1 left) -> stop.
+    decos = [
+        _deco(1, "A", price=100, limit=5, steps=[(7, 4, 48000), (8, 6, 48000)]),
+    ]
+    # Act
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=9)
+    # Assert
+    assert [s.to_level for s in plan.steps] == [7]
+    assert plan.total_frags == 4
+
+
+def test_plan_respects_max_steps():
+    decos = [
+        _deco(1, "A", price=100, limit=999,
+              steps=[(7, 4, 48000), (8, 4, 48000), (9, 4, 48000)]),
+    ]
+    # Act
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=2)
+    # Assert
+    assert len(plan.steps) == 2
+    assert [s.to_level for s in plan.steps] == [7, 8]
+
+
+def test_plan_skips_zero_attr_gain():
+    decos = [_deco(1, "A", price=100, limit=999, steps=[(7, 4, 0)])]
+    # Act
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=9)
+    # Assert: cosmetic star never worth coin.
+    assert plan.steps == ()
+    assert plan.skipped_reason == "no_candidate"
+
+
+def test_plan_empty_decos_reason():
+    assert plan_upgrades([], budget=10_000, max_steps=5).skipped_reason == "no_decos"
+
+
+def test_plan_zero_budget_reason():
+    decos = [_deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000)])]
+    assert plan_upgrades(decos, budget=0, max_steps=5).skipped_reason == "no_budget"
+
+
+def test_plan_from_level_tracks_chain():
+    # A deco starting at level 6 (first step to 7) reports correct from/to levels.
+    decos = [_deco(1, "A", price=100, limit=999,
+                   steps=[(7, 4, 48000), (8, 5, 48000)])]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=2)
+    assert [(s.from_level, s.to_level) for s in plan.steps] == [(6, 7), (7, 8)]
