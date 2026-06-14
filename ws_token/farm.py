@@ -591,20 +591,34 @@ def run_harvest_card_cycle(
     num_cards: int = 3,
     fertilizer_id: int = FERTILIZER_ID_HIGH_YIELD,
     land_ids: Sequence[int] = (),
+    inventory_tracker=None,
     timeout: Optional[float] = None,
 ) -> dict:
     """豐收卡 harvest-card cycle via pure WS.
 
-    Flow (per project_farm_mechanics memory 2026-05-28):
+    Flow:
       1. Stop companion worker (cancel 打工)
-      2. Fertilize all plots to force-ripen crops
-      3. Harvest all ready crops (best-effort; 3077 has ~50% timeout)
-      4. Buy harvest cards (shop_type=11, shop_id=1604)
-      5. Plant premium seeds (seed_id=103) on every empty plot
-      6. Re-enable companion worker
+      2. Read farm info once (reused for fertilize/harvest)
+      3. Fertilize all plots to force-ripen crops
+      4. Harvest all ready crops (best-effort; 3077 has ~50% timeout)
+      5. Decide cards_to_buy:
+           If inventory_tracker is given and has a count for premium_seed_id:
+             cards_to_buy = max(0, empty_plots − current_seeds), capped at num_cards
+           Otherwise: cards_to_buy = num_cards (config default)
+      6. Buy harvest cards (shop_type=11, shop_id=1604) only when cards_to_buy > 0
+      7. Plant premium seeds (seed_id=103) on every empty plot
+      8. Re-enable companion worker
+
+    inventory_tracker — optional mining.InventoryTracker; pass in from runner so
+    the login-time 0x0402 snapshot is available.  When present, buys only the
+    deficit (empty_plots - current_seeds), capped at num_cards.  When absent,
+    falls back to buying num_cards unconditionally.
     """
-    result = {
+    result: dict = {
         'stopped_work': False,
+        'empty_plots': 0,
+        'seed_before': None,
+        'cards_to_buy': num_cards,
         'fertilized': 0,
         'harvested': 0,
         'cards_bought': 0,
@@ -617,29 +631,62 @@ def run_harvest_card_cycle(
     sw = stop_work(client, timeout=timeout)
     result['stopped_work'] = sw.get('ok', False)
 
-    # 2. Fertilize to force-ripen
-    fert = fertilize_lands(client, role_id, fertilizer_id, timeout=timeout)
+    # 2. Read farm info once — reused for fertilize and harvest to avoid the
+    #    session-scoped 3077 dedup (server answers home_farm_info only ~once).
+    info: Optional[FarmInfo] = None
+    try:
+        info = read_farm(client, role_id, timeout=timeout)
+    except Exception as exc:
+        logger.info('ws_token farm: run_harvest_card_cycle read_farm failed (%s)', exc)
+
+    empty_count = len(info.empty_lands) if info is not None else 0
+    result['empty_plots'] = empty_count
+
+    # 3. Fertilize (pass info to skip re-read)
+    fert = fertilize_lands(client, role_id, fertilizer_id, info=info, timeout=timeout)
     result['fertilized'] = fert.get('fertilized', 0)
 
-    # 3. Harvest ready crops (best-effort; 3077 may timeout)
+    # 4. Harvest ready crops (best-effort; 3077 may timeout; pass info)
     try:
-        harv = harvest_ready(client, role_id, timeout=5.0)
+        harv = harvest_ready(client, role_id, info=info, timeout=5.0)
         result['harvested'] = harv.get('harvested', 0)
     except Exception as exc:
         logger.info('ws_token farm: harvest_ready skipped (%s)', exc)
 
-    # 4. Buy harvest cards up to num_cards
-    card_result = buy_to_daily_target(
-        client, harvest_card_shop_id, num_cards,
-        shop_type=harvest_card_shop_type, timeout=timeout,
-    )
-    result['cards_bought'] = card_result.get('bought', 0)
+    # 5. Decide how many harvest cards to buy based on 特級種子 現量.
+    #    1 harvest card ≒ 1 premium seed slot. When the tracker has seen the
+    #    item from the login-time 0x0402 snapshot, buy only the deficit; skip
+    #    entirely if we already have enough. Fall back to num_cards when unknown.
+    cards_to_buy = num_cards
+    if inventory_tracker is not None:
+        current_seeds = inventory_tracker.counts.get(int(premium_seed_id))
+        result['seed_before'] = current_seeds
+        if current_seeds is not None:
+            need = max(0, empty_count - current_seeds)
+            cards_to_buy = min(need, num_cards)
+            logger.info(
+                'ws_token farm: 特級種子現量=%d 空地=%d need=%d → buy %d cards',
+                current_seeds, empty_count, need, cards_to_buy,
+            )
+    result['cards_to_buy'] = cards_to_buy
 
-    # 5. Plant premium seeds on empty plots
+    # 6. Buy harvest cards (skip when sufficient seeds already in bag)
+    if cards_to_buy > 0:
+        card_result = buy_to_daily_target(
+            client, harvest_card_shop_id, cards_to_buy,
+            shop_type=harvest_card_shop_type, timeout=timeout,
+        )
+        result['cards_bought'] = card_result.get('bought', 0)
+    else:
+        logger.info('ws_token farm: skip harvest card buy — 特級種子 sufficient (%s)',
+                    result.get('seed_before'))
+
+    # 7. Plant premium seeds on all empty plots (info=None → fresh read after
+    #    harvest; server may not answer if session-deduped, handled internally)
     plant = plant_empty(client, role_id, premium_seed_id, timeout=timeout)
     result['planted'] = plant.get('planted', 0)
 
-    # 6. Re-enable companion worker
+    # 8. Re-enable companion worker
     rs = start_work_simple(client, timeout=timeout)
     result['restarted_work'] = rs.get('ok', False)
     result['ok'] = True

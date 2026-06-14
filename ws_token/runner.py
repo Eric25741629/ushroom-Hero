@@ -283,7 +283,8 @@ def _run_gacha(client, inventory_tracker, *,
 _FARM_HOME_TIMEOUT_S = 5.0
 
 
-def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
+def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
+              inventory_tracker=None) -> dict:
     """農場/打工: 收成 (免費) + 種植 / 打工 / 莊園購買 (依設定)。
 
     home module(12) 的 read_farm/harvest 在純 WS 下回應不穩，且當 server 端管家
@@ -350,12 +351,14 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict]) -> dict:
     # 4) 豐收卡循環 (可選；獨立完整流程：停打工→施肥→收成→買卡→種特級種子→恢復打工)
     #    觸發方式：ws_token.farm.harvest_card_cycle.enabled = true
     #    可選：num_cards（預設 3），fertilizer_id（預設 111）
+    #    inventory_tracker 傳入讓 cycle 能比對特級種子現量，只買缺口數。
     if hcc_enabled:
         num_cards = int(hcc_cfg.get("num_cards", 3))
         fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
         try:
             summary["harvest_card_cycle"] = farm.run_harvest_card_cycle(
-                client, role_id, num_cards=num_cards, fertilizer_id=fert_id)
+                client, role_id, num_cards=num_cards, fertilizer_id=fert_id,
+                inventory_tracker=inventory_tracker)
         except Exception as exc:
             logger.warning("ws_token farm: harvest_card_cycle skipped (%s)", exc)
             summary["harvest_card_cycle"] = {"skipped": str(exc)}
@@ -1057,7 +1060,8 @@ def run_device(device: str, *, spend: bool = False,
               lambda: _run_tycoon(client, enabled=tycoon,
                                   max_rolls=tycoon_max_rolls))
         _step("farm",
-              lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config))
+              lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config,
+                                inventory_tracker=inventory_tracker))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
         _step("guild", lambda: _run_guild(client, spend=spend))
