@@ -59,6 +59,7 @@ DEFAULT_DEVICE_CONFIG = {
     "enable_dungeon": True,  # 啟用副本(地獄/萬神)
     "enable_shop_manager": True,  # 啟用購物管家
     "enable_dungeon_manager": True,  # 啟用副本管家
+    "enable_fannaoxiao": False,  # 煩惱消 (act_type 224 左右消除小遊戲)；H5 only、每日一次、預設 off
     "is_real_phone": False,  # 是否為實體機/特殊機型 (原本的 fc65396d 邏輯)
     "keep_screen_on": False,  # 是否保持螢幕開啟 (不鎖屏)
     "screenshot_debug": False,  # 是否開啟截圖除錯
@@ -166,6 +167,7 @@ class DeviceConfig:
     enable_dungeon: bool = True
     enable_shop_manager: bool = True
     enable_dungeon_manager: bool = True
+    enable_fannaoxiao: bool = False
 
     # Device behaviour
     is_real_phone: bool = False
@@ -948,6 +950,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             "enable_dungeon",
             "enable_shop_manager",
             "enable_dungeon_manager",
+            "enable_fannaoxiao",
             "is_real_phone",
             "keep_screen_on",
             "screenshot_debug",

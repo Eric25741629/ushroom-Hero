@@ -56,6 +56,7 @@ from typing import Dict, Optional, Sequence
 
 from miner.depth_tracker import label_terrain
 from miner.v5.priors import Priors, get_priors
+from utils.log_paths import LogPaths
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def runtime_path(device: str, *, root: Optional[Path] = None) -> Path:
     ``root`` overrides the default ``miner/v5/runtime`` directory (test sandbox).
     """
     base = Path(root) if root is not None else _RUNTIME_DIR
-    safe = str(device).replace(":", "_").replace(" ", "_").replace("/", "_")
+    safe = LogPaths.safe_path_segment(device)
     return base / f"priors_runtime_{safe}.json"
 
 

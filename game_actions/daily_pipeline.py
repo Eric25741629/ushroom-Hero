@@ -34,6 +34,7 @@ from Skill import get_skill_and_partner
 
 from game_actions.carpark_scheduler import run_carpark_check_if_due
 from game_actions.dragon_realm_scheduler import run_dragon_realm_if_due
+from game_actions.fannaoxiao_scheduler import run_fannaoxiao_if_due
 from game_actions.daily_tasks import click_arena_challenges, daily_acceleration
 from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_dungeon
 from game_actions.lamp_scheduler import _run_lamp_if_due
@@ -369,6 +370,12 @@ def _run_tasks(ctx: DailyContext) -> None:
         run_dragon_realm_if_due(ip, d)
     except Exception:
         logger.exception("[%s] 龍骸聖域 任務異常", ip)
+
+    # Task 14.6: 煩惱消（flag 預設 off；H5 only、每日一次、整局免費有界）
+    try:
+        run_fannaoxiao_if_due(d, ip)
+    except Exception:
+        logger.exception("[%s] 煩惱消 任務異常", ip)
 
     # Task 15: 萬神試煉
     if not _ws_skip("萬神試煉"):

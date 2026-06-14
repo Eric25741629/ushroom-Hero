@@ -21,9 +21,11 @@ protobuf schema 對照可參考 `docs/protocol/` 內各 _SCHEMA.md。
 """
 from __future__ import annotations
 
-import struct
 import time
 from typing import Any, Dict, List, Optional
+
+from utils.protobuf_walk import read_varint as _pb_read_varint
+from utils.protobuf_walk import walk_fields as _pb_walk_fields
 
 # cmd_id 對照（從 IOHandler.ts + 實際 capture 確認）
 CMD_FRIEND_LIST = 0x0F02
@@ -114,50 +116,21 @@ def decode_equip_template(template_id: int) -> Dict[str, Any]:
 
 
 # ── protobuf wire-format walker（minimal）─────────────────────────────────────
+#
+# The varint reader + strict field walker live in `utils.protobuf_walk` (shared
+# with redpack_detector / equipment_cache). These thin aliases preserve the
+# historic private names so existing callers / tests don't change.
 
-
-def _read_varint(data: bytes, off: int) -> tuple[int, int]:
-    val = 0
-    shift = 0
-    while off < len(data):
-        b = data[off]
-        off += 1
-        val |= (b & 0x7F) << shift
-        if not (b & 0x80):
-            return val, off
-        shift += 7
-        if shift > 63:
-            raise ValueError("varint overflow")
-    raise ValueError("varint truncated")
+_read_varint = _pb_read_varint
 
 
 def _walk_pb(data: bytes) -> List[tuple[int, int, Any]]:
     """yield (field_number, wire_type, value) — value type depends on wire_type:
-    0=int, 1=int(64), 2=bytes, 5=int(32). Unknown wire types abort."""
-    out: List[tuple[int, int, Any]] = []
-    off = 0
-    while off < len(data):
-        tag, off = _read_varint(data, off)
-        field = tag >> 3
-        wire = tag & 7
-        if wire == 0:
-            v, off = _read_varint(data, off)
-            out.append((field, 0, v))
-        elif wire == 1:
-            v = struct.unpack_from("<Q", data, off)[0]
-            off += 8
-            out.append((field, 1, v))
-        elif wire == 2:
-            length, off = _read_varint(data, off)
-            out.append((field, 2, data[off : off + length]))
-            off += length
-        elif wire == 5:
-            v = struct.unpack_from("<I", data, off)[0]
-            off += 4
-            out.append((field, 5, v))
-        else:
-            raise ValueError(f"unsupported wire type {wire} at offset {off}")
-    return out
+    0=int, 1=int(64), 2=bytes, 5=int(32). Unknown wire types abort.
+
+    Thin wrapper over `protobuf_walk.walk_fields` (strict variant).
+    """
+    return _pb_walk_fields(data)
 
 
 # ── friend list parser ───────────────────────────────────────────────────────

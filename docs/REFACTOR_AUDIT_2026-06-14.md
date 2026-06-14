@@ -124,3 +124,67 @@ pytest: tests/test_sleep_service.py tests/test_startup_sleep.py
 ```
 
 行為等價：兩 consumer 的私名 parser / rank 函式輸出與抽取前 byte-identical（由 `test_scheduling_parity.py` 的「一致性 / 哨兵保持」測試守衛 + 既有 43 個 pinning 測試）。swap **保留**（未 revert）。
+
+---
+
+## 第二輪已實作（DONE，2026-06-14，未 commit）
+
+> 安全、非熱路徑子集。每項行為等價、加測試、改動最小。`utils/*`、`miner/v5/priors_runtime.py`、`oralce_manger.py` owner 範圍內；未碰 `config_manager.py` / `game_actions/*` / `new_main_v2.py` / `ws_token/*` / control_panel。
+
+### B. protobuf wire-walker 去重 → `utils/protobuf_walk.py`
+
+- **重複位置（驗證）**：`utils/web_game_api.py` 的 `_read_varint` + `_walk_pb`（tuple 形 `(field, wire, value)`、未知 wire **raise**）與 `utils/redpack_detector.py` 的 `_read_varint` + `_walk_pb`（dict 形 `{"field","wire","value"/"bytes"}`、未知 wire / 截斷 **靜默停止**）為同一 varint reader + field-walk loop 的兩種尾巴。
+  - 釐清：`utils/ws_listener.py` **不**用 `_walk_pb`（先前 grep 命中的是其 JS 字串裡的 `wire == 2`，非 Python）。`utils/equipment_cache.py` 是 `web_game_api._walk_pb` 的 consumer（import 進來），非第三份重複。`ws_token/codec.py` 另有一份 `walk`/`_read_varint`，但 ws_token **不在本輪 owner 範圍**，未動（見「deferred」）。
+- **抽取**：新 `utils/protobuf_walk.py`（純函式、僅 stdlib `struct`）。
+  - `read_varint(buf, off)` — 截斷 / overflow `raise ValueError`。
+  - `walk_fields(data)` — **strict**：未知 wire `raise`（給 web_game_api）。
+  - `walk_fields_lenient(data)` — **tolerant**：未知 wire / 截斷 len-delim / 截斷 fixed 皆乾淨停止回傳已解析部分（給 redpack）。
+  - `web_game_api._read_varint = read_varint`；`_walk_pb` 薄包 `walk_fields`（保留私名 + tuple 形）。移除已不再用到的 `import struct`。
+  - `redpack_detector._read_varint = read_varint`；`_walk_pb` 薄包 `walk_fields_lenient` 並把 tuple 轉回該模組歷史的 dict 形（wire 2 → `"bytes"`、其餘 → `"value"`）。
+- **行為等價**：兩邊回傳 shape / 錯誤語意（raise vs 靜默停止）逐一保留；redpack 的截斷測試（claim 10 bytes 只給 3 → `[]`）仍綠。
+- **熱路徑**：否（WS RPC 回應解析，非每幀）。**風險**：低。
+- **驗證**：新 `tests/test_protobuf_walk.py`（24 測，涵蓋 strict/lenient + live redbag entry）+ `tests/test_redpack_detector.py` + `tests/test_equipment_cache.py` → **49 passed, 8 skipped**；4 檔 + 新測試 `py_compile` OK；直接 import 三模組並比對 `_walk_pb` 輸出形狀無誤。
+
+### C. device-id sanitizer 漂移（承 M2）→ `LogPaths.safe_path_segment`
+
+- **問題**：`miner/v5/priors_runtime.py:93` 手寫 `.replace(":","_").replace(" ","_").replace("/","_")`，比 `LogPaths._safe`（只換 `:`、空白）多換 `/`。不能直接換 `safe_device_id`（會丟 `/` 處理，且 `test_runtime_path_sanitises_separators` 斷言 `/` 必須被清掉 → 會 fail）。
+- **做法（additive，未改既有契約）**：`utils/log_paths.py` 新增私函式 `_safe_segment`（`_safe` 之上再換 `/`）+ public `LogPaths.safe_path_segment(name)`；`priors_runtime.runtime_path` 改呼叫之。`_safe` / `safe_device_id` 既有行為**零變動**。
+- **行為等價**：對 `emulator-5554` / `127.0.0.1:5555` / `a:b/c d` / `adb-fc65396d` 等樣本，新輸出與舊手寫 byte-identical（程式驗證通過）。
+- **熱路徑**：否。**風險**：低。
+- **驗證**：`tests/test_miner_v5_priors_runtime.py` → **15 passed**（含 `test_runtime_path_sanitises_separators`）；`py_compile` OK。
+
+### D. 檔名改名 `oralce_manger.py` → `oracle_manager.py`（使用者授權）
+
+- **importer 普查**：全 repo `*.py` **零** import 此模組（唯一 `from oralce_manger import oralce` 出現在 `easyocr_calls.log` 的**註解行**，非程式）。閘門（importer ∈ config_manager / new_main_v2 / game_actions）**未觸發** → 安全改名。
+- **做法**：`git mv oralce_manger.py oracle_manager.py`（git 認得為 rename）。檔案內容 byte-identical（含內部 `oralce = oracle` 向後相容別名）。importer 更新數 = **0**。
+- **驗證**：`oracle_manager.py` `py_compile` OK；`tests/` 無任一檔引用新舊檔名。
+- **殘留（未改，超出本輪 code scope）**：docs（`OPTIMIZE_*.md`、本檔 line 89、`docs/INDEX.md`）仍寫舊名 `oralce_manger.py`；`easyocr_calls.log` 註解；`new_main_before20250514.py.tmp_codex` 等 `.tmp` 死檔。這些是文件 / 日誌 / 暫存，非 live import。
+
+---
+
+## Deferred — needs supervised pass（本輪**刻意不動**，高風險 / live 熱路徑 / 需監督審查）
+
+> 以下項目已在審計中標出，但因觸及 live hot path、跨啟動/執行期狀態、或正由其他 worker 編輯，**不在本輪安全子集**。需停 bot + fixture/pinning + live 驗證的獨立一輪。
+
+| 項目 | 位置 | 為何 defer |
+|---|---|---|
+| `device_wrapper.py` 內部重構 | `device_wrapper.py` | repo 最熱路徑（每幀截圖 / 點擊 / session 生命週期）；任何結構變動需 live 雙後端驗證 + pinning，且 `_WEB_DEVICE_LOCK` 必為 RLock 等隱形約束多。 |
+| carpark / cocos JS 座標 + 場景樹 walk 合併（ROP cx-2/dup-6 / #15） | `utils/carpark_*.py` / `cocos_navigator` | **熱路徑**；JS worldToScreen / scene-walk 多份重抄，但每份座標基準有細微差異（viewport / round），盲合併易回歸。先重構 `cocos_navigator` 自身 4 份再外擴。 |
+| Flask error-envelope 統一改寫（21×，ROP cx-1） | `control_panel/` 各 blueprint | 21 處 try/except → 統一封套 + CDP code 映射；錨點在 control_panel 重新定位後才能評估，且**該批檔案正由其他 worker 編輯**（本輪約束禁碰）。 |
+| `STARTUP_SLEEP_SEC_BY_DEVICE` 常數改名 → `STARTUP_STAGGER_OVERRIDE_SEC` | `runtime_services/startup_sleep.py` | 觸及啟動/執行期排程；`startup_sleep.py` 本 session 已被另一 worker commit，改名牽動 import + config 推導路徑，需停 bot 獨立一輪。 |
+| `ws_token/codec.py` 的 `walk`/`_read_varint` 併入 `utils/protobuf_walk.py` | `ws_token/codec.py` | 第三份 protobuf walker，**可**併（其 `walk` = `(field, value)` 形、未知 wire break，可由 `walk_fields_lenient` 適配），但 `ws_token/*` **不在本輪 owner 範圍**。留待 ws_token owner 一輪。 |
+| `game_actions/miner_action.py` `oracle()` → `predict_mining_entry()` 改名 | `game_actions/miner_action.py` | 語義改名建議成立，但 `game_actions/*` 由 worker K 持有，本輪禁碰。 |
+| `gold_mananer.py` → `gold_manager.py` 改名 | repo root | 同類拼字錯改名；本輪僅授權 `oralce_manger` 一檔，未一併做（需先普查 importer）。 |
+
+### 第二輪驗證紀錄
+
+```
+py_compile: utils/protobuf_walk.py utils/web_game_api.py utils/redpack_detector.py
+            utils/equipment_cache.py utils/log_paths.py miner/v5/priors_runtime.py
+            oracle_manager.py tests/test_protobuf_walk.py            → OK
+pytest: tests/test_protobuf_walk.py tests/test_redpack_detector.py
+        tests/test_equipment_cache.py tests/test_miner_v5_priors_runtime.py
+                                                                     → 64 passed, 8 skipped
+```
+
+行為等價佐證：protobuf walker 兩邊 shape/錯誤語意逐一保留（redpack 截斷測試綠）；sanitizer 對多樣本 byte-identical（程式比對）；改名零 importer、檔案內容不變。三項皆**保留**（未 revert）。
