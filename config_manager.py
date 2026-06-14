@@ -115,6 +115,13 @@ DEFAULT_DEVICE_CONFIG = {
             "allow_drill": False,
             "max_steps": 200,
         },
+        "gacha": {              # WS 抽卡（技能/同伴 衝刺抽完）；消耗抽卡券，預設關
+            "enabled": False,
+            "types": [1, 2],    # 1=技能, 2=同伴
+            "mode": "drain",    # drain=抽到券盡 | fixed=每批 count×batches
+            "count": 999,       # fixed 模式每批抽數 (15/35/999)
+            "batches": 1,       # fixed 模式批數
+        },
     },
 }
 
@@ -411,6 +418,28 @@ def _sanitize_mining_config(v: Any) -> Optional[dict]:
     return out
 
 
+def _sanitize_gacha_config(v: Any, default: dict) -> dict:
+    """Coerce WS gacha config; malformed input degrades to defaults (disabled).
+
+    types kept only as a list of 1/2 (技能/同伴); mode clamped to drain|fixed;
+    count to the server-known bundles 15/35/999; batches to 1..2000.
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    types = v.get("types")
+    if isinstance(types, (list, tuple)):
+        clean = [int(t) for t in types if t in (1, 2)]
+        out["types"] = clean or list(default["types"])
+    mode = v.get("mode")
+    out["mode"] = mode if mode in ("drain", "fixed") else default["mode"]
+    count = _to_int(v.get("count"), default["count"])
+    out["count"] = count if count in (15, 35, 999) else default["count"]
+    out["batches"] = _clamp_int(v.get("batches"), 1, 2000, default["batches"])
+    return out
+
+
 def _merge_carpark_plan(v: Any, default: dict) -> dict:
     """Coerce ws_token.carpark_plan; malformed input degrades to defaults.
 
@@ -474,6 +503,8 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
     )
     mining_cfg = _sanitize_mining_config(merged.get("mining"))
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
+    merged["gacha"] = _sanitize_gacha_config(merged.get("gacha"),
+                                             default["gacha"])
     # 開神燈百分比 / 最低保留：防呆轉型（壞值退回預設 0）。
     merged["lamp_percent"] = max(
         0.0, _to_float(merged.get("lamp_percent"), default["lamp_percent"]))

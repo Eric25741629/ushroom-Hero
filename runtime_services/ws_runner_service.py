@@ -252,6 +252,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     # 遺物 平均強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：單一真相在巢狀 ws_token dict。
     relic_upgrade = bool(_ws_nested.get("relic_upgrade", False))
     tycoon = bool(_ws_nested.get("tycoon", False))
+    # 抽卡 (技能/同伴) — 巢狀 ws_token.gacha 子設定 (預設關)；消耗抽卡券。
+    gacha_config = _ws_nested.get("gacha") or None
 
     def _nested_int(key: str, default: int) -> int:
         try:
@@ -314,6 +316,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             relic_fragment_floor=relic_fragment_floor,
                             tycoon=tycoon,
                             tycoon_max_rolls=tycoon_max_rolls,
+                            gacha_config=gacha_config,
                             mining_config=mining_config)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)

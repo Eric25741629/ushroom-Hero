@@ -262,6 +262,7 @@ def patched_runner(monkeypatch):
                         mail_skill_threshold=None,
                         relic_upgrade=False, relic_max_steps=10,
                         relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
+                        gacha_config=None,
                         mining_config=None,
                         progress=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
@@ -280,6 +281,7 @@ def patched_runner(monkeypatch):
                       "relic_max_steps": relic_max_steps,
                       "relic_fragment_floor": relic_fragment_floor,
                       "tycoon": tycoon, "tycoon_max_rolls": tycoon_max_rolls,
+                      "gacha_config": gacha_config,
                       "mining_config": mining_config})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
@@ -311,6 +313,7 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "relic_upgrade": False, "relic_max_steps": 10,
                         "relic_fragment_floor": 0,
                         "tycoon": False, "tycoon_max_rolls": 50,
+                        "gacha_config": None,
                         "mining_config": None}
     assert report.login_ok is True
 
@@ -382,6 +385,29 @@ def test_run_ws_device_cycle_reads_relic_tycoon_from_nested(patched_runner):
     assert calls[0]["tycoon_max_rolls"] == 12
 
 
+def test_run_ws_device_cycle_reads_gacha_from_nested(patched_runner):
+    """抽卡設定來自巢狀 ws_token.gacha（單一真相），coerce 後傳入 run_device。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"gacha": {"enabled": True, "types": [1],
+                                "mode": "fixed", "count": 35, "batches": 2}}}
+    )
+    svc.run_ws_device_cycle("ws-gacha", cfg, _NullLogger())
+    g = calls[0]["gacha_config"]
+    assert g is not None and g["enabled"] is True
+    assert g["types"] == [1] and g["mode"] == "fixed"
+    assert g["count"] == 35 and g["batches"] == 2
+
+
+def test_run_ws_device_cycle_gacha_defaults_off(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-nogacha", cfg, _NullLogger())
+    g = calls[0]["gacha_config"]
+    assert g is None or g.get("enabled") is False
+
+
 def test_run_ws_device_cycle_passes_mining_config(patched_runner):
     svc, calls = patched_runner
     mining_config = {"enabled": True, "allow_bomb": True, "max_steps": 12}
@@ -413,6 +439,7 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
                       mail_skill_threshold=None,
                       relic_upgrade=False, relic_max_steps=10,
                       relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
+                      gacha_config=None,
                       mining_config=None,
                       progress=None):
         calls.append(ip)

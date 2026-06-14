@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from ws_token import (
-    carpark, couple, dungeon, farm, guild, idle_reward, kungfu_store,
+    carpark, couple, dungeon, farm, gacha, guild, idle_reward, kungfu_store,
     league_solo, main_tasks, mining, mining_supervised, redpack, relic, rogue,
     spirit, steward, turntable, tycoon, workshop,
 )
@@ -78,7 +78,8 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "turntable", "tycoon", "farm", "dungeon", "rogue", "guild", "steward",
-    "relic", "kungfu_store", "spirit", "workshop", "couple", "mining", "lamp")
+    "relic", "gacha", "kungfu_store", "spirit", "workshop", "couple",
+    "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -235,6 +236,44 @@ def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
     if not enabled:
         return {"skipped": "tycoon disabled (set ws_token.tycoon=True)"}
     return tycoon.auto_play(client, max_rolls=max_rolls)
+
+
+def _run_gacha(client, inventory_tracker, *,
+               gacha_config: Optional[dict]) -> dict:
+    """抽卡 (技能/同伴) — opt-in, default off; SPENDS draw tickets (1012/1013).
+
+    Only reached when ``gacha_config.enabled``. For each type in ``types``
+    (default [1,2]) calls gacha.run_gacha, which sends draw cmd 0x0902 and steps
+    the 999/35/15 bundle ladder, stopping on the server's immediate 0x0201 reject
+    (insufficient tickets) — no timeout-probing. Seeds the per-type ticket budget
+    from the login 0x0402 snapshot via ``inventory_tracker`` when present. Returns
+    a per-type ``{drawn, bundles, stopped}`` summary, or ``{skipped}``.
+    """
+    if not gacha_config or not gacha_config.get("enabled"):
+        return {"skipped": "gacha disabled (set ws_token.gacha.enabled=True)"}
+    raw_types = gacha_config.get("types") or [gacha_config.get("type", 1)]
+    mode = str(gacha_config.get("mode", "drain"))
+    try:
+        count = int(gacha_config.get("count", 999))
+    except (TypeError, ValueError):
+        count = 999
+    try:
+        batches = int(gacha_config.get("batches", 1))
+    except (TypeError, ValueError):
+        batches = 1
+    out: dict = {}
+    for t in raw_types:
+        try:
+            dt = int(t)
+        except (TypeError, ValueError):
+            continue
+        rep = gacha.run_gacha(client, inventory_tracker, enabled=True,
+                              draw_type=dt, mode=mode, count=count,
+                              batches=batches)
+        out[gacha.DRAW_TYPE_NAME.get(dt, str(dt))] = {
+            "drawn": rep.total_drawn, "bundles": rep.bundles,
+            "stopped": rep.stopped_reason}
+    return out or {"skipped": "no valid gacha types"}
 
 
 # home module(12) home_farm_info(3077)/harvest(3081) is intermittently UNanswered
@@ -809,6 +848,7 @@ def run_device(device: str, *, spend: bool = False,
                relic_fragment_floor: int = 0,
                tycoon: bool = False,
                tycoon_max_rolls: int = 50,
+               gacha_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
                progress=None,
                should_abort: Optional[Callable[[], bool]] = None,
@@ -1012,6 +1052,10 @@ def run_device(device: str, *, spend: bool = False,
                                  enabled=relic_upgrade,
                                  max_steps=relic_max_steps,
                                  fragment_floor=relic_fragment_floor))
+        if gacha_config and gacha_config.get("enabled"):
+            _step("gacha",
+                  lambda: _run_gacha(client, inventory_tracker,
+                                     gacha_config=gacha_config))
         if kungfu_guess:
             _step("kungfu_store", lambda: _run_kungfu_store(client))
         _step("spirit", lambda: _run_spirit(client))

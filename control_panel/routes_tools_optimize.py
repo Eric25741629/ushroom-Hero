@@ -1,11 +1,14 @@
-"""車位工具 dashboard blueprint — 一鍵最佳升級車位裝飾 (+ 可擴充骨架).
+"""「工具 優化類」dashboard blueprint — 車位裝飾升級 + 純 WS 一鍵抽卡.
 
-Drives the device's live H5 page via the shared raw-CDP JS path
-(``control_panel_app._cdp_evaluate``), running the SAME cocos buy/upgrade UI a
-human uses (verified 2026-06-15, see docs/protocol/CARPARK_DECORATION_SHOP.md §9).
-No new WS protocol; no Playwright. The injected JS lives in
-``control_panel.carpark_tools_js``; the cost-effectiveness brain is the pure
-``ws_token.carpark_decoration.plan_upgrades`` (coin-per-attr greedy).
+Two tools, both driving the device's live H5 page via the shared raw-CDP JS path
+(``control_panel_app._cdp_evaluate``):
+
+1. 最佳升級車位裝飾 — runs the SAME cocos buy/upgrade UI a human uses (verified
+   2026-06-15, see docs/protocol/CARPARK_DECORATION_SHOP.md §9). Injected JS in
+   ``control_panel.carpark_tools_js``; brain = ``ws_token.carpark_decoration``.
+2. 一鍵抽卡 (技能/同伴) — PURE WS: sends draw cmd ``0x0902`` straight over the
+   game WebSocket (no cocos UI / animation), injected JS in
+   ``control_panel.gacha_tools_js``; ladder/cost brain = ``ws_token.gacha``.
 
 Long-running work (the ~30s read walk and the multi-minute execute) runs in a
 background thread tracked by an in-memory job registry; the frontend polls
@@ -21,16 +24,28 @@ from flask import Blueprint, jsonify, render_template, request
 
 import bot_state
 from control_panel.carpark_tools_js import EXEC_STEP_JS, READ_STATE_JS
+from control_panel.gacha_tools_js import DRAW_ONCE_JS
 from control_panel.shared.auth import _fly_pet_auth
+from ws_token import gacha as gacha_logic
 from ws_token.carpark_decoration import DecoUpgradeState, plan_upgrades
 
-bp = Blueprint("carpark_tools", __name__)
+bp = Blueprint("tools_optimize", __name__)
 
 # Safety bounds for the auto-spend executor.
 _DEFAULT_MAX_STEPS = 30
 _HARD_MAX_STEPS = 80
 _READ_TIMEOUT = 90      # the walk reads ~16 decorations, ~1-2s each
 _EXEC_TIMEOUT = 45      # one buy(up to 30 frags)+upgrade step
+
+# --- gacha (抽卡) pure-WS; ladder/cost/ids brain lives in ws_token.gacha ---
+_DRAW_TYPES = gacha_logic.DRAW_TYPE_NAME           # {1:'技能', 2:'同伴'}
+_DRAIN_LADDER = gacha_logic.BUNDLE_LADDER          # (999, 35, 15)
+_BUNDLE_COST = gacha_logic.BUNDLE_COST             # {15:15, 35:30, 999:800}
+_FIXED_COUNTS = tuple(gacha_logic.BUNDLE_COST)     # (15, 35, 999)
+_DRAW_JS_TIMEOUT_MS = 6000      # in-page wait for the 0x0902/0x0201 reply
+_DRAW_CDP_TIMEOUT = 15          # python-side CDP eval timeout (> JS timeout)
+_DRAIN_MAX_ITERS = 8000         # runaway guard for 一鍵抽完 (bundles)
+_DRAW_MAX_BATCHES = 2000        # fixed-mode batch cap
 
 # In-memory job registry: job_id -> dict(status, phase, log, result, error).
 _jobs: dict = {}
@@ -252,13 +267,135 @@ def _parse_params():
     return budget, max_steps
 
 
+# --- gacha (抽卡) pure-WS ----------------------------------------------------
+
+
+def _draw_once(ip: str, draw_type: int, count: int):
+    """Send one 0x0902 {type, count} over the live WS. Returns (res, err) where
+    res = {ok, drawn, remaining, rejected, error_code}. ``remaining`` is the
+    ticket balance read from the accompanying 0x0402 push (None if unseen);
+    ``rejected`` means the server replied 0x0201 (e.g. insufficient tickets)."""
+    ticket = gacha_logic.TICKET_ITEM.get(draw_type, 0)
+    args = [draw_type, count, ticket, _DRAW_JS_TIMEOUT_MS]
+    return _cdp_json(ip, f"({DRAW_ONCE_JS})({json.dumps(args)})", _DRAW_CDP_TIMEOUT)
+
+
+def _set_gacha_progress(jid: str, total: int, batches_done: int) -> None:
+    with _jobs_lock:
+        job = _jobs.get(jid)
+        if job and job.get("result"):
+            job["result"]["total"] = total
+            job["result"]["batches_done"] = batches_done
+
+
+def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
+                   count: int, batches: int) -> None:
+    rip = _real_ip(ip)
+    paused = False
+    type_name = _DRAW_TYPES.get(draw_type, str(draw_type))
+    try:
+        # Pause the bot loop so its own WS traffic doesn't race our reciveMsg hook.
+        _job_update(jid, phase="pausing")
+        try:
+            bot_state.set_pause(rip, True)
+            paused = True
+            if bot_state.get_pause_event(rip) is None:
+                _job_log(jid, f"⚠ 裝置 {rip} 未在 bot 追蹤中，未實際暫停（續行）")
+        except Exception as exc:  # noqa: BLE001
+            _job_log(jid, f"暫停失敗（續行）：{exc}")
+
+        _job_update(jid, phase="drawing", result={
+            "type": draw_type, "type_name": type_name, "mode": mode,
+            "total": 0, "batches_done": 0, "stopped_reason": None})
+        total = 0
+        batches_done = 0
+        stopped = None
+
+        if mode == "drain":
+            _job_log(jid, f"一鍵抽完（{type_name}）：依券餘額選 999/35/15，抽到不足即止")
+            remaining = None      # learned from each draw's 0x0402 ticket feedback
+            fb_idx = 0            # fallback ladder index while remaining unknown
+            iters = 0
+            while True:
+                iters += 1
+                if iters > _DRAIN_MAX_ITERS:
+                    stopped = "max_iters"
+                    break
+                if remaining is not None:
+                    rung = gacha_logic.largest_affordable(remaining)
+                    if rung is None:
+                        stopped = "exhausted"
+                        break
+                else:
+                    if fb_idx >= len(_DRAIN_LADDER):
+                        stopped = "exhausted"
+                        break
+                    rung = _DRAIN_LADDER[fb_idx]
+                res, err = _draw_once(ip, draw_type, rung)
+                if err or not res or res.get("err"):
+                    stopped = f"error:{err or (res or {}).get('err')}"
+                    _job_log(jid, f"  {rung} 抽：傳輸錯誤（{stopped}）")
+                    break
+                if res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
+                    reason = (f"reject code={res.get('error_code')}"
+                              if res.get("rejected") else "drawn=0")
+                    _job_log(jid, f"  {rung} 抽：停（{reason}）→ 換下一階")
+                    if remaining is not None:
+                        remaining = _BUNDLE_COST[rung] - 1   # correct stale estimate
+                    else:
+                        fb_idx += 1
+                    continue
+                drawn = int(res["drawn"])
+                total += drawn
+                batches_done += 1
+                rem = res.get("remaining")
+                if rem is not None:
+                    remaining = int(rem)
+                elif remaining is not None:
+                    remaining -= _BUNDLE_COST[rung]
+                _job_log(jid, f"  {rung} 抽 → +{drawn}（累計 {total}"
+                              + (f"，券剩 {remaining:,}）" if remaining is not None else "）"))
+                _set_gacha_progress(jid, total, batches_done)
+        else:  # fixed: count × batches
+            _job_log(jid, f"指定抽（{type_name}）：{count} 抽 × {batches} 批…")
+            for b in range(batches):
+                res, err = _draw_once(ip, draw_type, count)
+                if err or not res or res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
+                    reason = (f"reject code={res.get('error_code')}" if (res and res.get("rejected"))
+                              else (res or {}).get("err") if res else err)
+                    stopped = f"stopped:{reason or 'drawn=0'}"
+                    _job_log(jid, f"  第 {b + 1} 批：停（{reason or 'drawn=0'}）")
+                    break
+                drawn = int(res["drawn"])
+                total += drawn
+                batches_done += 1
+                rem = res.get("remaining")
+                _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → +{drawn}（累計 {total}"
+                              + (f"，券剩 {int(rem):,}）" if rem is not None else "）"))
+                _set_gacha_progress(jid, total, batches_done)
+
+        _job_update(jid, status="done", phase="done", result={
+            "type": draw_type, "type_name": type_name, "mode": mode,
+            "total": total, "batches_done": batches_done, "stopped_reason": stopped})
+        _job_log(jid, f"完成：{type_name} 共抽 {total} 次（{batches_done} 批）")
+    except Exception as exc:  # noqa: BLE001
+        _job_update(jid, status="error", error=f"{type(exc).__name__}: {exc}")
+    finally:
+        if paused:
+            try:
+                bot_state.set_pause(rip, False)
+                _job_log(jid, f"已恢復裝置 {rip} 的 bot loop")
+            except Exception:  # noqa: BLE001
+                pass
+
+
 # --- routes -----------------------------------------------------------------
 
-@bp.route("/carpark-tools")
+@bp.route("/tools-optimize")
 @_fly_pet_auth
-def carpark_tools_page():
-    """車位工具分頁（最佳升級車位裝飾；未來可擴充更多按鈕）。"""
-    return render_template("carpark_tools.html")
+def tools_optimize_page():
+    """「工具 優化類」分頁：車位裝飾升級 + 純 WS 一鍵抽卡。"""
+    return render_template("tools_optimize.html")
 
 
 @bp.route("/api/carpark/plan/<ip>", methods=["POST", "GET"])
@@ -276,6 +413,36 @@ def carpark_execute(ip):
     """暫停裝置 → 讀 → 算 → 逐步買碎片+升級 → 恢復。回 job_id，前端 poll。"""
     budget, max_steps = _parse_params()
     jid = _spawn(_run_execute_job, ip, budget, max_steps)
+    return jsonify({"status": "ok", "job_id": jid})
+
+
+@bp.route("/api/gacha/draw/<ip>", methods=["POST"])
+@_fly_pet_auth
+def gacha_draw(ip):
+    """純 WS 抽卡（cmd 0x0902）。body: {type:1|2, mode:"drain"|"fixed",
+    count?:15|35|999, batches?:int}。回 job_id，前端 poll /api/carpark/job。"""
+    src = request.get_json(silent=True) or {}
+    try:
+        draw_type = int(src.get("type", 0))
+    except (TypeError, ValueError):
+        draw_type = 0
+    if draw_type not in _DRAW_TYPES:
+        return jsonify({"status": "error", "message": "type 必須是 1(技能) 或 2(同伴)"}), 400
+    mode = str(src.get("mode", "drain"))
+    if mode not in ("drain", "fixed"):
+        return jsonify({"status": "error", "message": "mode 必須是 drain 或 fixed"}), 400
+    count, batches = 0, 1
+    if mode == "fixed":
+        try:
+            count = int(src.get("count", 0))
+            batches = int(src.get("batches", 1))
+        except (TypeError, ValueError):
+            return jsonify({"status": "error", "message": "count/batches 需為整數"}), 400
+        if count not in _FIXED_COUNTS:
+            return jsonify({"status": "error",
+                            "message": f"count 必須是 {list(_FIXED_COUNTS)}"}), 400
+        batches = max(1, min(_DRAW_MAX_BATCHES, batches))
+    jid = _spawn(_run_gacha_job, ip, draw_type, mode, count, batches)
     return jsonify({"status": "ok", "job_id": jid})
 
 

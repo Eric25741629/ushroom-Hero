@@ -91,6 +91,43 @@
 
     <div id="log" class="log" style="display:none"></div>
   </section>
+
+  <!-- 工具二：純 WS 一鍵抽卡（技能 / 同伴） -->
+  <section class="panel">
+    <h2>純 WS 一鍵抽卡 <span class="pill">技能 / 同伴 衝刺抽完</span></h2>
+    <div class="controls">
+      <label class="inline">類型
+        <select id="gType"><option value="1">技能</option><option value="2">同伴</option></select>
+      </label>
+      <label class="inline">模式
+        <select id="gMode" onchange="onGModeChange()">
+          <option value="drain">一鍵抽完（券用盡為止）</option>
+          <option value="fixed">指定次數 × 批數</option>
+        </select>
+      </label>
+      <label class="inline" id="gCountWrap" style="display:none">每次
+        <select id="gCount">
+          <option value="15">抽15</option>
+          <option value="35" selected>抽35</option>
+          <option value="999">抽999</option>
+        </select>
+      </label>
+      <label class="inline" id="gBatchWrap" style="display:none">批數
+        <input type="number" id="gBatches" value="1" min="1" max="200">
+      </label>
+      <button id="btnDraw" class="warn" onclick="doDraw()">開始抽（純 WS）</button>
+    </div>
+    <div class="note">說明：直接送遊戲抽卡封包 <code>0x0902 {type,count}</code>，不跑動畫/彈窗，故極快。
+      「一鍵抽完」用 999→35→15 階梯把券抽到不足為止（每發 ≤999 有界）。執行時會暫停該裝置 bot loop。</div>
+
+    <div id="gKpi" class="kpi" style="display:none">
+      <div>已抽 <b id="gTotal">-</b></div>
+      <div>批數 <b id="gBatchesDone">-</b></div>
+      <div>狀態 <b id="gPhase">-</b></div>
+    </div>
+
+    <div id="gLog" class="log" style="display:none"></div>
+  </section>
 </div>
 
 <script>
@@ -200,6 +237,58 @@ async function doExecute(){
     } else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
   }catch(e){ setStatus('execute 例外：'+e, true); }
   finally{ $('btnPlan').disabled = false; $('btnExec').disabled = false; }
+}
+
+// --- 工具二：純 WS 抽卡 ---
+function onGModeChange(){
+  const fixed = $('gMode').value==='fixed';
+  $('gCountWrap').style.display = fixed?'inline-flex':'none';
+  $('gBatchWrap').style.display = fixed?'inline-flex':'none';
+}
+function gLogLines(lines){
+  const el = $('gLog'); el.style.display='block';
+  el.innerHTML = (lines||[]).map(l=>`<div>${l.replace(/</g,'&lt;')}</div>`).join('');
+  el.scrollTop = el.scrollHeight;
+}
+function renderGacha(res){
+  if (!res) return;
+  $('gKpi').style.display='flex';
+  $('gTotal').textContent = fmt(res.total);
+  $('gBatchesDone').textContent = fmt(res.batches_done);
+  $('gPhase').textContent = res.stopped_reason || '進行中';
+}
+async function doDraw(){
+  if (!dev()){ setStatus('請先選裝置', true); return; }
+  const type = $('gType').value, mode = $('gMode').value;
+  const typeName = type==='1'?'技能':'同伴';
+  const body = { type:Number(type), mode };
+  let confirmMsg;
+  if (mode==='fixed'){
+    const count = Number($('gCount').value), batches = Number($('gBatches').value||1);
+    body.count = count; body.batches = batches;
+    confirmMsg = `確定用「${typeName}」抽 ${count}×${batches} 批？會消耗抽卡券並暫停該裝置 bot loop。`;
+  } else {
+    confirmMsg = `確定「${typeName}」一鍵抽完？會把抽卡券抽到不足為止，並暫停該裝置 bot loop。`;
+  }
+  if (!confirm(confirmMsg)) return;
+  $('btnDraw').disabled = true; setStatus('抽卡中…（純 WS，請勿關閉本頁）');
+  try{
+    const r = await fetch(`/api/gacha/draw/${encodeURIComponent(dev())}`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body)});
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus(j.message||'抽卡啟動失敗', true); return; }
+    const job = await pollJob(j.job_id, job=>{
+      if (job.log) gLogLines(job.log);
+      if (job.result) renderGacha(job.result);
+      setStatus('狀態：'+job.phase);
+    });
+    if (job && job.status==='done'){
+      const res = job.result||{}; renderGacha(res);
+      setStatus(`抽完：${res.type_name||typeName} 共 ${fmt(res.total)} 抽`+
+        (res.stopped_reason?`（${res.stopped_reason}）`:''), false);
+    } else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
+  }catch(e){ setStatus('抽卡例外：'+e, true); }
+  finally{ $('btnDraw').disabled = false; }
 }
 
 loadDevices();

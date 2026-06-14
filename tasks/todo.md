@@ -12,6 +12,79 @@
 
 ---
 
+## 🅿️ 2026-06-15 Dashboard 新分頁「車位工具」+ 一鍵最佳升級車位裝飾（規劃中，待使用者核可後動手）
+
+目標：control panel 新增**獨立可擴充分頁**（先放「車位裝飾」，未來再加更多按鈕），可選帳號/裝置，
+第一個功能＝**一鍵最佳升級車位裝飾**（偵測菇車幣 → 算最划算升級順序 → 執行買碎片+升級）。
+
+設計依據（皆 live 採證，見 `docs/protocol/CARPARK_DECORATION_SHOP.md §9`）：
+- 成本效益 = `coin-per-attr =(碎片數 × 該裝飾碎片單價) ÷ 邊際屬性`，**每裝飾單價不同**（10~60 萬）。
+- own_attrs 累計、每星 +160%/圍（+48000 三圍合計）；碎片數階梯 1,1,2,2,3,3,4,4,5,5,10,10,20,20,30。
+- 限購 X/120 = 剩餘可買；新裝飾不可自由買（走 装扮自选），故**只優化「已擁有」裝飾**。
+- 執行管道：沿用 dashboard 既有 **raw-CDP JS 注入**（`control_panel_app._cdp_json_response(ip, JS, await_promise=True)`，
+  不踢線），用已驗證的 cocos-UI 流程（開詳情→購買對話框 set qty→確認→升級），**不需新解協議**。
+  （純 WS shop_buy 6914 + 0x3801 是未來優化，需先建 mall item_id 對照表。）
+
+關鍵決策（使用者 2026-06-15 核可）：目標＝最大化**屬性**（攻生防）；範圍＝完整（預覽+一鍵執行）。
+
+### Review（✅ 全部完成 + live 驗證 2026-06-15）
+- [x] 1. Optimizer `plan_upgrades`（+ `DecoUpgradeState/UpgradeStep/UpgradePlan`）in `ws_token/carpark_decoration.py`；
+      `tests/test_carpark_decoration.py` **22 passed**（13 舊 + 9 新：價格/限購/預算/max_steps/interleave/邊界）。
+- [x] 2. Read 層 `control_panel/carpark_tools_js.py` `READ_STATE_JS`：導航裝扮面板→讀菇車幣+16 已擁有裝飾
+      （level 由星 pip；`closeDetail` poll 到真關閉、`readStable` poll 到 (name,level) 穩定才讀，解 async 殘影）。live 5556 正確。
+- [x] 3. Blueprint `control_panel/routes_carpark_tools.py`：`/carpark-tools`、`/api/carpark/{plan,execute,job}`；
+      背景 thread + in-memory job registry（`_jobs_lock`）；execute 先 `set_pause`→逐步 `EXEC_STEP_JS`（買碎片+升級）、失敗即停、finally resume。已註冊。
+- [x] 4. 前端 `templates/carpark_tools.html`：裝置選單(web_h5)、預算/步數、預覽表、執行二次確認 + 即時 log poll。
+- [x] 5. `dashboard.html` nav 加「🅿️ 車位工具」；`control_panel/shared/cdp.py` 加 `timeout` 參數（向後相容）。
+- [x] 6. WS 協議 live 採到（中式庭院大門 lv6→7）：買=`shop_buy 0x1b02(6914){11,item_id,qty}`、
+      升=`0x3801 JSON{type,skin_id}`→`0x3211(12817){skin_lev}`。見 `CARPARK_DECORATION_SHOP.md §9.8`。
+- [x] 7. code-review 抓 3 個花費安全 bug 已修：(a) 升級沒升星卻回 ok→改檢查 `afterLvl>beforeLvl`；
+      (b) 失敗時已買碎片 coin 沒計→JS 回 `bought` flag、executor 累計已扣 coin；
+      (c) `_real_ip` 切掉本機 TCP port 使 set_pause 打錯 key→改用 `bot_state.is_local_device`。
+- [x] 8. live 端對端：read→plan（5M 預算挑 5 步 c/a 20.83）、executor（卡通大門 lv10→11 實升）、路由註冊 + `test_carpark_dashboard` 等 **27 passed**。
+- [ ] 9. **提醒：dashboard 需重啟生效**（blueprint 在 import 註冊；重啟 `new_main_v2.py` 載入）。
+      限制：同 inventory 只支援**本機** web_h5 裝置（CDP 走 127.0.0.1:port）。
+
+---
+
+## 🎰 2026-06-15「工具 優化類」面板 + 純 WS 一鍵抽卡（技能/同伴）衝刺
+
+協議 live 解碼於小寶 (7fe98fc6, CDP 9226)，記憶 [[reference-gacha-draw-protocol]]、腳本 `tools/probe_gacha_live.py`：
+- 付費抽：`0x0902 {1:type, 2:count}`（type 1=技能 / 2=同伴；count=次數，券扣由伺服器算，999 折扣到 800）。
+- 免費影片召喚：`0x1602 {1:slot, 3:1}`（slot 8=技能 / 7=同伴，每日各 3 次×35 抽，無真廣告）→ **本期先不做**。
+- 純 WS 已驗證：`call_raw(0x0902,"08 01 10 23")` 回 35 抽結果，完全不碰 UI。
+
+使用者決策（2026-06-15）：① 抽迴圈「兩種都做」(一鍵抽完 + 指定次數×批數) ② 免費召喚先不做 ③ 只改顯示名。
+
+### Review（✅ 實作完成 + 純 WS payload live 驗證 2026-06-15；route 端對端待 dashboard 重啟）
+- [x] 1. 改名：`carpark_tools.html` `<title>`+`<h1>`→「工具 優化類」（使用者/linter 已改）；dashboard nav 已是。route/檔名/blueprint 名不動。
+- [x] 2. `control_panel/gacha_tools_js.py` `DRAW_ONCE_JS`：等 netManager._cnet → monkeypatch reciveMsg 攔 0x0902 →
+      `sendMessage(0x0902,{type,count})` → 回 JSON `{ok, drawn(=top-level field2 群組數), raw_len}`，內建 timeout/還原。純 WS。
+- [x] 3. `routes_carpark_tools.py` `/api/gacha/draw/<ip>` POST `{type,mode,count?,batches?}` → spawn job（重用 job registry）：
+      drain=ladder[999,35,15] while drawn>0 續抽、drawn==0/timeout 換階（每發 ≤999 有界）；fixed=count×batches。先 set_pause finally resume。
+- [x] 4. 前端第二個 `<section>`：type(技能/同伴)+mode+count/batches+執行鈕+即時 log（重用 `pollJob`/`/api/carpark/job`）。
+- [x] 5a. live 驗證（小寶 7fe98fc6, CDP 9226）：`probe_gacha_live.py drawjs` 跑 route 同一 `DRAW_ONCE_JS`：
+      技能15→{ok,drawn:15}、同伴15→{ok,drawn:15}；`send`(call_raw)技能35→35抽結果。**純 WS 端到端成立。**
+- [ ] 5b. route+drain 迴圈端對端：需 dashboard 重啟載入新 blueprint 後實跑（一鍵抽完會清券，留給使用者衝刺時驗）。
+- [ ] 6. **提醒：dashboard 需重啟（`new_main_v2.py`）才會載入 `/api/gacha/draw` 路由。**
+- 註：`routes_carpark_tools.py`/`carpark_tools.html` 目前為**未提交** carpark-tool WIP（git `??`），gacha 變更疊加其上 → 尚未 commit（避免綑綁他人未提交工作）。
+
+### A+C+D（使用者 2026-06-15 追加，✅ 實作完成 + 測試）
+- [x] A 餘額感知抽完：live 抓出券 item_id（技能 1012 / 同伴 1013，0x0402 diff）。`DRAW_ONCE_JS` 改成同時攔
+      0x0902(抽到數)/0x0402(券剩餘)/0x0201(拒絕)→`{ok,drawn,remaining,rejected,error_code}`；route drain 用 remaining
+      回饋驅動 999/35/15、即時 0x0201 換階，**零 timeout 探測**。live 驗證：抽15→剩56573、抽35→剩56543、無效type→reject code37。
+- [x] C headless ws_token：共用大腦 `ws_token/gacha.py`（ladder/cost/ids/parse + `run_gacha` drain/fixed，0x0201 安全停、
+      tracker 種子餘額）。`runner.py` 加 gacha_config 參數+`_run_gacha`+dispatch(relic後)+TASK_ORDER；plumb 進
+      `ws_runner_service.py`(主路徑) + `ws_phase.py`；`config_manager.py` 預設 `ws_token.gacha`(預設關)+`_sanitize_gacha_config`。
+- [x] D 改名：`routes_carpark_tools.py`→`routes_tools_optimize.py`、`carpark_tools.html`→`tools_optimize.html`、
+      blueprint/route `carpark_tools`/`/carpark-tools`→`tools_optimize`/`/tools-optimize`；`control_panel_app.py`、
+      `dashboard.html`、`tools/test_carpark_plan.py` 引用更新。API 路由 `/api/carpark/*`、`/api/gacha/*` 依功能保留。
+- [x] 測試：`tests/test_ws_token_gacha.py` 16 passed（body/parse/ladder/drain兩路徑/fixed/config sanitize）；
+      `tests/test_ws_runner_wiring.py`(+gacha 巢狀讀取) 全過；wiring/abort/gacha 合計 57 passed。py_compile 全綠。
+- [ ] 端對端待 **dashboard 重啟 + 實跑**（drain 會清券，留衝刺時驗）；ws_token headless 需該帳號 adb+ws 實跑驗。
+
+---
+
 ## 🌾 2026-06-15 WS farm 任務不穩 + 漏買種子/肥料修復（✅ 已修，使用者核可穩健版）
 
 根因（log + 程式碼證據，已確認）：
@@ -84,7 +157,7 @@
 
 ---
 
-## 🚗 2026-06-15（追加需求，待使用者過目後實作）搶位選位分層策略 + 10:00:00 每秒重試
+## 🚗 2026-06-15（✅ 已實作，worktree `feat/carpark-grab-tier`→FF merge `cb707370`）搶位選位分層策略 + 10:00:00 每秒重試
 
 使用者 2026-06-15 兩段新需求（澄清後定案）。範圍：三台 WS 車位裝置（5554/7fe98fc6/手機fc）共用的 WS 搶位邏輯。動到 live 關鍵路徑（`ws_token/runner.py` `_run_carpark` + `ws_token/carpark.py` `auto_select_and_park_many`）。
 
@@ -93,22 +166,30 @@
 2. 高獎勵低編號區（鉑銀1-8）：**只有同服1467抱團 ≥3** 才停；由編號小→大，找到第一個達標且有空位的就停。
 3. 低編號區沒抱團 → 鉑銀11-20，有空位就停（編號小→大）。
 4. 鉑銀21-30：隨便停（有空位就停）。
-5.（判斷項，需確認）絕對最後手段：上面全不適用但低編號(1-8)仍有非抱團空位 → 傾向使用者語意「避開無抱團低位」=**預設不停，到 10:01 沒搶到就放棄**。← 請確認。
+5. 絕對最後手段：上面全不適用但低編號(1-8)仍有非抱團空位 → **使用者 2026-06-15 拍板「停進去當保底」**（`allow_low_noncluster` 預設 True），有泊銀空位就絕不空手。
 
 **門檻**：同服(1467)占用 ≥3 算抱團（`cluster_min`，預設3）。
 **時間/重試**：10:00:00.000 開搶（現行已對準）；**只有整輪 `parked_count==0`（完全沒停到）才**每秒重試（poll 1s），到 **10:01:00**（`grab_window_seconds` 預設60）止；停到任何車即停止。隨便停(T4)屬單輪優先序內，達到就當下停、不再等。
 
 **實作（TDD）**：
-- [ ] `carpark_plan.py`：新增 `cluster_min`(預設3)、`grab_window_seconds`(預設60) getter；`grab_poll_seconds` 預設 0.3→1.0；保留 `grab_attempts` 當安全上限。
-- [ ] `carpark.py` `auto_select_and_park_many`：加 `cluster_min` 參數，改分層 ranking（preferred→低編號抱團≥min→11-20→21-30→[T4 視確認]）。抱團 pre-read 僅在 9/10 滿、需評估 fallback 時才付出（9/10 有位則最少 RTT 直接停，搶位要快）。純 ranking 抽可測函式。
-- [ ] `runner.py` `_run_carpark`：搶位迴圈由次數型改時間型——`grabbing` 時從 open_dt 迴圈到 open_dt+grab_window，每輪 park，`parked_count>0` 即停否則 `sleep_fn(1s)`；放寬重試條件為 parked_count==0（不再限 no_parkable_lot；每輪重算 need/current 防重複停）；非 grabbing 維持單次。park_timeout 不重試（靠 read_my_mounts 排除已停 mount 防雙停）。傳 cluster_min。
-- [ ] `config_manager.py` DEFAULT + `_merge_carpark_plan` sanitizer 補新欄位與型別清洗。
-- [ ] bot_config.json：預設即符合需求，三台不需逐台填（除非個別微調）。
-- [ ] 測試：`test_carpark_many.py`（分層 ranking + ≥3 gate + tier 內排序 + T4）、`test_carpark_plan.py`（新 getter）、`test_carpark_runner_plan.py`（時間型重試：parked==0 才重試/到窗尾停/poll 間隔；注入 sleep_fn+now）。
-- [ ] py_compile + focused pytest（carpark 全系列）。
+- [x] `carpark_plan.py`：新增 `cluster_min`(3)、`grab_window_seconds`(60)、`allow_low_noncluster`(True) getter；`grab_poll_seconds` 預設 0.3→1.0；`grab_attempts` 留作安全上限。
+- [x] `carpark.py` `auto_select_and_park_many`：加 `cluster_min`/`allow_low_noncluster` 參數，分層 ranking 抽純函式 `tiered_lot_order`（preferred→低編號抱團≥min→11-20→21-30→低編號非抱團T5）。Phase A preferred 快路徑（有空位最少 RTT 直接停、不付抱團預讀），Phase B 才預讀低編號 lot 算同服抱團。
+- [x] `runner.py` `_run_carpark`：搶位迴圈次數型→時間型——`grabbing` 時 deadline=開窗+grab_window(10:01)，每輪 park，`parked_count>0` 即停、`park_timeout` 不重試（靠 read_my_mounts 排除已停 mount 防雙停），其餘 parked_count==0 每隔 poll 重試並重讀 parked_cross 重算 need；非 grabbing 單次。注入 `time_fn` 利測試；傳 cluster_min/allow_low_noncluster。
+- [x] `config_manager.py` DEFAULT + `_merge_carpark_plan` sanitizer 補 5 欄位（複用 carpark_plan getter 清洗）。
+- [x] bot_config.json：預設即符合需求，三台不需逐台填（未動）。
+- [x] 測試：`test_carpark_many.py`（tiered_lot_order 純函式 4 案 + ≥3 gate + tier 內排序 + T5 + preferred 快路徑不預讀）、`test_carpark_plan.py`（新 getter）、`test_carpark_runner_plan.py`（時間型重試：parked==0 才重試/到窗尾止/park_timeout 不重試/非 grab 單次；注入 sleep_fn+time_fn）。
+- [x] py_compile + focused pytest：carpark+ws_phase 套件 160 綠 → merge 後 178 綠；ws_token_runner+carpark 116 綠。
 - [ ] ⚠ master `new_main_v2.py` 需重啟才生效。Live：5554 manual-hold 看 10:00 分層選位 + 每秒重試 log。
 
-**判斷項待確認**：(a) T4 絕對最後手段是否要停無抱團低位（預設否）；(b) poll/window 共用預設 = 手機fc 也套此搶位行為（合理，它也搶位）。
+**判斷項定案**：(a) T5 絕對最後手段＝**停進去當保底**（使用者拍板，`allow_low_noncluster` 預設 True）；(b) poll/window/cluster 共用預設 → 手機fc 也套此搶位行為。
+
+#### Review（2026-06-15）
+- 5 個工作面全落地，TDD 完整 RED→GREEN（每步先看測試失敗於正確原因再實作）。改動集中在 `_run_carpark` + `auto_select_and_park_many` + 2 個純邏輯檔。
+- 設計要點：分層 ranking 抽純函式 `tiered_lot_order`（無 I/O、可單測 tier 邊界與排序）；搶位 I/O 走兩階段——preferred 有位最少 RTT 直接停、不付抱團預讀（搶位要快），preferred 滿才預讀低編號 lot 算同服抱團並分層 fallback。
+- 時間型重試把舊「次數×poll」改成「到 10:01 窗尾」，並放寬重試條件為 `parked_count==0`；`park_timeout` 不重試 + 每輪重讀 parked_cross 重算 need 雙保險防重複停。硬上限 `max(grab_attempts, ceil(window/poll)+2)` 防時鐘異常時 runaway。
+- T5「停進去當保底」順帶讓既有 `test_many_falls_back_to_other_silver_when_preferred_full`（無 cluster_server_id 停低編號）續綠。舊「preferred 內比抱團/比滿」3 個 cluster 測試依新語意改寫成低區 gate 測試。
+- 隔離 worktree 開發、commit `a3c3e720`；併入更新後 base（含 interruptible WS phase，runner.py 自動合併無衝突）後 FF 主分支 `cb707370`。
+- ⚠ 需重啟 master `new_main_v2.py`（sys.modules cache + config 重讀）才生效；live 搶位驗證待下個 10:00 窗口（5554 manual-hold）。
 
 ---
 
