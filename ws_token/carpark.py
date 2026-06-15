@@ -89,6 +89,11 @@ SILVER_MID_MAX_LEVEL = 20     # 中編號區 鉑銀11..20 (扣掉 preferred 9/10
 DEFAULT_CLUSTER_MIN = 3       # 同服占用 >= this 算抱團
 DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空位 (使用者拍板)
 
+# reward_buff rate filter (probe 2026-06-15: field#8 has keys 1..4; semantic
+# mapping unknown — 0 means skip rate filter entirely for null_space fallback).
+REWARD_RATE_KEY = 0
+REWARD_RATE_TIERS = (20, 15, 10)
+
 
 def silver_level_to_ceng(level: int) -> int:
     """User-visible 鉑銀 level (1..30) -> internal ceng (5..34)."""
@@ -165,6 +170,15 @@ class NullSpace:
     master_id: int      # #2 (== park_id for new_parking_start)
     null_num: int       # #3 (empty-slot count; >0 means parkable)
     ceng: int           # #7
+    reward_kv: dict = field(default_factory=dict)  # #8 reward_buff {key: value}
+
+    @property
+    def rate(self) -> int:
+        """Reward rate from reward_buff (0 if key absent or REWARD_RATE_KEY==0)."""
+        if not REWARD_RATE_KEY:
+            return 0
+        v = self.reward_kv.get(REWARD_RATE_KEY)
+        return int(v) if isinstance(v, int) else 0
 
 
 @dataclass(frozen=True)
@@ -218,8 +232,8 @@ class Mount:
 
     mount_id: int       # #1
     car_lev: int        # #2
-    minute: int = 0     # #4 (minute value; 0 = fresh/idle)
     parking: bool       # derived: parking_data (#5) present
+    minute: int = 0     # #4 (minute value; 0 = fresh/idle)
     parking_info: ParkingInfo | None = None  # populated only when actually parked
 
 
@@ -373,10 +387,13 @@ def parse_null_spaces(body: bytes) -> list[NullSpace]:
     for fnum, v in codec.walk(body):
         if fnum != 1 or not isinstance(v, (bytes, bytearray)):
             continue
-        d = codec.walk_dict(bytes(v))
+        entry = bytes(v)
+        d = codec.walk_dict(entry)
+        reward_kv = _parse_kv_list(entry, kv_field=8)
         out.append(NullSpace(
             park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
             null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
+            reward_kv=reward_kv,
         ))
     return out
 
@@ -391,10 +408,13 @@ def parse_collect_spaces(body: bytes) -> list[NullSpace]:
     for fnum, v in codec.walk(body):
         if fnum != 2 or not isinstance(v, (bytes, bytearray)):
             continue
-        d = codec.walk_dict(bytes(v))
+        entry = bytes(v)
+        d = codec.walk_dict(entry)
+        reward_kv = _parse_kv_list(entry, kv_field=8)
         out.append(NullSpace(
             park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
             null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
+            reward_kv=reward_kv,
         ))
     return out
 
@@ -889,10 +909,12 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
 
     _null, collect = read_cross_null_and_collect(client, timeout=timeout)
     # collect_space (bookmarked) is primary; null_space is fallback.
+    using_null = False
     parkable_src = collect
     if not collect:
         logger.info("ws_token carpark: collect_space empty, falling back to null_space")
         parkable_src = _null
+        using_null = True
     else:
         _today_tmp = _load_today_parked_master_ids(device, state_dir)
         _parkable_collect = [lot for lot in collect
@@ -903,6 +925,7 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
             logger.info("ws_token carpark: collect_space has no parkable lots, "
                         "falling back to null_space")
             parkable_src = _null
+            using_null = True
     if not parkable_src:
         logger.info("ws_token carpark: no parkable lots in collect_space or null_space")
         out["reason"] = "no_parkable_lot"
@@ -913,6 +936,17 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
                 if lot.null_num > 0
                 and (not silver_only or is_silver_ceng(lot.ceng))
                 and lot.master_id not in today_parked]
+
+    # Rate filter: only for null_space fallback (collect_space is always trusted).
+    if using_null and REWARD_RATE_KEY and parkable:
+        for thr in REWARD_RATE_TIERS:
+            filtered = [l for l in parkable if l.rate >= thr]
+            if filtered:
+                logger.info("ws_token carpark: rate filter >=%d kept %d/%d null lots",
+                            thr, len(filtered), len(parkable))
+                parkable = filtered
+                break
+
     if not parkable:
         logger.info("ws_token carpark: %d lot(s) from %s, 0 parkable "
                     "(silver_only=%s, dedup %d today)", len(parkable_src),
