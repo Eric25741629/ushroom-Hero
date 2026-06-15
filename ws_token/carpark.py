@@ -95,6 +95,42 @@ DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空�
 REWARD_RATE_KEY = 1
 REWARD_RATE_TIERS = (20, 15, 10)
 
+# mount_id -> 菇車幣 park base rate (configMount._data[4][0][1], CDP dump 2026-06-15).
+# Unknown mount ids default to 999 — assume they pass the threshold.
+MOUNT_PARK_BASE: dict[int, int] = {
+    1: 3,       # 夏日出荷 (荷葉) — far below threshold, must EXCLUDE
+    2: 35,
+    3: 47,
+    4: 98,
+    5: 100,
+    6: 103,
+    7: 79,
+    8: 47,
+    9: 81,
+    10: 85,
+    11: 84,
+    12: 98,
+    13: 81,
+    14: 118,
+    15: 103,
+    19: 73,
+    20: 94,
+    21: 54,
+    22: 54,
+    24: 110,
+    25: 61,
+    27: 61,
+    28: 171,
+    29: 171,
+    32: 110,
+    37: 99,
+    412: 33,
+    706: 36,
+    804: 95,
+    41201: 33,
+}
+MOUNT_MIN_PARK_BASE = 20  # user policy 2026-06-15: 菇車幣 base rate >= 20/min
+
 
 def silver_level_to_ceng(level: int) -> int:
     """User-visible 鉑銀 level (1..30) -> internal ceng (5..34)."""
@@ -723,6 +759,11 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
         return {"parked": False, "reason": "no_available_mount", "target_id": None,
                 "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
                 "result": None}
+    quality = [m for m in mounts if MOUNT_PARK_BASE.get(m.mount_id, 999) >= MOUNT_MIN_PARK_BASE]
+    if quality:
+        mounts = quality
+    else:
+        logger.warning("ws_token carpark: no mounts meet park_base>=%d; using all", MOUNT_MIN_PARK_BASE)
     zero_min = [m for m in mounts if m.minute == 0]
     if zero_min:
         chosen = zero_min
@@ -898,6 +939,11 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         logger.info("ws_token carpark: no available (non-parking) mount")
         out["reason"] = "no_available_mount"
         return out
+    quality = [m for m in mounts if MOUNT_PARK_BASE.get(m.mount_id, 999) >= MOUNT_MIN_PARK_BASE]
+    if quality:
+        mounts = quality
+    else:
+        logger.warning("ws_token carpark: no mounts meet park_base>=%d; using all", MOUNT_MIN_PARK_BASE)
     zero_min = [m for m in mounts if m.minute == 0]
     if zero_min:
         chosen = zero_min
