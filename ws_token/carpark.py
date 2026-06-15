@@ -95,41 +95,39 @@ DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空�
 REWARD_RATE_KEY = 1
 REWARD_RATE_TIERS = (20, 15, 10)
 
-# mount_id -> 菇車幣 park base rate (configMount._data[4][0][1], CDP dump 2026-06-15).
-# Unknown mount ids default to 999 — assume they pass the threshold.
-MOUNT_PARK_BASE: dict[int, int] = {
-    1: 3,       # 夏日出荷 (荷葉) — far below threshold, must EXCLUDE
-    2: 35,
-    3: 47,
-    4: 98,
-    5: 100,
-    6: 103,
-    7: 79,
-    8: 47,
-    9: 81,
-    10: 85,
-    11: 84,
-    12: 98,
-    13: 81,
-    14: 118,
-    15: 103,
-    19: 73,
-    20: 94,
-    21: 54,
-    22: 54,
-    24: 110,
-    25: 61,
-    27: 61,
-    28: 171,
-    29: 171,
-    32: 110,
-    37: 99,
-    412: 33,
-    706: 36,
-    804: 95,
-    41201: 33,
+# mount_id -> 品質稀有度 (configMount._data[10], CDP dump 2026-06-15 for all 27 owned).
+# Cross-parking rate correlates with quality: q4/q6 < 20/min, q7+ >= 20/min.
+# Unknown mount ids default to 7 — assume they pass the threshold.
+MOUNT_QUALITY: dict[int, int] = {
+    1: 4,   # 夏日初荷 (荷葉)
+    2: 4,   # 洗澡小鴨
+    3: 4,   # 夏日衝浪板
+    4: 4,   # 水上飛人
+    5: 6,   # 螺旋小飛機
+    6: 6,   # 紫金葫蘆
+    7: 7,
+    8: 7,
+    9: 7,
+    10: 7,
+    11: 7,
+    12: 7,
+    13: 7,
+    14: 8,
+    15: 8,
+    19: 8,
+    20: 8,
+    21: 8,
+    22: 8,
+    24: 8,
+    25: 8,
+    27: 8,
+    28: 8,
+    29: 8,
+    32: 8,
+    37: 7,
+    804: 8,
 }
-MOUNT_MIN_PARK_BASE = 20  # user policy 2026-06-15: 菇車幣 base rate >= 20/min
+MOUNT_MIN_QUALITY = 7  # user policy 2026-06-15: q7+ earns >= 20/min cross-park
 
 
 def silver_level_to_ceng(level: int) -> int:
@@ -759,11 +757,11 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
         return {"parked": False, "reason": "no_available_mount", "target_id": None,
                 "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
                 "result": None}
-    quality = [m for m in mounts if MOUNT_PARK_BASE.get(m.mount_id, 999) >= MOUNT_MIN_PARK_BASE]
+    quality = [m for m in mounts if MOUNT_QUALITY.get(m.mount_id, 7) >= MOUNT_MIN_QUALITY]
     if quality:
         mounts = quality
     else:
-        logger.warning("ws_token carpark: no mounts meet park_base>=%d; using all", MOUNT_MIN_PARK_BASE)
+        logger.warning("ws_token carpark: no mounts meet quality>=%d; using all", MOUNT_MIN_QUALITY)
     zero_min = [m for m in mounts if m.minute == 0]
     if zero_min:
         chosen = zero_min
@@ -939,11 +937,11 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         logger.info("ws_token carpark: no available (non-parking) mount")
         out["reason"] = "no_available_mount"
         return out
-    quality = [m for m in mounts if MOUNT_PARK_BASE.get(m.mount_id, 999) >= MOUNT_MIN_PARK_BASE]
+    quality = [m for m in mounts if MOUNT_QUALITY.get(m.mount_id, 7) >= MOUNT_MIN_QUALITY]
     if quality:
         mounts = quality
     else:
-        logger.warning("ws_token carpark: no mounts meet park_base>=%d; using all", MOUNT_MIN_PARK_BASE)
+        logger.warning("ws_token carpark: no mounts meet quality>=%d; using all", MOUNT_MIN_QUALITY)
     zero_min = [m for m in mounts if m.minute == 0]
     if zero_min:
         chosen = zero_min
