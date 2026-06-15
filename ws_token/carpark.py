@@ -702,13 +702,15 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
                 "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
                 "result": None}
     zero_min = [m for m in mounts if m.minute == 0]
-    if not zero_min:
-        logger.info("ws_token carpark: no zero-minute mounts today; skip")
-        return {"parked": False, "reason": "no_zero_min_mount", "target_id": None,
-                "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
-                "result": None}
-    mount_queue = [m.mount_id for m in zero_min]
-    logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
+    if zero_min:
+        chosen = zero_min
+        logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
+    else:
+        best = min(mounts, key=lambda m: m.minute)
+        chosen = [best]
+        logger.info("ws_token carpark: no zero-minute mount; fallback to min-minute=%d "
+                    "mount %s", best.minute, best.mount_id)
+    mount_queue = [m.mount_id for m in chosen]
     mount_id = mount_queue[0]
 
     _null, collect = read_cross_null_and_collect(client, timeout=timeout)
@@ -875,12 +877,15 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         out["reason"] = "no_available_mount"
         return out
     zero_min = [m for m in mounts if m.minute == 0]
-    if not zero_min:
-        logger.info("ws_token carpark: no zero-minute mounts today; skip")
-        out["reason"] = "no_zero_min_mount"
-        return out
-    mount_queue = [m.mount_id for m in zero_min]
-    logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
+    if zero_min:
+        chosen = zero_min
+        logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
+    else:
+        best = min(mounts, key=lambda m: m.minute)
+        chosen = [best]
+        logger.info("ws_token carpark: no zero-minute mount; fallback to min-minute=%d "
+                    "mount %s", best.minute, best.mount_id)
+    mount_queue = [m.mount_id for m in chosen]
 
     _null, collect = read_cross_null_and_collect(client, timeout=timeout)
     # collect_space (bookmarked) is primary; null_space is fallback.
