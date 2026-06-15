@@ -218,6 +218,7 @@ class Mount:
 
     mount_id: int       # #1
     car_lev: int        # #2
+    minute: int = 0     # #4 (minute value; 0 = fresh/idle)
     parking: bool       # derived: parking_data (#5) present
     parking_info: ParkingInfo | None = None  # populated only when actually parked
 
@@ -340,6 +341,7 @@ def _parse_car(entry: bytes) -> Mount:
     return Mount(
         mount_id=_as_int(d.get(1)),
         car_lev=_as_int(d.get(2)),
+        minute=_as_int(d.get(4)),
         parking=_is_parking(pdata),
         parking_info=_parse_parking_data(pdata),
     )
@@ -699,22 +701,44 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
         return {"parked": False, "reason": "no_available_mount", "target_id": None,
                 "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
                 "result": None}
-    mount_id = mounts[0].mount_id
+    zero_min = [m for m in mounts if m.minute == 0]
+    if not zero_min:
+        logger.info("ws_token carpark: no zero-minute mounts today; skip")
+        return {"parked": False, "reason": "no_zero_min_mount", "target_id": None,
+                "pos": None, "mount_id": None, "attempts": 0, "lots": 0,
+                "result": None}
+    mount_queue = [m.mount_id for m in zero_min]
+    logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
+    mount_id = mount_queue[0]
 
     _null, collect = read_cross_null_and_collect(client, timeout=timeout)
+    # collect_space (bookmarked) is primary; null_space is fallback.
+    parkable_src = collect
     if not collect:
-        logger.info("ws_token carpark: collect_space empty (no bookmarked lots); "
-                    "skip (not falling back to null_space)")
+        logger.info("ws_token carpark: collect_space empty, falling back to null_space")
+        parkable_src = _null
+    else:
+        # even if collect has entries, filter parkable; if none pass, fall back
+        _today_tmp = _load_today_parked_master_ids(device, state_dir)
+        _parkable_collect = [lot for lot in collect
+                            if lot.null_num > 0 and lot.master_id not in _today_tmp]
+        if not _parkable_collect:
+            logger.info("ws_token carpark: collect_space has no parkable lots, "
+                        "falling back to null_space")
+            parkable_src = _null
+    if not parkable_src:
+        logger.info("ws_token carpark: no parkable lots in collect_space or null_space")
         return {"parked": False, "reason": "no_bookmarked_lot", "target_id": None,
                 "pos": None, "mount_id": mount_id, "attempts": 0, "lots": 0,
                 "result": None}
 
     today_parked = _load_today_parked_master_ids(device, state_dir)
-    parkable = [lot for lot in collect
+    parkable = [lot for lot in parkable_src
                 if lot.null_num > 0 and lot.master_id not in today_parked]
     if not parkable:
-        logger.info("ws_token carpark: %d bookmarked lot(s), 0 parkable "
-                    "(after dedup %d already parked today)", len(collect),
+        logger.info("ws_token carpark: %d lot(s) from %s, 0 parkable "
+                    "(after dedup %d already parked today)", len(parkable_src),
+                    "collect" if parkable_src is collect else "null",
                     len(today_parked))
         return {"parked": False, "reason": "no_cross_lot", "target_id": None,
                 "pos": None, "mount_id": mount_id, "attempts": 0,
@@ -850,23 +874,44 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         logger.info("ws_token carpark: no available (non-parking) mount")
         out["reason"] = "no_available_mount"
         return out
-    mount_queue = [m.mount_id for m in mounts]
+    zero_min = [m for m in mounts if m.minute == 0]
+    if not zero_min:
+        logger.info("ws_token carpark: no zero-minute mounts today; skip")
+        out["reason"] = "no_zero_min_mount"
+        return out
+    mount_queue = [m.mount_id for m in zero_min]
+    logger.info("ws_token carpark: using %d zero-minute mounts", len(zero_min))
 
     _null, collect = read_cross_null_and_collect(client, timeout=timeout)
+    # collect_space (bookmarked) is primary; null_space is fallback.
+    parkable_src = collect
     if not collect:
-        logger.info("ws_token carpark: collect_space empty (no bookmarked lots); "
-                    "skip (not falling back to null_space)")
-        out["reason"] = "no_bookmarked_lot"
+        logger.info("ws_token carpark: collect_space empty, falling back to null_space")
+        parkable_src = _null
+    else:
+        _today_tmp = _load_today_parked_master_ids(device, state_dir)
+        _parkable_collect = [lot for lot in collect
+                            if lot.null_num > 0
+                            and (not silver_only or is_silver_ceng(lot.ceng))
+                            and lot.master_id not in _today_tmp]
+        if not _parkable_collect:
+            logger.info("ws_token carpark: collect_space has no parkable lots, "
+                        "falling back to null_space")
+            parkable_src = _null
+    if not parkable_src:
+        logger.info("ws_token carpark: no parkable lots in collect_space or null_space")
+        out["reason"] = "no_parkable_lot"
         return out
 
     today_parked = _load_today_parked_master_ids(device, state_dir)
-    parkable = [lot for lot in collect
+    parkable = [lot for lot in parkable_src
                 if lot.null_num > 0
                 and (not silver_only or is_silver_ceng(lot.ceng))
                 and lot.master_id not in today_parked]
     if not parkable:
-        logger.info("ws_token carpark: %d bookmarked lot(s), 0 parkable "
-                    "(silver_only=%s, dedup %d today)", len(collect),
+        logger.info("ws_token carpark: %d lot(s) from %s, 0 parkable "
+                    "(silver_only=%s, dedup %d today)", len(parkable_src),
+                    "collect" if parkable_src is collect else "null",
                     silver_only, len(today_parked))
         out["reason"] = "no_parkable_lot"
         return out
