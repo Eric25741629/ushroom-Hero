@@ -89,9 +89,10 @@ SILVER_MID_MAX_LEVEL = 20     # 中編號區 鉑銀11..20 (扣掉 preferred 9/10
 DEFAULT_CLUSTER_MIN = 3       # 同服占用 >= this 算抱團
 DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空位 (使用者拍板)
 
-# reward_buff rate filter (probe 2026-06-15: field#8 has keys 1..4; semantic
-# mapping unknown — 0 means skip rate filter entirely for null_space fallback).
-REWARD_RATE_KEY = 0
+# reward_buff rate filter (probe 2026-06-15: field#8 keys 1..4 are daily totals;
+# key=1 = 菇車幣 (30000/day = 20/min), key=3 = 經驗 (15000/day = 10/min).
+# value ÷ 1440 = /min rate.  REWARD_RATE_TIERS in /min units.
+REWARD_RATE_KEY = 1
 REWARD_RATE_TIERS = (20, 15, 10)
 
 
@@ -174,11 +175,12 @@ class NullSpace:
 
     @property
     def rate(self) -> int:
-        """Reward rate from reward_buff (0 if key absent or REWARD_RATE_KEY==0)."""
+        """菇車幣 /min rate from reward_buff (0 if key absent or REWARD_RATE_KEY==0).
+        Raw value is daily total; divide by 1440 to get per-minute rate."""
         if not REWARD_RATE_KEY:
             return 0
         v = self.reward_kv.get(REWARD_RATE_KEY)
-        return int(v) if isinstance(v, int) else 0
+        return int(v) // 1440 if isinstance(v, int) else 0
 
 
 @dataclass(frozen=True)
