@@ -139,14 +139,32 @@ def _load_lamp():
 
 # --- per-task runners (each returns a summary; raising is caught by run_device)
 
-def _run_main_tasks(client, collector: main_tasks.TaskCollector) -> dict:
-    """Free: snapshot login-push state, then claim every free reward."""
+def _run_main_tasks(client, collector: main_tasks.TaskCollector, *,
+                    device: str = "", state_dir=None, now=None) -> dict:
+    """Free: snapshot login-push state, then claim every free reward.
+
+    Gated by both time (>= 08:00) and date (once per day) so repeated hourly
+    wakes before 8 AM skip the claim and repeated wakes after 8 AM only claim
+    once.  Date marker persisted in ws_state/<device>.json ``{"main_tasks":
+    {"last_date": "YYYY-MM-DD"}}`` following the same pattern as couple/rogue.
+    """
+    from datetime import datetime
+    now = datetime.now() if now is None else now
+    if now.hour < 8:
+        return {"skipped": "before 08:00"}
+    today = now.strftime("%Y-%m-%d")
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw)
+    if (st.get("main_tasks") or {}).get("last_date") == today:
+        return {"skipped": f"already done {today}"}
     state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily = main_tasks.claim_daily_tasks(client, state)
     marry = main_tasks.claim_marry_tasks(client, state)  # 默契考驗 好感週任務 (type 6)
     daily_box = main_tasks.claim_daily_box(client, state)
     weekly_box = main_tasks.claim_weekly_box(client, state)
     achievement = main_tasks.claim_achievement(client)
+    st["main_tasks"] = {"last_date": today, "last_ts": now.timestamp()}
+    ws_state.save_state(device, st, **kw)
     return {
         "daily_tasks": daily,
         "marry_tasks": marry,
@@ -253,6 +271,10 @@ def _run_gacha(client, inventory_tracker, *,
     """
     if not gacha_config or not gacha_config.get("enabled"):
         return {"skipped": "gacha disabled (set ws_token.gacha.enabled=True)"}
+    if gacha_config.get("weekend_only"):
+        import datetime as _dt
+        if _dt.date.today().weekday() < 5:
+            return {"skipped": "weekend_only: not Sat/Sun"}
     raw_types = gacha_config.get("types") or [gacha_config.get("type", 1)]
     mode = str(gacha_config.get("mode", "drain"))
     try:
@@ -624,7 +646,8 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
             res = carpark.auto_select_and_park_many(
                 client, count=need, prefer_levels=levels,
                 cluster_server_id=cluster_server_id, cluster_min=cluster_min,
-                allow_low_noncluster=allow_low)
+                allow_low_noncluster=allow_low,
+                device=device, state_dir=carpark_state_dir)
             if int(res.get("parked_count") or 0) > 0:
                 break
             if res.get("reason") == "park_timeout":
@@ -648,7 +671,8 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
     if target:
         return carpark.auto_park_cross(client, target_id=int(target))
     if auto:
-        return carpark.auto_select_and_park(client)
+        return carpark.auto_select_and_park(client, device=device,
+                                            state_dir=carpark_state_dir)
     return {"skipped": "carpark disabled (set carpark_target or carpark_auto)"}
 
 
@@ -1126,7 +1150,8 @@ def run_device(device: str, *, spend: bool = False,
                                    now=carpark_now,
                                    cluster_server_id=int(
                                        login.get("server_id") or 0) or None))
-        _step("main_tasks", lambda: _run_main_tasks(client, collector))
+        _step("main_tasks",
+              lambda: _run_main_tasks(client, collector, device=device))
         _step("league_solo", lambda: _run_league_solo(client))
         _step("redpack", lambda: _run_redpack(client))
         if mail_claim:

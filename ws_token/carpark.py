@@ -39,8 +39,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import date
 
 from ws_token import codec
+from ws_token import state as ws_state
 from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
@@ -377,6 +379,24 @@ def parse_null_spaces(body: bytes) -> list[NullSpace]:
     return out
 
 
+def parse_collect_spaces(body: bytes) -> list[NullSpace]:
+    """Decode car_park_search_s2c.collect_space (#2) -> [NullSpace].
+
+    Bookmark/favorite spots from the same 12808 response. Same inner schema
+    as null_space (p_car_park_null).
+    """
+    out = []
+    for fnum, v in codec.walk(body):
+        if fnum != 2 or not isinstance(v, (bytes, bytearray)):
+            continue
+        d = codec.walk_dict(bytes(v))
+        out.append(NullSpace(
+            park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
+            null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
+        ))
+    return out
+
+
 def parse_cross_preview(body: bytes) -> list[CrossLotPreview]:
     """Decode cross_car_park_preview_s2c.park_list -> [CrossLotPreview]."""
     lots = []
@@ -463,6 +483,20 @@ def read_cross_null_spaces(client: WSGameClient, *,
     return parse_null_spaces(body)
 
 
+def read_cross_null_and_collect(client: WSGameClient, *,
+                                timeout: float | None = None
+                                ) -> tuple[list[NullSpace], list[NullSpace]]:
+    """Single 12808 call returning (null_space, collect_space).
+
+    ``collect_space`` (#2) is the user-bookmarked subset — the preferred
+    candidate list for cross parking.  ``null_space`` (#1) is the full set.
+    """
+    body = client.call(CMD_SEARCH,
+                       build_search_body(type_=SEARCH_TYPE_CROSS),
+                       timeout=timeout)
+    return parse_null_spaces(body), parse_collect_spaces(body)
+
+
 def read_cross_preview(client: WSGameClient, *,
                        timeout: float | None = None) -> list[CrossLotPreview]:
     """Fetch the cross lot list via cross_car_park_preview (12830; empty c2s)."""
@@ -527,6 +561,40 @@ def collect_bag_rewards(client: WSGameClient, *,
     logger.info("ws_token carpark: warehouse collect declined code=%s", ec)
     return {"success": False, "response_cmd": cmd, "fields": f,
             "error_code": ec}
+
+
+# --- today-dedup (bookmark filter) -------------------------------------------
+
+def _load_today_parked_master_ids(device: str | None,
+                                  state_dir=None) -> set[int]:
+    """Load master_ids already parked today from ws_state for dedup."""
+    if not device:
+        return set()
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw)
+    cp = st.get("carpark_parked_today") or {}
+    if cp.get("date") != date.today().isoformat():
+        return set()
+    return set(cp.get("parked") or ())
+
+
+def _record_park_today(device: str | None, master_id: int,
+                       state_dir=None) -> None:
+    """Append master_id to today's parked set in ws_state."""
+    if not device:
+        return
+    today = date.today().isoformat()
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw)
+    cp = st.get("carpark_parked_today") or {}
+    if cp.get("date") != today:
+        cp = {"date": today, "parked": []}
+    parked = list(cp.get("parked") or ())
+    if master_id not in parked:
+        parked.append(master_id)
+    cp["parked"] = parked
+    st["carpark_parked_today"] = cp
+    ws_state.save_state(device, st, **kw)
 
 
 # --- park -------------------------------------------------------------------
@@ -607,14 +675,17 @@ def auto_park_cross(client: WSGameClient, *, target_id: int, new: bool = True,
 
 
 def auto_select_and_park(client: WSGameClient, *, new: bool = True,
+                         device: str | None = None, state_dir=None,
                          timeout: float | None = None) -> dict:
     """Fully automatic cross parking: search -> per-lot detail -> park.
 
     Reads my mounts first (cheap short-circuit), then lists parkable cross lots
-    via car_park_search (type=4 -> null_space; the NEW cross flow's source). For
-    each lot with ``null_num > 0`` it reads the slot detail to pick the exact
-    free pos, then attempts ONE park. A rejected park (race / protected) falls
-    through to the next lot. Strictly park-only, cross-only.
+    via car_park_search (type=4 -> collect_space; the user-bookmarked subset).
+    For each lot with ``null_num > 0`` it reads the slot detail to pick the
+    exact free pos, then attempts ONE park. A rejected park (race / protected)
+    falls through to the next lot. Strictly park-only, cross-only.
+
+    Skips lots already parked today (dedup by master_id in ws_state).
 
     ``park_id`` for new_parking_start is the lot's ``master_id`` (verified from
     the client: btn click -> reqParkingInfo(3, master_id, ceng), then
@@ -630,14 +701,24 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
                 "result": None}
     mount_id = mounts[0].mount_id
 
-    lots = read_cross_null_spaces(client, timeout=timeout)
-    parkable = [lot for lot in lots if lot.null_num > 0]
+    _null, collect = read_cross_null_and_collect(client, timeout=timeout)
+    if not collect:
+        logger.info("ws_token carpark: collect_space empty (no bookmarked lots); "
+                    "skip (not falling back to null_space)")
+        return {"parked": False, "reason": "no_bookmarked_lot", "target_id": None,
+                "pos": None, "mount_id": mount_id, "attempts": 0, "lots": 0,
+                "result": None}
+
+    today_parked = _load_today_parked_master_ids(device, state_dir)
+    parkable = [lot for lot in collect
+                if lot.null_num > 0 and lot.master_id not in today_parked]
     if not parkable:
-        logger.info("ws_token carpark: search returned %d lot(s), 0 parkable",
-                    len(lots))
+        logger.info("ws_token carpark: %d bookmarked lot(s), 0 parkable "
+                    "(after dedup %d already parked today)", len(collect),
+                    len(today_parked))
         return {"parked": False, "reason": "no_cross_lot", "target_id": None,
                 "pos": None, "mount_id": mount_id, "attempts": 0,
-                "lots": len(lots), "result": None}
+                "lots": len(collect), "result": None}
 
     attempts = 0
     last_result: ParkResult | None = None
@@ -652,6 +733,7 @@ def auto_select_and_park(client: WSGameClient, *, new: bool = True,
                                  mount_id=mount_id, new=new, timeout=timeout)
         last_result = result
         if result.success:
+            _record_park_today(device, lot.master_id, state_dir)
             logger.info("ws_token carpark: parked mount=%s into cross %s pos=%s "
                         "(auto-selected, attempt %s)", mount_id, lot.master_id,
                         pos, attempts)
@@ -734,13 +816,16 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
                               allow_low_noncluster: bool
                               = DEFAULT_ALLOW_LOW_NONCLUSTER,
                               new: bool = True,
+                              device: str | None = None,
+                              state_dir=None,
                               timeout: float | None = None) -> dict:
     """Park up to ``count`` of my idle mounts into 跨界 silver lots, tiered.
 
     Multi-mount core for the day/night carpark plan (ws_token/carpark_plan.py):
     reads my mounts ONCE (read_my_mounts already excludes mounts that are
-    parking), lists the cross lots via car_park_search (type=4 returns ALL
-    pools), keeps only silver-tier lots (``silver_only``; 跨界限定泊銀).
+    parking), lists the cross lots via car_park_search (type=4 -> collect_space,
+    the user-bookmarked subset), keeps only silver-tier lots (``silver_only``;
+    跨界限定泊銀). Skips lots already parked today (dedup by master_id).
 
     Selection is tiered (user 2026-06-15): 鉑銀``prefer_levels`` (9/10) first and
     unconditionally — a free preferred lot is parked with the FEWEST round-trips
@@ -767,12 +852,22 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
         return out
     mount_queue = [m.mount_id for m in mounts]
 
-    lots = read_cross_null_spaces(client, timeout=timeout)
-    parkable = [lot for lot in lots if lot.null_num > 0
-                and (not silver_only or is_silver_ceng(lot.ceng))]
+    _null, collect = read_cross_null_and_collect(client, timeout=timeout)
+    if not collect:
+        logger.info("ws_token carpark: collect_space empty (no bookmarked lots); "
+                    "skip (not falling back to null_space)")
+        out["reason"] = "no_bookmarked_lot"
+        return out
+
+    today_parked = _load_today_parked_master_ids(device, state_dir)
+    parkable = [lot for lot in collect
+                if lot.null_num > 0
+                and (not silver_only or is_silver_ceng(lot.ceng))
+                and lot.master_id not in today_parked]
     if not parkable:
-        logger.info("ws_token carpark: %d lot(s), 0 parkable "
-                    "(silver_only=%s)", len(lots), silver_only)
+        logger.info("ws_token carpark: %d bookmarked lot(s), 0 parkable "
+                    "(silver_only=%s, dedup %d today)", len(collect),
+                    silver_only, len(today_parked))
         out["reason"] = "no_parkable_lot"
         return out
 
@@ -821,6 +916,7 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
                     "mount_id": mount_id, "success": result.success,
                     "error_code": result.error_code})
                 if result.success:
+                    _record_park_today(device, lot.master_id, state_dir)
                     mount_queue.pop(0)
                     out["parked_count"] += 1
                     logger.info("ws_token carpark: parked mount=%s lot=%s "
