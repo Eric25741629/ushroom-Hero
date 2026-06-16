@@ -39,7 +39,92 @@ def _is_profile_in_use_error(exc: Exception) -> bool:
         or "process_notified" in text
         or "already in use" in text
         or ("profile" in text and "in use" in text)
+        # Windows hand-off: a freshly-spawned Chrome that finds an existing
+        # instance on the same --user-data-dir forwards its command line and
+        # exits cleanly with exitCode=0 (NOT 21). Playwright surfaces this as
+        # "Failed to launch the browser process." (7fe98fc6, 2026-06-16).
+        or (
+            "failed to launch the browser process" in text
+            and "exitcode=0" in text
+        )
     )
+
+
+def _cmdline_uses_profile(cmdline, target_normcase_abspath: str) -> bool:
+    """True if a process command line sets --user-data-dir to the target path."""
+    try:
+        for i, arg in enumerate(cmdline or []):
+            arg = str(arg)
+            val = ""
+            if arg.startswith("--user-data-dir="):
+                val = arg.split("=", 1)[1]
+            elif arg == "--user-data-dir" and i + 1 < len(cmdline):
+                val = str(cmdline[i + 1])
+            if (
+                val
+                and os.path.normcase(os.path.abspath(val))
+                == target_normcase_abspath
+            ):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _kill_chrome_holding_profile(
+    profile_dir: str,
+    logger_obj: logging.Logger,
+    device_id: str,
+    *,
+    process_iter=None,
+) -> int:
+    """Kill any Chrome/Chromium process whose command line uses this EXACT
+    --user-data-dir. Returns the number of processes killed.
+
+    Surgical by design: matches only the given profile dir, so it never touches
+    other devices' browsers or the user's personal Chrome. Strictly best-effort —
+    psutil import errors, iteration hiccups, races and access errors are swallowed
+    (returns what it managed to kill). Used to clear a stale Chrome that lingered
+    across a sleep and is now holding the profile lock — the root cause of the
+    7fe98fc6 login-less-fallback thrash (2026-06-16).
+    """
+    try:
+        target = os.path.normcase(os.path.abspath(profile_dir))
+    except Exception:
+        return 0
+    if process_iter is None:
+        try:
+            import psutil
+        except Exception as exc:
+            logger_obj.debug(
+                f"[{device_id}] psutil unavailable, skip orphan-kill: {exc}"
+            )
+            return 0
+        process_iter = psutil.process_iter
+    try:
+        procs = process_iter(["name", "cmdline"])
+    except Exception as exc:
+        logger_obj.debug(f"[{device_id}] orphan-kill process_iter failed: {exc}")
+        return 0
+    killed = 0
+    for proc in procs:
+        try:
+            info = getattr(proc, "info", {}) or {}
+            name = str(info.get("name") or "").lower()
+            if "chrome" not in name and "chromium" not in name:
+                continue
+            if not _cmdline_uses_profile(info.get("cmdline") or [], target):
+                continue
+            proc.kill()
+            killed += 1
+            logger_obj.warning(
+                f"[{device_id}] killed stale chrome pid={getattr(proc, 'pid', '?')} "
+                f"holding profile {profile_dir}"
+            )
+        except Exception as exc:
+            logger_obj.debug(f"[{device_id}] orphan-kill skipped one proc: {exc}")
+            continue
+    return killed
 
 
 def _launch_with_profile_recovery(
@@ -52,53 +137,85 @@ def _launch_with_profile_recovery(
     sleep_fn=time.sleep,
     max_in_use_retries: int = _PROFILE_IN_USE_MAX_RETRIES,
     in_use_wait_sec: float = _PROFILE_IN_USE_WAIT_SEC,
+    kill_orphan_fn=None,
 ):
     """Launch a persistent context, preferring the original (logged-in) profile.
 
-    Attempt order: original(channel) -> original(no-channel) -> fallback(channel).
-    A profile-in-use failure (Chrome exit 21) on the original profile is treated as
-    transient: wait and retry the SAME profile up to `max_in_use_retries` times before
-    moving on. The different-profile fallback — which loses the game login state — is a
-    last resort only. Non profile-in-use errors never trigger the wait/retry loop.
+    On a profile-in-use failure (Chrome exit 21, or the Windows exitCode=0
+    hand-off) the original profile is held by a stale Chrome that lingered across
+    a sleep. We KILL that holder and retry the SAME (logged-in) profile up to
+    `max_in_use_retries` times. If it still fails as in-use we RAISE — we must NOT
+    switch to the separate, login-less fallback profile, because that spawns a
+    second un-authed session that never reaches the main page (the 7fe98fc6
+    3-hour 未知 thrash, 2026-06-16). The fallback profile is reserved for genuine
+    NON profile-in-use launch errors (e.g. a missing Chrome channel binary).
 
     `launch_fn(target_profile, use_channel) -> context` performs the real launch.
-    Returns `(context, used_profile_dir)`; raises the last error if every attempt fails.
+    `kill_orphan_fn(profile_dir) -> int` kills the stale holder (defaults to the
+    real psutil-based killer; injected in tests).
+    Returns `(context, used_profile_dir)`; raises the last error if recovery fails.
     """
-    attempts = [(profile_dir, True), (profile_dir, False)]
-    if fallback_profile_dir and os.path.abspath(
-        fallback_profile_dir
-    ) != os.path.abspath(profile_dir):
-        attempts.append((fallback_profile_dir, True))
+    if kill_orphan_fn is None:
+        def kill_orphan_fn(p):
+            return _kill_chrome_holding_profile(p, logger_obj, device_id)
 
     last_err: Optional[Exception] = None
-    for target_profile, use_channel in attempts:
-        is_original = os.path.abspath(target_profile) == os.path.abspath(profile_dir)
-        retries_left = max_in_use_retries if is_original else 0
+    last_was_in_use = False
+
+    # Phase 1 — the original (logged-in) profile: Chrome channel, then bundled chromium.
+    for use_channel in (True, False):
+        retries_left = max_in_use_retries
         while True:
             try:
-                context = launch_fn(target_profile, use_channel)
-                if not is_original:
-                    logger_obj.warning(
-                        f"[{device_id}] web_h5 switched profile dir to fallback: {target_profile}"
-                    )
-                return context, target_profile
+                return launch_fn(profile_dir, use_channel), profile_dir
             except Exception as exc:
                 last_err = exc
-                if _is_profile_in_use_error(exc) and is_original and retries_left > 0:
+                last_was_in_use = _is_profile_in_use_error(exc)
+                if last_was_in_use and retries_left > 0:
                     retries_left -= 1
                     attempt_no = max_in_use_retries - retries_left
+                    killed = 0
+                    try:
+                        killed = kill_orphan_fn(profile_dir)
+                    except Exception as kexc:
+                        logger_obj.debug(f"[{device_id}] orphan kill raised: {kexc}")
                     logger_obj.warning(
-                        f"[{device_id}] web_h5 profile in use (chrome exit 21); "
-                        f"retrying SAME profile in {in_use_wait_sec}s "
+                        f"[{device_id}] web_h5 profile in use; killed {killed} stale "
+                        f"chrome; retrying SAME profile in {in_use_wait_sec}s "
                         f"({attempt_no}/{max_in_use_retries})"
                     )
                     sleep_fn(in_use_wait_sec)
                     continue
                 logger_obj.warning(
                     f"[{device_id}] web_h5 launch failed "
-                    f"(profile={target_profile}, use_channel={use_channel}): {exc}"
+                    f"(profile={profile_dir}, use_channel={use_channel}): {exc}"
                 )
                 break
+
+    # The logged-in profile is still unusable. If it was profile-in-use, raise —
+    # do NOT degrade to the login-less fallback profile. The startup ceiling +
+    # 30-minute avoidance then lets the lock clear; the next wake reuses the real
+    # profile.
+    if last_was_in_use:
+        raise last_err
+
+    # Non profile-in-use failure: the separate fallback profile is a last resort.
+    if fallback_profile_dir and os.path.abspath(
+        fallback_profile_dir
+    ) != os.path.abspath(profile_dir):
+        try:
+            context = launch_fn(fallback_profile_dir, True)
+            logger_obj.warning(
+                f"[{device_id}] web_h5 switched profile dir to fallback: {fallback_profile_dir}"
+            )
+            return context, fallback_profile_dir
+        except Exception as exc:
+            last_err = exc
+            logger_obj.warning(
+                f"[{device_id}] web_h5 launch failed "
+                f"(profile={fallback_profile_dir}, use_channel=True): {exc}"
+            )
+
     if last_err is not None:
         raise last_err
     raise RuntimeError(
@@ -1296,6 +1413,13 @@ class PlaywrightGameDevice:
     def press(self, key, *args, **kwargs):
         key_str = str(key).lower()
         if key_str in {"back", "escape"}:
+            # Self-heal a closed page before touching it, mirroring tap/swipe/
+            # screenshot. Without this, a page closed by a same-account login
+            # conflict made press('back') raise a raw TargetClosedError up into
+            # the startup loop (game_initialization.py:240) instead of reopening
+            # the browser.
+            self._ensure_browser_session("press")
+            self._sync_active_page()
             self._page.keyboard.press("Escape")
             return True
         if key_str == "home":

@@ -467,6 +467,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     f"[{ip}] 啟動流程中斷: {e} | policy={sleep_policy}, "
                     f"forced_sleep_sec=1800"
                 )
+                # 關閉瀏覽器/應用：啟動避讓時若保留壞掉的 Chrome（被頂號/頁面已關），
+                # 下次喚醒會 reuse 同一個壞掉的 session。關掉它，喚醒時開全新的。
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
             except StartupLoginConflictError as e:
                 forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC
@@ -476,6 +479,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     f"[{ip}] 啟動階段異地登錄中斷本次執行: {e} | policy={sleep_policy}, "
                     f"forced_sleep_sec={LOGIN_CONFLICT_SLEEP_SEC}"
                 )
+                # 異地登入冷卻期間關閉瀏覽器，下次喚醒重新開啟乾淨 session。
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
             except LoginConflictError as e:
                 forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC

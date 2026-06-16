@@ -185,6 +185,7 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
     wait_timeout = 60
     unknown_detection_delay = 30
     startup_restart_count = 0
+    max_startup_restarts = 5
     last_stage = "未知"
     main_confirm_count = 0
     required_main_confirm = 2
@@ -194,6 +195,20 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
             # 每輪先honor儀表板控制：暫停凍結、強制休眠/開網頁unwind到主迴圈，
             # 取代過去「偵測不到主頁面就強制重開」的無法中斷迴圈。
             _honor_startup_controls(ip)
+
+            # 全域重啟上限：每次重啟都會把 wait_time 重置，wait_timeout 因此永不觸發，
+            # 頁面一直關閉/未知時（如同帳號異地登入頂號）會無限重啟（live log 實測 105 次）。
+            # 達上限即放棄本輪啟動，return False 讓主迴圈套 30 分鐘避讓休眠（並關閉瀏覽器）。
+            if startup_restart_count >= max_startup_restarts:
+                logger.warning(
+                    f"[{ip}] 啟動重啟次數達上限 ({startup_restart_count}/{max_startup_restarts})，"
+                    f"放棄本次啟動避讓休眠 | last_stage={last_stage}"
+                )
+                try:
+                    d.app_stop("com.mxdzz.tw.and")
+                except Exception as stop_err:
+                    logger.warning(f"[{ip}] 達重啟上限後停止遊戲失敗: {stop_err}")
+                return False
             # Startup loop only decides startup-specific things; popup cleanup is delegated to the shared resolver.
             current_stage = resolve_stage_until_stable(
                 d,

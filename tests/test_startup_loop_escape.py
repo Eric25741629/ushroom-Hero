@@ -186,6 +186,52 @@ def test_force_sleep_from_stage_probe_propagates_not_swallowed(monkeypatch):
     assert start_calls == []
 
 
+def test_unbounded_relaunch_is_capped_and_returns_false(monkeypatch):
+    """Regression: handle_game_startup_pages had no global restart ceiling.
+
+    The only timeout (wait_timeout=60s) is reset (`wait_time = time.time()`)
+    after every relaunch, so it never fires. When the stage probe keeps failing
+    (e.g. web_h5 page repeatedly closed by a same-account login conflict), the
+    `except Exception` path relaunches forever — the live 7fe98fc6 log showed
+    restart_count=105. The loop must give up after a bounded number of restarts
+    and return False so the main loop applies the 30-minute avoidance sleep.
+    """
+    startup = _startup_module(monkeypatch)
+    monkeypatch.setattr(startup.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(startup.random, "randint", lambda *_a, **_k: 0)
+    _set_controls(monkeypatch, startup)
+
+    # Every stage probe blows up → each iteration hits the except→relaunch path.
+    def boom(*_a, **_k):
+        raise RuntimeError("stage probe failed")
+
+    monkeypatch.setattr(startup, "resolve_stage_until_stable", boom)
+
+    # Safety cap turns an unbounded loop into a deterministic failure instead of
+    # hanging the test runner: on unfixed code start_game_fn is called forever.
+    SAFETY_CAP = 50
+    start_calls = []
+
+    def start_fn(*_a, **_k):
+        start_calls.append(1)
+        if len(start_calls) > SAFETY_CAP:
+            raise AssertionError(
+                "startup loop relaunched past the safety cap — no restart ceiling"
+            )
+
+    d = _FakeDevice()
+    result = startup.handle_game_startup_pages(
+        d=d,
+        ip="fc65396d",
+        start_game_fn=start_fn,
+        reward_fn=lambda *a, **k: None,
+        logger=logging.getLogger("test_startup_loop_escape"),
+    )
+
+    assert result is False
+    assert len(start_calls) <= SAFETY_CAP
+
+
 def test_clear_controls_reaches_main_page_and_polls_pause(monkeypatch):
     startup = _startup_module(monkeypatch)
     monkeypatch.setattr(startup.time, "sleep", lambda *_a, **_k: None)

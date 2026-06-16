@@ -12,6 +12,79 @@
 
 ---
 
+## 🔥 2026-06-17 web_h5 登入衝突 / 啟動 thrash 修復（規劃中，待使用者核可後動手）
+
+問題回報（使用者）：同帳號登入失敗時，bot 不會「關閉 Chrome 後重開」，一直用同一個壞掉的瀏覽器。
+附 traceback：`game_initialization.py:240 d.press("back")` → `device_wrapper.py:1299 self._page.keyboard.press("Escape")`
+→ `TargetClosedError: Target page, context or browser has been closed`。
+
+### 根因（已從 `logs/7fe98fc6/main.log` live 採證，**restart_count=105**）
+1. **啟動迴圈無全域重啟上限**：`handle_game_startup_pages` 的 `startup_restart_count` 無上界；唯一的
+   `wait_timeout=60s` 每次重啟都被 `wait_time = time.time()` 重置 → 永不觸發。頁面一直 `未知`/關閉時可無限重啟遊戲。
+2. **web_h5 `press()` 缺自癒 guard**：`tap`/`click`/`swipe`/`screenshot` 都先 `_ensure_browser_session()`+`_sync_active_page()`，
+   只有 `press()`/`home()` 直接 `self._page.keyboard.press` → 頁面已關時拋 raw `TargetClosedError`（就是這條 traceback）。
+3. **頁面關閉時偵測不到「異地登錄」**：同帳號被頂號→H5 分頁關閉/crash→`screenshot()` 自癒會 reload 遊戲 URL，
+   把「異地登錄」彈窗洗掉，detector OCR 不到 → 不走設計好的 30 分鐘避讓，改在 `未知` 狂重啟。
+4. **放棄啟動時不關瀏覽器**：`stop_runtime_device_for_sleep`（web_h5 會 `close()` 關 Chrome）只在 `ForceSleepRequested`
+   分支呼叫；`StartupBypassError`/`StartupLoginConflictError` 不呼叫 → 30 分鐘避讓期間保留壞掉的 Chrome（=使用者看到的「一直用同一個」）。
+
+### 修法（最小變更、對症根因）— 使用者核可全做 A+B+C（2026-06-17）
+- [x] **Fix A — `device_wrapper.py` web_h5 `press()` 加自癒 guard**：`keyboard.press("Escape")` 前先
+      `self._ensure_browser_session("press")` + `self._sync_active_page()`，與 `tap`/`swipe` 一致。`home()` 維持 no-op。
+- [x] **Fix B — `game_initialization.py` 加全域重啟上限**：新增 `max_startup_restarts = 5`；while 迴圈頂端（honor 控制後）
+      檢查 `startup_restart_count >= max`→log + `d.app_stop` + `return False` → 主迴圈套 30 分鐘避讓。
+- [x] **Fix C — `new_main_v2.py` 放棄啟動時關閉瀏覽器**：`except StartupBypassError` 與 `except StartupLoginConflictError`
+      分支各加 `stop_runtime_device_for_sleep(d, ip, backend_kind, logger)`（沿用 ForceSleep 分支寫法）→ 避讓期間真正關 Chrome，下次喚醒開全新的。
+- [ ]（未做，選配）Fix D — 累計 target-closed 短路避讓。Fix B 已界定 thrash，暫不需。
+
+### TDD（RED→GREEN 已驗）
+- [x] `tests/test_device_wrapper_session_helpers.py`：`test_press_back_self_heals_session_before_keyboard`（RED：raw press 不自癒；GREEN）、
+      `test_press_home_is_noop_without_touching_page`（守護 home 不碰 page）。
+- [x] `tests/test_startup_loop_escape.py`：`test_unbounded_relaunch_is_capped_and_returns_false`（RED：safety cap 50 觸發；GREEN：≤5 後 return False）。
+- [x] Fix C：new_main_v2.main() 太大不宜單測；底層 `stop_runtime_device_for_sleep` 已有 `tests/test_sleep_service.py` 覆蓋，wiring 以閱讀 + py_compile 驗證。
+- [x] focused：`pytest test_device_wrapper_session_helpers test_startup_loop_escape test_sleep_service test_game_initialization` → **53 passed**；`py_compile` 三檔 OK。
+
+### 注意
+- 三檔皆為正在跑的 bot 核心 → 改完需**重啟 `new_main_v2.py`** 才生效（sys.modules cache）。
+- 出問題裝置：`7fe98fc6`（小寶，web_h5），非手機 fc。
+
+### Review（✅ A/B/C 完成 2026-06-17）
+- 善後三層（A press 自癒 / B 重啟上限 / C 放棄時關 Chrome）皆對症修復；最小變更，無觸碰其他 WIP。
+- 未做 Fix D（偵測異地登錄需頁面存活才能 OCR；Fix B 的上限已涵蓋頁面持續關閉的情境）。
+
+---
+
+## 🔬 2026-06-17 徹底排查 — 真正觸發點（孤兒 Chrome + 登入態錯誤 fallback profile）
+
+使用者追問「為什麼瀏覽器沒釋放成功 / 為什麼被 WS 頂號」，並要求 **codex 獨立調查**（HEAD 乾淨 worktree、只給原始症狀+log，零偏見）再彙整。
+
+### 交叉驗證後的真正根因鏈（A/B/C 只是善後，這才是觸發點）
+1. **正常每小時休眠不關 web_h5 瀏覽器**：`wake_up_handler.py:411-415` 對 web_h5 略過 app_stop；正常 `run_sleep_cycle` 不呼叫 `stop_runtime_device_for_sleep`（只 ForceSleep 分支會）。→ 舊 Chrome 行程整夜殘留，持有 **NAS 上的 `--user-data-dir`**。
+2. 喚醒時 `new_main_v2.py:333-337` 的「瀏覽器已關閉」其實是 `is_alive()` canvas 探針在背景節流分頁 false-negative，**不是真關**。bot 以為關了→launch 新 Chrome。
+3. 新 Chrome 撞到被舊行程鎖住的 profile → Windows **exitCode=0 交接退出**（`Failed to launch the browser process`），**非 exit 21**。
+4. `_is_profile_in_use_error` 只認 exit 21，**認不出 exitCode=0** → 不重試 → 直接切到**沒登入態的 fallback profile**（`AppData\Local\...`）105 次。
+5. fallback profile 無法認證 → 永遠「未知」；無重啟上限 → 105 次 thrash 3 小時；第 5 次未知 press 又無自癒 → TargetClosedError。
+6. 直到孤兒行程在 00:13 釋放鎖，主 profile 才 launch 成功。
+
+### 誠實校準（codex 比我嚴謹之處）
+- 「被 WS 頂號」是**真實系統性風險**（WS-before-browser 設計、HEAD commit 都為它而生），但本次事件 `異地登錄=0`、WS `kicked=False`，**頂號未被證明**；被證明的「未知」元兇是**登入態錯誤的 fallback profile**。先前我把兩者混講，已更正。
+- 我先前誤判「休眠會關瀏覽器」，由 codex 在乾淨 worktree 糾正（見 lessons.md）。
+
+### 追加修法（使用者核可 E+F+殺孤兒，2026-06-17）— ✅ 完成 + TDD
+- [x] **Fix E**：`_is_profile_in_use_error` 補認 Windows `exitCode=0`＋`failed to launch the browser process` 交接特徵。
+- [x] **Fix H**：`_kill_chrome_holding_profile`（psutil，依 `--user-data-dir` 精準比對；殺整棵同 profile 行程；best-effort 不拋；不誤殺他裝置/個人 Chrome）。in-use 時先殺孤兒再重試**同一登入 profile**。
+- [x] **Fix F**：in-use 重試用盡**不退 fallback、改 raise** → 觸發 Fix C 關瀏覽器 + 30 分避讓 → 下次喚醒乾淨重開。fallback profile 只留給「非 in-use」的硬啟動錯誤。
+- [x] TDD：`tests/test_device_wrapper_launch_recovery.py` 重寫（10 tests：exitCode=0 偵測、殺孤兒後同 profile 重試成功、in-use 不退 fallback 改 raise、硬錯誤才 fallback、精準只殺對應 profile、iter 失敗不拋）。
+- [x] 全套 focused：`test_device_wrapper_launch_recovery + session_helpers + startup_loop_escape + sleep_service + game_initialization` → **63 passed**；`py_compile` OK；真實 psutil 對假 profile 殺 0（不誤殺）已 live 驗。
+
+### 仍未確定（兩方一致）
+- 持有 profile 鎖的確切 Chrome PID；是否真顯示過頂號彈窗；Chrome mojibake stdout 內容。
+
+### 注意
+- 改完需**重啟 `new_main_v2.py`** 才生效。可考慮（未做）Fix G：把 web_profile_dir 移本機 SSD 減 NAS 鎖延遲。
+
+---
+
 ## 🅿️ 2026-06-15 Dashboard 新分頁「車位工具」+ 一鍵最佳升級車位裝飾（規劃中，待使用者核可後動手）
 
 目標：control panel 新增**獨立可擴充分頁**（先放「車位裝飾」，未來再加更多按鈕），可選帳號/裝置，

@@ -1,5 +1,21 @@
 # Lessons learned
 
+## 2026-06-15 遊戲抽卡分兩種：週末付費 35×3 vs 每日看廣告免費 (User 指正)
+
+- **問題**：User 說「五六日也有抽卡，改用 WS」，我直接把 `weekend_to_buy`（ADB 週末付費抽）錯誤對應到
+  `gacha_free`（0x1602 每日看廣告免費召喚），並把 `free_daily` 預設改成 `True`。
+- **兩者根本不同**：
+  - **週末付費 35×3**：`weekend_to_buy`，週六/日各 3×35 = 105 技能 + 105 同伴，消耗抽卡券（1012/1013），
+    WS 協議 `0x0902`，目的是**解周任務**；在 runner 裡是 `"gacha"` task key。
+  - **每日看廣告免費召喚**：`0x1602`，3 次/型/日（error 89 = server 上限），**不需廣告也能觸發**，
+    但遊戲本身已有自動化處理，**不歸 bot 管，不要碰 `free_daily`**；runner key 是 `"gacha_free"`。
+- **正確做法**：
+  - `WS_TO_PIPELINE_SKIPS["gacha"]` → `("抽技能夥伴",)`（付費抽做完→跳過 ADB `weekend_to_buy`）
+  - `_run_gacha` 加 `weekend_only` gate；config default `mode=fixed, count=35, batches=3`
+  - `free_daily` 永遠保持 `False`（不動每日廣告流程）
+- **Rule**：遇到「這個功能改用 WS」，先確認是哪條協議（付費 0x0902 / 免費 0x1602 / 其他），
+  不要從「時序相似」就猜對應。每個 WS cmd 都有獨立語義，映射前要驗證。
+
 ## 2026-06-15 多個 Claude Code 實例並行加功能 → 每個 session 要開分支+專屬 worktree (User 指正)
 
 - **根因不是「subagent 不能用」。User 澄清:「我的意思並非指不能使用 subagents,歸根原因是因為使用者同時使用多個 Claude Code 在加入新功能。」** 真正問題:**User 會同時開好幾個 Claude Code 實例**,各自在同一個 working tree 上改 code,彼此 last-write-wins 互相覆蓋,所以「重複覆蓋」很明顯。
@@ -23,6 +39,15 @@
   — 中間檔案被 sync/使用者改過(00:18)。**Rule**:在 `nas同步_project` 下,config/log 這類會被
   dashboard 或他機同步改動的檔,判讀前重讀一次;log「停在某時間」先懷疑是同步舊副本,用 mtime +
   正在跑的 process 佐證,別當成 bot 已停。
+- **別從 benchmark 數字硬推因果結論,被使用者連抓兩次。** 同一串裡我從 sim 分數先後斷言「WS 看不到
+  buried pit → 做 fog」「v1 作弊」,兩次都沒先驗證真實資訊模型就講得很篤定。使用者連續質疑(「捲動
+  怎麼會給完整 3x3」「什麼看不到」「不會是 server 標未連通你就當看不到」)才逼我去 dump `0x0c01` 協議,
+  發現:cell feature 只有 id/col/depth/terrain/f5/f6,沒有被我丟掉的「未連通」旗標;礦洞 401 本來就被
+  當 pit;WS 看得少是 server 送的 feature 稀疏;而 ADB(CNN 讀螢幕)其實看得到 unreachable_pit。前提全錯,
+  整包 fog 改動 git revert(a8d48985)。**Rule**:(a) 對「某 planner/某後端看得到什麼」這種會翻轉結論的
+  因果宣稱,先用真實協議/log 驗證再講,不要從 sim 行為反推;(b) benchmark 盤面若跟真實輸入不吻合(sim
+  密集 cluster vs 真實稀疏),就**不能拿它的排名當結論** — 寧可說「sim 不可信、要看真實資料」也不要硬給
+  一個漂亮但沒驗證的排名;(c) 使用者重複追問同一點 = 我的解釋有洞,該停下去驗證,不是再補一套說法。
 
 ## 2026-06-13 memory 查核/清理 session
 
@@ -267,3 +292,22 @@ Otherwise: edit, test, commit, move to next item, repeat.
 The legacy call site used `farm_manager.farm(d, ip, Cnn_model)`. Two options to wire farm_v2 in: (a) add `farm = run_farm` alias, or (b) rename `run_farm → farm`. Option (b) won — keeps a single public name, no shim to remove later, no docstring drift. The internal-only `quick_farm` reference inside `manager.py` was the only other call site.
 
 **Rule**: When wiring a "v2" module into legacy call sites, prefer renaming the new symbol to match the legacy name over adding an alias shim, unless the new name is documented elsewhere.
+
+### Default to pure-WS (ws_token backend), not cocos-UI/CDP, for game-driving features (2026-06-15 user correction: "我明明要求你支援純ws")
+Built a "最佳升級車位裝飾" dashboard tool driving the game via cocos-UI clicks through the dashboard's local CDP (`_cdp_evaluate`). When picking the execution mechanism I asked about scope + objective but **silently chose CDP-UI myself**. The user wanted the project-standard **pure-WS ws_token backend** (like `ws_token/mail.py` / `relic.py` / `tycoon.py`: token-direct, headless, no browser, reaches worker devices). See [[feedback_ws_first_recon_strategy]].
+
+Two traps:
+1. **Don't default to UI-clicking when a pure-WS path exists.** This repo has a whole `ws_token/` backend; game mutations should go through WS cmds (`netManager.send` / codec), not cocos `emit('click')`, unless the action is client-validated (battle/board) per the recon-strategy memory.
+2. **"Pure WS" (send cmd vs click UI) ≠ "works beyond local".** The 倉庫 page is already pure-WS yet still local-only because it injects via local CDP (`127.0.0.1:debug_port`). To reach remote/worker devices you need the ws_token backend (token-direct) + a dashboard→command-queue trigger, not just swapping clicks for `netManager.send`.
+
+**Rule**: For any feature that mutates game state, default the execution layer to pure-WS via the `ws_token` backend, and when the execution mechanism is a real choice, surface it in the upfront AskUserQuestion (CDP-UI vs pure-WS vs ws_token-backend) instead of deciding silently.
+
+### Don't infer behavior from a log MESSAGE; read the code path (2026-06-17, web_h5 7fe98fc6 thrash)
+While root-causing a 3-hour web_h5 startup thrash I asserted "normal hourly sleep closes the browser" because the wake log printed `web_h5 瀏覽器已關閉`. That message is actually `is_alive()==False` (a 200ms canvas probe that false-negatives on a throttled/backgrounded tab) — `new_main_v2.py:333-337`. Normal aligned sleep does NOT close the web browser: `wake_up_handler.py:411-415` skips app_stop for web_h5, and `run_sleep_cycle` never calls `stop_runtime_device_for_sleep` (only the `ForceSleepRequested` branch does). So the OLD Chrome lingers across sleep, holds the NAS-hosted `--user-data-dir`, and the next launch hits a profile-in-use hand-off (Windows `exitCode=0`, not exit 21) → degraded to a login-less fallback profile → permanent 未知.
+
+**Rule**: A log string describes intent, not proof. Before building a root-cause on "the bot does X here", open the exact function the message comes from and the surrounding control flow, and confirm X actually happens. Especially for close/teardown/sleep paths.
+
+### An independent agent on a CLEAN worktree catches your confirmation bias (2026-06-17)
+User asked for an unbiased second opinion. I ran `codex exec -s read-only` in a `git worktree add HEAD` checkout (no uncommitted fixes, no my todo writeup, no my tests) with only the raw symptom + log. Codex independently confirmed the press-self-heal and profile-fallback findings, but (a) surfaced the "sleep doesn't close browser" fact I had wrong, and (b) was stricter than me on the 頂號 claim: the log shows `異地登錄=0` and WS `kicked=False`, so a duplicate-login was a real systemic RISK but NOT proven for this incident — the proven cause was the login-less fallback profile. I had over-claimed "mutual WS 頂號".
+
+**Rule**: For high-stakes root-cause work, get an independent read from a clean checkout (worktree at HEAD + a neutral prompt that withholds your hypothesis). Then state confidence honestly: separate "proven by evidence" from "plausible mechanism / systemic risk". Don't confirm the user's framing if the evidence only supports a weaker claim.
