@@ -649,7 +649,7 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                 client, count=need, prefer_levels=levels,
                 cluster_server_id=cluster_server_id, cluster_min=cluster_min,
                 allow_low_noncluster=allow_low,
-                device=device, state_dir=carpark_state_dir)
+                device=device, state_dir=state_dir)
             if int(res.get("parked_count") or 0) > 0:
                 break
             if res.get("reason") == "park_timeout":
@@ -674,7 +674,7 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
         return carpark.auto_park_cross(client, target_id=int(target))
     if auto:
         return carpark.auto_select_and_park(client, device=device,
-                                            state_dir=carpark_state_dir)
+                                            state_dir=state_dir)
     return {"skipped": "carpark disabled (set carpark_target or carpark_auto)"}
 
 
