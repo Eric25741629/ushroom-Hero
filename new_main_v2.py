@@ -313,6 +313,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     has_priority = bot_state.is_online_check_priority_active(ip)
                     if has_req or has_priority:
                         logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 requester 上線檢查")
+                        # 本輪 WS 階段（line 280-284）已算好結果，但 ws_done 是 local，
+                        # 回頂端 continue 後會被丟棄、pre_runtime_ws_done 已是 None，
+                        # 導致下一輪又重跑整段 WS 階段（同帳號重複登入、踢掉自己 session、
+                        # 浪費 ~2 分鐘）。把結果存回 pre_runtime_ws_done，讓下一輪沿用、
+                        # 只服務互檢請求而不重跑 WS。
+                        pre_runtime_ws_done = ws_done
                         time.sleep(0.2)
                         continue
 
