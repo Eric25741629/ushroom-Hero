@@ -501,6 +501,65 @@ def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
     assert "grid=" in text
 
 
+def test_mine_marks_skipped_when_no_confirmed_dig(monkeypatch):
+    """死結（第一步 unconfirmed、0 confirmed dig）→ 回傳帶 "skipped" sentinel。
+
+    判定用 confirmed_digs==0，不是 executed==[]：unconfirmed step 也會 append 進
+    executed（confirmed 檢查之前），死結時 executed 長度為 1。用 "skipped" sentinel
+    讓 ws_phase 不把「挖礦/Oracle」記為完成、保留 ADB 後備。
+    """
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 2}
+    board = _board(actives=[9901],
+                   blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board)
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter, "plan",
+        lambda b, inv, max_depth=None: {
+            "message": "dig", "hold_floor": False, "grid": None,
+            "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
+    monkeypatch.setattr(
+        mining_supervised, "execute_plan_step",
+        lambda c, step, **kw: {
+            "step": dict(step), "goods_id": GOODS_PICKAXE,
+            "block_id": step["block_id"], "hits": 1, "confirmed": False,
+            "confirmation": "unconfirmed_no_board_change", "after_board": board})
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=3)
+
+    assert result["stopped_reason"] == "unconfirmed"
+    assert "skipped" in result
+    assert len(result["executed"]) == 1  # unconfirmed step 仍被記錄
+
+
+def test_mine_no_skipped_when_pickaxe_empty(monkeypatch):
+    """有 confirmed dig 挖到鎬子用完 → 不加 "skipped"（視為完成，skip ADB）。"""
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 1}
+    board1 = _board(actives=[9901],
+                    blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    board2 = _board(actives=[])
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board1)
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter, "plan",
+        lambda b, inv, max_depth=None: {
+            "message": "dig", "hold_floor": False, "grid": None,
+            "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
+    monkeypatch.setattr(
+        mining_supervised, "execute_plan_step",
+        lambda c, step, **kw: {
+            "step": dict(step), "goods_id": GOODS_PICKAXE,
+            "block_id": step["block_id"], "hits": 1, "confirmed": True,
+            "confirmation": "confirmed_by_board_change", "after_board": board2})
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=3)
+
+    assert result["stopped_reason"] == "pickaxe_empty"
+    assert "skipped" not in result
+
+
 def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     tracker = mining_supervised.mining.InventoryTracker()
     tracker.counts = {GOODS_PICKAXE: 1}

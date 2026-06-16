@@ -77,12 +77,14 @@ def _format_grid(grid: list) -> str:
 
 
 def _log_board_trace(board: Any, inventory: Dict[str, int], *,
-                     phase: str, step_index: int) -> None:
+                     phase: str, step_index: int,
+                     log: Optional[logging.Logger] = None) -> None:
     """Log WS raw board projection so live runs can diagnose filtered layout."""
-    if not logger.isEnabledFor(logging.INFO):
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
     trace = mining_adapter.board_projection_trace(board)
-    logger.info(
+    _log.info(
         "ws_mining board phase=%s step=%s area=%s baseline=%s top_depth=%s "
         "actives=%s blocks=%s holes=%s inventory=%s area_info=%s grid=%s "
         "dropped_blocks=%s dropped_block_details=%s dropped_actives=%s "
@@ -106,25 +108,30 @@ def _log_board_trace(board: Any, inventory: Dict[str, int], *,
 
 
 def _log_plan_trace(plan_result: Dict[str, Any], inventory: Dict[str, int],
-                    *, step_index: int) -> None:
-    if not logger.isEnabledFor(logging.INFO):
+                    *, step_index: int,
+                    log: Optional[logging.Logger] = None) -> None:
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
     steps = list(plan_result.get("ws_steps", []))
-    logger.info(
-        "ws_mining plan step=%s inventory=%s message=%r steps=%s first_step=%s",
+    _log.info(
+        "ws_mining plan step=%s inventory=%s message=%r steps=%s hold_floor=%s first_step=%s",
         step_index,
         dict(inventory),
         plan_result.get("message"),
         len(steps),
+        plan_result.get("hold_floor"),
         steps[0] if steps else None,
     )
 
 
 def _log_execute_trace(item: Dict[str, Any], *, step_index: int,
-                       inventory: Dict[str, int]) -> None:
-    if not logger.isEnabledFor(logging.INFO):
+                       inventory: Dict[str, int],
+                       log: Optional[logging.Logger] = None) -> None:
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
-    logger.info(
+    _log.info(
         "ws_mining execute step=%s goods_id=%s block_id=%s confirmed=%s "
         "confirmation=%s refresh_attempts=%s inventory_after=%s error=%s",
         step_index,
@@ -326,16 +333,27 @@ def _is_diggable(actives: set, block_by_id: Dict[int, Any], block_id: int) -> bo
     return int(getattr(blk, "config_id", 0) or 0) == mining.TERRAIN_STONE
 
 
-def _select_dig_step(board: Any, plan_steps) -> Optional[Dict[str, Any]]:
+def _select_dig_step(
+    board: Any,
+    plan_steps,
+    *,
+    hold_floor: bool = False,
+    grid=None,
+) -> Optional[Dict[str, Any]]:
     """Pick the next server-valid step from the planner output.
 
-    The v4 planner orders moves by value but can propose unreachable (non-active)
+    The v5 planner orders moves by value but can propose unreachable (non-active)
     or already-collected (count==0) pit blocks, which the server silently rejects
     (board unchanged). So take the planner's highest-value step whose target is
     actually diggable. If the planner proposed steps but NONE are diggable (e.g.
     it keeps targeting already-dug pits), fall back to the deepest diggable
     frontier cell to drive the board downward and reveal new pits. An empty plan
     is respected (return None) — the planner sees nothing worth digging.
+
+    When ``hold_floor=True`` (visible pits exist), the fallback only considers
+    diggable cells whose axe-dig would NOT open floor-7. Pass ``grid`` (the raw
+    7×6 planner grid from the plan result) to enable per-candidate simulation;
+    without it the fallback skips non-pit cells entirely to stay conservative.
     """
     plan_steps = list(plan_steps or ())
     actives = {int(a) for a in (getattr(board, "actives", None) or [])}
@@ -351,6 +369,37 @@ def _select_dig_step(board: Any, plan_steps) -> Optional[Dict[str, Any]]:
     cands = [bid for bid in actives if _is_diggable(actives, block_by_id, bid)]
     if not cands:
         return None
+
+    if hold_floor:
+        if grid is not None:
+            from miner.v3.board import floor7_open
+            from miner.v3.actions import apply_dig
+            baseline = int(getattr(board, "baseline", 0) or 0)
+            top_depth = mining_adapter.viewport_top_depth(baseline)
+            grid_cols = len(grid[0]) if grid else 0
+            safe_cands = []
+            for bid in cands:
+                depth, game_col = divmod(bid, 100)
+                row = depth - top_depth
+                col = game_col - 1
+                if not (0 <= row < len(grid)) or not (0 <= col < grid_cols):
+                    safe_cands.append(bid)
+                    continue
+                work = [gr[:] for gr in grid]
+                apply_dig(work, (row, col))
+                if not floor7_open(work):
+                    safe_cands.append(bid)
+            # safety valve: if EVERY candidate would scroll, allow original set
+            cands = safe_cands or cands
+        else:
+            # no grid available → only allow pits (never use deepest-frontier fallback)
+            pit_cands = [
+                bid for bid in cands
+                if block_by_id.get(bid) is not None
+                and (int(getattr(block_by_id[bid], "config_id", 0) or 0) == mining.TERRAIN_PIT
+                     or int(getattr(block_by_id[bid], "is_reward", 0) or 0))
+            ]
+            cands = pit_cands or cands
 
     def _key(bid: int):
         blk = block_by_id.get(bid)
@@ -373,6 +422,7 @@ def mine_until_pickaxe_empty(
     timeout: Optional[float] = None,
     max_depth: Optional[int] = None,
     should_abort: Optional[Callable[[], bool]] = None,
+    device_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Re-plan and execute one confirmed dig at a time until pickaxes reach 0.
 
@@ -386,6 +436,15 @@ def mine_until_pickaxe_empty(
     collected pits, which the server rejects, so the executed step is filtered to
     a diggable target with a frontier fallback.
     """
+    # 設定裝置專屬 ws_mining log（若有提供 device_id）
+    _wlog: Optional[logging.Logger] = None
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_mining_logger
+            _wlog = get_or_create_ws_mining_logger(device_id)
+        except Exception:
+            pass
+
     seen = tracker.has_item(mining.GOODS_PICKAXE)
     inventory = dict(tracker.as_props())
     if not seen:
@@ -398,7 +457,7 @@ def mine_until_pickaxe_empty(
     stopped_reason = "max_steps"
 
     current_board = mining.read_board(client, timeout=timeout)
-    _log_board_trace(current_board, inventory, phase="initial", step_index=0)
+    _log_board_trace(current_board, inventory, phase="initial", step_index=0, log=_wlog)
     for _idx in range(limit):
         # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
         # 續做時讀當前 board 接續，不會重複。
@@ -414,8 +473,13 @@ def mine_until_pickaxe_empty(
             max_depth=max_depth,
         )
         plans.append(plan_result)
-        _log_plan_trace(plan_result, inventory, step_index=_idx)
-        step = _select_dig_step(current_board, plan_result.get("ws_steps", []))
+        _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog)
+        step = _select_dig_step(
+            current_board,
+            plan_result.get("ws_steps", []),
+            hold_floor=bool(plan_result.get("hold_floor")),
+            grid=plan_result.get("grid"),
+        )
         if step is None:
             stopped_reason = "no_steps"
             break
@@ -431,7 +495,7 @@ def mine_until_pickaxe_empty(
         )
         executed.append(item)
         if not item.get("confirmed"):
-            _log_execute_trace(item, step_index=_idx, inventory=inventory)
+            _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
             stopped_reason = "unconfirmed"
             break
 
@@ -445,7 +509,7 @@ def mine_until_pickaxe_empty(
         if not seen and tracker.has_item(mining.GOODS_PICKAXE):
             seen = True
             inventory["pickaxe"] = tracker.pickaxe
-        _log_execute_trace(item, step_index=_idx, inventory=inventory)
+        _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
         if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
@@ -456,12 +520,24 @@ def mine_until_pickaxe_empty(
             break
         current_board = next_board
         _log_board_trace(current_board, inventory, phase="after_execute",
-                         step_index=_idx)
+                         step_index=_idx, log=_wlog)
     else:
         if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
 
-    return {
+    _summary_log = _wlog or logger
+    _summary_log.info(
+        "ws_mining summary: stopped=%s digs=%s hold_floor_rounds=%s "
+        "pickaxe %s→%s drill %s→%s bomb %s→%s",
+        stopped_reason,
+        len(executed),
+        sum(1 for p in plans if p.get("hold_floor")),
+        initial_inventory.get("pickaxe"), inventory.get("pickaxe"),
+        initial_inventory.get("drill"), inventory.get("drill"),
+        initial_inventory.get("bomb"), inventory.get("bomb"),
+    )
+
+    result: Dict[str, Any] = {
         "initial_inventory": initial_inventory,
         "final_inventory": inventory,
         "plans": plans,
@@ -469,6 +545,15 @@ def mine_until_pickaxe_empty(
         "executed": executed,
         "stopped_reason": stopped_reason,
     }
+    # 實質沒挖到（0 個 confirmed dig 且卡在 no_steps/unconfirmed）→ 標 "skipped"
+    # sentinel，讓 ws_phase._substantive_done 不把「挖礦/Oracle」記為完成、保留 ADB
+    # 後備。判定用 confirmed_digs==0（非 executed==[]）：unconfirmed step 也會被 append
+    # 進 executed（confirmed 檢查之前），死結時長度為 1。pickaxe_empty（沒鏟可挖）
+    # 仍算完成（ADB 也挖不了），不標 skipped。
+    confirmed_digs = sum(1 for it in executed if it.get("confirmed"))
+    if confirmed_digs == 0 and stopped_reason in ("no_steps", "unconfirmed"):
+        result["skipped"] = f"no dig confirmed (stopped={stopped_reason})"
+    return result
 
 
 def _format_step(step: Dict[str, Any]) -> str:

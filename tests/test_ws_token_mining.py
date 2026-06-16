@@ -330,3 +330,39 @@ def test_grid_pos_to_block_id_round_trips_depth_col():
     # block_id = depth*100 + col, depth = baseline - 5 + row, col = x (1-indexed).
     assert grid_pos_to_block_id(baseline=162388, row=0, col=2) == 16238303
     assert grid_pos_to_block_id(baseline=162388, row=6, col=3) == 16238904
+
+
+def test_plan_hold_floor_ignores_collected_row0_pit():
+    """已採集 (count==0) 的 row-0 礦坑不該觸發 hold_floor。
+
+    fc 死結根因：_block_label 把所有 config 401 標 reachable_pit（不看 count），
+    舊版 hold_floor = count_remaining_pits(grid[0:1])>0 → 已收掉的 row-0 坑仍卡住
+    hold_floor=True → 只能挑不開 floor-7 的格 → server 拒絕 → 永遠 unconfirmed。
+    修法用原始 blocks 的 count>0 判定，count==0 不算。
+    """
+    baseline = 162390
+    top = baseline - 5  # row 0 depth
+    # row-0 一個已採集礦坑 (count==0)；row-6 放一個 active 讓 floor-7 關閉
+    # （active 觸發 _project_board 的 unreachable_empty 填充，等同真實 fc 盤面）。
+    collected_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                              config_id=401, count=0, is_reward=0)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    board = _board(baseline, [collected_pit], actives=[floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is False, result.get("hold_floor")
+
+
+def test_plan_hold_floor_holds_for_uncollected_row0_pit():
+    """未採集 (count>0) 的 row-0 礦坑仍要 hold_floor（保留原本防捲動保護）。"""
+    baseline = 162390
+    top = baseline - 5
+    live_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                         config_id=401, count=1, is_reward=1)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    board = _board(baseline, [live_pit], actives=[floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is True, result.get("hold_floor")

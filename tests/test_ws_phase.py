@@ -43,7 +43,7 @@ def test_success_tasks_map_to_pipeline_names(monkeypatch):
     skips = ws_phase.run_ws_phase("dev")
     assert skips == frozenset({
         "紅包檢查", "點擊寶箱", "家族任務", "領取守護靈", "商店購買",
-        "所有日常任務", "好友每日禮物", "開神燈", "轉盤金幣", "挖礦任務",
+        "所有日常任務", "好友每日禮物", "開神燈", "轉盤金幣", "挖礦/Oracle",
     })
     # farm 沒配 seed_id → 農場任務不 skip（spec §8）
     assert "農場任務" not in skips
@@ -65,6 +65,33 @@ def test_dungeon_skips_only_with_sweeps_configured(monkeypatch):
     monkeypatch.setattr(ws_phase, "_run_device",
                         lambda ip, cfg, progress=None, **_kw:_report({"dungeon": {}}))
     assert "萬神試煉" not in ws_phase.run_ws_phase("dev")
+
+
+def test_mining_skipped_result_does_not_skip_oracle(monkeypatch):
+    """mine_until 沒挖到（回傳帶 "skipped"）→ ws_phase 不可標完成，保留 ADB 後備。
+
+    死結時 executed 含 1 個 unconfirmed step（非空），但 mine_until 會加 "skipped"
+    sentinel；ws_phase._substantive_done 既有慣例會排除帶 "skipped" 的 dict。
+    """
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"mining": {"executed": [{"block_id": 1, "confirmed": False}],
+                        "stopped_reason": "unconfirmed",
+                        "skipped": "no dig confirmed (stopped=unconfirmed)"}}))
+    assert "挖礦/Oracle" not in ws_phase.run_ws_phase("dev")
+
+
+def test_mining_done_result_skips_oracle(monkeypatch):
+    """有挖到 / 鎬子用完（無 "skipped"）→ 視為完成，skip ADB 挖礦。"""
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"mining": {"executed": [{"block_id": 1, "confirmed": True}],
+                        "stopped_reason": "pickaxe_empty"}}))
+    assert "挖礦/Oracle" in ws_phase.run_ws_phase("dev")
 
 
 def test_run_device_passes_mining_config(monkeypatch):

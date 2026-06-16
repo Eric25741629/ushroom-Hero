@@ -1,4 +1,4 @@
-"""Adapter: WS MineBoard <-> miner v4 planner grid + plan -> block_id steps.
+"""Adapter: WS MineBoard <-> miner v5 planner grid + plan -> block_id steps.
 
 Two layers, kept apart so the pure grid transform never imports the planner:
 
@@ -76,6 +76,29 @@ def _block_label(config_id: int, is_reward: int) -> str:
 def viewport_top_depth(baseline: int) -> int:
     """Live H5 視窗頂端深度；baseline 不是 row 0，而是 row 5。"""
     return int(baseline) - (GRID_ROWS - 2)
+
+
+def has_uncollected_row0_pit(mine_board: Any) -> bool:
+    """row-0（視窗頂端深度）是否還有「未採集」礦坑（從原始 blocks 判定）。
+
+    判定 hold_floor 必須看 block.count：已採集礦坑 (count==0) 視覺上已空、即使被捲走
+    也無損，不該觸發 hold_floor。grid 標籤層 (_block_label) 刻意不看 count（估成本用，
+    把所有 401/is_reward 都標 reachable_pit），所以這裡直接讀原始 MineBoard.blocks，
+    只認 row 0 (y == viewport_top_depth) 上 config_id==401 / is_reward 且 count>0 的 block。
+    若不這麼判，已採集的 row-0 礦坑會讓 hold_floor 永久 True → 只能挑不開 floor-7 的格 →
+    server 拒絕 → 永遠 unconfirmed（手機fc 鎬子卡 118/118 的死結根因）。
+    """
+    baseline = int(getattr(mine_board, "baseline", 0) or 0)
+    top_depth = viewport_top_depth(baseline)
+    for blk in getattr(mine_board, "blocks", []) or []:
+        if int(getattr(blk, "y", 0) or 0) != top_depth:
+            continue
+        if int(getattr(blk, "count", 0) or 0) <= 0:
+            continue
+        if (int(getattr(blk, "config_id", 0) or 0) == TERRAIN_PIT
+                or int(getattr(blk, "is_reward", 0) or 0)):
+            return True
+    return False
 
 
 def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[dict]]:
@@ -175,17 +198,20 @@ def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
          *, max_depth: Optional[int] = None) -> Dict[str, Any]:
-    """Build the grid, run plan_v4, and translate steps back to block_ids.
+    """Build the grid, run plan_v5, and translate steps back to block_ids.
 
-    ``plan_v4`` is imported lazily so importing this module never risks pulling
-    the miner CNN stack. (Verified safe: ``from miner.v4.planner import plan_v4``
-    does not import torch/cv2, but the lazy import keeps the contract robust.)
-
-    Returns the raw plan_v4 dict augmented with ``ws_steps``: a list of
-    ``{"goods_id"-less} step + {"block_id", "row", "col"}`` so a (human-driven)
-    executor can map each planner move to a home_mine_use_goods target.
+    Returns the plan_v5 dict augmented with:
+      ``ws_steps``: list of step + {block_id, row, col}.
+      ``hold_floor``: True when row-0 has uncollected pits and floor-7 is still closed.
+        Steps that would open floor-7 are removed from ws_steps under hold_floor
+        so the bot cannot scroll row-0 pits out of the viewport.
+        Pits in rows 1-6 survive a scroll (they move up, staying visible) and do
+        not trigger hold_floor.
+      ``grid``: the raw 7×6 planner grid, used by the fallback in _select_dig_step.
     """
-    from miner.v4.planner import plan_v4  # lazy: keep import cost off module load
+    from miner.v5.planner import plan_v5  # lazy: keep import cost off module load
+    from miner.v3.board import floor7_open
+    from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
     grid = board_to_grid(mine_board)
     inv = inventory or {}
@@ -195,7 +221,7 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     kwargs: Dict[str, Any] = {"shovels": shovels, "items": items}
     if max_depth is not None:
         kwargs["max_depth"] = max_depth
-    result = plan_v4(grid, **kwargs)
+    result = plan_v5(grid, **kwargs)
 
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     ws_steps: List[Dict[str, Any]] = []
@@ -203,11 +229,43 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
         pos = step.get("pos") or step.get("target")
         if not pos:
             continue
-        row, col = int(pos[0]), int(pos[1])
+        sr, sc = int(pos[0]), int(pos[1])
         enriched = dict(step)
-        enriched["row"] = row
-        enriched["col"] = col
-        enriched["block_id"] = grid_pos_to_block_id(baseline, row, col)
+        enriched["row"] = sr
+        enriched["col"] = sc
+        enriched["block_id"] = grid_pos_to_block_id(baseline, sr, sc)
         ws_steps.append(enriched)
+
+    # hold-floor: row 0 的「未採集」礦坑捲動後會離開視窗 → veto 會觸發捲動的步。
+    # row 1-6 的礦坑捲動後上移一列仍可見，不算風險；已採集 (count==0) 礦坑捲走無損，
+    # 不觸發 hold_floor。必須看 block.count，所以從原始 board 判定，不能用不看 count 的
+    # grid 標籤（_block_label 把已採集 401 也標 reachable_pit → 永久 hold_floor 死結）。
+    hold_floor = has_uncollected_row0_pit(mine_board) and not floor7_open(grid)
+    if hold_floor:
+        safe: List[Dict[str, Any]] = []
+        for step in ws_steps:
+            work = [gr[:] for gr in grid]
+            stype = step.get("type")
+            sr, sc = int(step["row"]), int(step["col"])
+            if stype == "dig":
+                apply_dig(work, (sr, sc))
+            elif stype == "use":
+                it = step.get("item")
+                if it == "bomb":
+                    apply_bomb(work, (sr, sc))
+                elif it == "drill":
+                    apply_drill(work, (sr, sc))
+                else:
+                    safe.append(step)
+                    continue
+            else:
+                safe.append(step)
+                continue
+            if not floor7_open(work):
+                safe.append(step)
+        ws_steps = safe
+
     result["ws_steps"] = ws_steps
+    result["hold_floor"] = hold_floor
+    result["grid"] = grid
     return result
