@@ -297,6 +297,72 @@ def plan_current_board(
     }
 
 
+# Seed count when the login 0x0402 snapshot never delivered the pickaxe (axe)
+# count (it doesn't — the axe count is the goods count for gtid 4001, surfaced
+# live only via the 0x0402 consume push that follows each dig). A positive seed
+# lets the planner emit steps; the first consume push then supplies the real
+# remaining count. Verified live on adb-fc65396d 2026-06-16.
+_SEED_UNKNOWN_PICKAXE = 999
+
+
+def _is_diggable(actives: set, block_by_id: Dict[int, Any], block_id: int) -> bool:
+    """Whether the server will accept an axe dig on ``block_id`` right now.
+
+    A target is diggable iff it is on the server frontier (``actives``) AND it is
+    not an already-cleared cell. Live-verified rules (adb-fc65396d 2026-06-16):
+      - active cell with NO block entry  -> undug dirt, diggable.
+      - block with count>0               -> live pit / partially-hit cell, diggable.
+      - pit/dirt block with count==0     -> already collected / passed, no-op.
+      - stone (config 202) reads count==0 even when fresh (MINING_SCHEMA §6), so
+        it is treated as diggable regardless of count.
+    """
+    if block_id not in actives:
+        return False
+    blk = block_by_id.get(block_id)
+    if blk is None:
+        return True
+    if int(getattr(blk, "count", 0) or 0) > 0:
+        return True
+    return int(getattr(blk, "config_id", 0) or 0) == mining.TERRAIN_STONE
+
+
+def _select_dig_step(board: Any, plan_steps) -> Optional[Dict[str, Any]]:
+    """Pick the next server-valid step from the planner output.
+
+    The v4 planner orders moves by value but can propose unreachable (non-active)
+    or already-collected (count==0) pit blocks, which the server silently rejects
+    (board unchanged). So take the planner's highest-value step whose target is
+    actually diggable. If the planner proposed steps but NONE are diggable (e.g.
+    it keeps targeting already-dug pits), fall back to the deepest diggable
+    frontier cell to drive the board downward and reveal new pits. An empty plan
+    is respected (return None) — the planner sees nothing worth digging.
+    """
+    plan_steps = list(plan_steps or ())
+    actives = {int(a) for a in (getattr(board, "actives", None) or [])}
+    block_by_id = {int(b.block_id): b for b in (getattr(board, "blocks", None) or [])}
+
+    for step in plan_steps:
+        bid = step.get("block_id")
+        if bid is not None and _is_diggable(actives, block_by_id, int(bid)):
+            return step
+    if not plan_steps:
+        return None
+
+    cands = [bid for bid in actives if _is_diggable(actives, block_by_id, bid)]
+    if not cands:
+        return None
+
+    def _key(bid: int):
+        blk = block_by_id.get(bid)
+        depth, col = divmod(bid, 100)
+        is_pit = blk is not None and (
+            int(getattr(blk, "config_id", 0) or 0) == mining.TERRAIN_PIT
+            or int(getattr(blk, "is_reward", 0) or 0))
+        return (0 if is_pit else 1, -depth, col)  # pits first, then deepest frontier
+
+    return {"type": "dig", "block_id": sorted(cands, key=_key)[0], "step_cost": 1.0}
+
+
 def mine_until_pickaxe_empty(
     client: WSGameClient,
     tracker: mining.InventoryTracker,
@@ -308,22 +374,22 @@ def mine_until_pickaxe_empty(
     max_depth: Optional[int] = None,
     should_abort: Optional[Callable[[], bool]] = None,
 ) -> Dict[str, Any]:
-    """Re-plan and execute one confirmed step at a time until pickaxes reach 0.
+    """Re-plan and execute one confirmed dig at a time until pickaxes reach 0.
 
-    庫存必須先由 0x0402 snapshot/update 建立；如果沒有看過鎬子現量，直接
-    skip，避免把 ``max_num`` 或預設 0 誤當成真實庫存。
+    The pickaxe ("axe") count is NOT delivered by the 0x0402 login snapshot — it
+    is the goods count for gtid 4001, surfaced live only via the 0x0402 consume
+    push (9800001) that follows each dig (verified live 2026-06-16, fc). So rather
+    than skip when the count is unknown, we seed a positive count so the planner
+    emits steps, then adopt the authoritative remaining count from the first
+    consume push (``tracker``). Each dig targets a server-VALID frontier cell
+    (see ``_select_dig_step``); the planner can propose unreachable / already-
+    collected pits, which the server rejects, so the executed step is filtered to
+    a diggable target with a frontier fallback.
     """
-    if not tracker.has_item(mining.GOODS_PICKAXE):
-        return {
-            "skipped": "inventory snapshot missing",
-            "initial_inventory": tracker.as_props(),
-            "final_inventory": tracker.as_props(),
-            "plans": [],
-            "candidate_steps": [],
-            "executed": [],
-        }
-
+    seen = tracker.has_item(mining.GOODS_PICKAXE)
     inventory = dict(tracker.as_props())
+    if not seen:
+        inventory["pickaxe"] = _SEED_UNKNOWN_PICKAXE
     initial_inventory = dict(inventory)
     plans: list[Dict[str, Any]] = []
     candidate_steps: list[Dict[str, Any]] = []
@@ -338,7 +404,7 @@ def mine_until_pickaxe_empty(
         # 續做時讀當前 board 接續，不會重複。
         if should_abort is not None and should_abort():
             raise WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
 
@@ -349,12 +415,11 @@ def mine_until_pickaxe_empty(
         )
         plans.append(plan_result)
         _log_plan_trace(plan_result, inventory, step_index=_idx)
-        steps = list(plan_result.get("ws_steps", []))
-        if not steps:
+        step = _select_dig_step(current_board, plan_result.get("ws_steps", []))
+        if step is None:
             stopped_reason = "no_steps"
             break
 
-        step = steps[0]
         candidate_steps.append(step)
         item = execute_plan_step(
             client,
@@ -375,8 +440,13 @@ def mine_until_pickaxe_empty(
             int(item["goods_id"]),
             int(item.get("hits") or 1),
         )
+        # Adopt the authoritative remaining count the moment the first consume
+        # push lands (only relevant when we started from a seed).
+        if not seen and tracker.has_item(mining.GOODS_PICKAXE):
+            seen = True
+            inventory["pickaxe"] = tracker.pickaxe
         _log_execute_trace(item, step_index=_idx, inventory=inventory)
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
 
@@ -388,7 +458,7 @@ def mine_until_pickaxe_empty(
         _log_board_trace(current_board, inventory, phase="after_execute",
                          step_index=_idx)
     else:
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
 
     return {

@@ -177,24 +177,34 @@ result = api.dig_cell(cell_id=11003903, prop_id=PROP_BOMB)
 ```
 
 ### Inventory tracking
-**現量唯一可信來源是 `0x0402` push**。0x0c01 query 的 f1 是上限不是 current。
+鎬子（axe）現量 = goods cache 的 gtid `4001` 數量（客端 `getGoodsCountByGoodsGtid(4001)`，
+UI 顯示 `現量/maxAxeNum` = 例 `350/118`）。`0x0c01` query 的 `max_num`(f1) 只是 cap
+（= maxAxeNum），**不是** current。鎬子會隨時間自動回復（recover）。
+
+> **更正（2026-06-16 fc 實測）**：登入時 **不會可靠地** 推送 `9800004` 道具 snapshot
+> （多次純連線只收到 `5004` 或完全沒有 `0x0402`）。鎬子現量只在 **每次挖掘後的 `0x0402`
+> 消耗推送 `9800001`**（`items=[(4001, 剩餘量)]`）才會出現。先前「登入 snapshot 帶 4001」
+> 的結論是用合成 consume push 驗的，對真實登入流程是 **錯的**。
 
 ```python
 class InventoryTracker:
     """訂閱 0x0402 push 維護 in-memory item count。"""
-    def __init__(self):
-        self.counts = {}
-
     def on_0x0402(self, body):
         parsed = parse_inventory_push(body)
-        if parsed.get("evt_type") in (9800004, 9800001, 9800009, 1001006):
+        if parsed.get("evt_type") in (9800004, 9800001, 9800009):
             for item in parsed.get("items", []):
                 self.counts[item["item_id"]] = item["new_count"]
 ```
 
-WS runner 只在 `InventoryTracker` 已看過 `4001` 現量時才會挖礦；若本輪快速重連
-沒有收到 `9800004` snapshot，會回傳 `{"skipped": "inventory snapshot missing"}`，
-不會用 `0x0c01.max_num` 或預設值猜測鎬子數量。
+因此 WS runner **不再** 因「沒看過 4001 現量」而 skip：`mine_until_pickaxe_empty` 先
+seed 一個正數讓 planner 出步、挖第一鏟，再用第一個 `9800001` 消耗推送的真實剩餘量續挖到 0
+（`ws_token/mining_supervised.py`）。
+
+**挖掘有效目標**：server 只接受 `home_mine_info.actives`（= 可挖前沿 block_id）內、且
+**未被清除** 的格子。一個 active 格可挖 iff（無 block entry＝未挖泥土）或（block.count>0＝
+活的礦洞/半挖）或（config 202 石頭，石頭新鮮時 count 也是 0）。已收集的礦洞（cfg 401
+count 0）仍留在 actives，但再挖是 no-op。v4 planner 會提議非 active／已收集的礦洞，需由
+`_select_dig_step` 過濾＋前沿 fallback（2026-06-16 fc 實測）。
 
 ---
 
@@ -206,7 +216,8 @@ WS runner 只在 `InventoryTracker` 已看過 `4001` 現量時才會挖礦；若
 | f4=201 = 泥土 | H5/CDP board adapter 對齊 |
 | f4=202 = 石頭 | H5/CDP board adapter 對齊 |
 | f4=401 = 礦洞 | user 指出右側礦洞 → 對應 cell 11003906 |
-| f1 = pickaxe_cap | f1=114，玩家當前 112 → 是 cap 不是 current |
-| evt=9800004 = 道具 snapshot | read-only WS probe: 4001 現量 35 |
+| f1 = pickaxe_cap (=maxAxeNum) | f1=114，玩家當前 112 → 是 cap 不是 current；fc f1=118 玩家 350 |
+| 鎬子現量 = goods gtid 4001 | 客端 `getGoodsCountByGoodsGtid(4001)` UI `350/118`；登入**不**保證推 9800004，現量靠 9800001 消耗推送 |
+| evt=9800001 = 挖掘消耗推送 | fc 實測每挖 1 鏟推 `(4001, 剩餘)`：350→349→…→0 |
 | item_id 1007 = 礦物 | push 5412819, on-screen 5412.3K |
 | evt=9800009 = 道具獲得 | 挖礦得礦物觸發此 evt |

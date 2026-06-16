@@ -27,11 +27,13 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
   8. couple      — 伴侶: 奶茶+玫瑰一天送一次 (give_all_in_hand; 日期閘存在
                    ws_state/<device>.json; ``couple_gifts`` default on) + 戒指錘鍊
                    (``forge_ring`` opt-in, default off). Skipped without a partner.
-  9. mining      — 挖礦: opt-in (``mining_config.enabled=True``) only. Uses the
-                   login-time 0x0402 inventory snapshot; skips instead of
-                   guessing when the pickaxe count is unknown. Re-plans after
-                   each confirmed step and can consume pickaxe/bomb/drill only
-                   through explicit config flags.
+  9. mining      — 挖礦: opt-in (``mining_config.enabled=True``) only. The pickaxe
+                   (axe) count is NOT in the 0x0402 login snapshot (it isn't
+                   reliably pushed) — it arrives via the 0x0402 consume push after
+                   each dig. So mining seeds a count, digs a server-valid frontier
+                   cell, then adopts the real remaining count from the consume
+                   push and re-plans, until pickaxes hit 0. Consumes pickaxe/bomb/
+                   drill only through explicit config flags.
  10. lamp        — 開神燈: opt-in (``open_lamp=True``) only. Spends 神燈 items and
                    auto-equips/sells drops, so it is gated behind its own flag
                    (NOT ``spend``) and OFF by default. Runs one batch of up to
@@ -1013,7 +1015,8 @@ def run_device(device: str, *, spend: bool = False,
         False) opts in to 戒指錘鍊 (consumes all 真愛之石).
       - ``mining_config`` ``{enabled, allow_bomb, allow_drill, max_steps}``
         enables pure-WS mining. It consumes mining tools and therefore stays
-        OFF by default. Missing 0x0402 inventory snapshot -> skip, not guess.
+        OFF by default. The pickaxe count comes from the 0x0402 consume push
+        (no reliable login snapshot), so mining seeds + adopts the real count.
       - ``mail_claim`` (default False) enables 每日自動領取郵件附件 (一鍵領取,
         once-daily gated). Free (only takes earned attachments); skipped without
         the flag. ``mail_gem_threshold`` / ``mail_skill_threshold`` (optional)

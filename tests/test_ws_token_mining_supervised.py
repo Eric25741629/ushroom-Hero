@@ -355,13 +355,86 @@ def test_mine_until_pickaxe_empty_uses_tracker_inventory_and_items(monkeypatch):
     assert result["final_inventory"]["pickaxe"] == 0
 
 
-def test_mine_until_pickaxe_empty_skips_when_pickaxe_count_unknown():
-    tracker = mining_supervised.mining.InventoryTracker()
+def test_mine_until_pickaxe_empty_seeds_when_count_unknown_then_adopts_push(monkeypatch):
+    """No login snapshot -> seed so the planner runs, then adopt the real count
+    from the consume push (tracker) after the first dig and stop at 0."""
+    tracker = mining_supervised.mining.InventoryTracker()  # empty: no has_item(4001)
+    board1 = _board(actives=[16239104])
+    board2 = _board(actives=[16239204])
+    seen_inventories = []
 
-    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker)
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board1)
 
-    assert result["skipped"] == "inventory snapshot missing"
-    assert result["executed"] == []
+    def fake_plan(board, inventory, max_depth=None):
+        seen_inventories.append(dict(inventory))
+        bid = 16239104 if board is board1 else 16239204
+        return {"message": "dig", "ws_steps": [{"type": "dig", "block_id": bid}]}
+
+    after = {16239104: board2, 16239204: _board(actives=[])}
+
+    def fake_execute(client, step, **kwargs):
+        # simulate the consume push landing in the tracker: real count 1 left after
+        # the first dig (adopted in place of the seed), then 0 after the second.
+        tracker.counts[GOODS_PICKAXE] = 1 if step["block_id"] == 16239104 else 0
+        return {"goods_id": GOODS_PICKAXE, "block_id": step["block_id"], "hits": 1,
+                "confirmed": True, "confirmation": "confirmed_by_board_change",
+                "after_board": after[step["block_id"]]}
+
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", fake_plan)
+    monkeypatch.setattr(mining_supervised, "execute_plan_step", fake_execute)
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=10)
+
+    assert "skipped" not in result
+    assert seen_inventories[0]["pickaxe"] == 999          # seeded for the first plan
+    assert result["stopped_reason"] == "pickaxe_empty"     # adopted real count, hit 0
+    assert len(result["executed"]) == 2
+
+
+def test_select_dig_step_skips_non_active_and_collected_pits():
+    # planner proposes a non-active pit, then an already-collected pit (count 0),
+    # then a valid active pit -> the valid one is chosen.
+    board = _board(
+        actives=[12206204],
+        blocks=[
+            _block(12206202, 2, 122062, config_id=401, count=1),  # not in actives
+            _block(12206203, 3, 122062, config_id=401, count=0),  # collected
+            _block(12206204, 4, 122062, config_id=401, count=1),  # valid
+        ],
+    )
+    steps = [
+        {"type": "dig", "block_id": 12206202},
+        {"type": "dig", "block_id": 12206203},
+        {"type": "dig", "block_id": 12206204},
+    ]
+    chosen = mining_supervised._select_dig_step(board, steps)
+    assert chosen["block_id"] == 12206204
+
+
+def test_select_dig_step_falls_back_to_frontier_when_all_steps_stale():
+    # every planner step targets an already-collected pit; fall back to the
+    # deepest diggable frontier cell (implicit dirt: active, no block entry).
+    board = _board(
+        actives=[12206602, 12206604],  # implicit frontier cells (no block entries)
+        blocks=[_block(12206204, 4, 122062, config_id=401, count=0)],  # collected
+    )
+    steps = [{"type": "dig", "block_id": 12206204}]
+    chosen = mining_supervised._select_dig_step(board, steps)
+    assert chosen["block_id"] in (12206602, 12206604)
+    assert chosen["type"] == "dig"
+
+
+def test_select_dig_step_treats_fresh_stone_as_diggable():
+    # stone reads count==0 when fresh, but is diggable on the frontier.
+    board = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=0)])
+    chosen = mining_supervised._select_dig_step(board, [{"type": "dig", "block_id": 9901}])
+    assert chosen["block_id"] == 9901
+
+
+def test_select_dig_step_empty_plan_returns_none():
+    board = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    assert mining_supervised._select_dig_step(board, []) is None
 
 
 def test_mine_until_pickaxe_empty_should_abort_raises(monkeypatch):
