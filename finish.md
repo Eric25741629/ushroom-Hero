@@ -2805,3 +2805,1418 @@ sim 對比完成(與文件一致)。現單獨跑真實 board 重放(timing/empty
 
 ---
 
+## 2026-06-15 01:09:23  ·  session 0238a4d0
+
+我去讀了 sim 的 tape/cluster 程式碼,你的質疑是對的,我前面那個解釋是錯的。以下是查證結果:
+
+## 查證:sim 到底有沒有給「完整 3x3」
+
+- sim **確實是捲動的**:7-row 視窗(`ROWS=7`)、清掉 row 6 才往下捲(`get_board()` 回 `tape[viewport..viewport+6]`)。
+- 但 cluster 是用 `_paint_square()` **整顆方塊鋪在 tape 上**(3x3 = 9 格 `unreachable_pit`)。
+- 3x3 只佔 **3 個 row**,塞得進 7-row 視窗 → **當一顆 3x3 落在可見視窗內時,planner 看得到完整 9 格 pit**。捲動根本不會把它切開(3 < 7)。
+
+所以「捲動讓 3x3 不完整」這個說法是錯的,sim 跟真實在「3 row 塞進 7 row」這件事上**沒有差別**。我照背了 skill 的話,沒查證,抱歉。
+
+## 真正的 fidelity gap:不是捲動,是「霧」(terrain reveal)
+
+差別在「planner 看得到多少 undug 格的地形」:
+
+- **sim**:`get_board()` 把整個視窗的原始 tape 丟給 planner,包含還沒挖到的 `unreachable_pit`。**v1 的全盤 A* 等於開了上帝視角**,看到完整 3x3 就能精算「一顆炸彈剛好清 9 格」→ 省鎬子。
+- **真實 board**(經 `mining_adapter.board_to_grid`):planner 只知道 server 在 `blocks`/`features` 裡**明示揭露**的那幾格地形;其餘 active 格一律當 `rock`(未知)、再其餘當 `empty`。我今天讀小寶的真實盤面就是證據——**44 個可挖格,但只揭露 13 個 feature、其中只有 1 個是礦洞(401)**,根本看不到完整 3x3。
+
+換句話說:**sim 給 planner 的資訊比真實多很多**。v1 在 sim 省鎬子,有一部分是吃了「看得到全圖 pit」這個 sim 才有的資訊紅利;真實遊戲看不到,這個紅利兌現不了。
+
+## 結論(修正版)
+
+1. 在 **sim** 裡 v1 確實最省鎬子(186 vs v5 202),這是真的;但**sim 本身對 v1 有系統性偏心**(全盤 pit 可見 + 純下行 + v5 沒收到 `depth=`)。
+2. 所以 **sim 不是回答「真實裡誰最省鎬子」的可信 benchmark**——理由不是我先前說的捲動,而是這個 fog-of-war 資訊不對稱。
+3. skill 裡「3x3 從不完整出現在單一 frame」那句,其實講的是**量測 regime 時**「單張快照用連通分量會漏數 3x3」(所以 sim 密度要靠 `track_pits_replay` 時間追蹤校正)——那是**分析工具的限制**,我把它跟「planner 執行時看不看得到 3x3」混為一談了。
+
+要真正回答「v5 是不是比 v1-v4 省鎬子」,只有**真實 session log**(`analyze_mining_logs.py`,有每場鎬子消耗 / cost-per-pit)。同盤 A/B 只能靠 sim/replay,而那正是 v5 的劣勢場(資訊被霧遮、又沒餵 depth)。
+
+我可以:
+1. 跑 `analyze_mining_logs.py` 把你裝置 v5 真實 session 的**實際鎬子成本**算出來;
+2. 或順手把 skill 那句不精準的 rationale 改成上面這個「fog-of-war」正確版,免得以後又誤導。
+
+要哪個(或都要)?
+
+---
+
+## 2026-06-15 01:19:03  ·  session 0238a4d0
+
+決定性結果出來了。我把 sim 餵 planner 的盤面遮成「跟真實一樣看不到 undug pit 身分」,同 30 個 seed 重跑:
+
+| | planner | 鎬子(cost) | pits | **cost/pit** |
+|---|---|---|---|---|
+| **作弊版**(sim 原始, 看得到 undug pit) | **v1** | **186** | **47.8** | **3.89** ← 假冠軍 |
+| | v3 | 201 | 46.9 | 4.29 |
+| | v4 | 200 | 46.8 | 4.29 |
+| | v5 | 202 | 46.3 | 4.36 |
+| **公平版**(遮掉 undug pit 身分) | v1 | 209 | 30.1 | 6.95 |
+| | v3 | 222 | 28.7 | 7.74 |
+| | v4 | 214 | 30.3 | 7.06 |
+| | **v5** | 214 | **32.4** | **6.61** ← 真冠軍 |
+
+## 誰作弊了:**v1**
+
+證據鏈完整:
+1. **機制**:`smart_planner._count_pits()`(line 54)把**所有** `"pit" in cell` 的格子算進待清目標,**包含 undug 的 `unreachable_pit`**;A* 目標是「清光所有 pit」(line 230)。所以 v1 會精準規劃去清它在視窗裡「看得到但還沒挖到」的整顆 3x3。
+2. **真實 adapter 不給這資訊**:`mining_adapter.board_to_grid` 從不產生 `unreachable_pit`,未揭露格一律 `empty`/`rock`(我今天讀小寶真實盤面:44 可挖格只揭露 **1 個 pit**,不是一整顆 3x3)。
+3. **拔掉 god-mode 後 v1 崩盤**:pits 47.8 → 30.1(掉 37%,四套跌最多),cost/pit 3.89 → 6.95。它的「省鎬子」幾乎全靠看得到埋著的 pit。
+
+而 **v5 跌最少**(46.3→32.4,−30%),在公平資訊下**同時是最省鎬子(cost/pit 6.61 最低)+ 清最多 pit(32.4)**。原因正是它的歷史先驗(P(pit|pit)=42.5% 續挖 bias、期望成本選欄)——**不靠預先看到 pit,而是靠統計猜 pit 在哪繼續挖**,這正是真實 fog-of-war 下唯一能用的本事。
+
+## 所以結論跟你想的相反:**不該把 default 改回 v1**
+
+v1 的領先是 benchmark 漏資訊造成的假象;**在公平(貼近真實)的資訊下,v5 才是真正最省鎬子、產出最高的**。所以 v5 當 default 是對的——而且理由比文件原本寫的「empty-plan 最低」更硬:**它在 cost-per-pit 上實質最佳**。我先前被作弊版數據誤導、把重點講偏,這次的對照實驗才是該拿來判斷的依據。
+
+## 後續(這才是修「benchmark 作弊」的根)
+
+問題不在 v1 的 production 程式(live 它拿到的是真實 adapter 盤面,沒這資訊,只是表現較差);問題在 **sim eval 餵 planner 的盤面 vocabulary 跟真實 adapter 不一致**(sim 給 `unreachable_pit` 全套地形,真實只給稀疏揭露)。建議:
+
+1. **把「fog 公平模式」做進 `mining_sim_eval` / `compare_planners`**(預設用、或加 `--fair` flag),讓 planner 看到的盤面經過跟 `mining_adapter` 等價的投影——以後對比不會再被 god-mode 誤導。
+2. 更新 planner-eval skill:標明舊 sim 對 v1 系統性偏心,公平版 v5 勝出的數據。
+
+要我直接動手把 fair 模式做進 eval 工具 + 更新 skill 嗎?(這會改 `tools/` 下的 eval,不碰 planner 本身,也不影響正在跑的 bot。)
+
+---
+
+## 2026-06-15 01:21:42  ·  session f3ef17b8
+
+The edit is well-formed and `statusClass` is in scope (defined at line 2715). The logic now covers all states cleanly:
+
+- **睡眠中** (`next_wake_at` 在未來): 「下次喚醒 X分Y秒」⏰ + 倒數環
+- **喚醒瞬間** (`next_wake_at` 已過): 「下次喚醒 喚醒中...」
+- **執行任務中** (ONLINE/DEGRADED 且無 `next_wake_at`): 「目前狀態 執行中」⚙️ + 滿環綠色 ← 修正點
+- **暫停/停用/離線**: 「下次喚醒 --」(維持原樣)
+
+這正是你截圖那個情況:WS 階段在跑、還沒排睡眠時間,以前落到 `else` 分支顯示「下次喚醒 --」,現在會顯示「目前狀態 執行中」。
+
+按專案慣例(commit after milestone,只 stage 動到的檔)提交這個改動:
+
+---
+
+## 2026-06-15 01:29:22  ·  session 0238a4d0
+
+完成。已只保留 fair 模式 + 更新 skill。
+
+## 改了什麼
+
+**`tools/mining_sim_eval.py`**(commit `5fd05187`):新增 `_fog_project`,在 `play_one_game` 把盤面餵給 planner **之前**,把所有 buried(unreachable)實體格遮成不透明 `unreachable_rock`(`reachable_pit` 等已揭露格照常透出 = 真實 frontier reveal)。對齊真實 `mining_adapter`。**god-mode raw-tape 路徑已移除,無 opt-out**——以後 `mining_sim_eval` / `compare_planners` 一律公平。sim 內部真值、獎勵、密度量測都不動;`replay_real_boards` 本來就走真實 adapter 不用改。
+
+## 現在的 canonical fair 數字(seed 200×30)
+
+| planner | score | pits | cost/pit |
+|---|---|---|---|
+| **v5** | **652** | **31.0** | 6.94 |
+| v4 | 624 | 30.3 | 7.06 |
+| v1 | 620 | 30.1 | 6.94 |
+| v3 | 602 | 28.7 | 7.74 |
+
+排名 **v5 ≥ v4 > v1 > v3**。v1 的假冠軍(舊 948)在拔掉作弊資訊後 pits 從 47.8 崩到 30.1。**v5 在公平資訊下 score / pits 最高、cost/pit 與 v1 並列最低**——v5 當 default 站得住腳,理由是「真實資訊下實質最省鎬子 + 產出最高」。
+
+## skill 更新
+
+planner-eval skill 開頭加了 `2026-06-15 sim 改為 fog-fair ⭐ 先看這個` 段落:解釋 god-mode 洩漏、v1 為何被高估、fair 對照表,並把舊的 raw-tape sim 分數表標為「god-mode era、已取代,只剩計時/empty% 可參考」。(skill 檔不在 git 追蹤內,為本機更新;memory 也同步更新。)
+
+要不要我順手也跑一次 `analyze_mining_logs.py` 看你裝置 v5 真實 session 的實際鎬子成本,跟這個 fair-sim 數字對照?
+
+---
+
+## 2026-06-15 01:45:29  ·  session 0238a4d0
+
+小寶現在停在主頁(家園),不在礦坑畫面,所以沒辦法直接比「螢幕上的礦 vs WS 資料」。但協議 dump 已經足夠回答你的假設了。先清暫存檔。
+
+---
+
+## 2026-06-15 01:52:40  ·  session 0238a4d0
+
+`_fog_project` 已 0 筆(fog 移除確認;grep 回 0 筆 exit 1 中斷了後續檢查)。補確認 compare_planners 與檔案乾淨狀態。(順帶注意:git log 出現別的分支 merge —— 應是你另一個 Claude Code 實例在動分支,我的 revert commit `a8d48985` 已在歷史內。)
+
+---
+
+## 2026-06-15 01:53:39  ·  session 40a206d2
+
+todo.md 的 diff 有**兩段**：頂部 `@@ -12,6 +12,39 @@`（+33 行，**不是我的** — 另一 session/使用者的未提交 WIP）+ 我的 plan 區段編輯。git 只能整檔 stage，會連帶捲入他人 WIP。依慣例（只提交自己的檔、絕不捲入他人 WIP），**todo.md 不提交**，更新留在工作樹由 todo.md 管理方提交。
+
+我的程式+測試已提交並合併（`cb707370`）。任務完成。
+
+---
+
+## 2026-06-15 02:10:36  ·  session 9a295ab0
+
+全部完成。這次工作分兩部分，總結如下。
+
+## 一、車位裝飾研究（你原本問的）
+- **封頂是 15 星，不是 20**（config 只到 level 15、`getDataByKeys(16+)=null`、UI 是 5 星×3 段）。你已確認以 15 為準。
+- **加成曲線**：每圍 lv1 320% → lv15 2560%（每星 +160%，攻/生/防各自獨立，對所有持有裝飾累加）。
+- **成本模型**：每個裝飾吃自己的碎片，碎片用菇車幣在 Mall 買，**單價隨裝飾不同**（10~60 萬）；限購 X/120 = 剩餘可買 = 升到滿級還需的碎片數。
+- **WS 協議 live 採到**（實際升中式庭院大門 lv6→7）：買碎片=`shop_buy 0x1b02(6914)`、升級=`0x3801 JSON{type,skin_id}`→回 `0x3211(12817){skin_lev}`。修正了舊文件「12817 是請求」的猜測。全寫進 `docs/protocol/CARPARK_DECORATION_SHOP.md §9`。
+
+## 二、Dashboard 新分頁「🅿️ 車位工具」（你後來要的）
+**怎麼用**：重啟 `new_main_v2.py` → 開 `http://127.0.0.1:5002/carpark-tools` → 選帳號/裝置 → 按「讀取並預覽計畫」→ 看清單後按「執行計畫」。
+
+**做了什麼**：
+1. **偵測菇車幣** + 讀全部已擁有裝飾（等級/單價/限購）。
+2. **算升級順序**：用 `coin-per-attr =(碎片數×該裝飾單價)÷屬性` 由低到高貪婪排序，**每個裝飾不同價格都算進去**，吃進你設的預算上限 + 步數上限。
+3. **執行**：自動逐星「買碎片→升級」。
+
+**安全設計**：預覽後才執行、執行前二次確認、執行期間暫停該裝置 bot loop、逐星序列化、server 拒絕即停、誠實計帳（買了碎片但沒升成也算花費）。只優化「已擁有」裝飾（新裝飾要走限定的「裝扮自選」，不能自由買）。
+
+**live 驗證**（5556）：讀到 16 個裝飾全正確、5M 預算正確挑出 5 步（每點屬性最便宜 c/a 20.83）、executor 實際把卡通大門升 lv10→11、Flask 路由註冊、**測試 27 passed**。
+
+**code-review 抓到並修掉 3 個花費安全 bug**：升級沒升星卻回成功、失敗時漏算已扣 coin、`_real_ip` 切掉本機 port 害 pause 打錯 key（改用 `bot_state.is_local_device`）。
+
+**兩個提醒**：
+- Dashboard 要**重啟**才會載入新分頁（blueprint 在 import 時註冊）。
+- 跟倉庫頁一樣，目前只支援**本機** web_h5 裝置（CDP 走 127.0.0.1:port）。
+
+骨架可擴充——未來要加更多按鈕直接在 `templates/carpark_tools.html` 加 section + 在 `routes_carpark_tools.py` 加 endpoint 即可。
+
+---
+
+## 2026-06-15 02:33:04  ·  session 9a295ab0
+
+完成你交代的部分:
+
+**1. 改名**：「車位工具」→「**🛠 工具 優化類**」(dashboard nav 連結 + 頁面 title/h1 都改了)。面板本來就是可擴充骨架，現在名稱也對齊「優化類工具集」的定位。
+
+**2. 已 commit 我這部分**（`dfbb9afa`，只 stage 我動的車位相關檔，沒碰 secrets/別人的 WIP）：車位裝飾分析、WS 協議、optimizer、docs、dashboard 殼。
+
+**3. 純 WS ws_token 後端交給另一個 agent** — 以下是給他接手的重點，可省他重做：
+- **optimizer 可直接重用**：`ws_token/carpark_decoration.plan_upgrades(decos, *, budget, max_steps)`（純函式、吃 `DecoUpgradeState`，coin-per-attr greedy，含各裝飾不同單價/限購/預算/步數），22 個測試過。
+- **協議已採到**（`docs/protocol/CARPARK_DECORATION_SHOP.md §9.8`）：買碎片=`shop_buy 0x1b02(6914){1:shop_type=11, 2:item_id, 3:qty}`、升級=`0x3801(14337) JSON{"type":0,"skin_id":id}`→回 `0x3211(12817){skin_lev}`。
+- **純 WS read 還缺 3 個包要抓/解**：`car_park_info`(skin_list=已擁有等級)、Mall 商店表 shop_type 11(各裝飾的 `item_id`+碎片單價+限購剩餘)、菇車幣餘額。（限購剩餘其實 = 升到滿級還需的碎片數，可由 config 推，但 item_id 與單價要從商店表拿。）
+- **跨 worker 觸發**：dashboard 按鈕要走 command queue 派給該裝置 runner 執行，才不會像 CDP 版只限本機。
+
+我不會再動純 WS 後端那塊，避免跟另一個 agent 撞檔。
+
+---
+
+## 2026-06-15 02:38:20  ·  session 0950aebf
+
+更新記憶（工具已建）與任務：
+
+---
+
+## 2026-06-15 02:50:08  ·  session 0950aebf
+
+已離開抽卡頁（`active_views` 只剩 `MainView`、抽卡按鈕掃不到了，切首頁送了 `0x4707`）。現在在「不在抽卡頁」狀態下純 WS 送一抽，證明與 UI 無關：
+
+---
+
+## 2026-06-15 03:01:53  ·  session 83d43f6d
+
+Let me confirm the tool generalizes to the other account (9223) and compiles cleanly.
+
+---
+
+## 2026-06-15 03:22:45  ·  session 0950aebf
+
+更新 todo review + 標記任務完成：
+
+---
+
+## 2026-06-15 03:53:31  ·  session 83d43f6d
+
+Auto-opencode: OFF
+
+OpenCode 自動委派目前是關閉的，所以程式任務都由我直接處理（除非你明確用 `/opencode <指令>` 觸發）。
+
+剛才那題還在等你拍板:要我把 dashboard 的 read+write 一起換成純 WS,還是先停在「解析 + `tools/read_carpark_ws.py`」這裡?
+
+---
+
+## 2026-06-15 03:53:56  ·  session 83d43f6d
+
+Auto-opencode: OFF
+
+OpenCode 自動委派目前是關閉的，所以程式任務都由我直接處理（除非你明確用 `/opencode <指令>` 觸發）。
+
+剛才那題還在等你拍板:要我把 dashboard 的 read+write 一起換成純 WS,還是先停在「解析 + `tools/read_carpark_ws.py`」這裡?
+
+---
+
+## 2026-06-15 04:11:29  ·  session 0950aebf
+
+已提交：`c93aa626`（branch `feat/overnight-2026-06-14`，15 檔，1365+ / 28-，無 push、無 attribution footer，依規則）。
+
+提交內容（抽卡功能 + 改名）：
+- 新增 `ws_token/gacha.py`、`control_panel/gacha_tools_js.py`、`tests/test_ws_token_gacha.py`、`tools/probe_gacha_live.py`
+- 改名 `routes_carpark_tools.py`→`routes_tools_optimize.py`、`carpark_tools.html`→`tools_optimize.html`（git 自動辨識為 rename）
+- 修改 `config_manager.py`、`control_panel_app.py`、`ws_token/runner.py`、`runtime_services/ws_runner_service.py`、`game_actions/ws_phase.py`、`templates/dashboard.html`、`tests/test_ws_runner_wiring.py`、`tools/test_carpark_plan.py`、`tasks/todo.md`
+
+刻意**未**納入（非本功能 / 本機狀態）：`bot_config.json`、`finish.md`、`tasks/lessons.md`、`docs/protocol/CARPARK_DECORATION_SHOP.md`、以及一批車位 recon 腳本（`find_carpark_entry.py`、`probe_parking_live.py` 等）— 那些是車位工具那條線的東西，留著不動。
+
+提醒仍在：dashboard 要**重啟**才會載入改名後的 `/tools-optimize` 路由與抽卡 API；headless 自動抽要在 `bot_config.json` 設 `ws_token.gacha`（預設關）。
+
+---
+
+## 2026-06-15 04:25:01  ·  session 83d43f6d
+
+OpenCode is spinning up (the free model can queue briefly). It's running in the background and I'll be notified on completion. Let me track the new phase while it works.
+
+---
+
+## 2026-06-15 04:27:07  ·  session 83d43f6d
+
+`ximi/mimo-v2.5-pro` is the match. Setting it.
+
+---
+
+## 2026-06-15 04:38:47  ·  session 83d43f6d
+
+全部完成,只剩合併(已刻意延後)。
+
+## 成果
+
+**協議(我解 + 驗證)**
+- 3 個包全解、跨兩帳號驗證:skin_list=`car_park_info`(12801 type0)、已買數=`shop_info`(6913 type11)、菇車幣=role attr 201;item_id/單價/cap 取自 client config `configMall`。
+- 釐清升級 cmd:是 `car_park_skin_up_c2s`(12817) protobuf,不是 §9.8 誤判的 0x3801 JSON(那是 json_proto 通用封套)。
+
+**TDD(我寫)**:`tests/test_carpark_ws_io.py` — payload 結構 + routes shop_id 接線 + exec args,先 RED 後 GREEN。
+
+**實作(OpenCode)**:`READ_STATE_WS_JS` + `EXEC_STEP_WS_JS` 進 `carpark_tools_js.py`,routes 的 `cat/cell` 全換 `shop_id`,`_READ_TIMEOUT` 90→25。第一次委派(free model)逾時只做半套,改用你指定的 `ximi/mimo-v2.5-pro` 91s 補完。
+
+**嚴格審核(我)**
+- 27/27 tests pass、py_compile OK。
+- diff 只動 carpark 兩檔,**gacha 分頁完全沒動**。
+- 兩個 payload 與我 live 驗證版**逐字一致**(byte-match)。
+- **live 真實 buy+upgrade 通過**:異世之界 lv1→2,菇車幣 88,643,235→88,443,235(−20 萬 exact)、等級 1→2、已買 1→2。
+
+## 隔離與合併狀態
+- 全程在 worktree `C:/Users/Eric/cc-worktrees/carpark-ws`(branch `feat/carpark-ws-readwrite`,off `c93aa626`),避開正在被另一個 session 即時改的 carpark/gacha 檔案。
+- 已 commit `1ff00e31`(只 stage 5 個我動的檔,沒 `git add -A`)。
+- **合併延後**:`feat/overnight-2026-06-14` 仍在 `c93aa626`,我的 branch 是乾淨 fast-forward(merge-tree 無衝突),但該 branch 正被主工作樹的並行 session 佔用且 dirty,現在強合會打斷它。
+
+要我**等並行 session 收尾後再幫你 FF 合併 + 移除 worktree**,還是你自己挑時間合?(合併指令很單純:主樹乾淨後 `git merge --ff-only feat/carpark-ws-readwrite`,再 `git worktree remove` + `git branch -d`。)
+
+---
+
+## 2026-06-15 04:42:27  ·  session 83d43f6d
+
+完成並收尾。
+
+## 合併結果
+- **FF 合併進 `feat/overnight-2026-06-14`**(commit `1ff00e31`),5 個檔:`carpark_tools_js.py` + `routes_tools_optimize.py` + `tests/test_carpark_ws_io.py` + `tools/read_carpark_ws.py` + `CARPARK_DECORATION_SHOP.md §10`。
+- 合併前清掉我自己 session 初期殘留在主樹的兩個 artifact(read-only §10 doc、未追蹤的 read tool;都已確認被 branch 版本取代)。
+- **並行 session 的 11 個未提交 WIP 檔完全沒被動到。**
+- worktree 已移除、merged branch 已刪除。
+- 沒有 push(依慣例,要 push 再跟我說)。
+
+## 驗證(主樹合併後)
+- `tests/test_carpark_ws_io.py` + `test_carpark_decoration.py` → **27 passed**。
+- py_compile OK。
+- (流程中已 live 驗過真實 buy+upgrade:異世之界 lv1→2,扣 20 萬菇車幣 exact。)
+
+## 要生效的最後一步
+車位裝飾工具現在是純 WS read+write,但 **dashboard 是吃 `sys.modules` 快取**,要 **重啟 `new_main_v2.py`** 才會載入新的 JS payload 與 routes。重啟後:預覽讀取從 ~90s cocos 掃描降到 ~3-4s WS、買升也走純 WS(不再導航 cocos UI)。gacha 分頁不受影響。
+
+---
+
+## 2026-06-15 04:47:43  ·  session 5a4bde37
+
+原因在 `runtime_services/startup_sleep.py` 的錯排邏輯。
+
+**根本原因：`emulator-5554` 的啟動延遲剛好是 0 秒。**
+
+`resolve_startup_stagger_sec` 計算公式是：
+
+```
+延遲 = 裝置在排序中的排名 (index) × gap_sec (預設 120s)
+```
+
+`compute_stagger_order` 按以下順序排序：
+
+| 排名 | 裝置 | parity | offset |
+|------|------|--------|--------|
+| **0** | **emulator-5554** | even=0 | 0min=0 |
+| 1 | emulator-5556 | even=0 | 15min |
+| 2 | emulator-5558 | even=0 | 5min → 實際排在 5556 前一點... |
+| ... | ... | odd/unset | ... |
+
+5554 是 `wake_hour_parity: "even"` + `wake_minute_offset: 0`，在 parity 和 offset 都最小，所以排名第 0。
+
+`0 × 120 = 0 秒`，等於完全不等就直接衝進去連瀏覽器。
+
+---
+
+**如果你不想讓它立刻開：**
+
+最簡單的方法是在 `STARTUP_SLEEP_SEC_BY_DEVICE` 加一個硬覆蓋（在 `new_main_v2.py` 的頂部，它會被 startup_sleep 模組引用）：
+
+```python
+from runtime_services.startup_sleep import STARTUP_SLEEP_SEC_BY_DEVICE
+STARTUP_SLEEP_SEC_BY_DEVICE["emulator-5554"] = 60  # 等 60 秒再開
+```
+
+或者更快的方式是直接在 `bot_config.json` 的 `global.compute` 加：
+
+```json
+"compute": { "startup_stagger_sec": 0 }
+```
+
+這會讓所有裝置都 0 延遲（等同現在 5554 的狀況）；若你只想讓 5554 晚一點，用第一個方法的 explicit override。
+
+---
+
+## 2026-06-15 04:49:43  ·  session d6bc0009
+
+再看 farm.py 和 ws_recon 文件的當前狀態。
+
+---
+
+## 2026-06-15 04:52:40  ·  session 5a4bde37
+
+原因找到了，在 `control_panel/shared/cdp.py:33`：
+
+```
+no CDP target on port 9230
+```
+
+這行來自 `find_game_page_target` — 它在 port 9230 上找不到任何開著的 Chrome 分頁。
+
+**根本原因：「在線」不等於「Chrome 開著」。**
+
+`bot_state` 的 ONLINE 只代表 bot thread 活著。5554 的 `web_stop_mode` 是 `close_browser`，所以：
+
+- bot 睡眠期間 → Chrome 關閉 → port 9230 沒有 target
+- bot WS phase（開瀏覽器前） → Chrome 也沒開
+- 只有 bot 正在執行遊戲任務時，Chrome 才在跑
+
+裝飾升級工具需要用 CDP 注入 JS，所以 Chrome 必須是開著的。
+
+---
+
+**目前最快的解法**：在 dashboard 先手動點「開啟瀏覽器」讓 Chrome 起來，再用裝飾工具。
+
+**更好的解法**：讓錯誤訊息對用戶友善，並在 `_cdp_evaluate` 找不到 target 時直接說清楚。要不要我改一下這個錯誤提示，讓前端顯示「瀏覽器未開啟，請先在 dashboard 點「開啟瀏覽器」再試」而不是技術性的 "no CDP target on port 9230"？
+
+---
+
+## 2026-06-15 04:54:31  ·  session 5a4bde37
+
+簡單說：
+
+**這個工具需要 Chrome 瀏覽器是開著的才能用。**
+
+bot 睡覺的時候會把 Chrome 關掉。所以你看到「閃電在線」，只是代表 bot 程式還在跑，不代表 Chrome 有開。
+
+---
+
+**解法**：在 dashboard 找到閃電那張卡，點「開啟瀏覽器」，等瀏覽器開起來，再去用裝飾升級工具就好了。
+
+---
+
+## 2026-06-15 05:17:03  ·  session d6bc0009
+
+完成。
+
+**本次做了什麼：**
+
+`ws_token/farm.py` 新增：
+- `SEED_ID_PREMIUM=103`, `HARVEST_CARD_SHOP_TYPE=11`, `HARVEST_CARD_SHOP_ID=1604`
+- `CMD_WORKER_START=18177`, `CMD_WORKER_CANCEL=18178`, `FARM_WORK_ID=1001`
+- `stop_work()` — cmd 18178, body `{field1: 1001}`
+- `start_work_simple()` — cmd 18177, same body（不動同伴/肥料設定）
+- `run_harvest_card_cycle()` — 完整流程：停打工 → 施肥 → 收成 → 買豐收卡 → 種特級種子 → 恢復打工
+
+`ws_token/runner.py` 新增 step 4：檢查 `farm.harvest_card_cycle.enabled`，若 true 呼叫 cycle；同時 skip step 3 的 `start_work`（避免衝突）。
+
+**啟用方式**（bot_config.json 某裝置）：
+```json
+"ws_token": {
+  "farm": {
+    "harvest_card_cycle": { "enabled": true, "num_cards": 3 }
+  }
+}
+```
+
+---
+
+## 2026-06-15 05:22:05  ·  session 8a19334c
+
+OpenCode 正在執行中。等它完成的同時，讓我更新 `bot_config.json` 兩台裝置的 `amount` 從測試值 1 改成 7000 — 這個是 `finish.md` 記錄的待辦事項：
+
+> `bot_config.json` 兩台（emulator-5554、adb-fc65396d）`statue_weekly.amount` 1 → 7000（原註解：驗證穩定後改 7000）
+
+---
+
+## 2026-06-15 05:22:55  ·  session d6bc0009
+
+完成。邏輯如下：
+
+**buy 決策（在 `run_harvest_card_cycle` step 5）：**
+
+```
+若 inventory_tracker 有 item 103 現量:
+    need = max(0, empty_plots - current_seeds)
+    cards_to_buy = min(need, num_cards)   ← 買缺口，不超過設定上限
+    若 need == 0 → 完全跳過購買（種子夠用）
+否則 (未見 0x0402):
+    cards_to_buy = num_cards              ← fallback: 照設定買
+```
+
+`result` 會多出三個欄位方便確認：`seed_before`（買前現量）、`empty_plots`（空地數）、`cards_to_buy`（實際決定買幾張）。
+
+---
+
+## 2026-06-15 05:26:07  ·  session 8a19334c
+
+全部到位。讓我提交這批變更：
+
+---
+
+## 2026-06-15 05:34:16  ·  session 8a19334c
+
+`ok=True`，exp 從 21123502 → 21123503，驗證完畢。提交修正：
+
+---
+
+## 2026-06-15 05:45:42  ·  session 4a04f306
+
+完成。總結變更：
+
+**`config_manager.py`** — `get_online_check_checkers()` 新增 `"*"` 萬用字元支援：若清單含 `"*"`，展開為所有設備中沒有 `online_check_target_pid` 的裝置（即所有非 requester）。
+
+**`bot_config.json`** — `online_check_checkers` 改成 `["*"]`，讓 5554/5556/5560 等全部自動成為 checker，5558（有 `online_check_target_pid`）自動排除。
+
+**`tests/test_online_check_immediate_wake.py`** — 補上 `wake_override_service.bot_state` 的 monkeypatch 隔離，防止真實 `bot_state` 的 wake override 跨測試污染。
+
+效果：5558 醒來時會同時喚醒所有可用 checker（5554、5556、5560），誰最快搶到 request 就誰處理。5554 被 dashboard 暫停時，5556 或 5560 會自動接手。未來新增裝置只要沒有 `online_check_target_pid` 就自動納入，不需手動維護清單。
+
+---
+
+## 2026-06-15 05:50:55  ·  session 8a19334c
+
+完成。以下是這次實作的摘要：
+
+**實作內容：每日免費抽卡 (0x1602) — ws_token 自動化**
+
+**協議確認**
+- cmd `0x1602` c2s: `{slot#1, flag#3=1}`，slot=8 技能、slot=7 同伴
+- server 回 `0x0902`（35-draw 結果）或 `0x0201` error code 89（每日上限）
+- 每日上限 3 次/slot，無需真實廣告
+
+**新增檔案/變更**
+- `ws_token/gacha.py`: 新增 `CMD_FREE_DRAW`, `SLOT_SKILL/SLOT_COMPANION`, `free_draw_once/slot/all`
+- `ws_token/runner.py`: 新增 `_run_gacha_free`（ws_state 日期閘，避免同日重跑），TASK_ORDER 加入 `"gacha_free"`，run loop 在 `gacha_config.free_daily=True` 時觸發
+- `config_manager.py`: gacha default 加 `"free_daily": False`，sanitizer 防呆
+
+**啟用方式**（`bot_config.json`）：
+```json
+"ws_token": {
+  "gacha": {
+    "free_daily": true
+  }
+}
+```
+`enabled`（付費券抽）與 `free_daily`（免費廣告召喚）完全獨立開關，可只開其中一個。
+
+---
+
+## 2026-06-15 17:05:28  ·  session 8a19334c
+
+了解，免費廣告召喚 ADB 掛機本來就會自動觸發，不需要 WS 這層。
+
+那你說的「每周的抽卡 走 WS 協議」指的是什麼？我現在有幾個可能：
+
+1. **付費券抽（消耗抽卡券 1012/1013）** — 這個其實已經在 runner 裡了（`_run_gacha`，cmd `0x0902`），預設關，設 `ws_token.gacha.enabled = true` 就啟動，每次 WS 醒來會 drain 到沒券為止
+2. **其他每週重置的抽卡機制** — 例如某個週免費抽、週重置的特殊池
+
+你目前對這個裝置手動在做的是哪種？
+
+---
+
+## 2026-06-15 17:35:29  ·  session 8a19334c
+
+了解，免費廣告召喚 ADB 掛機本來就會自動觸發，不需要 WS 這層。
+
+那你說的「每周的抽卡 走 WS 協議」指的是什麼？我現在有幾個可能：
+
+1. **付費券抽（消耗抽卡券 1012/1013）** — 這個其實已經在 runner 裡了（`_run_gacha`，cmd `0x0902`），預設關，設 `ws_token.gacha.enabled = true` 就啟動，每次 WS 醒來會 drain 到沒券為止
+2. **其他每週重置的抽卡機制** — 例如某個週免費抽、週重置的特殊池
+
+你目前對這個裝置手動在做的是哪種？
+
+---
+
+## 2026-06-15 17:48:09  ·  session a377ef08
+
+語法檢查。
+
+---
+
+## 2026-06-15 17:53:26  ·  session a377ef08
+
+語法全部驗證一次：
+
+---
+
+## 2026-06-15 17:54:12  ·  session a377ef08
+
+對，你的理解完全正確。
+
+目前狀態：
+
+| 入口 | 是否存在 | 說明 |
+|------|----------|------|
+| **Dashboard 工具面板** `/api/gacha/draw` | 存在且可用 | 手動一鍵抽，走 WS `0x0902`，可選 drain/fixed 模式 |
+| **自動化 bot（ws_token）** | 程式碼已備妥，但預設 **停用** | `gacha.enabled=False`，不會自動跑 |
+| **ADB `weekend_to_buy`** | 週末照跑 | 除非你把裝置的 `ws_token.gacha.enabled=true`，否則 ADB 路徑不受影響 |
+
+如果你之後想讓 bot 在週末自動跑 35×3，在 `bot_config.json` 對應裝置下加：
+
+```json
+"ws_token": {
+  "gacha": {
+    "enabled": true,
+    "weekend_only": true
+  }
+}
+```
+
+這樣 WS 階段週末會自動抽，ADB `weekend_to_buy` 被 `_ws_skip` 跳過；平日 runner 回傳 `skipped: not Sat/Sun`，ADB 側不受影響。
+
+---
+
+## 2026-06-15 18:06:04  ·  session da801424
+
+4 個探索 agent 已並行啟動，正在讀取：
+- 每日任務 WS 協議與 daily_pipeline 流程
+- 停車品質過濾邏輯（尋找「收藏」欄位、今日已停去重）
+- `tools/` 下的新停車工具（probe_parking_live 等）
+- ws_phase 架構與現有 time gate 範例
+
+等結果回來後，針對三個 issue 寫 OpenCode 實作 prompt，再派 OpenCode 動手，最後我審 diff。
+
+---
+
+## 2026-06-15 18:10:30  ·  session da801424
+
+三個 agent 已回，資訊很清楚。等最後一個停車過濾 agent，同時對小寶做 live 探針。
+
+---
+
+## 2026-06-15 18:11:46  ·  session da801424
+
+兩個 OpenCode 已並行啟動：
+- **停車 collect_space 修正**：改用收藏格子 + 今日去重
+- **每日任務 8 AM gate**：加時間閘 + 日期閘
+
+跑完後我審 diff，確認沒問題再 commit。
+
+---
+
+## 2026-06-15 18:16:48  ·  session da801424
+
+語法 OK，`_record_park_today` 在兩個函數都有呼叫（line 736、919）。提交：
+
+---
+
+## 2026-06-15 18:20:39  ·  session da801424
+
+Agent 把所有 WIP 打包進去了（未授權）。撤銷這個 commit，還原到工作狀態：
+
+---
+
+## 2026-06-15 18:26:51  ·  session da801424
+
+commit `8d515d90`。
+
+**停車邏輯現在是：**
+
+1. 讀 12802 取坐騎 → 只保留 `minute == 0` 的（哪怕 1 分鐘都丟掉）
+2. 若無 minute==0 坐騎 → 直接 skip (`no_zero_min_mount`)
+3. 讀 12808 → 優先用 `collect_space`（收藏格子），若無可停格子 → fallback 到 `null_space`
+4. 兩個 source 都套 silver filter + 今日去重
+
+**20/min 硬限制**：目前等 probe agent 回來確認 `reward_buff` 的 key encoding。若確認全部跨界格子都是固定 20/min，就不需要額外篩選；若有低於 20 的格子，再補一個 rate 過濾。
+
+---
+
+## 2026-06-15 18:29:19  ·  session db2300d6
+
+完成。改動說明：
+
+- **`weekday() != 6`** 改成 **`weekday() != 0`**（週一 = 0）
+- 新增 **`now.hour < 3`** 守門：凌晨 3 點前跳過
+- 「裝置未上線就等」靠 bot 原本的 wake loop 處理 — bot 每次喚醒都會再呼叫 pipeline，週一 3 點後只要裝置上線就會觸發，不需要函數內部 sleep
+
+週的邊界沒問題：ISO week 以週一起算，遊戲週日結算後的週一正是新的 ISO week，`isocalendar()[1]` 自然切到新週，deduplication 邏輯不用動。
+
+---
+
+## 2026-06-15 18:33:49  ·  session da801424
+
+兩個函數都更新了。現在用 OpenCode 處理 reward_buff rate 解析 + 三段降級（需要先用小寶確認 key）：
+
+---
+
+## 2026-06-15 18:36:18  ·  session da801424
+
+是的，三個 commit 都只 stage 了我修改的檔案：
+
+- `efc65911` → `git add ws_token/carpark.py ws_token/runner.py`
+- `8d515d90` → `git add ws_token/carpark.py`
+- `13f67981` → `git add ws_token/carpark.py`
+
+其他 WIP 檔案（`Skill.py`、`bot_config.json`、`config_manager.py`、`finish.md` 等）全部維持未 stage 狀態，和 session 開始前一樣。
+
+OpenCode 還在跑 reward_buff probe + rate tier 實作，等完成後同樣只 stage `ws_token/carpark.py`。
+
+---
+
+## 2026-06-15 18:47:13  ·  session da801424
+
+已 commit `5f8e67f7`，只含 `ws_token/carpark.py`。
+
+目前狀態：
+- `REWARD_RATE_KEY = 0` → null_space 降級時暫不過濾（collect_space 永遠不過濾）
+- 一旦確認 reward_buff 的 key ID（代表菇車幣/min），把 `REWARD_RATE_KEY` 改成對應 key 數值，20→15→10 tier 就會自動生效
+
+要繼續跑小寶 probe 確認 reward_buff key 嗎？
+
+---
+
+## 2026-06-15 18:53:46  ·  session da801424
+
+邏輯正確，commit：
+
+---
+
+## 2026-06-15 19:01:13  ·  session da801424
+
+結果很清楚。幫使用者整理成可驗證的格式：
+
+**27 匹坐騎 — 按 minute 分組：**
+
+| minute | 狀態 | mount IDs |
+|--------|------|-----------|
+| 0 | PARKED_CROSS | #1 (已在跨界) |
+| 0 | PARKED_LOCAL | #10, #11, #12, #20, #37 |
+| **0** | **idle（可停）** | **#2, #3, #4, #5, #6, #8, #24, #27, #29, #32, #804 → 11 匹** |
+| 480 | idle | #7, #9, #13, #14, #15, #19, #21, #22, #25, #28 → 10 匹 |
+
+**Bot 的選擇邏輯：**
+1. `read_my_mounts` 先排除 parking=True（去掉 #1 + #10,#11,#12,#20,#37），剩 21 匹
+2. `zero_min = [m for m in mounts if m.minute == 0]` → 11 匹 idle 全部符合
+3. 這 11 匹都會被放進 `mount_queue` 依次停進去
+
+**minute=480 的 10 匹**表示今天已跑完 480 分鐘被自動領回，不會被選到（`minute > 0`）。
+
+這樣的分群與預期一致嗎？
+
+---
+
+## 2026-06-15 19:05:42  ·  session da801424
+
+顯示仍亂碼，直接寫到檔案繞過終端：
+
+---
+
+## 2026-06-15 19:25:55  ·  session da801424
+
+語法無誤，commit：
+
+---
+
+## 2026-06-15 20:55:36  ·  session da801424
+
+已修正。
+
+**問題根源**：我之前讀 `_data[4][0][1]`（某種資源增量/基礎值），但這個欄位完全無法反映跨界停車費率——水上飛人(98)比蓮花寶座(79)還高，卻是差坐騎。
+
+**正確邏輯**：`_data[10]` 是品質（稀有度），CDP dump 確認：
+- q=4（#1-4）、q=6（#5,6）→ 共 6 個，全部低於 20/min，全部排除
+- q=7+（#7-13,37,14-32,804）→ 共 21 個，全部達標，全部保留
+
+現在 `MOUNT_MIN_QUALITY = 7`，兩個選車函式都只會從 q7+ 坐騎選起。
+
+---
+
+## 2026-06-15 20:56:19  ·  session da801424
+
+已 commit，hash `0424e236`。
+
+---
+
+## 2026-06-15 21:01:19  ·  session c8f40974
+
+已有解析函數，讀完整段。
+
+---
+
+## 2026-06-15 21:05:34  ·  session 6ddc347f
+
+現在我有完整的圖像了，來解釋清楚。
+
+---
+
+## 問題診斷：WS 和 H5 為什麼打架
+
+### 根本原因：同帳號兩條 WebSocket 連線
+
+H5 遊戲頁面（Playwright 瀏覽器）本身會用 WebSocket 連接遊戲伺服器。你的 `WSGameClient` 也用同帳號的 WS 憑證連伺服器。**遊戲伺服器只允許一個 session**，新連線登入時發送 `CMD_KICKED`（code 259）踢掉舊的。
+
+```
+H5 browser page ─┐ 都連同一個帳號的 game server
+WSGameClient    ─┘ → 互踢
+```
+
+---
+
+### `ws_token.enabled=True` 不是「純 WS 模式」
+
+這是你設計上的誤解（也是「沒做好隔離」的感受來源）：
+
+| 設定 | 意義 |
+|------|------|
+| `use_ws_runner=true` | **純 WS**：完全不啟動 H5，WS 替代一切 |
+| `ws_token.enabled=true` | **WS-first hybrid**：WS 先跑，H5 **也跑**，H5 跳過 WS 已完成的任務 |
+
+你的所有設備都設了 `"use_ws_runner": false`，所以 H5 永遠會啟動 —— 這是設計意圖，不是 bug。
+
+---
+
+### 現有「串行化」隔離策略（為什麼有時有效）
+
+```
+睡眠 → 瀏覽器關閉 (web_stop_mode: close_browser)
+喚醒 → WS phase 先跑 → WS 關閉連線 (runner.py 的 finally)
+     → handle_device_wakeup → is_alive()=false → app_start → H5 連線
+     → daily_pipeline (WS 已做的 skip)
+```
+
+WS 跑完才關連線，H5 才開；伺服器看到的永遠只有一條連線 → 不打架。
+
+---
+
+### 隔離破口（打架的實際場景）
+
+1. **Live view / 手動開瀏覽器時**：瀏覽器開著、H5 已連伺服器。下一個排程的 WS phase 跑 → WS 登入踢 H5 session → 使用者的瀏覽器斷線。
+2. **瀏覽器沒關乾淨**：`web_stop_mode: close_browser` 是在睡眠時關，但如果 sleep 觸發前 WS 已跑（正在喚醒中），H5 還在線 → 衝突。
+3. **多個裝置同帳號**：如果兩個設備用了同一套帳號憑證，一個的 WS 踢另一個的 H5。
+
+---
+
+### 你想要什麼？
+
+**A. H5 不跑，純 WS（你問的感覺）**
+```json
+"use_ws_runner": true
+```
+WS runner 接管整個喚醒迴圈，完全不初始化 Playwright。
+
+**B. 繼續 hybrid，但修好打架**
+現在的設計已經「幾乎正確」了 —— 只要 browser 在 WS 跑之前真的關掉。你現在看到的打架最可能是 live view 場景。那個已經有防護（`should_abort` 偵測 pending web launch 請求），但反方向（H5 開著 → WS 才跑）沒有鎖。
+
+你目前遇到的具體問題是哪個場景？
+
+---
+
+## 2026-06-16 08:04:25  ·  session 11eb5109
+
+全部完成。以下是結論。
+
+## 問題與原因（已實測確定，借 fc 連線驗證）
+
+你的挖礦 WS 設定其實是開的（`ws_token.mining.enabled=true`），但每次喚醒都「跑了 mining 卻沒挖」。實測抓到**兩個 root cause**：
+
+**1. 鎬子數量讀不到 → mining 每輪直接 skip**
+- 鎬子（axe）現量是 **goods gtid 4001** 的數量（遊戲 UI 顯示的 `350/118` = 現量350/上限118，118 就是棋盤的 `max_num`）。
+- 關鍵：**WS 登入根本不會推送鎬子現量**。我連 fc 多次，登入只收到 `0x0402 evt=5004`（或完全沒有 0x0402），從來沒有大家以為的 `9800004` 道具快照。
+- 所以 `InventoryTracker.has_item(4001)` 永遠是 False → `mine_until_pickaxe_empty` 每次回 `{"skipped":"inventory snapshot missing"}` 就結束（log 裡 WS skip-set 永遠少了「挖礦/Oracle」就是這個徵兆）。
+- 真正的現量只在**每挖一鏟後的 `0x0402` 消耗推送 `9800001` `(4001, 剩餘量)`** 才出現。先前 memory 說「登入快照帶 4001」是用合成封包驗的，對真實登入是**錯的**。
+
+**2. 就算開挖，planner 挑的目標伺服器不收**
+- 伺服器只接受 `actives`（可挖前沿）內、且未被清除的格子。v4 planner 會挑「非 active 的礦洞」或「已挖過的礦洞(count=0)」→ 伺服器靜默拒絕（棋盤不變）→ 第一鏟就 unconfirmed 停掉。
+
+附帶確認：遊戲內建的伺服器端自動挖（`0x0c19`）需要「自動挖礦特權卡」或看廣告，fc 沒有（回 error 258），所以只能走逐格挖。
+
+## fc 驗收：鎬子 350 → 0 完成
+
+用逐格挖（挑 active 且可挖的前沿格）實測把 fc 鎬子**完整消耗到 0**：
+- 每鏟都由棋盤變化 + `9800001` 消耗推送確認，現量 350→349→…→**0**（`stop=pickaxe_empty`）。
+- 礦物（item 1007）從 15.3 萬漲到 ~20 萬，代表有正常吃到獎勵，不是空挖。
+
+## 已修好（並驗證）
+
+`ws_token/mining_supervised.py`：
+- 不再因「沒看過現量」而 skip：先 seed 一個正數讓 planner 出步，挖第一鏟後用 `9800001` 推送的真實剩餘量續挖到 0。
+- 新增 `_select_dig_step`：只挖 `actives` 內、未清除的格子（石頭新鮮時 count=0 也算可挖），planner 全無效時退而挖最深前沿格。
+- 20 個單元測試通過；並用**真實出貨路徑** `mine_until_pickaxe_empty` 連 fc 跑過：`skipped=False`、正常挖、`pickaxe_empty` 收尾。
+
+已一併修正 `docs/protocol/MINING_SCHEMA.md`（原本寫錯）、runner docstring、memory，並 commit（`b5deab7b`，只 stage 這次動到的 4 個檔，未 push）。
+
+## 你需要做一件事
+
+**重啟 `new_main_v2.py`**，新的 `mining_supervised.py` 才會生效（Python sys.modules 快取，跑著的 bot 不會自動換）。重啟後 fc / 小寶（同一份程式）每次喚醒就會自動把回復出來的鎬子挖掉。
+
+要不要我也順手把**小寶（7fe98fc6）**的鎬子一起挖掉？你說的是「先用 fc」，小寶我先沒動。
+
+---
+
+## 2026-06-16 13:07:44  ·  session 11eb5109
+
+修好了，這是跟挖礦無關的另一個 bug。
+
+## carpark NameError 原因
+`_run_carpark()` 的參數叫 `state_dir`，但函式內兩個呼叫點寫成了 `carpark_state_dir`（那個名字只存在於外層的 `run_device`，函式內未定義）：
+- `auto_select_and_park_many(... state_dir=carpark_state_dir)`（搶車位/補停路徑）
+- `auto_select_and_park(... state_dir=carpark_state_dir)`（legacy auto 路徑）
+
+只要 carpark plan 真的要停車（像 13:03 在日間窗口 cross=1、need>0）就會踩到 → `NameError`，被 per-task try/except 接住變成「WS 任務失敗: carpark」，所以 carpark 等於沒做。
+
+## 修正
+兩處改回 `state_dir`（`ws_token/runner.py`），已 commit（`1fcfc0ee`）。`test_carpark_runner_plan.py` 那 15 個會實際走到停車呼叫的測試現在通過。
+
+## 提醒
+- **兩個修正（挖礦 `b5deab7b` + carpark `1fcfc0ee`）都要重啟 `new_main_v2.py` 才生效**（Python 模組快取）。
+- 順帶一提：`test_ws_token_carpark.py::test_auto_select_and_park_empty_search` 有一個**既有、與這次無關**的失敗（它期望 `reason=="no_cross_lot"`，但 `carpark.py` 現在回 `"no_bookmarked_lot"`）。那是 carpark.py 邏輯改過但測試沒跟上，不是這次動到的。要的話我可以一併對齊。
+
+---
+
+## 2026-06-16 13:17:18  ·  session 1d00d549
+
+再確認 `ws_phase.py` 實際呼叫路徑。
+
+---
+
+## 2026-06-16 13:19:52  ·  session 3cab8d95
+
+All other `continue`/`raise` paths are correct: the web_h5 abort at 295 intentionally leaves `pre_runtime_ws_done=None` (resume-ledger handles it), and the `raise` paths (366/373/412) go through a real sleep cycle, so re-running WS on the next fresh wake is correct. Only the online-check bail (323) dropped `ws_done` — now fixed.
+
+Let me confirm the final diff is clean and commit just this file (per the commit-after-milestone convention; the other modified files are your in-progress WIP, which I won't touch).
+
+---
+
+## 2026-06-16 13:39:32  ·  session 1d00d549
+
+需要讀取 bot_config.json 的該段來找唯一識別字串。
+
+---
+
+## 2026-06-16 14:59:36  ·  session 1d00d549
+
+同樣地，`mining_supervised.py` 裡 `_select_dig_step` 的 hold_floor fallback 是以 `hold_floor` flag 為入口（從 `plan()` 傳入），不需要另外改——它的語意會跟著 `plan()` 的 `hold_floor` 一起正確。
+
+也更新 `plan()` 的 docstring 說明：
+
+---
+
+## 2026-06-16 15:03:37  ·  session 1d00d549
+
+這個 benchmark 是 screenshot 的，不是礦機。讓我找礦機相關的 benchmark。
+
+---
+
+## 2026-06-16 15:10:22  ·  session 1d00d549
+
+| 指標 | v4 | v5 |
+|------|----|----|
+| score | **740** | 734 |
+| pits | **37.2** | 37.0 |
+| depth | **129.6** | 129.2 |
+| cost | 161 | 163 |
+| plan_ms mean | **0.84** | 1.01 |
+| max_ms | 2.36 | **2.05** |
+| stuck | 0 | 0 |
+
+Sim 分數 v5 比 v4 少約 0.8%，差距在噪聲範圍內（200 局）。跑更多局確認一下：
+
+---
+
+## 2026-06-17 01:10:01  ·  session 0ed9d635
+
+全部完成。總結這次的徹底排查與修復。
+
+## 已交付（commit `a214d8db`，8 檔，63 tests pass）
+
+**真正的根因（codex 獨立交叉驗證 + 我的調查彙整）：**
+不是遊戲伺服器頂號，而是**孤兒 Chrome + 登入態錯誤的 fallback profile**：
+1. web_h5 正常每小時休眠**不關瀏覽器** → 舊 Chrome 整夜殘留，持有 **NAS 上的 profile**。
+2. 喚醒時 `is_alive()` canvas 探針在背景節流分頁誤判「已關」→ bot 重開新 Chrome。
+3. 新 Chrome 撞到被鎖 profile → Windows **exitCode=0 交接退出**（非 exit 21）。
+4. 偵測函式只認 exit 21 → 漏判 → 切到**沒登入態的 fallback profile** 105 次 → 永遠「未知」、3 小時 thrash → 最後 press 撞已關頁面崩潰。
+
+**關於「被 WS 頂號」：** 誠實講，這次 log `異地登錄=0`、WS `kicked=False`，**頂號未被證明**。它是這套架構真實存在的系統性風險（WS-before-browser 設計就是為它），但本次的直接元兇是 fallback profile 沒登入。先前我順著「頂號」講過頭了，已更正。
+
+**六項修法：**
+| | 內容 |
+|---|---|
+| A | `press()/home()` 加自癒（原本唯一漏掉 `_ensure_browser_session` 的互動方法）→ 不再 raw crash |
+| B | 啟動迴圈加全域重啟上限 5 次（原本無上限、wait_timeout 被重置永不觸發）|
+| C | 放棄啟動/異地登錄時關閉瀏覽器 → 避讓期間釋放、下次喚醒開全新 |
+| E | `_is_profile_in_use_error` 補認 Windows exitCode=0 交接 |
+| F | profile-in-use 重試用盡**改 raise，不退沒登入的 fallback**（fallback 只留給硬啟動錯誤）|
+| H | `_kill_chrome_holding_profile`：依 `--user-data-dir` 精準殺孤兒（不誤殺他裝置/個人 Chrome），殺完重試**同一登入 profile** |
+
+正常流程現在是：撞到鎖 → 殺孤兒 → 重開**原登入 profile**成功（最佳情況，不再走 fallback）；殺不掉才 raise → 30 分避讓關 Chrome → 下次乾淨重開。
+
+## 需要你做的
+- **重啟 `new_main_v2.py`** 才生效（sys.modules 快取，編輯不影響運行中的 bot）。
+- 調查用 worktree 已清除；當前 Chrome 是 00:31 後的乾淨行程，孤兒早已消失。
+
+## 未做（你選擇不做）
+- Fix G：把 `web_profile_dir` 從 NAS 移到本機 SSD，可從源頭減少 SMB 慢釋放鎖。若之後還復發，這是最徹底的一步。
+
+lessons.md（兩條：別從 log 訊息推斷行為要讀程式碼路徑；高風險根因用乾淨 worktree 找獨立第二意見）與 memory 已更新。
+
+---
+
+## 2026-06-17 03:53:09  ·  session 1d00d549
+
+還沒完成，繼續等。
+
+---
+
+## 2026-06-17 03:55:39  ·  session 1d00d549
+
+還沒完成，繼續等。
+
+---
+
+## 2026-06-17 04:43:10  ·  session ae594f65
+
+先看挖礦相關程式碼，再展開討論。
+
+---
+
+## 2026-06-17 05:01:52  ·  session 00493efb
+
+我的診斷已完整且有 fc runtime log 實證。Codex 仍在追線（目前到 config/daily_pipeline 接線），等它跑完我再合併成單一答案。
+
+先給你我這邊已鎖定的 root cause（log 鐵證），codex 結論一到我會合併補上：
+
+**fc 挖礦卡死 = 未提交的 `hold_floor` 邏輯 + adapter 不看 count 把「已採集礦坑」當成「未採礦坑」**
+
+fc 的 `ws_mining.log`（2026-06-16 19:18 起持續到 04:46）顯示每輪都 `hold_floor=True`、執行的 `block_id` 跟 planner 第一步不同、結果 `unconfirmed_no_board_change`，鎬子時間回復補到上限 31→42→63→71→**118/118**。
+
+我會在 codex 收斂後一次給出完整合併分析與修法。等待 codex 完成通知中。
+
+---
+
+## 2026-06-17 05:02:56  ·  session 00493efb
+
+Waiting for codex to finish (output-stabilization waiter `b98dp6ta9` will notify me). Then I'll read codex's full conclusion and merge it with my findings into one answer.
+
+---
+
+## 2026-06-17 05:05:05  ·  session 00493efb
+
+Codex 已獨立收斂到同一方向（output 第 10153 行：「不是 6/16 seed 修法失效，而是挖到某盤面後固定選到無效目標」），正在驗證 planner 內部 hold_floor 機制 — 也就是我已用程式碼證明的那條。兩邊互相印證，證據已足。我停掉 codex 背景並合併輸出。
+
+---
+
+
+## 2026-06-17  ·  todo.md 已完成項歸檔（session 00493efb）
+
+> 以下為 `tasks/todo.md` 移出的已完成工作紀錄（原文保留；todo.md 留有索引）。
+## 🔥 2026-06-17 web_h5 登入衝突 / 啟動 thrash 修復（規劃中，待使用者核可後動手）
+
+問題回報（使用者）：同帳號登入失敗時，bot 不會「關閉 Chrome 後重開」，一直用同一個壞掉的瀏覽器。
+附 traceback：`game_initialization.py:240 d.press("back")` → `device_wrapper.py:1299 self._page.keyboard.press("Escape")`
+→ `TargetClosedError: Target page, context or browser has been closed`。
+
+### 根因（已從 `logs/7fe98fc6/main.log` live 採證，**restart_count=105**）
+1. **啟動迴圈無全域重啟上限**：`handle_game_startup_pages` 的 `startup_restart_count` 無上界；唯一的
+   `wait_timeout=60s` 每次重啟都被 `wait_time = time.time()` 重置 → 永不觸發。頁面一直 `未知`/關閉時可無限重啟遊戲。
+2. **web_h5 `press()` 缺自癒 guard**：`tap`/`click`/`swipe`/`screenshot` 都先 `_ensure_browser_session()`+`_sync_active_page()`，
+   只有 `press()`/`home()` 直接 `self._page.keyboard.press` → 頁面已關時拋 raw `TargetClosedError`（就是這條 traceback）。
+3. **頁面關閉時偵測不到「異地登錄」**：同帳號被頂號→H5 分頁關閉/crash→`screenshot()` 自癒會 reload 遊戲 URL，
+   把「異地登錄」彈窗洗掉，detector OCR 不到 → 不走設計好的 30 分鐘避讓，改在 `未知` 狂重啟。
+4. **放棄啟動時不關瀏覽器**：`stop_runtime_device_for_sleep`（web_h5 會 `close()` 關 Chrome）只在 `ForceSleepRequested`
+   分支呼叫；`StartupBypassError`/`StartupLoginConflictError` 不呼叫 → 30 分鐘避讓期間保留壞掉的 Chrome（=使用者看到的「一直用同一個」）。
+
+### 修法（最小變更、對症根因）— 使用者核可全做 A+B+C（2026-06-17）
+- [x] **Fix A — `device_wrapper.py` web_h5 `press()` 加自癒 guard**：`keyboard.press("Escape")` 前先
+      `self._ensure_browser_session("press")` + `self._sync_active_page()`，與 `tap`/`swipe` 一致。`home()` 維持 no-op。
+- [x] **Fix B — `game_initialization.py` 加全域重啟上限**：新增 `max_startup_restarts = 5`；while 迴圈頂端（honor 控制後）
+      檢查 `startup_restart_count >= max`→log + `d.app_stop` + `return False` → 主迴圈套 30 分鐘避讓。
+- [x] **Fix C — `new_main_v2.py` 放棄啟動時關閉瀏覽器**：`except StartupBypassError` 與 `except StartupLoginConflictError`
+      分支各加 `stop_runtime_device_for_sleep(d, ip, backend_kind, logger)`（沿用 ForceSleep 分支寫法）→ 避讓期間真正關 Chrome，下次喚醒開全新的。
+- [ ]（未做，選配）Fix D — 累計 target-closed 短路避讓。Fix B 已界定 thrash，暫不需。
+
+### TDD（RED→GREEN 已驗）
+- [x] `tests/test_device_wrapper_session_helpers.py`：`test_press_back_self_heals_session_before_keyboard`（RED：raw press 不自癒；GREEN）、
+      `test_press_home_is_noop_without_touching_page`（守護 home 不碰 page）。
+- [x] `tests/test_startup_loop_escape.py`：`test_unbounded_relaunch_is_capped_and_returns_false`（RED：safety cap 50 觸發；GREEN：≤5 後 return False）。
+- [x] Fix C：new_main_v2.main() 太大不宜單測；底層 `stop_runtime_device_for_sleep` 已有 `tests/test_sleep_service.py` 覆蓋，wiring 以閱讀 + py_compile 驗證。
+- [x] focused：`pytest test_device_wrapper_session_helpers test_startup_loop_escape test_sleep_service test_game_initialization` → **53 passed**；`py_compile` 三檔 OK。
+
+### 注意
+- 三檔皆為正在跑的 bot 核心 → 改完需**重啟 `new_main_v2.py`** 才生效（sys.modules cache）。
+- 出問題裝置：`7fe98fc6`（小寶，web_h5），非手機 fc。
+
+### Review（✅ A/B/C 完成 2026-06-17）
+- 善後三層（A press 自癒 / B 重啟上限 / C 放棄時關 Chrome）皆對症修復；最小變更，無觸碰其他 WIP。
+- 未做 Fix D（偵測異地登錄需頁面存活才能 OCR；Fix B 的上限已涵蓋頁面持續關閉的情境）。
+
+---
+
+## 🔬 2026-06-17 徹底排查 — 真正觸發點（孤兒 Chrome + 登入態錯誤 fallback profile）
+
+使用者追問「為什麼瀏覽器沒釋放成功 / 為什麼被 WS 頂號」，並要求 **codex 獨立調查**（HEAD 乾淨 worktree、只給原始症狀+log，零偏見）再彙整。
+
+### 交叉驗證後的真正根因鏈（A/B/C 只是善後，這才是觸發點）
+1. **正常每小時休眠不關 web_h5 瀏覽器**：`wake_up_handler.py:411-415` 對 web_h5 略過 app_stop；正常 `run_sleep_cycle` 不呼叫 `stop_runtime_device_for_sleep`（只 ForceSleep 分支會）。→ 舊 Chrome 行程整夜殘留，持有 **NAS 上的 `--user-data-dir`**。
+2. 喚醒時 `new_main_v2.py:333-337` 的「瀏覽器已關閉」其實是 `is_alive()` canvas 探針在背景節流分頁 false-negative，**不是真關**。bot 以為關了→launch 新 Chrome。
+3. 新 Chrome 撞到被舊行程鎖住的 profile → Windows **exitCode=0 交接退出**（`Failed to launch the browser process`），**非 exit 21**。
+4. `_is_profile_in_use_error` 只認 exit 21，**認不出 exitCode=0** → 不重試 → 直接切到**沒登入態的 fallback profile**（`AppData\Local\...`）105 次。
+5. fallback profile 無法認證 → 永遠「未知」；無重啟上限 → 105 次 thrash 3 小時；第 5 次未知 press 又無自癒 → TargetClosedError。
+6. 直到孤兒行程在 00:13 釋放鎖，主 profile 才 launch 成功。
+
+### 誠實校準（codex 比我嚴謹之處）
+- 「被 WS 頂號」是**真實系統性風險**（WS-before-browser 設計、HEAD commit 都為它而生），但本次事件 `異地登錄=0`、WS `kicked=False`，**頂號未被證明**；被證明的「未知」元兇是**登入態錯誤的 fallback profile**。先前我把兩者混講，已更正。
+- 我先前誤判「休眠會關瀏覽器」，由 codex 在乾淨 worktree 糾正（見 lessons.md）。
+
+### 追加修法（使用者核可 E+F+殺孤兒，2026-06-17）— ✅ 完成 + TDD
+- [x] **Fix E**：`_is_profile_in_use_error` 補認 Windows `exitCode=0`＋`failed to launch the browser process` 交接特徵。
+- [x] **Fix H**：`_kill_chrome_holding_profile`（psutil，依 `--user-data-dir` 精準比對；殺整棵同 profile 行程；best-effort 不拋；不誤殺他裝置/個人 Chrome）。in-use 時先殺孤兒再重試**同一登入 profile**。
+- [x] **Fix F**：in-use 重試用盡**不退 fallback、改 raise** → 觸發 Fix C 關瀏覽器 + 30 分避讓 → 下次喚醒乾淨重開。fallback profile 只留給「非 in-use」的硬啟動錯誤。
+- [x] TDD：`tests/test_device_wrapper_launch_recovery.py` 重寫（10 tests：exitCode=0 偵測、殺孤兒後同 profile 重試成功、in-use 不退 fallback 改 raise、硬錯誤才 fallback、精準只殺對應 profile、iter 失敗不拋）。
+- [x] 全套 focused：`test_device_wrapper_launch_recovery + session_helpers + startup_loop_escape + sleep_service + game_initialization` → **63 passed**；`py_compile` OK；真實 psutil 對假 profile 殺 0（不誤殺）已 live 驗。
+
+### 仍未確定（兩方一致）
+- 持有 profile 鎖的確切 Chrome PID；是否真顯示過頂號彈窗；Chrome mojibake stdout 內容。
+
+### 注意
+- 改完需**重啟 `new_main_v2.py`** 才生效。可考慮（未做）Fix G：把 web_profile_dir 移本機 SSD 減 NAS 鎖延遲。
+
+---
+
+## 🅿️ 2026-06-15 Dashboard 新分頁「車位工具」+ 一鍵最佳升級車位裝飾（規劃中，待使用者核可後動手）
+
+目標：control panel 新增**獨立可擴充分頁**（先放「車位裝飾」，未來再加更多按鈕），可選帳號/裝置，
+第一個功能＝**一鍵最佳升級車位裝飾**（偵測菇車幣 → 算最划算升級順序 → 執行買碎片+升級）。
+
+設計依據（皆 live 採證，見 `docs/protocol/CARPARK_DECORATION_SHOP.md §9`）：
+- 成本效益 = `coin-per-attr =(碎片數 × 該裝飾碎片單價) ÷ 邊際屬性`，**每裝飾單價不同**（10~60 萬）。
+- own_attrs 累計、每星 +160%/圍（+48000 三圍合計）；碎片數階梯 1,1,2,2,3,3,4,4,5,5,10,10,20,20,30。
+- 限購 X/120 = 剩餘可買；新裝飾不可自由買（走 装扮自选），故**只優化「已擁有」裝飾**。
+- 執行管道：沿用 dashboard 既有 **raw-CDP JS 注入**（`control_panel_app._cdp_json_response(ip, JS, await_promise=True)`，
+  不踢線），用已驗證的 cocos-UI 流程（開詳情→購買對話框 set qty→確認→升級），**不需新解協議**。
+  （純 WS shop_buy 6914 + 0x3801 是未來優化，需先建 mall item_id 對照表。）
+
+關鍵決策（使用者 2026-06-15 核可）：目標＝最大化**屬性**（攻生防）；範圍＝完整（預覽+一鍵執行）。
+
+### Review（✅ 全部完成 + live 驗證 2026-06-15）
+- [x] 1. Optimizer `plan_upgrades`（+ `DecoUpgradeState/UpgradeStep/UpgradePlan`）in `ws_token/carpark_decoration.py`；
+      `tests/test_carpark_decoration.py` **22 passed**（13 舊 + 9 新：價格/限購/預算/max_steps/interleave/邊界）。
+- [x] 2. Read 層 `control_panel/carpark_tools_js.py` `READ_STATE_JS`：導航裝扮面板→讀菇車幣+16 已擁有裝飾
+      （level 由星 pip；`closeDetail` poll 到真關閉、`readStable` poll 到 (name,level) 穩定才讀，解 async 殘影）。live 5556 正確。
+- [x] 3. Blueprint `control_panel/routes_carpark_tools.py`：`/carpark-tools`、`/api/carpark/{plan,execute,job}`；
+      背景 thread + in-memory job registry（`_jobs_lock`）；execute 先 `set_pause`→逐步 `EXEC_STEP_JS`（買碎片+升級）、失敗即停、finally resume。已註冊。
+- [x] 4. 前端 `templates/carpark_tools.html`：裝置選單(web_h5)、預算/步數、預覽表、執行二次確認 + 即時 log poll。
+- [x] 5. `dashboard.html` nav 加「🅿️ 車位工具」；`control_panel/shared/cdp.py` 加 `timeout` 參數（向後相容）。
+- [x] 6. WS 協議 live 採到（中式庭院大門 lv6→7）：買=`shop_buy 0x1b02(6914){11,item_id,qty}`、
+      升=`0x3801 JSON{type,skin_id}`→`0x3211(12817){skin_lev}`。見 `CARPARK_DECORATION_SHOP.md §9.8`。
+- [x] 7. code-review 抓 3 個花費安全 bug 已修：(a) 升級沒升星卻回 ok→改檢查 `afterLvl>beforeLvl`；
+      (b) 失敗時已買碎片 coin 沒計→JS 回 `bought` flag、executor 累計已扣 coin；
+      (c) `_real_ip` 切掉本機 TCP port 使 set_pause 打錯 key→改用 `bot_state.is_local_device`。
+- [x] 8. live 端對端：read→plan（5M 預算挑 5 步 c/a 20.83）、executor（卡通大門 lv10→11 實升）、路由註冊 + `test_carpark_dashboard` 等 **27 passed**。
+- [ ] 9. **提醒：dashboard 需重啟生效**（blueprint 在 import 註冊；重啟 `new_main_v2.py` 載入）。
+      限制：同 inventory 只支援**本機** web_h5 裝置（CDP 走 127.0.0.1:port）。
+
+---
+
+## 🎰 2026-06-15「工具 優化類」面板 + 純 WS 一鍵抽卡（技能/同伴）衝刺
+
+協議 live 解碼於小寶 (7fe98fc6, CDP 9226)，記憶 [[reference-gacha-draw-protocol]]、腳本 `tools/probe_gacha_live.py`：
+- 付費抽：`0x0902 {1:type, 2:count}`（type 1=技能 / 2=同伴；count=次數，券扣由伺服器算，999 折扣到 800）。
+- 免費影片召喚：`0x1602 {1:slot, 3:1}`（slot 8=技能 / 7=同伴，每日各 3 次×35 抽，無真廣告）→ **本期先不做**。
+- 純 WS 已驗證：`call_raw(0x0902,"08 01 10 23")` 回 35 抽結果，完全不碰 UI。
+
+使用者決策（2026-06-15）：① 抽迴圈「兩種都做」(一鍵抽完 + 指定次數×批數) ② 免費召喚先不做 ③ 只改顯示名。
+
+### Review（✅ 實作完成 + 純 WS payload live 驗證 2026-06-15；route 端對端待 dashboard 重啟）
+- [x] 1. 改名：`carpark_tools.html` `<title>`+`<h1>`→「工具 優化類」（使用者/linter 已改）；dashboard nav 已是。route/檔名/blueprint 名不動。
+- [x] 2. `control_panel/gacha_tools_js.py` `DRAW_ONCE_JS`：等 netManager._cnet → monkeypatch reciveMsg 攔 0x0902 →
+      `sendMessage(0x0902,{type,count})` → 回 JSON `{ok, drawn(=top-level field2 群組數), raw_len}`，內建 timeout/還原。純 WS。
+- [x] 3. `routes_carpark_tools.py` `/api/gacha/draw/<ip>` POST `{type,mode,count?,batches?}` → spawn job（重用 job registry）：
+      drain=ladder[999,35,15] while drawn>0 續抽、drawn==0/timeout 換階（每發 ≤999 有界）；fixed=count×batches。先 set_pause finally resume。
+- [x] 4. 前端第二個 `<section>`：type(技能/同伴)+mode+count/batches+執行鈕+即時 log（重用 `pollJob`/`/api/carpark/job`）。
+- [x] 5a. live 驗證（小寶 7fe98fc6, CDP 9226）：`probe_gacha_live.py drawjs` 跑 route 同一 `DRAW_ONCE_JS`：
+      技能15→{ok,drawn:15}、同伴15→{ok,drawn:15}；`send`(call_raw)技能35→35抽結果。**純 WS 端到端成立。**
+- [ ] 5b. route+drain 迴圈端對端：需 dashboard 重啟載入新 blueprint 後實跑（一鍵抽完會清券，留給使用者衝刺時驗）。
+- [ ] 6. **提醒：dashboard 需重啟（`new_main_v2.py`）才會載入 `/api/gacha/draw` 路由。**
+- 註：`routes_carpark_tools.py`/`carpark_tools.html` 目前為**未提交** carpark-tool WIP（git `??`），gacha 變更疊加其上 → 尚未 commit（避免綑綁他人未提交工作）。
+
+### A+C+D（使用者 2026-06-15 追加，✅ 實作完成 + 測試）
+- [x] A 餘額感知抽完：live 抓出券 item_id（技能 1012 / 同伴 1013，0x0402 diff）。`DRAW_ONCE_JS` 改成同時攔
+      0x0902(抽到數)/0x0402(券剩餘)/0x0201(拒絕)→`{ok,drawn,remaining,rejected,error_code}`；route drain 用 remaining
+      回饋驅動 999/35/15、即時 0x0201 換階，**零 timeout 探測**。live 驗證：抽15→剩56573、抽35→剩56543、無效type→reject code37。
+- [x] C headless ws_token：共用大腦 `ws_token/gacha.py`（ladder/cost/ids/parse + `run_gacha` drain/fixed，0x0201 安全停、
+      tracker 種子餘額）。`runner.py` 加 gacha_config 參數+`_run_gacha`+dispatch(relic後)+TASK_ORDER；plumb 進
+      `ws_runner_service.py`(主路徑) + `ws_phase.py`；`config_manager.py` 預設 `ws_token.gacha`(預設關)+`_sanitize_gacha_config`。
+- [x] D 改名：`routes_carpark_tools.py`→`routes_tools_optimize.py`、`carpark_tools.html`→`tools_optimize.html`、
+      blueprint/route `carpark_tools`/`/carpark-tools`→`tools_optimize`/`/tools-optimize`；`control_panel_app.py`、
+      `dashboard.html`、`tools/test_carpark_plan.py` 引用更新。API 路由 `/api/carpark/*`、`/api/gacha/*` 依功能保留。
+- [x] 測試：`tests/test_ws_token_gacha.py` 16 passed（body/parse/ladder/drain兩路徑/fixed/config sanitize）；
+      `tests/test_ws_runner_wiring.py`(+gacha 巢狀讀取) 全過；wiring/abort/gacha 合計 57 passed。py_compile 全綠。
+- [ ] 端對端待 **dashboard 重啟 + 實跑**（drain 會清券，留衝刺時驗）；ws_token headless 需該帳號 adb+ws 實跑驗。
+
+---
+
+## 🌾 2026-06-15 WS farm 任務不穩 + 漏買種子/肥料修復（✅ 已修，使用者核可穩健版）
+
+根因（log + 程式碼證據，已確認）：
+- `_run_farm`（`ws_token/runner.py:233`）第一行無條件 `farm.read_farm`（home module **3077**），
+  接著 `harvest_ready`（**3081**）。home module(12) 在純 WS session 下回應**間歇性消失**
+  （非被前面任務用掉 — grep 確認全 run_device 序列只有 farm 碰 3077；冷呼叫第一發也會 timeout）。
+- 對照組：worker module 73（`read_work_status`/`start_work`）與 shop 6913/6914 recon 均註明「每次都可靠回應」。
+- 後果（5554，`ws_token.farm` 只設 `buy=[{407,4},{408,4}]`、無 seed_id/team_cfg_id）：
+  `read_farm` 一 timeout 就整個 raise → `_safe` 標記 farm error → **連可靠的種子/肥料每日購買都沒跑到**。
+- log 量化（5554 active main.log，2026-06-14~15）：farm 約 **50% 失敗**，失敗都剛好 15s（=call_timeout），
+  cmd 在 `3077`(read) 與 `3081`(harvest，使用者貼的錯誤) 兩處交替；偶發一次 kick(異地登入)。
+
+修法（最小侵入、對齊根因；**不改協議/cmd，它們是對的**）：使用者 2026-06-15 核可「穩健版」。
+- [x] 1. TDD（先 RED）：`tests/test_ws_token_runner.py` 加 3 案 —
+      `test_farm_reads_work_status_first`、`test_farm_skips_manual_harvest_when_worker_running`、
+      `test_farm_read_timeout_still_runs_buy`；fixture 補 `read_work_status`/`buy_farm_shop` stub、
+      end-to-end 補 18690 responder。RED traceback 正指 `runner.py:244 read_farm` raise → farm 失敗 → buy 漏。
+- [x] 2. `ws_token/runner.py` `_run_farm` 重構（GREEN）：
+      - 先 `farm.read_work_status`（reliable, module 73，5s timeout + try/except）判打工是否運作。
+      - 打工運作中 → 跳過 home-module 手動收成/種植（記 `{"skipped": "打工運作中，管家代收/代種"}`）。
+      - 打工關 → `read_farm`+`harvest_ready`+(`plant_empty` if seed_id) 包 try/except `WSError`，
+        timeout 記 skipped 不 raise；`_FARM_HOME_TIMEOUT_S=5.0` 讓 flaky 快速降級、不吃滿 15s。
+      - `start_work`（打工關才送）/ `buy` 獨立於 home-module 之外照跑（解除「read 失敗連帶吞掉 buy」）。
+- [x] 3. 驗證：`test_ws_token_runner`+`test_ws_token_farm`+`test_ws_phase`+`test_ws_runner_wiring`
+      **163 passed**；`py_compile` runner/farm/test OK。farm 既有 2 測（無設定只收成 / 有設定種+打工）續綠。
+- [ ] 4. 提醒：master `new_main_v2.py` 需重啟生效（sys.modules cache）。
+- [ ] 5.（選配）live 驗一輪：5554 manual-hold，看 farm 不再進 errors[]、buy 有跑、harvest 視打工狀態跳過/收成。
+
+#### Review（2026-06-15）
+- 根因不是協議錯（farm 有時 0-2s 就成功）；是 home module(12) 純 WS 間歇不回應 + `read_farm` 在 `_run_farm`
+  第一行無條件先跑，一 timeout 整段 raise → `_safe` 標 farm error → 連可靠的 shop 購買都沒跑到。
+- 真正被修掉的功能 bug：5554（farm 只設 buy）約 50% 喚醒漏買種子/肥料。穩健版讓 buy 與 home-module 解耦。
+- 順帶解掉使用者貼的 `cmd=3081`：打工運作時直接不送手動 harvest（管家代收），避開與管家搶地的 no-reply。
+- TDD 完整 RED→GREEN；改動集中（runner `_run_farm` 一處 + 一常數 + 測試 fixture/3 新測）。不動其他任務。
+- 兩個隔離 subagent 佐證：log 分析確認 farm 是唯一壞掉任務（5554 ~39% 失敗，cmd=3077 為主、43 次跨三台）；
+  欄位盤點確認協議 cmd 正確、無未驗證值被送出（farm 的 None 常數 `HARVEST_CARD_*` gate 的 `buy_harvest_card`
+  runner 不呼叫）。
+
+> 註：home module 3077 為何純 WS 間歇不回應，精確 server 機制需開窗 live 抓包才能 100% 確認
+> （疑似與管家/被踢 App 重連爭用同子系統）；上述修法對該機制 robust，不依賴其確切原因。
+
+#### 衍生發現（本次不動，列待辦/建議）
+- [ ] 自我觸發重登 race：5558 跨裝置 online-check 逼 5554 在前一輪 WS phase 結束 17s 後又開第二個 phase →
+      WS 登入踢掉自己 socket（`emulator-5554/main.log:6300-6327`，kicked=True）。建議在 online-check 中斷
+      喚醒時，加「距上次 WS 登入 < N 秒就不立即重登」的護欄。
+- [ ] `steward.py:51 RENEW_DAY_NUM=30`：`buy_service.day_num` 語意（字面天數 vs 階梯 index）未驗證，
+      且 spend=True 時可達、花家園幣。建議 live 抓一次續費 c2s 確認。
+- [ ] 刪 4 殘檔：`ws_token/lamp.sync-conflict-*.py`×2、`ws_token/mining_adapter.sync-conflict-*.py`×2
+      （避免被誤 import 到含「assume reachable」的舊邏輯副本）。
+- 觀察（非 bug）：WS phase ~4 分鐘幾乎全是 lamp 每輪開 7680 顆（~85% 時間）；若覺得太頻繁可調 lamp 儲備/批次策略。
+
+---
+
+## 🚗 2026-06-15 每日 10:00 搶車位：喚醒打斷加固（spec `docs/superpowers/specs/2026-06-15-carpark-1000-grab-wake-design.md`，使用者已核可）
+
+範圍：讓 5554 / 7fe98fc6（皆有 WS 後端）每天 09:59 醒、10:00 搶跨界泊銀車位。手機fc 已啟用不動；5556/5560/5558 本輪不處理。
+
+- [x] Part 1 config：`bot_config.json` 5554 + 7fe98fc6 `ws_token.carpark_plan.enabled` false→true（scaffold 已備、與手機fc 一致）。手機fc（adb-fc65396d，line 427）已 true 不動。已驗：JSON 合法、三台 carpark_plan.enabled 皆 True、無殘留 false。
+- [x] Part 2 code（TDD）：`runtime_services/sleep_service.py` `_maybe_resume_sleep` 兩條返回休眠分支（checker / 非 checker）進睡前套 `_apply_carpark_repark_wake`，補上「中斷後返回休眠睡過 10:00」漏拍。只提前不延後，對非車位裝置 no-op。
+- [x] Part 3 reconcile 共存（規劃期定案）：`carpark_auto.reconcile()` 純加法（`:1237` 只在 cross<target 補停、`:1254` 超額僅 log「recall delegated」、從不搬走跨界車）→ 依 spec 決策規則「保留 `daytime_cross:1` 當 fallback，不改 reconcile config」。WS 10:00 先搶（ws_phase 在瀏覽器啟動前跑），reconcile 後跑見 cross 已達標 → while 不執行；WS 搶輸時 reconcile 當 fallback 補搶。spec Part 3 已回填定案。
+- [x] Part 4 驗證（單測/語法）：新增 3 個 `_maybe_resume_sleep` clamp test（非 checker / checker 兩分支 + 無 next_ts no-op pin），TDD 先 RED（傳 resume_ts ≠ next_ts）後 GREEN；`tests/test_sleep_service.py` 33 passed；`py_compile` sleep_service + 測試檔 OK；wake-loop 消費端 19 測綠。
+- [ ] Part 4 驗證（live，待停機窗）：5554 manual-hold 觀察 log「跨界車位排程：喚醒提前 …」（09:59）+ 10:00 `pre-open wait … (grab)` + 實際搶位結果。
+- [ ] 提醒：master `new_main_v2.py` 需重啟才生效（sys.modules cache + config 重讀）。
+
+#### Review（2026-06-15）
+- 4 個工作面全落地：config 兩台啟用、`_maybe_resume_sleep` 兩分支 clamp、Part 3 定案不改 reconcile、單測+語法驗證綠。改動最小（sleep_service 兩處各 +3 行、config 2 處旗標、3 個新測試）。
+- TDD 完整走 RED→GREEN：先確認 2 個 clamp 測試因「未 clamp」失敗，實作後 33 passed。
+- 既有 `_apply_carpark_repark_wake`（只提前不延後、無 next_ts no-op、enabled gate）直接沿用，非車位裝置與一般返回休眠零影響。
+- ⚠ 非本案問題（pre-existing 測試順序污染）：`tests/test_wake_ws_fallback.py` 與 `test_wake_home_order.py` 等同跑時，後者把 `config_manager` 換成缺 `get_hostname` 的 fake module 未還原 → ws_fallback 的 `_patch_host` 7 個測試 AttributeError。單跑 `test_wake_ws_fallback.py` 12 passed、`config_manager.get_hostname` 確實存在（`config_manager.py:269`）→ 確認與本案無關，屬 todo.md 已記錄的同類污染。
+
+---
+
+## 🚗 2026-06-15（✅ 已實作，worktree `feat/carpark-grab-tier`→FF merge `cb707370`）搶位選位分層策略 + 10:00:00 每秒重試
+
+使用者 2026-06-15 兩段新需求（澄清後定案）。範圍：三台 WS 車位裝置（5554/7fe98fc6/手機fc）共用的 WS 搶位邏輯。動到 live 關鍵路徑（`ws_token/runner.py` `_run_carpark` + `ws_token/carpark.py` `auto_select_and_park_many`）。
+
+**搶位優先序（每次嘗試內由高到低）**：
+1. 鉑銀 9/10（主目標，有空位無條件停）。
+2. 高獎勵低編號區（鉑銀1-8）：**只有同服1467抱團 ≥3** 才停；由編號小→大，找到第一個達標且有空位的就停。
+3. 低編號區沒抱團 → 鉑銀11-20，有空位就停（編號小→大）。
+4. 鉑銀21-30：隨便停（有空位就停）。
+5. 絕對最後手段：上面全不適用但低編號(1-8)仍有非抱團空位 → **使用者 2026-06-15 拍板「停進去當保底」**（`allow_low_noncluster` 預設 True），有泊銀空位就絕不空手。
+
+**門檻**：同服(1467)占用 ≥3 算抱團（`cluster_min`，預設3）。
+**時間/重試**：10:00:00.000 開搶（現行已對準）；**只有整輪 `parked_count==0`（完全沒停到）才**每秒重試（poll 1s），到 **10:01:00**（`grab_window_seconds` 預設60）止；停到任何車即停止。隨便停(T4)屬單輪優先序內，達到就當下停、不再等。
+
+**實作（TDD）**：
+- [x] `carpark_plan.py`：新增 `cluster_min`(3)、`grab_window_seconds`(60)、`allow_low_noncluster`(True) getter；`grab_poll_seconds` 預設 0.3→1.0；`grab_attempts` 留作安全上限。
+- [x] `carpark.py` `auto_select_and_park_many`：加 `cluster_min`/`allow_low_noncluster` 參數，分層 ranking 抽純函式 `tiered_lot_order`（preferred→低編號抱團≥min→11-20→21-30→低編號非抱團T5）。Phase A preferred 快路徑（有空位最少 RTT 直接停、不付抱團預讀），Phase B 才預讀低編號 lot 算同服抱團。
+- [x] `runner.py` `_run_carpark`：搶位迴圈次數型→時間型——`grabbing` 時 deadline=開窗+grab_window(10:01)，每輪 park，`parked_count>0` 即停、`park_timeout` 不重試（靠 read_my_mounts 排除已停 mount 防雙停），其餘 parked_count==0 每隔 poll 重試並重讀 parked_cross 重算 need；非 grabbing 單次。注入 `time_fn` 利測試；傳 cluster_min/allow_low_noncluster。
+- [x] `config_manager.py` DEFAULT + `_merge_carpark_plan` sanitizer 補 5 欄位（複用 carpark_plan getter 清洗）。
+- [x] bot_config.json：預設即符合需求，三台不需逐台填（未動）。
+- [x] 測試：`test_carpark_many.py`（tiered_lot_order 純函式 4 案 + ≥3 gate + tier 內排序 + T5 + preferred 快路徑不預讀）、`test_carpark_plan.py`（新 getter）、`test_carpark_runner_plan.py`（時間型重試：parked==0 才重試/到窗尾止/park_timeout 不重試/非 grab 單次；注入 sleep_fn+time_fn）。
+- [x] py_compile + focused pytest：carpark+ws_phase 套件 160 綠 → merge 後 178 綠；ws_token_runner+carpark 116 綠。
+- [ ] ⚠ master `new_main_v2.py` 需重啟才生效。Live：5554 manual-hold 看 10:00 分層選位 + 每秒重試 log。
+
+**判斷項定案**：(a) T5 絕對最後手段＝**停進去當保底**（使用者拍板，`allow_low_noncluster` 預設 True）；(b) poll/window/cluster 共用預設 → 手機fc 也套此搶位行為。
+
+#### Review（2026-06-15）
+- 5 個工作面全落地，TDD 完整 RED→GREEN（每步先看測試失敗於正確原因再實作）。改動集中在 `_run_carpark` + `auto_select_and_park_many` + 2 個純邏輯檔。
+- 設計要點：分層 ranking 抽純函式 `tiered_lot_order`（無 I/O、可單測 tier 邊界與排序）；搶位 I/O 走兩階段——preferred 有位最少 RTT 直接停、不付抱團預讀（搶位要快），preferred 滿才預讀低編號 lot 算同服抱團並分層 fallback。
+- 時間型重試把舊「次數×poll」改成「到 10:01 窗尾」，並放寬重試條件為 `parked_count==0`；`park_timeout` 不重試 + 每輪重讀 parked_cross 重算 need 雙保險防重複停。硬上限 `max(grab_attempts, ceil(window/poll)+2)` 防時鐘異常時 runaway。
+- T5「停進去當保底」順帶讓既有 `test_many_falls_back_to_other_silver_when_preferred_full`（無 cluster_server_id 停低編號）續綠。舊「preferred 內比抱團/比滿」3 個 cluster 測試依新語意改寫成低區 gate 測試。
+- 隔離 worktree 開發、commit `a3c3e720`；併入更新後 base（含 interruptible WS phase，runner.py 自動合併無衝突）後 FF 主分支 `cb707370`。
+- ⚠ 需重啟 master `new_main_v2.py`（sys.modules cache + config 重讀）才生效；live 搶位驗證待下個 10:00 窗口（5554 manual-hold）。
+
+---
+
+## 🌙 2026-06-14 夜間自主批次：9 大需求 + 全面重構 + dashboard 重設計（branch `feat/overnight-2026-06-14`）
+
+使用者夜間下 9 項需求 + 「全部接入 / 直接驗證 / 全面重構+改名 / 階段 commit / dashboard 5-8 方案」。
+策略：WS 優先、一裝置一領域並行（5554/9230、7fe98fc6/9226、5556/9223），subagent 管 context。
+**2 階段 commit 在 branch `feat/overnight-2026-06-14`（只加本批次動到的檔，排除 auth_state 機密 + ~80 無關 WIP；未 push）。**
+
+| # | 需求 | 狀態 | 關鍵交付 / 協議 |
+|---|------|------|------|
+| 1 | 重構/複用稽核 | ✅ | `docs/REFACTOR_AUDIT_2026-06-14.md`；抽 `runtime_services/wake_parity.py` + `utils/protobuf_walk.py`；`oralce_manger→oracle_manager` 改名；hot-path 列待監督 |
+| 2 | 花+奶茶每日一次 | ✅ | `runner._run_couple` 每日日期閘（`ws_state.couple.gift_date`） |
+| 3 | 神器附魔倉庫 | ✅讀+GUI / ⏳分解動作 | `/inventory` 頁；module53 `info 0x3501`（live 2515 顆）；過濾=聯合搜索/賣最低/分解勾選；`split 0x350A` 推導，body 待 1 次 live 觸發 |
+| 4 | 守護靈倉庫+詞條過濾 | ✅ | `ws_token/spirit.py read_spirit_info`（module77 `19713`，live 372 隻）；`/inventory` 過濾 |
+| 5 | 每日郵件+滿判定 | ✅ | `ws_token/mail.py`+scheduler；`list 5377{mail_id=0=all}`/`claim 5380{0}=領全部 empty-safe`；武魂/gem 無真上限→best-effort 仍領 |
+| 6 | 車友商行裝飾 CP | ✅演算 / ⏳白天 | `ws_token/carpark_decoration.py` CP=邊際屬性/成本；`car_park_skin_up 12817`、`configParking_design`；catalog dump 待 10:00-22:00 |
+| 7 | 傳奇大亨擲骰 | ✅ | `ws_token/tycoon.py`（act module24 `dice 0x18A9` server-auth，live 驗證）；opt-in 預設關 |
+| 8 | 煩惱消 | ✅ | 真相=左右消除(非2048)、client→Playwright；`fannaoxiao_solver/driver/scheduler`（daily_pipeline 14.6，預設關）；live 124>100 |
+| 9 | 遺物平均點法 | ✅ | `ws_token/relic.py`（module17 `relic_up 0x1103` server-auth，live 驗證）；balanced=升最低等已裝備；opt-in+max_steps |
+
+### ⚠ 待辦 / 提醒
+- [ ] **重啟 `new_main_v2.py` + `control_panel_app.py`** 全部生效（含 `/inventory`、`/dashboard-redesigns/`）。
+- [ ] **挑 dashboard 方案**：`docs/dashboard_redesigns/index.html`（7 個）；回「用 N 號」→ 做成正式 `templates/dashboard.html`。
+- [ ] **開旗標**（皆預設關）：`ws_token.relic_upgrade`/`tycoon`/`mail_claim`、`enable_fannaoxiao`。relic 消耗碎片（有 max_steps/floor）。
+- [ ] **神器附魔分解/賣**：route 先回 501，需 live 觸發一次擷取 `split` body。
+- [ ] **車友裝飾**：白天商店開窗跑 catalog dump + buy round-trip 欄位號（`docs/protocol/CARPARK_DECORATION_SHOP.md`）。
+- [ ] **重構待監督 pass**：device_wrapper 內部 / carpark JS / Flask envelope 21x / `STARTUP_SLEEP_SEC_BY_DEVICE` 改名 / `ws_token/codec` walker / `gold_mananer` 改名。
+
+### Review
+9 項全以 WS 優先 + 一裝置一領域並行完成，協議皆 live 驗證；2 階段 commit（機密/無關 WIP 已排除，未 push）。新測試全綠（relic18/tycoon15/mail19/spirit22/inventory11/carpark13/fannaoxiao8+21/scheduling10/protobuf24 + runner132）。`docs/protocol/` 新增 5 份 recon；memory 補 8 條。
+
+---
+
+
+## 2026-06-12 couple 送花批次調整 (fc65396d 觀察)
+- [ ] _GIFT_BATCH 20 -> 10（使用者指定預設一次送 10）
+- [ ] give_all_in_hand 遇 0x0201 code=3 物品不足時降批次重試（10→5→2→1），num=1 仍不足才結束
+- [ ] 更新 tests/test_ws_token_couple.py 對應測試
+- [ ] 跑 focused pytest 驗證
+- [x] 全部完成：couple 批次 10 + code=3 降批次 (10→5→2→1)；tests 77 passed
+- [x] bot_config.json fc65396d ws_token.open_lamp false→true（使用者預期 WS 開燈）
+- [x] 順手修 test_ws_token_runner _SpyClient/fixture 缺 claim_quick_2h stub（先前 idle_reward 2h 改動遺漏）
+
+## 2026-06-12 ws_token 預設全開 + steward 副本掃蕩自動推導 + dashboard 規劃
+背景: fc65396d 神祕商人(購物管家)/副本管家失效。live WS 驗證兩服務皆 ACTIVE、
+遊戲內 12 章掃蕩設定都在 → 根因 (1) 裝置 ws_token.spend=false 只 read_info；
+(2) ws_phase 從未把 sweep_list 接給 _run_steward(接線缺口)，且 steward 不自動推導章節。
+使用者指示: ws_token.enabled 開了就代表全要 → 子功能預設全開、免逐項設定。
+
+- [x] config_manager DEFAULT ws_token 預設改: spend=true / open_lamp=true / mining.enabled=true
+      (forge_ring 維持 false: 會消耗全部真愛之石，破壞性，需明確 opt-in)
+- [x] steward.py 新增 derive_sweep_list(setting): 由 dungeon_setting_info(18699) 讀到的
+      遊戲內設定自動組 [(chapter, level, times)]，免手動維護章節
+- [x] runner._run_steward: spend 且 caller 未給 sweep_list 時自動 derive → run_dungeon_sweep
+- [x] bot_config.json fc65396d: ws_token.spend=true、mining.enabled=true(顯式 false 蓋掉新預設)
+- [x] tests: test_ws_token_steward derive (48 passed) 測試 + runner/ws_phase 既有預設斷言修正
+- [x] live 驗證 fc65396d: shopping shop1/8 code=0 買入(350/10件)、derive 12 章、sweep 8 章 code=0 有獎勵；571/574(購物)/576/577(掃蕩)為今日已買/票不足類非致命
+- [ ] dashboard 規劃(見下)
+- [ ] 提醒: bot 要重啟才生效
+
+
+## 2026-06-12 dashboard 進度徽章不認 WS 完成（fc65396d 商店購買/家族任務永遠 ⏳）
+
+根因（log 已查證，WS 本身有成功）：dashboard `/api/daily_progress`
+（`control_panel/routes_status.py:211`）讀的是 `JsonDataManager` 當日紀錄
+（商店購買=`Store`、家族任務=`family_market_timestamp`/`donate_family`），
+這些 key 只有舊 ADB/UI 任務實作真的跑過才寫。WS 階段（`ws_token/` steward/guild）
+與 `daily_pipeline._ws_skip()` 都不寫 JsonDataManager → WS 做完 → ADB 永遠跳過 →
+紀錄永不落地 → 徽章永遠 ⏳。
+
+- [x] ws_phase.py：新增 `SKIP_TO_DAILY_RECORD` + `_record_daily_done()`，WS 成功替代的任務
+      回寫當日紀錄（商店購買→`Store`、家族任務→`donate_family`、挖礦→`挖礦`、萬神試煉→`萬神試煉`）。
+      ⚠ 每日任務(`mission_timestamp`)刻意不回寫 — flat scalar schema（Mission.py），
+      time_recording 巢狀化會破壞讀側。
+- [x] TDD：tests/test_ws_phase.py 加 3 案例（成功回寫 / errored+self-skipped 不寫 /
+      寫入失敗不影響 skip-set），17 passed
+- [ ] 提醒：改完需重啟跑 bot 的 checkout（C:\python_project）才生效
+- 順帶觀察（同台、非本題）：farm WS 每輪 `WSTimeoutError cmd=3077`；
+  13:15/15:15 兩輪手機 ADB `not online` 降級純 WS
+
+### Dashboard 規劃（WS 進階設定）
+- 裝置卡「方案」選擇器旁加「WS 設定」齒輪 → 彈出 per-device ws_token 子開關:
+  spend / open_lamp / mining(含 allow_bomb/allow_drill) / couple_gifts / workshop_rotate / forge_ring
+- 後端: control_panel_app 既有 update_device_settings 已能寫 nested ws_token(經
+  _merge_ws_token_phase_config 清洗)，只需新增 API payload 欄位白名單 + 前端表單
+- 預設值顯示「預設(開)」字樣，未覆寫不寫入 bot_config(讓新預設流動)
+- 改 dashboard.html + control_panel_app.py 後需重啟中控
+
+---
+
+## 多代理程式碼審查（2026-06-13，ultracode 6 區 + 對抗式驗證）
+
+審查範圍：當前工作區改動（~3.7k 行 diff + ~1.7k 行新檔）。8 raw findings → 5 confirmed
+（1 HIGH / 2 MEDIUM / 2 LOW），3 駁回（誤報）。全部已修 + 驗證。
+
+### Review 結果（已修正）
+- [x] HIGH `runtime_services/device_scan_service.py`：offline_fallback 手機跑純 WS 掛機時，
+      仍被 ADB 缺席規則 1h 後誤判離線（違反「不放棄、不判離線」），且可能觸發 3h
+      dead-device 重啟封鎖。修：`_apply_adb_absence_rule` 新增 `exempt` 參數，offline_fallback
+      序號豁免並清除殘留 timestamp；call site 算一次 `fb_devices` 傳入。新增回歸測試。
+- [x] MEDIUM `ws_token/carpark.py`：spill loop 中途 park 逾時拋例外 → 已停車數未經
+      runner 持久化 → 配額重複計算。修：read 失敗只跳該 lot；park 例外回傳 partial
+      `out`（reason=park_timeout），讓 runner 持久化已確認 parked_count。
+- [x] MEDIUM `miner/v5/priors_runtime.py`：observe_scroll 取到 viewport 內(常為剛清掉=air)
+      的 above cell，與離線 tape 原始地形統計語意不一致，污染 priors。修：vertical 僅在
+      above 也在新揭露 band 內(`r-1>=first_new`)才計；flush/observations 改以新揭露 cell 數
+      計(marginal 仍即時持久)。連動更新 4 測試 + docstring。
+- [x] LOW `miner/v5/planner.py`：bottom-edge 迴圈無條件 break = 誤導性 dead structure。
+      修：直接讀最後一列(行為等價，保留 unknown→dirt 預設)。
+- [x] LOW `device.py`：close_notification 新增 `press("home")` 等被 try/except 吞掉
+      ForceSleepRequested/WakeLoopInterrupted unwind 例外。修：三個 handler 先 re-raise
+      控制流例外（top-level import，無循環依賴）。
+
+### 駁回（驗證為誤報，不動）
+- ws_token/carpark.py ext#8 `_parse_space` 解析：schema 為 repeated p_key_value，現行
+  逐 field-8 解碼正確；建議的 `_parse_kv_list` 反而會丟資料。
+- mining_service.py prev_board「時序錯」：實測 prev_board 與 depth_tracker._prev 同步，
+  正是 scroll 對齊的參考幀；且該參數目前未被使用。
+- priors_runtime.py ragged board IndexError：classifier 保證輸出 7x6 矩形，不可達。
+
+### 待使用者決定（非本次修正）
+- `miner/v5/runtime/*.json`（已存在的線上累積檔）內含舊污染語意的 vertical 計數，會持續
+  以 ≤20% 上限輕微影響 merge。如要丟棄可刪除這些檔或重跑 `tools/build_v5_priors.py`。
+- `tools/tmp_*.py`（5 支 scratch/probe）為未追蹤檔，建議勿 `git add -A` 進版控或加入 gitignore。
+
+## WS 階段可被「開啟瀏覽器」中斷 + 持久化續做 (2026-06-15, worktree)
+
+Spec: `docs/superpowers/specs/2026-06-15-ws-phase-interruptible-resume-design.md`
+在 worktree `worktree-ws-phase-interruptible-resume`（base=overnight checkpoint）實作，完成後 merge 回 `feat/overnight-2026-06-14`。
+
+- [x] `ws_token/abort.py`：`WSRunAborted(Exception)`（零相依，避免循環匯入）。
+- [x] `ws_token/runner.py`：`RunReport.aborted`；`run_device(should_abort, skip_tasks)`（預設 None=不變）；`_step` 檢查 aborted/should_abort()/skip_set；`_safe` re-raise `WSRunAborted`；`should_abort` 透傳 lamp/mining。TDD：`tests/test_ws_runner_abort.py`（10）。
+- [x] `ws_token/lamp.py` `open_lamp` + `ws_token/mining_supervised.py` `mine_until_pickaxe_empty`：加 `should_abort=None`，迴圈內命中即 `raise WSRunAborted`。real-raise 測試各 1。
+- [x] `game_actions/ws_phase.py`：ledger（ws_resume；date+ts TTL 30min；EXEMPT={carpark,idle_reward}）→ skip_tasks；`_substantive_done`；`effective_done` 重算 pipeline-skip + farm/dungeon；abort 寫入、完整完成清空、abort 時 update_state；全程 best-effort。TDD：`tests/test_ws_phase_resume.py`（8）。
+- [x] `new_main_v2.py`：WS 區塊後 `if backend=="web_h5" and has_pending_web_launch_request: continue`；init 被中斷則不快取 `pre_runtime_ws_done`。安全閘：web_h5 only（adb 無瀏覽器，避免緊迴圈）。
+- [x] 驗證：focused pytest + py_compile；3 個 milestone commit。
+
+### Review
+- 三層：機制（runner，純機制；should_abort/skip_tasks 預設 None=零行為差異）、政策（ws_phase ledger）、接線（new_main_v2，web_h5-gated）。
+- 安全：should_abort 與迴圈 continue 都僅 web_h5；adb（含手機fc offline_fallback）零影響。長任務（開神燈/挖礦）每批/每步讓出，已落地結果不重複。
+- ledger 99% 為空（只存在於 abort→resume 之間）；TTL 30min + 完整完成清空 雙保險，避免跨喚醒誤跳 regen 任務。
+- 測試限制：new_main_v2.main() 迴圈無既有 unit 測試框架且 import 全套 device/cv2 棧；兩個 guard 以 py_compile + 細讀驗證，其依賴的 primitives（has_pending_web_launch_request、run_ws_phase ledger）已全測。
+- 待 live 驗證：web_h5+ws 裝置 WS 階段（mining 進行中）按「開啟瀏覽器」→ 即時開頁 → 用完重新上線續做。需重啟 master+worker 生效。
+## 2026-06-17 05:49:37  ·  session 00493efb
+
+Baseline 確認：2 個驅動測試 RED、73 passed（既有全綠 + 我 3 個守護）。已 ping FixDesigner 回傳設計。為避免它卡住而拖延整夜進度，設一個 150s fallback：若 FixDesigner 先回我就合併、否則 fallback 觸發我就用 codex+我的共識實作。
+
+---
+
+## 2026-06-17 05:50:11  ·  session 00493efb
+
+FixDesigner 只回了 idle 通知、沒有設計內容。再直接要求它把完整設計回傳給我。
+
+---
+
