@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from miner.v3.clusters import find_prospective_pits
 from miner.v5.planner import plan_v5
 from miner.v5.priors import Priors, get_priors, load_priors
 
@@ -289,9 +290,6 @@ if __name__ == "__main__":
 # ---------------------------------------------------------------------------
 # find_prospective_pits unit tests
 # ---------------------------------------------------------------------------
-from miner.v3.clusters import find_prospective_pits
-
-
 def test_prospective_pits_2x1_returns_one_row_below():
     """2×1 run → one row below (width=2, need 1 more row) is prospective."""
     board = _board([
