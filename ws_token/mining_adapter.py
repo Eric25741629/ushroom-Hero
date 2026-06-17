@@ -209,7 +209,7 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
         not trigger hold_floor.
       ``grid``: the raw 7×6 planner grid, used by the fallback in _select_dig_step.
     """
-    from miner.v4.planner import plan_v4  # lazy: keep import cost off module load
+    from miner.planning.smart_planner import plan_smart  # lazy: keep import cost off module load
     from miner.v3.board import floor7_open
     from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
@@ -218,13 +218,12 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     shovels = float(inv.get("pickaxe", 0))
     items = {"drill": int(inv.get("drill", 0)), "bomb": int(inv.get("bomb", 0))}
 
-    # WS path uses v4 (the bounded-DFS survivor; v5 was v4 + priors). Unlike v1
-    # (A*), v4 keeps emitting a no_pit progress dig once pits are gone so the WS
-    # loop can keep scrolling. max_depth is v4's DFS horizon knob.
-    kwargs: Dict[str, Any] = {"shovels": shovels, "items": items}
-    if max_depth is not None:
-        kwargs["max_depth"] = max_depth
-    result = plan_v4(grid, **kwargs)
+    # WS path uses v1 (whole-board A*) — highest score/shovel-efficiency on the
+    # canonical sim (v1 3711 vs v4 1649). v1 used to return an EMPTY plan once
+    # pits were gone + floor7 open (why WS previously used v4); that's fixed by
+    # smart_planner's descent-dig fallback, so v1 now keeps emitting a no_pit
+    # progress dig like v4 did. `max_depth` is a v4-only DFS knob — ignored here.
+    result = plan_smart(grid, shovels=shovels, items=items)
 
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     ws_steps: List[Dict[str, Any]] = []
