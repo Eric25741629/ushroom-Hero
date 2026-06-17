@@ -632,7 +632,10 @@ function placeClustersInTapeRange(rMin, rMax) {
   const from = Math.max(rMin, 1);
   const span = Math.max(0, rMax - from);
   if (span <= 0) return;
-  const PIT_DENSITY = 0.036;
+  // Default 0.036 calibrated to real logs (track_pits_replay). Overridable via
+  // window.__PIT_DENSITY so eval harnesses can sweep density (e.g. the live game
+  // can run sparser — a 2026-06-18 re-measure on fresh logs read ~2.4%).
+  const PIT_DENSITY = (typeof window.__PIT_DENSITY === 'number') ? window.__PIT_DENSITY : 0.036;
   const SIDE_PMF = [[1, 0.66], [2, 0.17], [3, 0.17]];
   const target = Math.round(PIT_DENSITY * span * COLS);
   let placed = 0, guard = 0;

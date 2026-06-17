@@ -171,6 +171,8 @@ def main():
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--seed", type=int, default=100)
     ap.add_argument("--max-iters", type=int, default=600)
+    ap.add_argument("--density", type=float, default=None,
+                    help="override mining_sim.html PIT_DENSITY (e.g. 0.024)")
     ap.add_argument("--headed", action="store_true")
     args = ap.parse_args()
 
@@ -194,6 +196,8 @@ def main():
                 seed = args.seed + i
                 page = browser.new_page()
                 page.add_init_script(_SEED_SCRIPT % seed)
+                if args.density is not None:
+                    page.add_init_script(f"window.__PIT_DENSITY = {args.density};")
                 page.goto(url)
                 # boot reset() already ran under the seeded RNG (add_init_script
                 # runs before page scripts), so the mine is seeded and identical
