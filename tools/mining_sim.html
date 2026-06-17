@@ -625,21 +625,25 @@ function tryPlaceClusterTape(size, rRange, cRange, attempts) {
 }
 
 function placeClustersInTapeRange(rMin, rMax) {
-  // Reserve tape row 0 (player's starting row) — no clusters there. For all
-  // other rows, place biggest first so 2×2/1×1 fit around the 3×3.
+  // Reserve tape row 0 (player's starting row) — no clusters there.
+  // Calibrated to REAL logs (tools/track_pits_replay.py): spawn pit density
+  // ~3.6% of cells, cluster side PMF 1×1:66% / 2×2:17% / 3×3:17%. (The earlier
+  // count-based generator spawned ~33% density — ~9× too high.)
   const from = Math.max(rMin, 1);
   const span = Math.max(0, rMax - from);
-  const n3 = Math.max(1, Math.floor(span / 8));
-  for (let i = 0; i < n3; i++) {
-    tryPlaceClusterTape(3, [from, rMax - 3], [0, COLS - 3], 80);
-  }
-  const n2 = Math.max(2, Math.floor(span / 5));
-  for (let i = 0; i < n2; i++) {
-    tryPlaceClusterTape(2, [from, rMax - 2], [0, COLS - 2], 50);
-  }
-  const n1 = Math.max(2, Math.floor(span / 5));
-  for (let i = 0; i < n1; i++) {
-    tryPlaceClusterTape(1, [from, rMax - 1], [0, COLS - 1], 50);
+  if (span <= 0) return;
+  const PIT_DENSITY = 0.036;
+  const SIDE_PMF = [[1, 0.66], [2, 0.17], [3, 0.17]];
+  const target = Math.round(PIT_DENSITY * span * COLS);
+  let placed = 0, guard = 0;
+  const guardMax = target * 25 + 50;
+  while (placed < target && guard++ < guardMax) {
+    const x = Math.random();
+    let acc = 0, side = 1;
+    for (const [s, p] of SIDE_PMF) { acc += p; if (x < acc) { side = s; break; } }
+    if (tryPlaceClusterTape(side, [from, rMax - side], [0, COLS - side], 60)) {
+      placed += side * side;
+    }
   }
 }
 
