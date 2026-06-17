@@ -7,9 +7,9 @@ move, and the planner should prefer such placements over scattering items.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import FrozenSet, List, Tuple
+from typing import FrozenSet, List, Set, Tuple
 
-from .board import is_pit
+from .board import is_air, is_pit
 from .types import Board, Coordinate
 
 
@@ -65,3 +65,73 @@ def cluster_value(size: int) -> float:
     if size <= 1:
         return 1.0
     return float(size * size) * 1.4
+
+
+def find_prospective_pits(board: Board) -> Set[Coordinate]:
+    """Return in-viewport unexcavated cells that are certain to be pits.
+
+    A horizontal run of N >= 2 adjacent pits in a row is guaranteed to be the
+    top portion of an N×N square cluster (domain rule: isolated adjacent pits
+    do not occur). The unexcavated cells in the rows directly below (within
+    the viewport) are prospective pits — bombs/drills can reach them and the
+    full N×N cluster bonus becomes plannable.
+
+    Only returns cells within the viewport (row index < len(board)).
+    Out-of-viewport prospective pits cannot be hit and are handled separately
+    by _incomplete_bottom_squares in the v5 planner.
+    """
+    if not board:
+        return set()
+    rows = len(board)
+    cols = len(board[0])
+    prospective: Set[Coordinate] = set()
+
+    for r in range(rows):
+        c = 0
+        while c < cols:
+            if not is_pit(board[r][c]):
+                c += 1
+                continue
+            start = c
+            while c < cols and is_pit(board[r][c]):
+                c += 1
+            width = c - start
+            if width < 2:
+                continue
+            # Only process from the topmost row of the expected square.
+            # If the row above is all-pits at these cols, we are not at the top.
+            if r > 0 and all(
+                is_pit(board[r - 1][cc]) for cc in range(start, start + width)
+            ):
+                continue
+            # Count consecutive all-pit rows already confirmed below the run.
+            extra_confirmed = 0
+            for rb in range(r + 1, r + width):
+                if rb >= rows:
+                    break
+                if all(is_pit(board[rb][cc]) for cc in range(start, start + width)):
+                    extra_confirmed += 1
+                else:
+                    break
+            total_confirmed = 1 + extra_confirmed
+            if total_confirmed >= width:
+                continue  # complete cluster — find_clusters handles it
+            # Collect prospective cells from the remaining unconfirmed rows.
+            run_valid = True
+            candidates: Set[Coordinate] = set()
+            for rb in range(r + total_confirmed, r + width):
+                if rb >= rows:
+                    break  # out of viewport — bombs cannot reach
+                for cc in range(start, start + width):
+                    cell = board[rb][cc]
+                    if is_air(cell):
+                        run_valid = False
+                        break
+                    if not is_pit(cell):
+                        candidates.add((rb, cc))
+                if not run_valid:
+                    break
+            if run_valid:
+                prospective.update(candidates)
+
+    return prospective
