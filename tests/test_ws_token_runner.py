@@ -307,10 +307,17 @@ def test_run_device_main_tasks_collects_then_claims(patched):
 
     mt = [a for t, a in calls if t == "main_tasks"]
     assert mt[0] == "collect_state"
-    assert set(mt[1:]) == {
-        "claim_daily_tasks", "claim_marry_tasks", "claim_daily_box",
-        "claim_weekly_box", "claim_achievement"
+    # 領完每日任務後重新快照，活躍度寶箱才看得到剛變可領的盒子。
+    assert mt.index("claim_daily_box") > _last_index(mt, "collect_state")
+    assert mt.count("collect_state") == 2
+    assert set(mt) == {
+        "collect_state", "claim_daily_tasks", "claim_marry_tasks",
+        "claim_daily_box", "claim_weekly_box", "claim_achievement"
     }
+
+
+def _last_index(seq, val):
+    return len(seq) - 1 - seq[::-1].index(val)
 
 
 # --- spend gate -------------------------------------------------------------

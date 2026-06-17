@@ -162,6 +162,9 @@ def _run_main_tasks(client, collector: main_tasks.TaskCollector, *,
     state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily = main_tasks.claim_daily_tasks(client, state)
     marry = main_tasks.claim_marry_tasks(client, state)  # 默契考驗 好感週任務 (type 6)
+    # 領完每日任務後活躍度才上升、活躍度寶箱才變可領；server 會 push 更新的
+    # task_daily_point_s2c，故重新快照再領寶箱（否則用領取前的舊快照會漏領）。
+    state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily_box = main_tasks.claim_daily_box(client, state)
     weekly_box = main_tasks.claim_weekly_box(client, state)
     achievement = main_tasks.claim_achievement(client)
@@ -803,6 +806,7 @@ def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
 
 def _run_mining(client, tracker: mining.InventoryTracker, *,
                 mining_config: Optional[dict],
+                device: Optional[str] = None,
                 should_abort: Optional[Callable[[], bool]] = None) -> dict:
     """挖礦 opt-in: 用 0x0402 庫存現量，一步一刷新，鎬子用完即停。"""
     cfg = mining_config or {}
@@ -815,6 +819,7 @@ def _run_mining(client, tracker: mining.InventoryTracker, *,
         max_steps=int(cfg.get("max_steps") or 200),
         timeout=cfg.get("timeout"),
         max_depth=cfg.get("max_depth"),
+        device_id=device,
     )
 
 
@@ -1202,6 +1207,7 @@ def run_device(device: str, *, spend: bool = False,
             _step("mining",
                   lambda: _run_mining(client, inventory_tracker,
                                       mining_config=mining_config,
+                                      device=device,
                                       should_abort=should_abort))
         if open_lamp:
             _step("lamp",
