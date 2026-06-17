@@ -339,6 +339,7 @@ def _select_dig_step(
     *,
     hold_floor: bool = False,
     grid=None,
+    exclude=None,
 ) -> Optional[Dict[str, Any]]:
     """Pick the next server-valid step from the planner output.
 
@@ -356,17 +357,18 @@ def _select_dig_step(
     without it the fallback skips non-pit cells entirely to stay conservative.
     """
     plan_steps = list(plan_steps or ())
+    excl = {int(x) for x in (exclude or ())}
     actives = {int(a) for a in (getattr(board, "actives", None) or [])}
     block_by_id = {int(b.block_id): b for b in (getattr(board, "blocks", None) or [])}
 
     for step in plan_steps:
         bid = step.get("block_id")
-        if bid is not None and _is_diggable(actives, block_by_id, int(bid)):
+        if bid is not None and int(bid) not in excl and _is_diggable(actives, block_by_id, int(bid)):
             return step
     if not plan_steps:
         return None
 
-    cands = [bid for bid in actives if _is_diggable(actives, block_by_id, bid)]
+    cands = [bid for bid in actives if bid not in excl and _is_diggable(actives, block_by_id, bid)]
     if not cands:
         return None
 
@@ -474,29 +476,47 @@ def mine_until_pickaxe_empty(
         )
         plans.append(plan_result)
         _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog)
-        step = _select_dig_step(
-            current_board,
-            plan_result.get("ws_steps", []),
-            hold_floor=bool(plan_result.get("hold_floor")),
-            grid=plan_result.get("grid"),
-        )
-        if step is None:
-            stopped_reason = "no_steps"
-            break
 
-        candidate_steps.append(step)
-        item = execute_plan_step(
-            client,
-            step,
-            allow_bomb=allow_bomb,
-            allow_drill=allow_drill,
-            timeout=timeout,
-            before_board=current_board,
-        )
-        executed.append(item)
-        if not item.get("confirmed"):
+        # 同一盤面內逐個候選嘗試：被伺服器拒挖（unconfirmed、版面不變）的目標只
+        # 加入本盤黑名單後改試下一個可達格，不再因「第一步失敗」就中止整輪挖礦。
+        # 這正是 hold_floor 盤面挑到被上方石頭擋住的深層 frontier 格 → 拒挖 →
+        # 之前 digs=1 就 break、整輪挖 0 的根因。候選有限，不會無限送 dig。
+        rejected: set = set()
+        item = None
+        tried_any = False
+        while True:
+            if should_abort is not None and should_abort():
+                raise WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
+            step = _select_dig_step(
+                current_board,
+                plan_result.get("ws_steps", []),
+                hold_floor=bool(plan_result.get("hold_floor")),
+                grid=plan_result.get("grid"),
+                exclude=rejected,
+            )
+            if step is None:
+                break
+            candidate_steps.append(step)
+            tried_any = True
+            item = execute_plan_step(
+                client,
+                step,
+                allow_bomb=allow_bomb,
+                allow_drill=allow_drill,
+                timeout=timeout,
+                before_board=current_board,
+            )
+            executed.append(item)
+            if item.get("confirmed"):
+                break
             _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
-            stopped_reason = "unconfirmed"
+            rejected.add(int(step["block_id"]))
+            item = None
+
+        if item is None:
+            # 本盤所有可挖候選都試過仍無 confirmed dig。完全沒挖步=no_steps，
+            # 有送過但都被拒=unconfirmed（兩者都讓 confirmed_digs==0 標 skipped）。
+            stopped_reason = "unconfirmed" if tried_any else "no_steps"
             break
 
         _decrement_inventory(
