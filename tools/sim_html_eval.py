@@ -43,6 +43,9 @@ PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4, "v5": plan_v5}
 
 STUCK_LIMIT = 4  # identical board sig for this many planner iters == deadlock
 
+# Top-pileup instrumentation: pit labels (mirror mining_sim.html isPit()).
+_PIT_LABELS = {"pit", "reachable_pit", "unreachable_pit"}
+
 # Seeded Math.random override (mulberry32). Injected before the page scripts run
 # so every Math.random() call inside mining_sim.html is deterministic per seed.
 _SEED_SCRIPT = """
@@ -92,11 +95,22 @@ def play_one(page, plan_fn, max_iters):
     same_count = 0
     stuck = False
     iters = 0
+    # Top-pileup metrics: how often / how long a pit lingers in row 0 (the
+    # planner refusing to collect top ore -> it scrolls off uncollected).
+    row0_pit_iters = 0
+    row0_run = 0
+    row0_run_max = 0
     for iters in range(1, max_iters + 1):
         inv = snap["inv"]
         if _game_over(inv):
             break
         board = snap["board"]
+        if any(cell in _PIT_LABELS for cell in board[0]):
+            row0_pit_iters += 1
+            row0_run += 1
+            row0_run_max = max(row0_run_max, row0_run)
+        else:
+            row0_run = 0
         sig = _board_sig(board)
         if sig == last_sig:
             same_count += 1
@@ -136,6 +150,7 @@ def play_one(page, plan_fn, max_iters):
     return {
         "score": snap["score"], "pits": snap["pits"], "depth": snap["depth"],
         "cost": snap["cost"], "digs": snap["digs"], "stuck": stuck, "iters": iters,
+        "row0_pit_iters": row0_pit_iters, "row0_run_max": row0_run_max,
     }
 
 
@@ -155,8 +170,8 @@ def main():
           f"seeds={args.seed}..{args.seed + args.runs - 1} stuck_limit={STUCK_LIMIT}")
     print("=" * 86)
     print(f"{'planner':8s} {'score':>8s} {'pits':>6s} {'depth':>6s} {'cost':>7s} "
-          f"{'pit/sh':>7s} {'stuck':>6s} {'rounds':>6s}")
-    print("-" * 86)
+          f"{'pit/sh':>7s} {'stuck':>6s} {'r0pit%':>7s} {'r0run':>6s} {'rounds':>6s}")
+    print("-" * 100)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
@@ -180,8 +195,14 @@ def main():
             cost = statistics.mean(r["cost"] for r in rows)
             pps = statistics.mean((r["pits"] / r["cost"]) if r["cost"] else 0 for r in rows)
             stuck = sum(1 for r in rows if r["stuck"])
+            # row-0 pit pileup: % of planner iters with a pit stuck in row 0,
+            # and the longest consecutive run (averaged across rounds).
+            r0pct = statistics.mean(
+                (r["row0_pit_iters"] / r["iters"] * 100) if r["iters"] else 0 for r in rows
+            )
+            r0run = statistics.mean(r["row0_run_max"] for r in rows)
             print(f"{name:8s} {sc:8.0f} {pit:6.1f} {dep:6.1f} {cost:7.0f} "
-                  f"{pps:7.2f} {stuck:6d} {len(rows):6d}")
+                  f"{pps:7.2f} {stuck:6d} {r0pct:7.1f} {r0run:6.1f} {len(rows):6d}")
         browser.close()
 
 
