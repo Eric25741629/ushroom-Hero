@@ -100,6 +100,11 @@ def find_prospective_pits(board: Board) -> Set[Coordinate]:
                 continue
             # Only process from the topmost row of the expected square.
             # If the row above is all-pits at these cols, we are not at the top.
+            # Domain guarantee: clusters are 1×1/2×2/3×3 squares with a 1-cell
+            # isolation ring, so vertically-adjacent pits ALWAYS belong to the
+            # same cluster. Hence "row above is all-pit at my columns" is exactly
+            # equivalent to "I am not the top row" — a wider unrelated run above
+            # cannot occur (it would require two clusters with no gap).
             if r > 0 and all(
                 is_pit(board[r - 1][cc]) for cc in range(start, start + width)
             ):
