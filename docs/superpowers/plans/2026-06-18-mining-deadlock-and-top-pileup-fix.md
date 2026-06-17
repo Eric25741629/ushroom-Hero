@@ -502,3 +502,64 @@ Confirm via the Task A1 + A2 tests that the exact `7fe98fc6` board no longer spi
 **Type consistency:** `_identical_board_exceeded(cur_sig, prev_sig, count) -> (count, bool)` used consistently in A2. `_forced_descent_dig(board) -> Optional[(r,c)]` used consistently in B. `NoBoardChangeError(step, reason, board_before, board_after, partial_result)` matches executor.py:82.
 
 **Open risk to flag at execution time:** Task B references the loop's remaining-pit counter as `count` and the deadline as `start_time + max_duration_seconds` — verify the exact local variable names in `mining_service.py` before wiring (they were observed at lines 618, 588-590). Adjust to the real names.
+
+---
+
+## Execution Review (2026-06-18)
+
+Implemented via a dual-implementation cross-check: an Opus implementation (two
+subagents, main tree) and an independent OpenCode implementation (isolated git
+worktree), then aggregated/reconciled by Opus.
+
+**Cross-check outcome:** the two implementations CONVERGED — `git diff --no-index`
+between the trees showed only cosmetic differences (one dropped comment, single-
+vs-double quotes, a spurious BOM OpenCode added to the new test files). Crucially,
+BOTH independently applied the `remaining_pits` gating fix flagged in the Open
+Risk note above (neither used the wrong `count`). The Opus tree was taken as
+canonical (cleaner comments, no spurious BOM).
+
+**Bug both implementations shared (caught in aggregation):** the forced-descent
+`execute_plan_steps` call discarded its `ExecutionResult`, so the pickaxe(s) the
+forced dig consumed were never debited from the internal `count` (every other
+`execute_plan_steps` call in the loop credits via `_apply_partial`). Fixed in the
+canonical tree: `count = _apply_partial(descent_result, count, ...)` in the
+`else` branch. Drift was bounded by the 5-iter OCR reconcile, but the
+inconsistency was real.
+
+**Tests:** A1 + A2 + B (3 new tests) plus executor regression = 21 passed.
+
+**Task A1:** done — futile dig (verify-fail + whole board unchanged) now raises
+`NoBoardChangeError`; the loop's existing `except NoBoardChangeError` blacklists
+the action. This directly kills the `7fe98fc6` 122x spin (the verify-fail early
+return that bypassed the no-board-change check is gone).
+
+**Task A2:** done — `_identical_board_exceeded` guard wired after the clean-execute
+credit; backstop for any future "non-empty plan, board never changes" bug.
+
+**Task B:** done — `_forced_descent_dig` + empty-plan wiring, gated on
+`plan['remaining_pits'] > 0`, credits shovels, falls through to abort only if even
+forced descent makes no change.
+
+**Task C (investigation-first) — CONCLUSION: no v5 change.** Instrumented the HTML
+harness with row-0 pit persistence (`r0pit%`, `r0run`). Result (runs=5,
+max-iters=500, density 3.6%):
+
+| planner | score | pits | depth | stuck | r0pit% | r0run |
+|---------|-------|------|-------|-------|--------|-------|
+| v1      | 3126  | 157.6| 555.4 | 0     | 0.2    | 0.8   |
+| v3      | 2963  | 151.8| 537.8 | 0     | 0.0    | 0.0   |
+| v4      | 1359  | 69.2 | 231.2 | 3     | 0.0    | 0.0   |
+| v5      | 1173  | 61.6 | 218.0 | 3     | 0.0    | 0.0   |
+
+v5 ≈ v4 on row-0 pileup (both 0.0%), so the canonical model produces NO top
+pileup. The user-observed pileup is therefore a REAL-game/CNN artifact (sealed-
+pocket reachability the CNN mislabels as reachable), already mitigated by Tasks
+A+B (blacklist + forced descent). Per the plan's Step 3 branch, v5's
+`INCOMPLETE_SQUARE_PENALTY` was NOT touched. Committed instrumentation only.
+
+**Out-of-scope finding flagged:** v4/v5 get `stuck=3/5` in-sim and score ~half of
+v1/v3 under the recalibrated 3.6% density (no planner was modified, so this is not
+a regression — it is the post-calibration baseline). In the LIVE loop this exact
+"empty plan but pits remain" situation is now rescued by Task B forced-descent;
+but v5's standalone planner efficiency at low density is a separate question for a
+future planner pass.
