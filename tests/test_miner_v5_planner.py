@@ -393,3 +393,42 @@ def test_prospective_pits_complete_cluster_excluded():
     ])
     result = find_prospective_pits(board)
     assert result == set()
+
+
+# ---------------------------------------------------------------------------
+# Prospective pit inference — planner integration
+# ---------------------------------------------------------------------------
+
+def test_prospective_pits_planner_clears_beyond_visible():
+    """With prospective marking, the planner plans to collect pits beyond the
+    visible 3×1 row.
+
+    Setup: 3×1 visible pits at row 1 (cols 1-3). Rows 2-3 are unexcavated
+    dirt that will be marked as unreachable_pit. 1 bomb available.
+
+    Without prospective marking:
+      - original_groups has a group of 3 (the visible pits only)
+      - Bomb at (0, 2) fully clears group of 3 → no more pits → DFS stops
+      - pits_collected == 3
+
+    With prospective marking:
+      - original_groups has a group of 9 (3 confirmed + 6 prospective)
+      - After bomb, 5 prospective pits remain → DFS continues digging
+      - pits_collected > 3
+    """
+    board = _board([
+        "......",   # row 0: all reachable air (bomb placement available)
+        "D***DD",   # row 1: 3×1 confirmed pits at cols 1-3
+        "DDDDDD",   # row 2: dirt → prospective after marking
+        "DDDDDD",   # row 3: dirt → prospective after marking
+        "DDDDDD",   # row 4
+        "DDDDDD",   # row 5
+        "......",   # row 6: open air (floor7 already open)
+    ])
+    plan = plan_v5(board, shovels=20, items={"drill": 0, "bomb": 1})
+    assert plan["ok"] is True
+    pits_collected = plan["stats"]["pits_collected"]
+    assert pits_collected > 3, (
+        f"Expected planner to target prospective pits (>3 collected), "
+        f"got {pits_collected}. Prospective marking may not be integrated."
+    )
