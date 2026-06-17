@@ -12,7 +12,40 @@
 
 ---
 
-## ⛏️ 2026-06-17 手機fc WS 挖礦死結修復（自主，使用者核可直接實作 + WS 驗證）
+## ⛏️ 2026-06-18 v1 空 plan 修復 + 三套演算法 HTML 真實環境評測（dual-codev）
+
+Root cause（A 我 + B opencode 一致）：`smart_planner.solve()` 在起始 state 已達標
+（`remaining_pits==0 且 f7_open`）或無可用動作時，`res.history` 為空 → `steps==[]`。
+這就是「v1 在無 pit + floor7 開時回空步」、WS 監督迴圈被迫改用 v4 的原因。
+
+- [x] 修復：`_descent_fallback_step()`，`solve()` 回傳前若 history 空就補一個「最深可挖格」下潛挖步
+      （鏡像 v4 no_pit descent）；truly 無可挖仍誠實回空；正常 A* 輸出不變。commit fix(miner/v1)。
+- [x] TDD：`tests/test_smart_planner_descent_fallback.py`（RED→GREEN，3 passed；61 planner 測試無回歸）。
+- [x] dual-codev IMPLEMENT：opencode worktree 平行實作，演算法/掛點完全一致 → 取 A（docstring 較清楚）。
+- [x] HTML 真實環境評測（inv 已是 1000/10/10）：見 `tasks/eval_postfix.txt`。
+- [x] 優化分析（下方）。
+
+### 評測結果（mining_sim.html headless, seeds 100-104, max-iters 600, inv 1000/10/10）
+| planner | score | pits | depth | cost | pit/鏟 | bomb操作 | drill操作 | stuck | r0pit% |
+|---------|------:|-----:|------:|-----:|------:|------:|------:|------:|------:|
+| v1 | 3711 | 188 | 667 | 760 | 0.25 | 47.6 | 58.2 | 0 | 0.3 |
+| v3 | 3585 | 184 | 649 | 824 | 0.22 | 41.6 | 32.6 | 0 | 0.0 |
+| v4 | 1649 | 83 | 274 | 344 | 0.14 | 8.6 | 28.4 | 3 | 0.0 |
+（修復前 v1=3711/stuck0 → 修復後完全相同：descent fallback 在 sim 幾乎不觸發，零回歸。）
+
+### 操作優化空間
+1. **v1（預設）已是三套操作效率最高者**，且唯一的操作缺陷（空 plan）本次已修。
+   最有價值的優化：**WS 挖礦現在可從 v4 切回 v1**（v1 不再回空步），等於把 WS 路徑
+   的 score 從 ~1649 拉到 ~3711（2.2x）。屬 runtime routing 變更，需先 live WS 驗證再翻，
+   本次不動。
+2. **v4 是真正的優化目標但屬結構性**：3.6% 稀疏密度下 depth-3 bounded DFS 看不到一顆
+   3x3 cluster（跨 3 row），bomb 操作只有 8.6（v1 的 1/6）→ 抱著炸彈不用 + anti-scroll
+   guard → stuck 3/5、score 砍半。非小修可解（memory 已記），WS 不靠它就先擱置。
+3. **道具成本模型 caveat（低信心，需真實掉落數據）**：sim 會掉落道具所以「多用道具」在
+   sim 是免費的；真實遊戲 drill 較稀有（drill mean 59 vs bomb 588）。v1 用 flat
+   `cost_item=2.99` 不分 drill/bomb，且 v1 drill 操作(58)>bomb(48)→偏吃稀有資源；
+   v4 的權重 drill 2.5 < bomb 3.5 對真實稀缺度是「反的」。若要再壓真實道具經濟，
+   v1 可考慮 drill 成本 > bomb，但須先有真實掉落統計，勿憑 sim 調。
 
 Root cause（fc ws_mining.log + 程式碼鐵證）：`mining_adapter.plan()` 的
 `hold_floor = count_remaining_pits(grid[0:1]) > 0 and not floor7_open(grid)` 用不看 count 的
