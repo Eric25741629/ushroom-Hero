@@ -53,7 +53,6 @@ from miner.v3.board import (
     is_reachable_air,
     normalize_board,
 )
-from miner.v3.clusters import find_prospective_pits
 from miner.v3.types import Board, Coordinate, PlanResult, PlanStats
 from miner.v4.planner import (
     FLOOR7_OPEN_BONUS,
@@ -406,13 +405,6 @@ def plan_v5(
     priors = _resolve_priors(device)
     work = normalize_board(board)
     canonicalize_in_place(work)
-    # Mark in-viewport prospective pits before counting and group identification.
-    # A horizontal N×1 run is guaranteed to be the top of an N×N square (domain:
-    # clusters are squares with a 1-cell isolation ring); the unexcavated cells
-    # below are treated as unreachable_pit so the full cluster is visible to
-    # _identify_pit_groups, _cluster_completion_delta, and bomb/drill scoring.
-    for _pr, _pc in find_prospective_pits(work):
-        work[_pr][_pc] = "unreachable_pit"
     initial_pits = count_remaining_pits(work)
     strategy = _classify_strategy(work)
     item_state = {
