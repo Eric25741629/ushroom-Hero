@@ -198,9 +198,9 @@ def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
          *, max_depth: Optional[int] = None) -> Dict[str, Any]:
-    """Build the grid, run plan_v5, and translate steps back to block_ids.
+    """Build the grid, run the planner (v4), and translate steps back to block_ids.
 
-    Returns the plan_v5 dict augmented with:
+    Returns the plan dict augmented with:
       ``ws_steps``: list of step + {block_id, row, col}.
       ``hold_floor``: True when row-0 has uncollected pits and floor-7 is still closed.
         Steps that would open floor-7 are removed from ws_steps under hold_floor
@@ -209,7 +209,7 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
         not trigger hold_floor.
       ``grid``: the raw 7×6 planner grid, used by the fallback in _select_dig_step.
     """
-    from miner.v5.planner import plan_v5  # lazy: keep import cost off module load
+    from miner.v4.planner import plan_v4  # lazy: keep import cost off module load
     from miner.v3.board import floor7_open
     from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
@@ -218,10 +218,13 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     shovels = float(inv.get("pickaxe", 0))
     items = {"drill": int(inv.get("drill", 0)), "bomb": int(inv.get("bomb", 0))}
 
+    # WS path uses v4 (the bounded-DFS survivor; v5 was v4 + priors). Unlike v1
+    # (A*), v4 keeps emitting a no_pit progress dig once pits are gone so the WS
+    # loop can keep scrolling. max_depth is v4's DFS horizon knob.
     kwargs: Dict[str, Any] = {"shovels": shovels, "items": items}
     if max_depth is not None:
         kwargs["max_depth"] = max_depth
-    result = plan_v5(grid, **kwargs)
+    result = plan_v4(grid, **kwargs)
 
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     ws_steps: List[Dict[str, Any]] = []

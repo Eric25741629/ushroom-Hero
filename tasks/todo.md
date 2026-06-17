@@ -566,3 +566,46 @@ control_panel/
 - 陷阱：RogueView 的按鈕 emit('click') 與 mouse.click 都無效，要直接呼叫
   `node._eventProcessor.bubblingTarget._callbackTable['click'].callbackInfos[].callback`
 
+---
+
+## 2026-06-18 預設 planner 改 v1 + 移除 v5（使用者指示，本 session）
+
+### 結論依據
+真實 3.6% 密度 eval（`docs/superpowers/plans/2026-06-18-...top-pileup-fix.md:547-552`）：
+v5 score 1173 = 四套最低（v1=3126、v3=2963、v4=1359），stuck=3/5。v5 當初選預設是依舊高密度
+eval，密度校正後從未重評。研究法：dual-codev（A=我+Explore、B=opencode 獨立、C 彙整）。
+
+### 決策（dual-codev C）
+- WS mining（`ws_token/mining_adapter.py`）原硬寫 plan_v5 → 改 **v4**（非 v1）。
+  原本想用 v1 但測試 `test_plan_uses_active_cells_to_make_ws_progress_step` 抓到：v1（A*）在無 pit
+  + floor7 已開時直接回空步（goal 達成），但 WS 監督迴圈需要 planner 持續吐 no_pit 進度挖步
+  來捲動。v5=v4+priors，去掉 priors 的等價 = v4(行為+契約完全相同，且接受 max_depth)。
+  → main 截圖迴圈 default=v1（其迴圈自帶 forced-descent 處理空步）；WS 路徑=v4。
+- `miner/depth_tracker.py` **保留**（非 v5 專屬：`tools/track_pits_replay.py` 用 best_scroll + 有自測）；
+  v5 移除後 depth 變純 telemetry。
+- `bot_config.json` 既有 v4 裝置（L323、728）**不動**（使用者只說移除 v5）。
+- ⚠ 注意 todo.md L71-75 的「挖礦 WS 另一 session 勿動」鎖是 2026-06-11 舊註；該工作已於 2026-06-17
+  由本脈絡 merge+live 驗證（見 memory ws-mining-verified），故本次可改 mining_adapter.py。
+
+### EDIT
+- [x] `config_manager.py`: L70 default、L197 default、L998 enum 去 v5（→v1）
+- [x] `miner/mining_service.py`: 去 import plan_v5 / v5 dispatch 分支 / `{"v3","v4","v5"}` 去 v5 /
+      default+fallback v5→v1 / 去 priors_accumulator（v5 專屬）3 段
+- [x] `ws_token/mining_adapter.py`: plan_v5→plan_smart，停傳 max_depth
+- [x] `control_panel/routes_status.py`: L366 default 'v5'→'v1'
+- [x] `templates/dashboard.html`: 去 v5 option + default 'v5'→'v1'
+- [x] `bot_config.json`: v5 裝置（L32,186,362,483,604）→v1
+- [x] eval 工具去 v5 import：`tools/sim_html_eval.py`、`tools/mining_sim_eval.py`、`tools/replay_real_boards.py`
+- [x] CLAUDE.md miner 區段敘述更新
+
+### DELETE
+- [x] `miner/v5/`、`tools/build_v5_priors.py`(+sync-conflict)、`tests/test_miner_v5_*.py`、`docs/MINING_V5_PRIORS.md`
+
+### VERIFY
+- [x] py_compile 改動檔 + grep 全庫無殘留 `miner.v5`/`plan_v5`
+- [x] focused pytest（depth_tracker / mining_service import / ws_token mining import）
+- [x] opencode 獨立 review 最終 diff
+
+### Review（完成後填）
+-
+

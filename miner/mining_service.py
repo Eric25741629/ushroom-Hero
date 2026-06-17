@@ -33,7 +33,6 @@ from miner.planning.planner import (
 from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
-from miner.v5.planner import plan_v5
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
@@ -313,16 +312,6 @@ def _dispatch_planner(
     device: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Route to the correct planner version and return (plan, plan_title)."""
-    if planner_version == "v5":
-        plan = plan_v5(
-            board,
-            shovels=shovels,
-            items=items,
-            blocked_actions={sig[:3] for sig in blocked_actions},
-            depth=depth,
-            device=device,
-        )
-        return plan, "V5 規劃 (Miner V5, priors-driven)"
     if planner_version == "v4":
         plan = plan_v4(board, shovels=shovels, items=items, blocked_actions={sig[:3] for sig in blocked_actions})
         return plan, "V4 規劃 (Miner V4, 3-step bounded)"
@@ -350,7 +339,7 @@ def _log_planner_stats(
     miner_logger,
     depth: Optional[int] = None,
 ) -> None:
-    if planner_version not in {"v3", "v4", "v5"}:
+    if planner_version not in {"v3", "v4"}:
         return
     depth_str = "?" if depth is None else str(depth)
     miner_logger.info(
@@ -464,16 +453,15 @@ def run(
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     miner_logger = setup_miner_logger(ip)
     device_cfg = config_manager.get_device_config(ip)
-    # Default planner is v4 (planner-eval 2026-06-05 real-board replay: v4 is
-    # fastest at mean 1.1 ms / max 46 ms with 0 budget violations, and carries
-    # the unseal-corridor fallback for buried pits). v1 is the most shovel-
-    # efficient alternative; v3 is cluster-aware. v2 was removed (violated the
-    # <300 ms budget on 18.8% of real boards). Override per-device with
-    # `mining_planner_version` in config.
-    planner_version = str(device_cfg.get("mining_planner_version", "v5")).strip().lower()
+    # Default planner is v1 (A*). Real-board eval at the recalibrated 3.6%
+    # density (docs/.../2026-06-18-...top-pileup-fix.md): v1 is the most
+    # shovel-efficient and highest-scoring of all planners; v3 is cluster-aware;
+    # v4 is a bounded 3-step DFS. v5 (priors-driven) and v2 were removed.
+    # Override per-device with `mining_planner_version` in config.
+    planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
-    if planner_version not in {"v1", "v3", "v4", "v5"}:
-        planner_version = "v5"
+    if planner_version not in {"v1", "v3", "v4"}:
+        planner_version = "v1"
 
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
@@ -521,17 +509,8 @@ def run(
     blocked_action_signatures: Set[Tuple[Any, Any, Any, Any, Any]] = set()
     last_board_signature: Optional[Tuple[Tuple[str, ...], ...]] = None
 
-    # 追蹤本 session 捲動深度（純觀測），並在 v5 下線上累積垂直轉移 priors。
+    # 追蹤本 session 捲動深度（純觀測 telemetry，寫進 miner.log / plan stats）。
     depth_tracker = DepthTracker()
-    priors_accumulator = None
-    if planner_version == "v5":
-        try:
-            from miner.v5.priors_runtime import PriorsAccumulator
-
-            priors_accumulator = PriorsAccumulator(device=ip)
-        except Exception as exc:  # never let priors bookkeeping break mining
-            miner_logger.warning(f"[MiningService] priors accumulator init failed: {exc}")
-            priors_accumulator = None
     prev_board: Optional[List[List[str]]] = None
 
     iterations = 0
@@ -594,13 +573,6 @@ def run(
             miner_logger.info(
                 f"[MiningService] depth={depth_tracker.depth} (+{shifted})"
             )
-        # Online priors: a confirmed scroll reveals fresh bottom rows whose
-        # vertical transitions feed the v5 runtime accumulator.
-        if priors_accumulator is not None and shifted > 0 and prev_board is not None:
-            try:
-                priors_accumulator.observe_scroll(prev_board, board, shifted)
-            except Exception as exc:
-                miner_logger.warning(f"[MiningService] observe_scroll failed: {exc}")
         prev_board = board
         state_signature = _board_signature(board)
         if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
@@ -723,14 +695,6 @@ def run(
                 f"判定死結，中止挖礦迴圈"
             )
             break
-
-
-
-    if priors_accumulator is not None:
-        try:
-            priors_accumulator.close()
-        except Exception as exc:
-            miner_logger.warning(f"[MiningService] priors accumulator flush failed: {exc}")
 
     if rl_recorder:
         rl_recorder.flush()

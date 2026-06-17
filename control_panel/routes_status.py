@@ -363,7 +363,7 @@ def get_status():
         info["carpark_plan_enabled"] = bool(
             ((cfg.get("ws_token") or {}).get("carpark_plan") or {}).get("enabled"))
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
-        info["mining_planner_version"] = cfg.get("mining_planner_version", "v5")
+        info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
         info["live_view_available"] = bool(
             live_view_enabled
             and info["backend"] == "web_h5"

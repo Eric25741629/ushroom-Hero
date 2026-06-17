@@ -47,7 +47,6 @@ from miner.v3.board import (
 from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
-from miner.v5.planner import plan_v5
 
 
 def _call_smart(board, shovels, items):
@@ -60,7 +59,6 @@ PLANNERS = {
     "v1": _call_smart,
     "v3": plan_v3,
     "v4": plan_v4,
-    "v5": plan_v5,
 }
 
 ROWS = 7
@@ -568,8 +566,8 @@ def main():
     parser.add_argument("--log-every", type=int, default=0)
     parser.add_argument(
         "--planner",
-        choices=["v1", "v3", "v4", "v5"],
-        default="v4",
+        choices=["v1", "v3", "v4"],
+        default="v1",
         help="which planner to evaluate (v1=plan_smart)",
     )
     parser.add_argument(

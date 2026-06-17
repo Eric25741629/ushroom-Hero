@@ -19,7 +19,7 @@ A seeded RNG is injected before the page boots (overrides Math.random) so the
 same seed reproduces the same mine across planners — fair head-to-head.
 
 Usage:
-    python tools/sim_html_eval.py --planners v1,v3,v4,v5 --runs 5
+    python tools/sim_html_eval.py --planners v1,v3,v4 --runs 5
     python tools/sim_html_eval.py --planners v4 --runs 5 --max-iters 400 --headed
 """
 from __future__ import annotations
@@ -37,9 +37,8 @@ from playwright.sync_api import sync_playwright
 from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
-from miner.v5.planner import plan_v5
 
-PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4, "v5": plan_v5}
+PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4}
 
 STUCK_LIMIT = 4  # identical board sig for this many planner iters == deadlock
 
@@ -156,7 +155,7 @@ def play_one(page, plan_fn, max_iters):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--planners", default="v1,v3,v4,v5")
+    ap.add_argument("--planners", default="v1,v3,v4")
     ap.add_argument("--runs", type=int, default=5)
     ap.add_argument("--seed", type=int, default=100)
     ap.add_argument("--max-iters", type=int, default=600)

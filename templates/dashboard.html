@@ -1699,13 +1699,11 @@ select.form-control {
 
             <select id="editMiningPlanner" class="form-control">
 
-              <option value="v1">v1（原始 SmartPlanner）</option>
+              <option value="v1">v1（A* SmartPlanner，預設）</option>
 
               <option value="v3">v3（cluster-aware）</option>
 
               <option value="v4">v4（3-step bounded，道具稀缺感知）</option>
-
-              <option value="v5">v5（機率先驗，預設）</option>
 
             </select>
 
@@ -3657,9 +3655,9 @@ select.form-control {
 
         if (plannerSelect) {
 
-          const plannerVer = String(config.mining_planner_version || 'v5').toLowerCase();
+          const plannerVer = String(config.mining_planner_version || 'v1').toLowerCase();
 
-          plannerSelect.value = ['v1','v3','v4','v5'].includes(plannerVer) ? plannerVer : 'v5';
+          plannerSelect.value = ['v1','v3','v4'].includes(plannerVer) ? plannerVer : 'v1';
 
         }
 
@@ -3785,7 +3783,7 @@ select.form-control {
 
         sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
-        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v5',
+        mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
 
         backend: selectedBackendPlan.replace('+ws', ''),
 
