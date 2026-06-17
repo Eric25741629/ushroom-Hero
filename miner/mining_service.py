@@ -100,6 +100,19 @@ USE_ITEMS: bool = True
 # 連續拿到空 plan 的容忍上限，避免無限空轉。
 _MAX_EMPTY_PLANS: int = 3
 
+# 連續相同版面（非空 plan 卻毫無變化）的容忍上限 — 真正的「identical state」死結偵測。
+_MAX_IDENTICAL_BOARDS: int = 3
+
+
+def _identical_board_exceeded(cur_sig, prev_sig, count: int):
+    """Return (new_count, tripped). Increments when the board signature is
+    unchanged from the previous iteration; resets to 0 when it changes."""
+    if prev_sig is not None and cur_sig == prev_sig:
+        count += 1
+    else:
+        count = 0
+    return count, count >= _MAX_IDENTICAL_BOARDS
+
 # OCR 鏟子驗證頻率（每 N 個 iter 對照一次）。從原本 3 拉長到 5 —
 # 現在 count 由 executor 回傳的 ExecutionResult.shovels_used 增量扣減，
 # OCR 只是漂移驗證。
@@ -384,6 +397,25 @@ def _diagnose_empty_plan(board: List[List[str]], plan: Dict[str, Any], miner_log
         miner_logger.error("[Mining] 致命問題：棋盤找不到任何空氣！分類器可能有問題")
 
 
+def _forced_descent_dig(board):
+    """Pick the deepest reachable non-pit frontier cell so digging it drives
+    the viewport toward a scroll. Used to escape a board where the only
+    remaining pits are uncollectable (blacklisted / sealed-pocket reachable).
+    Returns (r, c) or None when no diggable non-pit frontier exists."""
+    from miner.v3.board import is_frontier_diggable, is_pit
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    best = None  # (depth_row, col)
+    for r in range(rows):
+        for c in range(cols):
+            if is_pit(board[r][c]):
+                continue
+            if is_frontier_diggable(board, r, c):
+                if best is None or r > best[0]:
+                    best = (r, c)
+    return best
+
+
 def _verify_items_pre_execution(
     d: u2.Device,
     plan: Dict[str, Any],
@@ -504,6 +536,8 @@ def run(
 
     iterations = 0
     consecutive_empty_plans = 0
+    identical_board_count = 0
+    prev_exec_sig = None
     while count >= 1:
         _check_force_sleep(ip)
         if time.time() - start_time > max_duration_seconds:
@@ -598,6 +632,35 @@ def run(
 
         if not plan.get("steps"):
             _diagnose_empty_plan(board, plan, miner_logger)
+            # If reachable pits remain but the planner can't collect them
+            # (blacklisted / sealed-pocket reachable), don't just count toward
+            # abort — scroll past them so mining continues productively.
+            # NOTE: gate on remaining_pits, NOT `count` — `count` is the pickaxe
+            # count (the loop condition is `while count >= 1`), so it is almost
+            # always true and would NOT mean "pits remain".
+            if int(plan.get("remaining_pits", 0) or 0) > 0:
+                descent = _forced_descent_dig(board)
+                if descent is not None:
+                    miner_logger.warning(
+                        f"[MiningService] 空 plan 但仍有礦無法採集，強制下挖 {descent} 推進下樓"
+                    )
+                    try:
+                        descent_result = execute_plan_steps(
+                            d, clf, board,
+                            [{"type": "dig", "action": "dig", "dig_list": [descent],
+                              "target": descent}],
+                            rl_recorder=rl_recorder, deadline=start_time + max_duration_seconds,
+                        )
+                    except NoBoardChangeError as exc:
+                        # even forced descent did nothing — fall through to abort
+                        blocked_action_signatures.add(_step_signature(exc.step))
+                    else:
+                        # Credit the pickaxe(s) the forced dig consumed, like every
+                        # other execute_plan_steps call — otherwise internal count
+                        # drifts high until the next OCR reconcile.
+                        count = _apply_partial(descent_result, count, items_available, miner_logger)
+                        consecutive_empty_plans = 0
+                        continue
             consecutive_empty_plans += 1
             if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
                 miner_logger.warning(
@@ -646,6 +709,20 @@ def run(
 
         # Plan executed cleanly — credit shovels / items consumed.
         count = _apply_partial(exec_result, count, items_available, miner_logger)
+
+        # Identical-state deadlock guard: if executing a non-empty plan left
+        # the board unchanged for too many iterations in a row, abort instead
+        # of spinning (Task A1 normally blacklists first; this is the backstop).
+        identical_board_count, tripped = _identical_board_exceeded(
+            state_signature, prev_exec_sig, identical_board_count
+        )
+        prev_exec_sig = state_signature
+        if tripped:
+            miner_logger.warning(
+                f"[MiningService] 版面連續 {identical_board_count} 次無變化（非空 plan），"
+                f"判定死結，中止挖礦迴圈"
+            )
+            break
 
 
 
