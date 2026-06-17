@@ -23,6 +23,25 @@ def get_hp(label: str) -> int:
     if "dirt" in label or "pit" in label: return 1
     return 0
 
+
+def _descent_fallback_step(board: List[List[str]]) -> Optional[Dict[str, Any]]:
+    """When A* finds no goal-improving plan (no pits left AND floor7 already
+    open, the WS no_pit case), emit ONE downward dig so the runtime keeps
+    scrolling — mirrors v4's no_pit descent. Without this v1 returns an empty
+    plan and the WS supervised loop stalls ('v1 會有空的問題').
+
+    Picks the deepest diggable cell (largest row, tie-break smallest col).
+    'Diggable' matches get_valid_actions: not air and not unreachable_.
+    Returns None when nothing is reachably diggable (honest empty plan)."""
+    R, C = len(board), len(board[0])
+    for r in range(R - 1, -1, -1):
+        for c in range(C):
+            label = board[r][c]
+            if not is_air(label) and not label.startswith("unreachable_"):
+                return {"type": "dig", "pos": (r, c),
+                        "step_cost": float(get_hp(label))}
+    return None
+
 class SmartState:
     def __init__(self, board: List[List[str]],
                  shovels: float,
@@ -241,9 +260,14 @@ class SmartPlanner:
                     heapq.heappush(pq, next_state)
 
         res = best_finished or current
+        steps = res.history
+        if not steps:
+            fallback = _descent_fallback_step(res.board)
+            if fallback is not None:
+                steps = [fallback]
         return {
             "ok": True,
-            "steps": res.history,
+            "steps": steps,
             "total_cost": res.accumulated_cost,
             "remaining_pits": res.remaining_pits,
             "floor7_open": res.f7_open,
