@@ -90,6 +90,12 @@ def _game_over(inv):
 def play_one(page, plan_fn, max_iters):
     """Run one full game on the already-loaded page. Returns a result dict."""
     snap = page.evaluate("__snapshot()")
+    # Count item OPERATIONS the planner actually performs (the sim drops bombs/
+    # drills as dig rewards, so start-minus-final inventory goes negative and is
+    # useless; the real 'operation efficiency' signal is how often each planner
+    # chooses to spend a bomb/drill).
+    bombs_used = 0
+    drills_used = 0
     last_sig = None
     same_count = 0
     stuck = False
@@ -144,12 +150,18 @@ def play_one(page, plan_fn, max_iters):
             ok = page.evaluate("(a) => __applyStep(a[0], a[1], a[2], a[3])",
                                [kind, item, r, c])
             snap = page.evaluate("__snapshot()")
+            if ok and kind == "use":
+                if item == "bomb":
+                    bombs_used += 1
+                elif item == "drill":
+                    drills_used += 1
             if not ok:
                 break  # illegal/no-op step: re-plan from fresh board
     return {
         "score": snap["score"], "pits": snap["pits"], "depth": snap["depth"],
         "cost": snap["cost"], "digs": snap["digs"], "stuck": stuck, "iters": iters,
         "row0_pit_iters": row0_pit_iters, "row0_run_max": row0_run_max,
+        "bombs_used": bombs_used, "drills_used": drills_used,
     }
 
 
@@ -169,8 +181,9 @@ def main():
           f"seeds={args.seed}..{args.seed + args.runs - 1} stuck_limit={STUCK_LIMIT}")
     print("=" * 86)
     print(f"{'planner':8s} {'score':>8s} {'pits':>6s} {'depth':>6s} {'cost':>7s} "
-          f"{'pit/sh':>7s} {'stuck':>6s} {'r0pit%':>7s} {'r0run':>6s} {'rounds':>6s}")
-    print("-" * 100)
+          f"{'pit/sh':>7s} {'bomb':>5s} {'drill':>6s} {'stuck':>6s} {'r0pit%':>7s} "
+          f"{'r0run':>6s} {'rounds':>6s}")
+    print("-" * 110)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=not args.headed)
@@ -200,8 +213,11 @@ def main():
                 (r["row0_pit_iters"] / r["iters"] * 100) if r["iters"] else 0 for r in rows
             )
             r0run = statistics.mean(r["row0_run_max"] for r in rows)
+            bombs = statistics.mean(r["bombs_used"] for r in rows)
+            drills = statistics.mean(r["drills_used"] for r in rows)
             print(f"{name:8s} {sc:8.0f} {pit:6.1f} {dep:6.1f} {cost:7.0f} "
-                  f"{pps:7.2f} {stuck:6d} {r0pct:7.1f} {r0run:6.1f} {len(rows):6d}")
+                  f"{pps:7.2f} {bombs:5.1f} {drills:6.1f} {stuck:6d} {r0pct:7.1f} "
+                  f"{r0run:6.1f} {len(rows):6d}")
         browser.close()
 
 
