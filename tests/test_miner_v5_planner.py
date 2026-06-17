@@ -284,3 +284,114 @@ def test_plan_v5_prefers_air_column_for_descent():
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-q"]))
+
+
+# ---------------------------------------------------------------------------
+# find_prospective_pits unit tests
+# ---------------------------------------------------------------------------
+from miner.v3.clusters import find_prospective_pits
+
+
+def test_prospective_pits_2x1_returns_one_row_below():
+    """2×1 run → one row below (width=2, need 1 more row) is prospective."""
+    board = _board([
+        "......",
+        "D**DDD",   # row 1: 2×1 at cols 1-2
+        "DDDDDD",   # row 2: dirt → prospective
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == {(2, 1), (2, 2)}
+
+
+def test_prospective_pits_3x1_returns_two_rows_below():
+    """3×1 run → two rows below (width=3, need 2 more rows) are prospective."""
+    board = _board([
+        "......",
+        "D***DD",   # row 1: 3×1 at cols 1-3
+        "DDDDDD",   # row 2: prospective
+        "DDDDDD",   # row 3: prospective
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == {(2, 1), (2, 2), (2, 3), (3, 1), (3, 2), (3, 3)}
+
+
+def test_prospective_pits_3x2_visible_returns_one_row():
+    """3×2 visible (rows 1-2 confirmed) → only row 3 is prospective."""
+    board = _board([
+        "......",
+        "D***DD",   # row 1: top of 3×3
+        "D***DD",   # row 2: second confirmed row
+        "DDDDDD",   # row 3: prospective
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == {(3, 1), (3, 2), (3, 3)}
+
+
+def test_prospective_pits_invalidated_by_empty_below():
+    """If a cell below the pit run is already empty/dug, run is invalid."""
+    board = _board([
+        "......",
+        "D**DDD",   # row 1: 2×1
+        "D.DDDD",   # row 2: col 1 is empty → invalidates
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == set()
+
+
+def test_prospective_pits_3x1_at_bottom_returns_empty():
+    """3×1 at last row → rows below are out of viewport → no prospective cells."""
+    board = _board([
+        "......",
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "D***DD",   # row 6: 3×1 at bottom, rows 7-8 out of viewport
+    ])
+    result = find_prospective_pits(board)
+    assert result == set()
+
+
+def test_prospective_pits_isolated_single_pit_ignored():
+    """Width-1 runs are never prospective (1×1 does not infer a 1×1 square)."""
+    board = _board([
+        "......",
+        "DD*DDD",   # row 1: isolated single pit at col 2
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == set()
+
+
+def test_prospective_pits_complete_cluster_excluded():
+    """Fully-confirmed 2×2 is already handled by find_clusters — no prospective."""
+    board = _board([
+        "......",
+        "D**DDD",   # row 1: top of 2×2
+        "D**DDD",   # row 2: bottom confirmed — complete 2×2
+        "DDDDDD",
+        "DDDDDD",
+        "DDDDDD",
+        "......",
+    ])
+    result = find_prospective_pits(board)
+    assert result == set()
