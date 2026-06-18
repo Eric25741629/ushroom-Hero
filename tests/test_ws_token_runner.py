@@ -184,10 +184,10 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("spirit", "draw_all_free"))
                                         or {"pools_drawn": 0, "rewards": {}, "results": []}))
 
-    # workshop (12h rotation; cadence state sandboxed in-memory below)
-    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
-                        lambda c, **k: (calls.append(("workshop", "rotate_team_recipes"))
-                                        or {"parity": k.get("parity", 0), "switched": []}))
+    # workshop (閒置才補配方; idempotent, no cadence state)
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, **k: (calls.append(("workshop", "assign_idle_workshops"))
+                                        or {"workshops": []}))
     _mem_state: dict = {}
     monkeypatch.setattr(runner.ws_state, "load_state",
                         lambda device, **k: dict(_mem_state))
@@ -1332,7 +1332,7 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         steward.CMD_INFO: lambda b: [s2c(steward.CMD_INFO, b"")],
         # spirit: empty pool list -> no free draws
         spirit.CMD_DRAW_INFO: lambda b: [s2c(spirit.CMD_DRAW_INFO, b"")],
-        # workshop: empty info -> no team workshops to rotate
+        # workshop: empty info -> no team workshops to assign
         workshop.CMD_INFO: lambda b: [s2c(workshop.CMD_INFO, b"")],
         # couple: empty favor list + lover_id=0 -> no partner, skipped
         couple.CMD_FAVOR_INFO: lambda b: [s2c(couple.CMD_FAVOR_INFO, b"")],
@@ -1386,9 +1386,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["carpark"]["skipped"]
     # spirit / workshop / couple ran end-to-end over the real code
     assert rep.tasks["spirit"]["pools_drawn"] == 0
-    # workshop: empty info -> no team workshops -> no successful switch ->
-    # best-effort rule: rotated=False and NO state written (retry next run)
-    assert rep.tasks["workshop"]["rotated"] is False
+    # workshop: empty info -> no team workshops to assign -> empty result
+    assert rep.tasks["workshop"]["workshops"] == []
     assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
@@ -1647,93 +1646,67 @@ def test_run_couple_forge_ring_independent_of_gift_gate(monkeypatch, tmp_path):
     assert "already gifted" in out["gifts_skipped"]
 
 
-def _switched_entry(team, food, *, chosen_ok=True, timeout=False):
-    """One rotate_team_recipes switched[] entry as workshop.switch_recipe shapes it."""
-    chosen = ({"ok": True, "error_code": None} if chosen_ok else
-              {"ok": False, "error_code": None, "timeout": timeout})
-    return {"team_cfg_id": team, "food_id": food, "count": 1,
-            "workshop_id": team - 6000,
-            "cancelled": {"ok": True, "error_code": None}, "chosen": chosen}
+class _FakeTracker:
+    """Minimal InventoryTracker stand-in exposing only ``counts``."""
+
+    def __init__(self, counts):
+        self.counts = dict(counts)
 
 
-def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
+def test_run_workshop_passes_tracker_counts_as_materials(monkeypatch):
+    # _run_workshop threads inventory_tracker.counts into assign_idle_workshops
+    # (the 0x0402 原料庫存 snapshot) — no parity/cadence/state involved.
     from ws_token import runner
-    rotated = []
+    seen = {}
     monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: rotated.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001 if parity % 2 == 0 else 8005)]})
-    # first run: no state -> rotates with parity 0
-    out1 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert rotated == [0] and out1["rotated"] is True
-    # 1 hour later: gated
-    out2 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert rotated == [0] and out2["rotated"] is False
-    # 12h+ later: rotates with parity 1
-    out3 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0 + 12 * 3600 + 1)
-    assert rotated == [0, 1] and out3["rotated"] is True
+        runner.workshop, "assign_idle_workshops",
+        lambda c, *, materials: seen.update(materials)
+        or {"workshops": [{"team_cfg_id": 6002, "action": "assigned",
+                           "food_id": 8005, "count": 59, "ok": True}]})
+    tracker = _FakeTracker({6017: 7, 6019: 118, 6020: 118, 6021: 1138})
+    out = runner._run_workshop(object(), tracker, device="devA")
+    assert seen == {6017: 7, 6019: 118, 6020: 118, 6021: 1138}
+    assert out["workshops"][0]["food_id"] == 8005
+    assert "missing_materials" not in out
 
 
-def test_run_workshop_all_switches_failed_does_not_write_state(monkeypatch, tmp_path):
-    # Server was state-gated silent on every switch (live 2026-06-10 7fe98fc6):
-    # rotate returns only chosen ok=False entries -> NOT a valid rotation ->
-    # no state write, so the next run retries instead of waiting 12h.
+def test_run_workshop_is_idempotent_no_cadence(monkeypatch):
+    # Repeated calls always invoke assign_idle_workshops (idempotent — it only
+    # touches idle workshops, so re-running is harmless). No 12h gate.
     from ws_token import runner
     calls = []
-    monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: calls.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
-                         _switched_entry(6003, 8005, chosen_ok=False, timeout=True)]})
-    out1 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert out1["rotated"] is False
-    assert out1["reason"] == "all switches failed/timeout"
-    assert len(out1["switched"]) == 2
-    # state NOT written -> a retry 1h later is NOT gated and rotates again
-    out2 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert calls == [0, 0]
-    assert out2["rotated"] is False  # still all-failed in this mock
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: calls.append(1) or {"workshops": []})
+    tracker = _FakeTracker({6017: 4})
+    runner._run_workshop(object(), tracker, device="devB")
+    runner._run_workshop(object(), tracker, device="devB")
+    runner._run_workshop(object(), tracker, device="devB")
+    assert calls == [1, 1, 1]  # ran every time, never gated
 
 
-def test_run_workshop_one_success_is_enough_to_write_state(monkeypatch, tmp_path):
+def test_run_workshop_warns_and_reports_missing_materials(monkeypatch):
+    # 防呆: a recipe material absent from the 0x0402 snapshot -> reported in
+    # missing_materials; that material is still passed as absent (producible=0
+    # downstream), never forged into a count.
     from ws_token import runner
-    calls = []
-    monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: calls.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
-                         _switched_entry(6003, 8005, chosen_ok=True)]})
-    out1 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert out1["rotated"] is True
-    # state written -> 1h later is gated
-    out2 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert calls == [0]
-    assert out2["rotated"] is False and "ago" in out2["reason"]
+    seen = {}
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: seen.update(materials)
+                        or {"workshops": []})
+    # only 6017 present; 6019/6020/6021 (needed by 8005) are missing
+    tracker = _FakeTracker({6017: 10})
+    out = runner._run_workshop(object(), tracker, device="devC")
+    assert out["missing_materials"] == [6019, 6020, 6021]
+    assert seen == {6017: 10}  # missing keys NOT fabricated
 
 
-def test_run_workshop_empty_switched_does_not_write_state(monkeypatch, tmp_path):
-    # No team workshops in info -> switched=[] -> no success -> no state write.
+def test_run_workshop_no_missing_when_all_materials_present(monkeypatch):
     from ws_token import runner
-    calls = []
-    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
-                        lambda c, *, parity: calls.append(parity)
-                        or {"parity": parity % 2, "switched": []})
-    out = runner._run_workshop(object(), device="devD", state_dir=tmp_path,
-                               now=1_000_000.0)
-    assert out["rotated"] is False
-    runner._run_workshop(object(), device="devD", state_dir=tmp_path,
-                         now=1_000_000.0 + 60)
-    assert calls == [0, 0]  # not gated: it retried
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: {"workshops": []})
+    tracker = _FakeTracker({6017: 1, 6019: 1, 6020: 1, 6021: 1})
+    out = runner._run_workshop(object(), tracker, device="devD")
+    assert "missing_materials" not in out
 
 
 def test_run_spirit_draws_free(monkeypatch):

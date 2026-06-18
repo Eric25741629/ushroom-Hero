@@ -21,9 +21,10 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
                    renewal only when spend AND the service is expired.
   6. spirit      — free: 守護靈免費召喚 (draw_all_free; only free_times,
                    never buys 招喚貨幣 — item 800003 does not exist).
-  7. workshop    — 加工坊 12h 配方輪換 (rotate_team_recipes, parity alternates;
-                   cadence persisted in ws_state/<device>.json; gated by
-                   ``workshop_rotate``, default on).
+  7. workshop    — 加工坊「閒置才補配方」(assign_idle_workshops): 只對閒置的小隊加工
+                   依可做量指派食物,絕不 cancel 正在生產的工坊。可做量由
+                   inventory_tracker (0x0402 原料庫存快照) 算; 冪等,每次喚醒都跑。
+                   gated by ``workshop_rotate``, default on.
   8. couple      — 伴侶: 奶茶+玫瑰一天送一次 (give_all_in_hand; 日期閘存在
                    ws_state/<device>.json; ``couple_gifts`` default on) + 戒指錘鍊
                    (``forge_ring`` opt-in, default off). Skipped without a partner.
@@ -87,9 +88,6 @@ TASK_ORDER: tuple[str, ...] = (
 _LAMP_BATCH_NUM: int = 20
 _LAMP_MAX_BATCHES: int = 500  # 20 * 500 = 10000
 _LAMP_BATCH_DELAY_SEC: float = 0.2
-
-# workshop 12h 配方輪換間隔（使用者 2026-06-10 指定：兩類別 12hr 切一次）
-_WORKSHOP_ROTATE_S: float = 12 * 3600.0
 
 # 萬神試煉 本周積分獎勵：每週五領一次（使用者 2026-06-13 指定）。
 # Python weekday(): Mon=0 … Fri=4 … Sun=6.
@@ -699,38 +697,29 @@ def _run_kungfu_store(client) -> dict:
             "bought": rep.bought, "stopped": rep.stopped}
 
 
-def _run_workshop(client, *, device: str, state_dir=None, now=None) -> dict:
-    """加工坊 12h 配方輪換 (spec §2.2; cadence 存 ws_state/<device>.json).
+def _run_workshop(client, inventory_tracker, *, device: str) -> dict:
+    """加工坊「閒置才補配方」: 只對閒置的小隊加工依可做量指派食物,絕不動 running 工坊.
 
-    state {"workshop": {"last_rotate_ts": float, "parity": int}}; 12h 未到 →
-    {"rotated": False}; 到了 → rotate_team_recipes(交替 parity)。
+    冪等 (idempotent) — 每次喚醒都跑,因為只動 selected_food==0 的工坊,重複呼叫無害。
+    可做量 (producible_count) 由 ``inventory_tracker.counts`` 算 (登入 0x0402 9800004
+    全庫存快照,runner 連線時已捕獲)。不再有 12h parity/cadence 死結。
 
-    Best-effort 驗收: rotate_team_recipes 不會 raise（伺服器對狀態不符的
-    cancel/choose 靜默不回，switch_recipe 內吞 WSTimeoutError），所以只有
-    ``switched`` 內至少一個 ``chosen.ok == True``（真的換成一個配方）才算有效
-    輪換並回寫 state；全失敗/timeout 則不寫 state，下一輪再試。
+    防呆: 組 materials 前先檢查 RECIPE_FOOD_IDS 用到的每個素材 key 是否在 0x0402
+    快照;缺的 key log 繁中警告並當作 0 (該食物 producible=0,自然跳過),絕不送 count=0
+    壞請求,也絕不 cancel running 工坊。Returns assign_idle_workshops 的
+    ``{"workshops": [...]}``,缺料時附 ``missing_materials``。
     """
-    import time as _time
-    now = _time.time() if now is None else now
-    kw = {"state_dir": state_dir} if state_dir is not None else {}
-    st = ws_state.load_state(device, **kw)
-    wst = st.get("workshop") or {}
-    last_ts = float(wst.get("last_rotate_ts") or 0)
-    if now - last_ts < _WORKSHOP_ROTATE_S:
-        hours = (now - last_ts) / 3600.0
-        return {"rotated": False, "reason": f"rotated {hours:.1f}h ago (<12h)"}
-    parity = (int(wst.get("parity") or 0) + 1) % 2 if last_ts else 0
-    out = workshop.rotate_team_recipes(client, parity=parity)
-    any_ok = any((s.get("chosen") or {}).get("ok") for s in out.get("switched", ()))
-    if not any_ok:
-        logger.warning(
-            "ws_token runner: %s workshop rotate had no successful switch "
-            "(server silent / no team workshops) — state not written, will retry",
-            device)
-        return {"rotated": False, "reason": "all switches failed/timeout", **out}
-    st["workshop"] = {"last_rotate_ts": now, "parity": parity}
-    ws_state.save_state(device, st, **kw)
-    return {"rotated": True, **out}
+    materials = dict(inventory_tracker.counts)
+    needed = {mat for food in workshop.RECIPE_FOOD_IDS
+              for mat, _per in workshop.RECIPE_APPROACH.get(food, ())}
+    missing = sorted(m for m in needed if m not in inventory_tracker.counts)
+    for mat in missing:
+        logger.warning("ws_token runner: %s workshop: 素材 %s 不在 0x0402 快照,"
+                       "視為 0 (相關食物 producible=0)", device, mat)
+    out = workshop.assign_idle_workshops(client, materials=materials)
+    if missing:
+        out = {**out, "missing_materials": missing}
+    return out
 
 
 def _run_couple(client, *, gifts: bool, forge_ring: bool,
@@ -1199,7 +1188,7 @@ def run_device(device: str, *, spend: bool = False,
         _step("spirit", lambda: _run_spirit(client))
         if workshop_rotate:
             _step("workshop",
-                  lambda: _run_workshop(client, device=device))
+                  lambda: _run_workshop(client, inventory_tracker, device=device))
         _step("couple",
               lambda: _run_couple(client, gifts=couple_gifts,
                                   forge_ring=forge_ring, device=device))
