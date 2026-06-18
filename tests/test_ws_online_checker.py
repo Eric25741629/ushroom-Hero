@@ -13,10 +13,8 @@ Two layers under test:
      guild member list. Any error / undetermined → ``None``. The client is always
      closed.
 
-Plus the旁路 wiring in ``web_session_service.process_online_check_requests``:
-when the checker's device config has ``online_check_via_ws: true`` the WS path is
-used and the browser-based ``_run_checker_protocol_only`` is NOT called; with the
-flag off (default) behaviour is byte-for-byte the legacy browser path.
+`check_via_ws` is what the master-only ``runtime_services.online_check_service``
+calls to answer cross-device online-check out of the wake loop.
 """
 import sys
 from pathlib import Path
@@ -181,8 +179,6 @@ def test_check_via_ws_none_and_closes_on_error(monkeypatch):
     assert client.closed  # must always close even on error
 
 
-# --- web_session_service routing -------------------------------------------
-
 class _Logger:
     def info(self, *a, **k):
         pass
@@ -195,64 +191,3 @@ class _Logger:
 
     def debug(self, *a, **k):
         pass
-
-
-def test_process_routes_to_ws_when_flag_on(monkeypatch):
-    import bot_state
-    from runtime_services import web_session_service as wss
-
-    monkeypatch.setattr(bot_state, "is_online_check_checker", lambda ip: True)
-
-    reqs = [{"id": "r1", "requester_ip": "emulator-5558", "target_pid": TARGET}, None]
-    monkeypatch.setattr(bot_state, "pop_online_check_request",
-                        lambda ip: reqs.pop(0))
-
-    completed = {}
-    monkeypatch.setattr(bot_state, "complete_online_check_request",
-                        lambda req_id, is_busy, detail="": completed.update(
-                            {"id": req_id, "busy": is_busy}))
-    monkeypatch.setattr(bot_state, "update_state", lambda *a, **k: None)
-
-    import config_manager
-    monkeypatch.setattr(config_manager, "get_device_config",
-                        lambda ip: {"online_check_via_ws": True})
-
-    # WS path returns busy=True; browser path must NOT be called.
-    monkeypatch.setattr(wss, "check_via_ws",
-                        lambda ip, pid, log, **kw: True)
-
-    def _boom(*a, **k):
-        raise AssertionError("browser path must not run when flag is on")
-    monkeypatch.setattr(wss, "_run_checker_protocol_only", _boom)
-
-    wss.process_online_check_requests("emulator-5554", None, _Logger(), None)
-    assert completed == {"id": "r1", "busy": True}
-
-
-def test_process_uses_browser_path_when_flag_off(monkeypatch):
-    import bot_state
-    from runtime_services import web_session_service as wss
-
-    monkeypatch.setattr(bot_state, "is_online_check_checker", lambda ip: True)
-    reqs = [{"id": "r1", "requester_ip": "emulator-5558", "target_pid": TARGET}, None]
-    monkeypatch.setattr(bot_state, "pop_online_check_request",
-                        lambda ip: reqs.pop(0))
-    completed = {}
-    monkeypatch.setattr(bot_state, "complete_online_check_request",
-                        lambda req_id, is_busy, detail="": completed.update(
-                            {"id": req_id, "busy": is_busy}))
-    monkeypatch.setattr(bot_state, "update_state", lambda *a, **k: None)
-
-    import config_manager
-    monkeypatch.setattr(config_manager, "get_device_config",
-                        lambda ip: {})  # flag off / absent
-
-    monkeypatch.setattr(wss, "_run_checker_protocol_only",
-                        lambda ip, pid, rip, log: (False, "browser ok"))
-
-    def _boom(*a, **k):
-        raise AssertionError("WS path must not run when flag is off")
-    monkeypatch.setattr(wss, "check_via_ws", _boom)
-
-    wss.process_online_check_requests("emulator-5554", None, _Logger(), None)
-    assert completed == {"id": "r1", "busy": False}

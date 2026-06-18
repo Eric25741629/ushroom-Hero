@@ -4,7 +4,6 @@ import bot_state
 import config_manager
 from device_wrapper import MonitoredDevice, close_all_web_devices, create_web_device_if_enabled
 from runtime_services.device_runtime_service import ForceSleepRequested
-from runtime_services.ws_online_checker import check_via_ws
 
 
 LOGIN_CONFLICT_SLEEP_SEC = 30 * 60
@@ -27,16 +26,6 @@ def mark_login_conflict_sleep(ip: str, sleep_sec: int = LOGIN_CONFLICT_SLEEP_SEC
         next_wake_at=wake_ts,
     )
     return wake_ts
-
-
-def check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip: str = "emulator-5554"):
-    try:
-        is_busy = bool(check_on_line_fn(cnn_model))
-        reason = "account_online" if is_busy else "account_offline"
-        return is_busy, reason
-    except Exception as e:
-        logger_obj.warning(f"[{check_ip}] check_on_line_detail fallback due to error: {e}")
-        return True, f"check_failed:{e}"
 
 
 # 互檢 gate 等待 checker 結果時的輪詢分片：把單一 60s 盲等切成 0.5s 一片，
@@ -143,170 +132,6 @@ def wait_for_checker_gate_before_start(
                 return
             bot_state.update_state(ip, task="等待互檢", step=f"{checker_ip} 忙碌中，{remain} 秒後重試")
             time.sleep(1)
-
-
-def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_fn) -> None:
-    """Serve pending cross-device online-check requests as a checker.
-
-    Decoupled (2026-06-09): any device in the configured `online_check_checkers`
-    list may serve requests (default: just emulator-5554, so legacy behaviour is
-    unchanged). The check is **protocol-only** (friend list, no OCR): the
-    requester's `target_pid` is read off the request, and
-    `game_initialization.check_on_line_protocol_only` judges presence via this
-    checker's web_h5 session.
-
-    The `check_on_line_fn` / `cnn_model` params are kept for signature
-    compatibility but no longer drive the check (no OCR fallback by design).
-    """
-    if not bot_state.is_online_check_checker(ip):
-        return
-
-    while True:
-        req = bot_state.pop_online_check_request(ip)
-        if not req:
-            return
-
-        req_id = req.get("id")
-        requester_ip = req.get("requester_ip")
-        target_pid = req.get("target_pid")
-        try:
-            logger_obj.info(
-                f"[{ip}] processing online-check request from {requester_ip} "
-                f"(req={req_id}, target_pid={target_pid})"
-            )
-            bot_state.update_state(
-                ip,
-                task="互檢中",
-                step=f"處理 {requester_ip} 的上線檢查",
-            )
-            if _checker_uses_ws(ip):
-                is_busy, reason = _run_checker_via_ws(
-                    ip, target_pid, requester_ip, logger_obj
-                )
-            else:
-                is_busy, reason = _run_checker_protocol_only(
-                    ip, target_pid, requester_ip, logger_obj
-                )
-            if is_busy is None:
-                # Cannot determine on this checker (e.g. target not in friend
-                # list). Fail so the requester retries and another checker can
-                # claim it — never 放行 on an unknown result.
-                logger_obj.info(
-                    f"[{ip}] online-check 無法判定 (req={req_id}, reason={reason})，"
-                    f"交給其他 checker / 下一輪重試"
-                )
-                bot_state.fail_online_check_request(
-                    req_id, f"undetermined by {ip}: {reason}"
-                )
-                continue
-            bot_state.complete_online_check_request(
-                req_id,
-                is_busy=is_busy,
-                detail=f"checked by {ip} for requester={requester_ip}; reason={reason}",
-            )
-        except Exception as e:
-            logger_obj.error(f"[{ip}] online-check request failed: req={req_id}, err={e}")
-            bot_state.fail_online_check_request(req_id, str(e))
-
-
-def _checker_uses_ws(ip) -> bool:
-    """True iff this checker should answer online-check over pure WS.
-
-    Gated by the checker's own device config ``online_check_via_ws`` (default
-    False → legacy browser path). Any config error is treated as off.
-    """
-    try:
-        return bool(config_manager.get_device_config(ip).get("online_check_via_ws", False))
-    except Exception:
-        return False
-
-
-def _resolve_check_target_pid(target_pid, requester_ip):
-    """target_pid off the request, falling back to the requester's config pid."""
-    pid = target_pid
-    if not pid:
-        try:
-            pid = config_manager.get_device_config(requester_ip).get("online_check_target_pid")
-        except Exception:
-            pid = None
-    return pid
-
-
-def _run_checker_via_ws(ip, target_pid, requester_ip, logger_obj):
-    """Pure-WS online check on this checker (no browser session needed).
-
-    Returns ``(is_busy, reason)`` with the same contract as
-    :func:`_run_checker_protocol_only`: ``is_busy`` is ``None`` when the result is
-    undetermined (caller fails the request so another checker / a retry can claim
-    it). A WS ``True/False`` maps straight to busy/not-busy. Threshold comes from
-    the requester's config (matching the browser path); an optional checker-side
-    ``online_check_guild_id`` enables the guild-member fallback.
-    """
-    pid = _resolve_check_target_pid(target_pid, requester_ip)
-    if not pid:
-        return None, "online_check_target_pid not set"
-
-    threshold_sec = 60
-    try:
-        threshold_sec = int(
-            config_manager.get_device_config(requester_ip).get(
-                "online_check_threshold_sec", 60
-            )
-        )
-    except Exception:
-        threshold_sec = 60
-
-    guild_id = None
-    try:
-        guild_id = config_manager.get_device_config(ip).get("online_check_guild_id") or None
-    except Exception:
-        guild_id = None
-
-    presence = check_via_ws(
-        ip, int(pid), logger_obj, guild_id=guild_id, threshold_sec=threshold_sec
-    )
-    if presence is None:
-        return None, "ws online-check undetermined (not visible to this checker)"
-    return presence, f"ws online-check by {ip} (busy={presence})"
-
-
-def _run_checker_protocol_only(ip, target_pid, requester_ip, logger_obj):
-    """Resolve the target_pid then run the protocol-only check on this checker.
-
-    Returns (is_busy, reason); is_busy is None when the result is undetermined.
-    On error, conservatively returns (True, "check_failed:...") so the requester
-    keeps waiting rather than 放行.
-    """
-    # Backward-compat: legacy requesters submitted without a target_pid (the old
-    # check_on_line read it from the hardcoded emulator-5558 config). Fall back
-    # to the requester's own online_check_target_pid so the 5558 path is intact.
-    pid = target_pid
-    if not pid:
-        try:
-            pid = config_manager.get_device_config(requester_ip).get("online_check_target_pid")
-        except Exception:
-            pid = None
-    if not pid:
-        # No way to do a protocol check → undetermined (let caller fail it).
-        return None, "online_check_target_pid not set"
-
-    threshold_sec = 60
-    try:
-        threshold_sec = int(
-            config_manager.get_device_config(requester_ip).get(
-                "online_check_threshold_sec", 60
-            )
-        )
-    except Exception:
-        threshold_sec = 60
-
-    from game_initialization import check_on_line_protocol_only  # lazy import
-
-    try:
-        return check_on_line_protocol_only(ip, int(pid), threshold_sec)
-    except Exception as e:
-        logger_obj.warning(f"[{ip}] protocol-only online-check error: {e}; conservative → busy")
-        return True, f"check_failed:{e}"
 
 
 def initialize_runtime_device(

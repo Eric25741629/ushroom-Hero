@@ -382,17 +382,11 @@ def test_run_sleep_cycle_returns_interrupted_flag(sleep_mod, sleep_cycle_env, mo
 
 @pytest.fixture
 def resume_env(monkeypatch, sleep_mod):
-    calls = {"state": [], "check_on_line": [], "process_online": []}
+    # Online-check no longer resumes here (served out-of-loop by
+    # online_check_service), so the fixture only needs the resume-sleep seams.
+    calls = {"state": []}
     monkeypatch.setattr(sleep_mod.bot_state, "update_state", lambda ip, **kw: calls["state"].append({"ip": ip, **kw}))
-    monkeypatch.setattr(sleep_mod.bot_state, "has_pending_online_check_request", lambda ip: False)
-    monkeypatch.setattr(
-        sleep_mod, "process_online_check_requests",
-        lambda ip, cnn, log, fn: calls["process_online"].append(ip),
-    )
     monkeypatch.setattr(sleep_mod, "sleep_until_wake_or_interrupt", lambda ip, ts, log: False)
-    # check_on_line stub (imported from game_initialization)
-    if "game_initialization" in sys.modules and not hasattr(sys.modules["game_initialization"], "check_on_line"):
-        sys.modules["game_initialization"].check_on_line = lambda *a, **k: False
     return calls
 
 
@@ -403,15 +397,6 @@ def test_maybe_resume_no_pending_no_resume_returns_false(sleep_mod, resume_env):
     assert ts is None
     assert reason == ""
     assert cont is False
-
-
-def test_maybe_resume_5554_with_pending_online_check_continues(sleep_mod, resume_env, monkeypatch):
-    monkeypatch.setattr(sleep_mod.bot_state, "has_pending_online_check_request", lambda ip: True)
-    ts, reason, cont = sleep_mod._maybe_resume_sleep(
-        "emulator-5554", object(), None, "", logging.getLogger("t"),
-    )
-    assert cont is True
-    assert resume_env["process_online"] == ["emulator-5554"]
 
 
 def test_maybe_resume_non_5554_with_resume_ts_enters_sleep(sleep_mod, resume_env):

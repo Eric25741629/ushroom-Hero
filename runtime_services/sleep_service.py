@@ -22,11 +22,9 @@ from typing import Optional
 
 import bot_state
 import config_manager
-from game_initialization import check_on_line
 from json_manager import return_time
 from runtime_services.device_runtime_service import sleep_until_wake_or_interrupt
 from runtime_services.wake_parity import parse_hour_parity, parse_minute_offset
-from runtime_services.web_session_service import process_online_check_requests
 from utils.car_fight_utils import adjust_wake_time_for_cars
 from utils.logging_utils import logger
 
@@ -259,36 +257,15 @@ def _maybe_resume_sleep(
 
     Returns (updated_ts, updated_reason, should_continue).
     Caller does `if should_continue: continue`.
+
+    Online-check no longer resumes here — it is served out-of-loop by the
+    master-only ``runtime_services.online_check_service``. ``Cnn_model`` is kept
+    only for call-site signature stability.
     """
-    if bot_state.is_online_check_checker(ip):
-        has_req = bot_state.has_pending_online_check_request(ip)
-        has_priority = bot_state.is_online_check_priority_active(ip)
-        if has_req or has_priority:
-            process_online_check_requests(ip, Cnn_model, logger_obj, check_on_line)
-            time.sleep(0.2)
-            return resume_sleep_until_ts, resume_sleep_reason, True
-        if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-            # Returning to sleep must also honor the 跨界車位 09:59 grab clamp
-            # (only-earlier), mirroring run_sleep_cycle — else an interrupted
-            # device can oversleep the daily 10:00 搶車位 window.
-            resume_sleep_until_ts = _apply_carpark_repark_wake(
-                ip, resume_sleep_until_ts, time.time(), logger_obj)
-            wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-            remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-            detail = resume_sleep_reason or "返回休眠"
-            bot_state.update_state(
-                ip,
-                task="休眠中",
-                step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                next_wake_at=resume_sleep_until_ts,
-            )
-            logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-            interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
-            if interrupted:
-                return None, "", True
-            return None, "", False
-    elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-        # Same 跨界車位 09:59 grab clamp on the non-checker resume path.
+    if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+        # Returning to sleep must honor the 跨界車位 09:59 grab clamp
+        # (only-earlier), mirroring run_sleep_cycle — else an interrupted device
+        # can oversleep the daily 10:00 搶車位 window.
         resume_sleep_until_ts = _apply_carpark_repark_wake(
             ip, resume_sleep_until_ts, time.time(), logger_obj)
         wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))

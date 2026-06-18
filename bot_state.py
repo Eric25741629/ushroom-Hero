@@ -684,24 +684,6 @@ def get_web_launch_status(ip: str) -> Dict[str, Any]:
         }
 
 
-def _signal_all_checkers_locked() -> None:
-    """Wake every configured checker so the freest one can claim the request.
-
-    Must be called while holding _global_lock. Raising SKIP_SLEEP on each
-    checker lets each one break its long sleep and poll the mailbox; the first
-    to claim wins (pop is atomic under the lock), the rest find nothing pending.
-    """
-    try:
-        import config_manager  # lazy: avoid import cycle
-        checkers = config_manager.get_online_check_checkers()
-    except Exception:
-        checkers = ["emulator-5554"]
-    wake_ts = time.time()
-    for checker in checkers:
-        _signals.setdefault(checker, set()).add(Signal.SKIP_SLEEP)
-        _wake_overrides[checker] = wake_ts
-
-
 def submit_online_check_request(
     requester_ip: str,
     checker_ip: Optional[str] = None,
@@ -738,7 +720,6 @@ def submit_online_check_request(
                 and existing.get("status") in ("pending", "processing")
             ):
                 existing["updated_at"] = now
-                _signal_all_checkers_locked()
                 return existing_id
 
         req_id = str(uuid.uuid4())
@@ -757,10 +738,9 @@ def submit_online_check_request(
         }
         _online_check_requests[req_id] = payload
         _online_check_pending.append(req_id)
-        # Hint every configured checker to break its long sleep and poll ASAP.
-        _signal_all_checkers_locked()
-        # Also request an immediate device rescan so a cold-start-delayed checker
-        # thread can be started right away instead of waiting for the next 30s loop.
+        # No wake signalling: the master-only online_check_service serves this
+        # over pure WS from an idle checker — devices never wake for online-check.
+        # Keep the immediate device rescan nudge (cheap, no SKIP_SLEEP).
         _set_refresh_needed_locked()  # already holding _global_lock
     return req_id
 

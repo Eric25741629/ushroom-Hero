@@ -159,11 +159,6 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
             logger_obj.info(f"[{ip}] 收到中控網頁啟動請求，提前喚醒處理手動模式")
             return True
 
-        if bot_state.is_online_check_checker(ip):
-            if bot_state.has_pending_online_check_request(ip):
-                logger_obj.info(f"[{ip}] 偵測到 requester 上線檢查請求，提前喚醒處理")
-                return True
-
         if time.time() >= wake_ts:
             logger_obj.info(f"[{ip}] 已達對齊後喚醒時間，執行喚醒")
             return False

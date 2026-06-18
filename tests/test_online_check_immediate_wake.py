@@ -1,12 +1,11 @@
-"""Regression: 5554 wakes immediately on a pending 5558 online-check request.
+"""Regression: online-check no longer wakes a checker device.
 
-The even/odd wake-parity scheduling (`wake_hour_parity`) only changes the
-*periodic* wake time. 5558's online-check must still get an immediate
-response from 5554 — that is interrupt-driven in
-`sleep_until_wake_or_interrupt` (1-second poll, returns True the moment a
-request is pending), independent of the scheduled `wake_ts`. These tests
-lock that guarantee so parity — or any future scheduling change — cannot
-silently introduce a delay.
+Online-check is served out-of-loop by the master-only `online_check_service`
+(pure WS, idle checker), so a pending request must NOT interrupt a sleeping
+checker. The old SKIP_SLEEP-every-checker path woke the whole web_h5 fleet
+every ~30s and cold-started browsers (帳號一直在重啟); these tests lock the
+decoupling — a checker with a pending online-check still wakes only on its own
+schedule / manual override, never on the online-check request itself.
 """
 from __future__ import annotations
 
@@ -51,31 +50,36 @@ def _fake_state(**overrides):
     return types.SimpleNamespace(**base)
 
 
-def test_5554_wakes_immediately_on_pending_online_check(drs):
+def test_checker_does_not_early_wake_on_pending_online_check(drs):
     mod, monkeypatch = drs
-    monkeypatch.setattr(
-        mod,
-        "bot_state",
-        _fake_state(has_pending_online_check_request=lambda ip: ip == "emulator-5554"),
-    )
-    far_future = 9_999_999_999.0  # a parity-scheduled wake far in the future
+    # A checker (5554) with a pending online-check must NOT early-wake: the gate
+    # was removed (online_check_service serves it out-of-loop). With wake_ts
+    # already past, it wakes on schedule (False); the removed gate would have
+    # returned True before the time check.
+    from runtime_services import wake_override_service as wake_override
+
+    fake = _fake_state(has_pending_online_check_request=lambda ip: True)
+    monkeypatch.setattr(mod, "bot_state", fake)
+    monkeypatch.setattr(wake_override, "bot_state", fake)
+    past = 1.0
     result = mod.sleep_until_wake_or_interrupt(
-        "emulator-5554", far_future, logging.getLogger("t")
+        "emulator-5554", past, logging.getLogger("t")
     )
-    # Interrupted immediately by the pending request — did NOT wait for wake_ts.
-    assert result is True
+    assert result is False
 
 
 def test_non_5554_does_not_early_wake_on_online_check_flag(drs):
     mod, monkeypatch = drs
     # Even with the flag set, a non-checker device must not treat it as its
     # own interrupt. With wake_ts already past, it returns False (reached
-    # the scheduled wake), proving the 5554-only branch didn't fire.
-    monkeypatch.setattr(
-        mod,
-        "bot_state",
-        _fake_state(has_pending_online_check_request=lambda ip: True),
-    )
+    # the scheduled wake), proving the checker-only branch didn't fire.
+    # Also patch wake_override_service.bot_state so any real bot_state cross-test
+    # wake_override doesn't leak into this deterministic check.
+    from runtime_services import wake_override_service as wake_override
+
+    fake = _fake_state(has_pending_online_check_request=lambda ip: True)
+    monkeypatch.setattr(mod, "bot_state", fake)
+    monkeypatch.setattr(wake_override, "bot_state", fake)
     past = 1.0
     result = mod.sleep_until_wake_or_interrupt(
         "emulator-5560", past, logging.getLogger("t")

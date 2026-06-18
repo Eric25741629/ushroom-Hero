@@ -132,13 +132,6 @@ def _handle_startup_sleep(ip: str, device_logger) -> None:
                 remaining_startup_sleep = max(0, int(wake_ts - time.time()))
                 if remaining_startup_sleep <= 0:
                     break
-            if bot_state.is_online_check_checker(ip):
-                if (
-                    bot_state.has_pending_online_check_request(ip)
-                    or bot_state.is_online_check_priority_active(ip)
-                ):
-                    device_logger.info(f"[{ip}] 收到 requester 上線檢查請求，提前結束啟動休眠")
-                    break
             if bot_state.has_pending_web_launch_request(ip):
                 device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")
                 break
