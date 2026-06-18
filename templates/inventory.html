@@ -65,6 +65,21 @@
   .tablewrap { max-height:70vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
   .spin { color:var(--muted); }
   label.inline { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:12.5px; }
+  .eqbadge { color:var(--accent); font-size:11px; border:1px solid var(--accent);
+             border-radius:6px; padding:0 5px; }
+  .conn { font-size:12.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+          background:var(--panel2); color:var(--muted); }
+  .conn.on { color:var(--accent2); border-color:var(--accent2); }
+  .conn.off { color:var(--danger); border-color:var(--danger); }
+  .modal-bg { position:fixed; inset:0; background:rgba(5,8,15,.72); display:none;
+              align-items:center; justify-content:center; z-index:50; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+           padding:24px 28px; max-width:380px; text-align:center; box-shadow:0 18px 60px rgba(0,0,0,.5); }
+  .modal h2 { margin:0 0 10px; font-size:17px; }
+  .modal p { color:var(--muted); margin:0 0 18px; }
+  .modal .row { display:flex; gap:10px; justify-content:center; }
+  .modal .cd { color:var(--warn); font-weight:700; }
 </style>
 </head>
 <body>
@@ -73,8 +88,10 @@
   <a class="home" href="/">← 回主控台</a>
   <div class="controls" style="margin:0">
     <label class="inline">裝置
-      <select id="dev"></select>
+      <select id="dev" onchange="onDevChange()"></select>
     </label>
+    <span id="connState" class="conn off">未連線</span>
+    <button id="connBtn" class="ghost" onclick="toggleConn()">連線</button>
     <span id="status" class="spin"></span>
   </div>
 </header>
@@ -122,7 +139,10 @@
     <div class="controls">
       <label class="inline">標記最低品質的前 <input type="number" id="gSellN" value="50" min="0" oninput="renderGem()"> 顆（賣最低候選）</label>
       <button class="ghost" onclick="selectSellCandidates()">勾選候選</button>
+      <label class="inline">等級&lt; <input type="number" id="gLowLv" value="7" min="1" max="99"></label>
+      <button class="ghost" onclick="selectLowLevel()">勾選低等級</button>
       <button class="warn" onclick="doDecompose()">分解勾選 (<span id="gSelCount">0</span>)</button>
+      <span class="meta" style="margin:0">（已裝備/鎖定不會被勾選）</span>
     </div>
     <div class="tablewrap">
       <table>
@@ -130,13 +150,35 @@
           <th><input type="checkbox" id="gAll" onclick="toggleAll(this)"></th>
           <th onclick="gemSort('quality')">品質</th><th onclick="gemSort('suit')">套裝</th>
           <th onclick="gemSort('pos')">位置</th><th onclick="gemSort('lv')">等級</th>
-          <th>主屬</th><th>隨機詞條</th><th>鎖</th><th>id</th>
+          <th>裝備</th><th>主屬</th><th>隨機詞條</th><th>鎖</th><th>id</th>
         </tr></thead>
         <tbody id="gBody"></tbody>
       </table>
     </div>
     <div id="gActionMsg" class="note"></div>
   </section>
+</div>
+
+<div id="idleModal" class="modal-bg">
+  <div class="modal">
+    <h2>閒置提醒</h2>
+    <p>您已閒置一段時間，<span class="cd" id="idleCd">60</span> 秒後將自動斷線。</p>
+    <div class="row">
+      <button onclick="stayConnected()">繼續使用</button>
+      <button class="ghost" onclick="idleLogoutNow()">立即斷線</button>
+    </div>
+  </div>
+</div>
+
+<div id="kickModal" class="modal-bg">
+  <div class="modal">
+    <h2>連線已斷線</h2>
+    <p>偵測到異地登入（同帳號在他處登入），此連線已被伺服器中斷。</p>
+    <div class="row">
+      <button onclick="reconnectFromKick()">重新連線</button>
+      <button class="ghost" onclick="hideModal('kickModal')">知道了</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -255,9 +297,11 @@ function renderGem(){
   const sellSet = new Set(); // visual hint: lowest-quality first N among filtered
   list.forEach(g=>{
     const tr=document.createElement('tr');
-    tr.innerHTML = `<td><input type="checkbox" ${g._sel?'checked':''} onchange="toggleSel('${g.id}',this.checked)"></td>
-      <td><span class="qbadge" style="background:${QCOLORS[g.quality]||'#888'}">${g.quality}</span></td>
-      <td>${g.suit}</td><td>${g.pos}</td><td>${g.lv}</td>
+    const prot = g.is_lock || g.is_equipped;
+    tr.innerHTML = `<td><input type="checkbox" ${g._sel?'checked':''} ${prot?'disabled':''} onchange="toggleSel('${g.id}',this.checked)"></td>
+      <td><span class="qbadge" style="background:${QCOLORS[g.quality]||'#888'}" title="${g.quality_name||g.quality}">${g.quality}</span> ${g.quality_name||''}</td>
+      <td>${g.suit_name||g.suit}</td><td>${g.pos}</td><td>${g.lv}</td>
+      <td>${g.is_equipped?'<span class=eqbadge>裝備</span>':''}</td>
       <td class="attrs">${attrStr(g.base_attr)}</td>
       <td class="attrs">${attrStr(g.rand_attr)}</td>
       <td>${g.is_lock?'<span class=lockbadge>鎖</span>':''}</td>
@@ -268,22 +312,32 @@ function renderGem(){
   $('gSelCount').textContent = GEMS.filter(g=>g._sel).length;
 }
 
-function toggleSel(id, on){ const g=GEMS.find(x=>x.id===id); if(g) g._sel=on; renderGem(); }
-function toggleAll(cb){ gemFiltered().forEach(g=>{ if(!g.is_lock) g._sel=cb.checked; }); renderGem(); }
+// 可賣 = 未鎖 + 未裝備（與後端 select_safe 防呆一致）
+function sellable(g){ return !g.is_lock && !g.is_equipped; }
+function toggleSel(id, on){ const g=GEMS.find(x=>x.id===id); if(g && sellable(g)) g._sel=on; renderGem(); }
+function toggleAll(cb){ gemFiltered().forEach(g=>{ if(sellable(g)) g._sel=cb.checked; }); renderGem(); }
 function gemSort(k){ if(gemSortKey===k) gemSortDir*=-1; else {gemSortKey=k; gemSortDir=1;} renderGem(); }
 
 function selectSellCandidates(){
   const n = parseInt($('gSellN').value||'0',10);
-  // lowest quality, then lowest level, skip locked
-  const cand = GEMS.filter(g=>!g.is_lock).slice().sort((a,b)=> a.quality-b.quality || a.lv-b.lv).slice(0,n);
+  // lowest quality, then lowest level, skip locked/equipped
+  const cand = GEMS.filter(sellable).slice().sort((a,b)=> a.quality-b.quality || a.lv-b.lv).slice(0,n);
   const set = new Set(cand.map(g=>g.id));
   GEMS.forEach(g=> g._sel = set.has(g.id));
+  renderGem();
+}
+
+function selectLowLevel(){
+  // 勾選所有「等級<門檻」的未鎖未裝備石（使用者「等級7以下隨便賣」）
+  const lv = parseInt($('gLowLv').value||'7',10);
+  GEMS.forEach(g=> g._sel = sellable(g) && g.lv < lv);
   renderGem();
 }
 
 async function doDecompose(){
   const ids = GEMS.filter(g=>g._sel).map(g=>g.id);
   if (!ids.length){ $('gActionMsg').textContent='未勾選任何寶石。'; return; }
+  if (!confirm(`確定分解(賣) ${ids.length} 顆神器附魔石？此動作無法復原。`)) return;
   $('gActionMsg').textContent='送出分解請求…';
   try {
     const r = await fetch(`/api/artifact_gem_action/${encodeURIComponent(dev())}`, {
@@ -291,7 +345,13 @@ async function doDecompose(){
       body: JSON.stringify({action:'split', ids})
     });
     const j = await r.json();
-    $('gActionMsg').textContent = `[${r.status}] ${j.message||JSON.stringify(j)}`;
+    if (j.status==='ok'){
+      const blk = j.blocked && Object.keys(j.blocked).length ? `，防呆擋下 ${Object.keys(j.blocked).length} 顆` : '';
+      $('gActionMsg').textContent = `已分解 ${j.decomposed_count} 顆${blk}。重新讀取倉庫…`;
+      await loadGem();
+    } else {
+      $('gActionMsg').textContent = `[${r.status}] ${j.message||JSON.stringify(j)}`;
+    }
   } catch(e){ $('gActionMsg').textContent='錯誤: '+e; }
 }
 
@@ -302,7 +362,76 @@ function showTab(t){
   $('tabGem').classList.toggle('on', t==='gem');
 }
 
-loadDevices();
+/* ===== 純 WS session：連線 / 心跳保活 / 閒置登出 / 異地登入告知 ===== */
+// 閒置門檻預設 30 分；?idle=<秒> 可調短方便測試。心跳每 30 秒。
+const IDLE_SEC = parseInt(new URLSearchParams(location.search).get('idle')) || 1800;
+const KEEPALIVE_MS = 30000;
+let connectedDev = null, keepaliveTimer = null, idleTimer = null, idleCdTimer = null;
+
+function setConn(state){
+  const c=$('connState'), b=$('connBtn');
+  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; b.textContent='斷線'; }
+  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; b.textContent='連線'; }
+  else { c.textContent='未連線'; c.className='conn off'; b.textContent='連線'; }
+}
+function showModal(id){ $(id).classList.add('show'); }
+function hideModal(id){ $(id).classList.remove('show'); }
+
+async function connectSession(){
+  const d=dev(); if(!d){ setConn('off'); return false; }
+  setConn('connecting');
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect`,{method:'POST'});
+    const j=await r.json();
+    if(j.status==='ok'){ connectedDev=d; setConn('on'); startKeepalive(); resetIdle(); setStatus('已連線（純 WS，免開瀏覽器）'); return true; }
+    setConn('off'); setStatus('連線失敗: '+(j.message||''), true); return false;
+  }catch(e){ setConn('off'); setStatus('連線錯誤: '+e, true); return false; }
+}
+async function disconnectSession(){
+  stopKeepalive(); clearIdle();
+  const d=connectedDev||dev(); connectedDev=null; setConn('off');
+  try{ await fetch(`/api/ws_session/${encodeURIComponent(d)}/disconnect`,{method:'POST'}); }catch(e){}
+}
+function toggleConn(){ if(connectedDev) disconnectSession(); else connectSession(); }
+async function onDevChange(){
+  if(connectedDev && connectedDev!==dev()) await disconnectSession();
+  await connectSession();
+}
+
+// 心跳保活：順帶讀回 kicked（異地登入）/ alive
+function startKeepalive(){ stopKeepalive(); keepaliveTimer=setInterval(pingOnce, KEEPALIVE_MS); }
+function stopKeepalive(){ if(keepaliveTimer){ clearInterval(keepaliveTimer); keepaliveTimer=null; } }
+async function pingOnce(){
+  const d=connectedDev; if(!d) return;
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/ping`,{method:'POST'});
+    const j=await r.json();
+    if(j.kicked){ onKicked(); }
+    else if(!j.alive){ stopKeepalive(); connectedDev=null; setConn('off'); }
+  }catch(e){}
+}
+function onKicked(){ stopKeepalive(); clearIdle(); connectedDev=null; setConn('off'); showModal('kickModal'); }
+function reconnectFromKick(){ hideModal('kickModal'); connectSession(); }
+
+// 閒置 IDLE_SEC -> 60 秒倒數 -> 自動斷線
+function resetIdle(){ clearIdle(); if(!connectedDev) return; idleTimer=setTimeout(beginIdleCountdown, IDLE_SEC*1000); }
+function clearIdle(){ if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} if(idleCdTimer){clearInterval(idleCdTimer);idleCdTimer=null;} }
+function beginIdleCountdown(){
+  let left=60; $('idleCd').textContent=left; showModal('idleModal');
+  idleCdTimer=setInterval(()=>{ left--; $('idleCd').textContent=left;
+    if(left<=0){ clearInterval(idleCdTimer); idleCdTimer=null; idleLogoutNow(); } }, 1000);
+}
+function stayConnected(){ hideModal('idleModal'); clearIdle(); if(connectedDev){ resetIdle(); } else { connectSession(); } }
+function idleLogoutNow(){ hideModal('idleModal'); disconnectSession(); setStatus('已因閒置自動斷線'); }
+
+// 使用者活動重置閒置計時（倒數中不重置，需明確「繼續使用」）；節流 5 秒
+let _lastAct=0;
+function onActivity(){ if(idleCdTimer) return; const now=Date.now(); if(now-_lastAct>5000){ _lastAct=now; if(connectedDev) resetIdle(); } }
+['mousemove','keydown','click','scroll'].forEach(ev=>window.addEventListener(ev,onActivity,{passive:true}));
+// 關窗即時釋放連線（恢復 bot loop）；sweeper 為 90s 後的安全網
+window.addEventListener('beforeunload',()=>{ if(connectedDev) navigator.sendBeacon(`/api/ws_session/${encodeURIComponent(connectedDev)}/disconnect`); });
+
+(async function init(){ await loadDevices(); await connectSession(); })();
 </script>
 </body>
 </html>

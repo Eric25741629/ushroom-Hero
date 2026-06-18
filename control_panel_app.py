@@ -72,6 +72,7 @@ from control_panel import (  # noqa: E402
     routes_status,
     routes_web_session,
     routes_worker,
+    ws_session,
 )
 
 for _mod in (
@@ -86,6 +87,7 @@ for _mod in (
     routes_fly_pet,
     routes_inventory,
     routes_tools_optimize,
+    ws_session,
 ):
     app.register_blueprint(_mod.bp)
 

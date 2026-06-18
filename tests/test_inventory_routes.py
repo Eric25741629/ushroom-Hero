@@ -1,8 +1,8 @@
-"""倉庫 blueprint (Task 3 神器附魔 + Task 4 守護靈) 路由測試。
+"""倉庫 blueprint 路由測試（純 WS 版）。
 
-晚綁定 monkeypatch 模式同 sibling blueprint 測試（``test_fly_pet_api``）：
-路由透過 ``control_panel_app._cdp_json_response`` 屬性查找，故 patch façade 即可攔截，
-不必碰真實 CDP / web socket。
+資料源已從「CDP 注入瀏覽器」改為「純 WS（ws_session 持久連線 + ws_token reader）」。
+測試 stub 掉 ``ws_session.get_client`` 與 ``ws_token`` reader/mutator，不碰真實 socket，
+驗證路由輸出（中文名解析、賣石防呆）即可。
 """
 import importlib
 import sys
@@ -36,6 +36,12 @@ def _login_fly_pet(client):
         sess["fly_pet_auth"] = True
 
 
+def _patch_live_client(monkeypatch):
+    """讓 _session_client 拿到一個假的 live client（不連線）。"""
+    from control_panel import ws_session
+    monkeypatch.setattr(ws_session, "get_client", lambda ip: object())
+
+
 # --- route registration ----------------------------------------------------
 
 def test_inventory_routes_registered():
@@ -45,91 +51,139 @@ def test_inventory_routes_registered():
     assert "/api/spirit_list/<ip>" in rules
     assert "/api/artifact_gem_list/<ip>" in rules
     assert "/api/artifact_gem_action/<ip>" in rules
+    # 新增的純 WS session 端點
+    assert "/api/ws_session/<ip>/connect" in rules
+    assert "/api/ws_session/<ip>/ping" in rules
+    assert "/api/ws_session/<ip>/disconnect" in rules
 
 
-# --- spirit list (Task 4) ---------------------------------------------------
+# --- spirit list：純 WS 讀 + 中文名解析 ------------------------------------
 
-def test_spirit_list_calls_cdp_with_await_and_spirit_cmd(monkeypatch):
+def test_spirit_list_returns_chinese_names(monkeypatch):
     cpa = _import_control_panel_app()
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
+    _patch_live_client(monkeypatch)
+    from ws_token import spirit as ws_spirit
+    from utils import config_names
 
-    captured = {}
+    inv = ws_spirit.SpiritInventory(
+        reset_times=0, reshape_times=3, tab=1,
+        spirits=(ws_spirit.SpiritCard(
+            id=111, config_id=101, level=9, is_lock=True,
+            positions=(ws_spirit.SpiritPosition(
+                pos=1, cur_id=5, cur_attrs={1001: 50}, reshape_id=0,
+                reshape_attrs={}),)),))
+    monkeypatch.setattr(ws_spirit, "read_spirit_info", lambda c, **k: inv)
+    monkeypatch.setattr(config_names, "spirit_name", lambda c: "格鬥犬")
+    monkeypatch.setattr(config_names, "attr_name", lambda a: "攻擊")
 
-    def fake_cdp_json_response(ip, expression, await_promise=False, data_key="data"):
-        captured["ip"] = ip
-        captured["expression"] = expression
-        captured["await_promise"] = await_promise
-        captured["data_key"] = data_key
-        return cpa.jsonify({"status": "ok", "data": {"spirits": []}})
-
-    monkeypatch.setattr(cpa, "_cdp_json_response", fake_cdp_json_response)
-
+    client = cpa.app.test_client(); _login_fly_pet(client)
     resp = client.get("/api/spirit_list/emulator-5554")
 
     assert resp.status_code == 200
-    assert captured["ip"] == "emulator-5554"
-    assert captured["await_promise"] is True
-    assert captured["data_key"] == "data"
-    # 守護靈 cmd 19713 (0x4D01) must be sent + hooked in the injected JS
-    assert "19713" in captured["expression"]
-    assert "sendMessage(19713" in captured["expression"]
+    data = resp.get_json()["data"]
+    assert data["count"] == 1 and data["reshape_times"] == 3
+    s = data["spirits"][0]
+    assert s["name"] == "格鬥犬" and s["lock"] == 1 and s["level"] == 9
+    assert s["positions"][0]["affixes"][0]["name"] == "攻擊"
 
 
-# --- artifact gem list (Task 3) --------------------------------------------
+# --- gem list：純 WS 讀 + 套裝/品質中文名 + is_equipped --------------------
 
-def test_artifact_gem_list_calls_cdp_with_await_and_gem_cmd(monkeypatch):
+def test_artifact_gem_list_resolves_names_and_equipped(monkeypatch):
     cpa = _import_control_panel_app()
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
+    _patch_live_client(monkeypatch)
+    from ws_token import artifact_gem as ws_gem
+    from utils import config_names
 
-    captured = {}
+    inv = ws_gem.ArtifactGemInventory(
+        tab=5,
+        gems=(
+            ws_gem.ArtifactGem(id=100, quality=7, pos=2, suit=104, lv=9, exp=0,
+                               is_red=False, is_lock=False, base_attr={1001: 5},
+                               rand_attr={}),
+            ws_gem.ArtifactGem(id=200, quality=3, pos=4, suit=101, lv=1, exp=0,
+                               is_red=False, is_lock=False, base_attr={}, rand_attr={}),
+        ),
+        equipped_ids=frozenset({100}))
+    monkeypatch.setattr(ws_gem, "read_gem_info", lambda c, **k: inv)
+    monkeypatch.setattr(config_names, "suit_name", lambda s: f"套{s}")
+    monkeypatch.setattr(config_names, "quality_name", lambda q: f"品{q}")
+    monkeypatch.setattr(config_names, "attr_name", lambda a: f"屬{a}")
 
-    def fake_cdp_json_response(ip, expression, await_promise=False, data_key="data"):
-        captured["ip"] = ip
-        captured["expression"] = expression
-        captured["await_promise"] = await_promise
-        captured["data_key"] = data_key
-        return cpa.jsonify({"status": "ok", "data": {"gems": []}})
-
-    monkeypatch.setattr(cpa, "_cdp_json_response", fake_cdp_json_response)
-
+    client = cpa.app.test_client(); _login_fly_pet(client)
     resp = client.get("/api/artifact_gem_list/emulator-5554")
 
     assert resp.status_code == 200
-    assert captured["ip"] == "emulator-5554"
-    assert captured["await_promise"] is True
-    assert captured["data_key"] == "data"
-    # 神器附魔 cmd 13569 (0x3501) must be sent + hooked in the injected JS
-    assert "13569" in captured["expression"]
-    assert "sendMessage(13569" in captured["expression"]
+    data = resp.get_json()["data"]
+    assert data["count"] == 2 and data["equipped"] == 1
+    by_id = {g["id"]: g for g in data["gems"]}
+    assert by_id["100"]["is_equipped"] is True and by_id["100"]["suit_name"] == "套104"
+    assert by_id["100"]["quality_name"] == "品7"
+    assert by_id["200"]["is_equipped"] is False
 
 
-# --- action route is 501 pending (no destructive cmd until body captured) ---
+# --- action：賣石防呆（排除 equipped/locked）+ 只送安全子集 ----------------
 
-def test_artifact_gem_action_returns_501_pending(monkeypatch):
+def test_artifact_gem_action_guards_equipped_and_locked(monkeypatch):
     cpa = _import_control_panel_app()
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
+    _patch_live_client(monkeypatch)
+    from ws_token import artifact_gem as ws_gem
 
-    # _cdp_json_response must NOT be touched by the pending action route.
-    def boom(*args, **kwargs):  # pragma: no cover - asserts it is never called
-        raise AssertionError("action route must not hit CDP while pending")
+    inv = ws_gem.ArtifactGemInventory(
+        tab=1,
+        gems=(
+            ws_gem.ArtifactGem(id=1, quality=3, pos=1, suit=101, lv=2, exp=0,
+                               is_red=False, is_lock=False, base_attr={}, rand_attr={}),
+            ws_gem.ArtifactGem(id=2, quality=3, pos=1, suit=101, lv=1, exp=0,
+                               is_red=False, is_lock=True, base_attr={}, rand_attr={}),
+            ws_gem.ArtifactGem(id=3, quality=3, pos=1, suit=101, lv=1, exp=0,
+                               is_red=False, is_lock=False, base_attr={}, rand_attr={}),
+        ),
+        equipped_ids=frozenset({3}))
+    monkeypatch.setattr(ws_gem, "read_gem_info", lambda c, **k: inv)
 
-    monkeypatch.setattr(cpa, "_cdp_json_response", boom)
+    sent = {}
 
-    resp = client.post(
-        "/api/artifact_gem_action/emulator-5554",
-        json={"action": "split", "ids": ["1", "2"]},
-    )
+    def fake_decompose(c, ids, **k):
+        sent["ids"] = list(ids)
+        return {"ok": True, "error_code": 0, "removed": list(ids)}
 
-    assert resp.status_code == 501
+    monkeypatch.setattr(ws_gem, "decompose", fake_decompose)
+
+    client = cpa.app.test_client(); _login_fly_pet(client)
+    resp = client.post("/api/artifact_gem_action/emulator-5554",
+                       json={"action": "split", "ids": ["1", "2", "3"]})
+
+    assert resp.status_code == 200
     body = resp.get_json()
-    assert body["status"] == "pending"
-    # the derived (not yet wired) cmd ids are surfaced for the caller
-    assert body["cmds"]["split"] == 0x350A
-    assert body["cmds"]["sub"] == 0x350B
-    assert body["cmds"]["up"] == 0x3503
+    assert body["status"] == "ok"
+    assert sent["ids"] == [1]            # 只有未鎖未裝備的 1 被送出
+    assert body["decomposed"] == [1]
+    assert body["blocked"] == {"2": "locked", "3": "equipped"}
+
+
+def test_artifact_gem_action_all_blocked_returns_400(monkeypatch):
+    cpa = _import_control_panel_app()
+    _patch_live_client(monkeypatch)
+    from ws_token import artifact_gem as ws_gem
+
+    inv = ws_gem.ArtifactGemInventory(
+        tab=1,
+        gems=(ws_gem.ArtifactGem(id=2, quality=3, pos=1, suit=101, lv=1, exp=0,
+                                 is_red=False, is_lock=True, base_attr={}, rand_attr={}),),
+        equipped_ids=frozenset())
+    monkeypatch.setattr(ws_gem, "read_gem_info", lambda c, **k: inv)
+
+    def boom(*a, **k):
+        raise AssertionError("全部被擋時不可呼叫 decompose")
+
+    monkeypatch.setattr(ws_gem, "decompose", boom)
+
+    client = cpa.app.test_client(); _login_fly_pet(client)
+    resp = client.post("/api/artifact_gem_action/emulator-5554",
+                       json={"action": "split", "ids": ["2"]})
+    assert resp.status_code == 400
+    assert resp.get_json()["blocked"] == {"2": "locked"}
 
 
 # --- auth: unauthenticated requests are rejected ----------------------------
@@ -137,7 +191,6 @@ def test_artifact_gem_action_returns_501_pending(monkeypatch):
 def test_inventory_page_redirects_when_unauthenticated():
     cpa = _import_control_panel_app()
     client = cpa.app.test_client()
-    # no fly_pet_auth in session
     resp = client.get("/inventory")
     assert resp.status_code in (301, 302)
     assert "/fly-pet/login" in resp.headers.get("Location", "")

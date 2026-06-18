@@ -1,168 +1,182 @@
-"""倉庫 dashboard blueprint — 守護靈 (Task 4) + 神器附魔石 (Task 3) 唯讀檢視 + 過濾.
+"""倉庫 dashboard blueprint — 守護靈 + 神器附魔石 唯讀檢視 + 分解（賣）。
 
-資料來源走純 WS（不踢線）：route 用 ``_cpa._cdp_json_response(ip, JS, await_promise=True)``
-在裝置 live CDP 上注入 JS，JS 經遊戲自身 ``netManager._cnet`` 送查詢 cmd、hook
-``reciveMsg`` 收同 cmd 的「已解密」回包，再用內嵌的 minimal protobuf walker 解出欄位，
-並用 ``configAttribute._data[2]`` / ``configSpirit._data[6]`` 對名稱。
+資料源改走**純 WS**（`control_panel/ws_session.py` 的持久連線，不需開瀏覽器）：
+路由用 `ws_session.get_client(ip)` 取得已登入的 ``WSGameClient``，再呼叫
+``ws_token.spirit`` / ``ws_token.artifact_gem`` 的 Python reader 解析，中文名由
+``utils.config_names`` 查靜態表（`data/config_names.json`，一次性 dump，免瀏覽器）。
 
-協議（5554 live 驗證 2026-06-14）：
-  - 守護靈 spirit.spirit_info  cmd 19713 (0x4D01) empty body
-      s2c {reset_times#1, reshape_times#2, tab#3, tab_list#4, spirit_list#5:p_spirit_card[]}
-      p_spirit_card {id#1, config_id#2, level#3, is_lock#4, pos_list#5:p_spirit_pos[]}
-      p_spirit_pos {pos#1, cur_id#2, cur_attr_list#3:p_key_value[], reshape_id#4, reshape_attr_list#5}
-  - 神器附魔 artifact_gem.artifact_gem_info  cmd 13569 (0x3501) empty body
-      s2c { p_artifact_gem[] at f2 }
-      p_artifact_gem {id#1, quality#2, pos#3, suit#4, lv#5, exp#6, is_red#7, is_lock#8,
-                      base_attr#9:p_key_value[], rand_attr#10:p_key_value[]}
-
-分解/賣出/升級（mutate）cmd 已由「宣告序=index」推導（info=idx1=0x3501 已驗證）：
-  split(分解)=0x350A, sub=0x350B, up(升級)=0x3503, lock=0x3506。**body schema 待一次 live 觸發
-  擷取**，故動作 route 目前回 501 pending（避免盲射 destructive cmd）。「聯合搜索」= 前端依
-  屬性/套裝/品質過濾（client-side），不需新 WS。
+協議（5554 live 驗證 2026-06-19）：
+  - 守護靈 spirit_info  cmd 19713 (0x4D01) — 見 ws_token/spirit.py
+  - 神器附魔 artifact_gem_info  cmd 13569 (0x3501) / split 13578 (0x350A) — 見 ws_token/artifact_gem.py
+    ⚠ gem 的 ``pos`` 是鑲嵌位置類型(1-6)非裝備狀態；「已裝備」= id 在 tab_list 內。
+    分解防呆（排除 equipped + locked）以 ``artifact_gem.select_safe`` 為唯一來源。
 """
-import json  # noqa: F401  (kept for parity with sibling blueprints / future use)
+import logging
 
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, jsonify, render_template, request
 
+from control_panel import ws_session
 from control_panel.shared.auth import _fly_pet_auth
+from utils import config_names
+from ws_token import artifact_gem as ws_gem
+from ws_token import spirit as ws_spirit
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("inventory", __name__)
 
 
-# --- 神器附魔 mutate cmd ids（推導；body 待 live 擷取）------------------------
-ARTIFACT_CMD_INFO = 0x3501     # artifact_gem_info（已驗證 read）
-ARTIFACT_CMD_UP = 0x3503       # artifact_gem_up（升級）
-ARTIFACT_CMD_LOCK = 0x3506     # artifact_gem_lock
-ARTIFACT_CMD_SPLIT = 0x350A    # artifact_gem_split（分解）
-ARTIFACT_CMD_SUB = 0x350B      # artifact_gem_sub（批量分解/賣）
+# --- 純 WS session 取得（沒有就現場建立，順帶暫停該機 bot loop） --------------
+
+def _session_client(ip: str):
+    """取得 ``ip`` 的 live 純 WS client；沒有就嘗試 ensure 一條。回 (client, err)。"""
+    client = ws_session.get_client(ip)
+    if client is not None:
+        return client, None
+    res = ws_session.ensure(ip)
+    if res.get("status") == "error":
+        return None, res.get("message", "WS 連線失敗")
+    client = ws_session.get_client(ip)
+    if client is None:
+        return None, "WS 連線未就緒"
+    return client, None
 
 
-# --- 共用 minimal protobuf walker（注入遊戲頁，解 reciveMsg 交回的 Uint8Array）----
-_PB_HELPERS_JS = r"""
-  function readVarint(buf, off){ let v=0n, s=0n;
-    while(true){ const b=buf[off++]; v |= BigInt(b & 0x7f) << s; if(!(b & 0x80)) break; s += 7n; }
-    return [v, off]; }
-  function walk(buf){ const out=[]; let off=0;
-    while(off < buf.length){
-      let r=readVarint(buf, off); off=r[1]; const t=Number(r[0]); const f=t>>3, w=t&7;
-      if(w===0){ let r2=readVarint(buf, off); off=r2[1]; out.push({f:f,w:0,v:r2[0]}); }
-      else if(w===2){ let r2=readVarint(buf, off); off=r2[1]; const L=Number(r2[0]);
-        out.push({f:f,w:2,v:buf.slice(off, off+L)}); off+=L; }
-      else if(w===1){ out.push({f:f,w:1,v:0n}); off+=8; }
-      else if(w===5){ out.push({f:f,w:5,v:0n}); off+=4; }
-      else { break; }
-    } return out; }
-  function num(v){ return (typeof v==='bigint') ? Number(v) : v; }
-  function kvs(buf, field){ const m=[];
-    for(const e of walk(buf)){ if(e.f===field && e.w===2){ const d=walk(e.v);
-      let k=null, val=null; for(const x of d){ if(x.f===1) k=num(x.v); if(x.f===2) val=num(x.v); }
-      if(k!==null) m.push({attr_id:k, value:val}); } } return m; }
-  function attrName(id){ try{ const o=configAttribute.getDataByKey(id);
-    if(o && o._data) return String(o._data[2]||id); }catch(e){} return String(id); }
-  function attrs(buf, field){ return kvs(buf, field).map(function(a){
-    return {attr_id:a.attr_id, name:attrName(a.attr_id), value:a.value}; }); }
-"""
+def _attr_list(pairs: dict[int, int]) -> list[dict]:
+    """{attr_id: value} -> [{attr_id, name(中文), value}]。"""
+    return [{"attr_id": k, "name": config_names.attr_name(k), "value": v}
+            for k, v in pairs.items()]
 
 
-_SPIRIT_JS = "new Promise((resolve) => {" + _PB_HELPERS_JS + r"""
-  function done(o){ try { resolve(JSON.stringify(o)); } catch(e){ resolve(JSON.stringify({error:'stringify'})); } }
-  function spiritName(cfg){ try{ const o=configSpirit.getDataByKey(cfg);
-    if(o && o._data){ const p=String(o._data[6]||''); const b=p.split('/').pop(); return b||String(cfg);} }catch(e){}
-    return String(cfg); }
-  function pos(buf){ const d=walk(buf); let p=0,cid=0,rid=0;
-    for(const x of d){ if(x.f===1&&x.w===0)p=num(x.v); if(x.f===2&&x.w===0)cid=num(x.v); if(x.f===4&&x.w===0)rid=num(x.v); }
-    return {pos:p, cur_id:cid, reshape_id:rid, affixes:attrs(buf,3), reshape:attrs(buf,5)}; }
-  function card(buf){ const d=walk(buf); let id=0n,cfg=0,lv=0,lk=0;
-    for(const x of d){ if(x.f===1)id=x.v; else if(x.f===2&&x.w===0)cfg=num(x.v);
-      else if(x.f===3&&x.w===0)lv=num(x.v); else if(x.f===4&&x.w===0)lk=num(x.v); }
-    const ps=[]; for(const x of d){ if(x.f===5&&x.w===2) ps.push(pos(x.v)); }
-    return {id:String(id), config_id:cfg, name:spiritName(cfg), level:lv, lock: lk?1:0, positions:ps}; }
-  try {
-    const sock = netManager._cnet;
-    const orig = sock.reciveMsg.bind(sock); let cleared=false;
-    const cleanup=function(){ if(!cleared){cleared=true; sock.reciveMsg=orig;} };
-    const tid=setTimeout(function(){ cleanup(); done({error:'timeout waiting spirit_info'}); }, 8000);
-    sock.reciveMsg=function(c,b){ if(c===19713 && !cleared){ clearTimeout(tid); cleanup();
-        try{ const top=walk(b); const sp=[]; let rs=0,rsh=0,tab=0;
-          for(const x of top){ if(x.f===1&&x.w===0)rs=num(x.v); else if(x.f===2&&x.w===0)rsh=num(x.v);
-            else if(x.f===3&&x.w===0)tab=num(x.v); else if(x.f===5&&x.w===2) sp.push(card(x.v)); }
-          sp.sort(function(a,b){ return b.level-a.level || a.config_id-b.config_id; });
-          done({reset_times:rs, reshape_times:rsh, tab:tab, count:sp.length, spirits:sp});
-        }catch(e){ done({error:String(e)+(e.stack||'')}); } }
-      return orig(c,b); };
-    sock.sendMessage(19713, new Uint8Array());
-  } catch(e){ done({error:String(e)}); }
-})"""
+# --- 守護靈 -----------------------------------------------------------------
 
-
-_GEM_JS = "new Promise((resolve) => {" + _PB_HELPERS_JS + r"""
-  function done(o){ try { resolve(JSON.stringify(o)); } catch(e){ resolve(JSON.stringify({error:'stringify'})); } }
-  function gem(buf){ const d=walk(buf);
-    const g={id:'0',quality:0,pos:0,suit:0,lv:0,exp:0,is_red:0,is_lock:0};
-    for(const x of d){
-      if(x.f===1)g.id=String(x.v);
-      else if(x.f===2&&x.w===0)g.quality=num(x.v);
-      else if(x.f===3&&x.w===0)g.pos=num(x.v);
-      else if(x.f===4&&x.w===0)g.suit=num(x.v);
-      else if(x.f===5&&x.w===0)g.lv=num(x.v);
-      else if(x.f===6&&x.w===0)g.exp=num(x.v);
-      else if(x.f===7&&x.w===0)g.is_red=num(x.v);
-      else if(x.f===8&&x.w===0)g.is_lock=num(x.v);
+def _spirit_to_json(s) -> dict:
+    return {
+        "id": str(s.id),
+        "config_id": s.config_id,
+        "name": config_names.spirit_name(s.config_id),
+        "level": s.level,
+        "lock": 1 if s.is_lock else 0,
+        "positions": [{
+            "pos": p.pos,
+            "cur_id": p.cur_id,
+            "reshape_id": p.reshape_id,
+            "affixes": _attr_list(p.cur_attrs),
+            "reshape": _attr_list(p.reshape_attrs),
+        } for p in s.positions],
     }
-    g.base_attr=attrs(buf,9); g.rand_attr=attrs(buf,10); return g; }
-  try {
-    const sock = netManager._cnet;
-    const orig = sock.reciveMsg.bind(sock); let cleared=false;
-    const cleanup=function(){ if(!cleared){cleared=true; sock.reciveMsg=orig;} };
-    const tid=setTimeout(function(){ cleanup(); done({error:'timeout waiting artifact_gem_info'}); }, 8000);
-    sock.reciveMsg=function(c,b){ if(c===13569 && !cleared){ clearTimeout(tid); cleanup();
-        try{ const top=walk(b); const gems=[];
-          for(const x of top){ if(x.f===2&&x.w===2) gems.push(gem(x.v)); }
-          gems.sort(function(a,b){ return a.quality-b.quality || a.lv-b.lv; });
-          done({count:gems.length, gems:gems});
-        }catch(e){ done({error:String(e)+(e.stack||'')}); } }
-      return orig(c,b); };
-    sock.sendMessage(13569, new Uint8Array());
-  } catch(e){ done({error:String(e)}); }
-})"""
 
+
+# --- 神器附魔石 -------------------------------------------------------------
+
+def _gem_to_json(g, equipped_ids) -> dict:
+    return {
+        "id": str(g.id),
+        "quality": g.quality,
+        "quality_name": config_names.quality_name(g.quality),
+        "pos": g.pos,
+        "suit": g.suit,
+        "suit_name": config_names.suit_name(g.suit),
+        "lv": g.lv,
+        "is_red": 1 if g.is_red else 0,
+        "is_lock": 1 if g.is_lock else 0,
+        "is_equipped": g.id in equipped_ids,
+        "base_attr": _attr_list(g.base_attr),
+        "rand_attr": _attr_list(g.rand_attr),
+    }
+
+
+# --- routes -----------------------------------------------------------------
 
 @bp.route("/inventory")
 @_fly_pet_auth
 def inventory_page():
-    """守護靈 + 神器附魔石 倉庫檢視頁（過濾 / 賣最低排序 / 分解勾選）。"""
+    """守護靈 + 神器附魔石 倉庫檢視頁（純 WS、中文名、過濾、分解勾選）。"""
     return render_template("inventory.html")
 
 
 @bp.route("/api/spirit_list/<ip>", methods=["GET"])
 @_fly_pet_auth
 def spirit_list(ip):
-    """守護靈倉庫：每隻守護靈 + 各位置詞條（cur_attr）。純 WS 唯讀 (cmd 19713)。"""
-    import control_panel_app as _cpa
-
-    return _cpa._cdp_json_response(ip, _SPIRIT_JS, await_promise=True, data_key="data")
+    """守護靈倉庫：每隻守護靈 + 各位置詞條（中文名）。純 WS 唯讀 (cmd 19713)。"""
+    client, err = _session_client(ip)
+    if err:
+        return jsonify({"status": "error", "message": err}), 502
+    try:
+        inv = ws_spirit.read_spirit_info(client)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("spirit_list 讀取失敗 ip=%s: %s", ip, exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    spirits = [_spirit_to_json(s) for s in inv.spirits]
+    spirits.sort(key=lambda s: (-s["level"], s["config_id"]))
+    return jsonify({"status": "ok", "data": {
+        "reset_times": inv.reset_times,
+        "reshape_times": inv.reshape_times,
+        "tab": inv.tab,
+        "count": len(spirits),
+        "spirits": spirits,
+    }})
 
 
 @bp.route("/api/artifact_gem_list/<ip>", methods=["GET"])
 @_fly_pet_auth
 def artifact_gem_list(ip):
-    """神器附魔石倉庫：每顆寶石品質/等級/主屬/隨機詞條。純 WS 唯讀 (cmd 0x3501)。"""
-    import control_panel_app as _cpa
-
-    return _cpa._cdp_json_response(ip, _GEM_JS, await_promise=True, data_key="data")
+    """神器附魔石倉庫：每顆品質/套裝(中文)/等級/主屬/隨機詞條 + 是否裝備。純 WS (0x3501)。"""
+    client, err = _session_client(ip)
+    if err:
+        return jsonify({"status": "error", "message": err}), 502
+    try:
+        inv = ws_gem.read_gem_info(client)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("artifact_gem_list 讀取失敗 ip=%s: %s", ip, exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+    gems = [_gem_to_json(g, inv.equipped_ids) for g in inv.gems]
+    gems.sort(key=lambda g: (g["quality"], g["lv"]))
+    return jsonify({"status": "ok", "data": {
+        "count": len(gems),
+        "tab": inv.tab,
+        "equipped": len(inv.equipped_ids),
+        "gems": gems,
+    }})
 
 
 @bp.route("/api/artifact_gem_action/<ip>", methods=["POST"])
 @_fly_pet_auth
 def artifact_gem_action(ip):
-    """分解 / 賣出 動作 — cmd 已推導，body schema 待一次 live 擷取後啟用。
+    """分解（賣）勾選的神器附魔石 — split 0x350A 批量。
 
-    回 501 pending（不盲射 destructive cmd）。前端先具備勾選/排序 UI，待 body 補上即可接線。
+    server 端硬防呆：先重讀倉庫快照算 equipped/lock，用 ``select_safe`` 擋掉
+    已裝備/鎖定/不存在的 id（唯一防呆來源，不信任前端）。只送安全子集。
     """
+    data = request.get_json(silent=True) or {}
+    action = str(data.get("action", "split"))
+    ids = data.get("ids") or []
+    if action != "split":
+        return jsonify({"status": "error", "message": f"不支援的動作 {action}"}), 400
+    if not ids:
+        return jsonify({"status": "error", "message": "未勾選任何寶石"}), 400
+
+    client, err = _session_client(ip)
+    if err:
+        return jsonify({"status": "error", "message": err}), 502
+    try:
+        inv = ws_gem.read_gem_info(client)  # 重讀快照 → 最新 equipped/lock
+        safe, blocked = ws_gem.select_safe(inv, ids)
+        blocked_str = {str(k): v for k, v in blocked.items()}
+        if not safe:
+            return jsonify({"status": "error",
+                            "message": "全部被防呆擋下（已裝備/鎖定/不存在）",
+                            "blocked": blocked_str}), 400
+        result = ws_gem.decompose(client, safe)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("artifact_gem_action 失敗 ip=%s: %s", ip, exc)
+        return jsonify({"status": "error", "message": str(exc)}), 500
+
     return jsonify({
-        "status": "pending",
-        "message": ("分解/賣出 body schema 待 live 擷取一次再啟用；"
-                    "cmd 已推導 split(分解)=0x350A sub=0x350B up(升級)=0x3503"),
-        "cmds": {"split": ARTIFACT_CMD_SPLIT, "sub": ARTIFACT_CMD_SUB,
-                 "up": ARTIFACT_CMD_UP, "lock": ARTIFACT_CMD_LOCK},
-    }), 501
+        "status": "ok" if result["ok"] else "error",
+        "requested": len(ids),
+        "decomposed": result["removed"],
+        "decomposed_count": len(result["removed"]),
+        "blocked": blocked_str,
+        "error_code": result["error_code"],
+    })
