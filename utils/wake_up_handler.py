@@ -389,20 +389,13 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         logger.info(f"[{ip}] 執行啟動分流，等待 5 分鐘...")
         deadline = time.time() + (60 * 5)
         while time.time() < deadline:
-            if bot_state.is_online_check_checker(ip) and bot_state.has_pending_online_check_request(ip):
-                logger.info(f"[{ip}] 偵測到 online-check 請求，提前結束分流等待")
-                break
+            # Online-check no longer breaks the load-spreading stagger — it is
+            # served out-of-loop by online_check_service. Only a manual skip_sleep
+            # cuts it short.
             if bot_state.check_skip_sleep(ip):
                 logger.info(f"[{ip}] 收到 skip_sleep，提前結束分流等待")
                 break
             time.sleep(1)
-
-        # Checker 裝置若此時已有互檢請求，直接回主迴圈先處理 mailbox，
-        # 不要繼續往下執行自己的 app_stop / 喚醒流程。
-        if bot_state.is_online_check_checker(ip):
-            if bot_state.has_pending_online_check_request(ip):
-                logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 requester 上線檢查")
-                return d
     elif '3a8d31f2' in ip:
         time.sleep(10)
     
