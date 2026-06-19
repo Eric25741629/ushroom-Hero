@@ -48,6 +48,12 @@ def _stub_config(monkeypatch):
     monkeypatch.setattr(config_manager, "get_device_config", lambda ip: {})
 
 
+def _no_shuffle(monkeypatch):
+    # Neutralise the random shuffle so candidate order == configured order,
+    # keeping fall-through order deterministic for tests that assert it.
+    monkeypatch.setattr(svc.random, "shuffle", lambda seq: None)
+
+
 # ---------------------------------------------------------------------------
 # definite answers complete the request
 # ---------------------------------------------------------------------------
@@ -90,6 +96,7 @@ def test_first_checker_none_falls_through_to_next(monkeypatch):
     _set_checkers(monkeypatch, ["c1", "c2"])
     _all_idle(monkeypatch)
     _stub_config(monkeypatch)
+    _no_shuffle(monkeypatch)               # deterministic order to assert fall-through
 
     seen = []
 
@@ -106,6 +113,30 @@ def test_first_checker_none_falls_through_to_next(monkeypatch):
     assert seen == ["c1", "c2"]            # tried c1, then c2
     assert res["status"] == "done"
     assert res["result_busy"] is False
+
+
+def test_spreads_across_idle_checkers(monkeypatch):
+    # Each request stops at its first (random) idle checker, since every checker
+    # returns a definite answer. Over many requests the first-tried checker
+    # varies → WS-login load is spread, not pinned to the configured head.
+    _set_checkers(monkeypatch, ["c1", "c2", "c3"])
+    _all_idle(monkeypatch)
+    _stub_config(monkeypatch)
+
+    first_tried: set = set()
+
+    def _check(c, pid, log, **kw):
+        first_tried.add(c)
+        return False                       # definite → stops at the first tried
+    monkeypatch.setattr(svc, "check_via_ws", _check)
+
+    for _ in range(50):
+        req_id = bot_state.submit_online_check_request(
+            requester_ip="emulator-5558", target_pid=123)
+        svc._serve_pending_once()
+        bot_state.wait_online_check_result(req_id, timeout_sec=0.5)
+
+    assert len(first_tried) >= 2            # randomised, not pinned to one checker
 
 
 def test_all_checkers_none_fails_request(monkeypatch):

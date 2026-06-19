@@ -16,6 +16,7 @@ A sleeping web_h5 device has its browser closed, so the login is conflict-free.
 """
 from __future__ import annotations
 
+import random
 import threading
 import time
 from typing import Any, Dict, List, Optional
@@ -46,13 +47,21 @@ def _is_idle(ip: str, states: Dict[str, Dict[str, Any]]) -> bool:
 
 
 def _idle_checkers() -> List[str]:
-    """Configured checkers that are currently idle, in configured order."""
+    """Configured checkers that are currently idle, in RANDOM order.
+
+    Order is shuffled so each request picks a random sleeping device to open the
+    one-shot WS login, instead of always hammering the first configured checker
+    (5554). Callers still fall through the whole list on an undetermined (None)
+    result, so randomising only spreads load — it never weakens the gate.
+    """
     try:
         checkers = config_manager.get_online_check_checkers()
     except Exception:  # noqa: BLE001 — config read must never kill the loop
         checkers = ["emulator-5554"]
     states = bot_state.get_all_states()
-    return [c for c in checkers if _is_idle(c, states)]
+    idle = [c for c in checkers if _is_idle(c, states)]
+    random.shuffle(idle)  # ponytail: stdlib shuffle; spread WS-login load across idle devices
+    return idle
 
 
 def _threshold_for(requester_ip: Optional[str]) -> int:
