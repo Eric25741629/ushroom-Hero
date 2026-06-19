@@ -1156,6 +1156,19 @@ def run_device(device: str, *, spend: bool = False,
     logger.info("ws_token runner: %s login ok role_id=%s spend=%s",
                 device, role_id_hint, spend)
 
+    # 登入後補完整庫存快照：0x0402 只推「變動」，未變動的素材/閒置鎬子不會出現，
+    # 害 workshop 看不到原料而空轉、mining 得猜鎬子數。0x0401 (req/resp，空 body)
+    # 回完整庫存，seed 一次即可（之後 0x0402 增量照常更新）。best-effort：撈不到
+    # 不中斷後續任務（workshop 退回防呆 idle、mining 退回猜 seed）。
+    try:
+        _seeded = inventory_tracker.seed_from_query(
+            client, timeout=_FARM_HOME_TIMEOUT_S)
+        logger.info("ws_token runner: %s 庫存快照 seed %d items (pickaxe=%s)",
+                    device, _seeded,
+                    inventory_tracker.counts.get(mining.GOODS_PICKAXE))
+    except Exception:  # noqa: BLE001 — 庫存快照失敗不可中斷登入後任務
+        logger.debug("ws_token runner: %s 庫存快照 seed 失敗", device, exc_info=True)
+
     def _notify(name: str, status: str, detail: str = "") -> None:
         if progress is None:
             return

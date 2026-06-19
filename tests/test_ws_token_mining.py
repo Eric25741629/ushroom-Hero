@@ -220,6 +220,69 @@ def test_inventory_tracker_ignores_unrelated_event_type():
     assert tracker.counts == {}
 
 
+# --- seed_from_query: full snapshot via 0x0401 request/response --------------
+
+def _inv_query_reply(*entries):
+    """0x0401 reply: repeated top-level entry#1 {item_id#1, uid#2, count#3}.
+
+    Unlike 0x0402 (delta push wrapped in {evt_type#1, items#2}), the full
+    snapshot is a flat repeated list — count lives in f3 (live-confirmed on
+    5554: 6017=522, 6019=78, 6020=78, 6021=1078, 4001=7).
+    """
+    out = b""
+    for item_id, count in entries:
+        sub = (codec.pb_uint(1, item_id) + codec.pb_uint(2, 89_000_000_000)
+               + codec.pb_uint(3, count))
+        out += codec.pb_msg(1, sub)
+    return out
+
+
+class _QueryClient:
+    def __init__(self, reply, reply_cmd=0x0401):
+        self._reply = reply
+        self._reply_cmd = reply_cmd
+        self.calls = []
+
+    def call_for(self, cmd, body, expect_cmds=(), timeout=None):
+        self.calls.append((cmd, body, tuple(expect_cmds)))
+        return self._reply_cmd, self._reply
+
+
+def test_seed_from_query_populates_full_inventory():
+    tracker = InventoryTracker()
+    client = _QueryClient(_inv_query_reply((4001, 7), (6017, 522), (6021, 1078)))
+    n = tracker.seed_from_query(client)
+    assert n == 3
+    assert tracker.counts == {4001: 7, 6017: 522, 6021: 1078}
+    assert tracker.pickaxe == 7
+    assert tracker.has_item(6017) is True       # workshop material now visible
+    # asked the server for the full-snapshot cmd with an empty body
+    assert client.calls[0][0] == mining.CMD_INVENTORY_QUERY
+    assert client.calls[0][1] == b""
+
+
+def test_seed_from_query_empty_reply_is_noop():
+    tracker = InventoryTracker()
+    assert tracker.seed_from_query(_QueryClient(b"")) == 0
+    assert tracker.counts == {}
+
+
+def test_seed_from_query_wrong_reply_cmd_is_noop():
+    tracker = InventoryTracker()
+    client = _QueryClient(_inv_query_reply((4001, 7)), reply_cmd=0x0201)
+    assert tracker.seed_from_query(client) == 0
+    assert tracker.counts == {}
+
+
+def test_seed_from_query_does_not_clobber_then_delta_updates():
+    """Snapshot seeds the baseline; a later 0x0402 consume delta still applies."""
+    tracker = InventoryTracker()
+    tracker.seed_from_query(_QueryClient(_inv_query_reply((4001, 7))))
+    assert tracker.pickaxe == 7
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 6)))  # dug one
+    assert tracker.pickaxe == 6
+
+
 def test_inventory_tracker_ignores_unrelated_cmd():
     tracker = InventoryTracker()
     tracker.on_push(0x0504, _inv_push(9800001, (4001, 5)))  # lamp drop push, not inventory
