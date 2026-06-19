@@ -1,5 +1,19 @@
 # Lessons learned
 
+## 2026-06-19 改公開函式時，「只動 N 個檔」的限制要對「被依賴的測試/CLI」例外處理
+
+- **情境**：team lead 指定 workshop 修復「只動 3 個檔，別碰其他檔」。但我移除了 `switch_recipe`/
+  `rotate_team_recipes` 並改 `_run_workshop` 簽名 → `tests/test_ws_token_runner.py` 有 5 處
+  (1 fixture + 4 cadence 測試) 直接 `monkeypatch.setattr(runner.workshop, "rotate_team_recipes")`，
+  monkeypatch 對不存在的 attr 會 raise → **整個 runner 測試檔在 import/setup 期就壞**。
+  另 `ws_token/workshop_smoke.py` 取 `choose_food` 回傳的 `result['error_code']`（新版不再回該 key）。
+- **Rule**：移除/改簽名公開符號前，先 `grep` 全 repo 找呼叫端（測試、smoke CLI、dashboard）。
+  - 被依賴的**測試**：為了讓成果可驗證（綠燈），更新它是必要的，**做**但在回報裡明確標出「超出指定檔案範圍、原因、改了什麼」。
+  - 非執行路徑的**debug CLI**（如 smoke）：若嚴格限制檔案，**不要默默改**，在回報裡點名該檔會 KeyError + 建議的一行修法，讓 owner 決定。
+- **驗證 regression 歸屬**：end-to-end 測試掛掉時，先 `git stash` 我的改動跑 baseline 確認是不是
+  我造成的。本次 `test_run_device_end_to_end_over_fake_transport` 的 rogue/statue timeout 在 baseline
+  就已存在（responder 沒 script 那兩個 cmd），與 workshop 無關 → 別認領別人的鍋。
+
 ## 2026-06-15 遊戲抽卡分兩種：週末付費 35×3 vs 每日看廣告免費 (User 指正)
 
 - **問題**：User 說「五六日也有抽卡，改用 WS」，我直接把 `weekend_to_buy`（ADB 週末付費抽）錯誤對應到
@@ -311,3 +325,8 @@ While root-causing a 3-hour web_h5 startup thrash I asserted "normal hourly slee
 User asked for an unbiased second opinion. I ran `codex exec -s read-only` in a `git worktree add HEAD` checkout (no uncommitted fixes, no my todo writeup, no my tests) with only the raw symptom + log. Codex independently confirmed the press-self-heal and profile-fallback findings, but (a) surfaced the "sleep doesn't close browser" fact I had wrong, and (b) was stricter than me on the 頂號 claim: the log shows `異地登錄=0` and WS `kicked=False`, so a duplicate-login was a real systemic RISK but NOT proven for this incident — the proven cause was the login-less fallback profile. I had over-claimed "mutual WS 頂號".
 
 **Rule**: For high-stakes root-cause work, get an independent read from a clean checkout (worktree at HEAD + a neutral prompt that withholds your hypothesis). Then state confidence honestly: separate "proven by evidence" from "plausible mechanism / systemic risk". Don't confirm the user's framing if the evidence only supports a weaker claim.
+
+### Code-editing in the SHARED working dir gets clobbered by concurrent instances (2026-06-19)
+While doing the dashboard 進階設定 rework directly in the main working dir, a concurrent Claude instance switched HEAD (feat/overnight → fix/ws-farm-badges → back) to set up its own worktree. My uncommitted dashboard.html got reverted and my just-made Phase0 commit (5f518524) ended up stranded on `fix/ws-farm-badges` instead of my branch. Recovered by `git checkout 5f518524 -- <files>` to restore Phase0, re-applying Phase1, and re-committing on feat/overnight-2026-06-14 — but it cost a scare and left a duplicate commit on someone else's branch.
+
+**Rule**: The memory `feedback-isolate-session-worktree` is not optional — for ANY multi-step code-editing session in this repo, FIRST move into a dedicated `git worktree` on your own branch (the user runs several Claude instances against this shared NAS checkout at once). Commit early/often so work survives an external HEAD switch. If you find yourself editing tracked files in the shared main dir, stop and isolate first.

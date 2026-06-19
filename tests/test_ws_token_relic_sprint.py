@@ -37,8 +37,12 @@ from ws_token import relic_sprint  # noqa: E402
 from ws_token.relic_sprint import (  # noqa: E402
     ACT_TYPES,
     CMD_ERROR,
+    CMD_SPRINT_CALENDAR,
     CMD_SPRINT_INFO,
     CMD_SPRINT_REWARD,
+    CalWindow,
+    active_window,
+    parse_calendar,
     MAX_SPRINT_UPGRADES,
     NUM_ROUNDS,
     ROUND_THRESHOLDS,
@@ -768,3 +772,61 @@ def test_constants_match_live_recon():
     assert ROUND_THRESHOLDS == (225_000, 450_000, 675_000, 900_000)
     # hard backstop on the number of level-ups (full 900K sprint is ~7 LIVE)
     assert MAX_SPRINT_UPGRADES == 30
+
+
+# ---------------------------------------------------------------------------
+# calendar (6576 act_cross_limit_rank_calendar) — end-date for dashboard.
+# LIVE capture 2026-06-19 (小寶 7fe98fc6, CDP 9226): the empty-body reply lists
+# every act_type's scheduled windows as repeated #1 {act#1, begin#2, end#3}
+# (Unix seconds, clean UTC+8 midnight boundaries). act 269 appears twice — the
+# CURRENT window (06-15→06-22) plus a future one-day rerun (07-13→07-14).
+# ---------------------------------------------------------------------------
+LIVE_CAL = [
+    (269, 1783872000, 1783958400), (267, 1783267200, 1783872000),
+    (278, 1783440000, 1783699200), (268, 1783353600, 1783526400),
+    (265, 1782662400, 1783267200), (266, 1782748800, 1782921600),
+    (263, 1782057600, 1782662400), (264, 1782057600, 1782662400),
+    (276, 1782403200, 1782662400), (277, 1782230400, 1782489600),
+    (269, 1781452800, 1782057600), (275, 1781625600, 1781884800),
+    (270, 1781539200, 1781712000),
+]
+NOW_2026_06_19 = 1781880588  # within the current 269 window per the capture
+
+
+def _cal_body(triples):
+    return b"".join(
+        codec.pb_msg(1, codec.pb_uint(1, a) + codec.pb_uint(2, b) + codec.pb_uint(3, e))
+        for a, b, e in triples
+    )
+
+
+def test_parse_calendar_decodes_live_windows():
+    wins = parse_calendar(CMD_SPRINT_CALENDAR, _cal_body(LIVE_CAL))
+    assert len(wins) == len(LIVE_CAL)
+    assert wins[0] == CalWindow(269, 1783872000, 1783958400)
+    # both 269 windows are present
+    assert sum(1 for w in wins if w.act_type == 269) == 2
+
+
+def test_parse_calendar_non_calendar_cmd_is_empty():
+    assert parse_calendar(CMD_ERROR, _cal_body(LIVE_CAL)) == ()
+
+
+def test_active_window_picks_window_covering_now():
+    wins = parse_calendar(CMD_SPRINT_CALENDAR, _cal_body(LIVE_CAL))
+    win = active_window(wins, 269, NOW_2026_06_19)
+    assert win is not None
+    # the CURRENT 269 window, not the future 07-13 rerun
+    assert (win.begin, win.end) == (1781452800, 1782057600)
+
+
+def test_active_window_none_when_no_window_covers_now():
+    wins = parse_calendar(CMD_SPRINT_CALENDAR, _cal_body(LIVE_CAL))
+    assert active_window(wins, 269, now=1) is None          # before any window
+    assert active_window(wins, 999, NOW_2026_06_19) is None  # act not scheduled
+
+
+def test_active_window_earliest_end_when_multiple_cover():
+    # two windows of the same act both covering now -> pick the earliest-ending
+    wins = (CalWindow(269, 100, 900), CalWindow(269, 100, 500))
+    assert active_window(wins, 269, now=200).end == 500

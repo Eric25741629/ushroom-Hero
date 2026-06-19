@@ -27,6 +27,7 @@
       正常運作，``spent`` 則為 best-effort（量測不到時為 0）。
 """
 import logging
+import time
 from collections import OrderedDict
 
 from flask import Blueprint, jsonify, request
@@ -147,6 +148,16 @@ def relic_sprint_plan(ip):
         logger.warning("relic_sprint_plan 讀取失敗 ip=%s: %s", ip, exc)
         return jsonify({"status": "error", "message": str(exc)}), 500
 
+    # 本期活動結束時間：從 calendar(6576) 取 active window 的 end（Unix 秒，UTC+8 日界）。
+    # 6572 不帶時間窗，故額外讀一次 calendar；失敗不致命（end_ts=None，前端顯示進行中）。
+    end_ts = None
+    try:
+        windows = ws_sprint.read_calendar(client)
+        win = ws_sprint.active_window(windows, act_type, int(time.time()))
+        end_ts = win.end if win else None
+    except Exception:  # noqa: BLE001
+        logger.debug("relic_sprint_plan read_calendar 失敗 ip=%s", ip, exc_info=True)
+
     accrued = int(sprint.get("accrued", 0) or 0)
     total = ws_sprint.SPRINT_TOTAL
     remaining = max(0, total - accrued)
@@ -160,6 +171,7 @@ def relic_sprint_plan(ip):
         "accrued": accrued,
         "total": total,
         "remaining": remaining,
+        "end_ts": end_ts,
         "rounds": _rounds_view(sprint),
         "claimable_rounds": list(sprint.get("claimable_rounds", [])),
         "fragments_now": fragments_now,
