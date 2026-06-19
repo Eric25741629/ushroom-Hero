@@ -1761,8 +1761,19 @@ select.form-control {
         <div class="task-tab-panels">
 
           <div class="task-tab-panel" data-tab="farm">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">WS 莊園每日購買種子/肥料（407/408）+ 自動收成</label>
-            <div class="ws-schema-slot" data-slot="farm"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">啟用 WS 農場（純 WS 莊園收成+購買+豐收卡；取消＝農場子任務整段 skip）</label>
+            <div class="ws-field ws-field-row"><label>莊園每日購買 種子(407) 目標（空=不買）</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
+            <div class="ws-field ws-field-row"><label>莊園每日購買 肥料(408) 目標（空=不買）</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdSeed">看廣告拿種子（每日免費領，ad config 15；獨立於上方開關）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkHarvestCycle">每週豐收卡循環（停打工→施肥→收成→買卡→種特級→恢復打工）</label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
+              <div><label style="font-size:0.8em;">豐收卡張數</label><input type="number" id="inpHcNumCards" class="form-control" min="1" step="1" placeholder="3"></div>
+              <div><label style="font-size:0.8em;">肥料 id</label><input type="number" id="inpHcFert" class="form-control" min="0" step="1" placeholder="111"></div>
+            </div>
+            <details style="margin-top:4px;"><summary style="font-size:0.8em;color:#888;">進階（手動種植/打工，需填 id）</summary>
+              <div class="ws-field ws-field-row"><label>種植 seed_id（空=不手動種）</label><input type="number" id="inpFarmSeedId" class="form-control" min="0" step="1"></div>
+              <div class="ws-field ws-field-row"><label>打工隊伍 team_cfg_id（空=不打工）</label><input type="number" id="inpFarmTeamCfg" class="form-control" min="0" step="1"></div>
+            </details>
           </div>
 
           <div class="task-tab-panel" data-tab="lamp">
@@ -1788,6 +1799,13 @@ select.form-control {
           <div class="task-tab-panel" data-tab="relic"><div class="ws-schema-slot" data-slot="relic"></div></div>
 
           <div class="task-tab-panel" data-tab="mail"><div class="ws-schema-slot" data-slot="mail"></div></div>
+
+          <div class="task-tab-panel" data-tab="adreward">
+            <label class="checkbox-item"><input type="checkbox" id="chkAdEnabled">啟用看廣告獎勵自動領取（is_free=1 純 WS 領，無真實廣告影片）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（config 12）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（config 14）</label>
+            <div class="ws-field-note">種子（config 15）在「農場」頁籤的「看廣告拿種子」。</div>
+          </div>
 
           <div class="task-tab-panel" data-tab="kungfu">
             <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
@@ -3529,8 +3547,8 @@ select.form-control {
     // 其 load/save 仍由既有 JS 處理。以下只負責「之前藏在 json 沒 UI」的欄位。
     const WS_TASK_TABS = [
       ['farm', '農場'], ['lamp', '神燈'], ['mining', '挖礦'], ['relic', '遺物'],
-      ['mail', '郵件'], ['kungfu', '競猜'], ['tycoon', '大亨'], ['couple', '伴侶加工'],
-      ['conn', '連線'],
+      ['mail', '郵件'], ['adreward', '看廣告'], ['kungfu', '競猜'], ['tycoon', '大亨'],
+      ['couple', '伴侶加工'], ['conn', '連線'],
     ];
     // slot = 頁籤 id；path = config 內完整路徑(全部 ws_token.*)；type bool/int/intnull/text。
     const WS_EXTRA_FIELDS = [
@@ -3611,6 +3629,63 @@ select.form-control {
       _taskTabsRendered = true;
       activateTaskTab(WS_TASK_TABS[0][0]);
     }
+    // ---- 特殊頁籤(農場/看廣告)：欄位非單一 ws_token key，bespoke load/collect ----
+    function _numOrNull(id) {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const s = (el.value || '').trim();
+      if (s === '') return null;
+      const n = parseInt(s, 10);
+      return (n >= 0) ? n : null;
+    }
+    function _loadFarmTab(config) {
+      const farm = getPath(config, 'ws_token.farm', null);
+      const on = !!(farm && typeof farm === 'object');
+      document.getElementById('chkWsFarm').checked = on;
+      const buy = (farm && Array.isArray(farm.buy)) ? farm.buy : [];
+      const byShop = id => { const it = buy.find(b => b && b.shop_id === id); return it ? it.target : ''; };
+      document.getElementById('inpFarmBuy407').value = byShop(407);
+      document.getElementById('inpFarmBuy408').value = byShop(408);
+      const hcc = (farm && farm.harvest_card_cycle && typeof farm.harvest_card_cycle === 'object') ? farm.harvest_card_cycle : {};
+      document.getElementById('chkHarvestCycle').checked = hcc.enabled === true;
+      document.getElementById('inpHcNumCards').value = (typeof hcc.num_cards === 'number') ? hcc.num_cards : '';
+      document.getElementById('inpHcFert').value = (typeof hcc.fertilizer_id === 'number') ? hcc.fertilizer_id : '';
+      document.getElementById('inpFarmSeedId').value = (farm && typeof farm.seed_id === 'number') ? farm.seed_id : '';
+      document.getElementById('inpFarmTeamCfg').value = (farm && typeof farm.team_cfg_id === 'number') ? farm.team_cfg_id : '';
+    }
+    function _collectFarmTab(payload) {
+      if (!document.getElementById('chkWsFarm').checked) { setPath(payload, 'ws_token.farm', null); return; }
+      // 保留既有 farm 內非 UI 欄位(未來擴充)，只覆寫 UI 管的 key。
+      const existing = (_existingWsToken.farm && typeof _existingWsToken.farm === 'object') ? _existingWsToken.farm : {};
+      const farm = Object.assign({}, existing);
+      const buy = [];
+      const t407 = _numOrNull('inpFarmBuy407'); if (t407 !== null) buy.push({ shop_id: 407, target: t407 });
+      const t408 = _numOrNull('inpFarmBuy408'); if (t408 !== null) buy.push({ shop_id: 408, target: t408 });
+      if (buy.length) farm.buy = buy; else delete farm.buy;
+      if (document.getElementById('chkHarvestCycle').checked) {
+        const hcc = { enabled: true };
+        const nc = _numOrNull('inpHcNumCards'); if (nc !== null) hcc.num_cards = nc;
+        const fz = _numOrNull('inpHcFert'); if (fz !== null) hcc.fertilizer_id = fz;
+        farm.harvest_card_cycle = hcc;
+      } else { delete farm.harvest_card_cycle; }
+      const seed = _numOrNull('inpFarmSeedId'); if (seed !== null) farm.seed_id = seed; else delete farm.seed_id;
+      const team = _numOrNull('inpFarmTeamCfg'); if (team !== null) farm.team_cfg_id = team; else delete farm.team_cfg_id;
+      setPath(payload, 'ws_token.farm', farm);
+    }
+    // 看廣告獎勵 config_ids 跨兩頁籤(種子15在農場、鑽石12/14在看廣告)，共用同一 array。
+    const AD_CONFIGS = [[12, 'chkAdGem12'], [14, 'chkAdGem14'], [15, 'chkAdSeed']];
+    function _loadAdRewards(config) {
+      const ad = getPath(config, 'ws_token.ad_rewards', {}) || {};
+      document.getElementById('chkAdEnabled').checked = ad.enabled === true;
+      const ids = Array.isArray(ad.config_ids) ? ad.config_ids : [12, 14, 15];
+      AD_CONFIGS.forEach(([id, cid]) => { document.getElementById(cid).checked = ids.indexOf(id) !== -1; });
+    }
+    function _collectAdRewards(payload) {
+      const ids = [];
+      AD_CONFIGS.forEach(([id, cid]) => { if (document.getElementById(cid).checked) ids.push(id); });
+      setPath(payload, 'ws_token.ad_rewards.enabled', document.getElementById('chkAdEnabled').checked);
+      setPath(payload, 'ws_token.ad_rewards.config_ids', ids);
+    }
     function loadTaskTabs(config) {
       renderTaskTabs();
       WS_EXTRA_FIELDS.forEach(f => {
@@ -3620,6 +3695,8 @@ select.form-control {
         if (f.type === 'bool') el.checked = (v === true);
         else el.value = (v === null || v === undefined) ? '' : v;
       });
+      _loadFarmTab(config);
+      _loadAdRewards(config);
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
       if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
@@ -3645,6 +3722,8 @@ select.form-control {
         }
         setPath(payload, f.path, v);
       });
+      _collectFarmTab(payload);
+      _collectAdRewards(payload);
     }
     // Live-view decode pipeline: single-slot pending, dropping older frames if
     // a newer one arrives before the current decode finishes. Combined with
@@ -3873,10 +3952,6 @@ select.form-control {
           !!(wsMining && typeof wsMining === 'object' && wsMining.enabled === true) ||
           !!(config.ws_token_mining && typeof config.ws_token_mining === 'object' && config.ws_token_mining.enabled === true);
 
-        // WS 農場（莊園每日購買 + 收成）：farm 為非 null 物件即視為啟用。
-        document.getElementById('chkWsFarm').checked =
-          !!(_existingWsToken.farm && typeof _existingWsToken.farm === 'object');
-
         document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
 
         // 進階設定任務頁籤：載入 25+ 個展開欄位(挖礦params/遺物/郵件/大亨/伴侶/連線…)
@@ -4052,16 +4127,7 @@ select.form-control {
       if (!(lampPercent >= 0)) lampPercent = 0;
       let lampMinKeep = parseInt(document.getElementById('inpWsLampMinKeep').value, 10);
       if (!(lampMinKeep >= 0)) lampMinKeep = 0;
-      // WS 農場 opt-in：啟用時保留既有 farm dict（手動進階的種植 seed_id/打工
-      // team_cfg_id/豐收卡 harvest_card_cycle），無既有設定才套用預設「莊園每日
-      // 購買 407/408 各 4」(同 5554)。取消勾選 -> null（farm 子任務整段 skip）。
-      const wsFarmChecked = wsEnabled && document.getElementById('chkWsFarm').checked;
-      const existingFarm =
-        (_existingWsToken.farm && typeof _existingWsToken.farm === 'object')
-          ? _existingWsToken.farm : null;
-      const wsFarm = wsFarmChecked
-        ? (existingFarm || { buy: [{ shop_id: 407, target: 4 }, { shop_id: 408, target: 4 }] })
-        : null;
+      // farm 由 _collectFarmTab(collectTaskTabs 內)依農場頁籤控制項組裝或設 null。
       payload.ws_token = Object.assign({}, _existingWsToken, {
         enabled: wsEnabled,
         spend: wsSelected,
@@ -4069,7 +4135,6 @@ select.form-control {
         lamp_percent: lampPercent,
         lamp_min_keep: lampMinKeep,
         offline_fallback: wsOfflineFallback,
-        farm: wsFarm,
         mining: Object.assign(
           { allow_bomb: false, allow_drill: false, max_steps: 200 },
           existingWsMining,
