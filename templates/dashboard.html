@@ -1243,6 +1243,9 @@ select.form-control {
 .ws-schema-slot .ws-field label{font-size:.85em;color:#555;}
 .ws-schema-slot .ws-field input[type=number]{width:120px;}
 .ws-schema-slot .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
+.task-tab-panel .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
+textarea.ws-json{font-family:var(--mono,monospace);font-size:.78em;width:100%;resize:vertical;white-space:pre;margin:4px 0;}
+textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
   </style>
 
 </head>
@@ -1814,6 +1817,24 @@ select.form-control {
           <div class="task-tab-panel" data-tab="tycoon"><div class="ws-schema-slot" data-slot="tycoon"></div></div>
 
           <div class="task-tab-panel" data-tab="couple"><div class="ws-schema-slot" data-slot="couple"></div></div>
+
+          <div class="task-tab-panel" data-tab="gacha">
+            <div class="ws-schema-slot" data-slot="gacha"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkGachaSkill">抽技能（type 1）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkGachaPartner">抽同伴（type 2）</label>
+          </div>
+
+          <div class="task-tab-panel" data-tab="carpark">
+            <div class="ws-schema-slot" data-slot="carpark"></div>
+            <label for="txtCarparkPlan" style="font-size:.85em;color:#555;">跨界停車計畫 carpark_plan（JSON：日/夜窗口、泊銀等級、搶位參數；留空＝不改）</label>
+            <textarea id="txtCarparkPlan" class="form-control ws-json" rows="8" spellcheck="false"></textarea>
+          </div>
+
+          <div class="task-tab-panel" data-tab="dungeon">
+            <label for="txtDungeonSweeps" style="font-size:.85em;color:#555;">副本掃蕩 dungeon_sweeps（JSON：[[type,id,num],...]；深淵 type2 / 萬神 type23，只掃蕩不自動打）</label>
+            <textarea id="txtDungeonSweeps" class="form-control ws-json" rows="5" spellcheck="false"></textarea>
+            <div class="ws-field-note">留空＝不改（保留既有）；要清除請填 []。</div>
+          </div>
 
           <div class="task-tab-panel" data-tab="conn">
             <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
@@ -3547,8 +3568,9 @@ select.form-control {
     // 其 load/save 仍由既有 JS 處理。以下只負責「之前藏在 json 沒 UI」的欄位。
     const WS_TASK_TABS = [
       ['farm', '農場'], ['lamp', '神燈'], ['mining', '挖礦'], ['relic', '遺物'],
-      ['mail', '郵件'], ['adreward', '看廣告'], ['kungfu', '競猜'], ['tycoon', '大亨'],
-      ['couple', '伴侶加工'], ['conn', '連線'],
+      ['mail', '郵件'], ['adreward', '看廣告'], ['gacha', '抽卡'], ['kungfu', '競猜'],
+      ['tycoon', '大亨'], ['couple', '伴侶加工'], ['carpark', '車位'], ['dungeon', '副本掃蕩'],
+      ['conn', '連線'],
     ];
     // slot = 頁籤 id；path = config 內完整路徑(全部 ws_token.*)；type bool/int/intnull/text。
     const WS_EXTRA_FIELDS = [
@@ -3570,6 +3592,13 @@ select.form-control {
       { slot:'couple', path:'ws_token.workshop_rotate', type:'bool', label:'加工坊 12h 配方輪換', def:true },
       { slot:'conn', path:'ws_token.bootstrap_token', type:'bool', label:'缺 token 時冷啟 App 撈取（僅 adb 裝置）', def:true },
       { slot:'conn', path:'ws_token.fallback_host', type:'text', label:'離線備援限定主機名（空=只 master）', def:'' },
+      { slot:'gacha', path:'ws_token.gacha.enabled', type:'bool', label:'啟用 WS 付費抽卡（消耗抽卡券 1012/1013）', def:false },
+      { slot:'gacha', path:'ws_token.gacha.mode', type:'select', options:[['fixed','固定批數 fixed'],['drain','抽到券盡 drain']], label:'模式', def:'fixed' },
+      { slot:'gacha', path:'ws_token.gacha.count', type:'int', label:'每批抽數（15/35/999）', def:35 },
+      { slot:'gacha', path:'ws_token.gacha.batches', type:'int', label:'批數（fixed 模式）', def:3 },
+      { slot:'gacha', path:'ws_token.gacha.weekend_only', type:'bool', label:'只在週六/日執行', def:false },
+      { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'跨界停車目標 master_id（legacy 單停；空=不用）', def:null },
+      { slot:'carpark', path:'ws_token.carpark_auto', type:'bool', label:'跨界自動掃停可停 lot（legacy 單停模式）', def:false },
     ];
     function _wsFieldId(path) { return 'wsx_' + path.replace(/\./g, '_'); }
     function getPath(obj, path, def) {
@@ -3617,6 +3646,11 @@ select.form-control {
         if (f.type === 'bool') {
           wrap.className = 'ws-field';
           wrap.innerHTML = '<label class="checkbox-item"><input type="checkbox" id="' + id + '">' + f.label + '</label>';
+        } else if (f.type === 'select') {
+          wrap.className = 'ws-field ws-field-row';
+          const opts = (f.options || []).map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('');
+          wrap.innerHTML = '<label for="' + id + '">' + f.label + '</label>' +
+            '<select id="' + id + '" class="form-control">' + opts + '</select>';
         } else {
           wrap.className = 'ws-field ws-field-row';
           const it = (f.type === 'text') ? 'text' : 'number';
@@ -3686,6 +3720,46 @@ select.form-control {
       setPath(payload, 'ws_token.ad_rewards.enabled', document.getElementById('chkAdEnabled').checked);
       setPath(payload, 'ws_token.ad_rewards.config_ids', ids);
     }
+    // 抽卡 types(1技/2伴) 陣列；車位/掃蕩走 JSON 文字框(輕量,複雜巢狀不做逐欄)。
+    const GACHA_TYPES = [[1, 'chkGachaSkill'], [2, 'chkGachaPartner']];
+    function _loadGachaTypes(config) {
+      const types = getPath(config, 'ws_token.gacha.types', [1, 2]);
+      const arr = Array.isArray(types) ? types : [1, 2];
+      GACHA_TYPES.forEach(([n, cid]) => { const el = document.getElementById(cid); if (el) el.checked = arr.indexOf(n) !== -1; });
+    }
+    function _collectGachaTypes(payload) {
+      const arr = [];
+      GACHA_TYPES.forEach(([n, cid]) => { const el = document.getElementById(cid); if (el && el.checked) arr.push(n); });
+      setPath(payload, 'ws_token.gacha.types', arr);
+    }
+    const WS_JSON_FIELDS = [
+      { id: 'txtCarparkPlan', path: 'ws_token.carpark_plan' },
+      { id: 'txtDungeonSweeps', path: 'ws_token.dungeon_sweeps' },
+    ];
+    function _loadJsonFields(config) {
+      WS_JSON_FIELDS.forEach(f => {
+        const el = document.getElementById(f.id);
+        if (!el) return;
+        el.classList.remove('ws-json-bad');
+        const v = getPath(config, f.path, null);
+        el.value = (v == null) ? '' : JSON.stringify(v, null, 2);
+      });
+    }
+    function _collectJsonFields(payload) {
+      WS_JSON_FIELDS.forEach(f => {
+        const el = document.getElementById(f.id);
+        if (!el) return;
+        el.classList.remove('ws-json-bad');
+        const s = (el.value || '').trim();
+        if (s === '') return; // 留空=不改(保留 Object.assign 帶入的既有值)
+        try {
+          setPath(payload, f.path, JSON.parse(s));
+        } catch (e) {
+          el.classList.add('ws-json-bad'); // 解析失敗:不覆寫,標紅提示
+          console.warn('[task-tabs] ' + f.path + ' JSON 解析失敗,保留既有值', e);
+        }
+      });
+    }
     function loadTaskTabs(config) {
       renderTaskTabs();
       WS_EXTRA_FIELDS.forEach(f => {
@@ -3697,6 +3771,8 @@ select.form-control {
       });
       _loadFarmTab(config);
       _loadAdRewards(config);
+      _loadGachaTypes(config);
+      _loadJsonFields(config);
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
       if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
@@ -3716,6 +3792,8 @@ select.form-control {
           const s = el.value.trim();
           v = (s === '') ? null : parseInt(s, 10);
           if (v !== null && !(v >= 0)) v = null;
+        } else if (f.type === 'select') {
+          v = el.value;
         } else {
           v = parseInt(el.value, 10);
           if (!(v >= 0)) v = (typeof f.def === 'number') ? f.def : 0;
@@ -3724,6 +3802,8 @@ select.form-control {
       });
       _collectFarmTab(payload);
       _collectAdRewards(payload);
+      _collectGachaTypes(payload);
+      _collectJsonFields(payload);
     }
     // Live-view decode pipeline: single-slot pending, dropping older frames if
     // a newer one arrives before the current decode finishes. Combined with
