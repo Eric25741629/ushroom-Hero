@@ -90,6 +90,37 @@ def viewport_top_depth(baseline: int) -> int:
     return int(baseline) - (GRID_ROWS - 2)
 
 
+def map_pits(mine_board: Any) -> List[Dict[str, int]]:
+    """全地圖（非只 7 列視窗）的未採集礦坑 — look-ahead 用。
+
+    伺服器送的是比可見 7 列「棋盤」更高的「地圖」：未採集礦坑(待發現礦洞)會出現在
+    視窗上下好幾列(實測 baseline-3 .. +17)，但 `board_to_grid` 把盤面裁成 rows 0-6、
+    其餘當 outside_viewport 丟掉，planner 因此看不到即將到來的礦。這裡從原始 blocks 撈出
+    每個未採集礦坑(config 401 / is_reward 且 count>0)，附上相對視窗頂端的 row：
+      row > 6  → 視窗下方(即將捲到的 upcoming 礦)
+      0..6     → 視窗內
+      row < 0  → 已捲過(passed；通常已收不到)
+    讓 planner 能朝即將到來的礦規劃下挖，而不是盲目下挖。純 WS、不需 CNN。
+    """
+    baseline = int(getattr(mine_board, "baseline", 0) or 0)
+    top = viewport_top_depth(baseline)
+    out: List[Dict[str, int]] = []
+    for blk in getattr(mine_board, "blocks", []) or []:
+        if int(getattr(blk, "count", 0) or 0) <= 0:
+            continue
+        if not (int(getattr(blk, "config_id", 0) or 0) == TERRAIN_PIT
+                or int(getattr(blk, "is_reward", 0) or 0)):
+            continue
+        out.append({
+            "row": int(blk.y) - top,   # rel to viewport top; >6 = 下方/upcoming
+            "col": int(blk.x) - 1,
+            "depth": int(blk.y),
+            "count": int(blk.count),
+        })
+    out.sort(key=lambda d: (d["row"], d["col"]))
+    return out
+
+
 def has_uncollected_row0_pit(mine_board: Any) -> bool:
     """row-0（視窗頂端深度）是否還有「未採集且仍可挖」的礦坑（從原始 blocks 判定）。
 
@@ -291,4 +322,6 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     result["ws_steps"] = ws_steps
     result["hold_floor"] = hold_floor
     result["grid"] = grid
+    # 全地圖 look-ahead：視窗下方即將到來的未採集礦坑（伺服器有送、舊版被裁掉）。
+    result["map_pits"] = map_pits(mine_board)
     return result

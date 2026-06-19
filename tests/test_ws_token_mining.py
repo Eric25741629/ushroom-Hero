@@ -42,6 +42,7 @@ from ws_token.mining import (  # noqa: E402
 from ws_token.mining_adapter import (  # noqa: E402
     board_to_grid,
     grid_pos_to_block_id,
+    map_pits,
     plan as plan_ws_mining,
 )
 
@@ -433,6 +434,24 @@ def test_plan_hold_floor_holds_for_uncollected_reachable_row0_pit():
     result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
 
     assert result["hold_floor"] is True, result.get("hold_floor")
+
+
+def test_map_pits_includes_below_and_above_viewport_lookahead():
+    # 伺服器送的「地圖」比 7 列視窗高（實測 baseline-3..+17）。map_pits 要撈出視窗
+    # 下方(upcoming)/上方(passed)的未採集礦坑，count==0(已採)排除。舊版 board_to_grid
+    # 把這些當 outside_viewport 丟掉 → planner 看不到即將到來的礦。
+    baseline = 162390
+    top = baseline - 5
+    blocks = [
+        MineBlock(block_id=(top + 17) * 100 + 5, x=5, y=top + 17, config_id=401, count=1, is_reward=1),  # 下方
+        MineBlock(block_id=(top + 2) * 100 + 3,  x=3, y=top + 2,  config_id=401, count=1, is_reward=1),  # 視窗內
+        MineBlock(block_id=(top - 2) * 100 + 4,  x=4, y=top - 2,  config_id=401, count=1, is_reward=1),  # 上方
+        MineBlock(block_id=(top + 5) * 100 + 1,  x=1, y=top + 5,  config_id=401, count=0, is_reward=1),  # 已採→排除
+    ]
+    pits = map_pits(_board(baseline, blocks))
+    assert [p["row"] for p in pits] == [-2, 2, 17]          # sorted by row; count0 dropped
+    upcoming = [p for p in pits if p["row"] > 6]
+    assert upcoming and upcoming[0]["col"] == 4              # the row-17 pit at col 5(1-idx)->4(0-idx)
 
 
 def test_plan_hold_floor_releases_unreachable_row0_pit():
