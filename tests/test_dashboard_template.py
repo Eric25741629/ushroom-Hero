@@ -157,9 +157,13 @@ def test_device_settings_core_toggle_ids_intact():
 
 
 def test_settings_ws_and_advanced_groups_are_collapsible():
-    """雜亂子開關收進可摺疊群組（<details>），常用任務開關留在外層。"""
+    """雜亂子開關收進可摺疊群組（<details>），常用任務開關留在外層。
+
+    WS 任務細項改成「進階設定」摺疊段內的任務類別橫向頁籤（taskTabBar）。
+    """
     html = _html()
-    assert "WS 任務（純 WS，需 +ws 方案）" in html
+    assert "進階設定 — 任務細項（WS，需 +ws 方案）" in html
+    assert 'id="taskTabBar"' in html  # 任務類別橫向頁籤條
     assert "<summary>進階</summary>" in html
     # 常用任務改名後的群組標題
     assert "常用任務開關" in html

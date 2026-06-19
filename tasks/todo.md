@@ -6,6 +6,29 @@
 
 ---
 
+## 🎛️ 2026-06-19 Dashboard 設定 modal — 任務類別橫向頁籤（進階設定內）
+
+設計已核准（memory `project-dashboard-config-category-tabs`）。目標：把 25+ 個藏在
+bot_config.json 的 ws_token 設定全部露出，以任務類別分頁籤，收進「進階設定」摺疊段，
+橫向切換。主視圖維持精簡（方案/排程/4 個常用 enable toggle 保留）。
+
+架構（schema-driven，localized 在這一段）：
+- `TASK_TABS` JS schema（每類別 + 欄位 path/type/label/default/wsOnly；type bool/int/float/select/special）
+- `getPath/setPath(obj,'ws_token.gacha.count',v)` 巢狀存取 helper
+- `renderTaskTabs()` 由 schema 生成橫向頁籤條 + 各 panel；`loadTaskTabs(config)` / `collectTaskTabs(payload)`
+- 既有 id（chkWsOpenLamp/inpWsLampPercent/inpWsLampMinKeep/chkWsMining/chkWsKungfuGuess/
+  chkWsFarm/chkWsOfflineFallback）→ 由 schema 接管，移除舊「WS 任務」details 避免重複 id
+
+類別：農場/神燈/挖礦/遺物/車位/郵件/抽卡/看廣告/競猜/大亨/伴侶加工/副本掃蕩
+
+- [ ] P1 外殼+infra+簡單欄位類（神燈/挖礦/遺物/郵件/伴侶/競猜/大亨）+ 接線 + 移除舊 details + 驗證 + commit
+- [ ] P2 特殊欄位（農場 buy/ad#15/harvest_card_cycle、看廣告 ad split、抽卡、車位/掃蕩 JSON 輕量）+ sanitizer 補齊 + commit
+
+注意：dashboard.html 共用大檔直接 Edit（勿 Write 覆蓋）；改 template 重整頁面即生效，不需重啟 bot。
+農場頁籤「每週豐收卡」= WS `ws_token.farm.harvest_card_cycle`（與視覺農場 enable_harvest_card 不同條）。
+
+---
+
 ## 🛠️ 2026-06-19 codex review 修正（純 WS 掛機）
 
 規則: 不 commit、不重啟 bot、不動 live 裝置。每項補/改測試。

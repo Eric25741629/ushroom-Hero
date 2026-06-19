@@ -1227,6 +1227,22 @@ select.form-control {
 .wake-block .wake-text{display:flex;flex-direction:column;min-width:0;}
 .wake-block .wake-text .label{display:block;margin-bottom:2px;}
 .wake-block .wake-num{font-family:var(--mono);font-feature-settings:"tnum" 1;font-weight:700;font-size:18px;color:var(--coral-deep);line-height:1.15;white-space:nowrap;}
+
+/* ---- task-category horizontal tabs (進階設定 內) ---- */
+.ws-plan-hint{font-size:.78em;color:#9a6b00;background:#fff7e0;border:1px solid #f0e3c5;border-radius:8px;padding:6px 9px;margin:6px 0;}
+.task-tab-bar{display:flex;gap:6px;overflow-x:auto;padding:6px 2px;margin-bottom:8px;border-bottom:1px solid #eee;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+.task-tab-bar::-webkit-scrollbar{height:5px;}
+.task-tab-bar::-webkit-scrollbar-thumb{background:#d9cdb4;border-radius:3px;}
+.task-tab-chip{flex:0 0 auto;cursor:pointer;border:1px solid #e2d8c2;background:#faf6ee;color:#6b5a3a;border-radius:999px;padding:5px 13px;font-size:.82em;white-space:nowrap;transition:background .12s,color .12s,border-color .12s;}
+.task-tab-chip:hover{background:#f1e8d6;}
+.task-tab-chip.active{background:var(--coral-deep,#e07a5f);color:#fff;border-color:var(--coral-deep,#e07a5f);font-weight:600;}
+.task-tab-panel{display:none;padding:4px 2px;}
+.task-tab-panel.active{display:block;}
+.ws-schema-slot .ws-field{margin:6px 0;}
+.ws-schema-slot .ws-field.ws-field-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.ws-schema-slot .ws-field label{font-size:.85em;color:#555;}
+.ws-schema-slot .ws-field input[type=number]{width:120px;}
+.ws-schema-slot .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
   </style>
 
 </head>
@@ -1738,44 +1754,55 @@ select.form-control {
 
 
 
-      <details class="web-advanced" style="margin-bottom:16px;">
+      <details class="web-advanced" id="advTaskDetails" style="margin-bottom:16px;">
+        <summary>進階設定 — 任務細項（WS，需 +ws 方案）</summary>
+        <div id="wsPlanHint" class="ws-plan-hint" style="display:none;">目前方案未含 +ws，以下任務設定不會生效（仍可預先設定，之後切到含 +ws 的方案即啟用）。</div>
+        <div id="taskTabBar" class="task-tab-bar"></div>
+        <div class="task-tab-panels">
 
-        <summary>WS 任務（純 WS，需 +ws 方案）</summary>
-
-        <div class="checkbox-group" style="border:none; border-radius:0;">
-
-          <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">WS 開神燈（純 WS，消耗神燈道具；選 WS 方案自動啟用）</label>
-
-          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
-
-            <div>
-
-              <label style="font-size:0.8em;">開神燈百分比 %（0=不依百分比）</label>
-
-              <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
-
-            </div>
-
-            <div>
-
-              <label style="font-size:0.8em;">最低保留神燈數（0=無下限）</label>
-
-              <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
-
-            </div>
-
+          <div class="task-tab-panel" data-tab="farm">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">WS 莊園每日購買種子/肥料（407/408）+ 自動收成</label>
+            <div class="ws-schema-slot" data-slot="farm"></div>
           </div>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkWsMining">WS 挖礦（純 WS，挖到鎬子用完；需方案含 +ws）</label>
+          <div class="task-tab-panel" data-tab="lamp">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">WS 開神燈（純 WS，消耗神燈道具；選 WS 方案自動啟用）</label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
+              <div>
+                <label style="font-size:0.8em;">開神燈百分比 %（0=不依百分比）</label>
+                <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
+              </div>
+              <div>
+                <label style="font-size:0.8em;">最低保留神燈數（0=無下限）</label>
+                <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
+              </div>
+            </div>
+            <div class="ws-schema-slot" data-slot="lamp"></div>
+          </div>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
+          <div class="task-tab-panel" data-tab="mining">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsMining">WS 挖礦（純 WS，挖到鎬子用完）</label>
+            <div class="ws-schema-slot" data-slot="mining"></div>
+          </div>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">WS 農場（莊園每日購買種子/肥料 407/408 + 自動收成；需方案含 +ws）</label>
+          <div class="task-tab-panel" data-tab="relic"><div class="ws-schema-slot" data-slot="relic"></div></div>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
+          <div class="task-tab-panel" data-tab="mail"><div class="ws-schema-slot" data-slot="mail"></div></div>
+
+          <div class="task-tab-panel" data-tab="kungfu">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
+          </div>
+
+          <div class="task-tab-panel" data-tab="tycoon"><div class="ws-schema-slot" data-slot="tycoon"></div></div>
+
+          <div class="task-tab-panel" data-tab="couple"><div class="ws-schema-slot" data-slot="couple"></div></div>
+
+          <div class="task-tab-panel" data-tab="conn">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
+            <div class="ws-schema-slot" data-slot="conn"></div>
+          </div>
 
         </div>
-
       </details>
 
 
@@ -3495,6 +3522,130 @@ select.form-control {
     let _existingCarpark = {};
     let _existingWsToken = {};
     let _existingWsTokenMining = {};
+
+    // ---- 進階設定：任務類別橫向頁籤 ----------------------------------------
+    // 既有 7 個 WS 控制項(chkWsOpenLamp/inpWsLampPercent/inpWsLampMinKeep/chkWsMining/
+    // chkWsKungfuGuess/chkWsFarm/chkWsOfflineFallback)的 HTML 已搬進對應頁籤但 id 不變,
+    // 其 load/save 仍由既有 JS 處理。以下只負責「之前藏在 json 沒 UI」的欄位。
+    const WS_TASK_TABS = [
+      ['farm', '農場'], ['lamp', '神燈'], ['mining', '挖礦'], ['relic', '遺物'],
+      ['mail', '郵件'], ['kungfu', '競猜'], ['tycoon', '大亨'], ['couple', '伴侶加工'],
+      ['conn', '連線'],
+    ];
+    // slot = 頁籤 id；path = config 內完整路徑(全部 ws_token.*)；type bool/int/intnull/text。
+    const WS_EXTRA_FIELDS = [
+      { slot:'mining', path:'ws_token.mining.allow_bomb', type:'bool', label:'允許使用炸彈', def:false },
+      { slot:'mining', path:'ws_token.mining.allow_drill', type:'bool', label:'允許使用鑽頭', def:false },
+      { slot:'mining', path:'ws_token.mining.max_steps', type:'int', label:'每輪步數上限', def:200 },
+      { slot:'relic', path:'ws_token.relic_upgrade', type:'bool', label:'遺物平均強化（消耗遺物碎片）', def:false },
+      { slot:'relic', path:'ws_token.relic_max_steps', type:'int', label:'強化每輪步數上限', def:10 },
+      { slot:'relic', path:'ws_token.relic_fragment_floor', type:'int', label:'碎片低於此值即停（0=無下限）', def:0 },
+      { slot:'relic', path:'ws_token.relic_sprint.enabled', type:'bool', label:'遺物碎片衝刺榜（衝至目標領回合獎勵）', def:false },
+      { slot:'relic', path:'ws_token.relic_sprint.target_spend', type:'int', label:'衝刺目標消耗（=第4回合門檻）', def:900000 },
+      { slot:'mail', path:'ws_token.mail_claim', type:'bool', label:'每日領取全部郵件附件', def:false },
+      { slot:'mail', path:'ws_token.mail_gem_threshold', type:'intnull', label:'神器附魔寶石滿門檻（空=不查）', def:null },
+      { slot:'mail', path:'ws_token.mail_skill_threshold', type:'intnull', label:'武魂滿門檻（空=不查）', def:null },
+      { slot:'tycoon', path:'ws_token.tycoon', type:'bool', label:'傳奇大亨自動擲骰（免費骰純收益，活動沒開=跳過）', def:false },
+      { slot:'tycoon', path:'ws_token.tycoon_max_rolls', type:'int', label:'每輪擲骰上限', def:50 },
+      { slot:'couple', path:'ws_token.couple_gifts', type:'bool', label:'伴侶送禮（奶茶+玫瑰送光）', def:true },
+      { slot:'couple', path:'ws_token.forge_ring', type:'bool', label:'戒指錘鍊（消耗全部真愛之石）', def:false },
+      { slot:'couple', path:'ws_token.workshop_rotate', type:'bool', label:'加工坊 12h 配方輪換', def:true },
+      { slot:'conn', path:'ws_token.bootstrap_token', type:'bool', label:'缺 token 時冷啟 App 撈取（僅 adb 裝置）', def:true },
+      { slot:'conn', path:'ws_token.fallback_host', type:'text', label:'離線備援限定主機名（空=只 master）', def:'' },
+    ];
+    function _wsFieldId(path) { return 'wsx_' + path.replace(/\./g, '_'); }
+    function getPath(obj, path, def) {
+      let cur = obj;
+      for (const p of path.split('.')) {
+        if (cur == null || typeof cur !== 'object' || !(p in cur)) return def;
+        cur = cur[p];
+      }
+      return (cur === undefined) ? def : cur;
+    }
+    function setPath(obj, path, val) {
+      const parts = path.split('.');
+      let cur = obj;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const p = parts[i];
+        if (cur[p] == null || typeof cur[p] !== 'object') cur[p] = {};
+        cur = cur[p];
+      }
+      cur[parts[parts.length - 1]] = val;
+    }
+    let _taskTabsRendered = false;
+    function activateTaskTab(id) {
+      document.querySelectorAll('#taskTabBar .task-tab-chip').forEach(c =>
+        c.classList.toggle('active', c.dataset.tab === id));
+      document.querySelectorAll('.task-tab-panel').forEach(p =>
+        p.classList.toggle('active', p.dataset.tab === id));
+    }
+    function renderTaskTabs() {
+      if (_taskTabsRendered) return;
+      const bar = document.getElementById('taskTabBar');
+      if (!bar) return;
+      WS_TASK_TABS.forEach(([id, label]) => {
+        const chip = document.createElement('div');
+        chip.className = 'task-tab-chip';
+        chip.dataset.tab = id;
+        chip.textContent = label;
+        chip.addEventListener('click', () => activateTaskTab(id));
+        bar.appendChild(chip);
+      });
+      WS_EXTRA_FIELDS.forEach(f => {
+        const slot = document.querySelector('.ws-schema-slot[data-slot="' + f.slot + '"]');
+        if (!slot) return;
+        const id = _wsFieldId(f.path);
+        const wrap = document.createElement('div');
+        if (f.type === 'bool') {
+          wrap.className = 'ws-field';
+          wrap.innerHTML = '<label class="checkbox-item"><input type="checkbox" id="' + id + '">' + f.label + '</label>';
+        } else {
+          wrap.className = 'ws-field ws-field-row';
+          const it = (f.type === 'text') ? 'text' : 'number';
+          wrap.innerHTML = '<label for="' + id + '">' + f.label + '</label>' +
+            '<input type="' + it + '" id="' + id + '" class="form-control"' +
+            (it === 'number' ? ' min="0" step="1"' : '') + '>';
+        }
+        slot.appendChild(wrap);
+      });
+      _taskTabsRendered = true;
+      activateTaskTab(WS_TASK_TABS[0][0]);
+    }
+    function loadTaskTabs(config) {
+      renderTaskTabs();
+      WS_EXTRA_FIELDS.forEach(f => {
+        const el = document.getElementById(_wsFieldId(f.path));
+        if (!el) return;
+        const v = getPath(config, f.path, f.def);
+        if (f.type === 'bool') el.checked = (v === true);
+        else el.value = (v === null || v === undefined) ? '' : v;
+      });
+      const plan = (document.getElementById('editBackend') || {}).value || 'adb';
+      const hint = document.getElementById('wsPlanHint');
+      if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
+    }
+    // 把頁籤新欄位寫回 payload.ws_token(全部 ws_token.* 路徑)。必須在
+    // payload.ws_token 主體(Object.assign)建好之後呼叫,只覆寫各自的 key。
+    function collectTaskTabs(payload) {
+      WS_EXTRA_FIELDS.forEach(f => {
+        const el = document.getElementById(_wsFieldId(f.path));
+        if (!el) return;
+        let v;
+        if (f.type === 'bool') {
+          v = el.checked;
+        } else if (f.type === 'text') {
+          v = el.value.trim();
+        } else if (f.type === 'intnull') {
+          const s = el.value.trim();
+          v = (s === '') ? null : parseInt(s, 10);
+          if (v !== null && !(v >= 0)) v = null;
+        } else {
+          v = parseInt(el.value, 10);
+          if (!(v >= 0)) v = (typeof f.def === 'number') ? f.def : 0;
+        }
+        setPath(payload, f.path, v);
+      });
+    }
     // Live-view decode pipeline: single-slot pending, dropping older frames if
     // a newer one arrives before the current decode finishes. Combined with
     // createImageBitmap (off-main-thread JPEG decode), this caps decode-queue
@@ -3728,6 +3879,9 @@ select.form-control {
 
         document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
 
+        // 進階設定任務頁籤：載入 25+ 個展開欄位(挖礦params/遺物/郵件/大亨/伴侶/連線…)
+        loadTaskTabs(config);
+
         document.getElementById('editWebUrl').value = config.web_url || '';
 
         document.getElementById('editCanvasSelector').value = config.web_canvas_selector || 'canvas';
@@ -3921,6 +4075,8 @@ select.form-control {
           existingWsMining,
           { enabled: wsMiningEnabled }),
       });
+      // 進階設定任務頁籤：把展開欄位寫回 payload.ws_token(在主體 Object.assign 後,只覆寫各自 key)。
+      collectTaskTabs(payload);
 
       try {
 
