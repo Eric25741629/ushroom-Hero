@@ -1770,6 +1770,8 @@ select.form-control {
 
           <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
 
+          <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">WS 農場（莊園每日購買種子/肥料 407/408 + 自動收成；需方案含 +ws）</label>
+
           <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
 
         </div>
@@ -3720,6 +3722,10 @@ select.form-control {
           !!(wsMining && typeof wsMining === 'object' && wsMining.enabled === true) ||
           !!(config.ws_token_mining && typeof config.ws_token_mining === 'object' && config.ws_token_mining.enabled === true);
 
+        // WS 農場（莊園每日購買 + 收成）：farm 為非 null 物件即視為啟用。
+        document.getElementById('chkWsFarm').checked =
+          !!(_existingWsToken.farm && typeof _existingWsToken.farm === 'object');
+
         document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
 
         document.getElementById('editWebUrl').value = config.web_url || '';
@@ -3892,6 +3898,16 @@ select.form-control {
       if (!(lampPercent >= 0)) lampPercent = 0;
       let lampMinKeep = parseInt(document.getElementById('inpWsLampMinKeep').value, 10);
       if (!(lampMinKeep >= 0)) lampMinKeep = 0;
+      // WS 農場 opt-in：啟用時保留既有 farm dict（手動進階的種植 seed_id/打工
+      // team_cfg_id/豐收卡 harvest_card_cycle），無既有設定才套用預設「莊園每日
+      // 購買 407/408 各 4」(同 5554)。取消勾選 -> null（farm 子任務整段 skip）。
+      const wsFarmChecked = wsEnabled && document.getElementById('chkWsFarm').checked;
+      const existingFarm =
+        (_existingWsToken.farm && typeof _existingWsToken.farm === 'object')
+          ? _existingWsToken.farm : null;
+      const wsFarm = wsFarmChecked
+        ? (existingFarm || { buy: [{ shop_id: 407, target: 4 }, { shop_id: 408, target: 4 }] })
+        : null;
       payload.ws_token = Object.assign({}, _existingWsToken, {
         enabled: wsEnabled,
         spend: wsSelected,
@@ -3899,6 +3915,7 @@ select.form-control {
         lamp_percent: lampPercent,
         lamp_min_keep: lampMinKeep,
         offline_fallback: wsOfflineFallback,
+        farm: wsFarm,
         mining: Object.assign(
           { allow_bomb: false, allow_drill: false, max_steps: 200 },
           existingWsMining,
