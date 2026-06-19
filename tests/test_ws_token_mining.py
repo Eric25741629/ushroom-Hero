@@ -354,15 +354,37 @@ def test_plan_hold_floor_ignores_collected_row0_pit():
     assert result["hold_floor"] is False, result.get("hold_floor")
 
 
-def test_plan_hold_floor_holds_for_uncollected_row0_pit():
-    """未採集 (count>0) 的 row-0 礦坑仍要 hold_floor（保留原本防捲動保護）。"""
+def test_plan_hold_floor_holds_for_uncollected_reachable_row0_pit():
+    """未採集 (count>0) 且「在 actives 上（可挖）」的 row-0 礦坑仍要 hold_floor。"""
     baseline = 162390
     top = baseline - 5
     live_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
                          config_id=401, count=1, is_reward=1)
     floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
-    board = _board(baseline, [live_pit], actives=[floor_active])
+    # 礦坑本身在 actives（伺服器接受挖）才值得守住不捲動。
+    board = _board(baseline, [live_pit], actives=[live_pit.block_id, floor_active])
 
     result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
 
     assert result["hold_floor"] is True, result.get("hold_floor")
+
+
+def test_plan_hold_floor_releases_unreachable_row0_pit():
+    """未採集但「不在 actives（已被挖過頭、無法再挖）」的 row-0 礦坑不該 hold_floor。
+
+    真實死結（7fe98fc6 2026-06-20）：礦坑被挖出的空洞越過後卡在視窗頂列，count>0
+    但不在 actives（伺服器不接受挖）。舊版仍 hold_floor=True → 拒絕捲動 → 監督迴圈
+    只能挑不開 floor-7 的深層 frontier 格狂挖，26 步燒掉 ~26 把鎬子，礦坑始終收不到、
+    最後照樣捲走。守一個挖不到的坑只是純浪費，應放行捲動。
+    """
+    baseline = 162390
+    top = baseline - 5
+    stranded_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                             config_id=401, count=1, is_reward=1)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    # 礦坑 block_id 刻意不放進 actives → 不可挖。
+    board = _board(baseline, [stranded_pit], actives=[floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is False, result.get("hold_floor")

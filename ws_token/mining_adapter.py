@@ -79,24 +79,31 @@ def viewport_top_depth(baseline: int) -> int:
 
 
 def has_uncollected_row0_pit(mine_board: Any) -> bool:
-    """row-0（視窗頂端深度）是否還有「未採集」礦坑（從原始 blocks 判定）。
+    """row-0（視窗頂端深度）是否還有「未採集且仍可挖」的礦坑（從原始 blocks 判定）。
 
-    判定 hold_floor 必須看 block.count：已採集礦坑 (count==0) 視覺上已空、即使被捲走
-    也無損，不該觸發 hold_floor。grid 標籤層 (_block_label) 刻意不看 count（估成本用，
-    把所有 401/is_reward 都標 reachable_pit），所以這裡直接讀原始 MineBoard.blocks，
-    只認 row 0 (y == viewport_top_depth) 上 config_id==401 / is_reward 且 count>0 的 block。
-    若不這麼判，已採集的 row-0 礦坑會讓 hold_floor 永久 True → 只能挑不開 floor-7 的格 →
-    server 拒絕 → 永遠 unconfirmed（手機fc 鎬子卡 118/118 的死結根因）。
+    判定 hold_floor 必須同時看 block.count 與 actives：
+      - count：已採集礦坑 (count==0) 視覺上已空、即使被捲走也無損，不該觸發 hold_floor。
+        grid 標籤層 (_block_label) 刻意不看 count（估成本用，把所有 401/is_reward 都標
+        reachable_pit），所以這裡直接讀原始 MineBoard.blocks，只認 row 0
+        (y == viewport_top_depth) 上 config_id==401 / is_reward 且 count>0 的 block。
+        若不這麼判，已採集的 row-0 礦坑會讓 hold_floor 永久 True（手機fc 鎬子卡 118/118）。
+      - actives：礦坑必須在伺服器可挖前緣 (actives) 上才值得守。被挖出的空洞越過、卡在
+        視窗頂列的礦坑 count>0 但不在 actives（伺服器拒挖）—守它只會讓監督迴圈狂挖開不了
+        floor-7 的深層格、燒光鎬子，礦坑照樣收不到並捲走（7fe98fc6 2026-06-20 浪費根因）。
+        挖不到的坑就放行捲動，捲走成本=1 挖步而非 ~26 把鎬子。
     """
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     top_depth = viewport_top_depth(baseline)
+    actives = {int(a) for a in (getattr(mine_board, "actives", []) or [])}
     for blk in getattr(mine_board, "blocks", []) or []:
         if int(getattr(blk, "y", 0) or 0) != top_depth:
             continue
         if int(getattr(blk, "count", 0) or 0) <= 0:
             continue
-        if (int(getattr(blk, "config_id", 0) or 0) == TERRAIN_PIT
+        if not (int(getattr(blk, "config_id", 0) or 0) == TERRAIN_PIT
                 or int(getattr(blk, "is_reward", 0) or 0)):
+            continue
+        if int(getattr(blk, "block_id", 0) or 0) in actives:
             return True
     return False
 
