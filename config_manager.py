@@ -120,8 +120,8 @@ DEFAULT_DEVICE_CONFIG = {
         "tycoon_max_rolls": 50,  # 傳奇大亨每輪擲骰次數上限
         "mining": {             # WS 挖礦；成功後可跳過 Playwright 挖礦任務
             "enabled": True,
-            "allow_bomb": False,
-            "allow_drill": False,
+            "allow_bomb": True,   # 預設開：炸彈一次清 3x3+十字，省鏟效率高 (2026-06-20)
+            "allow_drill": True,  # 預設開：鑽頭清整直行+底排
             "max_steps": 200,
         },
         "gacha": {              # WS 抽卡；預設關
@@ -425,8 +425,8 @@ def _sanitize_mining_config(v: Any) -> Optional[dict]:
         return None
     out = {
         "enabled": _to_bool(v.get("enabled"), False),
-        "allow_bomb": _to_bool(v.get("allow_bomb"), False),
-        "allow_drill": _to_bool(v.get("allow_drill"), False),
+        "allow_bomb": _to_bool(v.get("allow_bomb"), True),   # 預設開 (2026-06-20)
+        "allow_drill": _to_bool(v.get("allow_drill"), True),  # 預設開
         "max_steps": _clamp_int(v.get("max_steps"), 1, 500, 200),
     }
     if v.get("max_depth") is not None:
