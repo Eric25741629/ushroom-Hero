@@ -330,3 +330,13 @@ User asked for an unbiased second opinion. I ran `codex exec -s read-only` in a 
 While doing the dashboard 進階設定 rework directly in the main working dir, a concurrent Claude instance switched HEAD (feat/overnight → fix/ws-farm-badges → back) to set up its own worktree. My uncommitted dashboard.html got reverted and my just-made Phase0 commit (5f518524) ended up stranded on `fix/ws-farm-badges` instead of my branch. Recovered by `git checkout 5f518524 -- <files>` to restore Phase0, re-applying Phase1, and re-committing on feat/overnight-2026-06-14 — but it cost a scare and left a duplicate commit on someone else's branch.
 
 **Rule**: The memory `feedback-isolate-session-worktree` is not optional — for ANY multi-step code-editing session in this repo, FIRST move into a dedicated `git worktree` on your own branch (the user runs several Claude instances against this shared NAS checkout at once). Commit early/often so work survives an external HEAD switch. If you find yourself editing tracked files in the shared main dir, stop and isolate first.
+
+### 純 WS 挖礦的盤面認知與「該用 CDP 不是 cold login」(2026-06-20)
+追挖礦浪費時走了一堆冤枉路，使用者多次糾正。教訓集中在「先讀使用者既有的東西、用對連線」：
+
+1. **別對 live 瀏覽器 session 的裝置做 cold `ws_token` login**：`load_creds`+`WSGameClient.connect()` 會觸發 login conflict，把使用者/bot 正在用的瀏覽器 session **強制登出**。要讀盤/挖礦一律走 **CDP + `WebGameAPI`**（`connect_over_cdp(web_debug_port)` → `call_raw(0x0c01)` / `dig_cell`），共享瀏覽器既有連線、不衝突。CDP 分頁是臨時的（bot 週期會開關），RPC 前先 `bring_to_front`（背景分頁 JS 被 throttle → call_raw timeout）。
+2. **0x0c01 block 的 count 是 DUG 狀態**：count==0=已挖空氣(挖=no-op)、count>0=未挖。`mining_adapter` 舊版 count-blind 把已挖格當實心 → 盤面誤判密集 → planner 亂挖（浪費根因）。別再信「新石頭 count=0」舊註記（已被 CDP dig 推翻）。
+3. **0x0c01 無法還原完整地形**：未挖且無 block feature 的格，土/岩 + unreachable 都不在 WS；要視覺判讀得用 `miner` CNN classifier（截圖→GRID_CFG 裁切→分類）。使用者一直在說「用我的 classifier / 我的 html」——**先讀使用者既有實作（classifier 的裁切、mining_sim.html 模型）再動手，別自己用 WS 重造一套還做錯**。
+4. **驗證要落地**：用 CNN classifier 視覺對照 + 實際挖一格看 0x0c03 回覆/版面變化，別只靠協議推論。使用者授權「自由實測、無須擔心使用道具」時，挖一格驗證比反覆猜更快更準。
+
+**Rule**: 動挖礦/web_h5 WS 之前——(a) 用 CDP 不用 cold login；(b) 認知模型先對照 CNN classifier 與一次實挖；(c) 先讀既有 code/model/protocol doc 再改。
