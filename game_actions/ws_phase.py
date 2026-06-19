@@ -72,6 +72,8 @@ def _record_daily_done(ip: str, skips: set[str], log) -> None:
 
 # ad_reward config_id：農場種子廣告（使用者澄清「農場種植」== 每日領種子廣告）。
 _AD_FARM_SEED_CONFIG_ID = 15
+# 莊園商店 種子 shop_id（farm.buy 407）：對應 dashboard「農場買種」徽章。
+_FARM_SEED_SHOP_ID = 407
 
 
 def _mark_mission_done(ip: str, log) -> None:
@@ -125,6 +127,40 @@ def _ad_seed_claimed(report) -> bool:
     return isinstance(skipped, str) and skipped.startswith("maxed")
 
 
+def _mark_farm_seed_done(ip: str, log) -> None:
+    """寫「農場買種」farm_seed_purchase（比照 farm_v2 的 record_time schema）。"""
+    import json_manager
+    json_manager.create_time_manager(
+        ip.split(":")[-1] if ":" in ip else ip
+    ).record_time("farm_seed_purchase")
+
+
+def _farm_seed_bought(report) -> bool:
+    """report.tasks['farm'] 是否代表今天「莊園買種子(407)」已處理完。
+
+    完成 = farm.buy 結果有 shop_id==407 那筆且 ``ok==True`` 且 ``target>0``。
+    含「今天已買滿」(``need==0``/``bought==0`` 但 ``ok==True``)，比照 ad-seed 的
+    maxed 視為當日完成。買種被 server 擋下 (``ok==False``，如 code=25 冷卻) 不算。
+    WS farm 路徑不寫此徽章（只有舊視覺 farm_v2 寫），故由 WS 階段在這裡回寫。
+    """
+    res = (report.tasks.get("farm") or {})
+    if not isinstance(res, dict):
+        return False
+    buy = res.get("buy")
+    if not isinstance(buy, list):
+        return False
+    for entry in buy:
+        if (isinstance(entry, dict)
+                and entry.get("shop_id") == _FARM_SEED_SHOP_ID
+                and entry.get("ok") is True):
+            try:
+                if int(entry.get("target") or 0) > 0:
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
 def _record_ws_daily_progress(ip: str, report, effective_done: set[str],
                               log) -> None:
     """回寫「每日任務」「農場種植」徽章（schema 與 SKIP_TO_DAILY_RECORD 不同）。
@@ -141,6 +177,11 @@ def _record_ws_daily_progress(ip: str, report, effective_done: set[str],
             _mark_farm_plant_done(ip, log)
         except Exception:  # noqa: BLE001
             log.warning("[%s] WS 回寫農場種植紀錄失敗", ip, exc_info=True)
+    if _farm_seed_bought(report):
+        try:
+            _mark_farm_seed_done(ip, log)
+        except Exception:  # noqa: BLE001
+            log.warning("[%s] WS 回寫農場買種紀錄失敗", ip, exc_info=True)
 
 
 # --- 續做 ledger（中斷後持久化進度；瀏覽器用完重新上線只跑未完成）-------------
@@ -217,12 +258,58 @@ def _clear_resume(ip: str, log, state_dir=None) -> None:
         log.debug("[%s] WS resume ledger 清除失敗（忽略）", ip, exc_info=True)
 
 
+def _cfg_int(cfg: dict, key: str, default: int) -> int:
+    try:
+        return int(cfg.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _cfg_opt_int(cfg: dict, key: str):
+    v = cfg.get(key)
+    try:
+        return int(v) if v not in (None, "", 0) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _ad_reward_ids(cfg: dict):
+    """ws_token.ad_rewards → run_device 的 config_ids list；enabled 且非空才回，否則 None。"""
+    ad = cfg.get("ad_rewards")
+    if not (isinstance(ad, dict) and ad.get("enabled")):
+        return None
+    ids = ad.get("config_ids")
+    if not isinstance(ids, (list, tuple)):
+        return None
+    clean = [int(x) for x in ids
+             if isinstance(x, (int, float)) and not isinstance(x, bool)]
+    return clean or None
+
+
+def _relic_sprint(cfg: dict):
+    """ws_token.relic_sprint → (enabled, target|None)。未啟用回 (False, None)。"""
+    sp = cfg.get("relic_sprint")
+    if not (isinstance(sp, dict) and sp.get("enabled")):
+        return False, None
+    try:
+        t = int(sp.get("target_spend"))
+        return True, (t if t > 0 else None)
+    except (TypeError, ValueError):
+        return True, None
+
+
 def _run_device(ip: str, cfg: dict, progress=None, *,
                 should_abort=None, skip_tasks=None):
-    """間接層：lazy import + 參數展開，tests monkeypatch 這裡。"""
+    """間接層：lazy import + 參數展開，tests monkeypatch 這裡。
+
+    轉傳的參數必須對齊 ``runtime_services.ws_runner_service``（兩條 caller 共用
+    ``run_device``）。歷史上本函式漏接了一整批 — mail/tycoon/kungfu/遺物強化+衝刺/
+    看廣告獎勵 —— 導致走 WS-first 階段的 adb 裝置即使 config 開了也靜默不跑。
+    ``cfg`` 是裝置的 ws_token 巢狀 dict；``kungfu_guess`` 由 run_ws_phase 折入。
+    """
     from ws_token.runner import run_device
-    return run_device(
-        ip,
+    sprint_on, sprint_target = _relic_sprint(cfg)
+    kwargs = dict(
         progress=progress,
         spend=bool(cfg.get("spend", False)),
         open_lamp=bool(cfg.get("open_lamp", False)),
@@ -236,11 +323,26 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         couple_gifts=bool(cfg.get("couple_gifts", True)),
         workshop_rotate=bool(cfg.get("workshop_rotate", True)),
         forge_ring=bool(cfg.get("forge_ring", False)),
+        kungfu_guess=bool(cfg.get("kungfu_guess", False)),
+        mail_claim=bool(cfg.get("mail_claim", False)),
+        mail_gem_threshold=_cfg_opt_int(cfg, "mail_gem_threshold"),
+        mail_skill_threshold=_cfg_opt_int(cfg, "mail_skill_threshold"),
+        relic_upgrade=bool(cfg.get("relic_upgrade", False)),
+        relic_max_steps=_cfg_int(cfg, "relic_max_steps", 10),
+        relic_fragment_floor=_cfg_int(cfg, "relic_fragment_floor", 0),
+        relic_sprint_enabled=sprint_on,
+        tycoon=bool(cfg.get("tycoon", False)),
+        tycoon_max_rolls=_cfg_int(cfg, "tycoon_max_rolls", 50),
+        ad_reward_config_ids=_ad_reward_ids(cfg),
         gacha_config=cfg.get("gacha") or None,
         mining_config=cfg.get("mining") or None,
         should_abort=should_abort,
         skip_tasks=skip_tasks,
     )
+    # target 只在有值時帶，否則讓 run_device 用其預設（避免 None 覆寫 int 預設）。
+    if sprint_on and sprint_target is not None:
+        kwargs["relic_sprint_target"] = sprint_target
+    return run_device(ip, **kwargs)
 
 
 def _bootstrap_token(ip: str, log, *, force: bool = False) -> bool:
@@ -269,6 +371,12 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     cfg = device_cfg.get("ws_token") or {}
     if not cfg.get("enabled", False):
         return frozenset()
+    # kungfu_guess 真相在裝置層 flat ws_token_kungfu_guess；cfg 是 ws_token 巢狀
+    # 沒這欄 → 折入,讓 _run_device 統一從 cfg 取（與 ws_runner_service 一致）。
+    if "kungfu_guess" not in cfg:
+        _kf = device_cfg.get("ws_token_kungfu_guess")
+        if _kf is not None:
+            cfg = {**cfg, "kungfu_guess": bool(_kf)}
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     can_bootstrap = _should_bootstrap(backend_kind, cfg)
     started = time.time()

@@ -471,3 +471,130 @@ def test_adb_login_failure_refreshes_once_and_retries(monkeypatch):
     assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
     assert bootstrap_calls == [False, True]
     assert run_calls == ["dev", "dev"]
+
+
+# --- _run_device 完整轉傳（對齊 ws_runner_service；WS-first 階段不可漏跑任務）----
+
+def _capture_run_device(monkeypatch):
+    """monkeypatch ws_token.runner.run_device，回傳捕捉到的 kwargs dict。"""
+    captured: dict = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured["ip"] = ip
+        captured.update(kwargs)
+        return _report({})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+    return captured
+
+
+def test_run_device_passes_mail_claim(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True, "mail_claim": True,
+                                 "mail_gem_threshold": 5, "mail_skill_threshold": 3})
+    assert cap["mail_claim"] is True
+    assert cap["mail_gem_threshold"] == 5
+    assert cap["mail_skill_threshold"] == 3
+
+
+def test_run_device_passes_tycoon(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True, "tycoon": True, "tycoon_max_rolls": 12})
+    assert cap["tycoon"] is True
+    assert cap["tycoon_max_rolls"] == 12
+
+
+def test_run_device_passes_kungfu_guess(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True, "kungfu_guess": True})
+    assert cap["kungfu_guess"] is True
+
+
+def test_run_device_passes_ad_reward_config_ids_when_enabled(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True,
+                                 "ad_rewards": {"enabled": True,
+                                                "config_ids": [12, 14, 15]}})
+    assert cap["ad_reward_config_ids"] == [12, 14, 15]
+
+
+def test_run_device_ad_reward_none_when_disabled(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True,
+                                 "ad_rewards": {"enabled": False,
+                                                "config_ids": [12, 14, 15]}})
+    assert cap["ad_reward_config_ids"] is None
+
+
+def test_run_device_passes_relic_upgrade(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True, "relic_upgrade": True,
+                                 "relic_max_steps": 7, "relic_fragment_floor": 2})
+    assert cap["relic_upgrade"] is True
+    assert cap["relic_max_steps"] == 7
+    assert cap["relic_fragment_floor"] == 2
+
+
+def test_run_device_relic_sprint_enabled_with_target(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True,
+                                 "relic_sprint": {"enabled": True,
+                                                  "target_spend": 900000}})
+    assert cap["relic_sprint_enabled"] is True
+    assert cap["relic_sprint_target"] == 900000
+
+
+def test_run_device_relic_sprint_disabled_by_default(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True})
+    assert cap["relic_sprint_enabled"] is False
+    # target 不帶（讓 run_device 用預設），避免覆寫成 None
+    assert "relic_sprint_target" not in cap
+
+
+def test_run_ws_phase_folds_device_level_kungfu_guess(monkeypatch):
+    """kungfu_guess 真相在裝置層 flat ws_token_kungfu_guess；run_ws_phase 折進 cfg。"""
+    monkeypatch.setattr(
+        config_manager, "get_device_config",
+        lambda ip: {"ws_token": {"enabled": True, "bootstrap_token": False},
+                    "ws_token_kungfu_guess": True, "backend": "adb"})
+    seen: dict = {}
+
+    def fake_run_device(ip, cfg, progress=None, **_kw):
+        seen.update(cfg)
+        return _report({})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+    assert seen.get("kungfu_guess") is True
+
+
+# --- 農場買種徽章偵測 _farm_seed_bought（farm buy 407 ok → 寫 farm_seed_purchase）--
+
+def test_farm_seed_bought_true_when_407_ok():
+    rep = _report({"farm": {"buy": [
+        {"shop_id": 407, "target": 4, "ok": True, "bought": 4},
+        {"shop_id": 408, "target": 4, "ok": True, "bought": 4}]}})
+    assert ws_phase._farm_seed_bought(rep) is True
+
+
+def test_farm_seed_bought_true_when_already_at_target():
+    rep = _report({"farm": {"buy": [
+        {"shop_id": 407, "target": 4, "before": 4, "need": 0, "ok": True, "bought": 0}]}})
+    assert ws_phase._farm_seed_bought(rep) is True
+
+
+def test_farm_seed_bought_false_when_no_seed_entry():
+    rep = _report({"farm": {"buy": [{"shop_id": 408, "target": 4, "ok": True}]}})
+    assert ws_phase._farm_seed_bought(rep) is False
+
+
+def test_farm_seed_bought_false_when_rejected():
+    rep = _report({"farm": {"buy": [{"shop_id": 407, "target": 4, "ok": False, "code": 25}]}})
+    assert ws_phase._farm_seed_bought(rep) is False
+
+
+def test_farm_seed_bought_false_without_buy():
+    rep = _report({"farm": {"harvest_card_cycle": {"cards_bought": 1}}})
+    assert ws_phase._farm_seed_bought(rep) is False
