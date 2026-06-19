@@ -4,53 +4,58 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>登入 - 飛寵管理</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      background: #121212;
-      color: #e0e0e0;
+      font-family: "Manrope", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: #f4efe6;
+      color: #2b2620;
       display: flex;
       justify-content: center;
       align-items: center;
       min-height: 100vh;
     }
     .login-card {
-      background: #1e1e1e;
-      border: 1px solid #333;
+      background: #ffffff;
+      border: 1px solid #ece3d3;
       border-radius: 12px;
       padding: 36px 32px;
       width: 340px;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+      box-shadow: 0 8px 32px rgba(70,52,28,0.12);
     }
     .login-card h1 {
+      font-family: "Sora", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
       font-size: 1.3em;
       margin-bottom: 24px;
       text-align: center;
-      font-weight: 600;
+      font-weight: 700;
     }
     .form-group { margin-bottom: 16px; }
     .form-group label {
       display: block;
       font-size: 0.85em;
-      color: #aaa;
+      color: #6f6657;
       margin-bottom: 6px;
     }
     .form-group input {
       width: 100%;
       padding: 10px 12px;
-      background: #2a2a2a;
-      border: 1px solid #444;
+      background: #faf6ee;
+      border: 1px solid #ddd2bd;
       border-radius: 6px;
-      color: #e0e0e0;
+      color: #2b2620;
       font-size: 0.95em;
       outline: none;
     }
-    .form-group input:focus { border-color: #66bb6a; }
+    .form-group input:focus { border-color: #e0653a; box-shadow: 0 0 0 2px rgba(224,101,58,0.16); }
     .error {
-      background: rgba(239,83,80,0.15);
-      border: 1px solid #ef5350;
-      color: #ef5350;
+      background: rgba(226,107,134,0.12);
+      border: 1px solid #e26b86;
+      color: #b8455f;
       padding: 8px 12px;
       border-radius: 6px;
       font-size: 0.85em;
@@ -59,24 +64,25 @@
     button {
       width: 100%;
       padding: 10px;
-      background: #66bb6a;
+      background: #e0653a;
       border: none;
       border-radius: 6px;
-      color: #121212;
+      color: #fff;
       font-weight: 600;
       font-size: 0.95em;
       cursor: pointer;
     }
-    button:hover { background: #81c784; }
+    button:hover { background: #c14f2a; }
     .back-link {
       display: block;
       text-align: center;
       margin-top: 16px;
-      color: #aaa;
+      color: #6f6657;
       font-size: 0.82em;
       text-decoration: none;
     }
-    .back-link:hover { color: #e0e0e0; }
+    .back-link:hover { color: #2b2620; }
+    html.embedded .back-link { display: none; }
   </style>
 </head>
 <body>

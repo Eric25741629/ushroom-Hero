@@ -4,17 +4,23 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>倉庫檢視 · 守護靈 / 神器附魔</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
 <style>
   :root {
-    --bg: #0f1420; --panel: #161d2e; --panel2: #1d2740; --line: #2a3550;
-    --text: #e6ebf5; --muted: #8a96b0; --accent: #5b8cff; --accent2: #36d399;
-    --warn: #ffb454; --danger: #ff5d6c;
+    --bg:#f4efe6; --panel:#ffffff; --panel2:#faf6ee; --line:#ece3d3;
+    --text:#2b2620; --muted:#6f6657; --accent:#e0653a; --accent2:#3fb389;
+    --warn:#e0a939; --danger:#e26b86;
     --q3:#9aa6c0; --q4:#5ec8ff; --q5:#7c5bff; --q6:#c061ff; --q7:#ff8f3c; --q8:#ffd23c;
   }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text);
-         font:14px/1.5 "Segoe UI",system-ui,"PingFang TC","Microsoft JhengHei",sans-serif; }
-  header { padding:14px 20px; background:linear-gradient(180deg,#1a2236,#131a2a);
+         font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  header h1, .modal h2 { font-family:"Sora","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  html.embedded header .home { display:none; }
+  header { padding:14px 20px; background:linear-gradient(180deg,#ffffff,#faf6ee);
            border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
   header h1 { font-size:18px; margin:0; letter-spacing:.5px; }
   header .home { color:var(--muted); text-decoration:none; font-size:13px; }
@@ -51,13 +57,13 @@
   .affixes { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
   .arow { display:flex; gap:6px; align-items:center; font-size:12.5px; }
   .apos { color:var(--muted); width:42px; flex:none; }
-  .atag { background:#0e1626; border:1px solid var(--line); border-radius:6px;
+  .atag { background:#faf6ee; border:1px solid var(--line); border-radius:6px;
           padding:1px 7px; font-size:12px; }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
   th,td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
   th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); cursor:pointer; }
   td.attrs { white-space:normal; }
-  tr.sell { background:rgba(255,93,108,.10); }
+  tr.sell { background:rgba(226,107,134,.12); }
   .qbadge { display:inline-block; min-width:20px; text-align:center; border-radius:6px;
             padding:0 6px; font-weight:700; color:#0b1020; }
   .note { color:var(--warn); font-size:12.5px; margin-top:10px; }
@@ -71,11 +77,11 @@
           background:var(--panel2); color:var(--muted); }
   .conn.on { color:var(--accent2); border-color:var(--accent2); }
   .conn.off { color:var(--danger); border-color:var(--danger); }
-  .modal-bg { position:fixed; inset:0; background:rgba(5,8,15,.72); display:none;
+  .modal-bg { position:fixed; inset:0; background:rgba(43,38,32,.45); display:none;
               align-items:center; justify-content:center; z-index:50; }
   .modal-bg.show { display:flex; }
   .modal { background:var(--panel); border:1px solid var(--line); border-radius:14px;
-           padding:24px 28px; max-width:380px; text-align:center; box-shadow:0 18px 60px rgba(0,0,0,.5); }
+           padding:24px 28px; max-width:380px; text-align:center; box-shadow:0 18px 60px rgba(70,52,28,.22); }
   .modal h2 { margin:0 0 10px; font-size:17px; }
   .modal p { color:var(--muted); margin:0 0 18px; }
   .modal .row { display:flex; gap:10px; justify-content:center; }
