@@ -113,7 +113,19 @@ f6 varint = ?（觀測 = 0）
 - 在 `actives` 但**無 block feature** → `dirt`（未挖泥土；MINING_SCHEMA §7 + dig 實測）
 - 非 active 且無 block feature → `empty`
 
-**WS 本質限制（需 CNN classifier 補）**：0x0c01 **不送**「未挖格」的逐格地形——只有 count>0 的少數格帶 config。所以「無 block」的未挖格其 **土/岩 無法從 0x0c01 區分**，且 unreachable 的未挖實心格（被空洞越過）0x0c01 也看不到（會誤判成空）。要完整地形需用 `miner` CNN classifier（截圖→GRID_CFG 裁切 x0=6,y0=227,x1=535,y1=852→7×6 分類）做視覺判讀。純 WS 挖礦路徑因此天生地形認知不全。
+**WS 本質限制**：0x0c01 **不送**「未挖格」的逐格地形——只有 count>0 的少數格帶 config。所以「無 block」的未挖格其 **土/岩 無法從 0x0c01 區分**，且 unreachable 的未挖實心格（被空洞越過）0x0c01 也看不到（會誤判成空）。
+
+### 6.2 地形真正來源 = 前端 client config `configMine_template`（CDP 讀 2026-06-20）
+
+前端能畫出每格地形，是因為**盤面由 client 端 config table 生成**，不是 WS 逐格下發：
+
+| 前端全域 | 內容 |
+|---|---|
+| `window.configMine_grid.datas` | cell-type → 屬性/獎勵：`100`=空(air)、`201`=土、`202`=岩、`401`=礦洞；`101/102/103/108`=含礦泥土(item 1007 礦物 50/100/250)；`301-308`=特殊獎勵格(礦物/粉鑽2/鑽頭4002/炸彈4003/紅包卡1012-1013) |
+| `window.configMine_template.datas` | `_data=[id, [42 個 cell-type 的 7×6 陣列], weight]`，加權隨機選模板生成盤面(如 1001/1002 weight 10、11-19 weight 1-9)。模板上排多為 100(空)、下排 201/202 |
+| `window.configMine_hole_type.datas` | 礦洞形狀：`_data=[id, ?, [[dr,dc,401]...](3x3/2x2/1x1), weight, …獎勵 item list, …]` |
+
+**結論**：盤面是前端用 `configMine_template` 加權隨機生成（同 `tools/mining_sim.html` 的 cluster 邏輯），WS 0x0c01 只追蹤「已挖狀態(count) + 可挖前沿(actives) + 礦洞實例」。要讓**純 WS** 路徑拿到完整未挖地形，需其一：(a) web_h5 裝置經 **CDP 讀前端 runtime 生成的盤面**(cocos model)；(b) port 模板生成邏輯(需 server 端的模板/seed 選擇依據，尚未坐實在哪個 WS 欄位)；(c) `miner` CNN classifier 視覺判讀(截圖→GRID_CFG 裁切 x0=6,y0=227,x1=535,y1=852→7×6)。**但 count==0=空氣 的核心修正(§6.1)已先解掉「已挖格誤判實心→盤面假性密集→亂挖浪費」這個主因。**
 
 ### f4 terrain enum（user-confirmed）
 
