@@ -64,10 +64,14 @@ DEFAULT_DEVICE_CONFIG = {
     "keep_screen_on": False,  # 是否保持螢幕開啟 (不鎖屏)
     "screenshot_debug": False,  # 是否開啟截圖除錯
     "online_check_interval_sec": 30,  # 偵測到上線後的避讓 retry 間隔 (秒)
+    # 代查線一律走純 WS 靜默路徑(一次性 WS 連線讀好友上線狀態),不需要瀏覽器。
+    # 全機隊都是 web_h5、睡覺時瀏覽器關閉,瀏覽器路徑(_run_checker_protocol_only)
+    # 會 page closed 失敗並冷啟重登;WS 路徑無此問題。預設 True。
+    "online_check_via_ws": True,
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v5",  # v1 / v3 / v4 / v5 (v5 default — priors-driven, planner-eval 2026-06-12; v2 removed)
+    "mining_planner_version": "v1",  # v1 / v3 / v4 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
@@ -107,6 +111,10 @@ DEFAULT_DEVICE_CONFIG = {
         "relic_upgrade": False,  # 遺物 平均強化（消耗遺物碎片強化最低等級已裝備遺物）；預設關，加法功能
         "relic_max_steps": 10,   # 遺物強化每輪步數上限
         "relic_fragment_floor": 0,  # 遺物強化：剩餘遺物碎片低於此值即停（0=無下限）
+        "relic_sprint": {        # 遺物碎片衝刺（衝刺榜）；消耗遺物碎片衝至目標再領回合獎勵；預設關，加法功能
+            "enabled": False,
+            "target_spend": 900000,  # 衝刺目標（累計消耗遺物碎片；= 第 4 回合門檻）
+        },
         "tycoon": False,         # 傳奇大亨（大富翁）自動擲骰；免費骰子純收益，活動沒開=no-op；預設關
         "tycoon_max_rolls": 50,  # 傳奇大亨每輪擲骰次數上限
         "mining": {             # WS 挖礦；成功後可跳過 Playwright 挖礦任務
@@ -118,10 +126,15 @@ DEFAULT_DEVICE_CONFIG = {
         "gacha": {              # WS 抽卡；預設關
             "enabled": False,   # 付費抽（消耗抽卡券 1012/1013）
             "types": [1, 2],    # 1=技能, 2=同伴
-            "mode": "drain",    # drain=抽到券盡 | fixed=每批 count×batches
-            "count": 999,       # fixed 模式每批抽數 (15/35/999)
-            "batches": 1,       # fixed 模式批數
-            "free_daily": False,  # 每日免費召喚 (0x1602, 3×35/type/日，不需廣告)
+            "mode": "fixed",    # drain=抽到券盡 | fixed=每批 count×batches
+            "count": 35,        # fixed 模式每批抽數 (15/35/999)；週末 35×3 = 105 抽
+            "batches": 3,       # fixed 模式批數
+            "weekend_only": False, # True=只在週六/日執行（解周任務用，同 ADB weekend_to_buy 行為）
+            "free_daily": False,  # 每日免費召喚 (0x1602)；遊戲本身已自動處理，不歸 bot 管
+        },
+        "ad_rewards": {         # 看廣告獎勵自動領取 (鑽石/種子)；is_free=1 純 WS 領；預設關
+            "enabled": False,   # True => 每輪喚醒讀當日次數後只補差額領取
+            "config_ids": [12, 14, 15],  # 12=商城鑽石 14=浮動鑽石 15=農場種子 (AdType)
         },
     },
 }
@@ -188,12 +201,13 @@ class DeviceConfig:
     keep_screen_on: bool = False
     screenshot_debug: bool = False
     online_check_interval_sec: int = 30
+    online_check_via_ws: bool = True
 
     # Task durations / intervals
     lamp_check_interval: int = 2
     lamp_duration_sec: int = 300
     mining_duration_min: int = 6
-    mining_planner_version: str = "v5"
+    mining_planner_version: str = "v1"
     mining_save_samples: bool = False
 
     # Sleep schedule
@@ -439,7 +453,49 @@ def _sanitize_gacha_config(v: Any, default: dict) -> dict:
     count = _to_int(v.get("count"), default["count"])
     out["count"] = count if count in (15, 35, 999) else default["count"]
     out["batches"] = _clamp_int(v.get("batches"), 1, 2000, default["batches"])
+    out["weekend_only"] = _to_bool(v.get("weekend_only"), default["weekend_only"])
     out["free_daily"] = _to_bool(v.get("free_daily"), default["free_daily"])
+    return out
+
+
+def _sanitize_ad_rewards_config(v: Any, default: dict) -> dict:
+    """Coerce WS ad_rewards config; malformed input degrades to defaults (disabled).
+
+    enabled -> bool; config_ids -> list[int] (non-integers dropped). An empty /
+    invalid config_ids list falls back to the default ids so an enabled-but-broken
+    config still has something to claim.
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    ids = v.get("config_ids")
+    if isinstance(ids, (list, tuple)):
+        clean: list[int] = []
+        for x in ids:
+            if isinstance(x, bool):
+                continue
+            try:
+                clean.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        out["config_ids"] = clean or list(default["config_ids"])
+    return out
+
+
+def _sanitize_relic_sprint_config(v: Any, default: dict) -> dict:
+    """Coerce WS relic_sprint config; malformed input degrades to defaults (disabled).
+
+    enabled -> bool; target_spend -> a positive int (non-positive / invalid falls
+    back to the default 900000 so an enabled-but-broken config still has a sane
+    full-sprint target).
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    target = _to_int(v.get("target_spend"), default["target_spend"])
+    out["target_spend"] = target if target > 0 else default["target_spend"]
     return out
 
 
@@ -508,6 +564,8 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
     merged["gacha"] = _sanitize_gacha_config(merged.get("gacha"),
                                              default["gacha"])
+    merged["ad_rewards"] = _sanitize_ad_rewards_config(merged.get("ad_rewards"),
+                                                       default["ad_rewards"])
     # 開神燈百分比 / 最低保留：防呆轉型（壞值退回預設 0）。
     merged["lamp_percent"] = max(
         0.0, _to_float(merged.get("lamp_percent"), default["lamp_percent"]))
@@ -525,6 +583,8 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
     merged["relic_fragment_floor"] = max(
         0, _to_int(merged.get("relic_fragment_floor"),
                    default["relic_fragment_floor"]))
+    merged["relic_sprint"] = _sanitize_relic_sprint_config(
+        merged.get("relic_sprint"), default["relic_sprint"])
     merged["tycoon"] = _to_bool(merged.get("tycoon"), default["tycoon"])
     merged["tycoon_max_rolls"] = max(
         0, _to_int(merged.get("tycoon_max_rolls"), default["tycoon_max_rolls"]))
@@ -993,7 +1053,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         )
         current["mining_planner_version"] = _enum_str(
             current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
-            {"v1", "v3", "v4", "v5"},
+            {"v1", "v3", "v4"},
             "v1",
         )
         current["mining_save_samples"] = _to_bool(

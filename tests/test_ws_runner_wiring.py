@@ -262,6 +262,7 @@ def patched_runner(monkeypatch):
                         mail_skill_threshold=None,
                         relic_upgrade=False, relic_max_steps=10,
                         relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
+                        relic_sprint_enabled=False, relic_sprint_target=900000,
                         gacha_config=None,
                         mining_config=None,
                         progress=None):
@@ -281,6 +282,8 @@ def patched_runner(monkeypatch):
                       "relic_max_steps": relic_max_steps,
                       "relic_fragment_floor": relic_fragment_floor,
                       "tycoon": tycoon, "tycoon_max_rolls": tycoon_max_rolls,
+                      "relic_sprint_enabled": relic_sprint_enabled,
+                      "relic_sprint_target": relic_sprint_target,
                       "gacha_config": gacha_config,
                       "mining_config": mining_config})
         return types.SimpleNamespace(
@@ -313,6 +316,8 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "relic_upgrade": False, "relic_max_steps": 10,
                         "relic_fragment_floor": 0,
                         "tycoon": False, "tycoon_max_rolls": 50,
+                        "relic_sprint_enabled": False,
+                        "relic_sprint_target": 900000,
                         "gacha_config": None,
                         "mining_config": None}
     assert report.login_ok is True
@@ -383,6 +388,39 @@ def test_run_ws_device_cycle_reads_relic_tycoon_from_nested(patched_runner):
     assert calls[0]["relic_fragment_floor"] == 200000
     assert calls[0]["tycoon"] is True
     assert calls[0]["tycoon_max_rolls"] == 12
+
+
+def test_run_ws_device_cycle_relic_sprint_default_off(patched_runner):
+    """遺物碎片衝刺 預設 OFF：service 不傳 → fake 收到預設 (False / 900000)。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-no-sprint", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is False
+    assert calls[0]["relic_sprint_target"] == 900000
+
+
+def test_run_ws_device_cycle_reads_relic_sprint_from_nested(patched_runner):
+    """遺物碎片衝刺 來自巢狀 ws_token.relic_sprint（單一真相），啟用時傳 True + target。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"relic_sprint": {"enabled": True, "target_spend": 450000}}}
+    )
+    svc.run_ws_device_cycle("ws-sprint", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is True
+    assert calls[0]["relic_sprint_target"] == 450000
+
+
+def test_run_ws_device_cycle_relic_sprint_enabled_uses_default_target(patched_runner):
+    """啟用但沒給 target_spend → service 不傳 target，run_device 走預設 900000。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"relic_sprint": {"enabled": True}}}
+    )
+    svc.run_ws_device_cycle("ws-sprint-def", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is True
+    assert calls[0]["relic_sprint_target"] == 900000
 
 
 def test_run_ws_device_cycle_reads_gacha_from_nested(patched_runner):

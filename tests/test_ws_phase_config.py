@@ -56,6 +56,38 @@ def test_get_device_config_yields_lamp_defaults_for_bare_device(tmp_path, monkey
     assert ws.get("lamp_min_keep") == 0
 
 
+def test_default_relic_sprint_disabled_with_full_target():
+    # 遺物碎片衝刺 (衝刺榜) 預設關 (SPENDS 遺物碎片)，target_spend = 全衝刺門檻 900000。
+    rs = config_manager.DEFAULT_DEVICE_CONFIG["ws_token"]["relic_sprint"]
+    assert rs == {"enabled": False, "target_spend": 900000}
+
+
+def test_merge_relic_sprint_fills_default_when_absent():
+    # 裝置沒設 relic_sprint → 合併後補回預設 (disabled, 900000)。
+    merged = config_manager._merge_ws_token_phase_config({"enabled": True})
+    assert merged["relic_sprint"] == {"enabled": False, "target_spend": 900000}
+
+
+def test_merge_relic_sprint_coerces_enabled_and_target():
+    # enabled 強轉 bool；target_spend 取正整數。
+    merged = config_manager._merge_ws_token_phase_config({
+        "relic_sprint": {"enabled": 1, "target_spend": "450000"},
+    })
+    assert merged["relic_sprint"] == {"enabled": True, "target_spend": 450000}
+
+
+def test_merge_relic_sprint_bad_target_falls_back_to_default():
+    # 非法 / 非正的 target_spend 退回預設 900000；壞 dict 整段退預設。
+    bad_target = config_manager._merge_ws_token_phase_config({
+        "relic_sprint": {"enabled": True, "target_spend": -5},
+    })
+    assert bad_target["relic_sprint"] == {"enabled": True, "target_spend": 900000}
+    not_dict = config_manager._merge_ws_token_phase_config({
+        "relic_sprint": "garbage",
+    })
+    assert not_dict["relic_sprint"] == {"enabled": False, "target_spend": 900000}
+
+
 def test_default_carpark_plan_disabled_with_day_night_quota():
     plan = config_manager.DEFAULT_DEVICE_CONFIG["ws_token"]["carpark_plan"]
     assert plan["enabled"] is False

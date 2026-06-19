@@ -7,13 +7,20 @@ Two tools, both driving the device's live H5 page via the shared raw-CDP JS path
    (car_park_info / shop_info / shop_buy / car_park_skin_up); see
    docs/protocol/CARPARK_DECORATION_SHOP.md §10. Injected JS in
    ``control_panel.carpark_tools_js``; brain = ``ws_token.carpark_decoration``.
-2. 一鍵抽卡 (技能/同伴) — PURE WS: sends draw cmd ``0x0902`` straight over the
-   game WebSocket (no cocos UI / animation), injected JS in
-   ``control_panel.gacha_tools_js``; ladder/cost brain = ``ws_token.gacha``.
+2. 一鍵抽卡 (技能/同伴) — PURE WS over the persistent ws_session connection
+   (mirrors the 神器附魔/庫存 panel): the job takes the device's
+   ``ws_session.get_client(ip)`` and calls ``ws_token.gacha.draw_once`` directly
+   (no browser / cocos UI / animation). Pause/resume of the bot loop is owned by
+   ``ws_session`` (ensure pauses on connect, disconnect/sweeper resumes), so the
+   gacha job does NOT touch ``bot_state.set_pause`` itself.
+
+The carpark-decoration tool still drives the device's live H5 page via raw CDP
+(``control_panel_app._cdp_evaluate``) — its read/exec JS reads cocos config tables
+that have no headless ws_token reader yet, so it keeps the browser path.
 
 Long-running work (the ~30s read walk and the multi-minute execute) runs in a
 background thread tracked by an in-memory job registry; the frontend polls
-``/api/carpark/job/<job_id>``. Execute pauses the device's bot loop
+``/api/carpark/job/<job_id>``. The carpark execute pauses the device's bot loop
 (``bot_state.set_pause``) so it doesn't fight the navigation, then resumes.
 """
 import json
@@ -24,8 +31,8 @@ import uuid
 from flask import Blueprint, jsonify, render_template, request
 
 import bot_state
+from control_panel import ws_session
 from control_panel.carpark_tools_js import EXEC_STEP_WS_JS, READ_STATE_WS_JS
-from control_panel.gacha_tools_js import DRAW_ONCE_JS
 from control_panel.shared.auth import _fly_pet_auth
 from ws_token import gacha as gacha_logic
 from ws_token.carpark_decoration import DecoUpgradeState, plan_upgrades
@@ -43,8 +50,7 @@ _DRAW_TYPES = gacha_logic.DRAW_TYPE_NAME           # {1:'技能', 2:'同伴'}
 _DRAIN_LADDER = gacha_logic.BUNDLE_LADDER          # (999, 35, 15)
 _BUNDLE_COST = gacha_logic.BUNDLE_COST             # {15:15, 35:30, 999:800}
 _FIXED_COUNTS = tuple(gacha_logic.BUNDLE_COST)     # (15, 35, 999)
-_DRAW_JS_TIMEOUT_MS = 6000      # in-page wait for the 0x0902/0x0201 reply
-_DRAW_CDP_TIMEOUT = 15          # python-side CDP eval timeout (> JS timeout)
+_DRAW_WS_TIMEOUT = 10           # per-draw WS call_for timeout (s)
 _DRAIN_MAX_ITERS = 8000         # runaway guard for 一鍵抽完 (bundles)
 _DRAW_MAX_BATCHES = 2000        # fixed-mode batch cap
 
@@ -271,14 +277,26 @@ def _parse_params():
 # --- gacha (抽卡) pure-WS ----------------------------------------------------
 
 
-def _draw_once(ip: str, draw_type: int, count: int):
-    """Send one 0x0902 {type, count} over the live WS. Returns (res, err) where
-    res = {ok, drawn, remaining, rejected, error_code}. ``remaining`` is the
-    ticket balance read from the accompanying 0x0402 push (None if unseen);
+def _draw_once(client, draw_type: int, count: int):
+    """Send one 0x0902 {type, count} over the persistent ws_session client.
+
+    Returns ``(res, err)`` where ``res = {ok, drawn, remaining, rejected,
+    error_code}`` — same shape the job loop already consumes. ``remaining`` is
+    always ``None`` on the pure-WS path (ticket balance came from the CDP 0x0402
+    side-channel; the drain ladder is reject-driven, so it isn't needed).
     ``rejected`` means the server replied 0x0201 (e.g. insufficient tickets)."""
-    ticket = gacha_logic.TICKET_ITEM.get(draw_type, 0)
-    args = [draw_type, count, ticket, _DRAW_JS_TIMEOUT_MS]
-    return _cdp_json(ip, f"({DRAW_ONCE_JS})({json.dumps(args)})", _DRAW_CDP_TIMEOUT)
+    try:
+        r = gacha_logic.draw_once(client, draw_type, count,
+                                  timeout=_DRAW_WS_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 — surface as transport error
+        return None, f"{type(exc).__name__}: {exc}"
+    return {
+        "ok": bool(r.success),
+        "drawn": int(r.drawn),
+        "remaining": None,
+        "rejected": bool(r.rejected),
+        "error_code": r.error_code,
+    }, None
 
 
 def _set_gacha_progress(jid: str, total: int, batches_done: int) -> None:
@@ -291,19 +309,23 @@ def _set_gacha_progress(jid: str, total: int, batches_done: int) -> None:
 
 def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                    count: int, batches: int) -> None:
-    rip = _real_ip(ip)
-    paused = False
     type_name = _DRAW_TYPES.get(draw_type, str(draw_type))
     try:
-        # Pause the bot loop so its own WS traffic doesn't race our reciveMsg hook.
-        _job_update(jid, phase="pausing")
-        try:
-            bot_state.set_pause(rip, True)
-            paused = True
-            if bot_state.get_pause_event(rip) is None:
-                _job_log(jid, f"⚠ 裝置 {rip} 未在 bot 追蹤中，未實際暫停（續行）")
-        except Exception as exc:  # noqa: BLE001
-            _job_log(jid, f"暫停失敗（續行）：{exc}")
+        # Pure-WS: take the persistent ws_session client (it owns the bot-loop
+        # pause — ensure pauses on connect, disconnect/sweeper resumes — so we do
+        # NOT touch bot_state.set_pause here, unlike the carpark CDP path).
+        _job_update(jid, phase="connecting")
+        client = ws_session.get_client(ip)
+        if client is None:
+            res = ws_session.ensure(ip)
+            if res.get("status") == "error":
+                _job_update(jid, status="error",
+                            error=f"WS 連線失敗：{res.get('message', '')}")
+                return
+            client = ws_session.get_client(ip)
+        if client is None:
+            _job_update(jid, status="error", error="WS 連線未就緒")
+            return
 
         _job_update(jid, phase="drawing", result={
             "type": draw_type, "type_name": type_name, "mode": mode,
@@ -332,7 +354,7 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                         stopped = "exhausted"
                         break
                     rung = _DRAIN_LADDER[fb_idx]
-                res, err = _draw_once(ip, draw_type, rung)
+                res, err = _draw_once(client, draw_type, rung)
                 if err or not res or res.get("err"):
                     stopped = f"error:{err or (res or {}).get('err')}"
                     _job_log(jid, f"  {rung} 抽：傳輸錯誤（{stopped}）")
@@ -360,7 +382,7 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
         else:  # fixed: count × batches
             _job_log(jid, f"指定抽（{type_name}）：{count} 抽 × {batches} 批…")
             for b in range(batches):
-                res, err = _draw_once(ip, draw_type, count)
+                res, err = _draw_once(client, draw_type, count)
                 if err or not res or res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
                     reason = (f"reject code={res.get('error_code')}" if (res and res.get("rejected"))
                               else (res or {}).get("err") if res else err)
@@ -381,13 +403,6 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
         _job_log(jid, f"完成：{type_name} 共抽 {total} 次（{batches_done} 批）")
     except Exception as exc:  # noqa: BLE001
         _job_update(jid, status="error", error=f"{type(exc).__name__}: {exc}")
-    finally:
-        if paused:
-            try:
-                bot_state.set_pause(rip, False)
-                _job_log(jid, f"已恢復裝置 {rip} 的 bot loop")
-            except Exception:  # noqa: BLE001
-                pass
 
 
 # --- routes -----------------------------------------------------------------

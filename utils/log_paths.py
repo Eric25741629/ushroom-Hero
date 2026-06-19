@@ -64,6 +64,14 @@ class LogPaths:
         return cls.device_root(device_id) / "miner.log"
 
     @classmethod
+    def ws_mining_log(cls, device_id: str) -> Path:
+        return cls.device_root(device_id) / "ws_mining.log"
+
+    @classmethod
+    def ws_farm_log(cls, device_id: str) -> Path:
+        return cls.device_root(device_id) / "ws_farm.log"
+
+    @classmethod
     def ocr_trace_log(cls, device_id: str) -> Path:
         return cls.device_root(device_id) / "ocr_trace.log"
 
@@ -105,6 +113,12 @@ class _ScopedLogPaths:
 
     def miner_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "miner.log"
+
+    def ws_mining_log(self, device_id: str) -> Path:
+        return self.device_root(device_id) / "ws_mining.log"
+
+    def ws_farm_log(self, device_id: str) -> Path:
+        return self.device_root(device_id) / "ws_farm.log"
 
     def ocr_trace_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "ocr_trace.log"

@@ -55,9 +55,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from ws_token import (
-    carpark, couple, dungeon, farm, gacha, guild, idle_reward, kungfu_store,
-    league_solo, main_tasks, mining, mining_supervised, redpack, relic, rogue,
-    spirit, statue, steward, turntable, tycoon, workshop,
+    ad_reward, carpark, couple, dungeon, farm, gacha, guild, idle_reward,
+    kungfu_store, league_solo, main_tasks, mining, mining_supervised, redpack,
+    relic, relic_sprint, rogue, spirit, statue, steward, turntable, tycoon,
+    workshop,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -80,9 +81,9 @@ LOGIN_TASK = "login"
 # 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
-    "turntable", "tycoon", "farm", "dungeon", "rogue", "statue", "guild", "steward",
-    "relic", "gacha", "gacha_free", "kungfu_store", "spirit", "workshop", "couple",
-    "mining", "lamp")
+    "ad_rewards", "turntable", "tycoon", "farm", "dungeon", "rogue", "statue",
+    "guild", "steward", "relic", "relic_sprint", "gacha", "gacha_free",
+    "kungfu_store", "spirit", "workshop", "couple", "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -234,6 +235,20 @@ def _run_idle_reward(client, offline_pushes: list) -> dict:
     return summary
 
 
+def _run_ad_rewards(client, *, config_ids, enabled: bool) -> dict:
+    """看廣告獎勵 (鑽石/種子) opt-in: 純 WS 直接領 (is_free=1, 帳號買了免廣告).
+
+    Only reached with a non-empty ``config_ids`` (gated by run_device → enabled).
+    Reads today's per-config watch counts once (ad_info 0x1601), then for each
+    config_id claims only up to its daily cap and never during a cooldown — both
+    gates skip WITHOUT sending a packet (same「讀現值→只補差額→到上限跳過」discipline
+    as farm shop). Returns ad_reward.claim_ads' ``{results, total_claimed}``.
+    """
+    if not enabled or not config_ids:
+        return {"skipped": "ad_rewards disabled (set ws_token.ad_rewards.enabled=True)"}
+    return ad_reward.claim_ads(client, list(config_ids))
+
+
 def _run_turntable(client) -> dict:
     """Free: spin every free / accumulated 轉盤 turn (no ad top-ups over WS).
 
@@ -334,7 +349,7 @@ _FARM_HOME_TIMEOUT_S = 5.0
 
 
 def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
-              inventory_tracker=None) -> dict:
+              inventory_tracker=None, device: Optional[str] = None) -> dict:
     """農場/打工: 收成 (免費) + 種植 / 打工 / 莊園購買 (依設定)。
 
     home module(12) 的 read_farm/harvest 在純 WS 下回應不穩，且當 server 端管家
@@ -362,7 +377,8 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
     # 1) 打工偵測 (worker module 73, reliable) — 決定是否需要手動收成。
     worker_running = False
     try:
-        status = farm.read_work_status(client, role_id, timeout=_FARM_HOME_TIMEOUT_S)
+        status = farm.read_work_status(client, role_id, timeout=_FARM_HOME_TIMEOUT_S,
+                                       device_id=device)
         summary["work_status"] = status
         worker_running = bool(status.get("running"))
     except WSError as exc:
@@ -379,11 +395,12 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
         try:
             info = farm.read_farm(client, role_id, timeout=_FARM_HOME_TIMEOUT_S)
             summary["harvest"] = farm.harvest_ready(
-                client, role_id, info=info, timeout=_FARM_HOME_TIMEOUT_S)
+                client, role_id, info=info, timeout=_FARM_HOME_TIMEOUT_S,
+                device_id=device)
             if seed_id:
                 summary["plant"] = farm.plant_empty(
                     client, role_id, int(seed_id), info=info,
-                    timeout=_FARM_HOME_TIMEOUT_S)
+                    timeout=_FARM_HOME_TIMEOUT_S, device_id=device)
         except WSError as exc:
             logger.info("ws_token farm: home_farm 不可用，本輪跳過手動收成 (%s)", exc)
             summary["harvest"] = {"skipped": f"home_farm 不可用: {exc}"}
@@ -391,12 +408,12 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
     # 3) 打工設定 + 莊園購買 (worker/shop module, reliable) — 獨立於 home module。
     # 若 harvest_card_cycle 啟用，skip 這裡的 start_work（cycle 自己管開/關）。
     if team_cfg_id and not worker_running and not hcc_enabled:
-        summary["work"] = farm.start_work(client, int(team_cfg_id))
+        summary["work"] = farm.start_work(client, int(team_cfg_id), device_id=device)
     # 莊園購買: buy each configured farm-shop item UP TO its daily target. Reads
     # today's count first, so an item already bought in the GUI is respected
     # (buys only the remainder; nothing if already at target).
     if buy_list:
-        summary["buy"] = farm.buy_farm_shop(client, buy_list)
+        summary["buy"] = farm.buy_farm_shop(client, buy_list, device_id=device)
 
     # 4) 豐收卡循環 (可選；獨立完整流程：停打工→施肥→收成→買卡→種特級種子→恢復打工)
     #    觸發方式：ws_token.farm.harvest_card_cycle.enabled = true
@@ -408,7 +425,7 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
         try:
             summary["harvest_card_cycle"] = farm.run_harvest_card_cycle(
                 client, role_id, num_cards=num_cards, fertilizer_id=fert_id,
-                inventory_tracker=inventory_tracker)
+                inventory_tracker=inventory_tracker, device_id=device)
         except Exception as exc:
             logger.warning("ws_token farm: harvest_card_cycle skipped (%s)", exc)
             summary["harvest_card_cycle"] = {"skipped": str(exc)}
@@ -943,6 +960,25 @@ def _run_relic(client, tracker: mining.InventoryTracker, *, enabled: bool,
     return out
 
 
+def _run_relic_sprint(client, tracker: mining.InventoryTracker, *, enabled: bool,
+                      target_spend: int) -> dict:
+    """遺物碎片衝刺 (衝刺榜): opt-in, default off; SPENDS 遺物碎片 to claim the rounds.
+
+    Only reached when ``enabled`` (gated by run_device). The 衝刺榜 counts the
+    cumulative 遺物碎片 spent server-side, so this SPENDS fragments (by levelling
+    relics through :func:`ws_token.relic_sprint.run_relic_sprint`) up to
+    ``target_spend`` and then claims every CanGet round — hence OFF by default and
+    sharing the SAME inventory ``tracker`` as 遺物 平均強化 (the live 遺物碎片 count
+    gate reads ``tracker.counts``). When the activity is not the current rotation
+    the orchestrator bails with ``{"skipped": "no active sprint"}``. Returns
+    relic_sprint.run_relic_sprint's summary or ``{skipped}``.
+    """
+    if not enabled:
+        return {"skipped": "relic_sprint disabled (set ws_token.relic_sprint.enabled=True)"}
+    return relic_sprint.run_relic_sprint(
+        client, tracker, target_spend=target_spend, enabled=True)
+
+
 def run_device(device: str, *, spend: bool = False,
                sweep_list: Optional[Iterable[Sequence[int]]] = None,
                open_lamp: bool = False,
@@ -965,8 +1001,11 @@ def run_device(device: str, *, spend: bool = False,
                relic_upgrade: bool = False,
                relic_max_steps: int = 10,
                relic_fragment_floor: int = 0,
+               relic_sprint_enabled: bool = False,
+               relic_sprint_target: int = relic_sprint.SPRINT_TOTAL,
                tycoon: bool = False,
                tycoon_max_rolls: int = 50,
+               ad_reward_config_ids: Optional[Iterable[int]] = None,
                gacha_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
                statue_amount: int = 7000,
@@ -1021,10 +1060,20 @@ def run_device(device: str, *, spend: bool = False,
         ``relic_max_steps`` (default 10). ``relic_fragment_floor`` (default 0) stops
         upgrading once the live 遺物碎片 count drops below it. Always upgrades the
         lowest-level equipped relic; stops on 0x0201 / floor / cap.
+      - ``relic_sprint_enabled`` (default False) enables 遺物碎片衝刺 (衝刺榜) — it
+        SPENDS 遺物碎片 up to ``relic_sprint_target`` (default 900000) then claims
+        every CanGet round, so it is OFF by default and shares the SAME inventory
+        tracker as 遺物 平均強化. A closed / wrong-rotation activity is a safe no-op
+        ({"skipped": "no active sprint"}).
       - ``tycoon`` (default False) enables 傳奇大亨 (大富翁) auto-dice. The dice are
         FREE (regen from a timer) so this is pure gain, but stays opt-in; bounded
         by ``tycoon_max_rolls`` (default 50). A closed activity makes the first
         roll return 0x0201 and auto_play stops (safe no-op).
+      - ``ad_reward_config_ids`` (default None) enables 看廣告獎勵自動領取 (鑽石/種子)
+        purely over WS (is_free=1; the account bought 免廣告). None / empty = the
+        task self-skips. Reads today's per-config counts once and claims only up to
+        each config's daily cap, skipping during cooldown (no packet sent) — the
+        same read-then-deficit discipline as the farm shop.
 
     ``progress`` (optional) is a ``(task_name, status, detail)`` callback fired
     per task: ``("xxx", "start", "")`` before, ``("xxx", "ok", "")`` /
@@ -1157,13 +1206,18 @@ def run_device(device: str, *, spend: bool = False,
                                     gem_threshold=mail_gem_threshold,
                                     skill_threshold=mail_skill_threshold))
         _step("idle_reward", lambda: _run_idle_reward(client, idle_offline))
+        _ad_ids = tuple(ad_reward_config_ids or ())
+        if _ad_ids:
+            _step("ad_rewards",
+                  lambda: _run_ad_rewards(client, config_ids=_ad_ids,
+                                          enabled=True))
         _step("turntable", lambda: _run_turntable(client))
         _step("tycoon",
               lambda: _run_tycoon(client, enabled=tycoon,
                                   max_rolls=tycoon_max_rolls))
         _step("farm",
               lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config,
-                                inventory_tracker=inventory_tracker))
+                                inventory_tracker=inventory_tracker, device=device))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
         _step("statue", lambda: _run_statue(client, device=device, amount=statue_amount))
@@ -1176,6 +1230,10 @@ def run_device(device: str, *, spend: bool = False,
                                  enabled=relic_upgrade,
                                  max_steps=relic_max_steps,
                                  fragment_floor=relic_fragment_floor))
+        _step("relic_sprint",
+              lambda: _run_relic_sprint(client, inventory_tracker,
+                                        enabled=relic_sprint_enabled,
+                                        target_spend=relic_sprint_target))
         if gacha_config and gacha_config.get("enabled"):
             _step("gacha",
                   lambda: _run_gacha(client, inventory_tracker,

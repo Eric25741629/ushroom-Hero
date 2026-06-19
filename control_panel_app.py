@@ -61,6 +61,8 @@ from control_panel.shared.command_queue import (  # noqa: E402,F401
 
 # --- blueprints ---
 from control_panel import (  # noqa: E402
+    routes_ad_reward,
+    routes_relic_sprint,
     routes_tools_optimize,
     routes_config,
     routes_control,
@@ -87,6 +89,8 @@ for _mod in (
     routes_fly_pet,
     routes_inventory,
     routes_tools_optimize,
+    routes_ad_reward,
+    routes_relic_sprint,
     ws_session,
 ):
     app.register_blueprint(_mod.bp)

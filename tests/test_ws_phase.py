@@ -324,6 +324,114 @@ def test_record_failure_does_not_break_skip_set(monkeypatch):
     assert "商店購買" in ws_phase.run_ws_phase("dev")
 
 
+def _patch_progress_marks(monkeypatch):
+    """攔截「每日任務」「農場種植」兩個 WS daily-progress 回寫 helper。"""
+    mission_calls = []
+    farm_calls = []
+    monkeypatch.setattr(ws_phase, "_mark_mission_done",
+                        lambda ip, log: mission_calls.append(ip))
+    monkeypatch.setattr(ws_phase, "_mark_farm_plant_done",
+                        lambda ip, log: farm_calls.append(ip))
+    return mission_calls, farm_calls
+
+
+def test_ws_main_tasks_marks_mission_daily(monkeypatch):
+    """WS main_tasks 成功 → 寫「每日任務」(mission_timestamp) 徽章紀錄。"""
+    _cfg(monkeypatch, {"enabled": True})
+    mission_calls, _ = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None, **_kw:_report({"main_tasks": {}}))
+    ws_phase.run_ws_phase("dev")
+    assert mission_calls == ["dev"]
+
+
+def test_ws_main_tasks_errored_does_not_mark_mission(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    mission_calls, _ = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
+        {"redpack": {}}, errors={"main_tasks": "WSTimeoutError"}))
+    ws_phase.run_ws_phase("dev")
+    assert mission_calls == []
+
+
+def test_ws_ad_seed_marks_farm_plant(monkeypatch):
+    """WS ad_rewards 領到農場種子(config15) → 寫「農場種植」(farm_plant_click)。"""
+    _cfg(monkeypatch, {"enabled": True})
+    _, farm_calls = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "ad_rewards": {"results": {"農場種子廣告": {"name": "農場種子廣告",
+                                                "claimed": 2, "stopped": "remaining_zero"}},
+                       "total_claimed": 2},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert farm_calls == ["dev"]
+
+
+def test_ws_ad_seed_maxed_marks_farm_plant(monkeypatch):
+    """config15 今天已領滿(maxed) → 仍算「農場種植」今日完成。"""
+    _cfg(monkeypatch, {"enabled": True})
+    _, farm_calls = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "ad_rewards": {"results": {"農場種子廣告": {"name": "農場種子廣告",
+                                                "skipped": "maxed 2/2"}},
+                       "total_claimed": 0},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert farm_calls == ["dev"]
+
+
+def test_ws_ad_seed_cooldown_does_not_mark_farm_plant(monkeypatch):
+    """config15 還在冷卻、今天尚未領完 → 不可標「農場種植」完成。"""
+    _cfg(monkeypatch, {"enabled": True})
+    _, farm_calls = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "ad_rewards": {"results": {"農場種子廣告": {"name": "農場種子廣告",
+                                                "skipped": "cooldown until 9999999999"}},
+                       "total_claimed": 0},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert farm_calls == []
+
+
+def test_ws_no_ad_seed_does_not_mark_farm_plant(monkeypatch):
+    """ad_rewards 沒含農場種子(只領鑽石) → 不標農場種植。"""
+    _cfg(monkeypatch, {"enabled": True})
+    _, farm_calls = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "ad_rewards": {"results": {"商城廣告鑽石": {"name": "商城廣告鑽石",
+                                                "claimed": 3}},
+                       "total_claimed": 3},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert farm_calls == []
+
+
+def test_mark_mission_done_writes_flat_scalar(tmp_path, monkeypatch):
+    """_mark_mission_done 寫 flat scalar(不可巢狀化破壞 Mission.py 讀側)。"""
+    monkeypatch.chdir(tmp_path)
+    import logging
+    ws_phase._mark_mission_done("dev123", logging.getLogger("t"))
+    from utils.json_io import read_json_bom_safe
+    on_disk = read_json_bom_safe("dev123.json")
+    assert isinstance(on_disk["mission_timestamp"], (int, float))
+    assert not isinstance(on_disk["mission_timestamp"], bool)
+    assert on_disk["mission_timestamp"] > 0
+    # 不可巢狀化（dashboard / Mission.py 讀 flat）
+    assert not isinstance(on_disk["mission_timestamp"], dict)
+
+
+def test_mark_farm_plant_done_writes_dict_with_count(tmp_path, monkeypatch):
+    """_mark_farm_plant_done 寫 dict schema(讀側 is_same_day 才認)。"""
+    monkeypatch.chdir(tmp_path)
+    import logging
+    ws_phase._mark_farm_plant_done("dev456", logging.getLogger("t"))
+    from utils.json_io import read_json_bom_safe
+    on_disk = read_json_bom_safe("dev456.json")
+    rec = on_disk["farm_plant_click"]
+    assert isinstance(rec, dict)
+    assert "timestamp" in rec and rec["timestamp"] > 0
+
+
 def test_adb_login_failure_refreshes_once_and_retries(monkeypatch):
     _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True})
     bootstrap_calls = []

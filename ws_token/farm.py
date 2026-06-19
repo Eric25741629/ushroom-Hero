@@ -52,6 +52,25 @@ from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_logger(device_id: Optional[str]) -> logging.Logger:
+    """Pick the log destination: per-device ws_farm.log when ``device_id`` is given,
+    else the module logger (console-only, backward-compatible default).
+
+    Live runs pass the device so 豐收卡循環/種植/收成/打工 log lines land in the
+    device-scoped retention file ``logs/<device>/ws_farm.log`` (mirrors the miner's
+    ws_mining.log). Callers/tests that omit it keep the existing module logger, so
+    only the destination changes — control flow / return values / cmds are untouched.
+    """
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_farm_logger
+            return get_or_create_ws_farm_logger(device_id)
+        except Exception:
+            return logger
+    return logger
+
+
 # --- cmd ids (c2s and s2c share the same id, but FAILURES reply on 0x0201) ---
 CMD_INFO = 3077            # home_farm_info       (home module 12)
 CMD_PLANT = 3078          # home_farm_plant
@@ -351,6 +370,7 @@ def plant_empty(
     info: Optional[FarmInfo] = None,
     spacing: float = 0.2,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Plant ``seed_id`` on every empty land (per-land plant; no batch cmd).
 
@@ -360,6 +380,7 @@ def plant_empty(
     caller that already read the farm (e.g. right after harvest) MUST reuse it or
     the second read times out.
     """
+    log = _resolve_logger(device_id)
     if info is None:
         info = read_farm(client, role_id, timeout=timeout)
     targets = info.empty_lands
@@ -373,7 +394,9 @@ def plant_empty(
         results.append({"land_id": land.id, "code": code, "ok": ok})
         if spacing:
             time.sleep(spacing)
-    logger.info("ws_token farm: plant_empty attempted=%d planted=%d", len(targets), planted)
+    log.info("ws_token farm: plant_empty attempted=%d planted=%d", len(targets), planted)
+    log.info("農場種植: 空地 %d 塊 → 種了 %d 塊 (seed_id=%d)",
+             len(targets), planted, seed_id)
     return {"attempted": len(targets), "planted": planted, "results": results}
 
 
@@ -385,6 +408,7 @@ def harvest_ready(
     now: Optional[int] = None,
     spacing: float = 0.2,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Harvest every ready land (MATURE, or end_time<=now if ``now`` is given).
 
@@ -393,6 +417,7 @@ def harvest_ready(
     code!=0 = failure. Pass a pre-read ``info`` to skip the read (the live server
     answers ``home_farm_info`` only ONCE per session — see plant_empty).
     """
+    log = _resolve_logger(device_id)
     if info is None:
         info = read_farm(client, role_id, timeout=timeout)
     targets = info.ready_lands_at(now=now) if now is not None else info.ready_lands
@@ -409,8 +434,10 @@ def harvest_ready(
         results.append({"land_id": land.id, "code": code, "ok": ok})
         if spacing:
             time.sleep(spacing)
-    logger.info("ws_token farm: harvest_ready attempted=%d harvested=%d rewards=%s",
-                len(targets), harvested, rewards)
+    log.info("ws_token farm: harvest_ready attempted=%d harvested=%d rewards=%s",
+             len(targets), harvested, rewards)
+    log.info("農場收成: 可收 %d 塊 → 收成 %d 塊 (領取直到領完) rewards=%s",
+             len(targets), harvested, rewards)
     return {"attempted": len(targets), "harvested": harvested,
             "rewards": rewards, "results": results}
 
@@ -424,6 +451,7 @@ def fertilize_lands(
     num: int = 1,
     spacing: float = 0.2,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Fertilize every non-empty land (per-land; mirrors the in-game 「一鍵施肥」).
 
@@ -432,6 +460,7 @@ def fertilize_lands(
     to skip the read (home_farm_info answers once per session — see plant_empty).
     Returns {attempted, fertilized, results}.
     """
+    log = _resolve_logger(device_id)
     if info is None:
         info = read_farm(client, role_id, timeout=timeout)
     targets = tuple(land for land in info.lands if not land.is_empty)
@@ -449,8 +478,8 @@ def fertilize_lands(
         results.append({"land_id": land.id, "code": code, "ok": ok})
         if spacing:
             time.sleep(spacing)
-    logger.info("ws_token farm: fertilize_lands attempted=%d fertilized=%d fert_id=%d",
-                len(targets), fertilized, fertilizer_id)
+    log.info("ws_token farm: fertilize_lands attempted=%d fertilized=%d fert_id=%d",
+             len(targets), fertilized, fertilizer_id)
     return {"attempted": len(targets), "fertilized": fertilized, "results": results}
 
 
@@ -460,6 +489,7 @@ def read_work_status(
     *,
     team_cfg_id: int = FARM_WORKER_TEAM_CFG_ID,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """打工偵測 — read whether the farm 管家 (worker) is running, WITHOUT mutating.
 
@@ -471,6 +501,7 @@ def read_work_status(
 
     Returns {running, worker_status, team_cfg_id, found}.
     """
+    log = _resolve_logger(device_id)
     reply = client.call(CMD_GET_OTHER_WORKER,
                         build_get_other_worker_body(role_id, (team_cfg_id,)),
                         timeout=timeout)
@@ -484,8 +515,8 @@ def read_work_status(
                 found = True
                 break
     running = status > 0
-    logger.info("ws_token farm: read_work_status team_cfg_id=%d worker_status=%d running=%s",
-                team_cfg_id, status, running)
+    log.info("ws_token farm: read_work_status team_cfg_id=%d worker_status=%d running=%s",
+             team_cfg_id, status, running)
     return {"running": running, "worker_status": status,
             "team_cfg_id": team_cfg_id, "found": found}
 
@@ -498,12 +529,14 @@ def start_work(
     fertilizer_time_rest: int = 0,
     seed_used_seq: Iterable[Sequence[int]] = (),
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """打工: send worker_setting to hand the farm to the 管家 (auto plant +収).
 
     Empty ``seed_used_seq`` = 用免費種子 = 不買種. Returns
     {running, worker_status, raw}; running is True iff p_worker.worker_status>0.
     """
+    log = _resolve_logger(device_id)
     body = build_worker_setting_body(
         team_cfg_id,
         fertilizer_list=fertilizer_list,
@@ -515,16 +548,18 @@ def start_work(
         expect_cmds=(CMD_WORKER_SETTING, CMD_ERROR), timeout=timeout)
     if reply_cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(reply).get(1))
-        logger.warning("ws_token farm: start_work rejected 0x0201 code=%s "
-                       "(team_cfg_id=%s)", code, team_cfg_id)
+        log.warning("ws_token farm: start_work rejected 0x0201 code=%s "
+                    "(team_cfg_id=%s)", code, team_cfg_id)
         return {"running": False, "worker_status": 0, "error_code": code, "raw": reply}
     status = 0
     worker = codec.walk_dict(reply).get(1)  # worker_info#1 = p_worker
     if isinstance(worker, (bytes, bytearray)):
         status = _as_int(codec.walk_dict(bytes(worker)).get(3))  # worker_status#3
     running = status > 0
-    logger.info("ws_token farm: start_work team_cfg_id=%s worker_status=%d running=%s",
-                team_cfg_id, status, running)
+    log.info("ws_token farm: start_work team_cfg_id=%s worker_status=%d running=%s",
+             team_cfg_id, status, running)
+    log.info("農場打工: 開啟管家 team_cfg_id=%s → 運作中=%s (worker_status=%d)",
+             team_cfg_id, running, status)
     return {"running": running, "worker_status": status, "raw": reply}
 
 
@@ -533,6 +568,7 @@ def stop_work(
     *,
     work_id: int = FARM_WORK_ID,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Cancel farm 打工 (companion worker) via CMD_WORKER_CANCEL (18178).
 
@@ -540,6 +576,7 @@ def stop_work(
     with body {field1=1001}. Returns {ok, error_code}. Use start_work_simple()
     to re-enable after the harvest-card flow completes.
     """
+    log = _resolve_logger(device_id)
     reply_cmd, reply = client.call_for(
         CMD_WORKER_CANCEL,
         build_worker_start_cancel_body(work_id),
@@ -548,9 +585,9 @@ def stop_work(
     )
     if reply_cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(reply).get(1))
-        logger.warning('ws_token farm: stop_work rejected 0x0201 code=%s', code)
+        log.warning('ws_token farm: stop_work rejected 0x0201 code=%s', code)
         return {'ok': False, 'error_code': code}
-    logger.info('ws_token farm: stop_work ok')
+    log.info('ws_token farm: stop_work ok')
     return {'ok': True, 'error_code': 0}
 
 
@@ -559,6 +596,7 @@ def start_work_simple(
     *,
     work_id: int = FARM_WORK_ID,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Start farm 打工 using CMD_WORKER_START (18177) — simple re-enable.
 
@@ -567,6 +605,7 @@ def start_work_simple(
     Live-verified 2026-06-15 on 7fe98fc6: clicking '開始打工' sends cmd=18177
     with body {field1=1001}.
     """
+    log = _resolve_logger(device_id)
     reply_cmd, reply = client.call_for(
         CMD_WORKER_START,
         build_worker_start_cancel_body(work_id),
@@ -575,9 +614,9 @@ def start_work_simple(
     )
     if reply_cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(reply).get(1))
-        logger.warning('ws_token farm: start_work_simple rejected 0x0201 code=%s', code)
+        log.warning('ws_token farm: start_work_simple rejected 0x0201 code=%s', code)
         return {'ok': False, 'error_code': code}
-    logger.info('ws_token farm: start_work_simple ok')
+    log.info('ws_token farm: start_work_simple ok')
     return {'ok': True, 'error_code': 0}
 
 
@@ -593,6 +632,7 @@ def run_harvest_card_cycle(
     land_ids: Sequence[int] = (),
     inventory_tracker=None,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """豐收卡 harvest-card cycle via pure WS.
 
@@ -627,9 +667,16 @@ def run_harvest_card_cycle(
         'ok': False,
     }
 
+    log = _resolve_logger(device_id)
+    log.info(
+        '豐收卡循環: 開始 (role_id=%s, num_cards=%d, fertilizer_id=%d, premium_seed=%d)',
+        role_id, num_cards, fertilizer_id, premium_seed_id)
+
     # 1. Stop companion worker
-    sw = stop_work(client, timeout=timeout)
+    sw = stop_work(client, timeout=timeout, device_id=device_id)
     result['stopped_work'] = sw.get('ok', False)
+    log.info('豐收卡循環[1/7] 取消打工: ok=%s (code=%s)',
+             sw.get('ok', False), sw.get('error_code', 0))
 
     # 2. Read farm info once — reused for fertilize and harvest to avoid the
     #    session-scoped 3077 dedup (server answers home_farm_info only ~once).
@@ -637,21 +684,31 @@ def run_harvest_card_cycle(
     try:
         info = read_farm(client, role_id, timeout=timeout)
     except Exception as exc:
-        logger.info('ws_token farm: run_harvest_card_cycle read_farm failed (%s)', exc)
+        log.info('ws_token farm: run_harvest_card_cycle read_farm failed (%s)', exc)
 
     empty_count = len(info.empty_lands) if info is not None else 0
     result['empty_plots'] = empty_count
+    total_lands = len(info.lands) if info is not None else 0
+    log.info('豐收卡循環[2/7] 讀農場: 地塊=%d 空地=%d (info=%s)',
+             total_lands, empty_count, '已讀' if info is not None else 'timeout')
 
     # 3. Fertilize (pass info to skip re-read)
-    fert = fertilize_lands(client, role_id, fertilizer_id, info=info, timeout=timeout)
+    fert = fertilize_lands(client, role_id, fertilizer_id, info=info, timeout=timeout,
+                           device_id=device_id)
     result['fertilized'] = fert.get('fertilized', 0)
+    log.info('豐收卡循環[3/7] 施肥: 施肥 %d/%d 塊 (fert_id=%d)',
+             fert.get('fertilized', 0), fert.get('attempted', 0), fertilizer_id)
 
     # 4. Harvest ready crops (best-effort; 3077 may timeout; pass info)
     try:
-        harv = harvest_ready(client, role_id, info=info, timeout=5.0)
+        harv = harvest_ready(client, role_id, info=info, timeout=5.0, device_id=device_id)
         result['harvested'] = harv.get('harvested', 0)
+        log.info('豐收卡循環[4/7] 收成: 收成 %d/%d 塊 rewards=%s',
+                 harv.get('harvested', 0), harv.get('attempted', 0),
+                 harv.get('rewards', {}))
     except Exception as exc:
-        logger.info('ws_token farm: harvest_ready skipped (%s)', exc)
+        log.info('ws_token farm: harvest_ready skipped (%s)', exc)
+        log.info('豐收卡循環[4/7] 收成: 跳過 (home_farm 不可用: %s)', exc)
 
     # 5. Decide how many harvest cards to buy based on 特級種子 現量.
     #    1 harvest card ≒ 1 premium seed slot. When the tracker has seen the
@@ -664,34 +721,51 @@ def run_harvest_card_cycle(
         if current_seeds is not None:
             need = max(0, empty_count - current_seeds)
             cards_to_buy = min(need, num_cards)
-            logger.info(
+            log.info(
                 'ws_token farm: 特級種子現量=%d 空地=%d need=%d → buy %d cards',
                 current_seeds, empty_count, need, cards_to_buy,
             )
     result['cards_to_buy'] = cards_to_buy
+    log.info('豐收卡循環[5/7] 估算買卡: 特級種子現量=%s 空地=%d → 預定買 %d 張 (上限 %d)',
+             result.get('seed_before'), empty_count, cards_to_buy, num_cards)
 
     # 6. Buy harvest cards (skip when sufficient seeds already in bag)
     if cards_to_buy > 0:
         card_result = buy_to_daily_target(
             client, harvest_card_shop_id, cards_to_buy,
-            shop_type=harvest_card_shop_type, timeout=timeout,
+            shop_type=harvest_card_shop_type, timeout=timeout, device_id=device_id,
         )
         result['cards_bought'] = card_result.get('bought', 0)
+        log.info('豐收卡循環[6/7] 買豐收卡: 買到 %d 張 (need=%s ok=%s code=%s shop=%d/%d)',
+                 card_result.get('bought', 0), card_result.get('need'),
+                 card_result.get('ok'), card_result.get('code'),
+                 harvest_card_shop_type, harvest_card_shop_id)
     else:
-        logger.info('ws_token farm: skip harvest card buy — 特級種子 sufficient (%s)',
-                    result.get('seed_before'))
+        log.info('ws_token farm: skip harvest card buy — 特級種子 sufficient (%s)',
+                 result.get('seed_before'))
+        log.info('豐收卡循環[6/7] 買豐收卡: 跳過 (特級種子已足夠, 現量=%s)',
+                 result.get('seed_before'))
 
     # 7. Plant premium seeds on all empty plots (info=None → fresh read after
     #    harvest; server may not answer if session-deduped, handled internally)
-    plant = plant_empty(client, role_id, premium_seed_id, timeout=timeout)
+    plant = plant_empty(client, role_id, premium_seed_id, timeout=timeout,
+                        device_id=device_id)
     result['planted'] = plant.get('planted', 0)
+    log.info('豐收卡循環[7/7] 種特級種子: 種了 %d/%d 塊 (seed_id=%d)',
+             plant.get('planted', 0), plant.get('attempted', 0), premium_seed_id)
 
     # 8. Re-enable companion worker
-    rs = start_work_simple(client, timeout=timeout)
+    rs = start_work_simple(client, timeout=timeout, device_id=device_id)
     result['restarted_work'] = rs.get('ok', False)
     result['ok'] = True
+    log.info('豐收卡循環: 恢復打工 ok=%s (code=%s)',
+             rs.get('ok', False), rs.get('error_code', 0))
 
-    logger.info('ws_token farm: run_harvest_card_cycle %s', result)
+    log.info(
+        '豐收卡循環: 完成 — 取消打工=%s 施肥=%d 收成=%d 買卡=%d 種植=%d 恢復打工=%s',
+        result['stopped_work'], result['fertilized'], result['harvested'],
+        result['cards_bought'], result['planted'], result['restarted_work'])
+    log.info('ws_token farm: run_harvest_card_cycle %s', result)
     return result
 
 
@@ -715,6 +789,7 @@ def buy_to_daily_target(
     shop_type: int = FARM_SHOP_TYPE,
     counts: Optional[dict[int, int]] = None,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> dict:
     """Buy a farm-shop item UP TO a daily ``target`` count, never beyond.
 
@@ -726,13 +801,14 @@ def buy_to_daily_target(
     Pass a pre-read ``counts`` (from read_shop_counts) to batch several buys off one
     shop_info read. Returns {shop_id, target, before, need, bought, ok, code}.
     """
+    log = _resolve_logger(device_id)
     if counts is None:
         counts = read_shop_counts(client, shop_type, timeout=timeout)
     before = int(counts.get(shop_id, 0))
     need = target - before
     if need <= 0:
-        logger.info("ws_token farm: buy_to_daily_target shop_id=%d already %d/%d — skip",
-                    shop_id, before, target)
+        log.info("ws_token farm: buy_to_daily_target shop_id=%d already %d/%d — skip",
+                 shop_id, before, target)
         return {"shop_id": shop_id, "target": target, "before": before,
                 "need": 0, "bought": 0, "ok": True, "code": 0}
     reply_cmd, reply = client.call_for(
@@ -740,14 +816,14 @@ def buy_to_daily_target(
         expect_cmds=(CMD_SHOP_BUY, CMD_ERROR), timeout=timeout)
     if reply_cmd == CMD_ERROR:
         code = _as_int(codec.walk_dict(reply).get(1))
-        logger.warning("ws_token farm: buy_to_daily_target shop_id=%d rejected 0x0201 code=%s",
-                       shop_id, code)
+        log.warning("ws_token farm: buy_to_daily_target shop_id=%d rejected 0x0201 code=%s",
+                    shop_id, code)
         return {"shop_id": shop_id, "target": target, "before": before,
                 "need": need, "bought": 0, "ok": False, "code": code}
     # shop_buy_s2c {shop_id#1, num#2}
     bought = _as_int(codec.walk_dict(reply).get(2))
-    logger.info("ws_token farm: buy_to_daily_target shop_id=%d %d/%d -> bought %d",
-                shop_id, before, target, bought)
+    log.info("ws_token farm: buy_to_daily_target shop_id=%d %d/%d -> bought %d",
+             shop_id, before, target, bought)
     return {"shop_id": shop_id, "target": target, "before": before,
             "need": need, "bought": bought, "ok": True, "code": 0}
 
@@ -758,6 +834,7 @@ def buy_farm_shop(
     *,
     shop_type: int = FARM_SHOP_TYPE,
     timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
 ) -> list[dict]:
     """Buy several farm-shop items up to their daily targets off ONE shop_info read.
 
@@ -776,7 +853,8 @@ def buy_farm_shop(
         # counts read for shop_type; entries with a different shop_type re-read.
         c = counts if st == shop_type else None
         results.append(buy_to_daily_target(
-            client, sid, target, shop_type=st, counts=c, timeout=timeout))
+            client, sid, target, shop_type=st, counts=c, timeout=timeout,
+            device_id=device_id))
     return results
 
 

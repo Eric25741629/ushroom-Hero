@@ -269,6 +269,47 @@ def get_carpark(ip):
     })
 
 
+def _record_is_today(manager, data, key_or_list):
+    """某筆當日紀錄是否落在今天。支援三種 on-disk schema：
+
+    1. dict 含 ``timestamp`` / ``date``：走 ``JsonDataManager.is_same_day``
+       （Store / farm_plant_click / donate_family …）。
+    2. dict 含 ``last_time`` 字串："YYYY-MM-DD HH:MM:SS"（family_market_timestamp）。
+    3. **flat scalar** float/int：``mission_timestamp``（Mission.py 直接存數字，
+       不可巢狀化）。``is_same_day`` 只認 dict，對 scalar 永遠回 False，所以這裡
+       自行用 timezone 比對日期 —— 否則「每日任務」徽章即使今天剛完成也顯示 ⏳。
+
+    任一 key 命中即回 True（家族任務用雙 key）。
+    """
+    keys = key_or_list if isinstance(key_or_list, list) else [key_or_list]
+    today = datetime.datetime.now(manager.timezone).strftime("%Y-%m-%d")
+    for key in keys:
+        # schema 1: dict timestamp/date — 既有讀側
+        if manager.is_same_day(key):
+            return True
+        rec = data.get(key)
+        # schema 3: flat scalar timestamp（mission_timestamp）
+        if isinstance(rec, (int, float)) and not isinstance(rec, bool) and rec > 0:
+            try:
+                rec_date = datetime.datetime.fromtimestamp(
+                    float(rec), manager.timezone
+                ).strftime("%Y-%m-%d")
+                if rec_date == today:
+                    return True
+            except (OSError, OverflowError, ValueError):
+                pass
+        # schema 2: dict last_time 字串
+        if isinstance(rec, dict):
+            last_time = rec.get("last_time")
+            if last_time:
+                try:
+                    if last_time.split(" ")[0] == today:
+                        return True
+                except Exception:
+                    pass
+    return False
+
+
 @bp.route("/api/daily_progress/<ip>", methods=["GET"])
 def get_daily_progress(ip):
     """獲取設備的今日進度統計"""
@@ -302,23 +343,7 @@ def get_daily_progress(ip):
         data = manager.load_data()
 
         def check_is_today(key_or_list):
-            keys = key_or_list if isinstance(key_or_list, list) else [key_or_list]
-            for key in keys:
-                if manager.is_same_day(key):
-                    return True
-                if key in data and isinstance(data[key], dict):
-                    last_time = data[key].get("last_time")
-                    if last_time:
-                        try:
-                            record_date = last_time.split(" ")[0]
-                            today = datetime.datetime.now(manager.timezone).strftime(
-                                "%Y-%m-%d"
-                            )
-                            if record_date == today:
-                                return True
-                        except Exception:
-                            pass
-            return False
+            return _record_is_today(manager, data, key_or_list)
 
         for display_name, config in tasks_config.items():
             # 1. 檢查週期 (如果有的話)

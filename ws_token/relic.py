@@ -302,3 +302,150 @@ def plan_balanced_upgrades(
         budget -= best_cost
 
     return steps
+
+
+# --- "衝刺" spend-to-target driver (LIVE; spends fragments) ------------------
+
+
+def spend_to_target(
+    client: WSGameClient,
+    tracker,
+    *,
+    target_spend: int,
+    max_steps: int = 100_000,
+    prefer_smallest: bool = True,
+    level_cap: int = RELIC_LEVEL_CAP,
+    timeout: float | None = None,
+) -> dict:
+    """SPEND 遺物碎片 by levelling relics until ``target_spend`` is consumed.
+
+    The 衝刺榜 (relic sprint) counts the **cumulative 遺物碎片 spent** server-side;
+    every :func:`upgrade_relic` (0x1103) deducts the per-level cost and the server
+    folds that consumption straight into the sprint progress, so there is NO
+    separate submit cmd — we just keep levelling until enough has been spent.
+
+    Strategy (mirrors :func:`plan_balanced_upgrades`'s 平均 spirit, re-decided each
+    step from the LIVE state): always upgrade the **lowest-level** equipped relic
+    still below ``level_cap``. The real per-level cost lives server-side in
+    configRelic and is unknown client-side, so there is no cost table to plan
+    against; instead the live spend is measured from the 0x0402 inventory tracker
+    (``tracker.counts[RELIC_FRAGMENT_ITEM]``, which the server pushes after each
+    step) and the loop stops once the measured spend reaches ``target_spend``.
+
+    Overshoot is minimised by ``prefer_smallest``: the lowest-level relic almost
+    always has the cheapest next step (cost is convex in level), so picking it for
+    the final steps keeps the last (target-crossing) step's cost — and thus the
+    overshoot — as small as possible without needing the real cost table.
+
+    Stop conditions:
+      * measured ``spent >= target_spend`` (target reached);
+      * server rejects with 0x0201 (out of fragments / level cap);
+      * ``max_steps`` reached;
+      * no upgradeable equipped relic remains (all at cap / none equipped).
+
+    When the login-time 0x0402 snapshot never carried item 100022 the fragment
+    count is unknown: ``spent`` cannot be measured, so the loop falls back to the
+    server's 0x0201 reject / ``max_steps`` as the only bounds and the result is
+    flagged ``frag_unknown=True`` (``spent`` is then a best-effort 0).
+
+    Args:
+        client:       a logged-in :class:`WSGameClient`.
+        tracker:      a :class:`ws_token.mining.InventoryTracker` (or any object
+                      exposing ``counts: dict[int, int]``) fed by 0x0402 pushes.
+        target_spend: 遺物碎片 to spend this run (>0; <=0 → no-op).
+        max_steps:    hard cap on upgrade steps regardless of spend.
+        prefer_smallest: keep using the lowest-level (cheapest) relic to shrink the
+                      final overshoot. Always lowest-level here, so effectively the
+                      balanced strategy; kept as a flag for symmetry / future tuning.
+        level_cap:    per-relic max level (default 150).
+        timeout:      per-call WS timeout.
+
+    Returns ``{upgraded, spent, target_spend, stopped, fragments_remaining,
+    frag_unknown}``.
+    """
+    target = int(target_spend)
+    result: dict = {
+        "upgraded": 0,
+        "spent": 0,
+        "target_spend": target,
+        "stopped": "",
+        "fragments_remaining": None,
+        "frag_unknown": False,
+    }
+
+    counts = getattr(tracker, "counts", {})
+    start_frag = counts.get(RELIC_FRAGMENT_ITEM)
+    frag_unknown = start_frag is None
+    result["frag_unknown"] = frag_unknown
+    result["fragments_remaining"] = start_frag
+
+    if target <= 0:
+        result["stopped"] = "target<=0"
+        return result
+
+    info = read_relics(client, timeout=timeout)
+    if not info.success:
+        result["stopped"] = f"read failed (cmd=0x{info.response_cmd:04x})"
+        return result
+
+    # mutable per-uid level map for the equipped relics (live re-decide each step)
+    level: dict[int, int] = {r.uid: r.level for r in info.equipped}
+    if not level:
+        result["stopped"] = "no equipped relic"
+        return result
+
+    # preserve a stable tie-break order (server order = read order)
+    order = [r.uid for r in info.equipped]
+
+    upgraded = 0
+    spent = 0
+    stopped = "max_steps"
+    for _ in range(max(0, int(max_steps))):
+        # measured spend gates the loop (only when fragments are known)
+        if not frag_unknown:
+            cur = counts.get(RELIC_FRAGMENT_ITEM, start_frag)
+            spent = int(start_frag) - int(cur)
+            result["fragments_remaining"] = cur
+            if spent >= target:
+                stopped = "target_reached"
+                break
+
+        # pick the lowest-level equipped relic below cap (tie -> read order)
+        best_uid: Optional[int] = None
+        best_level: Optional[int] = None
+        for uid in order:
+            lv = level[uid]
+            if lv >= level_cap:
+                continue
+            if best_level is None or lv < best_level:
+                best_uid, best_level = uid, lv
+        if best_uid is None:
+            stopped = "all_at_cap"
+            break
+
+        res = upgrade_relic(client, best_uid, timeout=timeout)
+        if not res.success:
+            stopped = f"error_code={res.error_code}"
+            break
+        upgraded += 1
+        # adopt the server's authoritative new level when it echoes the relic
+        if res.relic is not None and res.relic.uid == best_uid:
+            level[best_uid] = res.relic.level
+        else:
+            level[best_uid] += 1
+
+    # final spend recompute (covers the loop-exit edge where the gate didn't run)
+    if not frag_unknown:
+        cur = counts.get(RELIC_FRAGMENT_ITEM, start_frag)
+        spent = int(start_frag) - int(cur)
+        result["fragments_remaining"] = cur
+
+    result["upgraded"] = upgraded
+    result["spent"] = spent
+    result["stopped"] = stopped
+    logger.info(
+        "ws_token relic: spend_to_target upgraded=%d spent=%s/%s stopped=%s "
+        "frag_unknown=%s",
+        upgraded, spent, target, stopped, frag_unknown,
+    )
+    return result

@@ -254,6 +254,15 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     tycoon = bool(_ws_nested.get("tycoon", False))
     # 抽卡 (技能/同伴) — 巢狀 ws_token.gacha 子設定 (預設關)；消耗抽卡券。
     gacha_config = _ws_nested.get("gacha") or None
+    # 看廣告獎勵 (鑽石/種子) — 巢狀 ws_token.ad_rewards 子設定 (預設關)；is_free=1 純 WS 領。
+    # enabled 且 config_ids 非空才傳 list，否則保持不傳 (run_device 該任務 self-skip)。
+    _ad_cfg = _ws_nested.get("ad_rewards")
+    ad_reward_config_ids = None
+    if isinstance(_ad_cfg, dict) and bool(_ad_cfg.get("enabled")):
+        _ids = _ad_cfg.get("config_ids")
+        if isinstance(_ids, (list, tuple)):
+            clean_ids = [int(x) for x in _ids if isinstance(x, (int, float))]
+            ad_reward_config_ids = clean_ids or None
 
     def _nested_int(key: str, default: int) -> int:
         try:
@@ -263,6 +272,18 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     relic_max_steps = _nested_int("relic_max_steps", 10)
     relic_fragment_floor = _nested_int("relic_fragment_floor", 0)
     tycoon_max_rolls = _nested_int("tycoon_max_rolls", 50)
+    # 遺物碎片衝刺 (衝刺榜，SPENDS 遺物碎片) — 巢狀 ws_token.relic_sprint 子設定 (預設關)。
+    # 啟用時才把 enabled/target 透過 extra_kwargs 傳入,未啟用維持既有 wiring 行為。
+    _sprint_cfg = _ws_nested.get("relic_sprint")
+    relic_sprint_enabled = False
+    relic_sprint_target = None
+    if isinstance(_sprint_cfg, dict) and bool(_sprint_cfg.get("enabled")):
+        relic_sprint_enabled = True
+        try:
+            _t = int(_sprint_cfg.get("target_spend"))
+            relic_sprint_target = _t if _t > 0 else None
+        except (TypeError, ValueError):
+            relic_sprint_target = None
     mining_config = cfg.get("ws_token_mining") or None
     # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
     try:
@@ -275,6 +296,17 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         lamp_min_keep = 0
 
     run_device = _load_run_device()
+    # 看廣告獎勵預設關 → 不傳此參數 (run_device 走預設 None)，維持既有 wiring 行為；
+    # 只有啟用時才附上，避免對沒有 **kwargs 的測試 fake 多傳一個關鍵字。
+    extra_kwargs: dict = {}
+    if ad_reward_config_ids is not None:
+        extra_kwargs["ad_reward_config_ids"] = ad_reward_config_ids
+    # 遺物碎片衝刺預設關 → 不傳這兩個參數 (run_device 走預設 False/SPRINT_TOTAL)，維持既有
+    # wiring 行為；只有啟用時才附上,避免對沒有 **kwargs 的測試 fake 多傳關鍵字。
+    if relic_sprint_enabled:
+        extra_kwargs["relic_sprint_enabled"] = True
+        if relic_sprint_target is not None:
+            extra_kwargs["relic_sprint_target"] = relic_sprint_target
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
     def _progress(name: str, status: str, detail: str = "") -> None:
@@ -317,7 +349,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             tycoon=tycoon,
                             tycoon_max_rolls=tycoon_max_rolls,
                             gacha_config=gacha_config,
-                            mining_config=mining_config)
+                            mining_config=mining_config,
+                            **extra_kwargs)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")

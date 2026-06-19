@@ -642,3 +642,160 @@ eval，密度校正後從未重評。研究法：dual-codev（A=我+Explore、B=
 ### Review（完成後填）
 -
 
+---
+
+## 2026-06-19 看廣告獎勵純 WS 自動領取（鑽石/種子/肥料）— 研究完成,待實作
+
+研究全部 live-verified(5556 web_h5 CDP 9223,2026-06-19)。完整協議見 memory
+`reference_ws_ad_reward_protocol`。
+
+### 結論：所有「看廣告領X」走同一個 cmd
+- claim = **`ad.ad_reward_c2s` 0x1602** `{config_id#1, ext#2:[], is_free#3=1}`（買免廣告=NO_ADS
+  特權→is_free=1 即時到帳、無影片）。回 0x1602 `{new_ad:{config_id,count,_,next_ts}}` +
+  獎勵走 item_change 0x0406(1030) 推播；拒絕=0x0201{code}（每日上限 code 89）。
+  抽卡免廣告(`ws_token/gacha.py` 0x1602 slot 8/7)就是這個 cmd（slot=AdType enum）。
+- count 查詢 = **`ad.ad_info_c2s` 0x1601 {}** → repeated `{config_id#1, count#2(當日次數),
+  _#3, next_ts#4(冷卻到期,0=可領)}`。未出現的 config_id 視為 count=0（同 shop_info）。
+
+### 要處理的 config_id（使用者指定）+ live 值
+| config_id | 名稱 | 獎勵 | times/日 | cd | 備註 |
+|---|---|---|---:|---:|---|
+| **15** AD_FARM_SEED | 種子 | 初級種子(101)×3 | 2 | 0 | 原始需求 |
+| **14** AD_FLOAT | 鑽石(=口語粉鑽) | 鑽石(2)×100 | 5 | 300 | cd 5min,每 session 約領 1 |
+| **12** AD_PAY_MALL | 鑽石 | 鑽石(2)×200 | 3 | 0 | ⚠ 不在 ad_info 清單,需 live 確認可純 WS 領 |
+
+（16 AD_FARM_FERTILE 普通肥料(112)×3-20 ×2、17 building-skip ×4 = 可選加,預設不開）
+
+### 使用者明確要求
+1. **透過 WS 直接請求**（買了免廣告,is_free=1）。
+2. **config_id 記進 config 以便追蹤**。
+3. **到每日上限就不請求**（讀 count→remaining=times-count,≤0 跳過;next_ts 未到也跳過,
+   避開 cd 拒絕）= 比照既有 farm shop「讀現值→只補差額」紀律。
+
+### 實作計畫（plan,待使用者過目）
+- [ ] 1. `ws_token/ad_reward.py`：`TIMES`/`AD_NAMES` 常數;`read_ad_counts(client)`(送 0x1601 解析
+      {config_id:(count,next_ts)});`claim_ad(client,config_id)`(loop:remaining>0 且 now>=next_ts
+      才送 0x1602,成功更新 next_ts,0x0201 即停);`claim_ads(client,config_ids)` 彙整。
+      ext 空、is_free=1。body builder 重用 `gacha` 的 `pb_uint(1,id)+pb_uint(3,1)`。
+- [ ] 2. `ws_token/runner.py`：`_run_ad_rewards` + TASK_ORDER + run_device 參數 `ad_reward_config_ids`。
+- [ ] 3. `runtime_services/ws_runner_service.py`：device config `ws_token.ad_rewards`
+      `{enabled, config_ids:[12,14,15]}` → run_device 參數映射。
+- [ ] 4. `config_manager.py`：DEFAULT `ws_token.ad_rewards={"enabled":false,"config_ids":[12,14,15]}`
+      + `_merge_*` sanitizer。
+- [ ] 5. `bot_config.json`：5 台開 `ws_token.ad_rewards={enabled:true,config_ids:[12,14,15]}`
+      = 5554 / 5556 / 5560 / 小寶(7fe98fc6) / 手機fc(adb-fc65396d)（皆已開 ws_token,無額外處理）。
+      **5558 先不開**（使用者 2026-06-19 指示;其 ws_token 本就關著）。
+- [ ] 6. `tests/test_ws_token_ad_reward.py`：read_ad_counts 解析 / 到上限跳過 / cd 跳過 /
+      0x0201 即停 / claim_ads 彙整（fake client,比照 `tests/fakes/ws_fakes.py`）。
+- [ ] 7. live 驗證 config 12（AD_PAY_MALL 不在 ad_info,需確認純 WS 可領）+ 一輪端到端。
+- [ ] ⚠ 改完需重啟 new_main_v2.py 生效。
+
+## 2026-06-19 純視覺農場退役計畫(待 WS 驗證後執行)
+
+> 背景:純 WS 農場三塊 — ① 看廣告領種子(ws_token ad_reward config_id=15)② 豐收卡循環
+> (ws_token.farm.run_harvest_card_cycle)③ 打工 start/stop(ws_token.farm)。三塊「全部 live 驗證」
+> 後,farm_v2 的「純視覺每日領取」可退役。本段只是計畫,**程式碼未刪**;待刪處已加
+> `# remove-after-ws-farm-verify(2026-06-19)` 註解標記方便定位(只加註解,未改邏輯)。
+> 盤點來源:Explore 子代理 + 主代理抽驗(行號以抽驗為準,子代理部分行號有偏差已修正)。
+
+### 退役前置條件(全部打勾才開刪)
+- [ ] 每台仍跑視覺農場的 H5 裝置(5556/5560/7fe98fc6;5558 使用者指示先不開)接上並 live 驗證:
+      `ws_token.ad_rewards{enabled:true, config_ids 含 15}` + `ws_token.farm.harvest_card_cycle{enabled:true}`
+      + `ws_token.farm.buy=[{407,4},{408,4}]`(目前只有 5554 設了 buy)。
+- [ ] adb-fc65396d:確認是否接 WS farm。**若不接 → 視覺/ADB 農場路徑必須全留**(該機 backend=adb,
+      無 WS farm 設定)。
+- [ ] **接線缺口(關鍵,退役前必修)**:`game_actions/ws_phase.py:271` 的農場 skip 條件目前是
+      `("farm" in effective_done) and (cfg.get("farm") or {}).get("seed_id")` —— 只看 `farm.seed_id`。
+      但 WS 農場實際用的是 `farm.buy` / `farm.harvest_card_cycle`,**沒有 seed_id**。故即使 WS 跑完豐收卡,
+      daily_pipeline Task 2「農場任務」也不會被 skip,視覺農場仍會重跑。退役時需把此條件改成
+      「harvest_card_cycle 跑成功 → skip 農場任務」(或 ad_rewards+harvest_card_cycle 都做完才 skip)。
+      未修則「刪視覺農場」會直接讓農場任務無人做。
+
+### A. 可刪(WS 驗證後,低風險)
+- [ ] `farm_v2/operations/ad_seed.py` 全檔(claim_ad_seeds 行 41-72 + _claim_h5 行 75-102)。
+      取代者:ws_token ad_reward(15)。ADB 路徑本就 honest stub(行 60-63 永遠回 0,刪它對 ADB 零影響)。
+      呼叫端要改:`farm_v2/manager.py:195` 刪 `claim_ad_seeds(...)` 呼叫 + 頂部 import。
+      連帶:`tests/test_farm_ad_seed.py` 一併刪。
+- [ ] `farm_v2/web_farm.py` 看廣告專屬 primitive(僅被 ad_seed 用):`seed_ad_status`/`tap_seed_ad`/
+      `reward_open`/`close_reward`/`close_seed_select`/`open_seed_select`(若無其他消費者)。
+      **刪前 grep 確認**這些函式除 ad_seed 外沒被 harvest_card 或別處引用(open_seed_select 可能共用,需查)。
+
+### B. 大部分可刪、保留 ADB 後備(WS 驗證後,中風險)
+- [ ] `farm_v2/operations/harvest_card.py`:H5 視覺豐收卡(run_harvest_card 行 706+ 的 H5 分支 +
+      導航 + 購卡 + 種/施肥/收成的 web/page 路徑)。取代者:ws_token.farm.run_harvest_card_cycle。
+      **必留**:ADB 後備分支(`_*_adb` / OCR `click_str_by_server` 路徑)——adb-fc65396d 若無 WS farm 要靠它。
+      **必留**:`harvest_card.py:31 from farm_v2.operations.weekly_card import check_if_parttime`——
+      weekly_card.py **不可整檔刪**(子代理誤判可立即刪;harvest_card 仍 import 它的 check_if_parttime)。
+      呼叫端要改:`farm_v2/manager.py:198-203`(should_run_card 區塊)依「該機是否仍需視覺農場」決定刪或留。
+- [ ] `farm_v2/operations/seed.py::buy_seed`(行 17-82,金幣買種 OCR 流程):取代者 ws_token.farm.buy_farm_shop
+      (shop 407/408)。**前置**:每台 H5 都設了 `farm.buy` 並驗過。ADB 機若無 WS 則保留。
+      呼叫端:`farm_v2/manager.py:188-191`。
+- [ ] `farm_v2/manager.py:205-244` 本地散落獎勵收集 + 手動種植迴圈(find_and_click getting/get_all/plants/put):
+      WS 打工會自動種+收,這段在 WS 全覆蓋後對 H5 多餘。**保留**給 ADB 機(無 WS)。
+
+### C. 已是死碼、與 WS 無關但可順手清(獨立於 WS 驗證)
+- [ ] `farm_v2/states.py`(FarmState/FarmContext):manager.py:14 有 import 但實際未使用,grep 確認 0 消費者後可刪。
+- [ ] `farm_v2/operations/weekly_card.py`:**不可整檔刪**(見上,check_if_parttime 仍被 harvest_card 用)。
+      可考慮把 check_if_parttime 抽到 base.py 後再刪其餘死碼,但屬重構、非退役範圍,先不動。
+- [ ] `farm_v2/manager.py::quick_farm`(行 263-268)+ `game_api.py` 的 TRIGGER_FARMING:memory 標記為死路徑
+      (無 consumer),可獨立清。
+
+### 必留(無論 WS 是否驗證)
+- `farm_v2/manager.py::farm`(主入口)、`navigate_to_farm`/`navigate_to_home`(daily_pipeline Task 2 呼叫)、
+  `farm()` 的 enable_farm gate + 8h farm_visit 節流 gate —— 只要還有任一裝置走視覺農場就必留。
+- `sea_v2.navigator.world_to_pixel`:被 `web_farm.py:21,174` 單向 import;**sea_v2 不反向依賴 farm_v2**,
+  且 sea_v2 自己也用 world_to_pixel,故 world_to_pixel 必留(屬 sea_v2,非農場專屬)。
+- 共用 helper(`img_tools.find_and_click`、`tools.click_white`、`utils.cocos_navigator`、OCR):跨子系統共用,勿動。
+- 反向依賴掃描結論:除 `daily_pipeline.py:31` + 測試外,**無核心模組 import farm_v2**
+  (`game_actions/navigation.py:17` 特意避開以防循環),退役影響面僅 daily_pipeline Task 2 一處。
+
+### 各裝置 backend / WS farm 涵蓋現況(2026-06-19 盤點,決定誰還需要視覺農場)
+- emulator-5554:web_h5,enable_farm,ws_token.farm.buy 已設(種子/肥料 WS 化);ad/豐收卡尚未 WS 化 → 視覺補。
+- emulator-5556 / 5560 / 7fe98fc6:web_h5,enable_farm,**ws_token.farm 未設** → 視覺農場 100% 承擔。
+- emulator-5558:web_h5(使用者指示先不開 WS)。
+- adb-fc65396d:**backend=adb**,enable_farm,無 WS farm → ADB 視覺農場 100% 承擔(ADB 後備務必留)。
+- web-001(enable_farm=false)/ web-002(停用):不相關。
+
+### 驗證(刪除執行時)
+- [ ] 改完跑 `python -m py_compile` 受影響檔 + `python -m pytest tests/test_farm_gate.py
+      tests/test_farm_ad_seed.py tests/test_harvest_card_*.py -q`(刪 ad_seed 時連帶刪其測試)。
+- [ ] daily_pipeline Task 2:WS-done 裝置應被 skip(需先修 ws_phase.py:271 接線缺口);ADB 裝置仍跑視覺一輪。
+- [ ] ⚠ 改完需重啟 new_main_v2.py 生效(sys.modules cache)。
+
+---
+
+## 2026-06-19 夜間自主批次完成總結(等使用者醒來過目 + commit)
+
+**全部已實作 + 主代理親跑 237 測試綠、py_compile OK、無交叉回歸。未 commit(原因見下)。**
+
+| 功能 | 狀態 | 我碰的檔 |
+|------|------|------|
+| 看廣告獎勵純WS(鑽石12/14+種子15,到上限/cd不請求) | ✅ 3 個 config_id live 實測到帳 | ws_token/ad_reward.py(新)、runner.py、ws_runner_service.py、config_manager.py、bot_config.json(5台)、test_ws_token_ad_reward.py(新) |
+| 農場WS落保留檔 logs/<dev>/ws_farm.log | ✅ | ws_token/farm.py、runner.py、utils/logging_utils.py、utils/log_paths.py |
+| 遺物碎片衝刺(act2 m25,relic_up自動計入,邊升邊追~900K最小overshoot) | ✅ 後端+接線,**未 live 驗(見下方 #25)** | ws_token/relic.py、ws_token/relic_sprint.py(新)、runner.py、ws_runner_service.py、config_manager.py、bot_config.json(5台)、3 測試檔 |
+| #23 工具面板純WS(ws_session 持久連線 + 看廣告一鍵 + 抽卡遷移) | ✅ | control_panel/routes_ad_reward.py(新)、routes_tools_optimize.py、control_panel_app.py、templates/tools_optimize.html、2 測試檔 |
+| #24 遺物均勻升級兩階段工具(規劃→執行) | ✅ | control_panel/routes_relic_sprint.py(新)、control_panel_app.py、templates/tools_optimize.html、2 測試檔 |
+| #19 徽章每日任務/農場種植(讀側 flat-scalar bug + WS 回寫) | ✅ | control_panel/routes_status.py、game_actions/ws_phase.py、test_daily_progress_badge.py(新)、test_ws_phase.py |
+
+**⚠ commit hold 原因**:共用檔 `config_manager.py / bot_config.json / utils/logging_utils.py / utils/log_paths.py / game_actions/ws_phase.py / daily_pipeline.py` 在開工前已被**別的並行 session** 改過(initial git status 已 M);我的改動與他們 WIP 混在同檔無法乾淨切,故全留工作區不 commit,等使用者過目全 diff 再決定範圍。純新檔(ad_reward.py/relic_sprint.py/routes_ad_reward.py/routes_relic_sprint.py + 各新測試)可單獨乾淨 commit。
+
+**⚠ 重啟生效**:runner/ws_phase/config/logging + 中控 routes_* → 需重啟 `new_main_v2.py` + 中控。
+
+**遺物衝刺待 live 驗(#25)**:count 單位(碎片量 vs 次數)、4 輪精確門檻、當期 act_type(13/269)、領獎回應形式。若 count=次數,run_relic_sprint 的 accrued 扣抵邏輯要改。協議細節見 `docs/protocol/RELIC_SPRINT_RECON.md`。
+
+**既有測試失敗(非本批,別 session WIP,未動)**:test_ws_token_gacha(gacha預設drain→fixed)、test_ws_token_runner(statue缺cmd3107+時鐘)、test_farm_gate(is_same_day)。
+
+---
+
+## 2026-06-19 #20 主 dashboard 重設計方案(待使用者過目,**刻意未動手**)
+
+使用者要把裝置卡片「雜亂無章」的設定收斂成「幾個按鈕/開關」。**這是改動控制 live bot 的主控面 `templates/dashboard.html` + config 存檔邏輯的結構性重寫,且高度依賴外觀驗收**——與本夜其他「additive 新面板 + 測試覆蓋」的低風險工作不同。我刻意不在無法視覺驗收時盲改主控面(改壞 config 存檔會誤存裝置設定、影響真機),改成備好方案讓使用者過目/微調後再動。
+
+建議方向(待確認):
+- [ ] 盤點 `templates/dashboard.html` 裝置卡片現有所有設定欄位 + `control_panel/routes_config.py` 存檔對應。
+- [ ] ws_token 一堆子開關(spend/open_lamp/farm/carpark_plan/mining/gacha/ad_rewards/relic_sprint/…)收進可摺疊「WS 任務」分頁,每項一 toggle,取代散落欄位。
+- [ ] 「方案」(adb/adb+ws/h5/h5+ws)等互斥選項用 segmented buttons 取代下拉。
+- [ ] 罕用/進階欄位收進「進階」摺疊區;常用(啟用/方案/喚醒)留卡片正面。
+- [ ] 存檔走既有 routes_config + saveConfig merge,逐欄位保持相容(template 測試先保欄位 hooks 不破)。
+- [ ] 分階段:先做一個裝置卡片新版型 → 使用者看過 → 再套全部。
+

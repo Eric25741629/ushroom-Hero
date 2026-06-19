@@ -30,7 +30,8 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "couple": ("好友每日禮物",),     # 使用者確認 == 伴侶送禮
     "lamp": ("開神燈",),
     "turntable": ("轉盤金幣",),
-    "mining": ("挖礦任務",),
+    "mining": ("挖礦/Oracle",),
+    "gacha": ("抽技能夥伴",),
 }
 
 # pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
@@ -41,7 +42,7 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
 SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
     "商店購買": ("Store",),
     "家族任務": ("donate_family",),
-    "挖礦任務": ("挖礦",),
+    "挖礦/Oracle": ("挖礦",),
     "萬神試煉": ("萬神試煉",),
 }
 
@@ -58,6 +59,85 @@ def _record_daily_done(ip: str, skips: set[str], log) -> None:
                 json_manager.time_recording(ip, name=key)
             except Exception:  # noqa: BLE001 — 紀錄失敗不能影響 WS 階段
                 log.warning("[%s] WS 回寫當日紀錄失敗: %s", ip, key, exc_info=True)
+
+
+# --- WS 專屬 daily-progress 徽章回寫（schema 與 time_recording 不同）-----------
+# 「每日任務」(mission_timestamp) 與「農場種植」(farm_plant_click) 兩個徽章的
+# on-disk schema 與 SKIP_TO_DAILY_RECORD 那批不同，故獨立處理：
+#   - mission_timestamp：flat scalar float（Mission.py 直接存數字）。time_recording
+#     會巢狀成 dict，破壞 Mission.py 讀側 → 必須直接寫 flat scalar。
+#   - farm_plant_click：dict {timestamp,date,datetime,count}（舊視覺 farm_v2 寫）。
+#     用 record_timestamp 維持 dict schema，dashboard 的 is_same_day 才認得。
+# 觸發來源是 report.tasks 的原始鍵（main_tasks / ad_rewards），不是 pipeline skip 名。
+
+# ad_reward config_id：農場種子廣告（使用者澄清「農場種植」== 每日領種子廣告）。
+_AD_FARM_SEED_CONFIG_ID = 15
+
+
+def _mark_mission_done(ip: str, log) -> None:
+    """寫「每日任務」flat scalar mission_timestamp（不可巢狀化）。
+
+    沿用 Mission.py 的 flat schema：保留既有 mission_num，只刷新 timestamp。
+    """
+    import time as _time
+
+    import json_manager
+    mgr = json_manager.JsonDataManager(
+        ip.split(":")[-1] if ":" in ip else ip)
+    data = mgr.load_data(default_data={"mission_timestamp": 0, "mission_num": 0})
+    data["mission_timestamp"] = _time.time()
+    mgr.save_data(data)
+
+
+def _mark_farm_plant_done(ip: str, log) -> None:
+    """寫「農場種植」farm_plant_click（dict schema，含 count）。
+
+    使用者澄清：「農場種植」現等同每日領種子廣告（WS ad_reward config15）。
+    沿用舊視覺 farm_v2 的 dict schema，dashboard 讀側（is_same_day）才認得。
+    """
+    import json_manager
+    json_manager.create_time_manager(
+        ip.split(":")[-1] if ":" in ip else ip
+    ).record_timestamp("farm_plant_click", {"count": 1})
+
+
+def _ad_seed_claimed(report) -> bool:
+    """report.tasks['ad_rewards'] 是否代表「今天農場種子廣告已處理完」。
+
+    完成 = config15 那筆有 ``claimed``（真的領了，含 0 但有送請求）或
+    ``skipped`` 以 "maxed" 開頭（今天已領滿）。``cooldown`` / unknown / 缺項
+    都不算（今天還沒領完，留 ⏳）。
+    """
+    from ws_token import ad_reward
+    res = (report.tasks.get("ad_rewards") or {})
+    if not isinstance(res, dict):
+        return False
+    seed_name = ad_reward.AD_NAMES.get(_AD_FARM_SEED_CONFIG_ID)
+    entry = (res.get("results") or {}).get(seed_name)
+    if not isinstance(entry, dict):
+        return False
+    if "claimed" in entry:
+        return True
+    skipped = entry.get("skipped")
+    return isinstance(skipped, str) and skipped.startswith("maxed")
+
+
+def _record_ws_daily_progress(ip: str, report, effective_done: set[str],
+                              log) -> None:
+    """回寫「每日任務」「農場種植」徽章（schema 與 SKIP_TO_DAILY_RECORD 不同）。
+
+    best-effort：任一寫入失敗只記 log，不影響 skip-set / WS 階段。
+    """
+    if "main_tasks" in effective_done:
+        try:
+            _mark_mission_done(ip, log)
+        except Exception:  # noqa: BLE001 — 紀錄失敗不能影響 WS 階段
+            log.warning("[%s] WS 回寫每日任務紀錄失敗", ip, exc_info=True)
+    if _ad_seed_claimed(report):
+        try:
+            _mark_farm_plant_done(ip, log)
+        except Exception:  # noqa: BLE001
+            log.warning("[%s] WS 回寫農場種植紀錄失敗", ip, exc_info=True)
 
 
 # --- 續做 ledger（中斷後持久化進度；瀏覽器用完重新上線只跑未完成）-------------
@@ -291,6 +371,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _clear_resume(ip, log, state_dir)
 
     _record_daily_done(ip, skips, log)
+    _record_ws_daily_progress(ip, report, effective_done, log)
 
     log.info(
         "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s aborted=%s skip=%s",

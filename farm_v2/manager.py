@@ -192,9 +192,12 @@ def farm(
 
     # 看廣告補初級種子（免廣告卡=直接發、8 點後、每日上限 2 次、看過不再看）。
     # 打工會自動把補到的種子種掉，所以這裡只領+關窗，不手動種。
+    # remove-after-ws-farm-verify(2026-06-19): 由 ws_token ad_reward(15) 取代,WS 驗證後刪此呼叫。
     claim_ad_seeds(d, device_ip, time_manager)
 
     # Weekly harvest card flow (replaces old Mon/Wed/Fri weekly_card)
+    # remove-after-ws-farm-verify(2026-06-19): 由 ws_token.farm.run_harvest_card_cycle 取代,
+    # WS 驗證後刪此整段 should_run_card 區塊(H5 設備);ADB 設備若無 WS farm 設定則保留。
     if should_run_card:
         logger.info("執行每週豐收卡流程")
         if run_harvest_card(d, device_ip=device_ip, cnn_model=cnn_model):
