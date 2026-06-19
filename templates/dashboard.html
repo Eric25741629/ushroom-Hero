@@ -1261,9 +1261,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     <!-- [暫時隱藏] <button id="navWarRoom" class="nav-btn" onclick="switchPage('war-room')">🚗 <span class="nav-label">跨界車位戰情室</span></button> -->
     <button id="navReadme" class="nav-btn" onclick="switchPage('readme')">📢 <span class="nav-label">更新公告</span></button>
     <button id="navLabeler" class="nav-btn" onclick="switchPage('labeler')">🏷 <span class="nav-label">自動標籤</span></button>
-    <a href="/fly-pet" class="nav-btn">&#x1F985; <span class="nav-label">飛寵管理</span></a>
-    <a href="/inventory" class="nav-btn">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></a>
-    <a href="/tools-optimize" class="nav-btn">&#x1F6E0;&#xFE0F; <span class="nav-label">工具 優化類</span></a>
+    <button id="navFlypet" class="nav-btn" onclick="switchPage('flypet')">&#x1F985; <span class="nav-label">飛寵管理</span></button>
+    <button id="navInventory" class="nav-btn" onclick="switchPage('inventory')">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></button>
+    <button id="navTools" class="nav-btn" onclick="switchPage('tools')">&#x1F6E0;&#xFE0F; <span class="nav-label">工具 優化類</span></button>
 
   </div>
 
@@ -1490,6 +1490,24 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         loading="lazy"
         src=""
       ></iframe>
+    </div>
+  </div>
+
+  <div id="page-flypet" class="page">
+    <div class="war-room-shell">
+      <iframe id="flypetFrame" class="war-room-frame" title="飛寵管理" loading="lazy" src=""></iframe>
+    </div>
+  </div>
+
+  <div id="page-inventory" class="page">
+    <div class="war-room-shell">
+      <iframe id="inventoryFrame" class="war-room-frame" title="倉庫 (守護靈/神器附魔)" loading="lazy" src=""></iframe>
+    </div>
+  </div>
+
+  <div id="page-tools" class="page">
+    <div class="war-room-shell">
+      <iframe id="toolsFrame" class="war-room-frame" title="工具 優化類" loading="lazy" src=""></iframe>
     </div>
   </div>
 
@@ -2105,6 +2123,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
     let warRoomLoaded = false; // [暫時隱藏] 戰情室
     let updatesLoaded = false;
+    let flypetLoaded = false;
+    let inventoryLoaded = false;
+    let toolsLoaded = false;
     let currentFrontendVersion = INITIAL_FRONTEND_VERSION;
 
 
@@ -2295,12 +2316,18 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       // document.getElementById('page-war-room').classList.toggle('active', page === 'war-room'); // [暫時隱藏]
       document.getElementById('page-readme').classList.toggle('active', page === 'readme');
       document.getElementById('page-labeler').classList.toggle('active', page === 'labeler');
+      document.getElementById('page-flypet').classList.toggle('active', page === 'flypet');
+      document.getElementById('page-inventory').classList.toggle('active', page === 'inventory');
+      document.getElementById('page-tools').classList.toggle('active', page === 'tools');
 
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
 
       // document.getElementById('navWarRoom').classList.toggle('active', page === 'war-room'); // [暫時隱藏]
       document.getElementById('navReadme').classList.toggle('active', page === 'readme');
       document.getElementById('navLabeler').classList.toggle('active', page === 'labeler');
+      document.getElementById('navFlypet').classList.toggle('active', page === 'flypet');
+      document.getElementById('navInventory').classList.toggle('active', page === 'inventory');
+      document.getElementById('navTools').classList.toggle('active', page === 'tools');
 
       if (page === 'labeler') {
 
@@ -2319,6 +2346,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         }
 
+      } else if (page === 'flypet') {
+        if (!flypetLoaded) { document.getElementById('flypetFrame').src = '/fly-pet'; flypetLoaded = true; }
+      } else if (page === 'inventory') {
+        if (!inventoryLoaded) { document.getElementById('inventoryFrame').src = '/inventory'; inventoryLoaded = true; }
+      } else if (page === 'tools') {
+        if (!toolsLoaded) { document.getElementById('toolsFrame').src = '/tools-optimize'; toolsLoaded = true; }
       } else {
 
         fetchStatus();
