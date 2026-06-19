@@ -251,7 +251,9 @@ def claim_ads(client: WSGameClient,
     try:
         counts = read_ad_counts(client, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — degrade to zero counts, never abort
-        logger.info("ws_token ad_reward: ad_info read failed (%s); 視為全 0", exc)
+        logger.warning(
+            "ws_token ad_reward: ad_info 讀取失敗 (%s); 視為全 0，改靠 server 0x0201 "
+            "界限（已滿/冷卻會被擋下，claim_ad 自停）", exc)
         counts = {}
 
     results: dict[str, dict] = {}

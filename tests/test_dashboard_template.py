@@ -124,6 +124,56 @@ def test_dashboard_exposes_ws_offline_fallback_toggle():
     assert "adb+ws" in html
 
 
+def test_dungeon_label_describes_real_dungeon_tasks():
+    """chkDungeon = enable_dungeon，真正控制副本（地獄之門/萬神試煉/雙週賞金）。
+
+    Regression (2026-06-19): 原標籤寫成「啟用地城（螺旋/秘境）」——遊戲沒有螺旋/秘境，
+    且 config 鍵是 enable_dungeon（config_manager.py 註解：啟用副本(地獄/萬神)）。
+    標籤必須改成描述真正受控的副本任務，且 id 與存檔對應不可變。
+    """
+    html = _html()
+    assert 'id="chkDungeon"' in html
+    # 新標籤點名真正的副本任務
+    assert "啟用副本（地獄之門/萬神試煉/雙週賞金）" in html
+    # 錯誤的舊文案必須消失
+    assert "螺旋/秘境" not in html
+    # 存檔對應維持
+    assert "config.enable_dungeon" in html
+    assert "enable_dungeon: document.getElementById('chkDungeon').checked" in html
+
+
+def test_device_settings_core_toggle_ids_intact():
+    """收斂分組（WS 任務 / 進階摺疊區）後，所有原本的開關 input id 必須仍存在，
+    否則 saveConfig/loadConfig 會抓不到元素 → 存檔壞掉。"""
+    html = _html()
+    for cid in (
+        "chkEnabled", "chkFarm", "chkArena", "chkMining", "chkDungeon",
+        "chkRealPhone", "chkWsOpenLamp", "chkWsMining", "chkWsKungfuGuess",
+        "chkWsOfflineFallback", "inpWsLampPercent", "inpWsLampMinKeep",
+    ):
+        assert f'id="{cid}"' in html, f"missing settings input id={cid}"
+        # 每個 id 只出現一次（避免重複導致 getElementById 抓錯）
+        assert html.count(f'id="{cid}"') == 1, f"duplicate settings input id={cid}"
+
+
+def test_settings_ws_and_advanced_groups_are_collapsible():
+    """雜亂子開關收進可摺疊群組（<details>），常用任務開關留在外層。"""
+    html = _html()
+    assert "WS 任務（純 WS，需 +ws 方案）" in html
+    assert "<summary>進階</summary>" in html
+    # 常用任務改名後的群組標題
+    assert "常用任務開關" in html
+
+
+def test_device_grid_does_not_stretch_cards():
+    """裝置卡片高度貼合內容，不被同列最高卡拉伸（修卡片底部留白）。"""
+    html = _html()
+    match = re.search(r"\.grid-container\s*\{(.*?)\}", html, re.S)
+    assert match, ".grid-container rule not found"
+    rule = match.group(1)
+    assert "align-items: start" in rule
+
+
 def test_skip_sleep_button_replaces_manual_wake_adjustment():
     html = _html()
     assert "調整喚醒" not in html

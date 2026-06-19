@@ -70,6 +70,15 @@ _refresh_needed = False
 _SCREENSHOT_WINDOW = 50
 _screenshot_windows: Dict[str, deque] = {}
 
+# Per-device dashboard log ring buffer cap. The frontend pulls bot_state.logs
+# via /api/status and renders the tail (card log-box: last 3; labeler/trainer
+# panels: last 40/120), so the buffer must hold enough history to feed those
+# views. The per-device file logger forwards every line here through
+# logging_utils.BotStateLogHandler -> append_log(), which is what actually keeps
+# the dashboard log-box populated (update_state(log=...) is only called from ~10
+# rare error/sleep/scan sites and would otherwise leave the box near-empty).
+_MAX_DEVICE_LOGS = 200
+
 # Devices whose automation thread runs in THIS process (local). Remote worker
 # devices are keyed "worker_id:ip" and are aggregated via report_status — they
 # never run a local thread, so they never register here. This is the reliable
@@ -264,10 +273,10 @@ def update_state(
             state["step_deadline"] = float(step_deadline)
 
         if log is not None:
-            # 只保留最近 10 筆 logs
+            state.setdefault("logs", [])
             state["logs"].append(f"{time.strftime('%H:%M:%S')} - {log}")
-            if len(state["logs"]) > 10:
-                state["logs"].pop(0)
+            if len(state["logs"]) > _MAX_DEVICE_LOGS:
+                del state["logs"][:-_MAX_DEVICE_LOGS]
 
         if next_wake_at is not None:
             state["next_wake_at"] = float(next_wake_at)
@@ -351,6 +360,42 @@ def update_remote_metrics(ip: str, logs=None, avg_screenshot_ms=None) -> None:
             st["logs"] = logs
         if avg_screenshot_ms is not None:
             st["avg_screenshot_ms"] = avg_screenshot_ms
+
+
+def append_log(ip: str, line: str) -> None:
+    """Append one already-formatted log line to a device's dashboard ring buffer.
+
+    Fast path for the per-device file logger bridge
+    (logging_utils.BotStateLogHandler): every `logger.info(...)` a device thread
+    emits lands here so the dashboard log-box mirrors the real execution log,
+    instead of staying near-empty (the box was previously fed only by the ~10
+    rare `update_state(log=...)` call sites).
+
+    Unlike `update_state(log=...)`, this does NOT touch `last_update` — a log line
+    is not a heartbeat, and treating it as one would interfere with the
+    offline/heartbeat-age detection that watches `last_update`. It also never
+    auto-creates a device that has not been initialised, so stray library logging
+    before `init_device` cannot spawn phantom dashboard cards.
+    """
+    if not ip or line is None:
+        return
+    text = str(line).strip()
+    if not text:
+        return
+    # NOTE: at high log volume this contends the per-device lock with state
+    # updates (update_state holds the same lock). The critical section is a tiny
+    # list append + trim, so the hold time is negligible and the contention is
+    # acceptable in practice. If a hot device ever shows lock pressure here, batch
+    # lines and flush periodically rather than locking per line. Left as-is for now.
+    lock = get_device_lock(ip)
+    with lock:
+        st = _states.get(ip)
+        if st is None:
+            return
+        logs = st.setdefault("logs", [])
+        logs.append(text)
+        if len(logs) > _MAX_DEVICE_LOGS:
+            del logs[:-_MAX_DEVICE_LOGS]
 
 
 def get_all_states() -> Dict[str, Dict[str, Any]]:

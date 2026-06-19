@@ -80,12 +80,15 @@ def test_plan_open_with_enough_fragments(monkeypatch):
     monkeypatch.setattr(rrs.ws_sprint, "read_sprint", lambda c, at, **k: {
         "open": True, "act_type": 269, "accrued": 450_000,
         "claimable_rounds": [2],
-        "tasks": [
-            {"task_id": 1001, "status": 2, "count": 450_000},  # 已領
-            {"task_id": 1002, "status": 1, "count": 450_000},  # 可領
-            {"task_id": 1003, "status": 0, "count": 450_000},  # 未達
-            {"task_id": 1004, "status": 0, "count": 450_000},
+        # 新模型:rounds = 4 個 stage round(small_group_id 1..4),_rounds_view 讀這個。
+        "rounds": [
+            {"small_group_id": 1, "task_id": 269129, "status": 2, "done_subtasks": 7},  # 已領
+            {"small_group_id": 2, "task_id": 269130, "status": 1, "done_subtasks": 7},  # 可領
+            {"small_group_id": 3, "task_id": 269131, "status": 0, "done_subtasks": 3},  # 未達
+            {"small_group_id": 4, "task_id": 269132, "status": 0, "done_subtasks": 0},
         ],
+        "tasks": [{"task_id": 269101 + i, "status": 0, "count": 450_000}
+                  for i in range(28)],  # 28 milestone 子任務(非輪)
     })
     monkeypatch.setattr(rrs.ws_relic, "read_relics",
                         lambda c, **k: _FakeRelicInfo([object(), object()]))
@@ -176,11 +179,11 @@ def test_execute_returns_summary(monkeypatch):
             "frag_unknown": False,
             "claimed_rounds": [3, 4],
             "sprint_before": {"open": True, "accrued": 450_000},
-            "sprint_after": {"open": True, "accrued": 900_000, "tasks": [
-                {"task_id": 1001, "status": 2, "count": 900_000},
-                {"task_id": 1002, "status": 2, "count": 900_000},
-                {"task_id": 1003, "status": 2, "count": 900_000},
-                {"task_id": 1004, "status": 2, "count": 900_000},
+            "sprint_after": {"open": True, "accrued": 900_000, "rounds": [
+                {"small_group_id": 1, "task_id": 269129, "status": 2, "done_subtasks": 7},
+                {"small_group_id": 2, "task_id": 269130, "status": 2, "done_subtasks": 7},
+                {"small_group_id": 3, "task_id": 269131, "status": 2, "done_subtasks": 7},
+                {"small_group_id": 4, "task_id": 269132, "status": 2, "done_subtasks": 7},
             ]},
         }
 
@@ -246,6 +249,43 @@ def test_execute_502_when_no_session(monkeypatch):
     resp = client.post("/api/relic_sprint/execute/emulator-5554", json={})
     assert resp.status_code == 502
     assert resp.get_json()["status"] == "error"
+
+
+# --- _trackers LRU size cap (記憶體：per-ip dict 不可無限增長) ----------------
+
+def test_tracker_registry_is_size_capped():
+    cpa = _import_control_panel_app()  # ensure module importable
+    del cpa
+    from control_panel import routes_relic_sprint as rrs
+    rrs._trackers.clear()
+    # create more trackers than the cap -> registry stays bounded, oldest evicted
+    for i in range(rrs._MAX_TRACKERS + 10):
+        rrs._tracker_for(f"dev-{i}")
+    assert len(rrs._trackers) == rrs._MAX_TRACKERS
+    # the earliest-created ids were evicted; the most recent are retained
+    assert "dev-0" not in rrs._trackers
+    assert f"dev-{rrs._MAX_TRACKERS + 9}" in rrs._trackers
+    rrs._trackers.clear()
+
+
+def test_tracker_registry_lru_touches_keep_recent_alive():
+    cpa = _import_control_panel_app()
+    del cpa
+    from control_panel import routes_relic_sprint as rrs
+    rrs._trackers.clear()
+    keep = rrs._tracker_for("keep-me")
+    # fill up to the cap with fresh ids
+    for i in range(rrs._MAX_TRACKERS - 1):
+        rrs._tracker_for(f"filler-{i}")
+    # re-touch keep-me so it becomes most-recently-used, then push one more in
+    again = rrs._tracker_for("keep-me")
+    assert again is keep  # same instance (not rebuilt)
+    rrs._tracker_for("one-more")
+    # keep-me survived eviction because it was touched; an early filler got evicted
+    assert "keep-me" in rrs._trackers
+    assert "filler-0" not in rrs._trackers
+    assert len(rrs._trackers) == rrs._MAX_TRACKERS
+    rrs._trackers.clear()
 
 
 # --- auth: unauthenticated requests are rejected ----------------------------

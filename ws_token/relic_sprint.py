@@ -2,15 +2,34 @@
 
 The "遺物碎片衝刺" is one rotation of the generic cross-server limited rank
 ("衝刺榜 / RankRush / cross_limited_rank") activity framework, gated to the relic
-養成 system: spending 遺物碎片 (item 100022) accrues server-side toward 4 cumulative
-rounds (``small_group_id`` 1..4). Reaching a round's threshold flips that task to
-CanGet; the per-round reward is then claimed with one packet.
+養成 system: spending 遺物碎片 (item 100022, currency 7) accrues server-side, and
+reaching round thresholds lets you claim per-round rewards.
+
+🔑 LIVE-verified 2026-06-19 on 5556 (CDP 9223, act_type=269, group_id=2698). The
+earlier "4 tasks / accrued=max(count)" recon was WRONG; the real structure is:
+
+  * **32 tasks**, two kinds (distinguished by config ``is_stage``):
+    - **28 non-stage milestone tasks** (is_stage=0), 7 per round × 4 rounds.
+      Their ``count`` = the **cumulative 遺物碎片 spent** (one shared server counter,
+      mirrored identically onto all 28). status flips to CanGet (1) once
+      ``count >= condition[2]`` (that milestone's cumulative threshold). Reward is
+      a token [gold 2:100, item 1002:5] — usually auto / not the prize.
+    - **4 STAGE round tasks** (is_stage=1), one per ``small_group_id`` 1..4,
+      ``condition=[]``. Their ``count`` = **how many of that round's 7 sub-tasks are
+      done** (0..7); status flips to CanGet when count==7 (round fully cleared).
+      THESE are the claimable rounds (big reward [1017:2000, 2:400, 1002:20]),
+      claimed with ``send_25_144(act_type, small_group_id)`` = 6575 {act_type, sgid}.
+
+  * Round cumulative thresholds (= last sub-task per round): 225K / 450K / 675K /
+    900K (== ROUND_THRESHOLDS). Per-relic level-up cost at lv~88 is ~125K-140K
+    fragments LIVE, so the full 900K sprint is only ~7 level-ups.
 
 🔑 The spend itself is NOT submitted here. relic ``relic_level_up`` (0x1103)
 deducts the fragments and the server folds that consumption straight into the
-sprint ``count`` — so the flow is: SPEND fragments by levelling relics
+sprint ``count`` (LIVE: one level-up 88→89 cost 125290 → all 28 milestone counts
+jumped 0→125290) — so the flow is: SPEND fragments by levelling relics
 (:func:`ws_token.relic.spend_to_target`) → re-read the sprint → claim every
-CanGet round. See docs/protocol/RELIC_SPRINT_RECON.md (唯讀 recon, 2026-06-19).
+CanGet stage round. See docs/protocol/RELIC_SPRINT_RECON.md (LIVE recon).
 
 Cmd map (cmd = module(25)*256 + sub; c2s/s2c share the id; failures -> 0x0201)::
 
@@ -50,10 +69,24 @@ CMD_ERROR = 0x0201            # error.error_info_s2c {error_code#1}
 # 遺物碎片衝刺 candidate act_types (monthly-rotated — probe, don't hard-code).
 ACT_TYPES: tuple[int, ...] = (13, 269)  # RankRush_8 / RankRush_New_7
 
-# 4 cumulative rounds; small_group_id 1..4. Thresholds (cumulative 遺物碎片 spent)
-# are the推斷 values pending live confirm (RELIC_SPRINT_RECON.md 待 live #1).
+# Structure (LIVE-verified for act 269; framework-identical across rotations).
+SUBTASKS_PER_ROUND = 7   # non-stage milestone tasks per round (config is_stage=0)
+NUM_ROUNDS = 4           # stage round tasks (config is_stage=1), small_group_id 1..4
+
+# Round cumulative-spend thresholds (= the last sub-task's condition[2] per round),
+# LIVE-read from configCross_limited_rank_task.condition. A round becomes
+# claimable once cumulative spent >= its threshold (all 7 sub-tasks crossed).
 ROUND_THRESHOLDS: tuple[int, ...] = (225_000, 450_000, 675_000, 900_000)
 SPRINT_TOTAL = 900_000  # = ROUND_THRESHOLDS[-1]; full-sprint target spend
+
+# Hard backstop on the number of relic level-ups one sprint run may perform.
+# The full 900K sprint is only ~7 level-ups LIVE (per-level cost ~125K-140K at
+# lv~88), so 30 is a generous ceiling. This protects against runaway spend even
+# if the server ``accrued`` read goes wrong: spend_to_target is driven by the
+# authoritative ``accrued`` gate, but max_steps is the fail-safe second bound —
+# crucial because the 0x0402 fragment delta is unmeasurable when an upgrade reply
+# omits item 100022 (frag_unknown), which is the common case.
+MAX_SPRINT_UPGRADES = 30
 
 # p_cross_limited_rank_task.status (ActivityTaskState)
 STATUS_NORMAL = 0
@@ -70,7 +103,26 @@ class SprintTask:
 
     task_id: int       # #1
     status: int        # #2 — 0 Normal / 1 CanGet / 2 HadGet
-    count: int         # #3 — server-accrued progress (cumulative fragments spent)
+    count: int         # #3 — non-stage: cumulative 遺物碎片 spent;
+    #                          stage: number of that round's sub-tasks done (0..7)
+
+    @property
+    def can_get(self) -> bool:
+        return self.status == STATUS_CAN_GET
+
+    @property
+    def had_get(self) -> bool:
+        return self.status == STATUS_HAD_GET
+
+
+@dataclass(frozen=True)
+class SprintRound:
+    """A claimable stage round (config is_stage=1)."""
+
+    small_group_id: int   # 1..4 — the claim key (send_25_144 arg 2)
+    task_id: int          # the stage task's id
+    status: int           # 0 Normal / 1 CanGet / 2 HadGet
+    done_subtasks: int    # stage task count == sub-tasks cleared in this round
 
     @property
     def can_get(self) -> bool:
@@ -83,33 +135,41 @@ class SprintTask:
 
 @dataclass(frozen=True)
 class Sprint:
-    """A parsed act_cross_limited_rank_info_s2c snapshot."""
+    """A parsed act_cross_limited_rank_info_s2c snapshot.
+
+    ``tasks`` keeps every raw task (in wire order); ``rounds`` is the derived list
+    of the NUM_ROUNDS stage tasks (the claimable rounds), ordered by small_group_id.
+    """
 
     open: bool                          # True iff a task_list came back
     act_type: int = 0                   # #1
     group_id: int = 0                   # #2
-    tasks: tuple[SprintTask, ...] = ()  # #3
+    tasks: tuple[SprintTask, ...] = ()  # #3 — all 32 raw tasks
+    rounds: tuple[SprintRound, ...] = ()  # derived: the 4 stage rounds
     response_cmd: int = 0
     error_code: Optional[int] = None
     raw: dict = field(compare=False, default_factory=dict)
 
     @property
     def accrued(self) -> int:
-        """Max task ``count`` = cumulative progress already spent this sprint.
+        """Cumulative 遺物碎片 already spent this sprint.
 
-        All 4 rounds share one cumulative counter, so the largest reported count
-        is the current progress (rounds not yet reached may report 0).
+        This is the **non-stage** milestone count (one shared server counter
+        mirrored onto all 28 sub-tasks). It is read as the max count among
+        non-stage tasks; stage-task counts (tiny 0..7) are excluded, so this is
+        robust even before the stage rounds are identified.
         """
-        return max((t.count for t in self.tasks), default=0)
+        non_stage = [t.count for t in self.tasks
+                     if t.count > SUBTASKS_PER_ROUND or not self._is_stage(t)]
+        return max(non_stage, default=0)
 
     @property
     def claimable_rounds(self) -> tuple[int, ...]:
-        """small_group_ids (1..4) whose task is CanGet (claim, not yet taken)."""
-        out = []
-        for idx, task in enumerate(self.tasks, start=1):
-            if task.can_get:
-                out.append(idx)
-        return tuple(out)
+        """small_group_ids (1..4) of stage rounds that are CanGet (claim now)."""
+        return tuple(r.small_group_id for r in self.rounds if r.can_get)
+
+    def _is_stage(self, task: SprintTask) -> bool:
+        return any(r.task_id == task.task_id for r in self.rounds)
 
 
 @dataclass(frozen=True)
@@ -137,6 +197,30 @@ def _parse_task(entry: bytes) -> SprintTask:
     d = codec.walk_dict(entry)
     return SprintTask(task_id=_as_int(d.get(1)), status=_as_int(d.get(2)),
                       count=_as_int(d.get(3)))
+
+
+def _derive_rounds(tasks: tuple[SprintTask, ...]) -> tuple[SprintRound, ...]:
+    """Identify the NUM_ROUNDS stage (round) tasks from the raw task list.
+
+    Pure-WS has no config table, so stage tasks are identified structurally from
+    the LIVE-verified layout: the task list is ``NUM_ROUNDS * SUBTASKS_PER_ROUND``
+    non-stage milestones followed by ``NUM_ROUNDS`` stage tasks (ascending
+    task_id; the 4 stage tasks are the highest task_ids). small_group_id is then
+    their ordinal 1..NUM_ROUNDS by ascending task_id — matching config
+    (LIVE: 269129→sgid1 .. 269132→sgid4).
+
+    Returns () when the list doesn't match the expected size (wrong rotation /
+    framework change) so callers can treat it as "no rounds" rather than guess.
+    """
+    expected = NUM_ROUNDS * SUBTASKS_PER_ROUND + NUM_ROUNDS
+    if len(tasks) != expected:
+        return ()
+    stage = sorted(tasks, key=lambda t: t.task_id)[-NUM_ROUNDS:]
+    return tuple(
+        SprintRound(small_group_id=i, task_id=t.task_id, status=t.status,
+                    done_subtasks=t.count)
+        for i, t in enumerate(stage, start=1)
+    )
 
 
 # --- body builders ----------------------------------------------------------
@@ -178,6 +262,7 @@ def parse_sprint(cmd: int, body: bytes) -> Sprint:
         act_type=_as_int(d.get(1)),
         group_id=_as_int(d.get(2)),
         tasks=tasks,
+        rounds=_derive_rounds(tasks),
         response_cmd=cmd,
         raw=d,
     )
@@ -204,9 +289,12 @@ def read_sprint(client: WSGameClient, act_type: int, *,
                 timeout: Optional[float] = None) -> dict:
     """Read one act_type's sprint progress (6572). Returns a plain dict.
 
-    ``{open, act_type, group_id, accrued, claimable_rounds, tasks}`` where ``tasks``
-    is a list of ``{task_id, status, count}``. A closed / wrong-rotation act_type
-    (no task_list, or a 0x0201) returns ``{"open": False, "act_type": act_type}``.
+    ``{open, act_type, group_id, accrued, claimable_rounds, rounds, tasks}`` where
+    ``accrued`` is the cumulative 遺物碎片 spent, ``claimable_rounds`` is the list of
+    CanGet stage small_group_ids, ``rounds`` describes all 4 stage rounds, and
+    ``tasks`` is the raw list of ``{task_id, status, count}``. A closed /
+    wrong-rotation act_type (no task_list, or a 0x0201) returns
+    ``{"open": False, "act_type": act_type}``.
     """
     cmd, reply = client.call_for(
         CMD_SPRINT_INFO, build_info_body(act_type),
@@ -221,9 +309,30 @@ def read_sprint(client: WSGameClient, act_type: int, *,
         "group_id": sprint.group_id,
         "accrued": sprint.accrued,
         "claimable_rounds": list(sprint.claimable_rounds),
+        "rounds": [{"small_group_id": r.small_group_id, "task_id": r.task_id,
+                    "status": r.status, "done_subtasks": r.done_subtasks}
+                   for r in sprint.rounds],
         "tasks": [{"task_id": t.task_id, "status": t.status, "count": t.count}
                   for t in sprint.tasks],
     }
+
+
+def _current_accrued(client: WSGameClient, act_type: int, *,
+                     timeout: Optional[float] = None) -> int:
+    """Re-read the sprint and return the server-authoritative cumulative spend.
+
+    Used as the ``should_stop`` driver for :func:`ws_token.relic.spend_to_target`:
+    ``accrued`` is the 28-milestone shared counter the server folds each relic_up
+    consumption into, so it is the ground truth for "how much have we spent this
+    sprint" — reliable even when the 0x0402 inventory tracker never saw item
+    100022. A failed / closed read returns 0 (don't stop on a transient hiccup;
+    ``MAX_SPRINT_UPGRADES`` remains the hard backstop).
+    """
+    try:
+        snapshot = read_sprint(client, act_type, timeout=timeout)
+    except (WSTimeoutError, WSError):
+        return 0
+    return int(snapshot.get("accrued", 0) or 0)
 
 
 def find_active_act_type(client: WSGameClient, *,
@@ -287,15 +396,24 @@ def run_relic_sprint(
 
       1. :func:`find_active_act_type` — bail with ``{"skipped": "no active sprint"}``
          if neither 13 nor 269 is the current rotation.
-      2. Read the sprint; subtract progress already accrued so we only spend the
-         remaining deficit (``remaining = max(0, target_spend - accrued)``). When
+      2. Read the sprint. If it is open but the stage ``rounds`` couldn't be derived
+         (wrong rotation / framework change — ``_derive_rounds`` returned ()), bail
+         with ``{"skipped": "protocol_mismatch"}`` WITHOUT spending: we can't tell
+         which round to claim, so any fragments spent would be unrecoverable.
+         Otherwise subtract progress already accrued so we only spend the remaining
+         deficit (``remaining = max(0, target_spend - accrued)``). When
          ``remaining <= 0`` we DON'T level any relic — just claim CanGet rounds.
-      3. :func:`ws_token.relic.spend_to_target` to consume ``remaining`` fragments
-         (the server folds the spend into the sprint count automatically).
-      4. Re-read the sprint; :func:`claim_round` for every CanGet round.
+      3. :func:`ws_token.relic.spend_to_target` to consume ``remaining`` fragments.
+         **Stop is driven by the server-authoritative sprint ``accrued``** (re-read
+         after each relic_up via ``should_stop``), NOT the 0x0402 tracker delta —
+         which is unmeasurable when an upgrade reply omits item 100022. A hard
+         ``max_steps=MAX_SPRINT_UPGRADES`` is the fail-safe second bound so the run
+         can never run away even if ``accrued`` reads go wrong.
+      4. Re-read the sprint; :func:`claim_round` for every CanGet stage round
+         (using each round's config-derived ``small_group_id``).
 
     Returns ``{act_type, spent, claimed_rounds, sprint_before, sprint_after}`` (or
-    ``{"skipped": ...}`` when disabled / no active sprint).
+    ``{"skipped": ...}`` when disabled / no active sprint / protocol_mismatch).
     """
     if not enabled:
         return {"skipped": "disabled"}
@@ -305,16 +423,33 @@ def run_relic_sprint(
         return {"skipped": "no active sprint"}
 
     sprint_before = read_sprint(client, act_type, timeout=timeout)
+    # Guard: open but no derivable rounds → don't spend (can't claim → wasted).
+    if sprint_before.get("open") and not sprint_before.get("rounds"):
+        logger.warning(
+            "ws_token relic_sprint: act_type=%s open 但 rounds 結構不符 — 不花碎片 "
+            "(protocol_mismatch)", act_type)
+        return {"skipped": "protocol_mismatch", "act_type": act_type,
+                "sprint_before": sprint_before}
+
     accrued = int(sprint_before.get("accrued", 0) or 0)
-    remaining = max(0, int(target_spend) - accrued)
+    target = int(target_spend)
+    remaining = max(0, target - accrued)
 
     spend_result: dict = {"upgraded": 0, "spent": 0, "stopped": "no_spend_needed"}
     if remaining > 0:
+        # Authoritative stop: re-read the sprint accrued after each level-up and
+        # stop the moment it reaches the target. Combined with MAX_SPRINT_UPGRADES
+        # this bounds the spend even when the fragment count is unknown.
+        def _reached_target() -> bool:
+            return _current_accrued(client, act_type, timeout=timeout) >= target
+
         spend_result = relic.spend_to_target(
-            client, tracker, target_spend=remaining, timeout=timeout)
+            client, tracker, target_spend=remaining,
+            max_steps=MAX_SPRINT_UPGRADES,
+            should_stop=_reached_target, timeout=timeout)
     else:
         logger.info("ws_token relic_sprint: accrued=%s >= target=%s — claim only",
-                    accrued, target_spend)
+                    accrued, target)
 
     # Re-read so freshly-crossed round thresholds show CanGet, then claim them.
     sprint_after = read_sprint(client, act_type, timeout=timeout)

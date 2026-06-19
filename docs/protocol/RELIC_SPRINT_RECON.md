@@ -1,163 +1,152 @@
-# 遺物碎片衝刺活動 (Relic Sprint / 衝刺榜) — 唯讀協議 recon
+# 遺物碎片衝刺活動 (Relic Sprint / 衝刺榜) — LIVE 實證協議 recon
 
-> 2026-06-19 唯讀分析。資料來源:client 源碼
-> `docs/game_client_sources/mushroomh5.acenetgame.com_assets_script_index.966f5.js`
-> (22MB minified,re.finditer 切片)、`docs/protocol/{ACT2,TYPE}_PROTO_SCHEMA.json`、
-> `ws_token/relic.py`、`docs/protocol/RELIC_ALLOC_RECON.md`。
-> **全程唯讀,未動 live 裝置、未送任何封包。** 門檻數值 (225K…) + 計數語意的最終確認
-> 列在「待 live 確認」。
+> **2026-06-19 LIVE recon（5556, CDP 9223, web_h5 host mushroomh5.acenetgame.com）。**
+> 推翻了 2026-06-19 早上的快速 recon（「4 task / accrued=max(count) / 門檻 225K-900K
+> 4 輪」)。真機讀 6572、讀 config 表、實際升 2 次遺物坐實 count 語意。
+> 資料來源:live 6572 reply bytes、`configCross_limited_rank_task.getDataByKey`(CDP 讀)、
+> client 源碼 `docs/game_client_sources/...index.966f5.js`(RankingRushDataCache /
+> RankingRushView setTaskList)。**升級只在 5556、總共 2 次（lv88→90 同一遺物 cfg=4029），
+> 確認語意後即停,未把碎片升光、未跑到 900K、未領獎。**
 
-## TL;DR(最重要的結論)
+## TL;DR(最重要、與舊 recon 的差異)
 
-- **衝刺活動 = 跨服限時排行榜「衝刺榜 (RankRush / Cross Limited Rank)」**,是通用活動框架
-  的一種 `ActivityType`。「遺物碎片衝刺」對應 **`ActivityType.RankRush_8 = 13`**
-  (舊版輪替) / **`RankRush_New_7 = 269`**(新版輪替)。
-  證據:client `JumpView` / `openView` 對這兩個 type 都 `uiMgr.openView("RelicMainView")`
-  —— 點衝刺活動直接跳到遺物頁,完全對上「用遺物升級衝刺」。
-- **協議走 `act2` 模組 (module 25 = 0x19) 的 `cross_limited_rank` 系列**(NOT relic 模組,
-  也 NOT act/24)。讀進度 / 領輪獎都在這裡;見下方 cmd 表。
-- **4 輪 = `small_group_id` 1..4**(client `setTaskList` 以 `is_stage==1` + `small_group_id`
-  分頁,每頁一輪;`maxPage` = 輪數)。每輪一個 stage task,門檻在
-  `configCross_limited_rank_task.condition`,獎勵在 `.reward`。
-- **🔑 relic 升級的碎片消費「自動計入」衝刺進度,server 端累計,不需另送提交/兌換 cmd。**
-  根據:client 端**只**「讀進度 (`info` / `task_update` push) + 領獎 (`task_reward`)」,
-  從不回報「我消費了多少」。`p_cross_limited_rank_task.count` 純由 server 推
-  `act_cross_limited_rank_task_update_s2c` 更新;領獎 c2s 只帶 `{act_type, small_group_id}`,
-  不帶 count。這是典型 server-side 行為累計活動(做行為 → server 自動加 count → 達門檻 status
-  轉 CanGet → client 領)。
-  → **實作上:照常用既有 `relic.relic_level_up` (0x1103) 升級消碎片,server 自己會把消費灌進
-    衝刺 count;到輪門檻後再對 4 輪各送一次 `act_cross_limited_rank_task_reward` 即可。**
-- **relic 升級 cmd 與現行 client 一致**:client 把 sub=3 命名為 `relic.relic_level_up_c2s`
-  (cmd 4355 = 0x1103) body `{id}`,**與 `ws_token/relic.py` 的 `CMD_RELIC_UP=0x1103 {relic_uid#1}`
-  是同一個 wire shape**(只是早期 recon 寫的 proto 名 `relic_up` 已更名,sub 不變)。relic.py 不需改協議。
-- **每帳號各自**:衝刺進度 (`count`)、輪獎 (`status`) 都掛在登入帳號的 act 狀態;碎片是帳號
-  貨幣 (item 100022 / currency 7)。每帳號獨立(與 memory 一致)。
-
-## 活動結構(client 證據)
-
-`ActivityType` 枚舉(源碼 @2426600):
-```
-OpenTask:1, AccRechargeDaily:2, ..., HorseCarnival:5,
-RankRush_1:6, RankRush_2:7, RankRush_3:8, RankRush_4:9, RankRush_5:10,
-RankRush_6:11, RankRush_7:12, RankRush_8:13, RankRush_9:14,
-RankRush_New_1:263 .. RankRush_New_7:269 .. RankRush_New_16:278, ...
-```
-
-各衝刺榜對應的養成系統(`JumpView`,源碼 @19742500):
-
-| RankRush type | 跳轉頁 | 養成 / 消費資源 |
+| 項目 | 舊快速 recon(錯) | LIVE 實證(對) |
 |---|---|---|
-| RankRush_8 (13) / RankRush_New_7 (269) | **RelicMainView** | **遺物碎片**(本任務目標) |
-| RankRush_7 (12) / RankRush_New_3 | ScienceView | 科技 |
-| RankRush_4 (9) / RankRush_New_4 | HorseView | 坐騎 |
-| RankRush_5 (10) / RankRush_6 (11) | StatueView | 雕像 |
-| RankRush_9 (14) / RankRush_New_5 | FateTabView | 命運 |
-| RankRush_2 (7) | Shop_Draw | 抽卡 |
+| task 數 | 4 (= 4 輪) | **32**(28 milestone + 4 stage round) |
+| 當期 act_type | 13 或 269 | **269**(`RankRush_New_7`),group_id=2698,task_group_id=2691 |
+| accrued | `max(task.count)` | **非 stage task 的 count = 累計消費碎片**;`max(非stage count)` 仍正確 |
+| count 語意 | 不確定(碎片 or 次數) | **碎片量**(升 1 級 lv88→89 消 125290,28 個 milestone count 全 0→125290) |
+| 領獎 small_group_id | 硬寫 1..4 | **由 config `is_stage==1` 的 stage task 推導**(269129→sgid1 .. 269132→sgid4) |
+| 門檻 | 推斷 225K/450K/675K/900K | **LIVE config 坐實**:輪累計門檻 = 各輪最後一個 milestone 的 `condition[2]` = 225K/450K/675K/900K |
 
-衝刺榜資源圖示 `RankRushRes` (源碼 @2436215):`RankRush_8` =
-`{ icon:"ccrl_icon_yiwu" (遺物), title:"xscb_txt_ywcc" (遺物衝刺), barImg:ccrl_ui_jindutiao08 }`。
-(`xscb` = 衝刺寶/衝刺榜資源前綴;`ywcc` = 遺物衝刺;`ccrl` = 衝刺榮燿進度條資源。)
+## 真實 32-task 結構(LIVE,act 269 / group_id 2698 / task_group_id 2691)
 
-活動有時間窗 + 輪替:`p_act_calendar { act_type#1, stime#2, etime#3 }`
-(`act_cross_limit_rank_calendar`),對上「周一開始、每月輪一次」。
-活動狀態 `ActivityState {Null:0, Preview:1, Open:2, EndShow:3}`;只有 `Open` 才能領獎
-(client `GetTaskRedNum` 以 `state==Open` 為前提)。
+6572 (`act_cross_limited_rank_info`) 對 `{act_type:269}` 回 `{act_type#1=269,
+group_id#2=2698, task_list#3: 32 × p_cross_limited_rank_task}`。
+
+config `configCross_limited_rank_task` row schema(源碼 ConfigCross_limited_rank_task.ts
+@13929300):`[id, task_group_id, small_group_id, is_stage, condition, reward, desc, desc_num, difference]`。
+
+### A. 28 個 milestone task(`is_stage=0`),task_id 269101~269128
+
+- 每輪 7 個,共 4 輪;`small_group_id` 1/1.../1(7)、2(7)、3(7)、4(7)。
+- `condition = [6, 7, 累計門檻]`:`[0]=6`(條件類型)、`[1]=7`(currency 7 = 遺物碎片)、
+  **`[2]=該 milestone 的「絕對累計」消費碎片門檻**。
+- `reward = [[2,100],[1002,5]]`(小獎:gold 100 + item 1002 ×5)。
+- **`count` = 該帳號「累計消費的遺物碎片」**(server 端單一累計器,理論上鏡射到全部 28 個)。
+- **⚠ count 凍結語意(LIVE 重要細節)**:milestone 一旦 `count >= condition[2]` → `status` 轉
+  CanGet(1),**其 count 會凍結在「跨過當下的累計值」**;仍 Normal(status=0) 的 milestone
+  才持續顯示「即時累計」。例:升 1 次後累計 125290,269101(門檻15K)轉 CanGet 且 count 凍在
+  125290;升 2 次後累計 265870,269101 仍是 125290,而仍 Normal 的 269110 顯示 265870。
+  → **真實當前累計 = 「最高的仍 Normal 的非 stage task 的 count」= `max(非 stage count)`**(凍結值
+  恆 ≤ 即時值,所以 max 正確)。
+
+各輪 7 個 milestone 的 `condition[2]`(LIVE 讀):
+```
+輪1 (sgid1): 15000  30000  60000  90000  135000 180000 225000
+輪2 (sgid2): 240000 255000 285000 315000 360000 405000 450000
+輪3 (sgid3): 465000 480000 510000 540000 585000 630000 675000
+輪4 (sgid4): 690000 705000 735000 765000 810000 855000 900000
+```
+(`desc_num` 是「輪內相對值」15000..225000;`difference` 是輪起始基準 0/225K/450K/675K。
+真正判定用的是絕對的 `condition[2]`。)
+
+### B. 4 個 STAGE round task(`is_stage=1`),task_id 269129~269132
+
+- `small_group_id` = 1/2/3/4;`condition = []`(無自身門檻);`reward = [[1017,2000],[2,400],[1002,20]]`
+  (**大獎:item 1017 ×2000 + gold 400 + item 1002 ×20** — 這才是衝刺要領的回合獎)。
+- **`count` = 該輪「已完成的 milestone 子任務數」(0..7)**;`status` 在 count==7(該輪 7 個 milestone
+  全跨過)時轉 CanGet(1)。LIVE:升 2 次後累計 265870 ≥ 225000(輪1全部 7 個門檻),269129 的
+  count 4→7、status 0→1(CanGet);輪2 (269130) count=2(240K/255K 跨過)。
+- **領獎 = `send_25_144(act_type, small_group_id)` = 6575 `{act_type#1, small_group_id#2}`**;
+  small_group_id 取自 stage task 的 config(269129=1..269132=4)。
+
+> **stage task 的辨識(pure-WS 無 config 表時)**:wire 上 4 個 stage task 是「task_id 最大的 4 個」
+> (排在 28 個 milestone 之後);依 task_id 升冪給 small_group_id 1..4。`relic_sprint._derive_rounds`
+> 用此結構規則(task 總數須 == 4×7+4=32,否則回空,不亂猜)。
+
+## client 分組邏輯(源碼交叉印證)
+
+`RankingRushDataCache.updateInfo`(@19739000):對每個 task `cfg = configCross_limited_rank_task.getDataByKey(task_id)`,
+`is_stage==1` → 放進 `group_task_list[small_group_id]`(=輪);否則放進 `task_list[task_id]`(=輪內子任務)。
+
+`RankingRushView setTaskList`(@19781972):
+```js
+for (r of configCross_limited_rank_task.getDatas())
+  if (r.task_group_id == group_id && r.is_stage == 1) { sgid=r.small_group_id; push(group_task_list[sgid]); }
+this.maxPage = taskInfo.length;   // 輪數 = stage task 數
+```
+`btnGet` 點擊 → `send_25_144(act_type, taskInfo[curPage-1].group_id)`,其中 `.group_id == small_group_id`。
+→ **領獎用的就是 stage task 的 small_group_id,不是位置 index、不是硬寫 1..4。**
+
+`JumpView`:`RankRush_8(13)` / `RankRush_New_7(269)` → `RelicMainView`(遺物頁),對上「升遺物衝刺」。
 
 ## act2 (module 25) cmd 表 — cross_limited_rank
 
-來源:源碼 cmd_id 對映 (@19536000) + `docs/protocol/ACT2_PROTO_SCHEMA.json`。
-`cmd = module(25)*256 + sub`;c2s/s2c 共用 id;失敗一律回 `0x0201`。
+`cmd = module(25)*256 + sub`;c2s/s2c 共用 id;失敗一律 `0x0201`。
 
 | cmd | 0x | name | c2s body | s2c body |
 |---|---|---|---|---|
-| 6572 | 0x19AC | `act2.act_cross_limited_rank_info` | `{act_type#1}` | `{act_type#1, group_id#2, task_list#3: p_cross_limited_rank_task[]}` |
-| 6573 | 0x19AD | `act2.act_cross_limited_rank_group` | `{act_type#1}` | `{act_type#1, serv_list#2: uint32[]}`(跨服分組,只用於開 RankJoinServerView,不影響領獎) |
-| 6574 | 0x19AE | `act2.act_cross_limited_rank_task_update` | — (push) | `{act_type#1, update_list#2: p_cross_limited_rank_task[]}` |
-| **6575** | **0x19AF** | **`act2.act_cross_limited_rank_task_reward`** | **`{act_type#1, small_group_id#2}`** | (成功更新 task status 為 HadGet,獎勵 0x0402 push;失敗 0x0201) |
-| 6576 | 0x19B0 | `act2.act_cross_limit_rank_calendar` | `{}` | `{calendars#1: p_act_calendar[]}` |
+| 6572 | 0x19AC | `act_cross_limited_rank_info` | `{act_type#1}` | `{act_type#1, group_id#2, task_list#3: p_cross_limited_rank_task[]}` |
+| 6574 | 0x19AE | `act_cross_limited_rank_task_update` | — (push) | `{act_type#1, update_list#2: p_cross_limited_rank_task[]}` |
+| **6575** | **0x19AF** | **`act_cross_limited_rank_task_reward`** | **`{act_type#1, small_group_id#2}`** | 成功 → status=HadGet(獎勵 0x0402 push);失敗 0x0201 |
+| 6576 | 0x19B0 | `act_cross_limit_rank_calendar` | `{}` | `{calendars#1: p_act_calendar[]}` |
 
-型別(`docs/protocol/TYPE_PROTO_SCHEMA.json`):
 ```
 p_cross_limited_rank_task { task_id#1:uint32, status#2:uint32, count#3:uint64 }
-   status: ActivityTaskState {Normal:0, CanGet:1, HadGet:2}
-   count : server 累計的進度量(uint64,可達 900K+)
-p_act_calendar { act_type#1, stime#2, etime#3 }
+   status: 0 Normal / 1 CanGet / 2 HadGet
 ```
 
-> 注意:client send 函式是 `RankingRushControl.send_25_144(act_type, group_id)`,
-> 其中傳入的 `group_id` 實際就是 stage task 的 `small_group_id`(輪次 1..4)。
-> 領獎按鈕 `btnGet` → 對「當前頁 (=當前輪)」的 group_id 送一次。
+## relic 升級協議(交叉印證,協議無需更動)
 
-## 門檻 / 計數 config — `configCross_limited_rank_task`
+relic module 17 / 0x11:`relic_level_up` = **cmd 4355 (0x1103)** body `{id#1:uint64}`,server-authoritative
+(client 只送 uid,server 扣碎片+升級+回 `{p_relic#1}`)。`ws_token/relic.py` `CMD_RELIC_UP=0x1103
+{relic_uid#1}` 完全一致。
 
-表 schema(源碼 @13929300,`ConfigCross_limited_rank_task.ts`):
+LIVE 升級成本(5556, cfg=4029):lv88→89 = **125290** 碎片、lv89→90 = **140580** 碎片
+(成本隨等級遞增)。**→ 在 lv~88,單一遺物升 1 級就消 12-14 萬碎片,整個 900K 衝刺只需約 7 次升級。**
+(對照 `RELIC_ALLOC_RECON.md`:cfg=4017 lv99→100=442080,成本更高。)
 
-| col | 欄位 | 意義 |
-|---|---|---|
-| 0 | `id` | task_id |
-| 1 | `task_group_id` | 大組(對應某個衝刺活動 type) |
-| 2 | `small_group_id` | **輪次 (1..4)** |
-| 3 | `is_stage` | 是否階段任務(衝刺輪 = 1) |
-| 4 | **`condition`** | **門檻條件**(目標值,如 225000 / 450000 / 675000 / 900000) |
-| 5 | `reward` | 該輪獎勵 |
-| 6 | `desc` (langID) | 任務描述文字(運行時語言表) |
-| 7 | `desc_num` | 顯示用數字 |
-| 8 | `difference` | (差額/分檔) |
+升級的碎片消費「自動計入」衝刺 count(server 端),**無另送提交 cmd**:LIVE 升 1 次後 6572 的 28 個
+milestone count 全部 0→125290。
 
-排名獎額外用 `configCross_limited_rank_reward`(排名段) + `configActivity_rank_reward`
-(衝刺榜「排行」獎,與「累計衝刺輪獎」是兩條線;本任務只關心輪獎)。
+## LIVE 升級觀測(碎片 delta vs count delta)
 
-**⚠ config 的 row data 不在 bundle**(`BaseConfig` 運行時載入;源碼無
-`setDatas`/inline 表)。所以 4 輪門檻 225K/450K/675K/900K 的**精確值 + 計數單位**
-(是「累計消費碎片量」還是「升級次數」)**只能 live 讀**(見下)。
-從結構強烈推斷:遺物衝刺榜的 condition 計的是「消費遺物碎片累計量」(對上使用者所述
-「4 輪 × 225K 碎片 = 900K」),count 為 uint64 也符合碎片量級而非次數量級。
+| 升級 | 遺物 | 碎片消耗(=count delta) | 累計 count(全 28 milestone) | stage task 變化 |
+|---|---|---|---|---|
+| #1 | cfg=4029 lv88→89 | **125290** | 0 → 125290 | 269101-104 status→1(凍 125290);269129 count 0→4 |
+| #2 | cfg=4029 lv89→90 | **140580** | 125290 → 265870 | 269105-109 status→1;**269129 count 4→7 status→1 (CanGet!)**;269130 count→2 |
 
-## relic 升級協議(交叉印證)
+> 碎片現量讀法:`0x0402` consume push 在升級後**未帶 item 100022**(與挖礦鎬子 9800001 同樣的「貨幣型」
+> 推送可能走不同 evt;`parse_inventory_push` 沒抓到 100022)。頁面也無全域 `getGoodsCountXxx(100022)`
+> 函式可直接讀。**→ 碎片即時量在 pure-WS 下「未知」是預期的**;`spend_to_target` 已有 `frag_unknown`
+> fallback(靠 0x0201 拒絕 / max_steps / 衝刺 accrued 為界)。**count(累計消費)才是可靠的進度真值**,
+> 規劃用 `remaining = SPRINT_TOTAL - accrued`。
 
-relic 模組 (module 17 / 0x11) 現行 cmd(源碼 cmd_id 對映):
+## 實作對齊(`ws_token/relic_sprint.py`)
 
-| cmd | 0x | name | c2s body |
-|---|---|---|---|
-| 4353 | 0x1101 | `relic.relic_info` | `{}` |
-| 4354 | 0x1102 | `relic.relic_equip` | `{id}` |
-| **4355** | **0x1103** | **`relic.relic_level_up`** | **`{id}`** ← 升級消碎片,即 relic.py 的 relic_up |
-| 4356 | 0x1104 | `relic.relic_find` | `{}`(寻找遗物 gacha,另消碎片,**勿用**) |
-| 4357 | 0x1105 | `relic.relic_tab_info` | `{}` |
-| 4359 | 0x1107 | `relic.relic_choose_tab` | `{tab}` |
-| 4362 | 0x110A | `relic.relic_unlock` | `{cfg_id}` |
+- `parse_sprint` → `Sprint{tasks(32 raw), rounds(4 stage), accrued, claimable_rounds}`;
+  `_derive_rounds` 用「最大 4 個 task_id = stage」結構規則,small_group_id 升冪 1..4。
+- `accrued` = `max(非 stage task count)`(robust:凍結值 ≤ 即時值)。
+- `claimable_rounds` = stage round 中 status==CanGet 的 small_group_id。
+- `claim_round` = 6575 `{act_type, small_group_id}`;small_group_id 由 round 推導(非硬寫)。
+- `run_relic_sprint`:`remaining = max(0, target - accrued)` → `relic.spend_to_target`(最低等級先升)→
+  重讀 → 對每個 claimable stage round 領獎。`SPRINT_TOTAL=900000`、`ROUND_THRESHOLDS=(225K,450K,675K,900K)`。
 
-→ `ws_token/relic.py` 的 `CMD_RELIC_UP=0x1103` + `build_relic_up_body = pb_uint(1, uid)`
-**與現行 client `relic_level_up {id}` 完全一致**,協議無需更動。
-每級碎片成本在 `configRelic[cfg_id][lv].col10 = [[7, C]]`(`RELIC_ALLOC_RECON.md` 已記:
-4017 號 lv99→100 = 442080;成本隨等級上升後 plateau)。client config row data 同樣不在
-bundle,實際成本只能靠 **0x0402 consume push 即時追蹤**(升一步、讀碎片減少量)。
+## 仍不確定 / 待確認
 
-## 待 live 確認(NOT done,維持唯讀/不消耗)
+1. **領獎 6575 的成功回應形狀**:LIVE 已造出 round1 CanGet,但**未實際送 6575 領獎**(auto-mode
+   classifier 擋下;且使用者要求保守)。`parse_claim` 依源碼把回同 cmd(0x19AF)當成功、0x0201 當失敗
+   ——成功/失敗 error_code(未達/已領/活動關閉)的精確值待真領一次坐實。
+2. **活動關閉(state != Open)時 6572 是否仍回 task_list**:目前 269 是 Open;13 關閉時是否回 echo-only /
+   0x0201 / timeout 由 `find_active_act_type` 容錯(三種都當關閉)。13 真關閉時的回應形狀未在本次坐實。
+3. **碎片即時現量的可靠來源**(0x0402 哪個 evt 帶 100022)未找到;目前靠 count(accrued)規劃,夠用。
+4. **dashboard 預覽**:`control_panel/routes_relic_sprint.py::_rounds_view` 仍用舊模型(取 `tasks[0..3]`
+   當 4 輪),需改成讀 `read_sprint` 新增的 `rounds`(已提供正確的 per-round status / small_group_id)。
+   本次 recon 邊界禁改 control_panel,留待後續。
 
-1. **4 輪 condition 精確值**:登入後送
-   `act_cross_limited_rank_info_c2s {act_type=13(或269)}`,讀 `task_list`,
-   交叉 `configCross_limited_rank_task.getDataByKey(task_id).condition`(CDP 在 web_h5
-   port 9226 讀 config,讀 config 不踢線)。確認是否 225K/450K/675K/900K。
-2. **計數單位**:升 1 級遺物(消耗 N 碎片)後,觀察 `act_cross_limited_rank_task_update_s2c`
-   的 `count` 增量 == N(碎片量)還是 == 1(次數)。一步即可定論。也順帶確認 relic 衝刺
-   是否真的綁「消費碎片」而非「升級次數 / 升到 X 級」。
-3. **遺物衝刺當前用 RankRush_8(13) 還是 RankRush_New_7(269)**:讀 `act_list` /
-   `act_cross_limit_rank_calendar`,看本期 Open 的是哪個 type(月輪替,值會換)。
-4. **領獎成功/失敗回應**:`task_reward` 成功是否回同 cmd(更新 status=HadGet)還是只靠
-   0x0402 / task_update push;失敗 0x0201 的 error_code(未達門檻 vs 已領 vs 活動關閉)。
-5. **`act_type` 是否需先 `info` 訂閱**:多數 act 子活動要先 `info_c2s` 才會推 update;
-   確認 task_reward 前是否必須先 info。
-6. **碎片 item id 100022 與 currency 7 的對映**在 0x0402 快照確認(relic.py 已用 100022)。
+## anti-cheat / 風險
 
-## 不確定點 / 風險
-
-- config row data 全在運行時表,bundle 不含 → 門檻數值 + 計數單位是**推斷**,須 (1)(2) live 坐實。
-- `RankRush_8` vs `RankRush_New_7`:活動每月輪替,act_type 值會切換,實作須**動態從 act_list /
-  calendar 取當前 Open 的遺物衝刺 type**,不可寫死 13 或 269。
-- 活動關閉 (state != Open) 時送 reward 會被 0x0201 拒(對照 tycoon/farm 的
-  `code=173 event ended`);消費碎片本身永遠可做,但**活動沒開時消費不會進衝刺 count**
-  → 衝刺只該在 state==Open 時跑。
-- anti-cheat:relic_level_up 是 server-authoritative(client 只送 uid,server 扣費+升級+回推),
-  衝刺 count 也是 server 累計,**無 client 計算 / 無偽造面**,風險低(同 `RELIC_ALLOC_RECON.md`
-  的乾淨 verdict)。唯一限制是同帳號異地登入互踢(ws_token 既有限制)。
+`relic_level_up` + 衝刺 count 全 server-authoritative,無 client 計算 / 無偽造面(同 `RELIC_ALLOC_RECON.md`
+乾淨 verdict)。唯一限制:同帳號異地登入互踢(ws_token 既有)。**唯一真實成本 = 碎片消耗**:在 lv~88
+單次升級即 12-14 萬,開 auto 前務必確認願意把碎片投進此活動。

@@ -27,6 +27,7 @@
       正常運作，``spent`` 則為 best-effort（量測不到時為 0）。
 """
 import logging
+from collections import OrderedDict
 
 from flask import Blueprint, jsonify, request
 
@@ -56,15 +57,25 @@ _PLAN_NOTE = (
 
 # 執行階段需要 tracker（量測 100022 即時消耗）。dashboard 持久 client 沒掛，故本模組
 # 自管 per-ip InventoryTracker，並於取得 client 時補掛 push handler（見 module docstring）。
-_trackers: dict[str, ws_mining.InventoryTracker] = {}
+# 以 size-capped LRU 保存，避免 per-ip dict 隨裝置數無限增長（記憶體洩漏）。
+_MAX_TRACKERS = 32
+_trackers: "OrderedDict[str, ws_mining.InventoryTracker]" = OrderedDict()
 
 
 def _tracker_for(ip: str) -> ws_mining.InventoryTracker:
-    """取得 ``ip`` 的 InventoryTracker（沒有就建一個）。"""
+    """取得 ``ip`` 的 InventoryTracker（沒有就建一個），LRU 上限 ``_MAX_TRACKERS``。
+
+    取用即移到末尾（most-recently-used）；超過上限時丟掉最舊（least-recently-used）
+    的一筆，使 registry 不會無限長。dashboard 操作量極小，cap 32 綽綽有餘。
+    """
     tracker = _trackers.get(ip)
     if tracker is None:
         tracker = ws_mining.InventoryTracker()
         _trackers[ip] = tracker
+        while len(_trackers) > _MAX_TRACKERS:
+            _trackers.popitem(last=False)  # evict least-recently-used
+    else:
+        _trackers.move_to_end(ip)
     return tracker
 
 
@@ -92,21 +103,25 @@ def _session_client(ip: str):
 
 
 def _rounds_view(sprint: dict) -> list[dict]:
-    """把 read_sprint 的 tasks 攤成 4 輪預覽（round/threshold/status/中文）。
+    """把 read_sprint 的 stage rounds 攤成 4 輪預覽（round/threshold/status/中文）。
 
-    sprint["tasks"] 是 [{task_id,status,count}]，依序對應 small_group_id 1..4；門檻取
-    ``ROUND_THRESHOLDS``。若 server 回的 task 數不足 4，缺的輪以 status=未達補滿。
+    sprint["rounds"] = [{small_group_id, task_id, status, done_subtasks}]（stage round,
+    1..4），由 read_sprint 依 LIVE 結構推導（小心:``tasks`` 是 32 個原始 task,前 28
+    是 milestone 子任務、不是輪,**不可**拿 tasks[0..3] 當輪)。門檻取 ``ROUND_THRESHOLDS``;
+    缺的輪(關閉/換版 rounds 不足)以 status=未達補滿。
     """
-    tasks = sprint.get("tasks") or []
+    rounds = sprint.get("rounds") or []
+    by_sgid = {int(r.get("small_group_id", 0) or 0): r for r in rounds}
     out: list[dict] = []
     for idx, threshold in enumerate(ws_sprint.ROUND_THRESHOLDS, start=1):
-        task = tasks[idx - 1] if idx - 1 < len(tasks) else {}
-        status = int(task.get("status", ws_sprint.STATUS_NORMAL) or 0)
+        r = by_sgid.get(idx, {})
+        status = int(r.get("status", ws_sprint.STATUS_NORMAL) or 0)
         out.append({
             "round": idx,
             "threshold": threshold,
             "status": status,
             "status_name": _STATUS_NAME.get(status, str(status)),
+            "done_subtasks": int(r.get("done_subtasks", 0) or 0),
         })
     return out
 

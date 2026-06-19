@@ -315,6 +315,7 @@ def spend_to_target(
     max_steps: int = 100_000,
     prefer_smallest: bool = True,
     level_cap: int = RELIC_LEVEL_CAP,
+    should_stop: Optional[Callable[[], bool]] = None,
     timeout: float | None = None,
 ) -> dict:
     """SPEND 遺物碎片 by levelling relics until ``target_spend`` is consumed.
@@ -337,16 +338,22 @@ def spend_to_target(
     the final steps keeps the last (target-crossing) step's cost — and thus the
     overshoot — as small as possible without needing the real cost table.
 
-    Stop conditions:
-      * measured ``spent >= target_spend`` (target reached);
+    Stop conditions (checked AFTER every successful relic_up):
+      * ``should_stop()`` returns True — the **authoritative** gate (the caller
+        passes a server-side check, e.g. sprint ``accrued >= target``). Checked
+        FIRST so it bounds the spend even when the tracker delta can't (see below);
+      * measured ``spent >= target_spend`` (tracker delta, only when fragments are
+        known — see ``frag_unknown``);
       * server rejects with 0x0201 (out of fragments / level cap);
       * ``max_steps`` reached;
       * no upgradeable equipped relic remains (all at cap / none equipped).
 
     When the login-time 0x0402 snapshot never carried item 100022 the fragment
-    count is unknown: ``spent`` cannot be measured, so the loop falls back to the
-    server's 0x0201 reject / ``max_steps`` as the only bounds and the result is
-    flagged ``frag_unknown=True`` (``spent`` is then a best-effort 0).
+    count is unknown: ``spent`` cannot be measured (``frag_unknown=True``, ``spent``
+    a best-effort 0). The tracker delta gate is then DEAD — so a caller MUST pass
+    ``should_stop`` (an authoritative server-side bound) plus a tight ``max_steps``
+    to avoid over-spending; otherwise the only bound is ``max_steps`` / the 0x0201
+    reject. :func:`ws_token.relic_sprint.run_relic_sprint` does exactly this.
 
     Args:
         client:       a logged-in :class:`WSGameClient`.
@@ -358,6 +365,10 @@ def spend_to_target(
                       final overshoot. Always lowest-level here, so effectively the
                       balanced strategy; kept as a flag for symmetry / future tuning.
         level_cap:    per-relic max level (default 150).
+        should_stop:  optional ``() -> bool`` authoritative stop check, evaluated
+                      after each successful relic_up; True stops the loop with
+                      ``stopped="target_reached"``. This is the ONLY reliable bound
+                      when ``frag_unknown`` (the tracker delta gate is dead then).
         timeout:      per-call WS timeout.
 
     Returns ``{upgraded, spent, target_spend, stopped, fragments_remaining,
@@ -433,6 +444,21 @@ def spend_to_target(
             level[best_uid] = res.relic.level
         else:
             level[best_uid] += 1
+
+        # Authoritative stop (server-side), checked after the spend lands. This is
+        # the bound that protects frag_unknown runs from over-spending: the caller
+        # re-reads the sprint accrued and returns True once target is reached.
+        if should_stop is not None:
+            try:
+                if should_stop():
+                    stopped = "target_reached"
+                    break
+            except Exception:  # noqa: BLE001 — a flaky check must not over-spend
+                logger.warning(
+                    "ws_token relic: should_stop raised — 保守停止以免超量",
+                    exc_info=True)
+                stopped = "should_stop_error"
+                break
 
     # final spend recompute (covers the loop-exit edge where the gate didn't run)
     if not frag_unknown:

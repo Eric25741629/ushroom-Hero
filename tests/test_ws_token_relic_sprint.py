@@ -1,6 +1,7 @@
 """Tests for ws_token.relic_sprint + relic.spend_to_target — 遺物碎片衝刺.
 
-Schemas are the recon truth (docs/protocol/RELIC_SPRINT_RECON.md):
+Model is the LIVE recon truth (docs/protocol/RELIC_SPRINT_RECON.md), captured
+2026-06-19 on 5556 (CDP 9223, act_type=269, group_id=2698):
 
   act2 module 25 (0x19); cmd = module*256 + sub:
     act_cross_limited_rank_info        0x19AC  c2s {act_type#1}
@@ -9,6 +10,12 @@ Schemas are the recon truth (docs/protocol/RELIC_SPRINT_RECON.md):
         -> s2c (success) OR 0x0201 error
   p_cross_limited_rank_task {task_id#1, status#2, count#3:uint64}
      status: 0 Normal / 1 CanGet / 2 HadGet
+
+  32 tasks = 28 non-stage milestones (is_stage=0; count = cumulative 遺物碎片 spent,
+  shared across all 28) + 4 STAGE round tasks (is_stage=1; count = sub-tasks done
+  0..7, claimable when count==7). The 4 stage tasks are the highest task_ids,
+  small_group_id = ascending ordinal 1..4. accrued = the cumulative spent (max
+  non-stage count); claimable_rounds = CanGet stage small_group_ids.
 
   relic module 17 (0x11): relic_up 0x1103 {relic_uid#1} -> {p_relic#1} | 0x0201
 
@@ -32,8 +39,13 @@ from ws_token.relic_sprint import (  # noqa: E402
     CMD_ERROR,
     CMD_SPRINT_INFO,
     CMD_SPRINT_REWARD,
+    MAX_SPRINT_UPGRADES,
+    NUM_ROUNDS,
+    ROUND_THRESHOLDS,
     SPRINT_TOTAL,
+    SUBTASKS_PER_ROUND,
     Sprint,
+    SprintRound,
     SprintTask,
     build_info_body,
     build_reward_body,
@@ -55,6 +67,17 @@ from tests.fakes.ws_fakes import (  # noqa: E402
 CMD_RELIC_INFO = relic.CMD_RELIC_INFO
 CMD_RELIC_UP = relic.CMD_RELIC_UP
 FRAG = relic.RELIC_FRAGMENT_ITEM
+
+# ---------------------------------------------------------------------------
+# LIVE capture (5556, 2026-06-19): 6572 reply for act_type=269 after two relic
+# level-ups (cumulative spent 265870). Round 1 (small_group_id=1) is CanGet
+# (stage task 269129 count==7); round 2 at 2/7; rounds 3/4 untouched.
+# Used to prove parse_sprint decodes the real 32-task wire bytes correctly.
+# ---------------------------------------------------------------------------
+# f1=act 269, f2=group 2698, then 28 milestone tasks (count 265870, early ones
+# CanGet) and 4 stage tasks (269129 status1 count7; 269130 c2; 269131/2 c0).
+LIVE_6572_HEX = "088d02108a151a0a08adb610100118ead2071a0a08aeb610100118ead2071a0a08afb610100118ead2071a0a08b0b610100118ead2071a0a08b1b6101001188e9d101a0a08b2b6101001188e9d101a0a08b3b6101001188e9d101a0a08b4b6101001188e9d101a0a08b5b6101001188e9d101a0a08b6b6101000188e9d101a0a08b7b6101000188e9d101a0a08b8b6101000188e9d101a0a08b9b6101000188e9d101a0a08bab6101000188e9d101a0a08bbb6101000188e9d101a0a08bcb6101000188e9d101a0a08bdb6101000188e9d101a0a08beb6101000188e9d101a0a08bfb6101000188e9d101a0a08c0b6101000188e9d101a0a08c1b6101000188e9d101a0a08c2b6101000188e9d101a0a08c3b6101000188e9d101a0a08c4b6101000188e9d101a0a08c5b6101000188e9d101a0a08c6b6101000188e9d101a0a08c7b6101000188e9d101a0a08c8b6101000188e9d101a0808c9b610100118071a0808cab610100018021a0808cbb610100018001a0808ccb61010001800"  # noqa: E501
+LIVE_6572_BODY = bytes.fromhex(LIVE_6572_HEX)
 
 
 # --- wire body builders -----------------------------------------------------
@@ -86,6 +109,36 @@ def _sprint_body(act_type, group_id, tasks):
     return out
 
 
+def _full_sprint_tasks(cumulative, *, round_status):
+    """Build the canonical 32-task list (28 milestones + 4 stage rounds).
+
+    ``cumulative`` = shared fragments-spent count on every milestone; each
+    milestone's status is CanGet iff cumulative >= its threshold. ``round_status``
+    = list of 4 status ints for the stage tasks; their count = sub-tasks done.
+    Returns ``[(task_id, status, count), ...]`` in wire order.
+    """
+    base = 269101
+    # per-round cumulative thresholds for the 7 sub-tasks (matches LIVE config)
+    sub_thresholds = [
+        [15_000, 30_000, 60_000, 90_000, 135_000, 180_000, 225_000],
+        [240_000, 255_000, 285_000, 315_000, 360_000, 405_000, 450_000],
+        [465_000, 480_000, 510_000, 540_000, 585_000, 630_000, 675_000],
+        [690_000, 705_000, 735_000, 765_000, 810_000, 855_000, 900_000],
+    ]
+    tasks = []
+    tid = base
+    for rnd in range(NUM_ROUNDS):
+        for thr in sub_thresholds[rnd]:
+            st = 1 if cumulative >= thr else 0
+            tasks.append((tid, st, cumulative))
+            tid += 1
+    # 4 stage tasks; count = how many of the round's sub-tasks are crossed
+    for rnd in range(NUM_ROUNDS):
+        done = sum(1 for thr in sub_thresholds[rnd] if cumulative >= thr)
+        tasks.append((base + 28 + rnd, round_status[rnd], done))
+    return tasks
+
+
 # --- fakes ------------------------------------------------------------------
 
 
@@ -105,57 +158,86 @@ def _client(extra):
 
 
 # ===========================================================================
-# parse_sprint
+# parse_sprint — against the REAL live bytes
 # ===========================================================================
 
 
-def test_parse_sprint_decodes_repeated_tasks():
-    # Arrange — 4 rounds, round1 CanGet, accrued count 300000
-    body = _sprint_body(269, 7, [
-        (1001, 1, 300_000),
-        (1002, 0, 300_000),
-        (1003, 0, 0),
-        (1004, 0, 0),
-    ])
-    # Act
-    sprint = parse_sprint(CMD_SPRINT_INFO, body)
-    # Assert
-    assert isinstance(sprint, Sprint) and sprint.open
-    assert sprint.act_type == 269 and sprint.group_id == 7
-    assert sprint.tasks[0] == SprintTask(task_id=1001, status=1, count=300_000)
-    assert sprint.accrued == 300_000
+def test_parse_sprint_decodes_live_32_task_capture():
+    # Act — parse the exact 6572 reply captured live (act 269, 2 upgrades).
+    sprint = parse_sprint(CMD_SPRINT_INFO, LIVE_6572_BODY)
+    # Assert structure
+    assert sprint.open
+    assert sprint.act_type == 269 and sprint.group_id == 2698
+    assert len(sprint.tasks) == 32
+    # accrued = cumulative 遺物碎片 spent (NOT max-of-all; stage counts excluded)
+    assert sprint.accrued == 265_870
+    # 4 stage rounds derived, small_group_id 1..4 by ascending task_id
+    assert len(sprint.rounds) == NUM_ROUNDS
+    assert [r.task_id for r in sprint.rounds] == [269129, 269130, 269131, 269132]
+    assert [r.small_group_id for r in sprint.rounds] == [1, 2, 3, 4]
+    # round1 fully done (7/7) -> CanGet; round2 2/7; rounds 3/4 untouched
+    assert sprint.rounds[0] == SprintRound(
+        small_group_id=1, task_id=269129, status=1, done_subtasks=7)
+    assert sprint.rounds[1].done_subtasks == 2 and sprint.rounds[1].status == 0
+    assert sprint.rounds[2].done_subtasks == 0
     assert sprint.claimable_rounds == (1,)
 
 
-def test_parse_sprint_empty_task_list_is_closed():
-    # Arrange — act_type echoed but NO task_list (wrong rotation)
-    body = codec.pb_uint(1, 13)
-    # Act
+def test_parse_sprint_milestone_count_frozen_at_crossing():
+    # LIVE quirk: a milestone's count FREEZES at the cumulative-spend value when
+    # it crossed (status->CanGet); still-Normal milestones keep the LIVE cumulative.
+    #   269101 crossed in upgrade#1 -> frozen at 125290.
+    #   269110 still Normal         -> live cumulative 265870.
+    # So accrued (= max non-stage count) still equals the true live spend 265870.
+    sprint = parse_sprint(CMD_SPRINT_INFO, LIVE_6572_BODY)
+    t0 = next(t for t in sprint.tasks if t.task_id == 269101)
+    assert t0.status == 1 and t0.count == 125_290  # frozen at crossing
+    t_live = next(t for t in sprint.tasks if t.task_id == 269110)
+    assert t_live.status == 0 and t_live.count == 265_870  # live cumulative
+    assert sprint.accrued == 265_870
+    # round cumulative thresholds (last sub-task per round) are the documented set
+    assert ROUND_THRESHOLDS == (225_000, 450_000, 675_000, 900_000)
+    assert SPRINT_TOTAL == ROUND_THRESHOLDS[-1]
+
+
+def test_parse_sprint_zero_progress_synthetic():
+    # Fresh account: cumulative 0, no rounds claimable.
+    body = _sprint_body(269, 2698, _full_sprint_tasks(0, round_status=[0, 0, 0, 0]))
     sprint = parse_sprint(CMD_SPRINT_INFO, body)
-    # Assert
-    assert sprint.open is False and sprint.tasks == ()
+    assert sprint.open and len(sprint.tasks) == 32
+    assert sprint.accrued == 0
+    assert sprint.claimable_rounds == ()
+    assert all(r.done_subtasks == 0 for r in sprint.rounds)
+
+
+def test_parse_sprint_multiple_claimable_rounds():
+    # Synthetic: cumulative crosses round 1 & 2; both stage tasks CanGet, one HadGet.
+    body = _sprint_body(269, 2698,
+                        _full_sprint_tasks(700_000, round_status=[2, 1, 1, 0]))
+    sprint = parse_sprint(CMD_SPRINT_INFO, body)
+    # round1 HadGet (2) -> not claimable; rounds 2 & 3 CanGet (1)
+    assert sprint.claimable_rounds == (2, 3)
+    assert sprint.accrued == 700_000
+
+
+def test_parse_sprint_empty_task_list_is_closed():
+    body = codec.pb_uint(1, 13)  # echoed type, no task_list
+    sprint = parse_sprint(CMD_SPRINT_INFO, body)
+    assert sprint.open is False and sprint.tasks == () and sprint.rounds == ()
 
 
 def test_parse_sprint_error_frame_is_closed():
-    # Arrange
-    body = codec.pb_uint(1, 173)
-    # Act
-    sprint = parse_sprint(CMD_ERROR, body)
-    # Assert
+    sprint = parse_sprint(CMD_ERROR, codec.pb_uint(1, 173))
     assert sprint.open is False and sprint.error_code == 173
 
 
-def test_parse_sprint_claimable_rounds_multiple():
-    # Arrange — rounds 1 & 3 CanGet, round 2 already HadGet
-    body = _sprint_body(269, 7, [
-        (1001, 1, 700_000),
-        (1002, 2, 700_000),
-        (1003, 1, 700_000),
-        (1004, 0, 700_000),
-    ])
+def test_derive_rounds_returns_empty_on_unexpected_layout():
+    # Wrong number of tasks (framework change) -> no rounds guessed.
+    body = _sprint_body(269, 2698, [(269101, 0, 0), (269102, 0, 0)])
     sprint = parse_sprint(CMD_SPRINT_INFO, body)
-    assert sprint.claimable_rounds == (1, 3)
-    assert sprint.accrued == 700_000
+    assert sprint.rounds == ()
+    # accrued falls back to max count across all tasks when rounds unknown
+    assert sprint.accrued == 0
 
 
 # ===========================================================================
@@ -163,13 +245,18 @@ def test_parse_sprint_claimable_rounds_multiple():
 # ===========================================================================
 
 
-def test_read_sprint_sends_act_type_and_parses():
-    body = _sprint_body(269, 7, [(1001, 1, 225_000), (1002, 0, 225_000)])
-    c, fake = _client({CMD_SPRINT_INFO: lambda _b: [s2c(CMD_SPRINT_INFO, body)]})
+def test_read_sprint_sends_act_type_and_parses_live_bytes():
+    c, fake = _client(
+        {CMD_SPRINT_INFO: lambda _b: [s2c(CMD_SPRINT_INFO, LIVE_6572_BODY)]})
     try:
         out = read_sprint(c, 269)
-        assert out["open"] and out["act_type"] == 269
-        assert out["accrued"] == 225_000 and out["claimable_rounds"] == [1]
+        assert out["open"] and out["act_type"] == 269 and out["group_id"] == 2698
+        assert out["accrued"] == 265_870
+        assert out["claimable_rounds"] == [1]
+        assert len(out["rounds"]) == NUM_ROUNDS
+        assert out["rounds"][0]["small_group_id"] == 1
+        assert out["rounds"][0]["done_subtasks"] == 7
+        assert len(out["tasks"]) == 32
         sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_SPRINT_INFO]
         assert codec.walk_dict(sent[0]) == {1: 269}
     finally:
@@ -177,7 +264,7 @@ def test_read_sprint_sends_act_type_and_parses():
 
 
 def test_read_sprint_closed_when_no_tasks():
-    body = codec.pb_uint(1, 13)  # echoed type, no task_list
+    body = codec.pb_uint(1, 13)
     c, _ = _client({CMD_SPRINT_INFO: lambda _b: [s2c(CMD_SPRINT_INFO, body)]})
     try:
         out = read_sprint(c, 13)
@@ -192,19 +279,17 @@ def test_read_sprint_closed_when_no_tasks():
 
 
 def test_find_active_act_type_picks_open_rotation():
-    open_body = _sprint_body(269, 7, [(1001, 0, 0)])
+    open_body = _sprint_body(269, 2698, _full_sprint_tasks(0, round_status=[0] * 4))
 
     def _info(body):
         act_type = codec.walk_dict(body).get(1)
         if act_type == 269:
             return [s2c(CMD_SPRINT_INFO, open_body)]
-        # 13 is closed: echo type only, no task_list
         return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
 
     c, fake = _client({CMD_SPRINT_INFO: _info})
     try:
         assert find_active_act_type(c) == 269
-        # probed 13 first (closed) then 269 (open) — both queried
         probed = [codec.walk_dict(b).get(1)
                   for _sid, cmd, b in fake.framed_sent() if cmd == CMD_SPRINT_INFO]
         assert probed == list(ACT_TYPES)
@@ -238,7 +323,6 @@ def test_find_active_act_type_treats_timeout_as_closed(monkeypatch):
     c, _ = _client({})
     try:
         assert find_active_act_type(c) == ACT_TYPES[1]
-        # 第一個逾時被吞掉,仍探了第二個 act_type。
         assert probed == list(ACT_TYPES)
     finally:
         c.close()
@@ -258,17 +342,17 @@ def test_find_active_act_type_wserror_does_not_abort_sweep(monkeypatch):
     c, _ = _client({})
     try:
         assert find_active_act_type(c) is None
-        assert probed == list(ACT_TYPES)  # 兩個都探過,沒有中途中斷
+        assert probed == list(ACT_TYPES)
     finally:
         c.close()
 
 
 # ===========================================================================
-# claim_round — success / 0x0201
+# claim_round — success / 0x0201 ; small_group_id derived, never hard-coded
 # ===========================================================================
 
 
-def test_claim_round_success():
+def test_claim_round_success_uses_small_group_id():
     c, fake = _client(
         {CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")]})
     try:
@@ -305,12 +389,7 @@ def test_parse_claim_unexpected_cmd_is_failure():
 
 
 def _spend_client(tracker, *, cost_per_step, relics, up_error_after=None):
-    """A client whose relic_up consumes ``cost_per_step`` fragments per step.
-
-    The responder mutates ``tracker.counts[FRAG]`` to emulate the 0x0402 consume
-    push, and echoes the upgraded p_relic (lv+1). ``up_error_after`` makes the
-    Nth (1-based) upgrade reply 0x0201 (e.g. out of fragments).
-    """
+    """A client whose relic_up consumes ``cost_per_step`` fragments per step."""
     state = {"levels": {uid: lv for uid, _cfg, _q, _loc, lv in relics},
              "ups": 0}
     info_body = _relic_info_body(relics)
@@ -335,7 +414,6 @@ def _spend_client(tracker, *, cost_per_step, relics, up_error_after=None):
 
 
 def test_spend_to_target_stops_at_target():
-    # Arrange — 100/step, target 250 -> needs 3 steps (overshoots to 300)
     tracker = _Tracker({FRAG: 1_000})
     c, fake, _ = _spend_client(
         tracker, cost_per_step=100,
@@ -351,24 +429,20 @@ def test_spend_to_target_stops_at_target():
 
 
 def test_spend_to_target_picks_lowest_level_first():
-    # Arrange — uid1 starts lower; balanced strategy = lowest level each step
     tracker = _Tracker({FRAG: 10_000})
     c, fake, _ = _spend_client(
         tracker, cost_per_step=100,
         relics=[(1, 4001, 1, 1, 10), (2, 4002, 1, 2, 12)])
     try:
-        relic.spend_to_target(c, tracker, target_spend=400)  # 4 steps
+        relic.spend_to_target(c, tracker, target_spend=400)
         ups = [codec.walk_dict(b).get(1)
                for _sid, cmd, b in fake.framed_sent() if cmd == CMD_RELIC_UP]
-        # 10,12 -> up1(11) -> up1(12) -> tie, order picks 1 (13) -> tie picks 1? no
-        #   after up1 twice: (12,12) tie -> uid1 (read order) -> (13,12) -> uid2
         assert ups == [1, 1, 1, 2]
     finally:
         c.close()
 
 
 def test_spend_to_target_stops_on_server_error():
-    # Arrange — 2nd upgrade is rejected (insufficient fragments)
     tracker = _Tracker({FRAG: 1_000})
     c, _, _ = _spend_client(
         tracker, cost_per_step=100,
@@ -382,7 +456,6 @@ def test_spend_to_target_stops_on_server_error():
 
 
 def test_spend_to_target_frag_unknown_falls_back_to_max_steps():
-    # Arrange — tracker has NO fragment count (login snapshot lacked 100022)
     tracker = _Tracker({})  # no FRAG key
     c, _, _ = _spend_client(
         tracker, cost_per_step=100,
@@ -393,7 +466,6 @@ def test_spend_to_target_frag_unknown_falls_back_to_max_steps():
         assert out["frag_unknown"] is True
         assert out["stopped"] == "max_steps"
         assert out["upgraded"] == 3
-        # spend cannot be measured -> best-effort 0
         assert out["spent"] == 0
     finally:
         c.close()
@@ -412,7 +484,6 @@ def test_spend_to_target_zero_target_is_noop():
 
 
 def test_spend_to_target_no_equipped_relic():
-    # Arrange — only unequipped relics (location 0)
     tracker = _Tracker({FRAG: 500})
     c, _, _ = _spend_client(
         tracker, cost_per_step=100, relics=[(1, 4001, 1, 0, 10)])
@@ -441,7 +512,6 @@ def test_run_relic_sprint_disabled_skips():
 
 def test_run_relic_sprint_no_active_skips():
     tracker = _Tracker({FRAG: 1_000})
-    # both act_types closed
     c, _ = _client(
         {CMD_SPRINT_INFO: lambda b: [s2c(CMD_SPRINT_INFO,
                                          codec.pb_uint(1, codec.walk_dict(b).get(1)))]})
@@ -453,15 +523,11 @@ def test_run_relic_sprint_no_active_skips():
 
 
 def test_run_relic_sprint_already_met_only_claims():
-    # Arrange — accrued already at SPRINT_TOTAL; round1 CanGet, others HadGet.
+    # Arrange — cumulative already at SPRINT_TOTAL; round1 CanGet, others HadGet.
     #   remaining target = 0 -> NO relic upgrades, just claim the CanGet round.
     tracker = _Tracker({FRAG: 1_000})
-    full = _sprint_body(269, 7, [
-        (1001, 1, SPRINT_TOTAL),  # CanGet
-        (1002, 2, SPRINT_TOTAL),  # HadGet
-        (1003, 2, SPRINT_TOTAL),
-        (1004, 2, SPRINT_TOTAL),
-    ])
+    full = _sprint_body(269, 2698,
+                        _full_sprint_tasks(SPRINT_TOTAL, round_status=[1, 2, 2, 2]))
 
     def _info(body):
         act_type = codec.walk_dict(body).get(1)
@@ -480,35 +546,34 @@ def test_run_relic_sprint_already_met_only_claims():
         # crucially: NO relic_up sent (target already met)
         assert CMD_RELIC_UP not in fake.sent_cmds()
         assert out["spent"] == 0
+        # claim c2s carried the round's small_group_id (=1), not hard-coded index
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_SPRINT_REWARD]
+        assert codec.walk_dict(sent[0]) == {1: 269, 2: 1}
     finally:
         c.close()
 
 
 def test_run_relic_sprint_full_flow_spend_then_claim():
-    # Arrange — start accrued 0; after spending 200 fragments, round1 (225K? no,
-    #   we use a small target via SPRINT default? keep target tiny via accrued
-    #   accounting). Simplest deterministic flow: target 200, 100/step (2 ups),
-    #   then re-read shows round1 CanGet -> claim it.
-    tracker = _Tracker({FRAG: 1_000})
+    # Arrange — start cumulative 0; spend 225000 (=> round 1 threshold), 75000/step
+    #   (3 ups), then re-read shows round1 (small_group_id=1) CanGet -> claim it.
+    # The sprint reply is driven by the SERVER-side accrued counter (mirrors the
+    # real game folding each relic_up consumption into the sprint count), so the
+    # accrued-driven should_stop in run_relic_sprint stops at exactly the target.
+    tracker = _Tracker({FRAG: 1_000_000})
     relics = [(1, 4001, 1, 1, 10), (2, 4002, 1, 2, 10)]
     info_body = _relic_info_body(relics)
     levels = {1: 10, 2: 10}
-    phase = {"reads": 0, "ups": 0}
-
-    before_body = _sprint_body(269, 7, [
-        (1001, 0, 0), (1002, 0, 0), (1003, 0, 0), (1004, 0, 0)])
-    after_body = _sprint_body(269, 7, [
-        (1001, 1, 200), (1002, 0, 200), (1003, 0, 200), (1004, 0, 200)])
+    server = {"accrued": 0}
 
     def _sprint_info(body):
         act_type = codec.walk_dict(body).get(1)
         if act_type != 269:
             return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
-        phase["reads"] += 1
-        # read#1 = find_active probe, read#2 = sprint_before, read#3 = sprint_after
-        if phase["reads"] >= 3:
-            return [s2c(CMD_SPRINT_INFO, after_body)]
-        return [s2c(CMD_SPRINT_INFO, before_body)]
+        # round1 CanGet once cumulative crosses its 225K threshold
+        rs = [1 if server["accrued"] >= ROUND_THRESHOLDS[0] else 0, 0, 0, 0]
+        body_out = _sprint_body(269, 2698,
+                                _full_sprint_tasks(server["accrued"], round_status=rs))
+        return [s2c(CMD_SPRINT_INFO, body_out)]
 
     def _relic_info(_b):
         return [s2c(CMD_RELIC_INFO, info_body)]
@@ -516,8 +581,8 @@ def test_run_relic_sprint_full_flow_spend_then_claim():
     def _relic_up(body):
         uid = codec.walk_dict(body).get(1)
         levels[uid] += 1
-        phase["ups"] += 1
-        tracker.counts[FRAG] -= 100
+        tracker.counts[FRAG] -= 75_000
+        server["accrued"] += 75_000  # server folds the spend into the sprint count
         return [s2c(CMD_RELIC_UP, _relic_up_body(uid, 4001, 1, 1, levels[uid]))]
 
     c, fake = _client({
@@ -527,13 +592,179 @@ def test_run_relic_sprint_full_flow_spend_then_claim():
         CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")],
     })
     try:
-        out = run_relic_sprint(c, tracker, enabled=True, target_spend=200)
+        out = run_relic_sprint(c, tracker, enabled=True, target_spend=225_000)
         assert out["act_type"] == 269
-        assert out["spent"] == 200          # 2 upgrades * 100
-        assert out["claimed_rounds"] == [1]  # round1 became CanGet
-        assert phase["ups"] == 2
-        # reward c2s carried {act_type, small_group_id}
+        assert out["spent"] == 225_000          # 3 upgrades * 75000
+        assert out["claimed_rounds"] == [1]      # round1 became CanGet
+        ups = [c2 for _s, c2, _b in fake.framed_sent() if c2 == CMD_RELIC_UP]
+        assert len(ups) == 3                     # stopped exactly at target, no overshoot
         sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_SPRINT_REWARD]
         assert codec.walk_dict(sent[0]) == {1: 269, 2: 1}
     finally:
         c.close()
+
+
+def test_run_relic_sprint_resumes_from_partial_accrued():
+    # Arrange — already spent 200000 (below round1 225K). target=225000 so only
+    #   25000 remaining; one 25000-step crosses round1 -> CanGet -> claim.
+    # Server-side accrued counter starts at 200000 and the relic_up folds the spend
+    # in, so the accrued-driven should_stop halts after exactly one step.
+    tracker = _Tracker({FRAG: 1_000_000})
+    relics = [(1, 4001, 1, 1, 10)]
+    info_body = _relic_info_body(relics)
+    levels = {1: 10}
+    server = {"accrued": 200_000}
+
+    def _sprint_info(body):
+        if codec.walk_dict(body).get(1) != 269:
+            return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
+        rs = [1 if server["accrued"] >= ROUND_THRESHOLDS[0] else 0, 0, 0, 0]
+        return [s2c(CMD_SPRINT_INFO,
+                    _sprint_body(269, 2698,
+                                 _full_sprint_tasks(server["accrued"], round_status=rs)))]
+
+    def _relic_up(body):
+        uid = codec.walk_dict(body).get(1)
+        levels[uid] += 1
+        tracker.counts[FRAG] -= 25_000
+        server["accrued"] += 25_000
+        return [s2c(CMD_RELIC_UP, _relic_up_body(uid, 4001, 1, 1, levels[uid]))]
+
+    c, fake = _client({
+        CMD_SPRINT_INFO: _sprint_info,
+        CMD_RELIC_INFO: lambda _b: [s2c(CMD_RELIC_INFO, info_body)],
+        CMD_RELIC_UP: _relic_up,
+        CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")],
+    })
+    try:
+        out = run_relic_sprint(c, tracker, enabled=True, target_spend=225_000)
+        # only the 25000 deficit was spent (resumed from accrued=200000)
+        assert out["spent"] == 25_000
+        ups = [c2 for _s, c2, _b in fake.framed_sent() if c2 == CMD_RELIC_UP]
+        assert len(ups) == 1
+        assert out["claimed_rounds"] == [1]
+    finally:
+        c.close()
+
+
+def test_run_relic_sprint_frag_unknown_stops_at_accrued_no_overspend():
+    """CRITICAL: 碎片現量未知（tracker 沒 100022）時，仍須用 server accrued 停在
+    target，不可超量耗光碎片。
+
+    這是 codex 找到的 CRITICAL：0x0402 升級回覆常不帶 100022 -> tracker delta 永遠
+    測不到 -> 舊版 spent 卡 0 -> 一路升到 max_steps(100000) 耗光碎片。新版以 server
+    accrued 驅動 should_stop：accrued 隨每次升級遞增，到 >= target 立即停。
+    """
+    tracker = _Tracker({})  # NO FRAG key -> frag_unknown (the dangerous case)
+    relics = [(1, 4001, 1, 1, 10)]
+    info_body = _relic_info_body(relics)
+    levels = {1: 10}
+    server = {"accrued": 0}
+    step = 50_000  # 4 steps reach 200K target exactly
+
+    def _sprint_info(body):
+        if codec.walk_dict(body).get(1) != 269:
+            return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
+        return [s2c(CMD_SPRINT_INFO,
+                    _sprint_body(269, 2698,
+                                 _full_sprint_tasks(server["accrued"],
+                                                    round_status=[0, 0, 0, 0])))]
+
+    def _relic_up(body):
+        uid = codec.walk_dict(body).get(1)
+        levels[uid] += 1
+        server["accrued"] += step  # server folds spend in; tracker still blind
+        return [s2c(CMD_RELIC_UP, _relic_up_body(uid, 4001, 1, 1, levels[uid]))]
+
+    c, fake = _client({
+        CMD_SPRINT_INFO: _sprint_info,
+        CMD_RELIC_INFO: lambda _b: [s2c(CMD_RELIC_INFO, info_body)],
+        CMD_RELIC_UP: _relic_up,
+        CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")],
+    })
+    try:
+        out = run_relic_sprint(c, tracker, enabled=True, target_spend=200_000)
+        assert out["frag_unknown"] is True
+        ups = [c2 for _s, c2, _b in fake.framed_sent() if c2 == CMD_RELIC_UP]
+        # 4 steps reach exactly 200K then stop — NOT runaway to max_steps.
+        assert len(ups) == 4
+        assert len(ups) <= MAX_SPRINT_UPGRADES        # bounded even when blind
+        assert out["spend_stopped"] == "target_reached"
+    finally:
+        c.close()
+
+
+def test_run_relic_sprint_hard_cap_bounds_runaway_when_accrued_stuck():
+    """CRITICAL backstop: 即使 server accrued 讀取異常（永遠卡 0，should_stop 永不
+    為真）且 frag_unknown，升級次數也絕不超過 MAX_SPRINT_UPGRADES。"""
+    tracker = _Tracker({})  # frag_unknown
+    relics = [(1, 4001, 1, 1, 10)]
+    info_body = _relic_info_body(relics)
+    levels = {1: 10}
+
+    def _sprint_info(body):
+        if codec.walk_dict(body).get(1) != 269:
+            return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
+        # accrued NEVER advances (simulates a broken/stale read) -> should_stop
+        # can never fire; only the hard cap can stop the loop.
+        return [s2c(CMD_SPRINT_INFO,
+                    _sprint_body(269, 2698,
+                                 _full_sprint_tasks(0, round_status=[0, 0, 0, 0])))]
+
+    def _relic_up(body):
+        uid = codec.walk_dict(body).get(1)
+        levels[uid] += 1
+        return [s2c(CMD_RELIC_UP, _relic_up_body(uid, 4001, 1, 1, levels[uid]))]
+
+    c, fake = _client({
+        CMD_SPRINT_INFO: _sprint_info,
+        CMD_RELIC_INFO: lambda _b: [s2c(CMD_RELIC_INFO, info_body)],
+        CMD_RELIC_UP: _relic_up,
+        CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")],
+    })
+    try:
+        out = run_relic_sprint(c, tracker, enabled=True, target_spend=SPRINT_TOTAL)
+        ups = [c2 for _s, c2, _b in fake.framed_sent() if c2 == CMD_RELIC_UP]
+        # The fail-safe: never more than the hard cap, even with a broken accrued.
+        assert len(ups) == MAX_SPRINT_UPGRADES
+        assert out["spend_stopped"] == "max_steps"
+    finally:
+        c.close()
+
+
+def test_run_relic_sprint_protocol_mismatch_does_not_spend():
+    """HIGH: sprint open 但 rounds 結構不符（_derive_rounds 回空）-> 不送任何
+    relic_up，直接回 protocol_mismatch（花了也領不到輪獎）。"""
+    tracker = _Tracker({FRAG: 1_000_000})
+    # 2-task list -> wrong size -> _derive_rounds returns () -> rounds empty
+    bad_body = _sprint_body(269, 2698, [(269101, 0, 0), (269102, 0, 0)])
+
+    def _sprint_info(body):
+        act_type = codec.walk_dict(body).get(1)
+        if act_type == 269:
+            return [s2c(CMD_SPRINT_INFO, bad_body)]
+        return [s2c(CMD_SPRINT_INFO, codec.pb_uint(1, 13))]
+
+    c, fake = _client({
+        CMD_SPRINT_INFO: _sprint_info,
+        CMD_RELIC_INFO: lambda _b: [s2c(CMD_RELIC_INFO, b"")],
+        CMD_RELIC_UP: lambda _b: [s2c(CMD_RELIC_UP, b"")],
+        CMD_SPRINT_REWARD: lambda _b: [s2c(CMD_SPRINT_REWARD, b"")],
+    })
+    try:
+        out = run_relic_sprint(c, tracker, enabled=True)
+        assert out["skipped"] == "protocol_mismatch"
+        assert out["act_type"] == 269
+        # crucially: NO relic_up and NO claim sent — we never spend a fragment.
+        assert CMD_RELIC_UP not in fake.sent_cmds()
+        assert CMD_SPRINT_REWARD not in fake.sent_cmds()
+    finally:
+        c.close()
+
+
+def test_constants_match_live_recon():
+    assert SUBTASKS_PER_ROUND == 7
+    assert NUM_ROUNDS == 4
+    assert ROUND_THRESHOLDS == (225_000, 450_000, 675_000, 900_000)
+    # hard backstop on the number of level-ups (full 900K sprint is ~7 LIVE)
+    assert MAX_SPRINT_UPGRADES == 30

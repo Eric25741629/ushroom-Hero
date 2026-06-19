@@ -104,9 +104,12 @@ def _mark_farm_plant_done(ip: str, log) -> None:
 def _ad_seed_claimed(report) -> bool:
     """report.tasks['ad_rewards'] 是否代表「今天農場種子廣告已處理完」。
 
-    完成 = config15 那筆有 ``claimed``（真的領了，含 0 但有送請求）或
-    ``skipped`` 以 "maxed" 開頭（今天已領滿）。``cooldown`` / unknown / 缺項
-    都不算（今天還沒領完，留 ⏳）。
+    完成 = config15 那筆 ``claimed > 0``（真的領到至少一次）或 ``skipped`` 以
+    "maxed" 開頭（今天已領滿）。``claimed == 0``（送了請求但被 error_code/cmd 擋
+    下，即冷卻/失敗）、``cooldown`` / unknown / 缺項都不算（今天還沒領完，留 ⏳）。
+
+    修正：原本只要有 ``claimed`` key 就算完成，會把「claimed=0 + error」的失敗也
+    誤標成當日完成（claim_ad 失敗時仍回 ``{"claimed": 0, "stopped": ...}``）。
     """
     from ws_token import ad_reward
     res = (report.tasks.get("ad_rewards") or {})
@@ -116,7 +119,7 @@ def _ad_seed_claimed(report) -> bool:
     entry = (res.get("results") or {}).get(seed_name)
     if not isinstance(entry, dict):
         return False
-    if "claimed" in entry:
+    if isinstance(entry.get("claimed"), int) and entry["claimed"] > 0:
         return True
     skipped = entry.get("skipped")
     return isinstance(skipped, str) and skipped.startswith("maxed")

@@ -431,6 +431,9 @@ h1 {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 18px;
+  /* 卡片高度貼合內容,不被同列最高卡拉伸 → 內容少的卡片底部不再留白。
+     grid items 預設 align-items:stretch 會把整列拉到等高;改成 start。 */
+  align-items: start;
 }
 
 /* ---- lacquer card ---- */
@@ -1717,7 +1720,7 @@ select.form-control {
 
       <div class="form-group">
 
-        <label>功能開關</label>
+        <label>常用任務開關</label>
 
         <div class="checkbox-group">
 
@@ -1726,6 +1729,20 @@ select.form-control {
           <label class="checkbox-item"><input type="checkbox" id="chkArena">啟用競技場（Arena）</label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkMining">啟用挖礦（Mining）</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用副本（地獄之門/萬神試煉/雙週賞金）</label>
+
+        </div>
+
+      </div>
+
+
+
+      <details class="web-advanced" style="margin-bottom:16px;">
+
+        <summary>WS 任務（純 WS，需 +ws 方案）</summary>
+
+        <div class="checkbox-group" style="border:none; border-radius:0;">
 
           <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">WS 開神燈（純 WS，消耗神燈道具；選 WS 方案自動啟用）</label>
 
@@ -1755,15 +1772,23 @@ select.form-control {
 
           <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用地城（螺旋/秘境）</label>
+        </div>
 
-          <div style="border-top:1px solid #444; margin:4px 0;"></div>
+      </details>
+
+
+
+      <details class="web-advanced" style="margin-bottom:16px;">
+
+        <summary>進階</summary>
+
+        <div class="checkbox-group" style="border:none; border-radius:0;">
 
           <label class="checkbox-item"><input type="checkbox" id="chkRealPhone"><b>實機模式（顯示恢復按鈕）</b></label>
 
         </div>
 
-      </div>
+      </details>
 
 
 
@@ -2927,13 +2952,13 @@ select.form-control {
             // 能先登入並填好設定再啟用。一般卡片的「開啟網頁」走 /api/web_launch 信箱，
             // 需要運行中的 thread 消費；停用裝置沒有 thread → 那條路按了不會有反應。
             const webSetupBtn = info.backend === 'web_h5'
-              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁(登入/設定)</button>`
+              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本)</button>`
               : '';
             actionBar.innerHTML = `
 
               ${webSetupBtn}
 
-              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用掛機</button>
+              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用腳本掛機</button>
 
             `;
 

@@ -406,6 +406,25 @@ def test_ws_no_ad_seed_does_not_mark_farm_plant(monkeypatch):
     assert farm_calls == []
 
 
+def test_ws_ad_seed_claimed_zero_error_does_not_mark_farm_plant(monkeypatch):
+    """config15 claimed=0 + error_code（送了請求但被擋下=失敗/冷卻）→ 今天還沒領完，
+    不可標「農場種植」完成。
+
+    這是 codex MEDIUM 的徽章誤標：claim_ad 失敗時仍回 {"claimed": 0, "stopped":
+    "error_code=..."}；舊版只要有 claimed key 就算完成 → 把失敗誤標成當日完成。
+    """
+    _cfg(monkeypatch, {"enabled": True})
+    _, farm_calls = _patch_progress_marks(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "ad_rewards": {"results": {"農場種子廣告": {"name": "農場種子廣告",
+                                                "claimed": 0,
+                                                "stopped": "error_code=89"}},
+                       "total_claimed": 0},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert farm_calls == []
+
+
 def test_mark_mission_done_writes_flat_scalar(tmp_path, monkeypatch):
     """_mark_mission_done 寫 flat scalar(不可巢狀化破壞 Mission.py 讀側)。"""
     monkeypatch.chdir(tmp_path)

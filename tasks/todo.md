@@ -6,6 +6,34 @@
 
 ---
 
+## 🛠️ 2026-06-19 codex review 修正（純 WS 掛機）
+
+規則: 不 commit、不重啟 bot、不動 live 裝置。每項補/改測試。
+
+- [x] 1. CRITICAL 遺物衝刺 spend 失控 — accrued 驅動 + 硬上限（relic_sprint.py / relic.py）
+- [x] 2. HIGH rounds 結構不符仍花碎片 — open 但 rounds 空回 protocol_mismatch（relic_sprint.py）
+- [x] 3. MEDIUM 徽章誤標 — `_ad_seed_claimed`: claimed>0 或 maxed 才算（ws_phase.py）
+- [x] 4. HIGH `_trackers` 無清理 — per-ip dict 加 OrderedDict LRU 上限 32（routes_relic_sprint.py）
+- [x] 5. MEDIUM log 橋接漏 WS logger — ws_farm_/ws_mining_ 用原始 device_id 命名 + 掛 handler + 前綴納入解析（logging_utils.py）
+- [x] 6. LOW ad_reward ad_info 失敗 log 文字補一句（ws_token/ad_reward.py）
+- [x] LOW 註記 bot_state.append_log lock 競爭（bot_state.py，只加註解）
+
+驗證: py_compile 全改動檔 OK + pytest 七測試檔 112 passed。
+
+### Review（2026-06-19）
+- CRITICAL 核心：`relic.spend_to_target` 新增 `should_stop` 參數（每次成功 relic_up 後檢查，
+  True 即停 `target_reached`，例外則保守停 `should_stop_error`）；`run_relic_sprint` 改以
+  server accrued 驅動（`_current_accrued` 重讀 6572）+ 硬上限 `MAX_SPRINT_UPGRADES=30`。
+  frag_unknown 下 tracker delta gate 失效，但 should_stop(accrued) 仍能達標即停；
+  accrued 讀取異常時 max_steps=30 為 backstop。兩條路徑都有測試直接證明不超量。
+- 既有兩個 run_relic_sprint full-flow 測試改成「server accrued 隨升級遞增」的動態 fake
+  （取代原本以 read 次數計數的 fake，因新流程每步多一次重讀）。
+- 新測試：frag_unknown 達標即停、accrued 卡死時硬上限封頂、protocol_mismatch 不花碎片、
+  should_stop frag_unknown 即停 / 例外保守停、claimed=0+error 不標徽章、_trackers LRU 上限、
+  WS logger 名還原 + forward。
+
+---
+
 > ⚠ 2026-06-14 注意：本檔曾被郵件 subagent 誤用 Write 覆寫，已 `git checkout` 還原到最後提交版（493 行）。
 > 你「header 之後、下面 `## 🔒 另一 session` 之前」的未提交 WIP 段落（2026-06-13/14 莊園/飛寵/carpark/lamp/
 > rogue/exit-21 等完成紀錄）目前缺；那些段落的完整原文仍在本次 Claude session context，可隨時「reconstruct todo」原樣補回。所述工作本身皆已在 git 近期 commit + docs/ 內，未遺失。

@@ -22,12 +22,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ws_token import codec  # noqa: E402
+from ws_token import relic  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.relic import (  # noqa: E402
     CMD_ERROR,
     CMD_RELIC_INFO,
     CMD_RELIC_TAB_INFO,
     CMD_RELIC_UP,
+    RELIC_FRAGMENT_ITEM,
     Relic,
     RelicInfo,
     RelicTabInfo,
@@ -299,3 +301,73 @@ def test_balanced_upgrade_uses_real_rising_cost():
     #   next cheapest step costs 50 (>10 left) -> stop
     assert steps == [1, 1, 1]
     assert steps.count(2) == 0
+
+
+# --- spend_to_target should_stop (authoritative stop, frag_unknown safety) --
+
+
+class _Tracker:
+    def __init__(self, counts=None):
+        self.counts = dict(counts or {})
+
+
+def _spend_client(relics):
+    levels = {uid: lv for uid, _c, _q, _l, lv in relics}
+    cfg_of = {uid: (c, q, l) for uid, c, q, l, _lv in relics}
+    info_body = _relic_info_body(relics)
+
+    def _info(_b):
+        return [s2c(CMD_RELIC_INFO, info_body)]
+
+    def _up(body):
+        uid = codec.walk_dict(body).get(1)
+        levels[uid] += 1
+        c, q, l = cfg_of[uid]
+        return [s2c(CMD_RELIC_UP,
+                    codec.pb_msg(1, _p_relic(uid, c, q, l, levels[uid])))]
+
+    fake = FakeTransport(login_responder({CMD_RELIC_INFO: _info, CMD_RELIC_UP: _up}))
+    c = WSGameClient(CREDS, transport_factory=factory_for(fake),
+                     heartbeat_enabled=False)
+    c.connect()
+    return c, fake
+
+
+def _count_ups(fake):
+    return sum(1 for _s, cmd, _b in fake.framed_sent() if cmd == CMD_RELIC_UP)
+
+
+def test_spend_to_target_should_stop_halts_even_when_frag_unknown():
+    """should_stop（server 權威停止）即使 frag_unknown 也能在達標時立即停止，
+    不會跑到 max_steps（CRITICAL 保護：tracker 量不到時的唯一可靠界）。"""
+    tracker = _Tracker({})  # no FRAG -> frag_unknown, tracker delta gate dead
+    c, fake = _spend_client([(1, 4001, 1, 1, 10)])
+    try:
+        # should_stop fires after 3 upgrades, counted from the wire (tracker blind)
+        out = relic.spend_to_target(
+            c, tracker, target_spend=999_999, max_steps=50,
+            should_stop=lambda: _count_ups(fake) >= 3)
+        assert out["frag_unknown"] is True
+        assert out["stopped"] == "target_reached"
+        ups = [cmd for _s, cmd, _b in fake.framed_sent() if cmd == CMD_RELIC_UP]
+        assert len(ups) == 3  # stopped at should_stop, NOT max_steps(50)
+    finally:
+        c.close()
+
+
+def test_spend_to_target_should_stop_error_stops_conservatively():
+    """should_stop 拋例外時保守停止（不超量），記 stopped=should_stop_error。"""
+    tracker = _Tracker({RELIC_FRAGMENT_ITEM: 1_000_000})
+    c, fake = _spend_client([(1, 4001, 1, 1, 10)])
+
+    def _boom():
+        raise RuntimeError("accrued read blew up")
+
+    try:
+        out = relic.spend_to_target(
+            c, tracker, target_spend=999_999, max_steps=50, should_stop=_boom)
+        assert out["stopped"] == "should_stop_error"
+        ups = [cmd for _s, cmd, _b in fake.framed_sent() if cmd == CMD_RELIC_UP]
+        assert len(ups) == 1  # one upgrade then the raising check stops the loop
+    finally:
+        c.close()
