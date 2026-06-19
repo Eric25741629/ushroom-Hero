@@ -158,7 +158,7 @@
                     ]
                 },
                 "relic_sprint": {
-                    "enabled": true,
+                    "enabled": false,
                     "target_spend": 900000
                 }
             },
@@ -307,7 +307,7 @@
                     ]
                 },
                 "relic_sprint": {
-                    "enabled": true,
+                    "enabled": false,
                     "target_spend": 900000
                 }
             },
@@ -478,7 +478,7 @@
                     ]
                 },
                 "relic_sprint": {
-                    "enabled": true,
+                    "enabled": false,
                     "target_spend": 900000
                 }
             },
@@ -617,7 +617,7 @@
                     ]
                 },
                 "relic_sprint": {
-                    "enabled": true,
+                    "enabled": false,
                     "target_spend": 900000
                 }
             },
@@ -753,7 +753,7 @@
                     ]
                 },
                 "relic_sprint": {
-                    "enabled": true,
+                    "enabled": false,
                     "target_spend": 900000
                 }
             },
