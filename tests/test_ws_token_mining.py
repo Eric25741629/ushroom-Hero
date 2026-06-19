@@ -329,15 +329,17 @@ def test_board_to_grid_rock_terrain_label():
     assert grid[0][0] == "rock"
 
 
-def test_board_to_grid_stone_ignores_unverified_count_field():
-    # p_mine_block.f5 ("count") 語意未驗證 (MINING_SCHEMA §6); live 2026-06-15
-    # 實測新石頭 f5=0 (第一次挖後才 0->1)，所以它不是「剩餘 hits」。石頭(202)
-    # 一律當 ≥2-hit 的 "rock"，不可因 count<=1 被誤降成 one_hit_rock (cost 1)。
-    for count in (0, 1, 2):
-        blk = MineBlock(block_id=16238301, x=1, y=162383, config_id=202,
-                        count=count, is_reward=0)
-        grid = board_to_grid(_board(162388, [blk]))
-        assert grid[0][0] == "rock", f"stone count={count} should be rock"
+def test_board_to_grid_count_drives_air_vs_solid():
+    # p_mine_block.f5 ("count") 語意 LIVE 坐實 (CDP dig 2026-06-20, 小寶, 201 與 202 皆同):
+    #   count==0 = 已挖空氣（挖它=no-op：0x0c03 無回覆、版面不變、不耗鏟）→ 投影成 empty。
+    #   count>0  = 未挖實心（201=土, 202=岩, 401=礦）。
+    # 舊版不看 count、把已挖空氣的 202 也標 rock → 盤面誤判為密集。
+    air = MineBlock(block_id=16238301, x=1, y=162383, config_id=202, count=0, is_reward=0)
+    assert board_to_grid(_board(162388, [air]))[0][0] == "empty", "count==0 stone = 已挖空氣"
+    for count in (1, 2):
+        rock = MineBlock(block_id=16238301, x=1, y=162383, config_id=202,
+                         count=count, is_reward=0)
+        assert board_to_grid(_board(162388, [rock]))[0][0] == "rock", f"未挖石頭 count={count}"
 
 
 def test_board_to_grid_pit_terrain_label():
@@ -368,12 +370,13 @@ def test_board_to_grid_block_outside_viewport_ignored():
 
 def test_board_to_grid_actives_without_features_are_unknown_solid():
     # live 0x0c01: actives lists valid dig targets; blocks only carries known
-    # terrain features. Missing feature must not become empty or the planner
-    # thinks row 6 is already open and emits no progress step.
+    # terrain features. An active cell with NO block feature = 未挖泥土 (undug dirt)
+    # per CDP dig 2026-06-20 + MINING_SCHEMA L204. It must be SOLID (not empty), or
+    # the planner thinks row 6 is already open and emits no progress step.
     baseline = 162390
     active_block_id = grid_pos_to_block_id(baseline, row=6, col=3)
     grid = board_to_grid(_board(baseline, [], actives=[active_block_id]))
-    assert grid[6][3] == "rock"
+    assert grid[6][3] == "dirt"
 
 
 def test_plan_uses_active_cells_to_make_ws_progress_step():

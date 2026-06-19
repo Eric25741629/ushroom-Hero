@@ -92,9 +92,28 @@ f1 varint = cell_id
 f2 varint = col (= cell_id % 100)
 f3 varint = depth (= cell_id // 100)
 f4 varint = terrain enum（user-confirmed, 見下表）
-f5 varint = ?（語意未驗證）
+f5 varint = count → **DUG 狀態**（CDP dig 2026-06-20 坐實，見 §6.1）
 f6 varint = ?（觀測 = 0）
 ```
+
+### 6.1 `f5` = count = DUG 狀態（LIVE CDP dig 2026-06-20，小寶，201/202 皆同）
+
+> **這條推翻了 2026-06-15 的「count 語意未驗證 / 新石頭 f5=0」舊註記。**
+
+| count | 意義 | 實測 |
+|---:|---|---|
+| **0** | **已挖（空氣）** | 對 count==0 的格送 0x0c03：**無回覆、版面不變、不耗鏟**（no-op）。`config_id` 此時只是「原本是什麼地形」的歷史值。 |
+| **>0** | **未挖 / live** | 送 0x0c03：有回覆、耗 1 鏟、該格變成 count==0（空氣）、可能捲動 baseline 並 reveal 下方新格。201=土 202=岩 401=活礦。 |
+
+實測：挖 `202/count1` → 回 `{area, baseline+1(捲), 新 reveal block, ...}`、格變 `202/count0`；挖 `201/count0` → 無回覆、不變。
+
+**盤面地形還原規則（ws_token/mining_adapter.board_to_grid）：**
+- block count==0 → `empty`（空氣；舊版誤標 solid → 整盤看起來「密集」、planner 亂挖浪費）
+- block count>0 → 地形（201 dirt / 202 rock / 401 reachable_pit）
+- 在 `actives` 但**無 block feature** → `dirt`（未挖泥土；MINING_SCHEMA §7 + dig 實測）
+- 非 active 且無 block feature → `empty`
+
+**WS 本質限制（需 CNN classifier 補）**：0x0c01 **不送**「未挖格」的逐格地形——只有 count>0 的少數格帶 config。所以「無 block」的未挖格其 **土/岩 無法從 0x0c01 區分**，且 unreachable 的未挖實心格（被空洞越過）0x0c01 也看不到（會誤判成空）。要完整地形需用 `miner` CNN classifier（截圖→GRID_CFG 裁切 x0=6,y0=227,x1=535,y1=852→7×6 分類）做視覺判讀。純 WS 挖礦路徑因此天生地形認知不全。
 
 ### f4 terrain enum（user-confirmed）
 

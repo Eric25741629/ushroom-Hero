@@ -54,8 +54,24 @@ TERRAIN_STONE = 202
 TERRAIN_PIT = 401
 
 
-def _block_label(config_id: int, is_reward: int) -> str:
-    """Map a WS block's terrain to a DEFAULT_CLASSES label."""
+def _block_label(config_id: int, is_reward: int, count: int) -> str:
+    """Map a WS block's terrain + dig-state to a DEFAULT_CLASSES label.
+
+    ``count`` semantics — LIVE-verified via CDP dig 2026-06-20 (小寶, BOTH 201 & 202):
+      count == 0 → the cell is ALREADY DUG (air). Digging it is a confirmed no-op
+                   (0x0c03 sends NO reply, the board does not change, no pickaxe is
+                   spent). ``config_id`` is then only the *historical* terrain, so
+                   the cell must project as empty/air — NOT as solid dirt/rock.
+      count  > 0 → undug / live cell: 201=dirt, 202=stone(rock), 401=pit.
+
+    The old code was count-blind and labelled dug (count==0) cells as solid
+    dirt/rock, so a mostly-dug board projected "dense" and the planner mis-planned
+    / wasted pickaxes (the dense-vs-empty cognition bug). The earlier "fresh stone
+    reads count==0" note was wrong: a live CDP dig of a fresh 202 returned count==1,
+    and digging a count==0 cell was a verified no-op.
+    """
+    if int(count) <= 0:
+        return EMPTY  # already-dug air; config_id is historical only
     if config_id == TERRAIN_PIT or is_reward:
         # Single-snapshot reachability is unknown -> assume reachable; the
         # planner's reachability pass refines it (gap #4).
@@ -63,10 +79,6 @@ def _block_label(config_id: int, is_reward: int) -> str:
     if config_id == TERRAIN_DIRT:
         return "dirt"
     if config_id == TERRAIN_STONE:
-        # 石頭 needs >=2 hits (verified). We cannot trust f5 as the remaining
-        # hit count (see note above), so always use the conservative >=2-hit
-        # "rock" cost. The rolling one-step re-plan + confirm-by-board-diff
-        # handles a partially-dug stone correctly regardless.
         return "rock"
     # Unknown terrain -> treat as a generic solid obstacle (gap #1).
     logger.debug("ws_token mining_adapter: unknown config_id=%s -> rock", config_id)
@@ -130,8 +142,10 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
                 "cell_id": cell_id, "row": row, "col": col, "reason": reason,
             })
             continue
-        # actives 是 server 接受的可挖目標；terrain 缺失時用 rock 保守估成本。
-        grid[row][col] = "rock"
+        # active 且無 block feature = 未挖泥土 (CDP dig 2026-06-20 + MINING_SCHEMA L204
+        # "active 無 block entry = 未挖泥土" + user)。舊版填 "rock" 把未挖泥土當石頭、
+        # 成本高估，也讓盤面更顯「實心」。實際未挖格大多是泥土；石頭/礦會帶 count>0 block。
+        grid[row][col] = "dirt"
 
     if any(cell != EMPTY for cell in grid[GRID_ROWS - 1]):
         for col, cell in enumerate(grid[GRID_ROWS - 1]):
@@ -159,7 +173,7 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
                 "reason": "+".join(reasons) or "unknown",
             })
             continue
-        grid[row][col] = _block_label(blk.config_id, blk.is_reward)
+        grid[row][col] = _block_label(blk.config_id, blk.is_reward, blk.count)
     return grid, dropped_blocks, dropped_actives
 
 

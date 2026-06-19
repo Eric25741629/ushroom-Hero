@@ -316,21 +316,25 @@ def _is_diggable(actives: set, block_by_id: Dict[int, Any], block_id: int) -> bo
     """Whether the server will accept an axe dig on ``block_id`` right now.
 
     A target is diggable iff it is on the server frontier (``actives``) AND it is
-    not an already-cleared cell. Live-verified rules (adb-fc65396d 2026-06-16):
+    not an already-dug cell. Live-verified rules (CDP dig 2026-06-20, 小寶):
       - active cell with NO block entry  -> undug dirt, diggable.
-      - block with count>0               -> live pit / partially-hit cell, diggable.
-      - pit/dirt block with count==0     -> already collected / passed, no-op.
-      - stone (config 202) reads count==0 even when fresh (MINING_SCHEMA §6), so
-        it is treated as diggable regardless of count.
+      - block with count>0               -> undug / live cell (dirt/stone/pit),
+        diggable; digging returns a 0x0c03 reply, spends a pickaxe, and the cell
+        becomes a count==0 air block.
+      - block with count==0              -> ALREADY DUG (air). Digging is a
+        confirmed no-op (0x0c03 NO reply, board unchanged, no pickaxe), for BOTH
+        201 and 202. So it is NOT a valid dig target.
+
+    The earlier "stone (202) is diggable regardless of count" rule was wrong (it
+    rested on a mistaken "fresh stone reads count==0" note) and sent wasted no-op
+    digs at already-dug stone; a fresh 202 actually carries count>0.
     """
     if block_id not in actives:
         return False
     blk = block_by_id.get(block_id)
     if blk is None:
         return True
-    if int(getattr(blk, "count", 0) or 0) > 0:
-        return True
-    return int(getattr(blk, "config_id", 0) or 0) == mining.TERRAIN_STONE
+    return int(getattr(blk, "count", 0) or 0) > 0
 
 
 def _select_dig_step(

@@ -425,10 +425,14 @@ def test_select_dig_step_falls_back_to_frontier_when_all_steps_stale():
     assert chosen["type"] == "dig"
 
 
-def test_select_dig_step_treats_fresh_stone_as_diggable():
-    # stone reads count==0 when fresh, but is diggable on the frontier.
-    board = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=0)])
-    chosen = mining_supervised._select_dig_step(board, [{"type": "dig", "block_id": 9901}])
+def test_select_dig_step_skips_dug_count0_block_picks_undug():
+    # LIVE CDP dig 2026-06-20 (小寶): a count==0 block (incl. stone 202) is
+    # ALREADY-DUG air — digging is a no-op (0x0c03 no reply, board unchanged), so
+    # it is NOT a valid dig target. A fresh stone actually carries count>0.
+    dug = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=0)])
+    assert mining_supervised._select_dig_step(dug, [{"type": "dig", "block_id": 9901}]) is None
+    live = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=1)])
+    chosen = mining_supervised._select_dig_step(live, [{"type": "dig", "block_id": 9901}])
     assert chosen["block_id"] == 9901
 
 
