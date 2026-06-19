@@ -127,6 +127,12 @@ f6 varint = ?（觀測 = 0）
 
 **結論**：盤面是前端用 `configMine_template` 加權隨機生成（同 `tools/mining_sim.html` 的 cluster 邏輯），WS 0x0c01 只追蹤「已挖狀態(count) + 可挖前沿(actives) + 礦洞實例」。要讓**純 WS** 路徑拿到完整未挖地形，需其一：(a) web_h5 裝置經 **CDP 讀前端 runtime 生成的盤面**(cocos model)；(b) port 模板生成邏輯(需 server 端的模板/seed 選擇依據，尚未坐實在哪個 WS 欄位)；(c) `miner` CNN classifier 視覺判讀(截圖→GRID_CFG 裁切 x0=6,y0=227,x1=535,y1=852→7×6)。**但 count==0=空氣 的核心修正(§6.1)已先解掉「已挖格誤判實心→盤面假性密集→亂挖浪費」這個主因。**
 
+### 6.3 WS 送的是「地圖」(比 7 列視窗高)，舊版只抓了一半（CDP 2026-06-20）
+
+0x0c01 的 `actives`/`blocks` **不只 7 列視窗**——實測 blocks 橫跨 **baseline-3 .. +17**(視窗上方已捲過列 + 下方尚未捲到列)，其中**含視窗下方即將到來的待發現礦坑**(如 row +17 col 4 的 401 count1)。但 `board_to_grid` 把盤面裁成 rows 0-6、其餘記成 `dropped_blocks` 丟掉 → planner 對即將到來的礦完全盲、只能盲目下挖。
+- 未採集礦坑(401 count>0)即使在視窗下方好幾列，0x0c01 也有送 → **重要礦資訊在「地圖」裡，不在被裁掉的視窗外才取不到，而是我們主動丟了**。
+- 新增 `mining_adapter.map_pits(board)` 撈全地圖未採集礦坑(附相對視窗 row：>6=下方upcoming / <0=已捲過)，`plan()` 新增 `map_pits`，供 planner look-ahead 朝 upcoming 礦下挖(純 WS、免 CNN)。planner 實際使用為下一步。
+
 ### f4 terrain enum（user-confirmed）
 
 | f4 | 名稱 | 驗證 cell |
