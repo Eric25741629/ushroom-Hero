@@ -21,11 +21,51 @@ bot_config.json 的 ws_token 設定全部露出，以任務類別分頁籤，收
 
 類別：農場/神燈/挖礦/遺物/車位/郵件/抽卡/看廣告/競猜/大亨/伴侶加工/副本掃蕩
 
-- [ ] P1 外殼+infra+簡單欄位類（神燈/挖礦/遺物/郵件/伴侶/競猜/大亨）+ 接線 + 移除舊 details + 驗證 + commit
-- [ ] P2 特殊欄位（農場 buy/ad#15/harvest_card_cycle、看廣告 ad split、抽卡、車位/掃蕩 JSON 輕量）+ sanitizer 補齊 + commit
+- [x] P1 外殼+infra+簡單欄位類（神燈/挖礦/遺物/郵件/伴侶/競猜/大亨/連線）+ 接線 + 移除舊 details + 驗證（commit 0aac335b）
+- [x] P2a 農場細項（buy 407/408、看廣告種子 ad#15、harvest_card_cycle、種植/打工）+ 看廣告 ad split（commit 8d5e0f79）
+- [x] P2b 抽卡（gacha 全欄 + select type）+ 車位/副本掃蕩（JSON 輕量）（commit 51666d9a）
+- [ ] （follow-up，低優先）farm/dungeon_sweeps 後端 sanitizer（目前 frontend 控制型別 + runner 防呆，passthrough）
+- [ ] dashboard 重整頁面 live 驗證一輪（改 template，不需重啟 bot）
 
 注意：dashboard.html 共用大檔直接 Edit（勿 Write 覆蓋）；改 template 重整頁面即生效，不需重啟 bot。
 農場頁籤「每週豐收卡」= WS `ws_token.farm.harvest_card_cycle`（與視覺農場 enable_harvest_card 不同條）。
+
+---
+
+## 🪟 2026-06-19 進階設定 白話化 + 重新分類 + 浮窗（使用者：看不懂用詞）
+
+使用者回饋：進階設定用詞太術語（尤其車位/副本掃蕩）；大亨是活動該獨立；抽卡 drain 工具頁已有；
+遺物平均強化移工具頁、這邊只留每週期解 900K 並顯示本期活動結束日；卡片要大一些（開獨立浮窗）；
+伴侶/加工坊拆開，跟郵件/競猜/抽卡一起放「雜項」。全部只在 `templates/dashboard.html`（Edit，勿 Write）。
+
+### Phase 0 — 前端重整（改 template，reload 即生效，不需重啟 bot）— 完成 2026-06-19
+- [x] A. 浮窗化：進階設定改「按鈕→開獨立較寬浮動 modal `#taskSettingsModal`」（780px，z-index 1100，
+      沿用 .modal/.active CSS）；頁籤條+panel 搬進去，欄位 id 不變；字級/間距上調一階 + 子標題。
+- [x] B. 重新分類 chips（`WS_TASK_TABS`）：移除 大亨/郵件/競猜/抽卡/伴侶加工 5 chip；
+      新增「活動」(events：大亨) +「雜項」(misc：伴侶/加工坊/郵件/競猜/抽卡，各帶 .ws-subhead 小標題)。
+      伴侶 vs 加工坊拆兩區塊（新增 data-slot="workshop"，`workshop_rotate` 改 slot='workshop'）。
+      最終 chips：農場/神燈/挖礦/遺物/看廣告/跨服停車/副本掃蕩/活動/雜項/連線（Playwright 確認 10 chip）。
+- [x] C. 白話改寫各 label：拿掉「WS/純 WS」術語、改動作導向；頂部提示句改白話。車位→「跨服停車」。
+      ⚠ 副本掃蕩本次不動：維持現狀（chip + JSON 文字框照舊），待後續單獨對話討論改版。
+- [x] D. 抽卡移除 drain：拿掉 `gacha.mode` 選單；額外在 `_collectGachaTypes` 釘 `mode='fixed'`
+      （runner 預設是 drain，不釘會偷抽到券盡）。Playwright 確認存檔 gacha.mode='fixed'。
+- [x] E. 遺物精簡：移除「平均強化」三欄（relic_upgrade/relic_max_steps/relic_fragment_floor）；
+      遺物頁只留衝刺（relic_sprint.enabled + target_spend=900000）。既有 relic_upgrade 由 Object.assign 保留。
+- [x] F. Phase0 驗證：Playwright 開浮窗 + 切頁籤 + collectTaskTabs round-trip 全綠（chip/slot/label/gacha-fixed/
+      workshop-split/relic-slim 皆正確）；served HTML 確認 template 已更新。實際 POST 存檔到 bot_config 未跑
+      （避免改到 live 裝置設定，使用者實機存檔即驗）。
+
+### Phase 1 — 遺物「本期活動結束日（即時讀）」（需後端 recon，今天 act 269 開著可驗）
+- [ ] G. recon：解 6576 `act_cross_limit_rank_calendar`（或活動開啟列表）取本期 end_time；live 對齊遊戲畫面。
+- [ ] H. 後端：`ws_token/relic_sprint.read_sprint` + `/api/relic_sprint/plan` 多回 end_ts/end_date（無活動沿用 open:false）。
+- [ ] I. 前端：遺物頁籤開啟時 fetch 該裝置 plan，顯示「本期活動結束日：YYYY-MM-DD」/「本期無活動」。
+
+注意：Phase1 後端改動（runner 路徑）要重啟 bot 才生效；dashboard 端點隨 flask reload。
+
+### 後續單獨討論（使用者另開對話）
+- [ ] 副本掃蕩改版 — 用詞白話化 + 是否改逐欄表單（取代 JSON）。本次重整不碰，維持現狀等討論。
+
+Follow-up（暫不做）：車位 full 逐欄表單仍 JSON；既有 drain 裝置不主動遷 fixed。
 
 ---
 

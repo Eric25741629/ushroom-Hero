@@ -186,6 +186,23 @@ class ClaimResult:
         return self.response_cmd == CMD_ERROR
 
 
+@dataclass(frozen=True)
+class CalWindow:
+    """One act_cross_limit_rank_calendar entry: {act_type#1, begin#2, end#3}.
+
+    begin/end are Unix seconds (LIVE 2026-06-19 小寶: clean UTC+8 midnight
+    boundaries). The calendar lists every act_type's scheduled windows (past,
+    current and upcoming), so a given act_type can appear more than once.
+    """
+
+    act_type: int  # #1
+    begin: int     # #2 — window open  (Unix s)
+    end: int       # #3 — window close (Unix s)
+
+    def covers(self, now: int) -> bool:
+        return self.begin <= now <= self.end
+
+
 # --- helpers ----------------------------------------------------------------
 
 
@@ -315,6 +332,45 @@ def read_sprint(client: WSGameClient, act_type: int, *,
         "tasks": [{"task_id": t.task_id, "status": t.status, "count": t.count}
                   for t in sprint.tasks],
     }
+
+
+def parse_calendar(cmd: int, body: bytes) -> tuple[CalWindow, ...]:
+    """act_cross_limit_rank_calendar_s2c -> windows (repeated #1 {act#1,begin#2,end#3}).
+
+    A 0x0201 / unexpected cmd yields () (treat as "no calendar"). LIVE-verified
+    2026-06-19 (小寶): each entry is a 15-byte sub-message; begin/end are Unix s.
+    """
+    if cmd != CMD_SPRINT_CALENDAR:
+        return ()
+    out: list[CalWindow] = []
+    for fnum, v in codec.walk(body):
+        if fnum == 1 and isinstance(v, (bytes, bytearray)):
+            d = codec.walk_dict(bytes(v))
+            out.append(CalWindow(_as_int(d.get(1)), _as_int(d.get(2)),
+                                  _as_int(d.get(3))))
+    return tuple(out)
+
+
+def read_calendar(client: WSGameClient, *,
+                  timeout: Optional[float] = None) -> tuple[CalWindow, ...]:
+    """Read the cross-limited-rank calendar (6576, empty body): all act windows."""
+    cmd, reply = client.call_for(
+        CMD_SPRINT_CALENDAR, b"",
+        expect_cmds=(CMD_SPRINT_CALENDAR, CMD_ERROR), timeout=timeout)
+    return parse_calendar(cmd, reply)
+
+
+def active_window(windows: tuple[CalWindow, ...], act_type: int,
+                  now: int) -> Optional[CalWindow]:
+    """The window of ``act_type`` currently open (begin<=now<=end).
+
+    The calendar can list the same act_type more than once (current + a future
+    rotation); we keep only windows that actually cover ``now`` and, if several
+    do, return the earliest-ending one (the live window, not a later rerun).
+    Returns None when none is open right now.
+    """
+    cands = [w for w in windows if w.act_type == act_type and w.covers(now)]
+    return min(cands, key=lambda w: w.end) if cands else None
 
 
 def _current_accrued(client: WSGameClient, act_type: int, *,

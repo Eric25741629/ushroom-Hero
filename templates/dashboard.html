@@ -1246,6 +1246,21 @@ select.form-control {
 .task-tab-panel .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
 textarea.ws-json{font-family:var(--mono,monospace);font-size:.78em;width:100%;resize:vertical;white-space:pre;margin:4px 0;}
 textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
+/* ---- 進階設定獨立浮窗 (taskSettingsModal) ---- */
+#taskSettingsModal.modal-overlay{z-index:1100;}
+.modal.task-modal{max-width:780px;width:94%;}
+.task-modal-body{padding:18px 24px 4px;}
+.task-modal .ws-subhead{font-size:.82em;font-weight:800;letter-spacing:.06em;color:var(--coral-deep,#c75a3f);margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid #efe6d4;}
+.task-modal .ws-subhead:first-child{margin-top:2px;}
+/* 卡片放大一階：浮窗內字級/間距比原本進階設定大一些，較好讀 */
+.task-modal .task-tab-chip{font-size:.9em;padding:6px 15px;}
+.task-modal .task-tab-panel{padding:6px 2px;}
+.task-modal .checkbox-item{font-size:.95em;margin:7px 0;}
+.task-modal .ws-schema-slot .ws-field label,
+.task-modal .task-tab-panel label{font-size:.92em;}
+.task-modal .task-tab-panel .ws-field-note,
+.task-modal .ws-schema-slot .ws-field-note{font-size:.8em;}
+.btn.open-task-settings{text-transform:none;letter-spacing:0;font-size:.9em;}
   </style>
 
 </head>
@@ -1757,92 +1772,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
 
-      <details class="web-advanced" id="advTaskDetails" style="margin-bottom:16px;">
-        <summary>進階設定 — 任務細項（WS，需 +ws 方案）</summary>
-        <div id="wsPlanHint" class="ws-plan-hint" style="display:none;">目前方案未含 +ws，以下任務設定不會生效（仍可預先設定，之後切到含 +ws 的方案即啟用）。</div>
-        <div id="taskTabBar" class="task-tab-bar"></div>
-        <div class="task-tab-panels">
-
-          <div class="task-tab-panel" data-tab="farm">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">啟用 WS 農場（純 WS 莊園收成+購買+豐收卡；取消＝農場子任務整段 skip）</label>
-            <div class="ws-field ws-field-row"><label>莊園每日購買 種子(407) 目標（空=不買）</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
-            <div class="ws-field ws-field-row"><label>莊園每日購買 肥料(408) 目標（空=不買）</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
-            <label class="checkbox-item"><input type="checkbox" id="chkAdSeed">看廣告拿種子（每日免費領，ad config 15；獨立於上方開關）</label>
-            <label class="checkbox-item"><input type="checkbox" id="chkHarvestCycle">每週豐收卡循環（停打工→施肥→收成→買卡→種特級→恢復打工）</label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
-              <div><label style="font-size:0.8em;">豐收卡張數</label><input type="number" id="inpHcNumCards" class="form-control" min="1" step="1" placeholder="3"></div>
-              <div><label style="font-size:0.8em;">肥料 id</label><input type="number" id="inpHcFert" class="form-control" min="0" step="1" placeholder="111"></div>
-            </div>
-            <details style="margin-top:4px;"><summary style="font-size:0.8em;color:#888;">進階（手動種植/打工，需填 id）</summary>
-              <div class="ws-field ws-field-row"><label>種植 seed_id（空=不手動種）</label><input type="number" id="inpFarmSeedId" class="form-control" min="0" step="1"></div>
-              <div class="ws-field ws-field-row"><label>打工隊伍 team_cfg_id（空=不打工）</label><input type="number" id="inpFarmTeamCfg" class="form-control" min="0" step="1"></div>
-            </details>
-          </div>
-
-          <div class="task-tab-panel" data-tab="lamp">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">WS 開神燈（純 WS，消耗神燈道具；選 WS 方案自動啟用）</label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
-              <div>
-                <label style="font-size:0.8em;">開神燈百分比 %（0=不依百分比）</label>
-                <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
-              </div>
-              <div>
-                <label style="font-size:0.8em;">最低保留神燈數（0=無下限）</label>
-                <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
-              </div>
-            </div>
-            <div class="ws-schema-slot" data-slot="lamp"></div>
-          </div>
-
-          <div class="task-tab-panel" data-tab="mining">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsMining">WS 挖礦（純 WS，挖到鎬子用完）</label>
-            <div class="ws-schema-slot" data-slot="mining"></div>
-          </div>
-
-          <div class="task-tab-panel" data-tab="relic"><div class="ws-schema-slot" data-slot="relic"></div></div>
-
-          <div class="task-tab-panel" data-tab="mail"><div class="ws-schema-slot" data-slot="mail"></div></div>
-
-          <div class="task-tab-panel" data-tab="adreward">
-            <label class="checkbox-item"><input type="checkbox" id="chkAdEnabled">啟用看廣告獎勵自動領取（is_free=1 純 WS 領，無真實廣告影片）</label>
-            <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（config 12）</label>
-            <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（config 14）</label>
-            <div class="ws-field-note">種子（config 15）在「農場」頁籤的「看廣告拿種子」。</div>
-          </div>
-
-          <div class="task-tab-panel" data-tab="kungfu">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">WS 競猜幣採購（菇菇武道會競猜商店，用粉鑽把競猜幣 4 檔買到上限；活動沒開時自動跳過）</label>
-          </div>
-
-          <div class="task-tab-panel" data-tab="tycoon"><div class="ws-schema-slot" data-slot="tycoon"></div></div>
-
-          <div class="task-tab-panel" data-tab="couple"><div class="ws-schema-slot" data-slot="couple"></div></div>
-
-          <div class="task-tab-panel" data-tab="gacha">
-            <div class="ws-schema-slot" data-slot="gacha"></div>
-            <label class="checkbox-item"><input type="checkbox" id="chkGachaSkill">抽技能（type 1）</label>
-            <label class="checkbox-item"><input type="checkbox" id="chkGachaPartner">抽同伴（type 2）</label>
-          </div>
-
-          <div class="task-tab-panel" data-tab="carpark">
-            <div class="ws-schema-slot" data-slot="carpark"></div>
-            <label for="txtCarparkPlan" style="font-size:.85em;color:#555;">跨界停車計畫 carpark_plan（JSON：日/夜窗口、泊銀等級、搶位參數；留空＝不改）</label>
-            <textarea id="txtCarparkPlan" class="form-control ws-json" rows="8" spellcheck="false"></textarea>
-          </div>
-
-          <div class="task-tab-panel" data-tab="dungeon">
-            <label for="txtDungeonSweeps" style="font-size:.85em;color:#555;">副本掃蕩 dungeon_sweeps（JSON：[[type,id,num],...]；深淵 type2 / 萬神 type23，只掃蕩不自動打）</label>
-            <textarea id="txtDungeonSweeps" class="form-control ws-json" rows="5" spellcheck="false"></textarea>
-            <div class="ws-field-note">留空＝不改（保留既有）；要清除請填 []。</div>
-          </div>
-
-          <div class="task-tab-panel" data-tab="conn">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改跑純 WS（離線備援；僅 adb+ws 方案有效）</label>
-            <div class="ws-schema-slot" data-slot="conn"></div>
-          </div>
-
-        </div>
-      </details>
+      <div style="margin:0 24px 16px;">
+        <button type="button" class="btn open-task-settings" onclick="openTaskSettings()" style="width:100%;">⚙ 進階設定 — 各任務細項</button>
+      </div>
 
 
 
@@ -1870,6 +1802,111 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
     </div>
 
+  </div>
+
+
+
+  <div id="taskSettingsModal" class="modal-overlay" onclick="if(event.target===this)closeTaskSettings()">
+    <div class="modal task-modal" onclick="event.stopPropagation()">
+      <div class="modal-header">進階設定 — 各任務細項</div>
+      <div class="task-modal-body">
+        <div id="wsPlanHint" class="ws-plan-hint" style="display:none;">目前方案沒有連線（+ws），以下設定先存著不會生效；之後把方案切成含連線的就會啟用。</div>
+        <div id="taskTabBar" class="task-tab-bar"></div>
+        <div class="task-tab-panels">
+
+          <div class="task-tab-panel" data-tab="farm">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">自動農場（莊園收成＋購買＋豐收卡；取消＝整個農場子任務跳過）</label>
+            <div class="ws-field ws-field-row"><label>莊園每日買 種子(407) 目標數（空＝不買）</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
+            <div class="ws-field ws-field-row"><label>莊園每日買 肥料(408) 目標數（空＝不買）</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdSeed">看廣告拿種子（每日免費領，免看真實廣告；獨立於上方開關）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkHarvestCycle">每週豐收卡循環（停打工→施肥→收成→買卡→種特級→恢復打工）</label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
+              <div><label style="font-size:0.84em;">豐收卡張數</label><input type="number" id="inpHcNumCards" class="form-control" min="1" step="1" placeholder="3"></div>
+              <div><label style="font-size:0.84em;">肥料 id</label><input type="number" id="inpHcFert" class="form-control" min="0" step="1" placeholder="111"></div>
+            </div>
+            <details style="margin-top:4px;"><summary style="font-size:0.84em;color:#888;">進階（手動指定種植/打工，需填 id）</summary>
+              <div class="ws-field ws-field-row"><label>種植 seed_id（空＝不手動種）</label><input type="number" id="inpFarmSeedId" class="form-control" min="0" step="1"></div>
+              <div class="ws-field ws-field-row"><label>打工隊伍 team_cfg_id（空＝不打工）</label><input type="number" id="inpFarmTeamCfg" class="form-control" min="0" step="1"></div>
+            </details>
+          </div>
+
+          <div class="task-tab-panel" data-tab="lamp">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">自動開神燈（消耗神燈道具；選含連線的方案會自動開）</label>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
+              <div>
+                <label style="font-size:0.84em;">開到剩百分之幾 %（0＝不依百分比）</label>
+                <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
+              </div>
+              <div>
+                <label style="font-size:0.84em;">最少保留幾個神燈（0＝無下限）</label>
+                <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
+              </div>
+            </div>
+            <div class="ws-schema-slot" data-slot="lamp"></div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="mining">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsMining">自動挖礦（挖到鎬子用完）</label>
+            <div class="ws-schema-slot" data-slot="mining"></div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="relic">
+            <div id="relicSprintDate" class="ws-field-note"></div>
+            <div class="ws-schema-slot" data-slot="relic"></div>
+            <div class="ws-field-note">「一口氣平均強化所有遺物」已移到上方「工具」面板手動執行；這裡只保留每週期把碎片衝到目標、領回合獎勵。</div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="adreward">
+            <label class="checkbox-item"><input type="checkbox" id="chkAdEnabled">自動領看廣告獎勵（免看真實廣告，直接領）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（每日免費）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（每日免費）</label>
+            <div class="ws-field-note">看廣告拿種子的開關在「農場」頁籤。</div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="carpark">
+            <div class="ws-schema-slot" data-slot="carpark"></div>
+            <label for="txtCarparkPlan" style="font-size:.9em;color:#555;">跨服停車：去別的伺服器找空車位停進去賺收益。下方是進階參數（白天/晚上時段、泊銀等級、搶位設定），用 JSON 填，留空＝沿用現有不改。</label>
+            <textarea id="txtCarparkPlan" class="form-control ws-json" rows="8" spellcheck="false"></textarea>
+          </div>
+
+          <div class="task-tab-panel" data-tab="dungeon">
+            <label for="txtDungeonSweeps" style="font-size:.85em;color:#555;">副本掃蕩 dungeon_sweeps（JSON：[[type,id,num],...]；深淵 type2 / 萬神 type23，只掃蕩不自動打）</label>
+            <textarea id="txtDungeonSweeps" class="form-control ws-json" rows="5" spellcheck="false"></textarea>
+            <div class="ws-field-note">留空＝不改（保留既有）；要清除請填 []。</div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="events">
+            <div class="ws-field-note">限時活動：活動沒開時會自動跳過，可先設定好等開放。</div>
+            <div class="ws-schema-slot" data-slot="tycoon"></div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="misc">
+            <div class="ws-subhead">伴侶</div>
+            <div class="ws-schema-slot" data-slot="couple"></div>
+            <div class="ws-subhead">加工坊</div>
+            <div class="ws-schema-slot" data-slot="workshop"></div>
+            <div class="ws-subhead">郵件</div>
+            <div class="ws-schema-slot" data-slot="mail"></div>
+            <div class="ws-subhead">競猜</div>
+            <label class="checkbox-item"><input type="checkbox" id="chkWsKungfuGuess">自動買競猜幣（武道會競猜商店，用粉鑽買到上限；沒活動自動跳過）</label>
+            <div class="ws-subhead">抽卡</div>
+            <div class="ws-schema-slot" data-slot="gacha"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkGachaSkill">抽技能</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkGachaPartner">抽同伴</label>
+            <div class="ws-field-note">「付費抽卡一鍵抽到券盡」請到上方「工具」面板手動執行。</div>
+          </div>
+
+          <div class="task-tab-panel" data-tab="conn">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsOfflineFallback">手機離線時改用連線掛機（離線備援；僅「手機＋連線」方案有效）</label>
+            <div class="ws-schema-slot" data-slot="conn"></div>
+          </div>
+
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-save" onclick="closeTaskSettings()">完成</button>
+      </div>
+    </div>
   </div>
 
 
@@ -3070,6 +3107,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
     function closeModal() {
 
+      closeTaskSettings();
+
       document.getElementById('configModal').classList.remove('active');
 
     }
@@ -3568,37 +3607,32 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     // 其 load/save 仍由既有 JS 處理。以下只負責「之前藏在 json 沒 UI」的欄位。
     const WS_TASK_TABS = [
       ['farm', '農場'], ['lamp', '神燈'], ['mining', '挖礦'], ['relic', '遺物'],
-      ['mail', '郵件'], ['adreward', '看廣告'], ['gacha', '抽卡'], ['kungfu', '競猜'],
-      ['tycoon', '大亨'], ['couple', '伴侶加工'], ['carpark', '車位'], ['dungeon', '副本掃蕩'],
-      ['conn', '連線'],
+      ['adreward', '看廣告'], ['carpark', '跨服停車'], ['dungeon', '副本掃蕩'],
+      ['events', '活動'], ['misc', '雜項'], ['conn', '連線'],
     ];
     // slot = 頁籤 id；path = config 內完整路徑(全部 ws_token.*)；type bool/int/intnull/text。
     const WS_EXTRA_FIELDS = [
       { slot:'mining', path:'ws_token.mining.allow_bomb', type:'bool', label:'允許使用炸彈', def:false },
       { slot:'mining', path:'ws_token.mining.allow_drill', type:'bool', label:'允許使用鑽頭', def:false },
       { slot:'mining', path:'ws_token.mining.max_steps', type:'int', label:'每輪步數上限', def:200 },
-      { slot:'relic', path:'ws_token.relic_upgrade', type:'bool', label:'遺物平均強化（消耗遺物碎片）', def:false },
-      { slot:'relic', path:'ws_token.relic_max_steps', type:'int', label:'強化每輪步數上限', def:10 },
-      { slot:'relic', path:'ws_token.relic_fragment_floor', type:'int', label:'碎片低於此值即停（0=無下限）', def:0 },
-      { slot:'relic', path:'ws_token.relic_sprint.enabled', type:'bool', label:'遺物碎片衝刺榜（衝至目標領回合獎勵）', def:false },
-      { slot:'relic', path:'ws_token.relic_sprint.target_spend', type:'int', label:'衝刺目標消耗（=第4回合門檻）', def:900000 },
+      { slot:'relic', path:'ws_token.relic_sprint.enabled', type:'bool', label:'每週期把遺物碎片衝到目標、領回合獎勵', def:false },
+      { slot:'relic', path:'ws_token.relic_sprint.target_spend', type:'int', label:'本期目標消耗碎片（預設 900000＝第 4 回合）', def:900000 },
       { slot:'mail', path:'ws_token.mail_claim', type:'bool', label:'每日領取全部郵件附件', def:false },
-      { slot:'mail', path:'ws_token.mail_gem_threshold', type:'intnull', label:'神器附魔寶石滿門檻（空=不查）', def:null },
-      { slot:'mail', path:'ws_token.mail_skill_threshold', type:'intnull', label:'武魂滿門檻（空=不查）', def:null },
-      { slot:'tycoon', path:'ws_token.tycoon', type:'bool', label:'傳奇大亨自動擲骰（免費骰純收益，活動沒開=跳過）', def:false },
-      { slot:'tycoon', path:'ws_token.tycoon_max_rolls', type:'int', label:'每輪擲骰上限', def:50 },
-      { slot:'couple', path:'ws_token.couple_gifts', type:'bool', label:'伴侶送禮（奶茶+玫瑰送光）', def:true },
-      { slot:'couple', path:'ws_token.forge_ring', type:'bool', label:'戒指錘鍊（消耗全部真愛之石）', def:false },
-      { slot:'couple', path:'ws_token.workshop_rotate', type:'bool', label:'加工坊 12h 配方輪換', def:true },
-      { slot:'conn', path:'ws_token.bootstrap_token', type:'bool', label:'缺 token 時冷啟 App 撈取（僅 adb 裝置）', def:true },
-      { slot:'conn', path:'ws_token.fallback_host', type:'text', label:'離線備援限定主機名（空=只 master）', def:'' },
-      { slot:'gacha', path:'ws_token.gacha.enabled', type:'bool', label:'啟用 WS 付費抽卡（消耗抽卡券 1012/1013）', def:false },
-      { slot:'gacha', path:'ws_token.gacha.mode', type:'select', options:[['fixed','固定批數 fixed'],['drain','抽到券盡 drain']], label:'模式', def:'fixed' },
-      { slot:'gacha', path:'ws_token.gacha.count', type:'int', label:'每批抽數（15/35/999）', def:35 },
-      { slot:'gacha', path:'ws_token.gacha.batches', type:'int', label:'批數（fixed 模式）', def:3 },
+      { slot:'mail', path:'ws_token.mail_gem_threshold', type:'intnull', label:'神器附魔寶石達此量就提醒（空＝不查）', def:null },
+      { slot:'mail', path:'ws_token.mail_skill_threshold', type:'intnull', label:'武魂達此量就提醒（空＝不查）', def:null },
+      { slot:'tycoon', path:'ws_token.tycoon', type:'bool', label:'傳奇大亨：自動擲免費骰（純收益，沒活動就跳過）', def:false },
+      { slot:'tycoon', path:'ws_token.tycoon_max_rolls', type:'int', label:'每輪最多擲幾次', def:50 },
+      { slot:'couple', path:'ws_token.couple_gifts', type:'bool', label:'自動送伴侶禮物（奶茶＋玫瑰送完）', def:true },
+      { slot:'couple', path:'ws_token.forge_ring', type:'bool', label:'戒指錘鍊（用光真愛之石）', def:false },
+      { slot:'workshop', path:'ws_token.workshop_rotate', type:'bool', label:'加工坊每 12 小時自動換配方', def:true },
+      { slot:'conn', path:'ws_token.bootstrap_token', type:'bool', label:'缺連線憑證時自動冷啟 App 取得（僅手機/adb）', def:true },
+      { slot:'conn', path:'ws_token.fallback_host', type:'text', label:'離線備援限定主機名（空＝只在主控機）', def:'' },
+      { slot:'gacha', path:'ws_token.gacha.enabled', type:'bool', label:'自動付費抽卡（消耗抽卡券 1012/1013）', def:false },
+      { slot:'gacha', path:'ws_token.gacha.count', type:'int', label:'每批抽幾抽（15/35/999）', def:35 },
+      { slot:'gacha', path:'ws_token.gacha.batches', type:'int', label:'每次抽幾批', def:3 },
       { slot:'gacha', path:'ws_token.gacha.weekend_only', type:'bool', label:'只在週六/日執行', def:false },
-      { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'跨界停車目標 master_id（legacy 單停；空=不用）', def:null },
-      { slot:'carpark', path:'ws_token.carpark_auto', type:'bool', label:'跨界自動掃停可停 lot（legacy 單停模式）', def:false },
+      { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'舊版單一停車目標 master_id（空＝不用）', def:null },
+      { slot:'carpark', path:'ws_token.carpark_auto', type:'bool', label:'舊版自動掃停可停車位', def:false },
     ];
     function _wsFieldId(path) { return 'wsx_' + path.replace(/\./g, '_'); }
     function getPath(obj, path, def) {
@@ -3625,6 +3659,40 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         c.classList.toggle('active', c.dataset.tab === id));
       document.querySelectorAll('.task-tab-panel').forEach(p =>
         p.classList.toggle('active', p.dataset.tab === id));
+      if (id === 'relic') loadRelicSprintDate();
+    }
+    // 遺物頁籤：即時讀「本期活動結束日」(純 WS calendar 6576 → /api/relic_sprint/plan)。
+    // 每次開浮窗只抓一次/裝置(切回頁籤不重抓)；未登入工具 session(401)時給軟提示。
+    let _relicDateFetchedFor = null;
+    async function loadRelicSprintDate() {
+      const el = document.getElementById('relicSprintDate');
+      if (!el) return;
+      const ip = (document.getElementById('editIp') || {}).value;
+      if (!ip || _relicDateFetchedFor === ip) return;
+      _relicDateFetchedFor = ip;
+      el.textContent = '本期活動結束日：讀取中…';
+      try {
+        const res = await fetch(`/api/relic_sprint/plan/${ip}`);
+        if (res.status === 401) {
+          el.textContent = '（登入工具頁後才能顯示本期活動結束日）';
+          _relicDateFetchedFor = null;
+          return;
+        }
+        const j = await res.json();
+        const d = (j && j.data) || {};
+        if (!d.open) { el.textContent = '本期目前沒有遺物衝刺活動'; return; }
+        if (d.end_ts) {
+          const ds = new Date(d.end_ts * 1000).toLocaleDateString('zh-TW',
+            { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
+          const days = Math.max(0, Math.ceil((d.end_ts * 1000 - Date.now()) / 86400000));
+          el.textContent = `本期活動結束日：${ds}（約剩 ${days} 天）`;
+        } else {
+          el.textContent = '本期活動進行中（結束日未知）';
+        }
+      } catch (e) {
+        el.textContent = '';
+        _relicDateFetchedFor = null;
+      }
     }
     function renderTaskTabs() {
       if (_taskTabsRendered) return;
@@ -3662,6 +3730,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       });
       _taskTabsRendered = true;
       activateTaskTab(WS_TASK_TABS[0][0]);
+    }
+    // 進階設定獨立浮窗開/關。欄位 id 不變，留在 DOM 裡，故關閉浮窗不影響存檔
+    // (saveConfig 仍讀得到各欄位)。開啟時依目前「方案」select 重算 +ws 提示。
+    function openTaskSettings() {
+      const m = document.getElementById('taskSettingsModal');
+      if (!m) return;
+      _relicDateFetchedFor = null;  // allow one fresh relic-date read per open
+      renderTaskTabs();
+      const plan = (document.getElementById('editBackend') || {}).value || 'adb';
+      const hint = document.getElementById('wsPlanHint');
+      if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
+      m.classList.add('active');
+    }
+    function closeTaskSettings() {
+      const m = document.getElementById('taskSettingsModal');
+      if (m) m.classList.remove('active');
     }
     // ---- 特殊頁籤(農場/看廣告)：欄位非單一 ws_token key，bespoke load/collect ----
     function _numOrNull(id) {
@@ -3731,6 +3815,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       const arr = [];
       GACHA_TYPES.forEach(([n, cid]) => { const el = document.getElementById(cid); if (el && el.checked) arr.push(n); });
       setPath(payload, 'ws_token.gacha.types', arr);
+      // 「抽到券盡 drain」已從此面板移除(改走工具頁一鍵)。recurring runner 的 mode 預設是
+      // drain,故此面板存檔一律釘成 fixed,確保自動掛機絕不偷抽到券盡。
+      setPath(payload, 'ws_token.gacha.mode', 'fixed');
     }
     const WS_JSON_FIELDS = [
       { id: 'txtCarparkPlan', path: 'ws_token.carpark_plan' },
