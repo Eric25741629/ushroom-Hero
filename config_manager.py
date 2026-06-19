@@ -54,6 +54,7 @@ DEFAULT_DEVICE_CONFIG = {
     "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
     "web_reload_after_goto": False,  # True=goto 成功後再 reload；預設關閉以加快 H5 載入
     "enable_farm": True,  # 啟用農場
+    "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
     "enable_dungeon": True,  # 啟用副本(地獄/萬神)
@@ -189,6 +190,7 @@ class DeviceConfig:
 
     # Feature flags
     enable_farm: bool = True
+    enable_harvest_card: bool = True
     enable_arena: bool = True
     enable_mining: bool = True
     enable_dungeon: bool = True
@@ -1071,6 +1073,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         for k in [
             "enabled",
             "enable_farm",
+            "enable_harvest_card",
             "enable_arena",
             "enable_mining",
             "enable_dungeon",
