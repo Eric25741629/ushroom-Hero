@@ -55,12 +55,26 @@ bot_config.json 的 ws_token 設定全部露出，以任務類別分頁籤，收
       workshop-split/relic-slim 皆正確）；served HTML 確認 template 已更新。實際 POST 存檔到 bot_config 未跑
       （避免改到 live 裝置設定，使用者實機存檔即驗）。
 
-### Phase 1 — 遺物「本期活動結束日（即時讀）」（需後端 recon，今天 act 269 開著可驗）
-- [ ] G. recon：解 6576 `act_cross_limit_rank_calendar`（或活動開啟列表）取本期 end_time；live 對齊遊戲畫面。
-- [ ] H. 後端：`ws_token/relic_sprint.read_sprint` + `/api/relic_sprint/plan` 多回 end_ts/end_date（無活動沿用 open:false）。
-- [ ] I. 前端：遺物頁籤開啟時 fetch 該裝置 plan，顯示「本期活動結束日：YYYY-MM-DD」/「本期無活動」。
+### Phase 1 — 遺物「本期活動結束日（即時讀）」— 完成 2026-06-19（commit 8fdeee7d/b8c95bba）
+- [x] G. recon：`tools/probe_relic_calendar.py` CDP→小寶(9226) 解 6576 `act_cross_limit_rank_calendar`：
+      回 repeated #1 {act_type#1, begin#2, end#3}（Unix 秒，clean UTC+8 日界）。同 act_type 可多窗
+      （269 當期 06-15→06-22 + 未來 07-13 一日重跑）。
+- [x] H. 後端：`ws_token/relic_sprint` 加 `CalWindow`/`parse_calendar`/`read_calendar`/`active_window`
+      （取 begin<=now<=end 的當前窗，多窗取最早結束）；`/api/relic_sprint/plan` 多回 `end_ts`。
+- [x] I. 前端：遺物頁籤開啟即 fetch plan → 顯示「本期活動結束日：YYYY/MM/DD（約剩 N 天）」/「本期沒有活動」/
+      401 軟提示。Playwright 驗證 fetch 路徑+401 分支無 JS error。
+- [x] 測試：`test_ws_token_relic_sprint` 加 5 個 calendar 測（37 passed）；routes 11 passed。
 
-注意：Phase1 後端改動（runner 路徑）要重啟 bot 才生效；dashboard 端點隨 flask reload。
+⚠ 待使用者：**重啟控制面板/bot** 後 `/api/relic_sprint/plan` 才會吐 `end_ts`（routes 改動需 reload）；
+重啟後登入工具 session 開遺物頁籤即見 2026/06/22。recon 工具 `tools/probe_relic_calendar.py` 可事後刪。
+
+### ⚠ 並行 instance 衝突事件（2026-06-19，已自救）
+另一個 Claude instance 在共用工作目錄切 branch（feat/overnight→fix/ws-farm-badges→回來），把我 Phase0 的
+commit 沖到 `fix/ws-farm-badges`（現於 worktree `.claude/worktrees/ws-farm-badges`），主目錄 working tree 退回
+Phase0 前。已從 commit 5f518524 還原 Phase0 + 重新接上 Phase1，全部重新 commit 到 feat/overnight-2026-06-14
+（8fdeee7d/b8c95bba）。**殘留：`fix/ws-farm-badges` tip 是我的 5f518524（內容與 feat/overnight 重複）**——
+未動該 branch（別家 instance 在用），待使用者決定是否 `git reset --hard 51666d9a` 清掉。
+教訓見 `tasks/lessons.md`：改碼工作要照 memory 規則先進 git worktree 隔離。
 
 ### 後續單獨討論（使用者另開對話）
 - [ ] 副本掃蕩改版 — 用詞白話化 + 是否改逐欄表單（取代 JSON）。本次重整不碰，維持現狀等討論。
