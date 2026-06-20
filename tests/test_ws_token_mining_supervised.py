@@ -209,7 +209,7 @@ def test_plan_current_board_dry_run_never_digs(monkeypatch):
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda got_board, inventory, max_depth=None: plan,
+        lambda got_board, inventory, max_depth=None, terrain=None: plan,
     )
 
     def forbidden_dig(*args, **kwargs):
@@ -243,7 +243,7 @@ def test_plan_current_board_replans_between_executed_steps(monkeypatch):
         lambda client, timeout=None: board1,
     )
 
-    def fake_plan(board, inventory, max_depth=None):
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
         planned_boards.append(board)
         step = step1 if board is board1 else step2
         return {"message": "ok", "ws_steps": [step]}
@@ -296,7 +296,7 @@ def test_mine_until_pickaxe_empty_uses_tracker_inventory_and_items(monkeypatch):
         lambda client, timeout=None: board1,
     )
 
-    def fake_plan(board, inventory, max_depth=None):
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
         plans.append(dict(inventory))
         if board is board1:
             return {"message": "use drill", "ws_steps": [
@@ -366,7 +366,7 @@ def test_mine_until_pickaxe_empty_seeds_when_count_unknown_then_adopts_push(monk
     monkeypatch.setattr(mining_supervised.mining, "read_board",
                         lambda client, timeout=None: board1)
 
-    def fake_plan(board, inventory, max_depth=None):
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
         seen_inventories.append(dict(inventory))
         bid = 16239104 if board is board1 else 16239204
         return {"message": "dig", "ws_steps": [{"type": "dig", "block_id": bid}]}
@@ -461,7 +461,7 @@ def test_mine_retries_next_candidate_after_unconfirmed(monkeypatch):
     monkeypatch.setattr(mining_supervised.mining, "read_board",
                         lambda client, timeout=None: board0)
 
-    def fake_plan(b, inv, max_depth=None):
+    def fake_plan(b, inv, max_depth=None, terrain=None):
         if b is board0:
             return {"message": "dig", "hold_floor": False, "grid": None,
                     "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0},
@@ -538,7 +538,7 @@ def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda board, inventory, max_depth=None: {"message": "no step", "ws_steps": []},
+        lambda board, inventory, max_depth=None, terrain=None: {"message": "no step", "ws_steps": []},
     )
 
     with caplog.at_level("INFO", logger=mining_supervised.logger.name):
@@ -572,7 +572,7 @@ def test_mine_marks_skipped_when_no_confirmed_dig(monkeypatch):
                         lambda client, timeout=None: board)
     monkeypatch.setattr(
         mining_supervised.mining_adapter, "plan",
-        lambda b, inv, max_depth=None: {
+        lambda b, inv, max_depth=None, terrain=None: {
             "message": "dig", "hold_floor": False, "grid": None,
             "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
     monkeypatch.setattr(
@@ -600,7 +600,7 @@ def test_mine_no_skipped_when_pickaxe_empty(monkeypatch):
                         lambda client, timeout=None: board1)
     monkeypatch.setattr(
         mining_supervised.mining_adapter, "plan",
-        lambda b, inv, max_depth=None: {
+        lambda b, inv, max_depth=None, terrain=None: {
             "message": "dig", "hold_floor": False, "grid": None,
             "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
     monkeypatch.setattr(
@@ -630,7 +630,7 @@ def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda board, inventory, max_depth=None: {
+        lambda board, inventory, max_depth=None, terrain=None: {
             "message": "dig",
             "ws_steps": [{"type": "dig", "block_id": 16239104}],
         },

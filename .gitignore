@@ -45,6 +45,9 @@ auth_state/*.json
 # Miner RL event logs
 miner/rl_logs/
 
+# Per-device self-learning terrain cache (runtime state)
+miner/terrain_cache/
+
 # Runtime coordination and reports
 .coordination/
 reports/miner_v2/

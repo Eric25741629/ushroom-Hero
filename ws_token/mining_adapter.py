@@ -151,8 +151,15 @@ def has_uncollected_row0_pit(mine_board: Any) -> bool:
     return False
 
 
-def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[dict]]:
-    """Project WS board into planner grid and record what the projection drops."""
+def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]], list[dict], list[dict]]:
+    """Project WS board into planner grid and record what the projection drops.
+
+    ``terrain`` (optional ``mine_terrain.TerrainModel``): WS never sends the type
+    of an undug cell, so undug actives default to "dirt". When a learned terrain
+    model reconstructs that cell as STONE (202) we upgrade it to "rock" so the
+    planner can cost it correctly / bomb dense stone. DIRT/AIR/unknown keep the
+    safe "dirt" default — the override only ever *adds* stone knowledge.
+    """
     grid: List[List[str]] = [[EMPTY for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     top_depth = viewport_top_depth(baseline)
@@ -176,7 +183,13 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
         # active 且無 block feature = 未挖泥土 (CDP dig 2026-06-20 + MINING_SCHEMA L204
         # "active 無 block entry = 未挖泥土" + user)。舊版填 "rock" 把未挖泥土當石頭、
         # 成本高估，也讓盤面更顯「實心」。實際未挖格大多是泥土；石頭/礦會帶 count>0 block。
-        grid[row][col] = "dirt"
+        label = "dirt"
+        if terrain is not None:
+            # 202 == STONE (ws_token.mine_terrain.STONE); literal to keep this
+            # pure projection import-free.
+            if terrain.terrain_at(depth, col) == 202:
+                label = "rock"
+        grid[row][col] = label
 
     if any(cell != EMPTY for cell in grid[GRID_ROWS - 1]):
         for col, cell in enumerate(grid[GRID_ROWS - 1]):
@@ -208,15 +221,15 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
     return grid, dropped_blocks, dropped_actives
 
 
-def board_to_grid(mine_board: Any) -> List[List[str]]:
+def board_to_grid(mine_board: Any, terrain: Any = None) -> List[List[str]]:
     """Project a MineBoard's blocks into a 7x6 grid of planner labels.
 
-    Pure: no planner import, no side effects. Viewport cells listed in
-    ``actives`` default to conservative "rock" when no terrain feature exists.
-    Blocks outside the 7-row viewport [baseline-5, baseline+2) or outside
-    columns 1..6 are dropped (gap #2/#3).
+    Pure: no planner import, no side effects. Undug ``actives`` default to
+    "dirt"; an optional learned ``terrain`` model upgrades cells it has
+    reconstructed as stone (see ``_project_board``). Blocks outside the 7-row
+    viewport [baseline-5, baseline+2) or outside columns 1..6 are dropped.
     """
-    grid, _dropped_blocks, _dropped_actives = _project_board(mine_board)
+    grid, _dropped_blocks, _dropped_actives = _project_board(mine_board, terrain)
     return grid
 
 
@@ -249,7 +262,7 @@ def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
 
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
-         *, max_depth: Optional[int] = None) -> Dict[str, Any]:
+         *, max_depth: Optional[int] = None, terrain: Any = None) -> Dict[str, Any]:
     """Build the grid, run the planner (v4), and translate steps back to block_ids.
 
     Returns the plan dict augmented with:
@@ -265,7 +278,14 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     from miner.v3.board import floor7_open
     from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
-    grid = board_to_grid(mine_board)
+    # Self-learning terrain: feed this board's dug cells (their real config_id)
+    # into the model, then project with stone-aware undug cells. No-op if no model.
+    if terrain is not None:
+        try:
+            terrain.observe_board(mine_board)
+        except Exception:
+            pass
+    grid = board_to_grid(mine_board, terrain)
     inv = inventory or {}
     shovels = float(inv.get("pickaxe", 0))
     items = {"drill": int(inv.get("drill", 0)), "bomb": int(inv.get("bomb", 0))}
