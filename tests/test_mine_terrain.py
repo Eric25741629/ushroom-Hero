@@ -119,6 +119,30 @@ def test_projection_upgrades_undug_stone_to_rock():
     assert mining_adapter.board_to_grid(board, m)[0][c] == "rock"
 
 
+def test_occluded_cell_filled_from_template():
+    """A viewport cell WS never reports (not active, no block) is air by default;
+    with the band identified it must be filled as the template's solid terrain."""
+    grids = mt.templates("row")
+    idx, (rr, c) = _unique_template_with_stone()
+    if rr == mining_adapter.GRID_ROWS - 1:
+        # avoid the bottom-row special-case; pick this template only if stone is
+        # off the floor (every active template has interior stone, so this holds)
+        rr, c = next((r, cc) for r in range(mt.ROWS - 1) for cc in range(mt.COLS)
+                     if grids[idx][r][cc] == mt.STONE)
+    phase, band = 0, 0
+    m = mt.TerrainModel()
+    _seed_band(m, grids, idx, phase, band)
+    _seed_band(m, grids, idx, phase, band + 1)
+
+    depth = phase + band * mt.ROWS + rr
+    baseline = depth - rr + (mining_adapter.GRID_ROWS - 2)  # so viewport row 0 == band row 0
+    # occluded: NO active, NO block anywhere -> the cell is a blank in WS
+    board = FakeBoard(baseline=baseline, actives=[], blocks=[])
+
+    assert mining_adapter.board_to_grid(board)[rr][c] == "empty"        # blind: air
+    assert mining_adapter.board_to_grid(board, m)[rr][c] == "unreachable_rock"
+
+
 def test_sliding_window_prunes_old_reveals():
     m = mt.TerrainModel()
     m.observe(10, 0, mt.DIRT)

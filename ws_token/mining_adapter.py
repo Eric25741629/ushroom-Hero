@@ -159,12 +159,21 @@ def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]
     model reconstructs that cell as STONE (202) we upgrade it to "rock" so the
     planner can cost it correctly / bomb dense stone. DIRT/AIR/unknown keep the
     safe "dirt" default — the override only ever *adds* stone knowledge.
+
+    OCCLUDED cells: WS sends only dug cells, frontier ``actives`` and pits — it
+    never sends a viewport cell that is undug but NOT on the diggable frontier (a
+    solid pocket the descent walked past). Those default to EMPTY (air), which
+    wrongly tells the planner it can pass through them. When ``terrain`` has the
+    band identified we fill them from the template as ``unreachable_dirt/rock``
+    (solid but off-frontier; the planner's own reachability pass promotes them
+    once a path opens). WS truth always wins (dug/pit/active set first).
     """
     grid: List[List[str]] = [[EMPTY for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     top_depth = viewport_top_depth(baseline)
     dropped_blocks: list[dict] = []
     dropped_actives: list[dict] = []
+    ws_known: set[tuple[int, int]] = set()  # cells WS actually reports (active/block)
 
     for block_id in getattr(mine_board, "actives", []) or []:
         try:
@@ -190,6 +199,7 @@ def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]
             if terrain.terrain_at(depth, col) == 202:
                 label = "rock"
         grid[row][col] = label
+        ws_known.add((row, col))
 
     if any(cell != EMPTY for cell in grid[GRID_ROWS - 1]):
         for col, cell in enumerate(grid[GRID_ROWS - 1]):
@@ -218,6 +228,23 @@ def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]
             })
             continue
         grid[row][col] = _block_label(blk.config_id, blk.is_reward, blk.count)
+        ws_known.add((row, col))
+
+    # Occluded fill: viewport cells WS never reported (not active, not a block)
+    # default to EMPTY=air. If the band is identified, fill solid ones from the
+    # template so the planner sees off-frontier pockets as walls, not passages.
+    if terrain is not None:
+        for r in range(GRID_ROWS):
+            depth = top_depth + r
+            for c in range(GRID_COLS):
+                if (r, c) in ws_known or grid[r][c] != EMPTY:
+                    continue
+                t = terrain.terrain_at(depth, c)
+                if t == 201:
+                    grid[r][c] = "unreachable_dirt"
+                elif t == 202:
+                    grid[r][c] = "unreachable_rock"
+
     return grid, dropped_blocks, dropped_actives
 
 
