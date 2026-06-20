@@ -1148,6 +1148,25 @@ def take_snapshot(page: Any) -> Optional[CarparkSnapshot]:
     return CarparkSnapshot(deployed=deployed, home_occupied=home_occupied, home_total=home_total)
 
 
+def _build_snapshot_summary(s):
+    """Pure projection of a CarparkSnapshot into the dashboard summary dict.
+
+    Hoisted from a nested closure in reconcile() (cx-7); reads only its arg
+    ``s``. Keep the returned shape byte-identical — the dashboard reads it.
+    """
+    return {
+        "cross_deployed": s.cross_count,
+        "home_occupied": s.home_occupied if s.home_total else "not-visible",
+        "home_capacity": s.home_total if s.home_total else "n/a",
+        "normal_at_friends": "not-visible",
+        "deployed_detail": [
+            {"slot": d.slot_idx, "hp_pct": d.hp_pct, "elapsed": d.timer_str,
+             "park_type": d.park_type, "at_limit": d.at_limit}
+            for d in s.deployed
+        ],
+    }
+
+
 def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
     """One-shot reconciliation: compare current deployed state vs target,
     take corrective actions, return a summary dict.
@@ -1195,19 +1214,6 @@ def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
         # home_occupied is whoever is parked at *my* home — mine + foreign;
         # normal_at_friends is what's deployed at friends' lots and is NOT
         # visible from this view, hence the "not-visible" marker).
-        def _build_snapshot_summary(s):
-            return {
-                "cross_deployed": s.cross_count,
-                "home_occupied": s.home_occupied if s.home_total else "not-visible",
-                "home_capacity": s.home_total if s.home_total else "n/a",
-                "normal_at_friends": "not-visible",
-                "deployed_detail": [
-                    {"slot": d.slot_idx, "hp_pct": d.hp_pct, "elapsed": d.timer_str,
-                     "park_type": d.park_type, "at_limit": d.at_limit}
-                    for d in s.deployed
-                ],
-            }
-
         summary = {
             "snapshot": _build_snapshot_summary(snap),
             "target": {
