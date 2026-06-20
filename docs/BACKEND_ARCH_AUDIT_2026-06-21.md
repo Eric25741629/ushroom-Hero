@@ -168,6 +168,11 @@ device thread
 | `32a024c9` | **fix**: `ws_token/state.py` + `ladder_reward.py` 原子寫(tmp+os.replace),修 torn-write 清閘缺陷 | +2 鑑別測試(`test_save_uses_atomic_replace` 等),17 passed |
 | `20518dc0` | **refactor(dup-0)**: park/tools/battle.manager 3 處內嵌守衛 → `main_page_guard`,各保留迴圈/dismiss 語意 | py_compile + 8 main_page_guard 測試 |
 | `0a33e842` | **refactor(cx-7)**: carpark `_build_snapshot_summary` 巢狀閉包 → module-level 純函式,dict shape 不變 | 43 carpark pinning 測試 |
+| `4df2563c` | **refactor(cx-3)**: 移除 V1 神燈互動流程 + `__main__`(-605 行)+ 死的 sympy/argparse import + 退役 example | py_compile + 20 lamp/daily 測試 |
+| `9c2bbbc6` | **feat(security)**: dashboard secret_key/帳密/bind 改 env override(附加式;未設 env = 零行為變更) | 17 fly_pet 測試 |
+| `29df2534` | **refactor(cx-1)**: 抽 `_cdp_err_code` 單一來源(shared/cdp + routes_fly_pet)+ battle_helpers `safe_device_id`(dup-3 收尾) | +`test_cdp_err_code` + 17 fly_pet 測試 |
+| `5e76cd70` | **refactor(cx-4)**: 抽 `_reenter_silver_detail_list`(先補 recovery 分支特徵化測試再抽) | 46 carpark 測試 |
+| `769c58e0` | **refactor(cx-5)**: web profile/state 路徑單一 resolver(device_wrapper + dashboard 共用,修 normpath 分歧 latent bug) | +8 測試 + device_wrapper launch recovery |
 | (本文件 + INDEX 修正) | 文件導正:架構/問題/策略交付 + INDEX planner 預設、control_panel 行數 drift | doc-only |
 
 選擇原則(ponytail):只執行**已對抗驗證為安全 + 高/明確價值**的項;
@@ -177,6 +182,13 @@ device thread
 
 ## 5. 重構策略(延後項 + 執行條件)
 
+> **2026-06-21 更新(本輪實作後)**:下列原列為「延後/待拍板」的項目,**多數已在分支 `feat/backend-arch-audit` 完成**(見 §4):cx-3 V1 神燈退役、security env-override、cx-1 `_cdp_err_code`、cx-4 `_reenter_silver_detail_list`、cx-5 web profile 路徑、dup-3 收尾。
+> **評估後判定「不抽」**(forced abstraction,會引入風險或降可讀性):ws_token `build_run_kwargs`(兩 caller 的輸入來源與 kwarg-gating 慣例**刻意分歧** — ws_phase 從巢狀 cfg、ws_runner_service 從上層解析好的區域變數且刻意省略關閉的任務以相容 test fake)、5 個 once-per-day 閘(`last_date` vs `gift_date` + 各自額外欄位,真實 per-task 差異)。真正的資料完整性風險(torn-write)已由原子寫(`32a024c9`)修掉。
+> **仍延後**(需 live 手動接管驗證):cx-2 / cocos_navigator + carpark JS walker —— 4 個 `find` walker **並非 byte-identical**(2 變體:`const next` vs `n=n.children.find`),carpark worldToScreen 是停車金錢熱路徑;mock 測試抓不到 JS 執行期破壞,須在 live 手動接管 + 逐點 old-vs-new 座標 assert 下做。
+> **需你後續動作**:安全 env-override 已就位,但你仍需設環境變數(`MUSHROOM_DASHBOARD_SECRET` / `_USER` / `_PASS` / `_HOST`)+ 輪換已外洩憑證,才真正生效。
+>
+> 以下為原始策略紀錄(完成項的執行條件說明仍具參考價值)。
+>
 > 原則:每項獨立審查 + 改 runtime 檔必重啟 `new_main_v2.py`(sys.modules 快取);Phase 間勿混 commit。
 
 ### 立即可做(低風險,本次未做但隨時可接)
