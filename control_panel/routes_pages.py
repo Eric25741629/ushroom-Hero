@@ -18,6 +18,7 @@ _README_PATH = _REPO_ROOT / "README.md"
 _UPDATE_PATH = _REPO_ROOT / "update.txt"
 _BUG_FEEDBACK_PATH = _REPO_ROOT / "reports" / "bug_feedback.jsonl"
 _TEMPLATES_DIR = _REPO_ROOT / "templates"
+_STATIC_LIB_DIR = _REPO_ROOT / "static" / "lib"
 
 
 def _load_readme_text() -> str:
@@ -45,6 +46,12 @@ def _get_frontend_version() -> str:
     tracked = [
         _TEMPLATES_DIR / "dashboard.html",
         _TEMPLATES_DIR / "readme_viewer.html",
+        # Shared design-system lib + its head partial: editing any of these must
+        # bump the version so the ?v= cache-bust in _assets_head.html fires.
+        _TEMPLATES_DIR / "_assets_head.html",
+        _STATIC_LIB_DIR / "tokens.css",
+        _STATIC_LIB_DIR / "components.css",
+        _STATIC_LIB_DIR / "app.js",
         _UPDATE_PATH,
         Path(__file__).resolve(),
     ]
@@ -121,7 +128,7 @@ def fly_pet_logout():
 @bp.route("/fly-pet")
 @_fly_pet_auth
 def fly_pet_page():
-    return render_template("fly_pet.html")
+    return render_template("fly_pet.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/api/bug_feedback", methods=["POST"])

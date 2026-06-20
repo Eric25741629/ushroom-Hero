@@ -1,0 +1,741 @@
+/* ============================================================
+   components.css — shared component classes (Phase 2 design system)
+   ------------------------------------------------------------
+   Consumes design tokens from tokens.css. NEVER hardcodes washi
+   palette hex — every color/space/radius/shadow flows through a
+   var(--token). Loads ALONGSIDE each template's legacy inline
+   <style> (Phase 3 removes the inline copies). New class names
+   here are chosen NOT to collide with legacy selectors:
+     legacy .btn / .modal / .modal-overlay / .toast / .chip ...
+   are LEFT to the inline CSS until Phase 3. The shared lib uses
+   the SAME names where the spec mandates a single source (.btn,
+   .modal-overlay, .modal, .toast, .chip, .badge, .data-table ...),
+   built from tokens so a class-swap in Phase 3 inherits a11y +
+   contrast fixes. Because the lib link comes AFTER the inline
+   <style> in source order, equal-specificity rules here win on the
+   migrated markup; un-migrated legacy markup keeps its inline look.
+
+   Source extraction (canonical markup/values):
+     buttons       dashboard.html:732-846
+     modal         dashboard.html:851-975
+     small confirm inventory.html:80-88
+     toast         fly_pet.html:218-226
+     drawer/sheet  fly_pet.html:420-463
+     status pill   tools_optimize.html:52-55
+     table         inventory.html:62-71 (+ fly_pet sortable/zebra)
+     form-control  dashboard.html:906-945
+     tabs          dashboard.html:1233 + fly_pet segmented ~304
+
+   BREAKPOINTS: @media cannot read CSS custom properties, so we use
+   ONE literal set everywhere — 480 / 768 / 1024 — matching
+   tokens.css --bp-sm/--bp-md/--bp-lg (documented, not interpolated).
+   ============================================================ */
+
+/* ============================================================
+   1. BUTTONS  (C5: every interactive button min-height 44px)
+   ------------------------------------------------------------
+   Base ports dashboard.html:732-755. Tap target raised 9px→11px
+   vertical padding is NOT enough alone, so min-height pins 44px.
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;                 /* C5 WCAG 2.5.5 tap target */
+  padding: 9px 15px;
+  border: 1.5px solid var(--line-accessible);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-family: var(--body);
+  font-weight: 800;
+  font-size: var(--text-sm);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-feature-settings: "tnum" 1, "lnum" 1;
+  background: var(--tile);
+  color: var(--ink);
+  box-shadow: var(--sh-1);
+  white-space: nowrap;
+  position: relative;
+  text-decoration: none;            /* allow <a class=btn> */
+  transition: transform .2s var(--ease), box-shadow .22s var(--ease),
+              background .2s, border-color .2s, filter .2s;
+}
+.btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--sh-2);
+  filter: brightness(1.02);
+}
+.btn:active {
+  transform: translateY(0) scale(.97);
+  box-shadow: var(--sh-press);
+}
+/* focus ring handled by the universal :focus-visible rule (§13) */
+
+/* ---- variants ---- */
+.btn--primary {
+  /* both stops AA vs the #fff8f3 label — was light --coral end (#e0653a) = 3.28:1 */
+  background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent-deep));
+  color: #fff8f3;
+  border-color: transparent;
+}
+.btn--primary:hover { filter: brightness(1.08); }
+
+.btn--secondary {
+  background: var(--tile-sunk);
+  color: var(--ink);
+  border-color: var(--line-accessible);
+}
+.btn--secondary:hover { background: var(--tatami-2); }
+
+.btn--ghost {
+  background: transparent;
+  color: var(--status-accent-text);   /* coral-deep — AA on washi */
+  border-color: var(--line-accessible);
+  box-shadow: none;
+}
+.btn--ghost:hover { background: var(--tile-sunk); }
+
+.btn--danger {
+  background: linear-gradient(135deg, var(--rose-wash), #f6e3e8);
+  color: var(--status-danger-text);    /* rose-deep — AA */
+  border-color: var(--rose-rim, #f0bcc8);
+}
+.btn--danger:hover { filter: brightness(1.03); }
+
+/* ---- disabled: NON-opacity-only cue (C-LOW dashboard.html:810).
+   Desaturate + dashed border + not-allowed; opacity kept mild so it
+   is still legible (avoids the ~2:1 opacity:.5 dimming-only fail). */
+.btn:disabled,
+.btn.is-disabled,
+.btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  filter: grayscale(.55) opacity(.72);
+  border-style: dashed;
+  box-shadow: none;
+  transform: none;
+}
+.btn:disabled:hover,
+.btn.is-disabled:hover { transform: none; filter: grayscale(.55) opacity(.72); }
+
+/* ---- loading state: .btn carrying a .spinner. Hide label text via
+   .btn-label so only the spinner shows; keep width stable. ---- */
+.btn.is-loading { pointer-events: none; color: transparent; }
+.btn.is-loading .btn-label { visibility: hidden; }
+.btn.is-loading .spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+/* ---- nav button (C5): rail / icon buttons must hit 44x44 ---- */
+.nav-btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  min-width: 44px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* ============================================================
+   2. CARD / SURFACE
+   ============================================================ */
+.surface {
+  background: var(--tile);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh-1);
+}
+.card {
+  background: var(--tile);
+  border: 1px solid var(--line-accessible);   /* meaningful boundary (C14) */
+  border-radius: var(--r-md);
+  padding: 14px 16px;
+  box-shadow: var(--sh-1);
+}
+
+/* ============================================================
+   3. MODAL  (C1 — role=dialog aria-modal; C16 width clamp)
+   ------------------------------------------------------------
+   Ports dashboard.html:851-975. `.active` shows; the JS manager
+   (app.js openModal/closeModal) toggles it + handles focus/Esc.
+   ============================================================ */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: var(--scrim);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  justify-content: center;
+  align-items: center;
+  padding: 12px;                    /* never let modal kiss the edge */
+}
+.modal-overlay.active {
+  display: flex;
+  animation: overlayFade .25s var(--ease);
+}
+@keyframes overlayFade { from { opacity: 0; } to { opacity: 1; } }
+
+.modal {
+  background: var(--tatami);
+  width: min(560px, calc(100vw - 24px));
+  min-width: 0;                     /* C16 — kill the 340/320 px-trap */
+  max-height: 86vh;
+  overflow-y: auto;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--line);
+  box-shadow: var(--sh-3);
+  padding: 0;
+  animation: modalIn .4s var(--ease-bounce);
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(20px) scale(.97); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* small confirm dialog — narrower, centered text (inventory.html:80-88) */
+.modal--confirm {
+  width: min(420px, calc(100vw - 24px));
+  padding: 24px 28px;
+  text-align: center;
+}
+.modal--confirm .modal-title { margin: 0 0 10px; font-size: var(--text-lg); font-weight: 800; }
+.modal--confirm .modal-body  { margin: 0 0 18px; color: var(--ink-soft); }
+.modal--confirm .modal-row {
+  display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+}
+/* danger emphasis: red header rule + countdown text uses status token */
+.modal--confirm.modal--danger { border-color: var(--rose-rim, #f0bcc8); }
+.modal--confirm.modal--danger .modal-title { color: var(--status-danger-text); }
+.modal--confirm .modal-countdown { color: var(--status-warn-text); font-weight: 700; }
+
+/* modal chrome (sticky header/footer) ported from dashboard */
+.modal-header {
+  position: sticky; top: 0; z-index: 2;
+  font-family: var(--display);
+  font-size: var(--text-lg);
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--ink);
+  padding: 20px 24px 16px;
+  background: linear-gradient(180deg, var(--tatami), rgba(244, 239, 230, .9));
+  border-bottom: 1px solid var(--line);
+}
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 16px 24px 22px;
+  background: linear-gradient(0deg, var(--tatami), rgba(244, 239, 230, .9));
+  border-top: 1px solid var(--line);
+  position: sticky; bottom: 0;
+}
+
+/* ============================================================
+   4. SHEET / SCRIM  (C1 + C21 — off-canvas drawer)
+   ------------------------------------------------------------
+   Ports fly_pet.html:420-463 (.fg-scrim/.fg-sheet/.fg-modal).
+   CRITICAL: a closed sheet must be truly GONE — not merely shoved
+   off-canvas while staying display:flex + tab-reachable. We drive
+   visibility off [hidden]/[inert]/aria-hidden so the JS manager
+   only needs to flip those attributes (C21).
+   ============================================================ */
+.scrim {
+  position: fixed; inset: 0;
+  background: var(--scrim);
+  z-index: 70;
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s var(--ease);
+}
+.scrim.is-open { opacity: 1; pointer-events: auto; }
+
+.sheet {
+  position: fixed; z-index: 80;
+  top: 0; right: 0; height: 100vh;
+  width: min(360px, 90vw);
+  background: var(--tile);
+  border: 1px solid var(--line);
+  border-radius: 18px 0 0 18px;
+  box-shadow: -10px 0 50px rgba(70, 52, 28, .18);
+  display: flex; flex-direction: column;
+  transform: translateX(110%);
+  transition: transform .28s var(--ease);
+}
+.sheet.is-open { transform: translateX(0); }
+
+/* closed-state hardening (C21): when the manager sets these, the sheet
+   is removed from layout, paint, the a11y tree AND the tab order. */
+.sheet[hidden] { display: none !important; }
+.sheet[inert],
+.sheet[aria-hidden="true"] {
+  transform: translateX(110%);
+  pointer-events: none;
+  visibility: hidden;               /* drop from a11y tree + tab order */
+}
+
+.sheet-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.sheet-head .sheet-title { margin: 0; font-size: var(--text-md); font-weight: 800; flex: 1; }
+.sheet-body { flex: 1; overflow-y: auto; padding: 16px 18px 30px; }
+.sheet-foot {
+  padding: 13px 18px;
+  border-top: 1px solid var(--line);
+  display: flex; gap: 10px;
+  padding-bottom: max(13px, env(safe-area-inset-bottom));
+}
+.sheet-foot .btn { flex: 1; }
+
+/* ============================================================
+   5. DATA TABLE  (C12/C5 + inventory table overflow)
+   ------------------------------------------------------------
+   Ports inventory.html:62-71 + fly_pet sortable/zebra.
+   .table-scroll wraps the table for horizontal overflow with a
+   right-edge fade affordance (::after) hinting more columns.
+   ============================================================ */
+.table-scroll {
+  position: relative;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line-accessible);
+  border-radius: var(--r-xs);
+  -webkit-overflow-scrolling: touch;
+}
+/* right-edge fade — pure affordance, pinned to the scroll viewport */
+.table-scroll::after {
+  content: "";
+  position: sticky;
+  top: 0; right: 0;
+  float: right;                     /* sit at the trailing edge */
+  width: 22px;
+  height: 100%;
+  margin-left: -22px;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, var(--tile));
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.data-table th,
+.data-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-accessible);
+  text-align: left;
+  white-space: nowrap;
+}
+.data-table thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--tile);
+  color: var(--text-faint);         /* AA — was --muted/--ink-faint */
+  font-weight: 700;
+}
+.data-table td.wrap { white-space: normal; }   /* attrs column opt-out */
+
+/* zebra striping (fly_pet) */
+.data-table tbody tr:nth-child(even) { background: var(--tile-sunk); }
+
+/* sticky first column — opt-in via .data-table--sticky-first.
+   keeps the row key visible while scrolling wide tables. */
+.data-table--sticky-first th:first-child,
+.data-table--sticky-first td:first-child {
+  position: sticky; left: 0; z-index: 2;
+  background: var(--tile);
+}
+.data-table--sticky-first thead th:first-child { z-index: 3; }
+
+/* sortable header (C8: must be keyboard-operable; markup adds
+   role=button tabindex=0 + aria-sort). 44px tap target (C5). */
+.data-table th.sortable {
+  cursor: pointer;
+  min-height: 44px;
+  user-select: none;
+}
+.data-table th.sortable[aria-sort="ascending"]::after  { content: " \2191"; }
+.data-table th.sortable[aria-sort="descending"]::after { content: " \2193"; }
+
+/* highlighted "to-sell" rows (inventory tr.sell) */
+.data-table tr.is-flagged { background: var(--rose-wash); }
+
+/* toolbar that stacks to a column on narrow screens (inventory C12) */
+.toolbar {
+  display: flex; flex-wrap: wrap;
+  gap: 10px; align-items: center;
+}
+@media (max-width: 480px) {       /* --bp-sm */
+  .toolbar--stack { flex-direction: column; align-items: stretch; }
+  .toolbar--stack > * { width: 100%; }
+}
+
+/* ============================================================
+   6. CHIP / BADGE  (C6 — hue on border/dot ONLY, text = --chip-text)
+   ============================================================ */
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--tile);
+  border: 1px solid var(--line-accessible);
+  color: var(--chip-text);          /* dark, ≥4.5:1 on any tint (C6) */
+  font-size: var(--text-xs);
+  font-weight: 600;
+  min-height: 32px;
+  cursor: default;
+}
+.chip .dot {
+  width: 9px; height: 9px; border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--chip-hue, var(--coral));   /* hue lives on the dot */
+}
+.chip.is-on {
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+.chip--button { cursor: pointer; }
+
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  text-align: center;
+  font-size: var(--text-xs);
+  font-weight: 800;
+  color: var(--chip-text);
+  border: 1px solid var(--line-accessible);
+  background: var(--tile);
+}
+/* count badge on a primary control — fill carries the hue, text white-on-deep */
+.badge--count {
+  color: #fff;
+  background: var(--coral-deep);
+  border-color: transparent;
+}
+
+/* ============================================================
+   7. STATUS PILL  (C6 — text via status-*-text tokens)
+   ------------------------------------------------------------
+   Ports tools_optimize.html:52-55 / inventory.html:76-79 (.conn).
+   ============================================================ */
+.status-pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-accessible);
+  background: var(--tile-sunk);
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+  font-weight: 600;
+}
+.status-pill.is-on {
+  color: var(--status-ok-text);
+  border-color: var(--mint-rim);
+}
+.status-pill.is-off {
+  color: var(--status-danger-text);
+  border-color: var(--rose-rim, #f0bcc8);
+}
+.status-pill.is-warn {
+  color: var(--status-warn-text);
+  border-color: var(--amber-rim);
+}
+
+/* ============================================================
+   8. TABS  (C11 — visual for an ARIA tablist; active via aria-selected)
+   ------------------------------------------------------------
+   Ports dashboard.html:1233 (.task-tab-bar/.task-tab-chip) +
+   fly_pet segmented toggle (~304). Markup uses
+   role=tablist / role=tab / aria-selected; JS adds roving tabindex.
+   ============================================================ */
+.tab-bar {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.tab-bar::-webkit-scrollbar { height: 5px; }
+.tab-bar::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 3px; }
+
+.tab {
+  flex: 0 0 auto;
+  min-height: 44px;                 /* C5 */
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer;
+  border: 1px solid var(--line-accessible);
+  background: var(--tile-sunk);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-family: var(--body);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.tab:hover { background: var(--tatami-2); color: var(--ink); }
+.tab[aria-selected="true"] {
+  background: var(--coral-deep);
+  color: #fff;
+  border-color: var(--coral-deep);
+  font-weight: 700;
+}
+/* segmented variant (fly_pet view toggle) — pill-group, no scroll */
+.tab-bar--segmented {
+  display: inline-flex;
+  overflow: visible;
+  border-bottom: none;
+  background: var(--tile);
+  border: 1px solid var(--line-accessible);
+  border-radius: var(--r-sm);
+  padding: 3px;
+  gap: 2px;
+}
+.tab-bar--segmented .tab {
+  border: none;
+  background: none;
+  border-radius: var(--r-xs);
+}
+.tab-bar--segmented .tab[aria-selected="true"] {
+  background: linear-gradient(135deg, var(--coral), var(--coral-deep));
+  color: #fff;
+}
+
+/* tabpanels: hidden unless active (markup: role=tabpanel) */
+.tab-panel { display: none; }
+.tab-panel.is-active,
+.tab-panel[aria-hidden="false"] { display: block; }
+
+/* ============================================================
+   9. TOAST  (C2/C9 — capped width, safe-area aware)
+   ------------------------------------------------------------
+   Ports fly_pet.html:218-226. The single aria-live announcer
+   region is created by app.js; these style the visual toasts.
+   ============================================================ */
+.toast-region {
+  position: fixed;
+  top: 16px; right: 16px;
+  z-index: 9999;
+  display: flex; flex-direction: column;
+  gap: 6px;
+  pointer-events: none;             /* let clicks pass between toasts */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.toast {
+  pointer-events: auto;
+  max-width: calc(100vw - 32px);    /* never exceed viewport (C-LOW) */
+  padding: 9px 16px;
+  border-radius: var(--r-xs);
+  font-size: var(--text-sm);
+  color: #fff;
+  box-shadow: var(--sh-2);
+  animation: toastIn .2s var(--ease);
+  overflow-wrap: anywhere;
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* variants — solid fills meet contrast for white text */
+.toast--ok   { background: var(--status-ok-fill, #2f8f66); }
+.toast--err  { background: var(--status-danger-fill, #d32f2f); }
+.toast--info { background: var(--ink-soft); }
+
+/* ============================================================
+   10. SPINNER  (single @keyframes spin — C10)
+   ============================================================ */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 1em; height: 1em;
+  border: 2px solid rgba(70, 52, 28, .22);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin .6s linear infinite;
+  vertical-align: -0.12em;
+}
+.spinner--lg { width: 28px; height: 28px; border-width: 3px; }
+
+/* ============================================================
+   11. SKELETON / EMPTY / ERROR  (C10/C20)
+   ============================================================ */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--tile-sunk);
+  border-radius: var(--r-xs);
+  min-height: 1em;
+}
+.skeleton::after {
+  content: "";
+  position: absolute; inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg,
+    transparent, rgba(255, 255, 255, .55), transparent);
+  animation: skeletonShimmer 1.3s ease-in-out infinite;
+}
+@keyframes skeletonShimmer { to { transform: translateX(100%); } }
+.skeleton--text { height: .9em; margin: .35em 0; }
+.skeleton--block { min-height: 64px; }
+
+/* empty + error states — friendly, never render a raw server path (C20) */
+.empty-state,
+.error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 40px 20px;
+  color: var(--ink-soft);
+}
+.empty-state .es-icon,
+.error-state .es-icon { font-size: 30px; line-height: 1; opacity: .8; }
+.empty-state .es-title,
+.error-state .es-title {
+  font-family: var(--display);
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--ink);
+}
+.empty-state .es-hint,
+.error-state .es-hint { font-size: var(--text-sm); color: var(--text-faint); }
+.error-state .es-title { color: var(--status-danger-text); }
+.error-state .es-actions { margin-top: 6px; }   /* slot for retry .btn */
+
+/* disconnected card — alias of empty-state for the data pages (C20) */
+.disconnected-card { /* see .empty-state */ }
+
+/* ============================================================
+   12. FORMS  (ports dashboard.html:906-945; C7 focus, C14 borders)
+   ============================================================ */
+.form-control {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 13px;
+  background: var(--tile);
+  border: 1.5px solid var(--line-accessible);
+  color: var(--ink);
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: var(--text-md);
+  transition: border-color .2s, box-shadow .2s;
+}
+.form-control:focus {
+  outline: none;                    /* replaced by border+ring (see §13) */
+  border-color: var(--coral-rim);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft, rgba(224, 101, 58, .16));
+}
+.form-control::placeholder { color: var(--text-faint); }
+textarea.form-control { resize: vertical; line-height: 1.5; }
+select.form-control { appearance: none; padding-right: 32px; }
+
+.form-label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--ink-soft);
+  font-family: var(--body);
+  font-weight: 700;
+  font-size: var(--text-sm);
+}
+/* inline label+control row (inventory label.inline) */
+.field-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: var(--text-sm);
+}
+.field-inline input,
+.field-inline select { width: auto; }
+
+/* ============================================================
+   13. UNIVERSAL FOCUS RING  (C7)
+   ------------------------------------------------------------
+   Matches dashboard L143. Scoped so it does NOT fight text
+   inputs that intentionally use border+box-shadow on :focus —
+   those get :focus-visible suppressed (they show their own ring).
+   ============================================================ */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+/* text-entry controls draw their own border+shadow ring → no outline */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.form-control:focus-visible {
+  outline: none;
+}
+
+/* ============================================================
+   14. LAYOUT HELPERS  (C15)
+   ============================================================ */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.grid-auto {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 10px;
+}
+@media (max-width: 480px) {        /* --bp-sm */
+  .grid-2 { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   15. SKIP LINK  (C4 — visually hidden until focused)
+   ============================================================ */
+.skip-link {
+  position: absolute;
+  left: 8px; top: -48px;
+  z-index: 2000;
+  padding: 10px 16px;
+  min-height: 44px;
+  display: inline-flex; align-items: center;
+  background: var(--coral-deep);
+  color: #fff;
+  border-radius: var(--r-xs);
+  text-decoration: none;
+  font-weight: 700;
+  transition: top .18s var(--ease);
+}
+.skip-link:focus { top: 8px; }
+
+/* ============================================================
+   16. REDUCED MOTION  (port dashboard.html:1212; positive-to-preserve)
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton::after { animation: none; }
+}
+
+/* ============================================================
+   17. COARSE POINTER  (C5 — enlarge small controls on touch)
+   ============================================================ */
+@media (pointer: coarse) {
+  .btn, .nav-btn, .tab { min-height: 44px; }
+  /* enlarge checkbox / radio hit area without resizing the glyph */
+  .hit-44 { position: relative; }
+  .hit-44::before {
+    content: "";
+    position: absolute;
+    inset: -12px;                   /* expands the clickable region */
+  }
+  .data-table th.sortable { padding-top: 12px; padding-bottom: 12px; }
+}

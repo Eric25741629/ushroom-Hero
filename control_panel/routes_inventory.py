@@ -92,7 +92,9 @@ def _gem_to_json(g, equipped_ids) -> dict:
 @_fly_pet_auth
 def inventory_page():
     """守護靈 + 神器附魔石 倉庫檢視頁（純 WS、中文名、過濾、分解勾選）。"""
-    return render_template("inventory.html")
+    from control_panel.routes_pages import _get_frontend_version
+
+    return render_template("inventory.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/api/spirit_list/<ip>", methods=["GET"])
