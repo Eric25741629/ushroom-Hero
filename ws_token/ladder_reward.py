@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -119,9 +120,16 @@ def load_store() -> dict:
 
 
 def save_store(store: dict) -> None:
+    # Atomic write (tmp + os.replace): this is a single shared file for all
+    # devices, so a torn write would corrupt every device's record at once.
+    # ponytail: atomic write only; concurrent read-modify-write lost-update is
+    # benign here (the select is idempotent and runs once/week), add an
+    # in-process lock if cross-device same-second writes ever matter.
     _STORE.parent.mkdir(parents=True, exist_ok=True)
-    _STORE.write_text(json.dumps(store, ensure_ascii=False, indent=2),
-                      encoding="utf-8")
+    tmp = Path(f"{_STORE}.tmp")
+    tmp.write_text(json.dumps(store, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    os.replace(tmp, _STORE)
 
 
 def get_body_hex(device: str) -> Optional[str]:
