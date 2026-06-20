@@ -2175,12 +2175,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
 
-    async function fetchCarpark(ip) {
+    // Perf (Phase 7): carpark snapshot had NO cache and fired /api/carpark/{ip}
+    // on every render tick (once per second per carpark device) even though the
+    // park window only shifts on the order of minutes. Cache by the device's
+    // last_update — same pattern as fetchProgress — so we only refetch when the
+    // device actually advanced. Render still uses the cached payload each tick.
+    const carparkCache = {};
+    async function fetchCarpark(ip, lastUpdate) {
+      const cached = carparkCache[ip];
+      if (cached && cached.lastUpdate === lastUpdate) return cached.data;
       try {
         const res = await fetch(`/api/carpark/${ip}`);
-        return await res.json();
+        const data = await res.json();
+        carparkCache[ip] = { data, lastUpdate };
+        return data;
       } catch {
-        return null;
+        return cached ? cached.data : null;
       }
     }
 
@@ -3010,7 +3020,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
 
-        if (info.carpark_plan_enabled) fetchCarpark(ip).then(d => renderCarpark(ip, d));
+        if (info.carpark_plan_enabled) fetchCarpark(ip, info.last_update).then(d => renderCarpark(ip, d));
 
         fetchProgress(ip, info.last_update).then(progress => {
 
@@ -4576,15 +4586,37 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
 
-    setInterval(fetchStatus, 1000);
-    setInterval(checkFrontendVersion, 3000);
+    // Perf (Phase 7): poll cadence backed off 1000ms→2000ms (status/labeler/
+    // trainer). Countdowns are computed client-side from epoch timestamps so
+    // they stay correct; at 2s the seconds-counter ticks in 2s steps, which is
+    // acceptable for a status panel and halves /api/status request volume.
+    // All intervals are tracked so visibilitychange can pause them when the tab
+    // is hidden (no work while nobody is looking) and resume on show.
+    const POLL_INTERVALS = [];
+    function startPolling() {
+      if (POLL_INTERVALS.length) return; // already running
+      POLL_INTERVALS.push(setInterval(fetchStatus, 2000));
+      POLL_INTERVALS.push(setInterval(checkFrontendVersion, 4000));
+      POLL_INTERVALS.push(setInterval(fetchLabelerStatus, 2000));
+      POLL_INTERVALS.push(setInterval(fetchTrainerStatus, 2000));
+      POLL_INTERVALS.push(setInterval(tickWebLoginStatus, 2000));
+    }
+    function stopPolling() {
+      while (POLL_INTERVALS.length) clearInterval(POLL_INTERVALS.pop());
+    }
 
-    setInterval(fetchLabelerStatus, 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        stopPolling();
+      } else {
+        startPolling();
+        // Refresh immediately on return so the panel isn't stale for a full tick.
+        fetchStatus();
+        checkFrontendVersion();
+      }
+    });
 
-    setInterval(fetchTrainerStatus, 1000);
-
-    setInterval(tickWebLoginStatus, 2000);
-
+    startPolling();
     fetchStatus();
     checkFrontendVersion();
 
