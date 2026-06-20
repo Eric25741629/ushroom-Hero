@@ -54,14 +54,26 @@ def test_save_uses_atomic_replace(tmp_path, monkeypatch):
     assert list(tmp_path.glob("*.tmp")) == []
 
 
-def test_save_overwrite_keeps_old_file_on_serialize_failure(tmp_path, monkeypatch):
-    """If serialization/write fails, the previous good file must survive intact."""
+def test_save_torn_write_does_not_destroy_existing_file(tmp_path, monkeypatch):
+    """A crash/SMB hiccup mid-write must not truncate the previous good file.
+
+    This is the real bug the atomic write fixes: the OLD code wrote straight to
+    the target, so a partial write corrupted it and load_state -> {} silently
+    reset every daily/weekly gate. The atomic write hits a sibling .tmp first,
+    so a torn write leaves the original intact.
+    """
     state.save_state("devA", {"good": 1}, state_dir=tmp_path)
 
-    boom = {"bad": object()}  # not JSON-serializable -> json.dumps raises
+    real_write_text = Path.write_text
+
+    def partial_then_crash(self, data, *a, **k):
+        real_write_text(self, data[: len(data) // 2], *a, **k)  # write half...
+        raise OSError("simulated mid-write crash")               # ...then die
+
+    monkeypatch.setattr(Path, "write_text", partial_then_crash)
     try:
-        state.save_state("devA", boom, state_dir=tmp_path)
-    except TypeError:
+        state.save_state("devA", {"good": 1, "more": 2}, state_dir=tmp_path)
+    except OSError:
         pass
-    # original content untouched (atomic: failed write never replaced it)
+    # Atomic: the torn bytes went to devA.json.tmp; devA.json is still the good file.
     assert state.load_state("devA", state_dir=tmp_path) == {"good": 1}
