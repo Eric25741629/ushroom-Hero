@@ -17,6 +17,7 @@ import time
 
 import bot_state
 import config_manager
+from utils.web_profile_paths import resolve_profile_dir, resolve_state_file
 
 logger = logging.getLogger(__name__)
 
@@ -44,33 +45,14 @@ def _normalize_web_login_state(ip: str):
     return state
 
 
+# Thin wrappers over the shared resolver (utils/web_profile_paths) so the
+# dashboard and device_wrapper._start always agree on the same normpathed dir.
 def _resolve_web_profile_dir(ip: str, profile_dir_raw: str) -> str:
-    raw = (
-        str(profile_dir_raw or "playwright_profile/{device_id}").strip()
-        or "playwright_profile/{device_id}"
-    )
-    profile_dir = raw.format(device_id=ip, ip=ip)
-    if not os.path.normpath(profile_dir).endswith(ip):
-        profile_dir = os.path.join(profile_dir, ip)
-    if not os.path.isabs(profile_dir):
-        profile_dir = os.path.join(os.getcwd(), profile_dir)
-    return os.path.normpath(profile_dir)
+    return resolve_profile_dir(ip, profile_dir_raw)
 
 
 def _resolve_web_state_file(ip: str, state_file_raw: str) -> str:
-    raw = (
-        str(state_file_raw or "auth_state/{device_id}.json").strip()
-        or "auth_state/{device_id}.json"
-    )
-    state_file = raw.format(device_id=ip, ip=ip)
-    if "{device_id}" not in raw and "{ip}" not in raw:
-        if os.path.basename(state_file).lower() == "auth_state.json":
-            state_file = os.path.join(
-                os.path.dirname(state_file), "auth_state", f"{ip}.json"
-            )
-    if not os.path.isabs(state_file):
-        state_file = os.path.join(os.getcwd(), state_file)
-    return os.path.normpath(state_file)
+    return resolve_state_file(ip, state_file_raw)
 
 
 def _existing_profile_dir(paths) -> str:

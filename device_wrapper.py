@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, Optional
 from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
 from utils.ws_listener import WSFrameTracker
+from utils.web_profile_paths import resolve_profile_dir, resolve_state_file
 from runtime_services.device_runtime_service import ForceSleepRequested, WakeLoopInterrupted
 
 logger = logging.getLogger(__name__)
@@ -792,34 +793,14 @@ class PlaywrightGameDevice:
                 "Playwright is required for web_h5 backend. Please install playwright."
             ) from exc
 
-        profile_dir = (
-            str(
-                self.cfg.get("web_profile_dir") or "playwright_profile/{device_id}"
-            ).strip()
-            or "playwright_profile/{device_id}"
-        )
         # 每個裝置都使用自己的 profile/cookies 資料夾，避免共享登入狀態。
-        # 若設定值包含 {device_id} / {ip}，會先做字串替換；否則會自動在尾端附加 device_id。
-        profile_dir = profile_dir.format(device_id=self.device_id, ip=self.device_id)
-        if not os.path.normpath(profile_dir).endswith(self.device_id):
-            profile_dir = os.path.join(profile_dir, self.device_id)
-        if not os.path.isabs(profile_dir):
-            profile_dir = os.path.join(os.getcwd(), profile_dir)
+        # 路徑解析與中控 routes_web_session 共用同一 helper（normpath 統一），確保
+        # dashboard 手動登入與 runtime 解析到同一目錄字串（見 utils/web_profile_paths）。
+        profile_dir = resolve_profile_dir(self.device_id, self.cfg.get("web_profile_dir"))
         os.makedirs(profile_dir, exist_ok=True)
 
         channel = str(self.cfg.get("web_channel") or "chrome").strip()
-        state_file_raw = (
-            str(self.cfg.get("web_state_file") or "auth_state/{device_id}.json").strip()
-            or "auth_state/{device_id}.json"
-        )
-        state_file = state_file_raw.format(device_id=self.device_id, ip=self.device_id)
-        if "{device_id}" not in state_file_raw and "{ip}" not in state_file_raw:
-            if os.path.basename(state_file).lower() == "auth_state.json":
-                state_file = os.path.join(
-                    os.path.dirname(state_file), "auth_state", f"{self.device_id}.json"
-                )
-        if state_file and not os.path.isabs(state_file):
-            state_file = os.path.join(os.getcwd(), state_file)
+        state_file = resolve_state_file(self.device_id, self.cfg.get("web_state_file"))
 
         def _clear_chrome_singleton_locks(target_dir: str) -> None:
             # Stale singleton files can make Chrome exit immediately with profile-in-use errors.
