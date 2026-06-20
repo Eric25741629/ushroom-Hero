@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="zh-TW">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,10 +10,9 @@
 <script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
 {% include '_assets_head.html' %}
 <style>
-  :root{
-    --bg:#f4efe6; --panel:#ffffff; --line:#ece3d3; --muted:#6f6657; --text:#2b2620;
-    --accent:#e0653a; --good:#3fb389; --warn:#e0a939; --danger:#e26b86;
-  }
+  /* :root token block removed (Phase 3): every old var (--bg/--panel/--line/--muted/
+     --text/--accent/--good/--warn/--danger) is aliased to an AA value in tokens.css,
+     so the page now routes through the accessible design tokens. */
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif}
   header h1,.panel h2,.modal h2{font-family:"Sora","Noto Sans TC","Microsoft JhengHei",sans-serif;}
@@ -21,7 +20,7 @@
   header{display:flex;align-items:center;gap:16px;padding:12px 18px;background:var(--panel);
     border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
   header h1{font-size:17px;margin:0}
-  a.home{color:var(--accent);text-decoration:none;font-size:13px}
+  a.home{color:var(--status-accent-text);text-decoration:none;font-size:13px}
   .wrap{max-width:1040px;margin:18px auto;padding:0 16px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
   .panel h2{font-size:15px;margin:0 0 12px}
@@ -29,17 +28,17 @@
   label.inline{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
   select,input{background:#fbf7ee;color:var(--text);border:1px solid var(--line);
     border-radius:7px;padding:6px 9px;font:inherit}
-  input[type=number]{width:130px}
-  button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;
+  input[type=number]{width:100%;max-width:130px}
+  button{background:var(--color-accent-deep);color:#fff;border:0;border-radius:8px;padding:8px 14px;
     font-weight:700;cursor:pointer}
-  button.ghost{background:transparent;color:var(--accent);border:1px solid var(--accent)}
+  button.ghost{background:transparent;color:var(--status-accent-text);border:1px solid var(--coral-rim)}
   button.warn{background:var(--warn);color:#3a2a00}
   button:disabled{opacity:.5;cursor:not-allowed}
   .spin{color:var(--muted);font-size:13px}
-  .err{color:var(--danger)}
-  .good{color:var(--good)}
+  .err{color:var(--status-danger-text)}
+  .good{color:var(--status-ok-text)}
   .kpi{display:flex;gap:22px;flex-wrap:wrap;margin:10px 0;font-size:13px}
-  .kpi b{font-size:18px;color:var(--accent)}
+  .kpi b{font-size:18px;color:var(--status-accent-text)}
   table{width:100%;border-collapse:collapse;font-size:13px}
   th,td{padding:7px 9px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
   th:nth-child(2),td:nth-child(2){text-align:left}
@@ -52,23 +51,23 @@
   .pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#f0e9da;color:var(--muted);font-size:12px}
   .conn{font-size:12.5px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);
         background:#faf6ee;color:var(--muted)}
-  .conn.on{color:var(--good);border-color:var(--good)}
-  .conn.off{color:var(--danger);border-color:var(--danger)}
+  .conn.on{color:var(--status-ok-text);border-color:var(--ok-rim)}
+  .conn.off{color:var(--status-danger-text);border-color:var(--danger)}
   .adgrid{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}
   .adcard{background:#faf6ee;border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px}
   .adcard .nm{font-weight:700;margin-bottom:4px}
   .adcard .cnt{font-size:13px;color:var(--muted)}
-  .adcard .cnt b{color:var(--accent);font-size:16px}
-  .adcard.maxed{border-color:var(--good)}
-  .adcard.maxed .cnt b{color:var(--good)}
+  .adcard .cnt b{color:var(--status-accent-text);font-size:16px}
+  .adcard.maxed{border-color:var(--ok-rim)}
+  .adcard.maxed .cnt b{color:var(--status-ok-text)}
   .prog{height:14px;border-radius:8px;background:#faf6ee;border:1px solid var(--line);overflow:hidden;margin:6px 0}
   .prog > span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--good));width:0}
   .rounds{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
   .rcard{background:#faf6ee;border:1px solid var(--line);border-radius:9px;padding:8px 12px;min-width:120px;font-size:13px}
   .rcard .rt{color:var(--muted);font-size:12px}
   .rcard .rs{font-weight:700;margin-top:3px}
-  .rcard.canget{border-color:var(--warn)} .rcard.canget .rs{color:var(--warn)}
-  .rcard.hadget{border-color:var(--good)} .rcard.hadget .rs{color:var(--good)}
+  .rcard.canget{border-color:var(--warn-rim)} .rcard.canget .rs{color:var(--status-warn-text)}
+  .rcard.hadget{border-color:var(--ok-rim)} .rcard.hadget .rs{color:var(--status-ok-text)}
   .modal-bg{position:fixed;inset:0;background:rgba(43,38,32,.45);display:none;
             align-items:center;justify-content:center;z-index:50}
   .modal-bg.show{display:flex}
@@ -77,10 +76,16 @@
   .modal h2{margin:0 0 10px;font-size:17px}
   .modal p{color:var(--muted);margin:0 0 18px}
   .modal .row{display:flex;gap:10px;justify-content:center}
-  .modal .cd{color:var(--warn);font-weight:700}
+  .modal .cd{color:var(--status-warn-text);font-weight:700}
+
+  /* item 7: progress bar a11y track height ref; item 6 responsive: .kpi -> 2-col grid on phones */
+  @media (max-width:480px){
+    .kpi{display:grid;grid-template-columns:1fr 1fr;gap:10px 18px}
+  }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#main">跳到主要內容</a>
 <header>
   <h1>🛠 工具 優化類</h1>
   <a class="home" href="/">← 回主控台</a>
@@ -90,7 +95,7 @@
   <span id="status" class="spin"></span>
 </header>
 
-<div class="wrap">
+<main id="main" class="wrap" tabindex="-1">
 
   <!-- 工具一：最佳升級車位裝飾 -->
   <section class="panel">
@@ -108,6 +113,18 @@
     <div class="note">說明：只優化「已擁有」裝飾（新裝飾要走「裝扮自選」，不能自由買）。
       指標＝每點屬性最便宜（碎片數×該裝飾單價÷屬性）。執行時會暫停該裝置 bot loop、逐星序列化、失敗即停。</div>
 
+    <div id="carparkState" class="empty-state">
+      <div class="es-icon" aria-hidden="true">🅿️</div>
+      <div class="es-title">尚未讀取車位裝飾</div>
+      <div class="es-hint">連線裝置後，按「讀取並預覽計畫」會花約 30 秒讀取並計算最佳升級。</div>
+    </div>
+    <div id="carparkSkeleton" style="display:none">
+      <div class="skeleton skeleton--text" style="width:60%"></div>
+      <div class="skeleton skeleton--text" style="width:85%"></div>
+      <div class="skeleton skeleton--block" style="margin-top:8px"></div>
+      <div class="note">讀取裝置車位狀態並計算中…（約 30 秒，請勿關閉本頁）</div>
+    </div>
+
     <div id="kpi" class="kpi" style="display:none">
       <div>菇車幣 <b id="kCoin">-</b></div>
       <div>計畫步數 <b id="kSteps">-</b></div>
@@ -116,7 +133,7 @@
       <div>剩餘 <b id="kLeft">-</b></div>
     </div>
 
-    <div id="tableWrap" class="tablewrap" style="display:none">
+    <div id="tableWrap" class="tablewrap table-scroll" style="display:none">
       <table>
         <thead><tr>
           <th>#</th><th>裝飾</th><th>星級</th><th>碎片</th><th>花費</th>
@@ -176,6 +193,14 @@
     <div class="note">說明：直接送遊戲看廣告封包 <code>0x1602 {config_id,is_free:1}</code>（帳號已買免廣告特權，即時發獎、不需真看影片）。
       讀一次當日次數，每項只補到每日上限、冷卻未到不送封包，故<strong>到上限的項目顯示已滿、不會送請求</strong>。純 WS 免開瀏覽器。</div>
 
+    <div id="adState" class="empty-state">
+      <div class="es-icon" aria-hidden="true">📺</div>
+      <div class="es-title">尚未讀取當日進度</div>
+      <div class="es-hint">連線後按「讀取當日進度」查看鑽石/種子的今日可領次數。</div>
+    </div>
+    <div id="adSkeleton" style="display:none">
+      <div class="skeleton skeleton--block"></div>
+    </div>
     <div id="adGrid" class="adgrid" style="display:none"></div>
     <div id="adMsg" class="note"></div>
   </section>
@@ -192,6 +217,17 @@
       升級走純 WS <code>遺物 0x1103</code>（server 端權威扣碎片、滾入衝刺進度）。
       碎片現量靠 0x0402 推送量測，登入快照不一定帶，未知時仍可執行（以伺服器拒絕/已累計進度為界）。</div>
 
+    <div id="rsState" class="empty-state">
+      <div class="es-icon" aria-hidden="true">💠</div>
+      <div class="es-title">尚未規劃遺物衝刺</div>
+      <div class="es-hint">連線後按「① 規劃（只讀，不花費）」查看本期門檻與可領輪獎。</div>
+    </div>
+    <div id="rsSkeleton" style="display:none">
+      <div class="skeleton skeleton--text" style="width:70%"></div>
+      <div class="skeleton skeleton--block" style="margin-top:8px"></div>
+      <div class="note">規劃中（只讀）…</div>
+    </div>
+
     <div id="rsCard" style="display:none">
       <div class="kpi">
         <div>本期活動 <b id="rsAct">-</b></div>
@@ -200,13 +236,14 @@
         <div>碎片現量 <b id="rsFrag">-</b></div>
         <div>是否足夠 <b id="rsEnough">-</b></div>
       </div>
-      <div class="prog"><span id="rsBar"></span></div>
+      <div class="prog" id="rsProg" role="progressbar" aria-label="遺物衝刺累計進度"
+           aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="rsBar"></span></div>
       <div id="rsRounds" class="rounds"></div>
       <div id="rsNote" class="note"></div>
     </div>
     <div id="rsMsg" class="note"></div>
   </section>
-</div>
+</main>
 
 <div id="idleModal" class="modal-bg">
   <div class="modal">
@@ -235,6 +272,45 @@ const $ = id => document.getElementById(id);
 const fmt = n => (n==null?'-':Number(n).toLocaleString());
 function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
 function dev(){ return $('dev').value; }
+
+/* ===== per-tool loading / empty / error state helpers (C10/C20) =====
+   Each tool has: a result container (shown on success), an idle/empty-state
+   card (#<tool>State), and a skeleton (#<tool>Skeleton). On disconnect we
+   reset every tool back to its idle card so a panel is never blank, and never
+   shows a raw server error (the raw detail goes to console / server log). */
+function _show(id, on){ const el=$(id); if(el) el.style.display = on?'':'none'; }
+
+// Render a friendly inline error + retry button into a state container.
+function showToolError(stateId, msg, onRetry){
+  const el=$(stateId); if(!el) return;
+  el.className='error-state'; el.style.display='';
+  el.innerHTML =
+    '<div class="es-icon" aria-hidden="true">⚠️</div>'+
+    '<div class="es-title">'+ (msg||'操作失敗') +'</div>'+
+    '<div class="es-actions"><button type="button" class="ghost es-retry">重試</button></div>';
+  const btn=el.querySelector('.es-retry');
+  if(btn && typeof onRetry==='function') btn.addEventListener('click', onRetry);
+}
+
+// Reset every tool panel to its idle state (used on disconnect / connect-fail).
+function showDisconnectedStates(){
+  ['carparkSkeleton','adSkeleton','rsSkeleton'].forEach(id=>_show(id,false));
+  ['kpi','tableWrap','log'].forEach(id=>_show(id,false));
+  _show('adGrid',false); _show('rsCard',false);
+  // restore idle prompts (showToolError may have swapped class to error-state)
+  resetIdleCard('carparkState','🅿️','尚未讀取車位裝飾','連線裝置後，按「讀取並預覽計畫」會花約 30 秒讀取並計算最佳升級。');
+  resetIdleCard('adState','📺','尚未讀取當日進度','連線後按「讀取當日進度」查看鑽石/種子的今日可領次數。');
+  resetIdleCard('rsState','💠','尚未規劃遺物衝刺','連線後按「① 規劃（只讀，不花費）」查看本期門檻與可領輪獎。');
+}
+function resetIdleCard(id, icon, title, hint){
+  const el=$(id); if(!el) return;
+  el.className='empty-state'; el.style.display='';
+  el.innerHTML='<div class="es-icon" aria-hidden="true">'+icon+'</div>'+
+    '<div class="es-title">'+title+'</div><div class="es-hint">'+hint+'</div>';
+}
+// On successful connect: just clear any error status text; idle prompts remain
+// until the user actually runs a tool.
+function clearToolEmptyStates(){ setStatus(''); }
 
 async function loadDevices(){
   try{
@@ -271,6 +347,7 @@ async function pollJob(jid, onUpdate){
 
 function renderPlan(res){
   if (!res){ return; }
+  _show('carparkState', false); _show('carparkSkeleton', false);
   $('kpi').style.display='flex';
   $('kCoin').textContent = fmt(res.coin);
   $('kSteps').textContent = (res.steps||[]).length;
@@ -299,6 +376,8 @@ let LAST_PLAN = null;
 async function doPlan(){
   if (!dev()){ setStatus('請先選裝置', true); return; }
   $('btnPlan').disabled = true; $('btnExec').disabled = true;
+  // ~30s job: show a skeleton so the panel isn't blank while it reads+computes.
+  _show('carparkState', false); _show('carparkSkeleton', true);
   setStatus('讀取狀態並計算中…（約 30 秒）');
   const budget = $('budget').value||0, maxSteps = $('maxSteps').value||30;
   try{
@@ -306,19 +385,27 @@ async function doPlan(){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({budget:Number(budget), max_steps:Number(maxSteps)})});
     const j = await r.json();
-    if (j.status!=='ok'){ setStatus(j.message||'plan 失敗', true); return; }
+    if (j.status!=='ok'){ setStatus('讀取計畫失敗，請重試', true);
+      if(j.message) console.warn('[carpark plan]', j.message);
+      showToolError('carparkState', '讀取計畫失敗', doPlan); return; }
     const job = await pollJob(j.job_id, job=>{ if(job.log) logLines(job.log); setStatus('狀態：'+job.phase); });
-    if (job && job.status==='done'){ LAST_PLAN = job.result; renderPlan(job.result);
+    if (job && job.status==='done'){ LAST_PLAN = job.result; _show('carparkSkeleton', false);
+      renderPlan(job.result);
       setStatus('預覽完成，可按「執行計畫」'); $('btnExec').disabled = !(job.result.steps||[]).length; }
-    else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
-  }catch(e){ setStatus('plan 例外：'+e, true); }
-  finally{ $('btnPlan').disabled = false; }
+    else if (job){ setStatus('規劃失敗，請重試', true);
+      console.warn('[carpark plan]', job.error); showToolError('carparkState', '規劃失敗', doPlan); }
+    else { setStatus('規劃中斷，請重試', true); showToolError('carparkState', '規劃中斷', doPlan); }
+  }catch(e){ console.warn('[carpark plan]', e); setStatus('規劃發生錯誤，請重試', true);
+    showToolError('carparkState', '規劃發生錯誤', doPlan); }
+  finally{ $('btnPlan').disabled = false; _show('carparkSkeleton', false); }
 }
 
 async function doExecute(){
   if (!LAST_PLAN || !(LAST_PLAN.steps||[]).length){ setStatus('請先預覽計畫', true); return; }
   const n = LAST_PLAN.steps.length, cost = LAST_PLAN.total_coin;
-  if (!confirm(`確定執行？將升 ${n} 星、花費約 ${fmt(cost)} 菇車幣，並暫停該裝置 bot loop。`)) return;
+  if (!await confirmDialog({ danger:true, title:'執行升級計畫',
+      okLabel:'確定執行',
+      body:`將升 ${n} 星、花費約 ${fmt(cost)} 菇車幣，並暫停該裝置 bot loop。` })) return;
   $('btnPlan').disabled = true; $('btnExec').disabled = true;
   setStatus('執行中…（請勿關閉本頁）');
   const budget = $('budget').value||0, maxSteps = $('maxSteps').value||30;
@@ -334,8 +421,8 @@ async function doExecute(){
       setStatus(`執行完成：成功 ${done} 星，花費 ${fmt(res.spent)} 菇車幣`+
         (res.stopped_reason?`（停止：${res.stopped_reason}）`:''), false);
       if (res.steps) renderPlan(res);
-    } else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
-  }catch(e){ setStatus('execute 例外：'+e, true); }
+    } else if (job){ console.warn('[carpark execute]', job.error); setStatus('執行失敗，請重試（詳情見主控台日誌）', true); }
+  }catch(e){ console.warn('[carpark execute]', e); setStatus('執行發生錯誤，請重試（詳情見主控台日誌）', true); }
   finally{ $('btnPlan').disabled = false; $('btnExec').disabled = false; }
 }
 
@@ -370,7 +457,8 @@ async function doDraw(){
   } else {
     confirmMsg = `確定「${typeName}」一鍵抽完？會把抽卡券抽到不足為止，並暫停該裝置 bot loop。`;
   }
-  if (!confirm(confirmMsg)) return;
+  if (!await confirmDialog({ danger:true, title:'確認抽卡', okLabel:'開始抽',
+      body:confirmMsg })) return;
   if (!await ensureConnected()){ setStatus('未連線，無法抽卡', true); return; }
   $('btnDraw').disabled = true; setStatus('抽卡中…（純 WS，請勿關閉本頁）');
   try{
@@ -387,8 +475,8 @@ async function doDraw(){
       const res = job.result||{}; renderGacha(res);
       setStatus(`抽完：${res.type_name||typeName} 共 ${fmt(res.total)} 抽`+
         (res.stopped_reason?`（${res.stopped_reason}）`:''), false);
-    } else if (job){ setStatus('失敗：'+(job.error||'unknown'), true); }
-  }catch(e){ setStatus('抽卡例外：'+e, true); }
+    } else if (job){ console.warn('[gacha draw]', job.error); setStatus('抽卡失敗，請重試（詳情見主控台日誌）', true); }
+  }catch(e){ console.warn('[gacha draw]', e); setStatus('抽卡發生錯誤，請重試（詳情見主控台日誌）', true); }
   finally{ $('btnDraw').disabled = false; }
 }
 
@@ -405,8 +493,18 @@ function setConn(state){
   else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; b.textContent='連線'; }
   else { c.textContent='未連線'; c.className='conn off'; b.textContent='連線'; }
 }
-function showModal(id){ $(id).classList.add('show'); }
-function hideModal(id){ $(id).classList.remove('show'); }
+// Route idle/kick modals through the shared modal manager (app.js) so they get
+// Esc-to-close, focus move-in (first button), Tab-trap and focus-restore (C1).
+// We keep the page-owned showModal/hideModal names (inline onclick relies on them)
+// but delegate to openModal/closeModal with the legacy 'show' open-class.
+function showModal(id){
+  if(window.openModal){ openModal(id,{cls:'show'}); }
+  else { $(id).classList.add('show'); }
+}
+function hideModal(id){
+  if(window.closeModal){ closeModal(id,{cls:'show'}); }
+  else { $(id).classList.remove('show'); }
+}
 
 async function connectSession(){
   const d=dev(); if(!d){ setConn('off'); return false; }
@@ -414,9 +512,18 @@ async function connectSession(){
   try{
     const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect`,{method:'POST'});
     const j=await r.json();
-    if(j.status==='ok'){ connectedDev=d; setConn('on'); startKeepalive(); resetIdle(); setStatus('已連線（純 WS，免開瀏覽器）'); return true; }
-    setConn('off'); setStatus('連線失敗: '+(j.message||''), true); return false;
-  }catch(e){ setConn('off'); setStatus('連線錯誤: '+e, true); return false; }
+    if(j.status==='ok'){ connectedDev=d; setConn('on'); startKeepalive(); resetIdle(); setStatus('已連線（純 WS，免開瀏覽器）'); clearToolEmptyStates(); return true; }
+    // INFO-LEAK FIX (C20): the server's raw message can carry a full auth_state
+    // path + a `python tools/...` dev command. Never render it to the user —
+    // the route already logs the real error server-side. Surface a friendly hint
+    // and keep the raw detail to the browser console only (dev-inspectable).
+    if(j.message) console.warn('[ws_session connect]', j.message);
+    setConn('off');
+    setStatus('尚未連線此裝置，點「連線」開始（連線詳情見主控台日誌）', true);
+    showDisconnectedStates();
+    return false;
+  }catch(e){ console.warn('[ws_session connect]', e); setConn('off');
+    setStatus('連線失敗，請稍後再試（詳情見主控台日誌）', true); showDisconnectedStates(); return false; }
 }
 async function disconnectSession(){
   stopKeepalive(); clearIdle();
@@ -448,7 +555,10 @@ function reconnectFromKick(){ hideModal('kickModal'); connectSession(); }
 function resetIdle(){ clearIdle(); if(!connectedDev) return; idleTimer=setTimeout(beginIdleCountdown, IDLE_SEC*1000); }
 function clearIdle(){ if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} if(idleCdTimer){clearInterval(idleCdTimer);idleCdTimer=null;} }
 function beginIdleCountdown(){
-  let left=60; $('idleCd').textContent=left; showModal('idleModal');
+  let left=60; $('idleCd').textContent=left;
+  // Esc on the idle modal = the SAFE default (繼續使用), not silent auto-disconnect.
+  const m=$('idleModal'); if(m) m._uiConfirmCancel=stayConnected;
+  showModal('idleModal');
   idleCdTimer=setInterval(()=>{ left--; $('idleCd').textContent=left;
     if(left<=0){ clearInterval(idleCdTimer); idleCdTimer=null; idleLogoutNow(); } }, 1000);
 }
@@ -462,6 +572,7 @@ window.addEventListener('beforeunload',()=>{ if(connectedDev) navigator.sendBeac
 
 /* ===== 工具三：純 WS 看廣告獎勵（鑽石 + 種子） ===== */
 function renderAdStatus(items){
+  _show('adState', false); _show('adSkeleton', false);
   const g=$('adGrid'); g.style.display='flex'; g.innerHTML='';
   (items||[]).forEach(it=>{
     const div=document.createElement('div');
@@ -474,17 +585,22 @@ function renderAdStatus(items){
 async function loadAdStatus(){
   if(!await ensureConnected()){ $('adMsg').textContent='未連線，無法讀取。'; return; }
   $('btnAdStatus').disabled=true; $('adMsg').textContent='讀取當日看廣告進度…';
+  _show('adState', false); _show('adGrid', false); _show('adSkeleton', true);
   try{
     const r=await fetch(`/api/ad_reward/status/${encodeURIComponent(dev())}`);
     const j=await r.json();
-    if(j.status!=='ok'){ $('adMsg').textContent='讀取失敗：'+(j.message||''); return; }
+    if(j.status!=='ok'){ $('adMsg').textContent='讀取失敗，請重試。';
+      if(j.message) console.warn('[ad_reward status]', j.message);
+      _show('adSkeleton', false); showToolError('adState', '讀取當日進度失敗', loadAdStatus); return; }
     renderAdStatus(j.data.items); $('adMsg').textContent='已更新當日進度。';
-  }catch(e){ $('adMsg').textContent='讀取錯誤：'+e; }
-  finally{ $('btnAdStatus').disabled=false; }
+  }catch(e){ console.warn('[ad_reward status]', e); $('adMsg').textContent='讀取發生錯誤，請重試。';
+    _show('adSkeleton', false); showToolError('adState', '讀取當日進度失敗', loadAdStatus); }
+  finally{ $('btnAdStatus').disabled=false; _show('adSkeleton', false); }
 }
 async function doAdClaim(){
   if(!await ensureConnected()){ $('adMsg').textContent='未連線，無法領取。'; return; }
-  if(!confirm('確定一鍵領取看廣告獎勵（鑽石+種子）？到上限的項目不會送請求。')) return;
+  if(!await confirmDialog({ danger:true, title:'一鍵領取看廣告獎勵', okLabel:'確定領取',
+      body:'將領取鑽石 + 種子（純 WS）。到上限的項目不會送請求。' })) return;
   $('btnAdClaim').disabled=true; $('adMsg').textContent='領取中…（純 WS）';
   try{
     const r=await fetch(`/api/ad_reward/claim/${encodeURIComponent(dev())}`,{method:'POST',
@@ -517,6 +633,7 @@ function renderRsRounds(rounds, claimable){
 }
 
 function renderRsPlan(d){
+  _show('rsState', false); _show('rsSkeleton', false);
   $('rsCard').style.display='block';
   $('rsAct').textContent = d.act_type!=null ? ('#'+d.act_type) : '-';
   $('rsAccrued').textContent = `${fmt(d.accrued)} / ${fmt(d.total)}`;
@@ -525,6 +642,8 @@ function renderRsPlan(d){
   $('rsEnough').textContent = (d.fragments_now==null) ? '未知' : (d.enough?'足夠':'不足');
   const pct = d.total ? Math.min(100, Math.round((d.accrued/d.total)*100)) : 0;
   $('rsBar').style.width = pct+'%';
+  const prog=$('rsProg'); if(prog){ prog.setAttribute('aria-valuenow', pct);
+    prog.setAttribute('aria-valuetext', `${fmt(d.accrued)} / ${fmt(d.total)}（${pct}%）`); }
   renderRsRounds(d.rounds, d.claimable_rounds);
   $('rsNote').textContent = d.note||'';
 }
@@ -533,26 +652,32 @@ async function doRsPlan(){
   if(!dev()){ setStatus('請先選裝置', true); return; }
   if(!await ensureConnected()){ $('rsMsg').textContent='未連線，無法規劃。'; return; }
   $('btnRsPlan').disabled=true; $('btnRsExec').disabled=true;
+  _show('rsState', false); _show('rsCard', false); _show('rsSkeleton', true);
   $('rsMsg').textContent='規劃中（只讀）…';
   try{
     const r=await fetch(`/api/relic_sprint/plan/${encodeURIComponent(dev())}`);
     const j=await r.json();
-    if(j.status!=='ok'){ $('rsMsg').textContent='規劃失敗：'+(j.message||''); return; }
+    if(j.status!=='ok'){ $('rsMsg').textContent='規劃失敗，請重試。';
+      if(j.message) console.warn('[relic_sprint plan]', j.message);
+      _show('rsSkeleton', false); showToolError('rsState', '規劃失敗', doRsPlan); return; }
     const d=j.data||{};
-    if(!d.open){ RS_PLAN=null; $('rsCard').style.display='none';
+    if(!d.open){ RS_PLAN=null; _show('rsCard', false); _show('rsSkeleton', false);
+      resetIdleCard('rsState','💤','本期無遺物衝刺活動', d.msg||'目前沒有可衝刺的遺物碎片活動，稍後再來。');
       $('rsMsg').textContent=d.msg||'本期無遺物衝刺活動。'; return; }
     RS_PLAN=d; renderRsPlan(d);
     $('rsMsg').textContent='規劃完成，可按「② 確認執行」。';
     $('btnRsExec').disabled=false;
-  }catch(e){ $('rsMsg').textContent='規劃錯誤：'+e; }
-  finally{ $('btnRsPlan').disabled=false; }
+  }catch(e){ console.warn('[relic_sprint plan]', e); $('rsMsg').textContent='規劃發生錯誤，請重試。';
+    _show('rsSkeleton', false); showToolError('rsState', '規劃發生錯誤', doRsPlan); }
+  finally{ $('btnRsPlan').disabled=false; _show('rsSkeleton', false); }
 }
 
 async function doRsExec(){
   if(!RS_PLAN || !RS_PLAN.open){ $('rsMsg').textContent='請先規劃。'; return; }
   if(!await ensureConnected()){ $('rsMsg').textContent='未連線，無法執行。'; return; }
   const rem = RS_PLAN.remaining||0;
-  if(!confirm(`確定執行遺物衝刺？將升級最小等級遺物、約消耗 ${fmt(rem)} 遺物碎片把累計推到 ${fmt(RS_PLAN.total)}，並領取所有可領輪獎。`)) return;
+  if(!await confirmDialog({ danger:true, title:'執行遺物衝刺', okLabel:'確定執行',
+      body:`將升級最小等級遺物、約消耗 ${fmt(rem)} 遺物碎片把累計推到 ${fmt(RS_PLAN.total)}，並領取所有可領輪獎。` })) return;
   $('btnRsPlan').disabled=true; $('btnRsExec').disabled=true;
   $('rsMsg').textContent='執行中…（純 WS，請勿關閉本頁）';
   try{
