@@ -57,12 +57,23 @@ def _cdp_evaluate(ip, expression, await_promise=False, timeout=15):
         return None, str(exc)
 
 
+def _cdp_err_code(err: str) -> int:
+    """Map a _cdp_evaluate error string to an HTTP status code (single source).
+
+    Was duplicated verbatim here and in routes_fly_pet.fly_pet_shelve (cx-1).
+    """
+    if err == "no web_debug_port":
+        return 400
+    if "no CDP target" in err:
+        return 502
+    return 500
+
+
 def _cdp_json_response(ip, expression, await_promise=False, data_key="data", timeout=15):
     """Helper: evaluate JS, parse JSON string result, return Flask response."""
     result, err = _cdp_evaluate(ip, expression, await_promise=await_promise, timeout=timeout)
     if err:
-        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
-        return jsonify({"status": "error", "message": err}), code
+        return jsonify({"status": "error", "message": err}), _cdp_err_code(err)
     inner = result.get("result", {})
     exc_detail = result.get("exceptionDetails")
     if exc_detail:
