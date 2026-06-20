@@ -658,6 +658,15 @@
           <input type="number" id="bFlyB" aria-label="飛寵 B ID" style="width:80px;" placeholder="ID">
           <button class="btn btn-primary btn-sm" onclick="doBreed()">交配</button>
         </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+          <label style="font-size:0.78em;color:var(--text2);" for="breedGroupSel">從收藏挑</label>
+          <select id="breedGroupSel" aria-label="從哪個收藏挑親代" style="font-size:0.82em;min-width:130px;">
+            <option value="">（尚無收藏）</option>
+          </select>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-fill="A">填入 A</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-fill="B">填入 B</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-pick="random">隨機自動挑 A/B</button>
+        </div>
       </div>
       <!-- Auto-breed panel -->
       <div class="ab-panel">
@@ -677,6 +686,24 @@
         </div>
         <div id="abSlots"></div>
       </div>
+    </div>
+  </div>
+
+  <!-- 手選飛寵收藏 (命名群組) section -->
+  <div class="section">
+    <div class="collapse-hdr" role="button" tabindex="0" aria-expanded="false" aria-controls="groupsBody"
+         onclick="toggleCollapse('groups')" onkeydown="collapseKeydown(event,'groups')">
+      <span class="section-title" style="margin:0;">手選飛寵收藏
+        <span style="font-weight:400;font-size:0.82em;color:var(--text2);">（命名群組，配種時可指定整組挑兩隻；與遊戲內圖鑑收藏無關）</span>
+      </span>
+      <span class="arrow" id="groupsArrow">&#9654;</span>
+    </div>
+    <div class="collapse-body" id="groupsBody">
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="btn btn--primary btn-sm" onclick="groupNew()">＋ 新增收藏</button>
+        <span style="font-size:0.78em;color:var(--text2);">在飛寵卡片或詳情按「＋收藏」把成員加入這裡。</span>
+      </div>
+      <div id="groupList"></div>
     </div>
   </div>
 
@@ -713,6 +740,23 @@ var confirmFn = null;
 
 function ip() { return document.getElementById('devSel').value; }
 function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// per-device localStorage helper: 折疊 key/load/save 樣板 (autoBreed/presets/groups
+// 三個 store 共用同一工廠,而非各自一份 copy)。
+// fallback: 解析失敗或型別不符時回 fallback() 的「新」實例 (避免共用同一參考)。
+function makeDeviceStore(prefix, fallback) {
+  fallback = fallback || function () { return {}; };
+  function key() { return prefix + ip(); }
+  function load() {
+    try {
+      var v = JSON.parse(localStorage.getItem(key()) || 'null');
+      // 型別防呆: 形狀不符 (object vs array vs ...) 一律回 fallback。
+      return (v === null || typeof v !== typeof fallback()) ? fallback() : v;
+    } catch (e) { return fallback(); }
+  }
+  function save(v) { localStorage.setItem(key(), JSON.stringify(v)); }
+  return { key: key, load: load, save: save };
+}
 
 // Toast
 function toast(msg, type) {
@@ -976,7 +1020,10 @@ function cardHTML(p) {
       '<div class="entries">' + entries + '</div>' +
       '<div class="card-foot">' +
         '<span class="sel-pill"><span class="box">' + (sel ? '&#10003;' : '') + '</span>' + (sel ? '已選' : '選取') + '</span>' +
-        '<button type="button" class="detail-link" data-detail="1" aria-label="查看' + name + '詳情">詳情 &rsaquo;</button>' +
+        '<span style="display:flex;gap:8px;align-items:center;">' +
+          '<button type="button" class="detail-link" data-group-add="' + p.id + '" aria-label="把' + name + '加入手選收藏">＋收藏</button>' +
+          '<button type="button" class="detail-link" data-detail="1" aria-label="查看' + name + '詳情">詳情 &rsaquo;</button>' +
+        '</span>' +
       '</div>' +
     '</article>';
 }
@@ -1296,6 +1343,9 @@ function openDetail(id) {
         '<button data-detail-sel="' + p.id + '">' + (selected.has(p.id) ? '✓ 取消選取' : '＋ 加入選取') + '</button>' +
         '<button class="dis" data-detail-dissolve="' + p.id + '">⚡ 分解此隻</button>' +
       '</div>' +
+      '<div class="mb-acts2" style="margin-top:8px;">' +
+        '<button data-detail-group-add="' + p.id + '">＋收藏（加入手選收藏）</button>' +
+      '</div>' +
     '</div>';
   // C1: route the detail drawer through the modal manager so Esc closes it,
   // focus moves into the panel (lands on the × close button), Tab traps, and
@@ -1379,6 +1429,8 @@ function initGallery() {
   stage.addEventListener('click', function(e) {
     var gsel = e.target.closest('.gsel-all');
     if (gsel) { selectGroupKey(gsel.dataset.grpKey); return; }
+    var gadd = e.target.closest('[data-group-add]');
+    if (gadd) { e.stopPropagation(); openAddOwnToGroup(+gadd.dataset.groupAdd); return; }
     var detail = e.target.closest('[data-detail]');
     var card = e.target.closest('.card');
     if (!card) return;
@@ -1390,9 +1442,11 @@ function initGallery() {
   stage.addEventListener('keydown', function(e) {
     if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
     var gsel = e.target.closest('.gsel-all');
+    var gadd = e.target.closest('[data-group-add]');
     var detail = e.target.closest('[data-detail]');
     var card = e.target.closest('.card');
     if (gsel) { e.preventDefault(); selectGroupKey(gsel.dataset.grpKey); return; }
+    if (gadd) { e.preventDefault(); openAddOwnToGroup(+gadd.dataset.groupAdd); return; }
     if (detail && card) { e.preventDefault(); openDetail(+card.dataset.id); return; }
     // 只有當焦點本身在卡片 (非內部原生按鈕) 時才切換選取
     if (card && e.target === card) { e.preventDefault(); toggleSel(+card.dataset.id); }
@@ -1468,6 +1522,8 @@ function initGallery() {
     if (ds) { toggleSel(+ds.dataset.detailSel); renderTable(); closeDetail(); return; }
     var dd = e.target.closest('[data-detail-dissolve]');
     if (dd) { var pid = +dd.dataset.detailDissolve; closeDetail(); doSellOne(pid); return; }
+    var dga = e.target.closest('[data-detail-group-add]');
+    if (dga) { var gid = +dga.dataset.detailGroupAdd; closeDetail(); openAddOwnToGroup(gid); return; }
   });
 }
 
@@ -1638,6 +1694,10 @@ async function doLoad(opts) {
     allPets.forEach(function(p) { (p.entries||[]).forEach(function(e) { if (e.name) entryNames.add(e.name); }); });
     updateFVals();
     applyFilters();
+    // 裝置可能已切換: 重載該裝置的手選收藏, 並依新 allPets 重算 STALE/成員顯示。
+    loadGroups();
+    renderGroupList();
+    refreshBreedGroupSel();
     document.getElementById('content').style.display = 'block';
     msg.textContent = allPets.length + ' 隻';
     toast('載入 ' + allPets.length + ' 隻飛寵', 'ok');
@@ -1801,6 +1861,7 @@ async function loadBreed() {
     }
     grid.innerHTML = html;
     renderAbSlots(homes);
+    refreshBreedGroupSel();   // homes 更新後刷新「從收藏挑」選單 (供 breeding-id 過濾)
     toast('繁殖池已載入', 'ok');
   } catch(e) { grid.innerHTML = '<span style="color:var(--danger);">' + esc(e.message) + '</span>'; }
 }
@@ -1900,25 +1961,36 @@ async function doLoadAllPartners() {
       try {
         var pd = await apiGet('/api/fly_pet_partner/' + encodeURIComponent(ip()) + '?role_id=' + f.role_id);
         var pets = pd.data || pd.pets || [];
+        // 群組 partner 成員 use-time 解析快取 (role_id -> pets[]);即使 0 隻也記錄 (用於 STALE 判定)。
+        partnerPetCache[f.role_id] = Array.isArray(pets) ? pets : [];
         if (!Array.isArray(pets) || pets.length === 0) continue;
         loaded++;
         var card = document.createElement('div');
         card.className = 'friend-card';
-        var hdr = '<div class="friend-card-hdr">' + esc(f.name) + ' - ' + pets.length + ' 隻上架</div>';
+        var roleId = f.role_id, roleName = f.name || '';
+        var hdr = '<div class="friend-card-hdr">' + esc(roleName) + ' - ' + pets.length + ' 隻上架</div>';
         var tbl = '<table style="width:100%;font-size:0.82em;border-collapse:collapse;">' +
-          '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th></tr></thead><tbody>';
+          '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th><th>收藏</th></tr></thead><tbody>';
         pets.forEach(function(p) {
           var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
           var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
           // 冷卻偵測: state 0=可用(可借來配), 1=繁殖中, 2=冷卻中. state>0 一律無法借過來配.
           var stateLabel = partnerStateLabel(p.state, p.end_time);
-          tbl += '<tr><td style="padding:3px 6px;">' + esc(p.display_name||p.name||'?') + '</td>' +
+          var pname = p.display_name || p.name || '?';
+          tbl += '<tr><td style="padding:3px 6px;">' + esc(pname) + '</td>' +
             '<td style="padding:3px 6px;">' + pqHTML(p.quality) + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + (p.generation||0) + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + growth + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + (p.level||0) + '</td>' +
             '<td style="padding:3px 6px;">' + (entries||'--') + '</td>' +
-            '<td style="padding:3px 6px;text-align:center;">' + stateLabel + '</td></tr>';
+            '<td style="padding:3px 6px;text-align:center;">' + stateLabel + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' +
+              '<button type="button" class="btn btn-ghost btn-sm" data-partner-group-add="1"' +
+                ' data-role-id="' + esc(String(roleId)) + '" data-role-name="' + esc(roleName) + '"' +
+                ' data-pet-id="' + (p.id||0) + '" data-config-id="' + (p.config_id||0) + '"' +
+                ' data-display-name="' + esc(pname) + '"' +
+                ' aria-label="把搭檔飛寵' + esc(pname) + '加入手選收藏">＋收藏</button>' +
+            '</td></tr>';
         });
         tbl += '</tbody></table>';
         card.innerHTML = hdr + tbl;
@@ -1943,26 +2015,434 @@ var abLogs = {};     // per-slot: [{time, msg}]
 var abHomes = [];    // cached home list from last loadBreed
 var abErrors = {};   // per-slot consecutive error count
 
-function abStorageKey() { return 'autoBreed_' + ip(); }
-function loadAbConfig() {
-  try { abConfig = JSON.parse(localStorage.getItem(abStorageKey()) || '{}'); } catch(e) { abConfig = {}; }
-}
-function saveAbConfig() { localStorage.setItem(abStorageKey(), JSON.stringify(abConfig)); }
+// autoBreed store: makeDeviceStore 的第一個 consumer (行為等價,型別防呆更嚴)。
+var _abStore = makeDeviceStore('autoBreed_', function () { return {}; });
+function abStorageKey() { return _abStore.key(); }   // thin alias (保留外部 caller 相容)
+function loadAbConfig() { abConfig = _abStore.load(); }
+function saveAbConfig() { _abStore.save(abConfig); }
 
 // ---- Breeding presets (方案) ----
 var abPresets = [];
 var flypetCatalog = null;   // {species:[{id,name}], entries:[{id,name,quality}]}
-function presetStorageKey() { return 'flypetPresets_' + ip(); }
+// presets store: makeDeviceStore 的第二個 consumer。
+var _presetStore = makeDeviceStore('flypetPresets_', function () { return []; });
+function presetStorageKey() { return _presetStore.key(); }   // thin alias
 function loadPresets() {
-  try { abPresets = JSON.parse(localStorage.getItem(presetStorageKey()) || '[]'); }
-  catch(e) { abPresets = []; }
+  abPresets = _presetStore.load();
   if (!Array.isArray(abPresets)) abPresets = [];
 }
-function savePresets() { localStorage.setItem(presetStorageKey(), JSON.stringify(abPresets)); }
+function savePresets() { _presetStore.save(abPresets); }
 function genPresetId() { return 'p' + Date.now() + '_' + Math.floor(Math.random() * 1000); }
 function getPreset(id) {
   for (var i = 0; i < abPresets.length; i++) if (abPresets[i].id === id) return abPresets[i];
   return null;
+}
+
+// =====================================================================
+// 手選飛寵收藏 (命名群組 收藏1/2/3…) — FLYPET_GROUPS_DESIGN
+//   - 命名、持久化 (per-device localStorage),成員可混合 own + partner。
+//   - 繁殖時「從收藏挑兩隻 (手選或隨機) 填入 A/B」,不用在 300+ 隻翻找。
+//   - 與既有「配種方案 (preset)」「設為基底/A/B」「遊戲內 is_collected 收藏」皆獨立。
+// =====================================================================
+
+// groups store: makeDeviceStore 的第三個 consumer (非第三份 copy)。
+var flypetGroups = [];
+var _groupStore = makeDeviceStore('flypetGroups_', function () { return []; });
+function loadGroups() {
+  flypetGroups = _groupStore.load();
+  if (!Array.isArray(flypetGroups)) flypetGroups = [];
+}
+function saveGroups() { _groupStore.save(flypetGroups); }
+function genGroupId() { return 'g' + Date.now() + '_' + Math.floor(Math.random() * 1000); }
+
+// partner pet use-time 解析快取: role_id -> RolePetListBack pets[] (doLoadAllPartners 寫入)。
+var partnerPetCache = {};
+
+// §1.3 安全旗標: partner 成員能否被自動挑/隨機當親代。
+// 預設 false — 自動填入/隨機只取 own 成員 (partner 成員仍可見/可標記,但灰顯不入池),
+// 直到 live 驗證 send_66_27 接受 partner pet id 才翻 true。零後端改動。
+var groupsAllowPartnerParent = false;
+
+function getGroup(id) {
+  for (var i = 0; i < flypetGroups.length; i++) if (flypetGroups[i].id === id) return flypetGroups[i];
+  return null;
+}
+
+// ---- 成員解析 (use-time) ----
+// own 成員只存 id,從 allPets 即時解析 (避免快取腐爛);
+// partner 成員存可重解析的最少欄位 + 離線顯示快取。
+function resolveMember(m) {
+  if (!m) return null;
+  if (m.src === 'partner') {
+    var pets = partnerPetCache[m.role_id];
+    var live = Array.isArray(pets) ? pets.find(function (p) { return p.id === m.pet_id; }) : null;
+    return {
+      src: 'partner', role_id: m.role_id, role_name: m.role_name || '',
+      pet: live || null,
+      // 離線快取欄位 (搭檔未載入時仍能畫卡)
+      display_name: (live && (live.display_name || live.name)) || m.display_name || ('ID:' + m.pet_id),
+      config_id: (live && live.config_id) || m.config_id || 0,
+      pet_id: m.pet_id, quality: live ? live.quality : 0,
+      entries: live ? (live.entries || []) : [],
+      state: live ? (live.state || 0) : -1   // -1 = 未載入
+    };
+  }
+  // own
+  var p = allPets.find(function (x) { return x.id === m.id; });
+  return p ? {
+    src: 'own', id: m.id, pet: p,
+    display_name: p.display_name || p.name || ('ID:' + m.id),
+    config_id: p.config_id || 0, quality: p.quality || 0, entries: p.entries || []
+  } : { src: 'own', id: m.id, pet: null, display_name: 'ID:' + m.id, config_id: 0, quality: 0, entries: [] };
+}
+
+// STALE = 成員「失聯」(resolve 失敗): own 已分解/換裝置; partner role 被踢或那隻下架。
+// STALE 成員: 灰顯 + ⚠失聯 + 可手動移除,但隨機/填入自動略過,不自動刪除。
+function isStaleMember(m) {
+  if (!m) return true;
+  if (m.src === 'partner') {
+    var pets = partnerPetCache[m.role_id];
+    if (pets === undefined) return false;   // 該搭檔尚未載入 → 不武斷標 STALE
+    return !pets.find(function (p) { return p.id === m.pet_id; });
+  }
+  return !allPets.find(function (x) { return x.id === m.id; });
+}
+
+// ---- 有效親代過濾 (重用 find_pair 略過精神: locked/fight/cooldown/breeding/STALE) ----
+// 前端用 allPets 的 lock/fight + abHomes (breed_info 快取) 近似 cooldown/breeding;
+// 伺服器 send_66_27 仍會權威性拒絕,前端過濾只是體驗。
+function breedingPetIds() {
+  var s = new Set();
+  (abHomes || []).forEach(function (h) {
+    if (h && h.fly_a) s.add(h.fly_a.id);
+    if (h && h.fly_b) s.add(h.fly_b.id);
+  });
+  return s;
+}
+function isPickableMember(m, breedingIds) {
+  if (isStaleMember(m)) return false;
+  if (m.src === 'partner') {
+    if (!groupsAllowPartnerParent) return false;   // 待 live 驗證,partner 不入自動池
+    var r = resolveMember(m);
+    return !!r.pet && r.state === 0;               // 0=可借用
+  }
+  var p = allPets.find(function (x) { return x.id === m.id; });
+  if (!p) return false;
+  if (p.lock) return false;
+  if (p.fight === 1) return false;
+  if (breedingIds && breedingIds.has(p.id)) return false;
+  return true;
+}
+
+// ---- CRUD ----
+function addToGroup(groupId, member) {
+  var g = getGroup(groupId);
+  if (!g) return false;
+  if (!Array.isArray(g.members)) g.members = [];
+  // 去重: own 比 id; partner 比 role_id+pet_id。
+  var dup = g.members.some(function (m) {
+    if (m.src !== member.src) return false;
+    return member.src === 'partner'
+      ? (m.role_id === member.role_id && m.pet_id === member.pet_id)
+      : (m.id === member.id);
+  });
+  if (dup) return false;
+  g.members.push(member);
+  saveGroups();
+  return true;
+}
+function removeFromGroup(groupId, idx) {
+  var g = getGroup(groupId);
+  if (!g || !Array.isArray(g.members)) return;
+  g.members.splice(idx, 1);
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function renameGroup(groupId, name) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  g.name = (name || '').trim() || g.name;
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function deleteGroup(groupId) {
+  flypetGroups = flypetGroups.filter(function (g) { return g.id !== groupId; });
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function groupNew() {
+  var n = flypetGroups.length + 1;
+  flypetGroups.push({ id: genGroupId(), name: '收藏' + n, members: [] });
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+  toast('已新增「收藏' + n + '」', 'ok');
+}
+function groupRename(groupId) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  // 沿用既有 prompt-less 流程: 用瀏覽器 prompt 取新名 (a11y: 標準對話,可鍵盤操作)。
+  var name = window.prompt('改名「' + g.name + '」為:', g.name);
+  if (name === null) return;
+  renameGroup(groupId, name);
+}
+async function groupDelete(groupId) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  var ok = await confirmDialog({
+    title: '刪除收藏', danger: true,
+    body: '刪除「' + g.name + '」(' + (g.members || []).length + ' 個成員)？成員飛寵本身不受影響。',
+    okLabel: '刪除'
+  });
+  if (!ok) return;
+  deleteGroup(groupId);
+  toast('已刪除「' + g.name + '」', 'ok');
+}
+function groupRemoveMember(groupId, idx) {
+  removeFromGroup(groupId, idx);
+}
+
+// ---- 加入收藏 (卡片/詳情共用) ----
+// 開一個 lib modal 列出群組讓使用者選一組加入 (own pet)。
+function openAddOwnToGroup(petId) {
+  var p = allPets.find(function (x) { return x.id === petId; });
+  if (!p) { toast('找不到飛寵', 'err'); return; }
+  if (flypetGroups.length === 0) {
+    groupNew();   // 沒有任何收藏 → 自動建一個
+  }
+  var name = esc(p.display_name || p.name || ('ID:' + petId));
+  openGroupChooser('把「' + name + '」加入收藏', function (groupId) {
+    var added = addToGroup(groupId, { src: 'own', id: petId });
+    var g = getGroup(groupId);
+    if (added) { renderGroupList(); refreshBreedGroupSel(); toast('已加入「' + (g ? g.name : '') + '」', 'ok'); }
+    else toast('已在「' + (g ? g.name : '') + '」內', 'info');
+  });
+}
+// 把搭檔飛寵加入收藏 (partner 成員: 存 role_id+pet_id + 離線顯示快取欄位)。
+function openAddPartnerToGroup(member) {
+  if (flypetGroups.length === 0) groupNew();
+  openGroupChooser('把搭檔「' + esc(member.display_name) + '」加入收藏', function (groupId) {
+    var added = addToGroup(groupId, {
+      src: 'partner', role_id: member.role_id, role_name: member.role_name,
+      pet_id: member.pet_id, config_id: member.config_id, display_name: member.display_name
+    });
+    var g = getGroup(groupId);
+    if (added) { renderGroupList(); refreshBreedGroupSel(); toast('已加入「' + (g ? g.name : '') + '」', 'ok'); }
+    else toast('已在「' + (g ? g.name : '') + '」內', 'info');
+  });
+}
+// 通用「選收藏」modal (lib openModal/closeModal)。
+function openGroupChooser(title, onPick) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  var opts = flypetGroups.map(function (g) {
+    return '<button type="button" class="btn btn--secondary" data-pick-group="' + esc(g.id) + '" ' +
+      'style="display:block;width:100%;text-align:left;margin:4px 0;">' +
+      esc(g.name) + ' <span style="color:var(--text2);font-size:0.85em;">(' + (g.members || []).length + ' 成員)</span></button>';
+  }).join('');
+  overlay.innerHTML =
+    '<div class="modal modal--confirm" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
+      '<div class="modal-title">' + esc(title) + '</div>' +
+      '<div class="modal-body" style="max-height:50vh;overflow:auto;">' + opts +
+        '<button type="button" class="btn btn--ghost" data-pick-group="__new__" style="display:block;width:100%;text-align:left;margin:8px 0 2px;">＋ 新收藏…</button>' +
+      '</div>' +
+      '<div class="modal-row"><button type="button" class="btn btn--secondary" data-chooser-cancel="1">取消</button></div>' +
+    '</div>';
+  (document.body || document.documentElement).appendChild(overlay);
+  function done() {
+    if (typeof closeModal === 'function') closeModal(overlay); else overlay.classList.remove('active');
+    setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 0);
+  }
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || e.target.closest('[data-chooser-cancel]')) { done(); return; }
+    var b = e.target.closest('[data-pick-group]');
+    if (!b) return;
+    var gid = b.dataset.pickGroup;
+    if (gid === '__new__') { groupNew(); gid = flypetGroups[flypetGroups.length - 1].id; }
+    done();
+    if (typeof onPick === 'function') onPick(gid);
+  });
+  overlay._uiConfirmCancel = done;   // lib 全域 Esc 關閉時當取消
+  if (typeof openModal === 'function') openModal(overlay, { cls: 'active' });
+  else overlay.classList.add('active');
+}
+
+// ---- 收藏管理面板渲染 ----
+function memberChipHTML(groupId, m, idx) {
+  var r = resolveMember(m);
+  var stale = isStaleMember(m);
+  var pfx = m.src === 'partner' ? '🤝 ' : '';
+  var roleTag = (m.src === 'partner' && r.role_name) ? '<span style="color:var(--text2);font-size:0.85em;">·' + esc(r.role_name) + '</span>' : '';
+  var staleTag = stale ? '<span style="color:var(--danger);font-weight:700;" title="此成員已失聯,挑選時自動略過">⚠失聯</span>' : '';
+  var sty = stale ? 'opacity:0.55;' : '';
+  return '<span class="chip" style="' + sty + '">' +
+    pfx + esc(r.display_name) + ' ' + roleTag + ' ' + staleTag +
+    '<button type="button" class="chip-x" data-group-rm-member="' + idx + '" data-group-id="' + esc(groupId) +
+      '" aria-label="從此收藏移除' + esc(r.display_name) + '" title="移除">&times;</button>' +
+    '</span>';
+}
+function renderGroupList() {
+  var el = document.getElementById('groupList');
+  if (!el) return;
+  if (flypetGroups.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="padding:18px;"><div class="es-title">尚無收藏</div>' +
+      '<div class="es-hint">點「＋ 新增收藏」建立,再到飛寵卡片或詳情按「＋收藏」加入成員。</div></div>';
+    return;
+  }
+  el.innerHTML = flypetGroups.map(function (g) {
+    var members = g.members || [];
+    var chips = members.length
+      ? members.map(function (m, i) { return memberChipHTML(g.id, m, i); }).join('')
+      : '<div class="empty-state" style="padding:12px;"><div class="es-hint">這個收藏還沒有成員 — 到卡片或詳情按「＋收藏」加入。</div></div>';
+    return '<div class="card" style="margin-top:10px;padding:12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+        '<strong style="font-size:0.92em;">' + esc(g.name) + '</strong>' +
+        '<span style="color:var(--text2);font-size:0.82em;">' + members.length + ' 成員</span>' +
+        '<span style="margin-left:auto;display:flex;gap:6px;">' +
+          '<button type="button" class="btn btn--ghost btn-sm" data-group-rename="' + esc(g.id) + '">改名</button>' +
+          '<button type="button" class="btn btn--danger btn-sm" data-group-delete="' + esc(g.id) + '">刪除</button>' +
+        '</span>' +
+      '</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + chips + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ---- 繁殖表單整合 ----
+function refreshBreedGroupSel() {
+  var sel = document.getElementById('breedGroupSel');
+  if (!sel) return;
+  var prev = sel.value;
+  if (flypetGroups.length === 0) {
+    sel.innerHTML = '<option value="">（尚無收藏）</option>';
+    return;
+  }
+  sel.innerHTML = flypetGroups.map(function (g) {
+    return '<option value="' + esc(g.id) + '">' + esc(g.name) + ' (' + (g.members || []).length + ')</option>';
+  }).join('');
+  if (prev && getGroup(prev)) sel.value = prev;
+}
+// 取選中群組的「可挑」成員 (own + 視旗標 partner),已過濾 STALE/locked/fight/breeding。
+function pickableMembersOfSelectedGroup() {
+  var sel = document.getElementById('breedGroupSel');
+  var g = sel ? getGroup(sel.value) : null;
+  if (!g) return { group: null, list: [] };
+  var breeding = breedingPetIds();
+  var list = (g.members || []).filter(function (m) { return isPickableMember(m, breeding); });
+  return { group: g, list: list };
+}
+// 填入 A / 填入 B: 列出成員讓使用者手選一隻 → setBreedPet(slot, id)。
+// 非 STALE 成員都列出; 不可挑者 (鎖定/出戰/繁殖中, 或旗標關時的 partner) 灰顯+disabled+tooltip。
+function fillBreedFromGroup(slot) {
+  var sel = document.getElementById('breedGroupSel');
+  var g = sel ? getGroup(sel.value) : null;
+  if (!g) { toast('請先選擇一個收藏', 'info'); return; }
+  var breeding = breedingPetIds();
+  var members = (g.members || []).filter(function (m) { return !isStaleMember(m); });
+  if (members.length === 0) { toast('「' + g.name + '」沒有可顯示的成員 (全部失聯)', 'err'); return; }
+  var anyPickable = members.some(function (m) { return isPickableMember(m, breeding); });
+  if (!anyPickable) { toast('「' + g.name + '」沒有可用成員 (已排除鎖定/出戰/繁殖中/失聯)', 'err'); return; }
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  var rows = members.map(function (m) {
+    var rm = resolveMember(m);
+    var pfx = m.src === 'partner' ? '🤝 ' : '';
+    var pid = m.src === 'partner' ? m.pet_id : m.id;
+    var pickable = isPickableMember(m, breeding);
+    // partner 不可挑且旗標關 → tooltip 標「待驗證」; own 不可挑 → 鎖定/出戰/繁殖中。
+    var why = '';
+    if (!pickable) {
+      if (m.src === 'partner' && !groupsAllowPartnerParent) why = '搭檔當親代待驗證';
+      else why = '不可用（鎖定/出戰/繁殖中）';
+    }
+    var dis = pickable ? '' : ' disabled aria-disabled="true" title="' + esc(why) + '" style="opacity:0.5;"';
+    return '<button type="button" class="btn btn--secondary"' +
+      (pickable ? ' data-fill-pet="' + pid + '"' : '') + dis +
+      ' style="display:block;width:100%;text-align:left;margin:4px 0;' + (pickable ? '' : 'opacity:0.5;') + '">' +
+      pfx + esc(rm.display_name) + ' <span style="color:var(--text2);font-size:0.85em;">#' + pid +
+      (why ? ' · ' + esc(why) : '') + '</span></button>';
+  }).join('');
+  overlay.innerHTML =
+    '<div class="modal modal--confirm" role="dialog" aria-modal="true" aria-label="從收藏填入 ' + slot + '">' +
+      '<div class="modal-title">從「' + esc(g.name) + '」填入 ' + slot + '</div>' +
+      '<div class="modal-body" style="max-height:50vh;overflow:auto;">' + rows + '</div>' +
+      '<div class="modal-row"><button type="button" class="btn btn--secondary" data-fill-cancel="1">取消</button></div>' +
+    '</div>';
+  (document.body || document.documentElement).appendChild(overlay);
+  function done() {
+    if (typeof closeModal === 'function') closeModal(overlay); else overlay.classList.remove('active');
+    setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 0);
+  }
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || e.target.closest('[data-fill-cancel]')) { done(); return; }
+    var b = e.target.closest('[data-fill-pet]');
+    if (!b) return;
+    done();
+    setBreedPet(slot, +b.dataset.fillPet);
+  });
+  overlay._uiConfirmCancel = done;
+  if (typeof openModal === 'function') openModal(overlay, { cls: 'active' });
+  else overlay.classList.add('active');
+}
+// 隨機自動挑 A/B: 從可挑成員隨機不重複抽兩隻 → setBreedPet('A',a) + setBreedPet('B',b)。
+function pickRandomFromGroup() {
+  var r = pickableMembersOfSelectedGroup();
+  if (!r.group) { toast('請先選擇一個收藏', 'info'); return; }
+  if (r.list.length < 2) { toast('「' + r.group.name + '」可用成員不足兩隻 (已排除鎖定/出戰/繁殖中/失聯)', 'err'); return; }
+  var pool = r.list.slice();
+  // Fisher-Yates 抽前兩個。
+  for (var i = pool.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  // own 用 id; partner 用 pet_id (= info.id)。
+  var a = pool[0].src === 'partner' ? pool[0].pet_id : pool[0].id;
+  var b = pool[1].src === 'partner' ? pool[1].pet_id : pool[1].id;
+  setBreedPet('A', a);
+  setBreedPet('B', b);
+  toast('已從「' + r.group.name + '」隨機挑兩隻填入 A/B', 'ok');
+}
+
+// ---- 收藏面板 + 繁殖表單群組鈕 事件綁定 (delegated, 只綁一次) ----
+function initGroups() {
+  var list = document.getElementById('groupList');
+  if (list && !list._wired) {
+    list._wired = true;
+    list.addEventListener('click', function (e) {
+      var rn = e.target.closest('[data-group-rename]');
+      if (rn) { groupRename(rn.dataset.groupRename); return; }
+      var del = e.target.closest('[data-group-delete]');
+      if (del) { groupDelete(del.dataset.groupDelete); return; }
+      var rm = e.target.closest('[data-group-rm-member]');
+      if (rm) { groupRemoveMember(rm.dataset.groupId, +rm.dataset.groupRmMember); return; }
+    });
+  }
+  var friends = document.getElementById('friendsResult');
+  if (friends && !friends._wired) {
+    friends._wired = true;
+    friends.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-partner-group-add]');
+      if (!b) return;
+      openAddPartnerToGroup({
+        role_id: Number(b.dataset.roleId), role_name: b.dataset.roleName || '',
+        pet_id: Number(b.dataset.petId), config_id: Number(b.dataset.configId),
+        display_name: b.dataset.displayName || ('ID:' + b.dataset.petId)
+      });
+    });
+  }
+  var breedRow = document.getElementById('breedGroupSel');
+  if (breedRow && breedRow.parentNode && !breedRow.parentNode._wired) {
+    breedRow.parentNode._wired = true;
+    breedRow.parentNode.addEventListener('click', function (e) {
+      var fill = e.target.closest('[data-group-fill]');
+      if (fill) { fillBreedFromGroup(fill.dataset.groupFill); return; }
+      var pick = e.target.closest('[data-group-pick]');
+      if (pick) { pickRandomFromGroup(); return; }
+    });
+  }
 }
 
 async function ensureCatalog() {
@@ -2381,6 +2861,10 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', function() {
   initGallery();    // 綁定卡片牆/種類欄/抽屜事件 (只綁一次)
+  initGroups();     // 綁定收藏面板 + 繁殖表單群組鈕 (只綁一次)
+  loadGroups();     // 載入手選收藏 (per-device localStorage)
+  renderGroupList();
+  refreshBreedGroupSel();
   syncPresetUI();
   updateFVals();
   initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)
