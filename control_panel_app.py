@@ -138,6 +138,12 @@ routes_status.init_ws(sock)
 
 @app.after_request
 def add_no_cache_headers(response):
+    # Static design-system assets (/static/lib/tokens.css, components.css, app.js,
+    # favicon, …) are versioned via a ?v= query that changes per deploy, so they
+    # can be cached aggressively — the query busts the cache when the lib changes.
+    if request.method == "GET" and request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
     # Fly-pet icons are immutable real-sprite PNGs keyed by config_id — let the
     # browser cache them so the card wall doesn't re-fetch ~38 URLs on every scroll.
     if request.method == "GET" and not request.path.startswith("/api/fly_pet_icon/"):

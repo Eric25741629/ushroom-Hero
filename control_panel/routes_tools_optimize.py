@@ -411,7 +411,9 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
 @_fly_pet_auth
 def tools_optimize_page():
     """「工具 優化類」分頁：車位裝飾升級 + 純 WS 一鍵抽卡。"""
-    return render_template("tools_optimize.html")
+    from control_panel.routes_pages import _get_frontend_version
+
+    return render_template("tools_optimize.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/api/carpark/plan/<ip>", methods=["POST", "GET"])

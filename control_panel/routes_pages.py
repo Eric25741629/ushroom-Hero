@@ -1,13 +1,19 @@
 """頁面與雜項路由 blueprint（index / updates / war-room / fly-pet / 版本 / 回饋）。"""
 import datetime
 import json
+import logging
 from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, render_template, request, send_from_directory, session
 
 from control_panel.shared.auth import _FLY_PET_USERS, _fly_pet_auth
 
+logger = logging.getLogger(__name__)
+
 bp = Blueprint("pages", __name__)
+
+# 使用者可見的友善訊息（永不外洩伺服器絕對路徑或 OSError 字串 — C20 info-leak）。
+_NO_UPDATE_MESSAGE = "目前沒有更新公告"
 
 # 路徑常數：原始檔以 ``Path(__file__).resolve().parent`` 計算 repo root，但本檔位於
 # control_panel/ 子目錄，必須改用 ``parents[1]`` 才能維持指向 repo 根目錄的同一路徑。
@@ -18,20 +24,29 @@ _README_PATH = _REPO_ROOT / "README.md"
 _UPDATE_PATH = _REPO_ROOT / "update.txt"
 _BUG_FEEDBACK_PATH = _REPO_ROOT / "reports" / "bug_feedback.jsonl"
 _TEMPLATES_DIR = _REPO_ROOT / "templates"
+_STATIC_LIB_DIR = _REPO_ROOT / "static" / "lib"
 
 
 def _load_readme_text() -> str:
     try:
         return _README_PATH.read_text(encoding="utf-8-sig")
     except Exception as e:
-        return f"README 讀取失敗: {e}"
+        # 防禦性（C20）：真實錯誤含絕對路徑只進 server log，不回傳給呼叫端。
+        logger.warning("README 讀取失敗（僅 server log）: %s", e)
+        return "README 讀取失敗"
 
 
-def _load_update_text() -> str:
+def _load_update_text() -> str | None:
+    """讀取 update.txt 內容。讀不到（缺檔/權限/IO 錯）時回傳 ``None``，
+    並把真正的錯誤（含絕對路徑）只寫進伺服器 log；**絕不**把 OSError 字串或
+    伺服器路徑回傳給前端（C20 info-leak）。呼叫端據此渲染友善的空狀態。"""
     try:
         return _UPDATE_PATH.read_text(encoding="utf-8-sig")
     except Exception as e:
-        return f"update.txt 讀取失敗: {e}"
+        # 真實錯誤（絕對路徑、Errno、UnicodeDecodeError 等）只進伺服器 log；
+        # 前端拿到 None -> 空狀態。catch-all 確保非 UTF-8 檔不會 500。
+        logger.warning("update.txt 讀取失敗（僅 server log，前端顯示空狀態）: %s", e)
+        return None
 
 
 def _file_mtime(path: Path) -> int:
@@ -45,6 +60,12 @@ def _get_frontend_version() -> str:
     tracked = [
         _TEMPLATES_DIR / "dashboard.html",
         _TEMPLATES_DIR / "readme_viewer.html",
+        # Shared design-system lib + its head partial: editing any of these must
+        # bump the version so the ?v= cache-bust in _assets_head.html fires.
+        _TEMPLATES_DIR / "_assets_head.html",
+        _STATIC_LIB_DIR / "tokens.css",
+        _STATIC_LIB_DIR / "components.css",
+        _STATIC_LIB_DIR / "app.js",
         _UPDATE_PATH,
         Path(__file__).resolve(),
     ]
@@ -67,11 +88,13 @@ def index():
 @bp.route("/updates/")
 def updates_page():
     """Serve update.txt content inside the control panel."""
+    text = _load_update_text()
     return render_template(
         "readme_viewer.html",
         page_title="更新公告",
         page_subtitle="目前顯示的是 repo 根目錄的 `update.txt` 內容。",
-        page_text=_load_update_text(),
+        page_text=text,
+        empty_message=_NO_UPDATE_MESSAGE,
         frontend_version=_get_frontend_version(),
     )
 
@@ -108,8 +131,12 @@ def fly_pet_login():
         if _FLY_PET_USERS.get(u) == p:
             session["fly_pet_auth"] = True
             return redirect("/fly-pet")
-        return render_template("fly_pet_login.html", error="帳號或密碼錯誤")
-    return render_template("fly_pet_login.html")
+        return render_template(
+            "fly_pet_login.html",
+            error="帳號或密碼錯誤",
+            frontend_version=_get_frontend_version(),
+        )
+    return render_template("fly_pet_login.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/fly-pet/logout")
@@ -121,7 +148,7 @@ def fly_pet_logout():
 @bp.route("/fly-pet")
 @_fly_pet_auth
 def fly_pet_page():
-    return render_template("fly_pet.html")
+    return render_template("fly_pet.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/api/bug_feedback", methods=["POST"])
