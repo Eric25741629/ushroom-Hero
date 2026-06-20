@@ -654,6 +654,20 @@ def _silver_tier_has_empty(page: Any, *, attempts: int = 6,
 # ───────────────────────────────────────────────────────────────────
 
 
+def _reenter_silver_detail_list(page: Any, pool_id: int) -> bool:
+    """Re-open the SILVER detail list to advance to the next lot.
+
+    Closing a full / no-cluster lot view back to the detail list isn't automatic,
+    so restart the picker flow: ParkingMain → space+cross tab → pool tier.
+    Returns False if any step fails (caller should return None / abort).
+    """
+    if not _ensure_parking_main_open(page):
+        return False
+    if not _open_space_view_and_cross_tab(page):
+        return False
+    return _click_pool_tier(page, pool_id)
+
+
 def park_one_silver(
     page: Any,
     prefer_back: bool = True,
@@ -719,23 +733,14 @@ def park_one_silver(
                 continue
             if snap.empty_count == 0:
                 logger.debug(f"[carpark_auto] 鉑銀{idx+1} full ({snap.occupied_count}/{snap.total})")
-                # Need to re-enter the detail list to try next — closing
-                # the lot view back to detail list isn't automatic here.
-                # Re-click pool tier to restart the picker flow.
-                if not _ensure_parking_main_open(page):
-                    return None
-                if not _open_space_view_and_cross_tab(page):
-                    return None
-                if not _click_pool_tier(page, pool_id):
+                # Closing the lot view back to the detail list isn't automatic;
+                # re-enter to advance to the next lot.
+                if not _reenter_silver_detail_list(page, pool_id):
                     return None
                 continue
             if pass_no == 0 and cluster and not snap.has_cluster_bonus:
                 logger.debug(f"[carpark_auto] 鉑銀{idx+1} has empties but no cluster ({snap.occupied_count}/{snap.total})")
-                if not _ensure_parking_main_open(page):
-                    return None
-                if not _open_space_view_and_cross_tab(page):
-                    return None
-                if not _click_pool_tier(page, pool_id):
+                if not _reenter_silver_detail_list(page, pool_id):
                     return None
                 continue
             logger.info(f"[carpark_auto] 鉑銀{idx+1} OK ({snap.occupied_count}/{snap.total}); "
