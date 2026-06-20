@@ -8,39 +8,12 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
+  {% include '_assets_head.html' %}
   <style>
-    :root {
-      --bg: #f4efe6;
-      --surface: #ffffff;
-      --surface2: #faf6ee;
-      --surface3: #fbf7ee;
-      --surface4: #f0e9da;
-      --border: #ece3d3;
-      --border2: #ddd2bd;
-      --text: #2b2620;
-      --text2: #6f6657;
-      --muted: #a59a87;
-      --accent: #e0653a;
-      --accent-h: #c14f2a;
-      --accent-soft: rgba(224, 101, 58, 0.12);
-      --danger: #e26b86;
-      --danger-h: #b8455f;
-      --warn: #e0a939;
-      --blue: #4aa0dd;
-
-      --eq1: #64b5f6;
-      --eq2: #ffd54f;
-      --eq3: #42a5f5;
-      --eq4: #ef5350;
-      --eq5: #7e57c2;
-      --eq6: #e040fb;
-      --eq7: #26a69a;
-
-      --pq0: #999;
-      --pq1: #64b5f6;
-      --pq2: #ce93d8;
-      --pq3: #ffd54f;
-    }
+    /* Design tokens now come from static/lib/tokens.css (all old var names
+       --bg/--accent/--muted/--eq*/--pq*/etc. are aliased there to AA values).
+       The inline :root block was removed in Phase 3 so this page routes
+       through the accessible tokens. */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: "Manrope", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
@@ -79,7 +52,7 @@
       cursor: pointer; font-weight: 650; transition: background 0.15s, border-color 0.15s, color 0.15s;
       min-height: 32px;
     }
-    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary { background: linear-gradient(135deg, var(--color-accent-strong), var(--color-accent-deep)); color: #fff; }
     .btn-primary:hover { background: var(--accent-h); }
     .btn-danger { background: var(--danger); color: #fff; }
     .btn-danger:hover { background: var(--danger-h); }
@@ -161,28 +134,31 @@
       border-radius: 5px; font-size: 0.8em; margin: 2px 2px; white-space: nowrap;
       border: 1px solid transparent; min-height: 23px;
     }
-    .ec-1 { background: rgba(100,181,246,0.13); color: var(--eq1); border-color: rgba(100,181,246,0.22); }
-    .ec-2 { background: rgba(255,213,79,0.16); color: var(--eq2); border-color: rgba(255,213,79,0.25); }
+    /* §3.2a: entry-tag chip TEXT darkened to a >=4.5:1 shade of each hue
+       (saturated pastel moved to the border/bg only). */
+    .ec-1 { background: rgba(100,181,246,0.13); color: #1d6fb8; border-color: rgba(100,181,246,0.22); }
+    .ec-2 { background: rgba(255,213,79,0.16); color: #8a6d00; border-color: rgba(255,213,79,0.25); }
     .ec-3 {
-      font-weight: 800; color: #ffe08a;
+      font-weight: 800; color: #8a6d00;
       background: linear-gradient(135deg, rgba(96,165,250,0.24), rgba(246,196,83,0.22));
       border: 1px solid rgba(246,196,83,0.48);
       box-shadow: inset 0 0 0 1px rgba(96,165,250,0.10);
     }
-    .ec-4 { background: rgba(239,83,80,0.16); color: var(--eq4); border-color: rgba(239,83,80,0.30); text-decoration: line-through; }
-    .ec-5 { background: rgba(126,87,194,0.18); color: #b9a4ff; border-color: rgba(126,87,194,0.34); }
-    .ec-6 { background: rgba(224,64,251,0.18); color: #f0abfc; border-color: rgba(224,64,251,0.36); font-weight: 800; }
-    .ec-7 { background: rgba(38,166,154,0.18); color: #5eead4; border-color: rgba(38,166,154,0.36); font-weight: 700; }
+    .ec-4 { background: rgba(239,83,80,0.16); color: #b91c1c; border-color: rgba(239,83,80,0.30); text-decoration: line-through; }
+    .ec-5 { background: rgba(126,87,194,0.18); color: #6d28d9; border-color: rgba(126,87,194,0.34); }
+    .ec-6 { background: rgba(224,64,251,0.18); color: #a21caf; border-color: rgba(224,64,251,0.36); font-weight: 800; }
+    .ec-7 { background: rgba(38,166,154,0.18); color: #0f766e; border-color: rgba(38,166,154,0.36); font-weight: 700; }
 
     /* Pet quality badge */
     .pq {
       display: inline-block; padding: 2px 8px; border-radius: 5px; font-size: 0.78em;
       font-weight: 800; border: 1px solid transparent; min-width: 34px; text-align: center;
     }
-    .pq-0 { background: rgba(153,153,153,0.15); color: var(--pq0); border-color: rgba(153,153,153,0.24); }
-    .pq-1 { background: rgba(100,181,246,0.16); color: var(--pq1); border-color: rgba(100,181,246,0.28); }
-    .pq-2 { background: rgba(206,147,216,0.18); color: var(--pq2); border-color: rgba(206,147,216,0.30); }
-    .pq-3 { background: rgba(255,213,79,0.20); color: var(--pq3); border-color: rgba(255,213,79,0.38); }
+    /* §3.2a: quality-badge TEXT darkened to AA shade of each hue (bright hue -> border). */
+    .pq-0 { background: rgba(153,153,153,0.15); color: #5f5f5f; border-color: rgba(153,153,153,0.24); }
+    .pq-1 { background: rgba(100,181,246,0.16); color: #1d6fb8; border-color: rgba(100,181,246,0.28); }
+    .pq-2 { background: rgba(206,147,216,0.18); color: #9333a8; border-color: rgba(206,147,216,0.30); }
+    .pq-3 { background: rgba(255,213,79,0.20); color: #8a6d00; border-color: rgba(255,213,79,0.38); }
 
     /* Action bar */
     .action-row {
@@ -220,7 +196,7 @@
       padding: 8px 16px; border-radius: 6px; font-size: 0.82em; color: #fff;
       animation: toastIn 0.2s ease; min-width: 200px;
     }
-    .toast-ok { background: #4f9d52; }
+    .toast-ok { background: var(--status-ok-fill); }
     .toast-err { background: var(--danger-h); }
     .toast-info { background: #6f6657; }
     @keyframes toastIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
@@ -269,28 +245,16 @@
        不污染既有 :root 變數,也不影響繁殖/搭檔區。
        ======================================================================= */
     .flypet-gallery {
-      --fg-accent: #e0653a;
-      --fg-accent-2: #c14f2a;
-      --fg-amber: #e0a939;
-      --fg-panel: #ffffff;
-      --fg-panel-2: #faf6ee;
-      --fg-bg-2: #fbf7ee;
-      --fg-line: #ece3d3;
-      --fg-line-soft: #f0e9da;
-      --fg-txt: #2b2620;
-      --fg-txt-dim: #6f6657;
-      --fg-txt-faint: #a59a87;
-      --fg-radius: 14px;
-      --pqc-0: #9aa6b2; --pqc-1: #64b5f6; --pqc-2: #ce93d8; --pqc-3: #ffd54f;
-      --eqc-1: #64b5f6; --eqc-2: #ffd54f; --eqc-3: #ffe08a; --eqc-4: #ef5350;
-      --eqc-5: #b9a4ff; --eqc-6: #f0abfc; --eqc-7: #5eead4;
+      /* --fg-*, --pqc-*, --eqc-* tokens removed (Phase 3): all aliased in
+         tokens.css :root to AA values (--fg-amber/--fg-txt-faint now deep,
+         chip text uses --chip-text below). */
       position: relative;
     }
 
     /* Stats */
     .flypet-gallery .fg-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 10px 0 12px; }
     .flypet-gallery .fg-stat { font-size: 0.82em; color: var(--fg-txt-dim); background: var(--fg-bg-2); border: 1px solid var(--fg-line); border-radius: 10px; padding: 8px 11px; }
-    .flypet-gallery .fg-stat b { color: var(--fg-accent); margin-left: 4px; font-size: 1.1em; }
+    .flypet-gallery .fg-stat b { color: var(--status-accent-text); margin-left: 4px; font-size: 1.1em; }
 
     /* Rail (search + view toggle + advanced) */
     .flypet-gallery .fg-rail { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
@@ -333,13 +297,13 @@
     .flypet-gallery .sp-all:hover { border-color: var(--fg-accent); background: var(--fg-panel-2); }
     .flypet-gallery .sp-all.on { background: rgba(224,101,58,.1); border-color: var(--fg-accent); border-style: solid; }
     .flypet-gallery .sp-all .nm { font-size: 13.5px; font-weight: 700; }
-    .flypet-gallery .sp-all.on .nm { color: var(--fg-accent); }
+    .flypet-gallery .sp-all.on .nm { color: var(--status-accent-text); }
     .flypet-gallery .sp-item { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 9px; cursor: pointer; position: relative; min-height: 44px; }
     .flypet-gallery .sp-item:hover { background: var(--fg-panel-2); }
     .flypet-gallery .sp-item.on { background: linear-gradient(90deg, rgba(224,101,58,.14), rgba(224,101,58,.03)); }
     .flypet-gallery .sp-item.on::before { content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--fg-accent); }
     .flypet-gallery .sp-item .sp-name { flex: 1 1 auto; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .flypet-gallery .sp-item.on .sp-name { color: var(--fg-accent); }
+    .flypet-gallery .sp-item.on .sp-name { color: var(--status-accent-text); }
     .flypet-gallery .sp-meta { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
     .flypet-gallery .sp-best { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
     .flypet-gallery .sp-cnt { font-size: 11.5px; font-weight: 700; color: var(--fg-txt-dim); background: var(--fg-bg-2); border: 1px solid var(--fg-line); border-radius: 11px; min-width: 26px; height: 21px; padding: 0 7px; display: inline-flex; align-items: center; justify-content: center; }
@@ -352,9 +316,9 @@
     .flypet-gallery .rh-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
     .flypet-gallery .rh-title .ttl { font-size: 16px; font-weight: 700; white-space: nowrap; }
     .flypet-gallery .rh-title .sub { font-size: 12px; color: var(--fg-txt-faint); }
-    .flypet-gallery .rh-title .sub b { color: var(--fg-accent); }
+    .flypet-gallery .rh-title .sub b { color: var(--status-accent-text); }
     .flypet-gallery .fg-selall-btn { margin-left: auto; height: 32px; padding: 0 12px; border-radius: 9px; border: 1px solid var(--fg-line); background: var(--fg-bg-2); color: var(--fg-txt-dim); font-size: 12.5px; font-weight: 600; cursor: pointer; }
-    .flypet-gallery .fg-selall-btn:hover { border-color: var(--fg-accent); color: var(--fg-accent); }
+    .flypet-gallery .fg-selall-btn:hover { border-color: var(--fg-accent); color: var(--status-accent-text); }
 
     /* Stage + grid + cards */
     .flypet-gallery .stage { max-height: 70vh; overflow-y: auto; padding: 2px 2px 10px; }
@@ -364,7 +328,7 @@
     .flypet-gallery .group-head .ico-wrap { flex: 0 0 auto; }
     .flypet-gallery .group-head h2 { margin: 0; font-size: 15px; font-weight: 800; }
     .flypet-gallery .group-head .gcount { font-size: 12px; color: var(--fg-txt-faint); background: var(--fg-panel); padding: 2px 9px; border-radius: 20px; }
-    .flypet-gallery .group-head .gsel-all { margin-left: auto; font-size: 12px; color: var(--fg-accent); font-weight: 600; padding: 5px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
+    .flypet-gallery .group-head .gsel-all { margin-left: auto; font-size: 12px; color: var(--status-accent-text); font-weight: 600; padding: 5px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
     .flypet-gallery .group-head .gsel-all:hover { background: rgba(224,101,58,.12); }
 
     .flypet-gallery .card { background: linear-gradient(180deg, var(--fg-panel), var(--fg-bg-2)); border: 1px solid var(--fg-line); border-radius: var(--fg-radius); padding: 12px 12px 10px; position: relative; transition: transform .14s ease, border-color .14s, box-shadow .14s; cursor: pointer; overflow: hidden; }
@@ -376,13 +340,15 @@
     .flypet-gallery .card-name { font-size: 15px; font-weight: 800; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .flypet-gallery .card-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
     .flypet-gallery .mbadge { font-size: 10.5px; color: var(--fg-txt-dim); background: var(--fg-panel-2); border: 1px solid var(--fg-line-soft); border-radius: 6px; padding: 1px 7px; display: inline-flex; align-items: center; gap: 3px; }
-    .flypet-gallery .mbadge.lv { color: var(--fg-accent); }
-    .flypet-gallery .mbadge.gen { color: var(--fg-accent-2); }
+    /* §3.2a item 3: brand orange as TEXT -> AA accent-text (#b54a23). */
+    .flypet-gallery .mbadge.lv { color: var(--status-accent-text); }
+    .flypet-gallery .mbadge.gen { color: var(--status-accent-text); }
     .flypet-gallery .star-row { display: flex; gap: 1px; margin-top: 5px; }
     .flypet-gallery .star-row .st { font-size: 11px; color: var(--fg-amber); }
-    .flypet-gallery .star-row .st.off { color: #ddd2bd; }
+    /* §3.2a item 4: empty star darkened (1.45:1 -> ~3:1) so empty vs filled stays distinguishable. */
+    .flypet-gallery .star-row .st.off { color: var(--line-accessible); }
     .flypet-gallery .lockmark { position: absolute; top: 9px; right: 10px; font-size: 13px; z-index: 3; color: var(--fg-amber); }
-    .flypet-gallery .fightmark { position: absolute; top: 9px; right: 10px; font-size: 11px; z-index: 3; background: #ef5350; color: #fff; border-radius: 6px; padding: 1px 6px; font-weight: 700; }
+    .flypet-gallery .fightmark { position: absolute; top: 9px; right: 10px; font-size: 11px; z-index: 3; background: var(--status-danger-fill); color: #fff; border-radius: 6px; padding: 1px 6px; font-weight: 700; }
     .flypet-gallery .card.has-lock.has-fight .lockmark { right: 50px; }
     .flypet-gallery .card .entries { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 10px; }
     .flypet-gallery .card-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--fg-line-soft); }
@@ -390,8 +356,8 @@
     .flypet-gallery .sel-pill .box { width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid var(--fg-line); display: grid; place-items: center; font-size: 11px; }
     .flypet-gallery .card.sel .sel-pill { color: var(--fg-accent); }
     .flypet-gallery .card.sel .sel-pill .box { background: var(--fg-accent); border-color: var(--fg-accent); color: #fff; }
-    .flypet-gallery .detail-link { font-size: 11.5px; color: var(--fg-txt-faint); cursor: pointer; }
-    .flypet-gallery .detail-link:hover { color: var(--fg-accent); }
+    .flypet-gallery .detail-link { font-size: 11.5px; color: var(--fg-txt-faint); cursor: pointer; background: none; border: none; padding: 0; font-family: inherit; }
+    .flypet-gallery .detail-link:hover { color: var(--status-accent-text); }
     .flypet-gallery #gallerySentinel { height: 36px; }
     .flypet-gallery .loading-more { text-align: center; color: var(--fg-txt-faint); font-size: 12px; padding: 12px; }
 
@@ -422,9 +388,10 @@
     .fg-scrim.show { opacity: 1; pointer-events: auto; }
     .fg-sheet { position: fixed; z-index: 80; top: 0; right: 0; height: 100vh; width: 360px; max-width: 90vw; background: #ffffff; border: 1px solid #ece3d3; border-radius: 18px 0 0 18px; transform: translateX(110%); transition: transform .28s cubic-bezier(.2,.9,.3,1); box-shadow: -10px 0 50px rgba(70,52,28,.18); display: flex; flex-direction: column; }
     .fg-sheet.show { transform: translateX(0); }
+    .fg-sheet[aria-hidden="true"] { visibility: hidden; }
     .fg-sheet-head { display: flex; align-items: center; gap: 10px; padding: 16px 18px; border-bottom: 1px solid #f0e9da; }
     .fg-sheet-head h3 { margin: 0; font-size: 16px; font-weight: 800; flex: 1; }
-    .fg-sheet-head .reset { font-size: 12.5px; color: #e0653a; font-weight: 600; padding: 6px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
+    .fg-sheet-head .reset { font-size: 12.5px; color: var(--status-accent-text); font-weight: 600; padding: 6px 10px; border-radius: 8px; background: none; border: none; cursor: pointer; }
     .fg-sheet-head .close { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; font-size: 18px; background: #faf6ee; border: none; color: #2b2620; cursor: pointer; }
     .fg-sheet-body { flex: 1; overflow-y: auto; padding: 16px 18px 30px; }
     .fg-sheet-sec { margin-bottom: 22px; }
@@ -453,14 +420,14 @@
     .fg-modal .mb { padding: 0 22px 22px; }
     .fg-modal .mb-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-bottom: 16px; }
     .fg-modal .mb-cell { background: #fbf7ee; border: 1px solid #f0e9da; border-radius: 10px; padding: 9px 12px; }
-    .fg-modal .mb-cell .k { font-size: 11px; color: #a59a87; }
+    .fg-modal .mb-cell .k { font-size: 11px; color: var(--color-ink-soft); }
     .fg-modal .mb-cell .v { font-size: 15px; font-weight: 700; }
     .fg-modal .mb-entries { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
     .fg-modal .mb-acts { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
     .fg-modal .mb-acts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .fg-modal .mb-acts button, .fg-modal .mb-acts2 button { height: 42px; border-radius: 11px; font-weight: 700; font-size: 13px; cursor: pointer; background: #faf6ee; border: 1px solid #ece3d3; color: #2b2620; }
     .fg-modal .mb-acts button:hover, .fg-modal .mb-acts2 button:hover { border-color: var(--fg-accent); }
-    .fg-modal .mb-acts2 .dis { background: rgba(239,83,80,.12); border-color: rgba(239,83,80,.4); color: #ff8a87; }
+    .fg-modal .mb-acts2 .dis { background: rgba(239,83,80,.12); border-color: rgba(239,83,80,.4); color: var(--status-danger-text); }
 
     /* Responsive */
     @media (max-width: 1023px) {
@@ -492,6 +459,8 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main">跳到主要內容</a>
+
 <div class="toast-box" id="toasts"></div>
 
 <div class="modal-bg" id="modalBg">
@@ -506,9 +475,9 @@
 </div>
 
 <!-- Top bar -->
-<div class="topbar">
+<header class="topbar">
   <h1>飛寵管理</h1>
-  <select id="devSel">
+  <select id="devSel" aria-label="選擇裝置">
     <option value="emulator-5554">emulator-5554</option>
     <option value="emulator-5556">emulator-5556</option>
     <option value="7fe98fc6">7fe98fc6</option>
@@ -516,13 +485,13 @@
   <button class="btn btn-primary" id="loadBtn" onclick="doLoad()">載入</button>
   <button class="btn btn-ghost btn-sm" id="launchBtn" onclick="doLaunch()" style="display:none;">啟動瀏覽器</button>
   <span id="loadMsg" style="font-size:0.82em; color:var(--text2);"></span>
-  <div class="topbar-right">
+  <nav class="topbar-right" aria-label="頁面導覽">
     <a href="/">返回中控面板</a>
     <a href="/fly-pet/logout">登出</a>
-  </div>
-</div>
+  </nav>
+</header>
 
-<div class="main">
+<main class="main" id="main">
 
 <!-- Initial -->
 <div class="empty" id="initMsg">選擇裝置後點擊「載入」</div>
@@ -532,7 +501,8 @@
 
   <!-- Pet list section (collapsible, default expanded) -->
   <div class="section">
-    <div class="collapse-hdr open" onclick="toggleCollapse('petlist')">
+    <div class="collapse-hdr open" role="button" tabindex="0" aria-expanded="true" aria-controls="petlistBody"
+         onclick="toggleCollapse('petlist')" onkeydown="collapseKeydown(event,'petlist')">
       <span class="section-title" style="margin:0;">飛寵列表 <span style="font-weight:400;font-size:0.82em;color:var(--text2);" id="petlistSummary"></span></span>
       <span class="arrow" id="petlistArrow">&#9654;</span>
     </div>
@@ -553,12 +523,13 @@
           <div class="fg-search">
             <span class="fg-si">&#128269;</span>
             <input id="gallerySearch" type="text" autocomplete="off"
+              aria-label="搜尋種類或詞條名稱"
               placeholder="搜尋種類名稱或詞條名稱…（例如：炎角龍、致命一擊）">
             <button class="fg-search-clear" id="gallerySearchClear" aria-label="清除">&times;</button>
           </div>
-          <div class="fg-view-toggle" id="galleryViewToggle">
-            <button data-view="group" class="on">&#9636; 依種類</button>
-            <button data-view="flat">&#9776; 平鋪</button>
+          <div class="fg-view-toggle" id="galleryViewToggle" role="group" aria-label="顯示方式">
+            <button type="button" data-view="group" class="on" aria-pressed="true">&#9636; 依種類</button>
+            <button type="button" data-view="flat" aria-pressed="false">&#9776; 平鋪</button>
           </div>
           <button class="fg-filter-btn" id="galleryFilterBtn">
             &#9881; 進階 <span class="badge" id="galleryFilterBadge" style="display:none">0</span>
@@ -579,7 +550,7 @@
               <span class="sh-count" id="speciesCount"></span>
             </div>
             <div class="species-search">
-              <input id="speciesFilter" type="text" autocomplete="off" placeholder="篩選種類…">
+              <input id="speciesFilter" type="text" autocomplete="off" aria-label="篩選種類" placeholder="篩選種類…">
             </div>
             <div class="species-list" id="speciesList"></div>
           </aside>
@@ -617,7 +588,7 @@
         <div class="fg-sheet-head">
           <h3>進階篩選</h3>
           <button class="reset" id="gallerySheetReset">重設</button>
-          <button class="close" id="gallerySheetClose">&times;</button>
+          <button class="close" id="gallerySheetClose" aria-label="關閉進階篩選">&times;</button>
         </div>
         <div class="fg-sheet-body">
           <div class="fg-sheet-sec">
@@ -663,7 +634,8 @@
 
   <!-- Breed section (default expanded) -->
   <div class="section">
-    <div class="collapse-hdr open" onclick="toggleCollapse('breed')">
+    <div class="collapse-hdr open" role="button" tabindex="0" aria-expanded="true" aria-controls="breedBody"
+         onclick="toggleCollapse('breed')" onkeydown="collapseKeydown(event,'breed')">
       <span class="section-title" style="margin:0;">交配繁殖</span>
       <span class="arrow" id="breedArrow">&#9654;</span>
     </div>
@@ -678,13 +650,22 @@
       <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
         <div class="section-sub">開始交配</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <label style="font-size:0.8em;color:var(--text2);">巢穴</label>
-          <input type="number" id="bBase" style="width:80px;" placeholder="ID">
-          <label style="font-size:0.8em;color:var(--text2);">飛寵A</label>
-          <input type="number" id="bFlyA" style="width:80px;" placeholder="ID">
-          <label style="font-size:0.8em;color:var(--text2);">飛寵B</label>
-          <input type="number" id="bFlyB" style="width:80px;" placeholder="ID">
+          <label style="font-size:0.8em;color:var(--text2);" for="bBase">巢穴</label>
+          <input type="number" id="bBase" aria-label="巢穴 ID" style="width:80px;" placeholder="ID">
+          <label style="font-size:0.8em;color:var(--text2);" for="bFlyA">飛寵A</label>
+          <input type="number" id="bFlyA" aria-label="飛寵 A ID" style="width:80px;" placeholder="ID">
+          <label style="font-size:0.8em;color:var(--text2);" for="bFlyB">飛寵B</label>
+          <input type="number" id="bFlyB" aria-label="飛寵 B ID" style="width:80px;" placeholder="ID">
           <button class="btn btn-primary btn-sm" onclick="doBreed()">交配</button>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+          <label style="font-size:0.78em;color:var(--text2);" for="breedGroupSel">從收藏挑</label>
+          <select id="breedGroupSel" aria-label="從哪個收藏挑親代" style="font-size:0.82em;min-width:130px;">
+            <option value="">（尚無收藏）</option>
+          </select>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-fill="A">填入 A</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-fill="B">填入 B</button>
+          <button type="button" class="btn btn--ghost btn-sm" data-group-pick="random">隨機自動挑 A/B</button>
         </div>
       </div>
       <!-- Auto-breed panel -->
@@ -708,9 +689,28 @@
     </div>
   </div>
 
+  <!-- 手選飛寵收藏 (命名群組) section -->
+  <div class="section">
+    <div class="collapse-hdr" role="button" tabindex="0" aria-expanded="false" aria-controls="groupsBody"
+         onclick="toggleCollapse('groups')" onkeydown="collapseKeydown(event,'groups')">
+      <span class="section-title" style="margin:0;">手選飛寵收藏
+        <span style="font-weight:400;font-size:0.82em;color:var(--text2);">（命名群組，配種時可指定整組挑兩隻；與遊戲內圖鑑收藏無關）</span>
+      </span>
+      <span class="arrow" id="groupsArrow">&#9654;</span>
+    </div>
+    <div class="collapse-body" id="groupsBody">
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button type="button" class="btn btn--primary btn-sm" onclick="groupNew()">＋ 新增收藏</button>
+        <span style="font-size:0.78em;color:var(--text2);">在飛寵卡片或詳情按「＋收藏」把成員加入這裡。</span>
+      </div>
+      <div id="groupList"></div>
+    </div>
+  </div>
+
   <!-- Partners (搭檔) section -->
   <div class="section">
-    <div class="collapse-hdr" onclick="toggleCollapse('friends')">
+    <div class="collapse-hdr" role="button" tabindex="0" aria-expanded="false" aria-controls="friendsBody"
+         onclick="toggleCollapse('friends')" onkeydown="collapseKeydown(event,'friends')">
       <span class="section-title" style="margin:0;">搭檔飛寵</span>
       <span class="arrow" id="friendsArrow">&#9654;</span>
     </div>
@@ -724,7 +724,7 @@
   </div>
 
 </div><!-- /content -->
-</div><!-- /main -->
+</main><!-- /main -->
 
 <script>
 var EQ = {1:'普通',2:'卓越',3:'史詩',4:'負面',5:'稀有',6:'變異',7:'工作'};
@@ -741,6 +741,23 @@ var confirmFn = null;
 function ip() { return document.getElementById('devSel').value; }
 function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 
+// per-device localStorage helper: 折疊 key/load/save 樣板 (autoBreed/presets/groups
+// 三個 store 共用同一工廠,而非各自一份 copy)。
+// fallback: 解析失敗或型別不符時回 fallback() 的「新」實例 (避免共用同一參考)。
+function makeDeviceStore(prefix, fallback) {
+  fallback = fallback || function () { return {}; };
+  function key() { return prefix + ip(); }
+  function load() {
+    try {
+      var v = JSON.parse(localStorage.getItem(key()) || 'null');
+      // 型別防呆: 形狀不符 (object vs array vs ...) 一律回 fallback。
+      return (v === null || typeof v !== typeof fallback()) ? fallback() : v;
+    } catch (e) { return fallback(); }
+  }
+  function save(v) { localStorage.setItem(key(), JSON.stringify(v)); }
+  return { key: key, load: load, save: save };
+}
+
 // Toast
 function toast(msg, type) {
   var el = document.createElement('div');
@@ -750,16 +767,28 @@ function toast(msg, type) {
   setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 3500);
 }
 
-// Modal
+// Modal — routed through the shared modal manager (C1: Esc + focus move-in/trap/restore).
 function showModal(title, msg, fn) {
   document.getElementById('modalTitle').textContent = title;
   document.getElementById('modalMsg').textContent = msg;
   confirmFn = fn;
-  document.getElementById('modalBg').classList.add('show');
+  var bg = document.getElementById('modalBg');
+  if (typeof openModal === 'function') openModal(bg, { cls: 'show' });
+  else bg.classList.add('show');
 }
-function hideModal() { document.getElementById('modalBg').classList.remove('show'); confirmFn = null; }
+function hideModal() {
+  var bg = document.getElementById('modalBg');
+  if (typeof closeModal === 'function') closeModal(bg, { cls: 'show' });
+  else bg.classList.remove('show');
+  confirmFn = null;
+}
 document.getElementById('modalOk').onclick = function() { if (confirmFn) confirmFn(); hideModal(); };
-document.addEventListener('keydown', function(e) { if (e.key === 'Escape') hideModal(); });
+// Fallback Esc only when the lib manager is absent (lib's global Esc covers the managed case).
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  if (typeof closeTopModal === 'function') return;   // lib handles it
+  hideModal();
+});
 
 // Loading state
 function setLoading(btn, on) {
@@ -793,7 +822,7 @@ function sortedEntries(pet) {
   return (pet.entries || []).slice().sort(function(a, b) { return ord(a) - ord(b); });
 }
 function ecHTML(e) {
-  if (!e) return '<span style="color:#a59a87;">--</span>';
+  if (!e) return '<span style="color:var(--color-ink-soft);">--</span>';
   var q = e.quality || 1;
   var tip = (EQ[q] || '') + (e.desc ? ' — ' + e.desc : '');
   return '<span class="ec ec-' + q + '" title="' + esc(tip) + '">' + esc(e.name) + '</span>';
@@ -850,14 +879,16 @@ function petIcon(p, size) {
   var cid = (p.config_id != null) ? p.config_id : 0;
   var hue = (cid * 37) % 360;
   var edge = PQ_COLOR[p.quality] || PQ_COLOR[0];
-  var ch = esc((p.display_name || p.name || '?').charAt(0));
+  var spName = p.display_name || p.name || '飛寵';
+  var ch = esc(spName.charAt(0) || '?');
+  var altTxt = esc(spName);   // a11y: gallery icon alt = species name (was alt="")
   var bg = 'linear-gradient(140deg, hsl(' + hue + ' 62% 46%), hsl(' + ((hue + 38) % 360) + ' 64% 32%))';
   var iconUrl = '/api/fly_pet_icon/' + encodeURIComponent(cid);
   var sty = 'width:' + size + 'px;height:' + size + 'px;';
   // onerror: 隱藏破圖、露出同槽佔位頭像 (slot 在 endpoint 404 時仍乾淨)
   var onerr = "this.style.display='none';var a=this.parentNode.querySelector('.av');if(a)a.style.display='grid';";
   return '<span class="icon-slot" style="--qedge:' + edge + ';' + sty + '">' +
-    '<img class="icon-img" src="' + iconUrl + '" alt="" loading="lazy" onerror="' + onerr + '">' +
+    '<img class="icon-img" src="' + iconUrl + '" alt="' + altTxt + '" loading="lazy" onerror="' + onerr + '">' +
     '<span class="av" style="display:none;background:' + bg + '">' + ch + '</span>' +
     '<span class="ring" style="--qedge:' + edge + '"></span>' +
     '</span>';
@@ -963,14 +994,16 @@ function cardHTML(p) {
   if (p.lock) cls += ' has-lock';
   if (p.fight === 1) cls += ' has-fight';
   var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join('');
-  if (!entries) entries = '<span style="color:#a59a87;font-size:11px;">無詞條</span>';
+  if (!entries) entries = '<span style="color:var(--color-ink-soft);font-size:11px;">無詞條</span>';
   var star = Math.max(0, Math.min(5, p.star || 0));
   var stars = '';
   for (var i = 0; i < 5; i++) stars += '<span class="st ' + (i < star ? '' : 'off') + '">&#9733;</span>';
   var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
   var flagMark = p.fight === 1 ? '<span class="fightmark">出戰</span>'
                : (p.lock ? '<span class="lockmark">&#128274;</span>' : '');
-  return '<article class="' + cls + '" data-id="' + p.id + '" style="--qedge:' + pqc + '">' +
+  return '<article class="' + cls + '" data-id="' + p.id + '" style="--qedge:' + pqc + '"' +
+      ' role="button" tabindex="0" aria-pressed="' + (sel ? 'true' : 'false') + '"' +
+      ' aria-label="' + name + '，' + (sel ? '已選取' : '未選取') + '，Enter 切換選取">' +
       flagMark +
       '<div class="card-top">' + petIcon(p, 64) +
         '<div class="card-id">' +
@@ -987,7 +1020,10 @@ function cardHTML(p) {
       '<div class="entries">' + entries + '</div>' +
       '<div class="card-foot">' +
         '<span class="sel-pill"><span class="box">' + (sel ? '&#10003;' : '') + '</span>' + (sel ? '已選' : '選取') + '</span>' +
-        '<span class="detail-link" data-detail="1">詳情 &rsaquo;</span>' +
+        '<span style="display:flex;gap:8px;align-items:center;">' +
+          '<button type="button" class="detail-link" data-group-add="' + p.id + '" aria-label="把' + name + '加入手選收藏">＋收藏</button>' +
+          '<button type="button" class="detail-link" data-detail="1" aria-label="查看' + name + '詳情">詳情 &rsaquo;</button>' +
+        '</span>' +
       '</div>' +
     '</article>';
 }
@@ -1114,14 +1150,18 @@ function renderSpeciesPane() {
   });
   var cntEl = document.getElementById('speciesCount');
   if (cntEl) cntEl.textContent = idx.length + ' 種 / ' + allPets.length + ' 隻';
-  var html = '<div class="sp-all ' + (gState.species === null ? 'on' : '') + '" data-sp="all">' +
+  var allOn = gState.species === null;
+  var html = '<div class="sp-all ' + (allOn ? 'on' : '') + '" data-sp="all"' +
+      ' role="button" tabindex="0" aria-pressed="' + (allOn ? 'true' : 'false') + '" aria-label="全部種類">' +
       '<div class="nm">全部種類</div>' +
       '<span class="sp-cnt" style="margin-left:auto;">' + allPets.length + '</span>' +
     '</div>';
   idx.forEach(function(s) {
     var on = (gState.species !== null && String(gState.species) === s.key);
     var dot = PQ_COLOR[s.best] || PQ_COLOR[0];
-    html += '<div class="sp-item ' + (on ? 'on' : '') + '" data-sp="' + esc(s.key) + '">' +
+    html += '<div class="sp-item ' + (on ? 'on' : '') + '" data-sp="' + esc(s.key) + '"' +
+        ' role="button" tabindex="0" aria-pressed="' + (on ? 'true' : 'false') + '"' +
+        ' aria-label="' + esc(s.name) + '，' + s.count + ' 隻">' +
         petIcon({config_id: s.config_id, display_name: s.name, quality: s.best}, 32) +
         '<span class="sp-name">' + esc(s.name) + '</span>' +
         '<span class="sp-meta">' +
@@ -1151,7 +1191,9 @@ function setView(view) {
   var g = document.getElementById('flypetGallery');
   if (g) g.classList.toggle('flat', view === 'flat');
   document.querySelectorAll('#galleryViewToggle button').forEach(function(b) {
-    b.classList.toggle('on', b.dataset.view === view);
+    var on = b.dataset.view === view;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   // 平鋪 = 攤平不分組 (左欄收掉);切回依種類時若有聚焦則保留
   applyFilters();
@@ -1172,7 +1214,7 @@ function buildGalleryChips() {
   }
   if (pqSheet && pqSheet.children.length === 0) {
     pqSheet.innerHTML = [3,2,1].map(function(q) {
-      return '<button class="c" data-pq="' + q + '" style="color:' + PQ_COLOR[q] + '"><span class="dot" style="background:' + PQ_COLOR[q] + '"></span>' + (PQ[q] || q) + '色</button>';
+      return '<button class="c" data-pq="' + q + '"><span class="dot" style="background:' + PQ_COLOR[q] + '"></span>' + (PQ[q] || q) + '色</button>';
     }).join('');
   }
   // 詞條品質順序: 1,2,3,5,6,7,4
@@ -1186,7 +1228,7 @@ function buildGalleryChips() {
   }
   if (eqSheet && eqSheet.children.length === 0) {
     eqSheet.innerHTML = eqOrder.map(function(q) {
-      return '<button class="c" data-eq="' + q + '" style="color:' + EQ_COLOR[q] + '"><span class="dot" style="background:' + EQ_COLOR[q] + '"></span>' + (EQ[q] || q) + '</button>';
+      return '<button class="c" data-eq="' + q + '"><span class="dot" style="background:' + EQ_COLOR[q] + '"></span>' + (EQ[q] || q) + '</button>';
     }).join('');
   }
 }
@@ -1220,6 +1262,7 @@ function toggleSel(id) {
 }
 function markCardSel(card, sel) {
   card.classList.toggle('sel', sel);
+  card.setAttribute('aria-pressed', sel ? 'true' : 'false');
   var box = card.querySelector('.sel-pill .box');
   var lbl = card.querySelector('.sel-pill');
   if (box) box.innerHTML = sel ? '&#10003;' : '';
@@ -1271,7 +1314,7 @@ function openDetail(id) {
   if (!p) return;
   var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
   var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join('');
-  if (!entries) entries = '<span style="color:#a59a87;font-size:12px;">無詞條</span>';
+  if (!entries) entries = '<span style="color:var(--color-ink-soft);font-size:12px;">無詞條</span>';
   var lockTxt = p.lock ? '🔒 已鎖定' : '🔓 未鎖定';
   var modal = document.getElementById('galleryDetail');
   var name = esc(p.display_name || p.name || '(?)');
@@ -1280,7 +1323,7 @@ function openDetail(id) {
       '<div><h3>' + name + '</h3>' +
         '<span class="mbadge" style="font-size:12px;padding:3px 9px;">' + lockTxt + (p.fight === 1 ? ' · ⚔出戰' : '') + '</span>' +
       '</div>' +
-      '<button class="close" data-detail-close="1">&times;</button>' +
+      '<button class="close" data-detail-close="1" aria-label="關閉詳情">&times;</button>' +
     '</div>' +
     '<div class="mb">' +
       '<div class="mb-grid">' +
@@ -1300,10 +1343,22 @@ function openDetail(id) {
         '<button data-detail-sel="' + p.id + '">' + (selected.has(p.id) ? '✓ 取消選取' : '＋ 加入選取') + '</button>' +
         '<button class="dis" data-detail-dissolve="' + p.id + '">⚡ 分解此隻</button>' +
       '</div>' +
+      '<div class="mb-acts2" style="margin-top:8px;">' +
+        '<button data-detail-group-add="' + p.id + '">＋收藏（加入手選收藏）</button>' +
+      '</div>' +
     '</div>';
-  document.getElementById('galleryDetailScrim').classList.add('show');
+  // C1: route the detail drawer through the modal manager so Esc closes it,
+  // focus moves into the panel (lands on the × close button), Tab traps, and
+  // focus restores to the card that opened it.
+  var dScrim = document.getElementById('galleryDetailScrim');
+  if (typeof openModal === 'function') openModal(dScrim, { cls: 'show' });
+  else dScrim.classList.add('show');
 }
-function closeDetail() { document.getElementById('galleryDetailScrim').classList.remove('show'); }
+function closeDetail() {
+  var dScrim = document.getElementById('galleryDetailScrim');
+  if (typeof closeModal === 'function') closeModal(dScrim, { cls: 'show' });
+  else dScrim.classList.remove('show');
+}
 
 // ---- 事件綁定 (gallery init) ----
 function initGallery() {
@@ -1334,17 +1389,27 @@ function initGallery() {
   });
 
   // 種類欄
-  var spList = document.getElementById('speciesList');
-  if (spList) spList.addEventListener('click', function(e) {
-    var all = e.target.closest('.sp-all');
-    var it = e.target.closest('.sp-item');
-    if (all) { selectSpecies(null); return; }
+  function activateSpeciesEl(target) {
+    var all = target.closest('.sp-all');
+    var it = target.closest('.sp-item');
+    if (all) { selectSpecies(null); return true; }
     if (it) {
       var key = it.dataset.sp;
       if (gState.species !== null && String(gState.species) === key) selectSpecies(null);
       else selectSpecies(key);
+      return true;
     }
-  });
+    return false;
+  }
+  var spList = document.getElementById('speciesList');
+  if (spList) {
+    spList.addEventListener('click', function(e) { activateSpeciesEl(e.target); });
+    // 鍵盤化 (C8): sp-all / sp-item 為 role=button tabindex=0, Enter/Space 觸發選種類
+    spList.addEventListener('keydown', function(e) {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      if (activateSpeciesEl(e.target)) e.preventDefault();
+    });
+  }
   var spFilter = document.getElementById('speciesFilter');
   if (spFilter) spFilter.addEventListener('input', function() { renderSpeciesPane(); });
   var backBtn = document.getElementById('galleryBackBtn');
@@ -1364,11 +1429,27 @@ function initGallery() {
   stage.addEventListener('click', function(e) {
     var gsel = e.target.closest('.gsel-all');
     if (gsel) { selectGroupKey(gsel.dataset.grpKey); return; }
+    var gadd = e.target.closest('[data-group-add]');
+    if (gadd) { e.stopPropagation(); openAddOwnToGroup(+gadd.dataset.groupAdd); return; }
     var detail = e.target.closest('[data-detail]');
     var card = e.target.closest('.card');
     if (!card) return;
     if (detail) { openDetail(+card.dataset.id); return; }
     toggleSel(+card.dataset.id);
+  });
+  // 卡片牆鍵盤化 (C8): Enter/Space 在卡片=切換選取、在詳情鈕=開詳情、在種類全選鈕=全選。
+  // .gsel-all 與 .detail-link 已是 <button> 原生可聚焦; .card 為 role=button tabindex=0。
+  stage.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+    var gsel = e.target.closest('.gsel-all');
+    var gadd = e.target.closest('[data-group-add]');
+    var detail = e.target.closest('[data-detail]');
+    var card = e.target.closest('.card');
+    if (gsel) { e.preventDefault(); selectGroupKey(gsel.dataset.grpKey); return; }
+    if (gadd) { e.preventDefault(); openAddOwnToGroup(+gadd.dataset.groupAdd); return; }
+    if (detail && card) { e.preventDefault(); openDetail(+card.dataset.id); return; }
+    // 只有當焦點本身在卡片 (非內部原生按鈕) 時才切換選取
+    if (card && e.target === card) { e.preventDefault(); toggleSel(+card.dataset.id); }
   });
 
   // 全選結果
@@ -1381,11 +1462,28 @@ function initGallery() {
   });
   document.getElementById('galleryBatchDissolve').addEventListener('click', function() { doSell(); });
 
-  // 進階抽屜
+  // 進階抽屜 (C1/C21): 透過 openModal/closeModal 取得 Esc 關閉 + 焦點移入/還原 + Tab trap;
+  // 關閉時對離屏 sheet 設 inert + aria-hidden, 把它的 23 個控制項移出 tab order 與 a11y tree。
   var scrim = document.getElementById('galleryScrim');
   var sheet = document.getElementById('gallerySheet');
-  function openSheet() { syncGalleryChips(); scrim.classList.add('show'); sheet.classList.add('show'); }
-  function closeSheet() { scrim.classList.remove('show'); sheet.classList.remove('show'); }
+  // 初始為關閉態: 預設離屏 sheet 不可被 tab 到。
+  sheet.setAttribute('aria-hidden', 'true');
+  sheet.setAttribute('inert', '');
+  function openSheet() {
+    syncGalleryChips();
+    scrim.classList.add('show');
+    sheet.classList.add('show');
+    sheet.removeAttribute('inert');
+    if (typeof openModal === 'function') openModal(sheet, { cls: 'show' });
+    else sheet.removeAttribute('aria-hidden');
+  }
+  function closeSheet() {
+    scrim.classList.remove('show');
+    if (typeof closeModal === 'function') closeModal(sheet, { cls: 'show' });
+    sheet.classList.remove('show');
+    sheet.setAttribute('aria-hidden', 'true');
+    sheet.setAttribute('inert', '');
+  }
   document.getElementById('galleryFilterBtn').addEventListener('click', openSheet);
   document.getElementById('gallerySheetClose').addEventListener('click', closeSheet);
   document.getElementById('gallerySheetApply').addEventListener('click', closeSheet);
@@ -1424,6 +1522,8 @@ function initGallery() {
     if (ds) { toggleSel(+ds.dataset.detailSel); renderTable(); closeDetail(); return; }
     var dd = e.target.closest('[data-detail-dissolve]');
     if (dd) { var pid = +dd.dataset.detailDissolve; closeDetail(); doSellOne(pid); return; }
+    var dga = e.target.closest('[data-detail-group-add]');
+    if (dga) { var gid = +dga.dataset.detailGroupAdd; closeDetail(); openAddOwnToGroup(gid); return; }
   });
 }
 
@@ -1594,6 +1694,10 @@ async function doLoad(opts) {
     allPets.forEach(function(p) { (p.entries||[]).forEach(function(e) { if (e.name) entryNames.add(e.name); }); });
     updateFVals();
     applyFilters();
+    // 裝置可能已切換: 重載該裝置的手選收藏, 並依新 allPets 重算 STALE/成員顯示。
+    loadGroups();
+    renderGroupList();
+    refreshBreedGroupSel();
     document.getElementById('content').style.display = 'block';
     msg.textContent = allPets.length + ' 隻';
     toast('載入 ' + allPets.length + ' 隻飛寵', 'ok');
@@ -1692,6 +1796,14 @@ function toggleCollapse(key) {
   var body = document.getElementById(key + 'Body');
   hdr.classList.toggle('open');
   body.classList.toggle('open');
+  hdr.setAttribute('aria-expanded', hdr.classList.contains('open') ? 'true' : 'false');
+}
+// Enter/Space on a keyboard-operable collapse header mirrors the click.
+function collapseKeydown(e, key) {
+  if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+    e.preventDefault();
+    toggleCollapse(key);
+  }
 }
 
 // ---- Breed ----
@@ -1749,6 +1861,7 @@ async function loadBreed() {
     }
     grid.innerHTML = html;
     renderAbSlots(homes);
+    refreshBreedGroupSel();   // homes 更新後刷新「從收藏挑」選單 (供 breeding-id 過濾)
     toast('繁殖池已載入', 'ok');
   } catch(e) { grid.innerHTML = '<span style="color:var(--danger);">' + esc(e.message) + '</span>'; }
 }
@@ -1848,25 +1961,36 @@ async function doLoadAllPartners() {
       try {
         var pd = await apiGet('/api/fly_pet_partner/' + encodeURIComponent(ip()) + '?role_id=' + f.role_id);
         var pets = pd.data || pd.pets || [];
+        // 群組 partner 成員 use-time 解析快取 (role_id -> pets[]);即使 0 隻也記錄 (用於 STALE 判定)。
+        partnerPetCache[f.role_id] = Array.isArray(pets) ? pets : [];
         if (!Array.isArray(pets) || pets.length === 0) continue;
         loaded++;
         var card = document.createElement('div');
         card.className = 'friend-card';
-        var hdr = '<div class="friend-card-hdr">' + esc(f.name) + ' - ' + pets.length + ' 隻上架</div>';
+        var roleId = f.role_id, roleName = f.name || '';
+        var hdr = '<div class="friend-card-hdr">' + esc(roleName) + ' - ' + pets.length + ' 隻上架</div>';
         var tbl = '<table style="width:100%;font-size:0.82em;border-collapse:collapse;">' +
-          '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th></tr></thead><tbody>';
+          '<thead><tr><th style="text-align:left;padding:3px 6px;">名稱</th><th>品質</th><th>代數</th><th>成長</th><th>等級</th><th>詞條</th><th>狀態</th><th>收藏</th></tr></thead><tbody>';
         pets.forEach(function(p) {
           var entries = sortedEntries(p).map(function(e) { return ecHTML(e); }).join(' ');
           var growth = p.growth ? (p.growth / 10000).toFixed(2) : '0';
           // 冷卻偵測: state 0=可用(可借來配), 1=繁殖中, 2=冷卻中. state>0 一律無法借過來配.
           var stateLabel = partnerStateLabel(p.state, p.end_time);
-          tbl += '<tr><td style="padding:3px 6px;">' + esc(p.display_name||p.name||'?') + '</td>' +
+          var pname = p.display_name || p.name || '?';
+          tbl += '<tr><td style="padding:3px 6px;">' + esc(pname) + '</td>' +
             '<td style="padding:3px 6px;">' + pqHTML(p.quality) + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + (p.generation||0) + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + growth + '</td>' +
             '<td style="padding:3px 6px;text-align:center;">' + (p.level||0) + '</td>' +
             '<td style="padding:3px 6px;">' + (entries||'--') + '</td>' +
-            '<td style="padding:3px 6px;text-align:center;">' + stateLabel + '</td></tr>';
+            '<td style="padding:3px 6px;text-align:center;">' + stateLabel + '</td>' +
+            '<td style="padding:3px 6px;text-align:center;">' +
+              '<button type="button" class="btn btn--ghost btn-sm" data-partner-group-add="1"' +
+                ' data-role-id="' + esc(String(roleId)) + '" data-role-name="' + esc(roleName) + '"' +
+                ' data-pet-id="' + (p.id||0) + '" data-config-id="' + (p.config_id||0) + '"' +
+                ' data-display-name="' + esc(pname) + '"' +
+                ' aria-label="把搭檔飛寵' + esc(pname) + '加入手選收藏">＋收藏</button>' +
+            '</td></tr>';
         });
         tbl += '</tbody></table>';
         card.innerHTML = hdr + tbl;
@@ -1891,26 +2015,435 @@ var abLogs = {};     // per-slot: [{time, msg}]
 var abHomes = [];    // cached home list from last loadBreed
 var abErrors = {};   // per-slot consecutive error count
 
-function abStorageKey() { return 'autoBreed_' + ip(); }
-function loadAbConfig() {
-  try { abConfig = JSON.parse(localStorage.getItem(abStorageKey()) || '{}'); } catch(e) { abConfig = {}; }
-}
-function saveAbConfig() { localStorage.setItem(abStorageKey(), JSON.stringify(abConfig)); }
+// autoBreed store: makeDeviceStore 的第一個 consumer (行為等價,型別防呆更嚴)。
+var _abStore = makeDeviceStore('autoBreed_', function () { return {}; });
+function abStorageKey() { return _abStore.key(); }   // thin alias (保留外部 caller 相容)
+function loadAbConfig() { abConfig = _abStore.load(); }
+function saveAbConfig() { _abStore.save(abConfig); }
 
 // ---- Breeding presets (方案) ----
 var abPresets = [];
 var flypetCatalog = null;   // {species:[{id,name}], entries:[{id,name,quality}]}
-function presetStorageKey() { return 'flypetPresets_' + ip(); }
+// presets store: makeDeviceStore 的第二個 consumer。
+var _presetStore = makeDeviceStore('flypetPresets_', function () { return []; });
+function presetStorageKey() { return _presetStore.key(); }   // thin alias
 function loadPresets() {
-  try { abPresets = JSON.parse(localStorage.getItem(presetStorageKey()) || '[]'); }
-  catch(e) { abPresets = []; }
+  abPresets = _presetStore.load();
   if (!Array.isArray(abPresets)) abPresets = [];
 }
-function savePresets() { localStorage.setItem(presetStorageKey(), JSON.stringify(abPresets)); }
+function savePresets() { _presetStore.save(abPresets); }
 function genPresetId() { return 'p' + Date.now() + '_' + Math.floor(Math.random() * 1000); }
 function getPreset(id) {
   for (var i = 0; i < abPresets.length; i++) if (abPresets[i].id === id) return abPresets[i];
   return null;
+}
+
+// =====================================================================
+// 手選飛寵收藏 (命名群組 收藏1/2/3…) — FLYPET_GROUPS_DESIGN
+//   - 命名、持久化 (per-device localStorage),成員可混合 own + partner。
+//   - 繁殖時「從收藏挑兩隻 (手選或隨機) 填入 A/B」,不用在 300+ 隻翻找。
+//   - 與既有「配種方案 (preset)」「設為基底/A/B」「遊戲內 is_collected 收藏」皆獨立。
+// =====================================================================
+
+// groups store: makeDeviceStore 的第三個 consumer (非第三份 copy)。
+var flypetGroups = [];
+var _groupStore = makeDeviceStore('flypetGroups_', function () { return []; });
+function loadGroups() {
+  flypetGroups = _groupStore.load();
+  if (!Array.isArray(flypetGroups)) flypetGroups = [];
+}
+function saveGroups() { _groupStore.save(flypetGroups); }
+function genGroupId() { return 'g' + Date.now() + '_' + Math.floor(Math.random() * 1000); }
+
+// partner pet use-time 解析快取: role_id -> RolePetListBack pets[] (doLoadAllPartners 寫入)。
+var partnerPetCache = {};
+
+// §1.3 安全旗標: partner 成員能否被自動挑/隨機當親代。
+// 預設 false — 自動填入/隨機只取 own 成員 (partner 成員仍可見/可標記,但灰顯不入池),
+// 直到 live 驗證 send_66_27 接受 partner pet id 才翻 true。零後端改動。
+var groupsAllowPartnerParent = false;
+
+function getGroup(id) {
+  for (var i = 0; i < flypetGroups.length; i++) if (flypetGroups[i].id === id) return flypetGroups[i];
+  return null;
+}
+
+// ---- 成員解析 (use-time) ----
+// own 成員只存 id,從 allPets 即時解析 (避免快取腐爛);
+// partner 成員存可重解析的最少欄位 + 離線顯示快取。
+function resolveMember(m) {
+  if (!m) return null;
+  if (m.src === 'partner') {
+    var pets = partnerPetCache[m.role_id];
+    var live = Array.isArray(pets) ? pets.find(function (p) { return p.id === m.pet_id; }) : null;
+    return {
+      src: 'partner', role_id: m.role_id, role_name: m.role_name || '',
+      pet: live || null,
+      // 離線快取欄位 (搭檔未載入時仍能畫卡)
+      display_name: (live && (live.display_name || live.name)) || m.display_name || ('ID:' + m.pet_id),
+      config_id: (live && live.config_id) || m.config_id || 0,
+      pet_id: m.pet_id, quality: live ? live.quality : 0,
+      entries: live ? (live.entries || []) : [],
+      state: live ? (live.state || 0) : -1   // -1 = 未載入
+    };
+  }
+  // own
+  var p = allPets.find(function (x) { return x.id === m.id; });
+  return p ? {
+    src: 'own', id: m.id, pet: p,
+    display_name: p.display_name || p.name || ('ID:' + m.id),
+    config_id: p.config_id || 0, quality: p.quality || 0, entries: p.entries || []
+  } : { src: 'own', id: m.id, pet: null, display_name: 'ID:' + m.id, config_id: 0, quality: 0, entries: [] };
+}
+
+// STALE = 成員「失聯」(resolve 失敗): own 已分解/換裝置; partner role 被踢或那隻下架。
+// STALE 成員: 灰顯 + ⚠失聯 + 可手動移除,但隨機/填入自動略過,不自動刪除。
+function isStaleMember(m) {
+  if (!m) return true;
+  if (m.src === 'partner') {
+    var pets = partnerPetCache[m.role_id];
+    if (pets === undefined) return false;   // 該搭檔尚未載入 → 不武斷標 STALE
+    return !pets.find(function (p) { return p.id === m.pet_id; });
+  }
+  return !allPets.find(function (x) { return x.id === m.id; });
+}
+
+// ---- 有效親代過濾 (重用 find_pair 略過精神: locked/fight/cooldown/breeding/STALE) ----
+// 前端用 allPets 的 lock/fight + abHomes (breed_info 快取) 近似 cooldown/breeding;
+// 伺服器 send_66_27 仍會權威性拒絕,前端過濾只是體驗。
+function breedingPetIds() {
+  var s = new Set();
+  (abHomes || []).forEach(function (h) {
+    if (h && h.fly_a) s.add(h.fly_a.id);
+    if (h && h.fly_b) s.add(h.fly_b.id);
+  });
+  return s;
+}
+function isPickableMember(m, breedingIds) {
+  if (isStaleMember(m)) return false;
+  if (m.src === 'partner') {
+    if (!groupsAllowPartnerParent) return false;   // 待 live 驗證,partner 不入自動池
+    var r = resolveMember(m);
+    return !!r.pet && r.state === 0;               // 0=可借用
+  }
+  var p = allPets.find(function (x) { return x.id === m.id; });
+  if (!p) return false;
+  if (p.lock) return false;
+  if (p.fight === 1) return false;
+  if (breedingIds && breedingIds.has(p.id)) return false;
+  return true;
+}
+
+// ---- CRUD ----
+function addToGroup(groupId, member) {
+  var g = getGroup(groupId);
+  if (!g) return false;
+  if (!Array.isArray(g.members)) g.members = [];
+  // 去重: own 比 id; partner 比 role_id+pet_id。
+  var dup = g.members.some(function (m) {
+    if (m.src !== member.src) return false;
+    return member.src === 'partner'
+      ? (m.role_id === member.role_id && m.pet_id === member.pet_id)
+      : (m.id === member.id);
+  });
+  if (dup) return false;
+  g.members.push(member);
+  saveGroups();
+  return true;
+}
+function removeFromGroup(groupId, idx) {
+  var g = getGroup(groupId);
+  if (!g || !Array.isArray(g.members)) return;
+  g.members.splice(idx, 1);
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function renameGroup(groupId, name) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  g.name = (name || '').trim() || g.name;
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function deleteGroup(groupId) {
+  flypetGroups = flypetGroups.filter(function (g) { return g.id !== groupId; });
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+}
+function groupNew() {
+  var n = flypetGroups.length + 1;
+  flypetGroups.push({ id: genGroupId(), name: '收藏' + n, members: [] });
+  saveGroups();
+  renderGroupList();
+  refreshBreedGroupSel();
+  toast('已新增「收藏' + n + '」', 'ok');
+}
+function groupRename(groupId) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  // 沿用既有 prompt-less 流程: 用瀏覽器 prompt 取新名 (a11y: 標準對話,可鍵盤操作)。
+  var name = window.prompt('改名「' + g.name + '」為:', g.name);
+  if (name === null) return;
+  renameGroup(groupId, name);
+}
+async function groupDelete(groupId) {
+  var g = getGroup(groupId);
+  if (!g) return;
+  var ok = await confirmDialog({
+    title: '刪除收藏', danger: true,
+    body: '刪除「' + g.name + '」(' + (g.members || []).length + ' 個成員)？成員飛寵本身不受影響。',
+    okLabel: '刪除'
+  });
+  if (!ok) return;
+  deleteGroup(groupId);
+  toast('已刪除「' + g.name + '」', 'ok');
+}
+function groupRemoveMember(groupId, idx) {
+  removeFromGroup(groupId, idx);
+}
+
+// ---- 加入收藏 (卡片/詳情共用) ----
+// 開一個 lib modal 列出群組讓使用者選一組加入 (own pet)。
+function openAddOwnToGroup(petId) {
+  var p = allPets.find(function (x) { return x.id === petId; });
+  if (!p) { toast('找不到飛寵', 'err'); return; }
+  if (flypetGroups.length === 0) {
+    groupNew();   // 沒有任何收藏 → 自動建一個
+  }
+  var name = esc(p.display_name || p.name || ('ID:' + petId));
+  openGroupChooser('把「' + name + '」加入收藏', function (groupId) {
+    var added = addToGroup(groupId, { src: 'own', id: petId });
+    var g = getGroup(groupId);
+    if (added) { renderGroupList(); refreshBreedGroupSel(); toast('已加入「' + (g ? g.name : '') + '」', 'ok'); }
+    else toast('已在「' + (g ? g.name : '') + '」內', 'info');
+  });
+}
+// 把搭檔飛寵加入收藏 (partner 成員: 存 role_id+pet_id + 離線顯示快取欄位)。
+function openAddPartnerToGroup(member) {
+  if (flypetGroups.length === 0) groupNew();
+  openGroupChooser('把搭檔「' + esc(member.display_name) + '」加入收藏', function (groupId) {
+    var added = addToGroup(groupId, {
+      src: 'partner', role_id: member.role_id, role_name: member.role_name,
+      pet_id: member.pet_id, config_id: member.config_id, display_name: member.display_name
+    });
+    var g = getGroup(groupId);
+    if (added) { renderGroupList(); refreshBreedGroupSel(); toast('已加入「' + (g ? g.name : '') + '」', 'ok'); }
+    else toast('已在「' + (g ? g.name : '') + '」內', 'info');
+  });
+}
+// 通用「選收藏」modal (lib openModal/closeModal)。
+function openGroupChooser(title, onPick) {
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  var opts = flypetGroups.map(function (g) {
+    return '<button type="button" class="btn btn--secondary" data-pick-group="' + esc(g.id) + '" ' +
+      'style="display:block;width:100%;text-align:left;margin:4px 0;">' +
+      esc(g.name) + ' <span style="color:var(--text2);font-size:0.85em;">(' + (g.members || []).length + ' 成員)</span></button>';
+  }).join('');
+  overlay.innerHTML =
+    '<div class="modal modal--confirm" role="dialog" aria-modal="true" aria-label="' + esc(title) + '">' +
+      '<div class="modal-title">' + esc(title) + '</div>' +
+      '<div class="modal-body" style="max-height:50vh;overflow:auto;">' + opts +
+        '<button type="button" class="btn btn--ghost" data-pick-group="__new__" style="display:block;width:100%;text-align:left;margin:8px 0 2px;">＋ 新收藏…</button>' +
+      '</div>' +
+      '<div class="modal-row"><button type="button" class="btn btn--secondary" data-chooser-cancel="1">取消</button></div>' +
+    '</div>';
+  (document.body || document.documentElement).appendChild(overlay);
+  function done() {
+    if (typeof closeModal === 'function') closeModal(overlay); else overlay.classList.remove('active');
+    setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 0);
+  }
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || e.target.closest('[data-chooser-cancel]')) { done(); return; }
+    var b = e.target.closest('[data-pick-group]');
+    if (!b) return;
+    var gid = b.dataset.pickGroup;
+    if (gid === '__new__') { groupNew(); gid = flypetGroups[flypetGroups.length - 1].id; }
+    done();
+    if (typeof onPick === 'function') onPick(gid);
+  });
+  overlay._uiConfirmCancel = done;   // lib 全域 Esc 關閉時當取消
+  if (typeof openModal === 'function') openModal(overlay, { cls: 'active' });
+  else overlay.classList.add('active');
+}
+
+// ---- 收藏管理面板渲染 ----
+function memberChipHTML(groupId, m, idx) {
+  var r = resolveMember(m);
+  var stale = isStaleMember(m);
+  var pfx = m.src === 'partner' ? '🤝 ' : '';
+  var roleTag = (m.src === 'partner' && r.role_name) ? '<span style="color:var(--text2);font-size:0.85em;">·' + esc(r.role_name) + '</span>' : '';
+  var staleTag = stale ? '<span style="color:var(--danger);font-weight:700;" title="此成員已失聯,挑選時自動略過">⚠失聯</span>' : '';
+  var sty = stale ? 'opacity:0.55;' : '';
+  return '<span class="chip" style="' + sty + '">' +
+    pfx + esc(r.display_name) + ' ' + roleTag + ' ' + staleTag +
+    '<button type="button" class="chip-x" data-group-rm-member="' + idx + '" data-group-id="' + esc(groupId) +
+      '" aria-label="從此收藏移除' + esc(r.display_name) + '" title="移除">&times;</button>' +
+    '</span>';
+}
+function renderGroupList() {
+  var el = document.getElementById('groupList');
+  if (!el) return;
+  if (flypetGroups.length === 0) {
+    el.innerHTML = '<div class="empty-state" style="padding:18px;"><div class="es-title">尚無收藏</div>' +
+      '<div class="es-hint">點「＋ 新增收藏」建立,再到飛寵卡片或詳情按「＋收藏」加入成員。</div></div>';
+    return;
+  }
+  el.innerHTML = flypetGroups.map(function (g) {
+    var members = g.members || [];
+    var chips = members.length
+      ? members.map(function (m, i) { return memberChipHTML(g.id, m, i); }).join('')
+      : '<div class="empty-state" style="padding:12px;"><div class="es-hint">這個收藏還沒有成員 — 到卡片或詳情按「＋收藏」加入。</div></div>';
+    return '<div class="card" style="margin-top:10px;padding:12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+        '<strong style="font-size:0.92em;">' + esc(g.name) + '</strong>' +
+        '<span style="color:var(--text2);font-size:0.82em;">' + members.length + ' 成員</span>' +
+        '<span style="margin-left:auto;display:flex;gap:6px;">' +
+          '<button type="button" class="btn btn--ghost btn-sm" data-group-rename="' + esc(g.id) + '">改名</button>' +
+          '<button type="button" class="btn btn--danger btn-sm" data-group-delete="' + esc(g.id) + '">刪除</button>' +
+        '</span>' +
+      '</div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:6px;">' + chips + '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ---- 繁殖表單整合 ----
+function refreshBreedGroupSel() {
+  var sel = document.getElementById('breedGroupSel');
+  if (!sel) return;
+  var prev = sel.value;
+  if (flypetGroups.length === 0) {
+    sel.innerHTML = '<option value="">（尚無收藏）</option>';
+    return;
+  }
+  sel.innerHTML = flypetGroups.map(function (g) {
+    return '<option value="' + esc(g.id) + '">' + esc(g.name) + ' (' + (g.members || []).length + ')</option>';
+  }).join('');
+  if (prev && getGroup(prev)) sel.value = prev;
+}
+// 取選中群組的「可挑」成員 (own + 視旗標 partner),已過濾 STALE/locked/fight/breeding。
+function pickableMembersOfSelectedGroup() {
+  var sel = document.getElementById('breedGroupSel');
+  var g = sel ? getGroup(sel.value) : null;
+  if (!g) return { group: null, list: [] };
+  var breeding = breedingPetIds();
+  var list = (g.members || []).filter(function (m) { return isPickableMember(m, breeding); });
+  return { group: g, list: list };
+}
+// 填入 A / 填入 B: 列出成員讓使用者手選一隻 → setBreedPet(slot, id)。
+// 非 STALE 成員都列出; 不可挑者 (鎖定/出戰/繁殖中, 或旗標關時的 partner) 灰顯+disabled+tooltip。
+function fillBreedFromGroup(slot) {
+  var sel = document.getElementById('breedGroupSel');
+  var g = sel ? getGroup(sel.value) : null;
+  if (!g) { toast('請先選擇一個收藏', 'info'); return; }
+  var breeding = breedingPetIds();
+  var members = (g.members || []).filter(function (m) { return !isStaleMember(m); });
+  if (members.length === 0) { toast('「' + g.name + '」沒有可顯示的成員 (全部失聯)', 'err'); return; }
+  var anyPickable = members.some(function (m) { return isPickableMember(m, breeding); });
+  if (!anyPickable) { toast('「' + g.name + '」沒有可用成員 (已排除鎖定/出戰/繁殖中/失聯)', 'err'); return; }
+  var overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  var rows = members.map(function (m) {
+    var rm = resolveMember(m);
+    var pfx = m.src === 'partner' ? '🤝 ' : '';
+    var pid = m.src === 'partner' ? m.pet_id : m.id;
+    var pickable = isPickableMember(m, breeding);
+    // partner 不可挑且旗標關 → tooltip 標「待驗證」; own 不可挑 → 鎖定/出戰/繁殖中。
+    var why = '';
+    if (!pickable) {
+      if (m.src === 'partner' && !groupsAllowPartnerParent) why = '搭檔當親代待驗證';
+      else why = '不可用（鎖定/出戰/繁殖中）';
+    }
+    var dis = pickable ? '' : ' disabled aria-disabled="true" title="' + esc(why) + '" style="opacity:0.5;"';
+    return '<button type="button" class="btn btn--secondary"' +
+      (pickable ? ' data-fill-pet="' + pid + '"' : '') + dis +
+      ' style="display:block;width:100%;text-align:left;margin:4px 0;' + (pickable ? '' : 'opacity:0.5;') + '">' +
+      pfx + esc(rm.display_name) + ' <span style="color:var(--text2);font-size:0.85em;">#' + pid +
+      (why ? ' · ' + esc(why) : '') + '</span></button>';
+  }).join('');
+  overlay.innerHTML =
+    '<div class="modal modal--confirm" role="dialog" aria-modal="true" aria-label="從收藏填入 ' + slot + '">' +
+      '<div class="modal-title">從「' + esc(g.name) + '」填入 ' + slot + '</div>' +
+      '<div class="modal-body" style="max-height:50vh;overflow:auto;">' + rows + '</div>' +
+      '<div class="modal-row"><button type="button" class="btn btn--secondary" data-fill-cancel="1">取消</button></div>' +
+    '</div>';
+  (document.body || document.documentElement).appendChild(overlay);
+  function done() {
+    if (typeof closeModal === 'function') closeModal(overlay); else overlay.classList.remove('active');
+    setTimeout(function () { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 0);
+  }
+  overlay.addEventListener('click', function (e) {
+    if (e.target === overlay || e.target.closest('[data-fill-cancel]')) { done(); return; }
+    var b = e.target.closest('[data-fill-pet]');
+    if (!b) return;
+    done();
+    setBreedPet(slot, +b.dataset.fillPet);
+  });
+  overlay._uiConfirmCancel = done;
+  if (typeof openModal === 'function') openModal(overlay, { cls: 'active' });
+  else overlay.classList.add('active');
+}
+// 隨機自動挑 A/B: 從可挑成員隨機不重複抽兩隻 → setBreedPet('A',a) + setBreedPet('B',b)。
+function pickRandomFromGroup() {
+  var r = pickableMembersOfSelectedGroup();
+  if (!r.group) { toast('請先選擇一個收藏', 'info'); return; }
+  if (r.list.length < 2) { toast('「' + r.group.name + '」可用成員不足兩隻 (已排除鎖定/出戰/繁殖中/失聯)', 'err'); return; }
+  var pool = r.list.slice();
+  // ponytail: when groupsAllowPartnerParent is enabled, dedupe the random pool by composite (src+id) and assert A!==B before setBreedPet — today pool is all-own + dedup'd so A!=B holds.
+  // Fisher-Yates 抽前兩個。
+  for (var i = pool.length - 1; i > 0; i--) {
+    var j = Math.floor(Math.random() * (i + 1));
+    var tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
+  }
+  // own 用 id; partner 用 pet_id (= info.id)。
+  var a = pool[0].src === 'partner' ? pool[0].pet_id : pool[0].id;
+  var b = pool[1].src === 'partner' ? pool[1].pet_id : pool[1].id;
+  setBreedPet('A', a);
+  setBreedPet('B', b);
+  toast('已從「' + r.group.name + '」隨機挑兩隻填入 A/B', 'ok');
+}
+
+// ---- 收藏面板 + 繁殖表單群組鈕 事件綁定 (delegated, 只綁一次) ----
+function initGroups() {
+  var list = document.getElementById('groupList');
+  if (list && !list._wired) {
+    list._wired = true;
+    list.addEventListener('click', function (e) {
+      var rn = e.target.closest('[data-group-rename]');
+      if (rn) { groupRename(rn.dataset.groupRename); return; }
+      var del = e.target.closest('[data-group-delete]');
+      if (del) { groupDelete(del.dataset.groupDelete); return; }
+      var rm = e.target.closest('[data-group-rm-member]');
+      if (rm) { groupRemoveMember(rm.dataset.groupId, +rm.dataset.groupRmMember); return; }
+    });
+  }
+  var friends = document.getElementById('friendsResult');
+  if (friends && !friends._wired) {
+    friends._wired = true;
+    friends.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-partner-group-add]');
+      if (!b) return;
+      openAddPartnerToGroup({
+        role_id: Number(b.dataset.roleId), role_name: b.dataset.roleName || '',
+        pet_id: Number(b.dataset.petId), config_id: Number(b.dataset.configId),
+        display_name: b.dataset.displayName || ('ID:' + b.dataset.petId)
+      });
+    });
+  }
+  var breedRow = document.getElementById('breedGroupSel');
+  if (breedRow && breedRow.parentNode && !breedRow.parentNode._wired) {
+    breedRow.parentNode._wired = true;
+    breedRow.parentNode.addEventListener('click', function (e) {
+      var fill = e.target.closest('[data-group-fill]');
+      if (fill) { fillBreedFromGroup(fill.dataset.groupFill); return; }
+      var pick = e.target.closest('[data-group-pick]');
+      if (pick) { pickRandomFromGroup(); return; }
+    });
+  }
 }
 
 async function ensureCatalog() {
@@ -2329,6 +2862,10 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', function() {
   initGallery();    // 綁定卡片牆/種類欄/抽屜事件 (只綁一次)
+  initGroups();     // 綁定收藏面板 + 繁殖表單群組鈕 (只綁一次)
+  loadGroups();     // 載入手選收藏 (per-device localStorage)
+  renderGroupList();
+  refreshBreedGroupSel();
   syncPresetUI();
   updateFVals();
   initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)

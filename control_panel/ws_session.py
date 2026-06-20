@@ -93,6 +93,11 @@ def ensure(device: str) -> dict:
             # 必須把 bot loop 還原，避免裝置永久卡在暫停。
             if had_existing:
                 _safe_set_pause(device, False)
+            # 無 captured creds 時 load_creds 的訊息含絕對路徑 + adb_token_login 指令；
+            # 對前端只回通用提示（細節已於上方 logger.warning 落伺服器日誌）。
+            if isinstance(exc, FileNotFoundError):
+                return {"status": "error",
+                        "message": "此裝置尚未連線（連線詳情見伺服器日誌）"}
             return {"status": "error", "message": str(exc)}
 
         # 連線成功才暫停 bot loop，並登錄 session。
