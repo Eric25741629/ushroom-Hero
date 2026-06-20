@@ -245,9 +245,9 @@
   </section>
 </main>
 
-<div id="idleModal" class="modal-bg">
+<div id="idleModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="idleModalTitle">
   <div class="modal">
-    <h2>閒置提醒</h2>
+    <h2 id="idleModalTitle">閒置提醒</h2>
     <p>您已閒置一段時間，<span class="cd" id="idleCd">60</span> 秒後將自動斷線。</p>
     <div class="row">
       <button onclick="stayConnected()">繼續使用</button>
@@ -256,9 +256,9 @@
   </div>
 </div>
 
-<div id="kickModal" class="modal-bg">
+<div id="kickModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="kickModalTitle">
   <div class="modal">
-    <h2>連線已斷線</h2>
+    <h2 id="kickModalTitle">連線已斷線</h2>
     <p>偵測到異地登入（同帳號在他處登入），此連線已被伺服器中斷。</p>
     <div class="row">
       <button onclick="reconnectFromKick()">重新連線</button>

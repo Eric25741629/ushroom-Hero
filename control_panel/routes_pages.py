@@ -42,8 +42,9 @@ def _load_update_text() -> str | None:
     伺服器路徑回傳給前端（C20 info-leak）。呼叫端據此渲染友善的空狀態。"""
     try:
         return _UPDATE_PATH.read_text(encoding="utf-8-sig")
-    except (FileNotFoundError, OSError) as e:
-        # 真實錯誤（絕對路徑、Errno）只進伺服器 log；前端拿到 None -> 空狀態。
+    except Exception as e:
+        # 真實錯誤（絕對路徑、Errno、UnicodeDecodeError 等）只進伺服器 log；
+        # 前端拿到 None -> 空狀態。catch-all 確保非 UTF-8 檔不會 500。
         logger.warning("update.txt 讀取失敗（僅 server log，前端顯示空狀態）: %s", e)
         return None
 
@@ -130,8 +131,12 @@ def fly_pet_login():
         if _FLY_PET_USERS.get(u) == p:
             session["fly_pet_auth"] = True
             return redirect("/fly-pet")
-        return render_template("fly_pet_login.html", error="帳號或密碼錯誤")
-    return render_template("fly_pet_login.html")
+        return render_template(
+            "fly_pet_login.html",
+            error="帳號或密碼錯誤",
+            frontend_version=_get_frontend_version(),
+        )
+    return render_template("fly_pet_login.html", frontend_version=_get_frontend_version())
 
 
 @bp.route("/fly-pet/logout")

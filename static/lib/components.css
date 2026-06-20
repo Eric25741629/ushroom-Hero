@@ -11,9 +11,12 @@
    the SAME names where the spec mandates a single source (.btn,
    .modal-overlay, .modal, .toast, .chip, .badge, .data-table ...),
    built from tokens so a class-swap in Phase 3 inherits a11y +
-   contrast fixes. Because the lib link comes AFTER the inline
-   <style> in source order, equal-specificity rules here win on the
-   migrated markup; un-migrated legacy markup keeps its inline look.
+   contrast fixes. _assets_head.html (which links this lib) is included
+   BEFORE each template's inline <style> in source order, so during
+   coexistence the INLINE rules win at equal specificity — that is
+   intended: un-migrated legacy markup keeps its exact current look.
+   These shared classes only take over once Phase 3 DELETES the inline
+   blocks (and any new markup that opts into the lib class names).
 
    Source extraction (canonical markup/values):
      buttons       dashboard.html:732-846

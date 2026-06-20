@@ -75,6 +75,7 @@
   --warn-rim: #e0b75a;           /* (was --amber-rim) */
   --danger: #e26b86;             /* danger / force (was --rose) */
   --danger-wash: #f8dee4;        /* (was --rose-wash) */
+  --danger-rim: #ec8aa0;         /* danger border/rim (was --rose-rim) */
   --danger-fill: #d32f2f;        /* deeper red for white-on-fill ~5:1 (C6) */
   --info: #4aa0dd;               /* degraded / info (was --sky / --blue) */
   --info-wash: #dceefb;          /* (was --sky-wash) */
@@ -199,6 +200,7 @@
   --rose: var(--danger);
   --rose-deep: var(--status-danger-text);
   --rose-wash: var(--danger-wash);
+  --rose-rim: var(--danger-rim);
   /* dashboard LOAD-BEARING legacy (JS reads these) */
   --bg-color: var(--color-paper);
   --card-bg: var(--color-surface);

@@ -259,7 +259,7 @@
     var title = opts.title || '請確認';
     var bodyText = opts.body || '';
     var danger = !!opts.danger;
-    var okLabel = opts.okLabel || (danger ? '確定' : '確定');
+    var okLabel = opts.okLabel || '確定';
     var cancelLabel = opts.cancelLabel || '取消';
 
     return new Promise(function (resolve) {
@@ -271,6 +271,7 @@
 
       var h = document.createElement('div');
       h.className = 'modal-title';
+      h.id = 'ui-confirm-title-' + (Date.now().toString(36) + Math.random().toString(36).slice(2, 8));
       h.textContent = title;
 
       var b = document.createElement('div');
@@ -296,7 +297,7 @@
       if (bodyText) modal.appendChild(b);
       modal.appendChild(actions);
       overlay.appendChild(modal);
-      overlay.setAttribute('aria-labelledby', '');
+      overlay.setAttribute('aria-labelledby', h.id);
       (document.body || document.documentElement).appendChild(overlay);
 
       var settled = false;
