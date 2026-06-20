@@ -11,8 +11,6 @@
 import device as D
 import time
 import numpy as np
-import uiautomator2 as u2
-import winsound
 import cv2
 import requests
 import base64
@@ -29,7 +27,6 @@ from img_tools import (
 import logging as _logging
 _lamp_logger = _logging.getLogger(__name__)
 from config.paths import OCR_FAILS_DIR_STR
-from opengold_v2.lamp_loop_state import LampLoopAction, LampLoopState
 current_index = 0
 OCR_SERVER_URL = "http://100.64.0.7:5001"  # OCR 服務器地址
 # 全域預設：是否比對機率
