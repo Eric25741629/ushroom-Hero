@@ -3048,7 +3048,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         const showLiveView = !!info.live_view_available;
 
-        const webOpen = _webOpenState[ip] === true;
+        // 權威值對帳: info.web_browser_open 是後端 (device thread is_alive) 的真值。
+        const _authOpen = info.web_browser_open;   // true | false | undefined
+        let webOpen;
+        if (_authOpen === true) {
+          webOpen = true;                          // 後端確認瀏覽器開著
+          _webOpenState[ip] = true;                // 同步樂觀值
+          _webOpenTs[ip] = 0;                      // 已確認開啟 → grace 用掉, 之後 false 立即翻回
+        } else if (_authOpen === false) {
+          // 後端說關了: 只有剛點「開啟」且還在 grace 內才續顯示「關閉」(冷啟空窗), 否則翻回「開啟」。
+          const _fresh = _webOpenState[ip] === true
+            && (Date.now() - (_webOpenTs[ip] || 0)) < WEB_OPEN_GRACE_MS;
+          webOpen = _fresh;
+          if (!_fresh) _webOpenState[ip] = false;
+        } else {
+          webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
+        }
 
         const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-force`;
 
@@ -3441,9 +3456,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
     // ── 開啟/關閉網頁 toggle + 3 秒防連點鎖 ──────────────────────────
-    // 樂觀切換: 按「開啟網頁」立即視為已開 (顯示「關閉網頁」), 按「關閉網頁」反之; 重整後還原。
-    // 後端開/關瀏覽器是非同步的 (裝置 thread 下一輪才真正執行), 3 秒鎖避免使用者連點重複送請求。
-    const _webOpenState = {};      // ip -> true 表示已按開啟 (顯示關閉鈕)
+    // 按鈕狀態以後端權威值 info.web_browser_open (device thread 發布 is_alive()) 對帳。
+    // _webOpenState/_webOpenTs 只是點擊瞬間的樂觀即時回饋 + grace window: 後端開/關瀏覽器
+    // 是非同步的 (裝置 thread 下一輪才真正執行/回報), 在 grace 內續顯示樂觀值避免閃動,
+    // 之後一律以真值校正 → 外部手動關閉瀏覽器後按鈕會自動翻回「開啟網頁」。3 秒鎖防連點。
+    const _webOpenState = {};      // ip -> true 表示視為已開 (顯示關閉鈕; 樂觀)
+    const _webOpenTs = {};         // ip -> 按下「開啟網頁」的時間戳 (ms), 給 grace window
+    const WEB_OPEN_GRACE_MS = 15000;  // 開啟瀏覽器冷啟空窗: 此期間權威值還沒翻 true 也續顯示「關閉」
     const _webBtnLockUntil = {};   // ip -> 鎖定到期時間戳 (ms)
 
     function webBtnLocked(ip) {
@@ -3557,6 +3576,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       lockWebBtn(ip);
 
       _webOpenState[ip] = true;   // 樂觀: 立即顯示「關閉網頁」
+      _webOpenTs[ip] = Date.now();   // grace window 起點, 撐過冷啟空窗
+
+
 
       const statusEl = document.getElementById('webLoginStatusText');
 

@@ -317,7 +317,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 skip_wakeup_screenshot = False
                 if backend_kind == "web_h5":
                     alive_fn = getattr(d, "is_alive", None)
-                    if callable(alive_fn) and not alive_fn():
+                    browser_alive = bool(alive_fn()) if callable(alive_fn) else False
+                    # Publish authoritative browser-open truth for the dashboard
+                    # toggle (is_alive is thread-affine → must be read here).
+                    bot_state.set_web_browser_open(ip, browser_alive)
+                    if not browser_alive:
                         skip_wakeup_screenshot = True
                         logger.info(f"[{ip}] web_h5 瀏覽器已關閉，跳過喚醒截圖，直接啟動")
 

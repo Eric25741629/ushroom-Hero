@@ -599,6 +599,25 @@ def check_web_close(ip: str) -> bool:
     return consume_signal(ip, Signal.WEB_CLOSE)
 
 
+def set_web_browser_open(ip: str, is_open: bool) -> None:
+    """Publish whether this device's web_h5 browser is currently open.
+
+    The authoritative reading is `device.is_alive()`, which is thread-affine
+    (only meaningful on the owning device thread), so the truth must be published
+    from the device thread into per-device state. The dashboard reads it back via
+    /api/status to reconcile the 開啟/關閉網頁 button with reality — an external /
+    manual browser close then flips the button back to 開啟網頁 on the next poll
+    instead of staying stuck on 關閉網頁.
+
+    No-op if the device has no state row yet (it gets one on its next
+    `update_state`); never conjures a row into existence.
+    """
+    with get_device_lock(ip):
+        state = _states.get(ip)
+        if state is not None:
+            state["web_browser_open"] = bool(is_open)
+
+
 def clear_skip_sleep(ip: str):
     """Clear skip_sleep flag for device without consuming it."""
     with _global_lock:

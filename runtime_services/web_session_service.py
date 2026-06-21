@@ -220,6 +220,9 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
             force_headful=force_headful,
         )
         bot_state.complete_web_launch_request(ip, ok=True, message="web page opened")
+        # Browser is now open — publish the truth so the dashboard toggle flips to
+        # 關閉網頁 immediately (without waiting for the hold loop's first tick).
+        bot_state.set_web_browser_open(ip, True)
 
         if manual_hold_until_closed:
             logger_obj.info(f"[{ip}] manual hold enabled, waiting for page to close")
@@ -234,6 +237,9 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
                     still_open = bool(alive_fn()) if callable(alive_fn) else False
                 except Exception:
                     still_open = False
+                # Publish each tick so the dashboard toggle flips back to 開啟網頁
+                # the moment the user closes the browser window (≤1s).
+                bot_state.set_web_browser_open(ip, still_open)
 
                 if bot_state.check_manual_release(ip):
                     logger_obj.info(f"[{ip}] manual release requested, resume automation")
