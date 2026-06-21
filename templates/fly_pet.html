@@ -455,6 +455,34 @@
       .flypet-gallery .grid { grid-template-columns: 1fr 1fr; gap: 10px; }
       .flypet-gallery .icon-slot { width: 56px; height: 56px; }
     }
+
+    /* =======================================================================
+       常駐頁籤分區 (A 案頁籤 + 選單不能隱藏)
+       --------------------------------------------------------------------
+       使用者硬性要求:點頁籤只顯示單一分區 (標準 tabs),但頁籤「選單」本身
+       永遠在畫面上 (position:sticky + 不透明底 + 高於內容的 z-index),滾動時
+       內容捲到它底下而它「永遠不隱藏」。--fp-topbar-h 由 JS 量測 .topbar 高度
+       寫入,讓頁籤條剛好黏在 sticky topbar 正下方 (topbar z-index:100)。
+       頁籤條本身沿用 lib 的 .tab-bar / .tab (橫向可捲);這裡只加「常駐」定位。
+       ======================================================================= */
+    .fp-tabnav {
+      position: sticky;
+      top: var(--fp-topbar-h, 57px);     /* 黏在 sticky topbar 正下方 */
+      z-index: 50;                       /* 高於內容、低於 topbar(100)/modal */
+      background: var(--color-surface);  /* 不透明:內容捲到底下時不透出 */
+      margin: 0 -20px 14px;              /* 抵銷 .main 的左右 padding → 滿版橫條 */
+      padding: 4px 20px 0;
+      border-bottom: 1px solid var(--color-line);
+      box-shadow: 0 6px 16px rgba(70, 52, 28, 0.06);
+    }
+    .fp-tabnav .tab-bar { border-bottom: none; margin: 0; }
+    /* 各分區當作 tabpanel:預設隱藏,僅 active 顯示 (lib .tab-panel 規則),
+       scroll-margin-top 讓鍵盤聚焦的內容不會被常駐頁籤條遮住。 */
+    #content .tab-panel { scroll-margin-top: calc(var(--fp-topbar-h, 57px) + 64px); }
+
+    @media (max-width: 768px) {
+      .fp-tabnav { margin: 0 -12px 12px; padding: 4px 12px 0; }
+    }
   </style>
 </head>
 <body>
@@ -499,8 +527,20 @@
 <!-- Content (hidden until load) -->
 <div id="content" style="display:none;">
 
+  <!-- 常駐頁籤條:position:sticky + 不透明底 + z-index 高於內容 → 永遠不隱藏。
+       點頁籤切換分區 (標準 tabs:只顯示一個 panel),但這條選單滾動時固定可見,
+       讓使用者隨時跳到「手選收藏」而不必往下捲。-->
+  <div class="fp-tabnav">
+    <nav class="tab-bar" id="fpTabBar" role="tablist" aria-label="飛寵功能區">
+      <button class="tab" role="tab" id="fptab-gallery" aria-controls="fppanel-gallery" aria-selected="true" tabindex="0">&#9636; 圖鑑瀏覽</button>
+      <button class="tab" role="tab" id="fptab-breed" aria-controls="fppanel-breed" aria-selected="false" tabindex="-1">&#129516; 配種繁殖</button>
+      <button class="tab" role="tab" id="fptab-groups" aria-controls="fppanel-groups" aria-selected="false" tabindex="-1">&#11088; 手選收藏</button>
+      <button class="tab" role="tab" id="fptab-partners" aria-controls="fppanel-partners" aria-selected="false" tabindex="-1">&#129309; 搭檔</button>
+    </nav>
+  </div>
+
   <!-- Pet list section (collapsible, default expanded) -->
-  <div class="section">
+  <div class="section tab-panel is-active" role="tabpanel" id="fppanel-gallery" aria-labelledby="fptab-gallery" tabindex="0">
     <div class="collapse-hdr open" role="button" tabindex="0" aria-expanded="true" aria-controls="petlistBody"
          onclick="toggleCollapse('petlist')" onkeydown="collapseKeydown(event,'petlist')">
       <span class="section-title" style="margin:0;">飛寵列表 <span style="font-weight:400;font-size:0.82em;color:var(--text2);" id="petlistSummary"></span></span>
@@ -577,6 +617,9 @@
         <span class="fg-batch-count"><b id="galleryBatchN">0</b> 隻</span>
         <span class="fg-batch-sub" id="galleryBatchSub">已選取</span>
         <div class="fg-batch-actions">
+          <label for="batchGroupSel" class="fg-batch-sub" style="margin:0;">加入</label>
+          <select id="batchGroupSel" aria-label="選擇要加入的收藏"></select>
+          <button type="button" class="btn btn--ghost btn-sm" data-batch-group-add>加入收藏</button>
           <button class="fg-b-clear" id="galleryBatchClear">取消</button>
           <button class="fg-b-dissolve" id="galleryBatchDissolve">&#9889; 分解</button>
         </div>
@@ -633,7 +676,7 @@
   </div><!-- /pet list section -->
 
   <!-- Breed section (default expanded) -->
-  <div class="section">
+  <div class="section tab-panel" role="tabpanel" id="fppanel-breed" aria-labelledby="fptab-breed" tabindex="0">
     <div class="collapse-hdr open" role="button" tabindex="0" aria-expanded="true" aria-controls="breedBody"
          onclick="toggleCollapse('breed')" onkeydown="collapseKeydown(event,'breed')">
       <span class="section-title" style="margin:0;">交配繁殖</span>
@@ -690,7 +733,7 @@
   </div>
 
   <!-- 手選飛寵收藏 (命名群組) section -->
-  <div class="section">
+  <div class="section tab-panel" role="tabpanel" id="fppanel-groups" aria-labelledby="fptab-groups" tabindex="0">
     <div class="collapse-hdr" role="button" tabindex="0" aria-expanded="false" aria-controls="groupsBody"
          onclick="toggleCollapse('groups')" onkeydown="collapseKeydown(event,'groups')">
       <span class="section-title" style="margin:0;">手選飛寵收藏
@@ -708,7 +751,7 @@
   </div>
 
   <!-- Partners (搭檔) section -->
-  <div class="section">
+  <div class="section tab-panel" role="tabpanel" id="fppanel-partners" aria-labelledby="fptab-partners" tabindex="0">
     <div class="collapse-hdr" role="button" tabindex="0" aria-expanded="false" aria-controls="friendsBody"
          onclick="toggleCollapse('friends')" onkeydown="collapseKeydown(event,'friends')">
       <span class="section-title" style="margin:0;">搭檔飛寵</span>
@@ -1461,6 +1504,9 @@ function initGallery() {
     selected.clear(); renderTable(); updateBatchbar();
   });
   document.getElementById('galleryBatchDissolve').addEventListener('click', function() { doSell(); });
+  // 批次加入收藏:把目前多選一次加入 #batchGroupSel 指定的收藏 (或新建)。
+  var batchAdd = document.querySelector('#galleryBatchbar [data-batch-group-add]');
+  if (batchAdd) batchAdd.addEventListener('click', function() { batchAddSelectedToGroup(); });
 
   // 進階抽屜 (C1/C21): 透過 openModal/closeModal 取得 Esc 關閉 + 焦點移入/還原 + Tab trap;
   // 關閉時對離屏 sheet 設 inert + aria-hidden, 把它的 23 個控制項移出 tab order 與 a11y tree。
@@ -2313,6 +2359,9 @@ function renderGroupList() {
 
 // ---- 繁殖表單整合 ----
 function refreshBreedGroupSel() {
+  // 圖鑑批次選單與繁殖選單同源於 flypetGroups,集中在這裡一起刷新,
+  // 既有所有 refreshBreedGroupSel() 呼叫點 (新增/改名/刪除/載入/加入收藏) 都會連帶刷新批次選單。
+  refreshBatchGroupSel();
   var sel = document.getElementById('breedGroupSel');
   if (!sel) return;
   var prev = sel.value;
@@ -2324,6 +2373,45 @@ function refreshBreedGroupSel() {
     return '<option value="' + esc(g.id) + '">' + esc(g.name) + ' (' + (g.members || []).length + ')</option>';
   }).join('');
   if (prev && getGroup(prev)) sel.value = prev;
+}
+// 圖鑑批次列「加入收藏」選單:列出現有收藏 + 末尾「＋ 新收藏」。保留使用者先前選擇。
+function refreshBatchGroupSel() {
+  var sel = document.getElementById('batchGroupSel');
+  if (!sel) return;
+  var prev = sel.value;
+  var opts = flypetGroups.map(function (g) {
+    return '<option value="' + esc(g.id) + '">' + esc(g.name) + ' (' + (g.members || []).length + ')</option>';
+  }).join('');
+  // __new__ 哨兵值:選它代表「先建一個新收藏再加入」(沿用 groupNew 流程)。
+  sel.innerHTML = opts + '<option value="__new__">＋ 新收藏</option>';
+  if (prev && (prev === '__new__' || getGroup(prev))) sel.value = prev;
+}
+// 把目前圖鑑多選 (selected Set) 一次加入選定收藏。
+//  - 選 __new__ → 先 groupNew() 建一個,目標 = 最後一個。
+//  - own 成員 {src:'own', id};addToGroup 內建去重 (回傳 false=已存在)。
+//  - 加完刷新收藏面板 + 繁殖/批次選單,toast 回報筆數,並清空多選。
+function batchAddSelectedToGroup() {
+  if (selected.size === 0) { toast('請先選擇飛寵', 'info'); return; }
+  var sel = document.getElementById('batchGroupSel');
+  var gid = sel ? sel.value : '';
+  if (gid === '__new__' || !gid || !getGroup(gid)) {
+    groupNew();                                  // 沒選或選「＋ 新收藏」→ 建新的
+    gid = flypetGroups[flypetGroups.length - 1].id;
+  }
+  var g = getGroup(gid);
+  var added = 0;
+  selected.forEach(function (id) {
+    if (addToGroup(gid, { src: 'own', id: id })) added++;   // addToGroup 已 saveGroups + 去重
+  });
+  renderGroupList();
+  refreshBreedGroupSel();                        // 連帶刷新批次選單 (數量變了)
+  if (sel && getGroup(gid)) sel.value = gid;     // 維持指向剛加入的收藏
+  var name = g ? g.name : '';
+  var skipped = selected.size - added;
+  toast('已加入 ' + added + ' 隻到「' + name + '」' + (skipped > 0 ? '（' + skipped + ' 隻已在其中）' : ''), 'ok');
+  selected.clear();                              // 清空圖鑑多選
+  renderTable();
+  updateBatchbar();
 }
 // 取選中群組的「可挑」成員 (own + 視旗標 partner),已過濾 STALE/locked/fight/breeding。
 function pickableMembersOfSelectedGroup() {
@@ -2859,15 +2947,116 @@ async function processAbSlot(home, cfg, excludeIds, eggs) {
   }
 }
 
+// =====================================================================
+// 常駐頁籤 (A 案 + 選單不能隱藏)
+//   - 點頁籤只顯示單一分區 (標準 ARIA tabs);頁籤條 position:sticky 永遠可見。
+//   - roving tabindex:Tab 進入只停一顆,方向鍵在頁籤間移動。
+//   - 切到「圖鑑」時重渲染 (gallery 視窗化靠 IntersectionObserver,
+//     從 display:none 切回不會自己補卡,需主動呼叫 renderTable())。
+//   - 切到 groups/partners 時自動展開其折疊區 (panel 即整頁,不需再收合)。
+//   - 記住上次頁籤於 localStorage('flypetTab_'+ip()),預設 gallery。
+// =====================================================================
+var FP_TABS = ['gallery', 'breed', 'groups', 'partners'];
+
+function fpTabBtn(key) { return document.getElementById('fptab-' + key); }
+function fpTabPanel(key) { return document.getElementById('fppanel-' + key); }
+
+// 量測 sticky topbar 高度寫入 --fp-topbar-h,讓常駐頁籤條剛好黏在它正下方
+// (topbar 會 flex-wrap,高度隨視窗變化,故 load + resize 都重量)。
+function fpSyncTopbarHeight() {
+  var tb = document.querySelector('.topbar');
+  if (!tb) return;
+  var h = Math.round(tb.getBoundingClientRect().height) || 57;
+  document.documentElement.style.setProperty('--fp-topbar-h', h + 'px');
+}
+
+function fpEnsurePanelOpen(key) {
+  // groups/partners 預設折疊;切到該分區時把折疊區展開,使整個 panel 內容可見。
+  var map = { groups: 'groups', partners: 'friends' };
+  var ckey = map[key];
+  if (!ckey) return;
+  var body = document.getElementById(ckey + 'Body');
+  var arrow = document.getElementById(ckey + 'Arrow');
+  if (body && !body.classList.contains('open')) {
+    body.classList.add('open');
+    if (arrow && arrow.parentElement) {
+      arrow.parentElement.classList.add('open');
+      arrow.parentElement.setAttribute('aria-expanded', 'true');
+    }
+  }
+}
+
+function selectTab(key, opts) {
+  opts = opts || {};
+  if (FP_TABS.indexOf(key) < 0) key = 'gallery';
+  FP_TABS.forEach(function(k) {
+    var btn = fpTabBtn(k), panel = fpTabPanel(k);
+    var on = (k === key);
+    if (btn) {
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      btn.tabIndex = on ? 0 : -1;     // roving tabindex
+    }
+    if (panel) {
+      panel.classList.toggle('is-active', on);
+      panel.setAttribute('aria-hidden', on ? 'false' : 'true');
+    }
+  });
+  fpEnsurePanelOpen(key);
+  // gallery 從隱藏切回需要重渲染卡片牆 (視窗化觀察器在 display:none 下不會補卡)。
+  if (key === 'gallery' && typeof renderTable === 'function' &&
+      document.getElementById('galleryStage')) {
+    renderTable();
+  }
+  try { localStorage.setItem('flypetTab_' + ip(), key); } catch (e) {}
+  if (opts.focus) { var b = fpTabBtn(key); if (b) b.focus(); }
+}
+
+function initTabs() {
+  var bar = document.getElementById('fpTabBar');
+  if (!bar || bar._wired) return;
+  bar._wired = true;
+  bar.addEventListener('click', function(e) {
+    var t = e.target.closest('[role="tab"]');
+    if (!t) return;
+    selectTab(t.id.replace('fptab-', ''));
+  });
+  bar.addEventListener('keydown', function(e) {
+    var t = e.target.closest('[role="tab"]');
+    if (!t) return;
+    var cur = FP_TABS.indexOf(t.id.replace('fptab-', ''));
+    var next = -1;
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (cur + 1) % FP_TABS.length;
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (cur - 1 + FP_TABS.length) % FP_TABS.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = FP_TABS.length - 1;
+    else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault(); selectTab(t.id.replace('fptab-', '')); return;
+    } else return;
+    e.preventDefault();
+    selectTab(FP_TABS[next], { focus: true });
+  });
+}
+
+// 恢復上次頁籤 (per-device);裝置可能還沒選,先讀 ip() 對應 key,讀不到用 gallery。
+function restoreTab() {
+  var key = 'gallery';
+  try { key = localStorage.getItem('flypetTab_' + ip()) || 'gallery'; } catch (e) {}
+  selectTab(key);
+}
+
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', function() {
   initGallery();    // 綁定卡片牆/種類欄/抽屜事件 (只綁一次)
   initGroups();     // 綁定收藏面板 + 繁殖表單群組鈕 (只綁一次)
+  initTabs();       // 綁定常駐頁籤 (click/方向鍵/roving tabindex,只綁一次)
+  fpSyncTopbarHeight();
+  window.addEventListener('resize', fpSyncTopbarHeight);
   loadGroups();     // 載入手選收藏 (per-device localStorage)
   renderGroupList();
   refreshBreedGroupSel();
   syncPresetUI();
   updateFVals();
+  restoreTab();     // 恢復上次分區 (預設 gallery)
   initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)
 });
 </script>
