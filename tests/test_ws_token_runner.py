@@ -126,7 +126,11 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.idle_reward, "claim_quick_2h",
                         lambda c, **k: (calls.append(("idle_reward", "claim_quick_2h")) or _ClaimOK()))
 
-    # turntable (free; always runs)
+    # turntable (free; always runs). run_daily = claim_ad(13) ad top-up + spin;
+    # stub the ad top-up so the test doesn't hit a real ad_info round-trip.
+    monkeypatch.setattr(runner.ad_reward, "claim_ad",
+                        lambda c, cid, **k: {"name": "轉盤廣告次數", "claimed": 0,
+                                             "skipped": "stub"})
     monkeypatch.setattr(runner.turntable, "spin_all_free",
                         lambda c, **k: (calls.append(("turntable", "spin_all_free"))
                                         or {"spun": 0, "results": []}))
@@ -1286,8 +1290,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     """Drive the REAL task orchestrators against a scripted responder to prove
     the wiring (cmd ids, body building, push collection) is sound end-to-end."""
     from ws_token import (
-        couple, farm, idle_reward, league_solo, main_tasks, redpack, spirit,
-        steward, turntable, workshop,
+        ad_reward, couple, farm, idle_reward, league_solo, main_tasks, redpack,
+        spirit, steward, turntable, workshop,
     )
 
     # main_tasks reads are PUSH-based; emit the login-time frames on login.
@@ -1315,7 +1319,11 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         # idle_reward: ONLINE read -> type=1, nothing claimable (no claim sent)
         idle_reward.CMD_REWARD_INFO: lambda b: [
             s2c(idle_reward.CMD_REWARD_INFO, codec.pb_uint(1, idle_reward.TYPE_ONLINE))],
-        # turntable: info -> num=0 (no free spins)
+        # turntable ad top-up: ad_info -> config 13 already maxed (2/2) so
+        # claim_ad skips WITHOUT sending 0x1602; then info -> num=0 (no spins)
+        ad_reward.CMD_AD_INFO: lambda b: [
+            s2c(ad_reward.CMD_AD_INFO,
+                codec.pb_msg(1, codec.pb_uint(1, 13) + codec.pb_uint(2, 2)))],
         turntable.CMD_INFO: lambda b: [
             s2c(turntable.CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
         # farm: 打工偵測 -> empty team_list (worker NOT running -> manual path)

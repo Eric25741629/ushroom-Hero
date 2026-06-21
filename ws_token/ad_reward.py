@@ -51,13 +51,15 @@ CMD_ERROR = 0x0201       # error.error_info_s2c {error_code#1}
 # instantly with no video (live-verified 2026-06-19).
 IS_FREE = 1
 
-# Per-config daily cap (configAds ``times``). 16/17 are out of the default scope
-# but kept so a device that opts them in is still capped correctly.
-TIMES: dict[int, int] = {12: 3, 14: 5, 15: 2, 16: 2, 17: 4}
+# Per-config daily cap (configAds ``times``). 13/16/17 are out of the default
+# ad_rewards scope but kept so callers that opt them in are still capped
+# correctly — 13 (AD_TURNTABLE) is claimed by ws_token.turntable, not here.
+TIMES: dict[int, int] = {12: 3, 13: 2, 14: 5, 15: 2, 16: 2, 17: 4}
 
 # Human names for logging (AdType / configAds key).
 AD_NAMES: dict[int, str] = {
     12: "商城廣告鑽石",
+    13: "轉盤廣告次數",
     14: "浮動廣告鑽石",
     15: "農場種子廣告",
     16: "農場肥料廣告",

@@ -250,12 +250,15 @@ def _run_ad_rewards(client, *, config_ids, enabled: bool) -> dict:
 
 
 def _run_turntable(client) -> dict:
-    """Free: spin every free / accumulated 轉盤 turn (no ad top-ups over WS).
+    """Free: bank today's 轉盤 ad-funded spins, then spin every available turn.
 
-    spin_all_free reads ``num`` once and spins that many (capped); it only ever
-    consumes turns the account already has. Returns ``{spun, results}``.
+    Delegates to turntable.run_daily: ad_reward.claim_ad(config 13, 2/day) banks
+    the daily "watch ad" spins (NO_ADS = free instant; each claim bumps the wheel
+    pool by 1) cap/cooldown-gated, then spin_all_free drains the pool (per-spin
+    cooldown stops the drain after ~1/session; turns accumulate across wakes).
+    Returns ``{spun, results, declined, ad_topup}``.
     """
-    return turntable.spin_all_free(client)
+    return turntable.run_daily(client)
 
 
 def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
