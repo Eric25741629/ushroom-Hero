@@ -40,6 +40,17 @@ from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_logger(device_id: str | None) -> logging.Logger:
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_lamp_logger
+            return get_or_create_ws_lamp_logger(device_id)
+        except Exception:
+            return logger
+    return logger
+
+
 CMD_EQUIP_INFO = 0x0501
 CMD_WEAR = 0x0502
 CMD_EQUIP_CHANGE = 0x0504   # drop detail push
@@ -324,12 +335,12 @@ def _extract_repeated_uint(body: bytes, field: int) -> list[int]:
 
 
 def _try_call(client: WSGameClient, cmd: int, body: bytes, *, timeout: float,
-              what: str) -> bool:
+              what: str, _log: logging.Logger | None = None) -> bool:
     try:
         client.call_for(cmd, body, expect_cmds=(cmd, CMD_ERROR), timeout=timeout)
         return True
-    except Exception as exc:  # timeout OR connection drop — never abort the run
-        logger.warning("ws_token lamp: %s failed (%s); continuing", what, exc)
+    except Exception as exc:
+        (_log or logger).warning("ws_token lamp: %s failed (%s); continuing", what, exc)
         return False
 
 
@@ -351,6 +362,7 @@ def open_lamp(
     initial_count: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     should_abort: Callable[[], bool] | None = None,
+    device_id: str | None = None,
 ) -> dict:
     """Open boxes and auto-equip winners into their matching 套裝.
 
@@ -383,6 +395,7 @@ def open_lamp(
     """
     config = config or OpenGoldConfig()
     parser = OCRParser(config)
+    log = _resolve_logger(device_id)
 
     feature_on = lamp_percent > 0 or lamp_min_keep > 0 or lamp_daily_min > 0
     max_open = max_batches * batch_num
@@ -405,8 +418,8 @@ def open_lamp(
 
     # initial_count known and nothing to open this run -> return before any RPC.
     if feature_on and target == 0:
-        logger.info("ws_token lamp: target=0 (total=%s percent=%s min_keep=%s); "
-                    "open nothing", initial_count, lamp_percent, lamp_min_keep)
+        log.info("ws_token lamp: target=0 (total=%s percent=%s min_keep=%s); "
+                 "open nothing", initial_count, lamp_percent, lamp_min_keep)
         return {"opened": 0, "equipped": [], "sold": [], "left": [],
                 "dry_run": dry_run, "target": 0, "initial_count": initial_count,
                 "remaining": None}
@@ -414,9 +427,9 @@ def open_lamp(
     active_tab = parse_tab_info(client.call(CMD_TAB_INFO, b""))
     set_map, lian_shan_tabs, worn = derive_set_map(
         client.call(CMD_EQUIP_INFO, b""), parser)
-    logger.debug("ws_token lamp: active_tab=%s sets=%s lian=%s",
-                 active_tab, {"".join(sorted(k)): v for k, v in set_map.items()},
-                 lian_shan_tabs)
+    log.debug("ws_token lamp: active_tab=%s sets=%s lian=%s",
+              active_tab, {"".join(sorted(k)): v for k, v in set_map.items()},
+              lian_shan_tabs)
 
     drops: dict[int, dict] = {}
     lock = threading.Lock()
@@ -450,14 +463,14 @@ def open_lamp(
                     CMD_OPEN_ALL, build_open_all(batch_num, quality),
                     expect_cmds=(CMD_OPEN_ALL, CMD_ERROR), timeout=10.0)
             except WSTimeoutError:
-                logger.info("ws_token lamp: open timed out (out of lamps?); stop")
+                log.info("ws_token lamp: open timed out (out of lamps?); stop")
                 break
-            except Exception as exc:  # connection drop / unexpected — stop cleanly
-                logger.warning("ws_token lamp: open failed (%s); stopping", exc)
+            except Exception as exc:
+                log.warning("ws_token lamp: open failed (%s); stopping", exc)
                 break
             if cmd == CMD_ERROR:
-                logger.info("ws_token lamp: open error code=%s (out of lamps?); stop",
-                            codec.walk_dict(s2c).get(1))
+                log.info("ws_token lamp: open error code=%s (out of lamps?); stop",
+                         codec.walk_dict(s2c).get(1))
                 break
             new_uids = _extract_repeated_uint(s2c, 1)
             if not new_uids:
@@ -504,7 +517,7 @@ def open_lamp(
                     continue
                 d = decide_v2(detail, set_map, worn, lian_shan_tabs, config, parser)
                 if d.action == "equip":
-                    logger.info("ws_token lamp uid=%s -> EQUIP (%s)", uid, d.reason)
+                    log.info("ws_token lamp uid=%s -> EQUIP (%s)", uid, d.reason)
                     equipped.append((d.tab, uid, d.reason))
                     batch_equips.append((d.tab, uid))
                     worn.setdefault(d.tab, {})[detail["slot"]] = detail  # new worn baseline
@@ -512,56 +525,58 @@ def open_lamp(
                         sold.append((d.displaced_uid, "displaced by " + str(uid)))
                         batch_sells.append(d.displaced_uid)
                 elif d.action == "sell":
-                    logger.debug("ws_token lamp uid=%s -> SELL (%s)", uid, d.reason)
+                    log.debug("ws_token lamp uid=%s -> SELL (%s)", uid, d.reason)
                     sold.append((uid, d.reason))
                     batch_sells.append(uid)
                 else:
-                    logger.debug("ws_token lamp uid=%s -> LEAVE (%s)", uid, d.reason)
+                    log.debug("ws_token lamp uid=%s -> LEAVE (%s)", uid, d.reason)
                     left.append((uid, "".join(sorted(
                         frozenset(e.code for e in drop_to_equipment(detail, parser).entries)))))
 
             if not dry_run:
-                for tab, uid in batch_equips:  # equip first so the old piece frees up
+                for tab, uid in batch_equips:
                     _try_call(client, CMD_WEAR, build_wear(tab, uid),
-                              timeout=sell_timeout, what=f"wear tab={tab} uid={uid}")
+                              timeout=sell_timeout, what=f"wear tab={tab} uid={uid}", _log=log)
                 for i in range(0, len(batch_sells), _SELL_CHUNK):
                     chunk = batch_sells[i:i + _SELL_CHUNK]
                     _try_call(client, CMD_SELL, build_sell(chunk),
-                              timeout=sell_timeout, what=f"sell {chunk}")
+                              timeout=sell_timeout, what=f"sell {chunk}", _log=log)
                     time.sleep(_SELL_DELAY_SEC)
 
             if feature_on and target >= 0 and on_progress is not None:
                 try:
                     on_progress(opened, target)
-                except Exception:  # a raising callback must never abort the open
-                    logger.exception("ws_token lamp: on_progress callback failed")
+                except Exception:
+                    log.exception("ws_token lamp: on_progress callback failed")
 
             # Per-batch stop conditions (any one ends the run).
             if feature_on and target >= 0 and opened >= target:
                 break
             if (lamp_min_keep > 0 and remaining is not None
                     and remaining <= lamp_min_keep):
-                logger.info("ws_token lamp: remaining=%d <= min_keep=%d; stop",
-                            remaining, lamp_min_keep)
+                log.info("ws_token lamp: remaining=%d <= min_keep=%d; stop",
+                         remaining, lamp_min_keep)
                 break
 
             if batch_delay > 0 and batch_index < max_batches - 1:
                 time.sleep(batch_delay)
 
-        if not dry_run and active_tab:
-            _try_call(client, CMD_CHOOSE_TAB, build_choose_tab(active_tab),
-                      timeout=sell_timeout, what=f"restore active tab {active_tab}")
     finally:
+        if not dry_run and active_tab:
+            try:
+                client.call_for(CMD_CHOOSE_TAB, build_choose_tab(active_tab),
+                                expect_cmds=(CMD_CHOOSE_TAB, CMD_ERROR), timeout=sell_timeout)
+            except Exception as exc:
+                log.warning("ws_token lamp: restore active tab %s failed (%s)", active_tab, exc)
         client.set_push_handler(None)
 
-    # Lazy target that never resolved (out of lamps before any count) -> 0.
     reported_target = target if target >= 0 else 0
     if equipped or left:
-        logger.info("ws_token lamp: opened=%d/%d equipped=%d left=%d dry_run=%s",
-                    opened, reported_target, len(equipped), len(left), dry_run)
+        log.info("ws_token lamp: opened=%d/%d equipped=%d left=%d dry_run=%s",
+                 opened, reported_target, len(equipped), len(left), dry_run)
     else:
-        logger.debug("ws_token lamp: opened=%d/%d equipped=0 sold=%d left=0 "
-                     "dry_run=%s", opened, reported_target, len(sold), dry_run)
+        log.debug("ws_token lamp: opened=%d/%d equipped=0 sold=%d left=0 "
+                  "dry_run=%s", opened, reported_target, len(sold), dry_run)
     return {"opened": opened, "equipped": equipped, "sold": sold, "left": left,
             "dry_run": dry_run, "target": reported_target,
             "initial_count": total, "remaining": remaining}

@@ -860,6 +860,7 @@ def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
         initial_count=initial_count,
         on_progress=on_progress,
         should_abort=should_abort,
+        device_id=ip or None,
     )
 
     if lamp_daily_min > 0 and ip and result.get("opened", 0) > 0:

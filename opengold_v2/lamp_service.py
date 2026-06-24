@@ -364,8 +364,8 @@ class LampService:
 
         if self._is_pairs_incomplete(rolled_pairs) or self._is_pairs_incomplete(original_pairs):
             logger.warning("[LampService] OCR 無法完整辨識詞條，跳過自動比較")
-            # 階段5：OCR 不完整（診斷截圖）
             self._log_screenshot(prefix="lamp", suffix="incomplete_ocr")
+            self._return_to_original_equipment(stage_texts)
             return True
 
         rolled_equip = Equipment.from_pairs(rolled_pairs)
@@ -377,13 +377,11 @@ class LampService:
         if result.should_replace:
             logger.info(f"[LampService] 比對結果: replace=True ; reason: {result.reason}")
             logger.info("[LampService] 執行換裝")
-            # 階段6a：決定保留（換裝）
             self._log_screenshot(prefix="lamp", suffix="kept")
             self.ui.click_keep_button()
         else:
             logger.debug(f"[LampService] 比對結果: replace=False ; reason: {result.reason}")
             logger.debug("[LampService] 不換，執行出售")
-            # 階段6b：決定出售（不換）
             self._log_screenshot(prefix="lamp", suffix="sold")
             self.ui.click_sell_button()
 
@@ -607,8 +605,12 @@ class LampService:
                 logger.warning(f"[LampService] _finish_clean 失敗: {exc}")
             break
 
-    def run(self, times: int = 1000, is_compare: bool = True):
+    def run(self, times: int = 1000, is_compare: bool = True, min_keep: int = 0):
         """執行開神燈主流程。times=-1 表示無限。
+
+        ``min_keep``：剩餘神燈 <= 此值時不啟動自動開裝(仍會清殘留再離開)。
+        對齊 WS 開燈的 ``lamp_min_keep``，讓「保留 N 顆」政策在 WS 路徑失敗、
+        fallback 到 H5 開燈時依然生效(否則 H5 會無視保留量狂開)。0 = 不限制。
 
         Outer loop is gated by LampLoopState — only triggers process_single_lamp
         on HANDLE_POPUP (count stable + popup OCR detected). All other states
@@ -639,8 +641,14 @@ class LampService:
                 logger.warning(f"[LampService] 收尾失敗: {exc}")
             return
 
-        if pre_count == 0:
-            logger.info("[LampService] 剩餘神燈為 0，已清乾淨殘留，不啟動自動開裝")
+        # 剩餘 <= 保留量(min_keep，0 含「沒燈」)→ 清完殘留就離開，不啟動自動開裝。
+        keep_floor = max(0, int(min_keep or 0))
+        if pre_count is not None and pre_count <= keep_floor:
+            if keep_floor > 0:
+                logger.info(f"[LampService] 剩餘神燈 {pre_count} <= 保留量 {keep_floor}，"
+                            "已清殘留，不啟動自動開裝")
+            else:
+                logger.info("[LampService] 剩餘神燈為 0，已清乾淨殘留，不啟動自動開裝")
             try:
                 self.ui.exit_lamp()
             except Exception as exc:

@@ -72,6 +72,10 @@ class LogPaths:
         return cls.device_root(device_id) / "ws_farm.log"
 
     @classmethod
+    def ws_lamp_log(cls, device_id: str) -> Path:
+        return cls.device_root(device_id) / "ws_lamp.log"
+
+    @classmethod
     def ocr_trace_log(cls, device_id: str) -> Path:
         return cls.device_root(device_id) / "ocr_trace.log"
 
@@ -119,6 +123,9 @@ class _ScopedLogPaths:
 
     def ws_farm_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "ws_farm.log"
+
+    def ws_lamp_log(self, device_id: str) -> Path:
+        return self.device_root(device_id) / "ws_lamp.log"
 
     def ocr_trace_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "ocr_trace.log"
