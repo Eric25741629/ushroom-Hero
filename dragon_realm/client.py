@@ -1,7 +1,7 @@
 """龍骸聖域 H5 RPC 橋接。
 
-send 具名 c2s + 讀 window.__dr_state（一次性 listener 暫存最新 s2c）。
-欄位攤平對照 docs/protocol/DRAGON_REALM_SCHEMA.md（Task 1 產出）。
+透過 IS() wrapper 取得 ActivityLhsyDataCache singleton，直接讀 .info。
+info_s2c 只在入場時發一次，listener 模式不可靠。
 """
 from __future__ import annotations
 
@@ -12,56 +12,67 @@ from dragon_realm.planner import Action
 
 logger = logging.getLogger(__name__)
 
-# 一次性安裝 listener；把最新 info/help 存到 window.__dr_state，附 client 端 ts。
+# ponytail: IS() wrapper 抓 singleton — info_s2c 只在入場發一次，listener 收不到
 _INSTALL_JS = r"""
 () => {
   const nm = window.netManager;
-  if (!nm) return false;
-  if (window.__dr_installed) return true;
-  window.__dr_state = {};
-  const cap = (k) => (e) => { try { window.__dr_state[k] = {ts: Date.now(), data: JSON.parse(JSON.stringify(e))}; } catch(_) {} };
-  nm.addEventListener("dragon_realm.dragon_realm_info_s2c", cap("info"), window);
-  nm.addEventListener("dragon_realm.dragon_realm_event_update_s2c", cap("info"), window);
-  nm.addEventListener("dragon_realm.dragon_realm_help_event_list_s2c", cap("help"), window);
-  window.__dr_installed = true;
-  nm.send("dragon_realm.dragon_realm_info_c2s", {});
-  return true;
+  if (!nm || typeof IS !== 'function') return false;
+  if (window.__drCache) return true;
+  const origIS = window.IS;
+  window.IS = function(cls) {
+    const r = origIS(cls);
+    if (!window.__drCache && r && r.info && typeof r.info.update === 'function' && r.teamInfo) {
+      window.__drCache = r;
+    }
+    return r;
+  };
+  const table = (nm._events && nm._events._callbackTable) || {};
+  const entry = table['dragon_realm.dragon_realm_info_s2c'];
+  const infos = (entry && entry.callbackInfos) || [];
+  const ctrl = infos[0] && infos[0].target;
+  if (ctrl) {
+    const proto = Object.getPrototypeOf(ctrl);
+    try { proto.on_dragon_realm_unlock_auto_explore_s2c.call(ctrl, {is_open: 0, is_sys: 1, action: []}); } catch(_) {}
+  }
+  window.IS = origIS;
+  return !!window.__drCache;
 }
 """
 
-# 把 window.__dr_state 攤成 state.from_raw 的中間 dict。
-# NB: 下列鍵路徑（info.ceng / cur.event_id / data 陣列 / eventList / 背包）依
-#     DRAGON_REALM_SCHEMA.md 確認後填寫；此處為對照 schema 的實作位置。
 _READ_JS = r"""
 () => {
-  const st = window.__dr_state || {};
-  const info = (st.info && st.info.data) || null;
-  const helpList = (st.help && st.help.data) || null;
-  const ts = (st.info && st.info.ts) || 0;
-  if (!info) return {ts: 0, raw: null};
-  // pickEventData: 當前事件 data 陣列 [{k,v}] -> {k:v}
+  const cache = window.__drCache;
+  if (!cache || !cache.info) return {ts: 0, raw: null};
+  const info = cache.info;
   const pickEventData = (arr) => {
     const o = {}; (arr || []).forEach(it => { o[it.k] = it.v; }); return o;
   };
-  const cur = info.cur_event || info.current || {};
+  const ed = pickEventData(info.event_data);
+  // ponytail: event_id 是 config row ID 非 type constant，從 data keys 推導
+  let et = 0;
+  if (info.event_id) {
+    if (ed[1] || ed[6]) et = 1;       // K_PVE_HP or K_MAX_HP -> monster (PVE)
+    else if (ed[2] !== undefined) et = 4;  // K_TRAP_TIME -> trap
+    else et = 5;                       // fallback: buff/cave/box -> advance
+  }
   const raw = {
-    activity_open: !!(info.ceng || info.hp != null || info.event_list),
+    activity_open: !!(info.ceng || info.hp != null),
     ceng: info.ceng || 1,
-    hp: info.hp != null ? info.hp : (info.stamina || 0),
+    hp: info.hp != null ? info.hp : 0,
     server_time: info.server_time || 0,
     help_hp: info.help_hp || 0,
-    event_id: cur.event_id || 0,
-    event_type: cur.event_type || 0,
-    event_uid: cur.event_uid || cur.id || 0,
-    event_data: pickEventData(cur.data),
-    event_list: (info.event_list || []).map(e => ({
-      role_id: e.role_id, event_id: e.event_id, id: e.id,
+    event_id: info.event_id || 0,
+    event_type: et || 0,
+    event_uid: info.event_uid || 0,
+    event_data: ed,
+    event_list: (cache.eventList || []).map(e => ({
+      role_id: e.role_id, event_id: e.event_id, id: e.id || e.uid,
       event_type: e.event_type, back_kill_time: e.back_kill_time || 0,
     })),
-    help_events: (helpList && helpList.list ? helpList.list : []).map(x => x.event_id || x.id),
-    bag: window.__dr_bag || {},
+    help_events: (cache.eventList || []).filter(e => e.event_id).map(e => e.event_id),
+    bag: {},
   };
-  return {ts: ts, raw: raw};
+  return {ts: Date.now(), raw: raw};
 }
 """
 

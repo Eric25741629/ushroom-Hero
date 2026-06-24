@@ -51,9 +51,9 @@ class DragonState:
             events.append(DragonEvent(
                 role_id=rid,
                 event_id=int(e.get("event_id", 0)),
-                event_type=int(e.get("event_type", 0)),
-                uid=int(e.get("id", 0)),
-                back_kill_time=int(e.get("back_kill_time", 0)),
+                event_type=int(e.get("event_type") or 0),
+                uid=int(e.get("id") or 0),
+                back_kill_time=int(e.get("back_kill_time") or 0),
                 is_mine=(rid == my_role_id),
             ))
         return DragonState(
@@ -63,8 +63,8 @@ class DragonState:
             server_time=int(raw.get("server_time", 0)),
             help_hp=int(raw.get("help_hp", 0)),
             event_id=int(raw.get("event_id", 0)),
-            event_type=int(raw.get("event_type", 0)),
-            event_uid=int(raw.get("event_uid", 0)),
+            event_type=int(raw.get("event_type") or 0),
+            event_uid=int(raw.get("event_uid") or 0),
             is_challenge=bool(data.get(C.K_IS_CHALLENGE, 0)),
             is_ask_help=bool(data.get(C.K_IS_ASK_HELP, 0)),
             back_kill_time=int(data.get(C.K_BACK_KILL_TIME, 0)),
