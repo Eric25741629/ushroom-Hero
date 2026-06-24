@@ -39,6 +39,8 @@ def main() -> int:
                     help="open this %% of the current 神燈 stock (0 = feature off)")
     ap.add_argument("--lamp-min-keep", type=int, default=0,
                     help="keep at least this many 神燈 unopened (0 = feature off)")
+    ap.add_argument("--lamp-daily-min", type=int, default=0,
+                    help="每日最少開啟數量 (0 = 不限制; 不受百分比約束)")
     args = ap.parse_args()
 
     creds = load_creds(args.device)
@@ -75,6 +77,7 @@ def main() -> int:
                              batch_num=args.num, max_batches=args.batches,
                              lamp_percent=args.lamp_percent,
                              lamp_min_keep=args.lamp_min_keep,
+                             lamp_daily_min=args.lamp_daily_min,
                              initial_count=holder["count"],
                              on_progress=lambda o, t: print(f"  progress {o}/{t}", flush=True))
         print(f"[lamp] opened={res['opened']} equipped={len(res['equipped'])} "

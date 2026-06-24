@@ -148,6 +148,61 @@ def test_compute_lamp_target_min_keep_above_total_yields_zero():
         100, lamp_percent=0.0, lamp_min_keep=500, max_open=10000) == 0
 
 
+# --- lamp_daily_min tests ---------------------------------------------------
+
+def test_compute_lamp_target_daily_min_boosts_percent_limited():
+    # percent=1% of 100000=1000, but daily_min=2000 not yet met -> boost to 2000
+    assert lamp.compute_lamp_target(
+        100000, lamp_percent=1.0, lamp_min_keep=0, max_open=10000,
+        lamp_daily_min=2000, opened_today=0) == 2000
+
+
+def test_compute_lamp_target_daily_min_no_boost_when_already_met():
+    # daily_min=100, opened_today=100 -> remaining_daily=0, no boost
+    # percent=1% of 100000=1000 -> normal target
+    assert lamp.compute_lamp_target(
+        100000, lamp_percent=1.0, lamp_min_keep=0, max_open=10000,
+        lamp_daily_min=100, opened_today=100) == 1000
+
+
+def test_compute_lamp_target_daily_min_overrides_percent_with_min_keep():
+    # percent=1% of 510000=5100, min_keep=500000 -> floor_cap=10000 -> normal=5100
+    # daily_min=8000 not yet met -> boost to 8000 (still within floor_cap)
+    assert lamp.compute_lamp_target(
+        510000, lamp_percent=1.0, lamp_min_keep=500000, max_open=20000,
+        lamp_daily_min=8000, opened_today=0) == 8000
+
+
+def test_compute_lamp_target_daily_min_respects_min_keep_floor():
+    # total=1000, min_keep=900 -> floor_cap=100, daily_min=200 -> capped to 100
+    assert lamp.compute_lamp_target(
+        1000, lamp_percent=0.0, lamp_min_keep=900, max_open=10000,
+        lamp_daily_min=200, opened_today=0) == 100
+
+
+def test_compute_lamp_target_daily_min_partial_day():
+    # percent=1% of 100000=1000; daily_min=2000, opened_today=1500 -> remaining=500
+    # 500 < normal 1000 -> no boost, stays at 1000
+    assert lamp.compute_lamp_target(
+        100000, lamp_percent=1.0, lamp_min_keep=0, max_open=10000,
+        lamp_daily_min=2000, opened_today=1500) == 1000
+
+
+def test_compute_lamp_target_daily_min_partial_day_boosts():
+    # percent=1% of 100000=1000; daily_min=3000, opened_today=1500 -> remaining=1500
+    # 1500 > normal 1000 -> boost to 1500 (rounded to nearest 20 = 1500)
+    assert lamp.compute_lamp_target(
+        100000, lamp_percent=1.0, lamp_min_keep=0, max_open=10000,
+        lamp_daily_min=3000, opened_today=1500) == 1500
+
+
+def test_compute_lamp_target_daily_min_no_override_when_normal_higher():
+    # percent=50% of 10000=5000, daily_min=100, opened_today=0 -> normal is higher
+    assert lamp.compute_lamp_target(
+        10000, lamp_percent=50.0, lamp_min_keep=0, max_open=10000,
+        lamp_daily_min=100, opened_today=0) == 5000
+
+
 # --- open_lamp fake-client harness ------------------------------------------
 
 def _client(extra):

@@ -818,7 +818,8 @@ def _run_couple(client, *, gifts: bool, forge_ring: bool,
     return summary
 
 
-def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
+def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
+              lamp_min_keep: int = 0, lamp_daily_min: int = 0,
               initial_count: Optional[int] = None, on_progress=None,
               should_abort: Optional[Callable[[], bool]] = None) -> dict:
     """開神燈: sequentially open up to 10000 boxes and auto-equip/sell drops.
@@ -832,10 +833,21 @@ def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
 
     ``lamp_percent`` (>0 = 依當前神燈總數百分比決定本輪目標) / ``lamp_min_keep``
     (>0 = 剩餘神燈硬地板) 啟用百分比/保留模式；兩者皆 0 時維持舊行為（開到沒燈）。
+    ``lamp_daily_min`` (>0) = 每日最少開啟數量，不受百分比規則約束。
     ``initial_count`` 是登入快照撈到的神燈現量（None = 由 lamp 第一批反推）；
     ``on_progress(opened, target)`` 每批回報進度。
     """
-    return _load_lamp().open_lamp(
+    import datetime as _dt
+    from json_manager import check_json, record_json
+
+    opened_today = 0
+    today_str = _dt.date.today().strftime("%Y-%m-%d")
+    if lamp_daily_min > 0 and ip:
+        rec = check_json(ip, "ws_lamp_daily_opened")
+        if rec and isinstance(rec, dict) and rec.get("date") == today_str:
+            opened_today = max(0, int(rec.get("count", 0) or 0))
+
+    result = _load_lamp().open_lamp(
         client,
         dry_run=False,
         batch_num=_LAMP_BATCH_NUM,
@@ -843,10 +855,20 @@ def _run_lamp(client, *, lamp_percent: float = 0.0, lamp_min_keep: int = 0,
         batch_delay=_LAMP_BATCH_DELAY_SEC,
         lamp_percent=lamp_percent,
         lamp_min_keep=lamp_min_keep,
+        lamp_daily_min=lamp_daily_min,
+        opened_today=opened_today,
         initial_count=initial_count,
         on_progress=on_progress,
         should_abort=should_abort,
     )
+
+    if lamp_daily_min > 0 and ip and result.get("opened", 0) > 0:
+        record_json(ip, "ws_lamp_daily_opened", {
+            "date": today_str,
+            "count": opened_today + result["opened"],
+        })
+
+    return result
 
 
 def _run_mining(client, tracker: mining.InventoryTracker, *,
@@ -1078,6 +1100,7 @@ def run_device(device: str, *, spend: bool = False,
                open_lamp: bool = False,
                lamp_percent: float = 0.0,
                lamp_min_keep: int = 0,
+               lamp_daily_min: int = 0,
                farm_config: Optional[dict] = None,
                dungeon_sweeps: Optional[Iterable[Sequence[int]]] = None,
                carpark_target: Optional[int] = None,
@@ -1383,8 +1406,10 @@ def run_device(device: str, *, spend: bool = False,
                                       should_abort=should_abort))
         if open_lamp:
             _step("lamp",
-                  lambda: _run_lamp(client, lamp_percent=lamp_percent,
+                  lambda: _run_lamp(client, ip=device,
+                                    lamp_percent=lamp_percent,
                                     lamp_min_keep=lamp_min_keep,
+                                    lamp_daily_min=lamp_daily_min,
                                     initial_count=lamp_count_holder["count"],
                                     on_progress=_lamp_progress,
                                     should_abort=should_abort))
@@ -1486,6 +1511,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="開神燈: 依當前神燈總數的百分比決定本輪目標 (0=不依百分比，開到沒燈)")
     ap.add_argument("--lamp-min-keep", type=int, default=0, metavar="N",
                     help="開神燈: 剩餘神燈硬地板 (0=無下限)")
+    ap.add_argument("--lamp-daily-min", type=int, default=0, metavar="N",
+                    help="開神燈: 每日最少開啟數量 (0=不限制; 不受百分比約束)")
     ap.add_argument("--farm-seed", type=int, default=None, metavar="SEED_ID",
                     help="農場: plant this seed_id on empty lands (live-confirm value)")
     ap.add_argument("--farm-team", type=int, default=None, metavar="TEAM_CFG_ID",
@@ -1561,7 +1588,8 @@ def main(argv: Optional[list[str]] = None) -> int:
           flush=True)
     rep = run_device(args.device, spend=args.spend, sweep_list=sweep_list,
                      open_lamp=args.open_lamp, lamp_percent=args.lamp_percent,
-                     lamp_min_keep=args.lamp_min_keep, farm_config=farm_config,
+                     lamp_min_keep=args.lamp_min_keep,
+                     lamp_daily_min=args.lamp_daily_min, farm_config=farm_config,
                      dungeon_sweeps=dungeon_sweeps,
                      carpark_target=args.carpark_target,
                      carpark_auto=args.carpark_auto,

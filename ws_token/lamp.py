@@ -116,7 +116,8 @@ def extract_lamp_count(body: bytes) -> int | None:
 
 
 def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
-                        max_open: int) -> int:
+                        max_open: int,
+                        lamp_daily_min: int = 0, opened_today: int = 0) -> int:
     """Lamps to open this run: a multiple of 20 clamped to ``[0, max_open]``.
 
     floor_cap = max(0, total - lamp_min_keep)
@@ -124,6 +125,11 @@ def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
     - percent only                -> raw = percent_amt
     - min_keep only               -> raw = floor_cap
     - neither                     -> raw = total (open the whole lot)
+
+    ``lamp_daily_min`` (>0) overrides the percentage limit: if today's opened
+    count has not reached the daily minimum, the target is boosted to cover
+    the remaining daily quota, still capped by ``lamp_min_keep`` floor and
+    ``max_open``.
     """
     floor_cap = max(0, total - lamp_min_keep)
     if lamp_percent > 0 and lamp_min_keep > 0:
@@ -134,7 +140,13 @@ def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
         raw = floor_cap
     else:
         raw = total
-    return min(max(0, round_to_nearest_20(raw)), max_open)
+    normal = min(max(0, round_to_nearest_20(raw)), max_open)
+    if lamp_daily_min > 0:
+        remaining_daily = max(0, lamp_daily_min - opened_today)
+        if remaining_daily > normal:
+            boosted = min(remaining_daily, floor_cap) if lamp_min_keep > 0 else remaining_daily
+            return min(max(0, round_to_nearest_20(boosted)), max_open)
+    return normal
 
 
 # --- p_equip parsing --------------------------------------------------------
@@ -334,6 +346,8 @@ def open_lamp(
     sell_timeout: float = 8.0,
     lamp_percent: float = 0.0,
     lamp_min_keep: int = 0,
+    lamp_daily_min: int = 0,
+    opened_today: int = 0,
     initial_count: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     should_abort: Callable[[], bool] | None = None,
@@ -345,7 +359,7 @@ def open_lamp(
     (default) computes + logs everything but sends no wear/sell/choose-tab.
 
     Percent / min-keep (feature ON when ``lamp_percent > 0`` OR
-    ``lamp_min_keep > 0``):
+    ``lamp_min_keep > 0`` OR ``lamp_daily_min > 0``):
       - ``target`` = how many lamps to open this run, a multiple of 20 capped
         at ``max_batches * batch_num`` (see :func:`compute_lamp_target`).
       - ``total`` comes from ``initial_count`` when given; otherwise it is
@@ -360,14 +374,17 @@ def open_lamp(
       - ``on_progress(opened, target)`` fires after each batch once target is
         known (a raising callback never aborts the loop).
 
-    Feature OFF (both <= 0): byte-for-byte the legacy behaviour — open up to
+    ``lamp_daily_min`` (>0) overrides the percentage limit when today's opened
+    count (``opened_today``) has not reached the daily minimum.
+
+    Feature OFF (all <= 0): byte-for-byte the legacy behaviour — open up to
     ``max_batches`` and stop when the server runs out of lamps; ``target`` is
     reported as ``max_batches * batch_num`` and no count is required.
     """
     config = config or OpenGoldConfig()
     parser = OCRParser(config)
 
-    feature_on = lamp_percent > 0 or lamp_min_keep > 0
+    feature_on = lamp_percent > 0 or lamp_min_keep > 0 or lamp_daily_min > 0
     max_open = max_batches * batch_num
     # remaining = last-known 神燈 現量 from a 0x0402 push (None until first seen).
     remaining: int | None = None
@@ -380,7 +397,9 @@ def open_lamp(
     elif initial_count is not None:
         target = compute_lamp_target(initial_count, lamp_percent=lamp_percent,
                                      lamp_min_keep=lamp_min_keep,
-                                     max_open=max_open)
+                                     max_open=max_open,
+                                     lamp_daily_min=lamp_daily_min,
+                                     opened_today=opened_today)
     else:
         target = -1  # derive lazily from the first batch's 1001006 push
 
@@ -468,7 +487,9 @@ def open_lamp(
                     total = remaining + len(new_uids)
                     target = compute_lamp_target(
                         total, lamp_percent=lamp_percent,
-                        lamp_min_keep=lamp_min_keep, max_open=max_open)
+                        lamp_min_keep=lamp_min_keep, max_open=max_open,
+                        lamp_daily_min=lamp_daily_min,
+                        opened_today=opened_today)
                 else:  # no count ever arrived — fall back to opening once
                     total = opened
                     target = opened
