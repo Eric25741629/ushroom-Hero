@@ -268,6 +268,24 @@ def test_stop_runtime_device_swallows_exception(sleep_mod):
     )  # should not raise
 
 
+def test_should_stop_runtime_device_for_sleep_honors_web_close_browser(sleep_mod):
+    assert sleep_mod.should_stop_runtime_device_for_sleep(
+        {"web_stop_mode": "close_browser"}, "web_h5"
+    ) is True
+    assert sleep_mod.should_stop_runtime_device_for_sleep(
+        {"web_stop_mode": "close"}, "web_h5"
+    ) is True
+    assert sleep_mod.should_stop_runtime_device_for_sleep(
+        {"web_stop_mode": "keep_page"}, "web_h5"
+    ) is False
+
+
+def test_should_stop_runtime_device_for_sleep_ignores_adb(sleep_mod):
+    assert sleep_mod.should_stop_runtime_device_for_sleep(
+        {"web_stop_mode": "close_browser"}, "adb"
+    ) is False
+
+
 # ---------------------------------------------------------------------------
 # run_sleep_cycle
 # ---------------------------------------------------------------------------
@@ -374,6 +392,40 @@ def test_run_sleep_cycle_returns_interrupted_flag(sleep_mod, sleep_cycle_env, mo
         forced_wake_ts=time.time() + 300,
     )
     assert interrupted is True
+
+
+def test_sleep_until_wake_interrupts_on_web_close(sleep_mod, monkeypatch):
+    calls = {"web_close": 0}
+    now = {"value": 100.0}
+
+    def fake_sleep(_s):
+        now["value"] += 200.0
+
+    monkeypatch.setattr(sleep_mod.time, "sleep", fake_sleep)
+    monkeypatch.setattr(sleep_mod.time, "time", lambda: now["value"])
+    monkeypatch.setattr(sleep_mod.bot_state, "check_force_sleep", lambda ip: False)
+    monkeypatch.setattr(sleep_mod.bot_state, "check_pause", lambda ip: False)
+    monkeypatch.setattr(sleep_mod.bot_state, "check_skip_sleep", lambda ip: False)
+    monkeypatch.setattr(sleep_mod.bot_state, "has_pending_web_launch_request", lambda ip: False)
+    monkeypatch.setattr(
+        sleep_mod.bot_state,
+        "has_pending_web_close_request",
+        lambda ip: calls.__setitem__("web_close", calls["web_close"] + 1) or True,
+    )
+    monkeypatch.setattr(
+        sleep_mod.bot_state,
+        "check_web_close",
+        lambda ip: (_ for _ in ()).throw(AssertionError("sleep loop must not consume web_close")),
+    )
+    monkeypatch.setattr(
+        "runtime_services.wake_override_service.apply_manual_wake_override",
+        lambda ip, wake_ts, log, task: (wake_ts, False),
+    )
+
+    assert sleep_mod.sleep_until_wake_or_interrupt(
+        "emu-1", 200.0, logging.getLogger("t")
+    ) is True
+    assert calls["web_close"] == 1
 
 
 # ---------------------------------------------------------------------------

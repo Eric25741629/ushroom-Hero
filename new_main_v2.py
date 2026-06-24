@@ -84,6 +84,7 @@ from runtime_services.sleep_service import (
     StartupBypassError,
     _maybe_resume_sleep,
     run_sleep_cycle,
+    should_stop_runtime_device_for_sleep,
     stop_runtime_device_for_sleep,
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
@@ -261,6 +262,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     if callable(close_fn):
                         try:
                             close_fn()
+                            bot_state.set_web_browser_open(ip, False)
                             logger.info(f"[{ip}] 收到關閉瀏覽器請求，已關閉無頭瀏覽器（裝置續跑，下次喚醒自動重開）")
                         except Exception as close_err:
                             logger.warning(f"[{ip}] 關閉瀏覽器失敗: {close_err}")
@@ -497,6 +499,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         logger.error(f"[{ip}] 重連失敗: {e2}")
                 open_notification(d)
                 d.screen_off()
+            sleep_device_config = config_manager.get_device_config(ip)
+            if (not force_sleep_now) and should_stop_runtime_device_for_sleep(sleep_device_config, backend_kind):
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
+                if backend_kind == "web_h5":
+                    bot_state.set_web_browser_open(ip, False)
             release_wakeup_lock(ip)
             wake_ts, interrupted, wake_up_time = run_sleep_cycle(
                 ip,

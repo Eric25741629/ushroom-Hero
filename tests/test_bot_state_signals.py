@@ -224,6 +224,10 @@ def test_request_force_sleep_raises_force_and_clears_skip_and_manual():
 
         bot_state.request_force_sleep(ip, reason="強制休眠")
 
+        st = bot_state.get_all_states()[ip]
+        assert st["task"] == "休眠中"
+        assert st["step"] == "強制休眠"
+
         # FORCE is raised and one-shot consumable
         assert bot_state.check_force_sleep(ip) is True
         assert bot_state.check_force_sleep(ip) is False
@@ -264,6 +268,19 @@ def test_request_force_sleep_does_not_clear_web_close():
         bot_state.request_force_sleep(ip)
 
         assert bot_state.check_web_close(ip) is True
+    finally:
+        _cleanup(ip)
+
+
+def test_has_pending_web_close_request_does_not_consume():
+    ip = "test-signals-peek-webclose"
+    _cleanup(ip)
+    try:
+        bot_state.request_web_close(ip)
+        assert bot_state.has_pending_web_close_request(ip) is True
+        assert bot_state.has_pending_web_close_request(ip) is True
+        assert bot_state.check_web_close(ip) is True
+        assert bot_state.has_pending_web_close_request(ip) is False
     finally:
         _cleanup(ip)
 

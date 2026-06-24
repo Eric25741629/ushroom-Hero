@@ -166,6 +166,18 @@ def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger
         logger_obj.warning(f"[{ip}] 強制休眠停止裝置失敗: backend={backend_kind}, err={stop_err}")
 
 
+def should_stop_runtime_device_for_sleep(cfg: dict, backend_kind: str) -> bool:
+    """一般休眠前是否要關閉 runtime device。
+
+    web_h5 的 keep_page 表示保留頁面；close/close_page/close_browser 表示
+    休眠時釋放 Playwright/Chrome，dashboard 應顯示「開啟網頁」。
+    """
+    if backend_kind != "web_h5":
+        return False
+    stop_mode = str((cfg or {}).get("web_stop_mode", "keep_page")).strip().lower()
+    return stop_mode in {"close", "close_page", "close_browser"}
+
+
 def run_sleep_cycle(
     ip: str,
     logger_obj,

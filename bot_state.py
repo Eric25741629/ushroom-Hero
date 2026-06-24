@@ -569,7 +569,8 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
             req["last_message"] = reason
         if ip in _states:
             st = _states[ip]
-            st["task"] = "強制休眠"
+            # 立即把 UI 切到睡眠語意，避免長流程還沒收尾時面板繼續顯示舊任務。
+            st["task"] = "休眠中"
             st["step"] = reason
             st.pop("next_wake_at", None)
             st["last_update"] = time.time()
@@ -597,6 +598,13 @@ def request_web_close(ip: str) -> None:
 def check_web_close(ip: str) -> bool:
     """Atomically check and consume the close-browser flag for `ip`."""
     return consume_signal(ip, Signal.WEB_CLOSE)
+
+
+def has_pending_web_close_request(ip: str) -> bool:
+    """Return True when a close-browser request is pending without consuming it."""
+    with _global_lock:
+        s = _signals.get(ip)
+        return bool(s and Signal.WEB_CLOSE in s)
 
 
 def set_web_browser_open(ip: str, is_open: bool) -> None:

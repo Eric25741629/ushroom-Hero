@@ -241,6 +241,20 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
                 # the moment the user closes the browser window (≤1s).
                 bot_state.set_web_browser_open(ip, still_open)
 
+                if bot_state.check_web_close(ip):
+                    logger_obj.info(f"[{ip}] manual hold close-browser requested")
+                    close_fn = getattr(device_obj, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception as close_err:
+                            logger_obj.warning(
+                                f"[{ip}] close browser during manual hold failed: {close_err}"
+                            )
+                    bot_state.set_web_browser_open(ip, False)
+                    bot_state.update_state(ip, task="手動操作", step="已關閉瀏覽器")
+                    break
+
                 if bot_state.check_manual_release(ip):
                     logger_obj.info(f"[{ip}] manual release requested, resume automation")
                     bot_state.update_state(ip, task="手動操作", step="手動操作已結束，準備恢復")

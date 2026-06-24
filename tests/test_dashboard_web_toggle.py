@@ -49,6 +49,11 @@ def test_toggle_reconciles_with_authoritative_browser_state():
     assert "_webOpenTs" in html
 
 
+def test_close_clears_open_grace_window():
+    html = _html()
+    assert "delete _webOpenTs[ip]" in html
+
+
 def test_three_second_click_lock():
     html = _html()
     assert "webBtnLocked" in html

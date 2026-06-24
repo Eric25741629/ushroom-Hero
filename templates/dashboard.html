@@ -3056,16 +3056,26 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         // 權威值對帳: info.web_browser_open 是後端 (device thread is_alive) 的真值。
         const _authOpen = info.web_browser_open;   // true | false | undefined
         let webOpen;
-        if (_authOpen === true) {
+        const _closingFresh = _webOpenState[ip] === false
+          && (Date.now() - (_webCloseTs[ip] || 0)) < WEB_CLOSE_GRACE_MS;
+        if (_closingFresh) {
+          // 剛按「關閉網頁」後，裝置 thread 可能還沒消費 close 信號；
+          // 這段時間不要讓上一輪 is_alive=true 把按鈕跳回「關閉網頁」。
+          webOpen = false;
+        } else if (_authOpen === true) {
           webOpen = true;                          // 後端確認瀏覽器開著
           _webOpenState[ip] = true;                // 同步樂觀值
           _webOpenTs[ip] = 0;                      // 已確認開啟 → grace 用掉, 之後 false 立即翻回
+          _webCloseTs[ip] = 0;
         } else if (_authOpen === false) {
           // 後端說關了: 只有剛點「開啟」且還在 grace 內才續顯示「關閉」(冷啟空窗), 否則翻回「開啟」。
           const _fresh = _webOpenState[ip] === true
             && (Date.now() - (_webOpenTs[ip] || 0)) < WEB_OPEN_GRACE_MS;
           webOpen = _fresh;
-          if (!_fresh) _webOpenState[ip] = false;
+          if (!_fresh) {
+            _webOpenState[ip] = false;
+            _webCloseTs[ip] = 0;
+          }
         } else {
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
@@ -3468,6 +3478,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     const _webOpenState = {};      // ip -> true 表示視為已開 (顯示關閉鈕; 樂觀)
     const _webOpenTs = {};         // ip -> 按下「開啟網頁」的時間戳 (ms), 給 grace window
     const WEB_OPEN_GRACE_MS = 15000;  // 開啟瀏覽器冷啟空窗: 此期間權威值還沒翻 true 也續顯示「關閉」
+    const _webCloseTs = {};        // ip -> 按下「關閉網頁」的時間戳 (ms), 給 close grace window
+    const WEB_CLOSE_GRACE_MS = 15000; // 關閉請求由裝置 thread 非同步消費，期間先顯示「開啟」
     const _webBtnLockUntil = {};   // ip -> 鎖定到期時間戳 (ms)
 
     function webBtnLocked(ip) {
@@ -3534,6 +3546,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       if (!ip || webBtnLocked(ip)) return;
       lockWebBtn(ip);
       _webOpenState[ip] = false;   // 樂觀: 立即切回「開啟網頁」
+      delete _webOpenTs[ip];       // 清掉開啟 grace，避免關閉後又被拉回「關閉網頁」
+      _webCloseTs[ip] = Date.now();
       const statusEl = document.getElementById('webLoginStatusText');
       try {
         const resp = await fetch(`/api/web_close/${ip}`, {
@@ -4087,7 +4101,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       // browser next cycle — a browser "restart", distinct from 強制休眠.
       const ip = _lvIp;
       closeLiveView();
-      if (ip) fetch(`/api/web_close/${ip}`, { method: 'POST' }).catch(() => {});
+      if (ip) {
+        _webOpenState[ip] = false;
+        delete _webOpenTs[ip];
+        _webCloseTs[ip] = Date.now();
+        fetch(`/api/web_close/${ip}`, { method: 'POST' }).catch(() => {});
+      }
     }
 
 
