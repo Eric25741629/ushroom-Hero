@@ -796,19 +796,38 @@ def get_online_check_checkers() -> "list[str]":
     if not checkers:
         return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
 
-    # Expand the wildcard "*" to all non-requester devices.
+    # Expand the wildcard "*" to all non-requester devices, excluding any device
+    # a human plays directly (`human_played`) — logging in as such an account
+    # would kick the human off (異地登入). See get_human_played_devices().
     if "*" in checkers:
         try:
             devices = load_config().get("devices", {}) or {}
             expanded = [
                 dev_ip for dev_ip, cfg in devices.items()
-                if isinstance(cfg, dict) and not cfg.get("online_check_target_pid")
+                if isinstance(cfg, dict)
+                and not cfg.get("online_check_target_pid")
+                and not cfg.get("human_played")
             ]
             return expanded if expanded else list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
         except Exception:
             return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
 
     return checkers
+
+
+def get_human_played_devices() -> "list[str]":
+    """Device serials whose account a human plays directly.
+
+    The bot must never auto-login as these (online-check checker, persistent
+    online-monitor): doing so triggers 異地登入 and kicks the human's session.
+    Marked per-device with `"human_played": true` in bot_config.
+    """
+    try:
+        devices = load_config().get("devices", {}) or {}
+    except Exception:
+        return []
+    return [dev for dev, cfg in devices.items()
+            if isinstance(cfg, dict) and cfg.get("human_played")]
 
 
 def get_ocr_config() -> Dict[str, Any]:

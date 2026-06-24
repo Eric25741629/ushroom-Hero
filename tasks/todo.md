@@ -25,6 +25,30 @@ Review:
 - 範圍外但同雷:`periodic_tasks.should_execute_sea` / `week_events`(legacy,daily_pipeline 未用)、武道會/坐騎衝刺 badge 仍用 today-predicate + cycle-from-last-run,未動。
 - 錨點若與遊戲實際檔期不符,只改 `_SEA_ANCHOR_MONDAY` / `_SEA_CYCLE_DAYS` 兩常數。
 
+### code-review 跟進(xhigh workflow,57 agents)
+- [x] #1 時鐘分裂(CONFIRMED):dashboard 龍骸閘用 naive 本地、點亮用台北 → 抽 `_compute_daily_progress(manager, device_id, today=)`,把台北 today 同餵 `is_sea_week`/`_is_dragon_week`。(UTC+8 主機本無影響,屬 latent)
+- [x] #2/#3 覆蓋缺口:`get_daily_progress` 抽成可測純函式,新增 4 例真實端對端(航海週顯示+點亮/本週非今天仍亮/非檔期隱藏/龍骸週);移除原套套邏輯測試。
+- [x] #4 視窗測試巧合耦合:`TestShouldExecuteSeaWindow._at` 改由 `_SEA_ANCHOR_MONDAY` 推算 + precondition assert。
+- [x] #5 wall-clock flaky:`_FakeManager` 加 `now` 注入。
+- [ ] 未改(記錄):#8 `is_sea_week` 與 `_is_dragon_week` DRY 重複(可抽 `is_calendar_cycle_week`,但動到龍骸 run-gate TZ,verifier 判 pure-style);#6 `is_same_week` 少 flat-scalar 容錯(sea/dragon 紀錄恆 dict,低風險);#7 `week_events` legacy 仍用舊漂移錨(未 wired live);#9 dead `cycle_weeks` 參數;#10 sea_week/period 旗標冗餘。
+
+---
+
+## 🔧 2026-06-24 web_h5 WS 憑證初次種子自動化
+
+問題:5558(web_h5)WS 階段一直噴「no captured creds」→ fallback Playwright。根因:
+- `refresh_from_device`(Playwright 回寫)只刷新既有 capture,缺檔即跳過(page 讀不到 uname/plat,湊不出第一份)。
+- `bootstrap_token`(冷啟 App 撈 logcat)只對 adb 生效(`_should_bootstrap` 寫死 backend=="adb")。
+- 故 web_h5 缺「第一份種子」的自動路徑;其他 web_h5 模擬器是當初 adb_token_login 手動種的。
+
+修法(使用者核准):
+- [x] `game_actions/ws_phase.py`:加 `_should_seed_web_h5(ip, backend, cfg)` = web_h5 + bootstrap_token 旗標 + **缺 capture**(`_has_ws_creds`) + **adb 可達**(`_adb_reachable`,複用 `ws_runner_service._is_adb_reachable`)。`run_ws_phase` 在 adb bootstrap 後加 best-effort 種子步驟:成功本輪續跑 WS,失敗只 log → 降級 Playwright(行為同舊)。種完 has_creds 為真 → 不再冷啟。
+- [x] 純雲端 web(web-xxx 不在 adb devices)自然被排除,免每輪空跑 adb_token_login。
+- [x] 測試:`tests/test_ws_phase.py` +4(不可達不種/缺檔可達種/有檔不種/旗標關不種);全檔 49 綠。
+
+ponytail 上限:缺 App 但 adb 可達的 web_h5 會每輪重試(~2min);模擬器實務上都有 App,種一次即止 → 暫不加退避。
+⚠ 需重啟 `new_main_v2.py` 生效;之後 5558 下一輪 WS 會自動種子,不必再手動 adb_token_login。
+
 ---
 
 ## ✅ log 確認已 LIVE（bot 自 2026-06-19 21:57 起跑此 checkout，2026-06-20 log 核對）
@@ -268,3 +292,44 @@ running 進程是 06-19 21:57 那版；之後 commit 的改動尚未套用。log
 - live 驗證:4 階段協議 + earn 37 增益 end-to-end 在 5554 跑通(tools/ws_harvest_step.py)。
 - 既有失敗(非本次):runner 的 main_tasks 4 測試=08:00 時間閘(現 05:59);fake-transport 259 hang。8 點後/環境問題,與本變更無關。
 - **待生效**:需重啟 new_main_v2(sys.modules cache);5554 等裝置要在 config 設 `ws_token.farm.harvest_card_cycle.enabled=true` 才會跑(目前 5554=null)。ADB 視覺版 farm_v2 未動。
+
+## 修復:手機登入立刻被 WS 彈出(線上檢查連線打到真人帳號)— 2026-06-25
+
+**問題**:真人在手機登入後立刻被 WS 彈出(異地登入)。
+**根因**:線上偵測機制用「真人手機帳號」(roleId 89565100509472)連線:
+1. `online_monitor` 預設 `preferred="fc65396d_u999"`(= 手機帳號)持久連線;真人登入踢掉它後,`_loop` 因 `_should_yield(手機)` 看不到 bot_state thread 而判定 idle → 立刻 reclaim 重連 → 又踢真人。死迴圈。
+2. `online_check_checkers=['*']` 展開含手機(無 target_pid),一次性 WS 登入也可能用手機帳號。
+
+**帳號別名陷阱**:`fc65396d_u999`/`adb-fc65396d-…_tcp` → roleId 89565100509472(手機);但 `fc65396d` → 89555436834913(其實是 5554)。保護必須以 **roleId** 為準,不能用裝置名字串。
+
+**修復計畫(TDD)**:
+- [x] 測試先行:`tests/test_online_monitor.py`(7)+ `tests/test_config_human_played.py`(2)→ 先 RED 後 GREEN
+- [x] `bot_config.json`:手機裝置 `adb-fc65396d-…_tcp` 加 `"human_played": true`
+- [x] `config_manager.py`:`get_online_check_checkers()` 的 `*` 展開排除 `human_played`;新增 `get_human_played_devices()`
+- [x] `ws_token/online_monitor.py`:預設 `preferred="emulator-5554"`;`discover_role_map(protected_role_ids=…)` 過濾;`_connect` 以 roleId 拒絕保護帳號;`resolve_protected_role_ids()` 從 config 解析;`ensure_started`/CLI 預設改 5554
+- [x] 新增:切換/重連 5 分鐘冷卻 `switch_cooldown_sec=300`(`_switch_allowed()` 閘住 failover 重連 + yield + reclaim),解「斷線後立刻重連又被彈出」
+- [x] 驗證:focused pytest 9/9 綠;真實 config 驗證 phone 不在 checkers、protected={89565100509472}、preferred=emulator-5554
+
+### Review — 完成 2026-06-25
+**根因**:線上偵測(online_monitor 持久連線 + online_check_service 一次性登入)會用「真人手機帳號」連 WS → 異地登入踢真人;monitor `_loop` 又因看不到手機 bot_state thread 而判定 idle,斷線後立刻 reclaim 重連 → 死迴圈狂踢。
+
+**修法**(2 層防護 + 冷卻):
+1. 以 **roleId** 標記/排除真人帳號(裝置名有別名陷阱:`fc65396d_u999`/`adb-…_tcp`→手機 89565100509472;`fc65396d`→5554)。`human_played:true` → `resolve_protected_role_ids()` → monitor `_connect` 拒登 + `discover_role_map` 過濾;`*` checker 池排除。
+2. preferred 改 `emulator-5554`(主路由)。
+3. 切換/重連 5 分鐘冷卻,杜絕重連風暴。
+
+**驗證**:`pytest tests/test_online_monitor.py tests/test_config_human_played.py -q` → 9 passed。online-check/config 回歸 64 passed。`test_online_check_immediate_wake` 3 紅 = 既有 stub 缺 `has_pending_web_close_request`(與本修復無關)。
+**待生效/手動驗證**:重啟 `new_main_v2`(sys.modules cache);手動開手機帳號 H5,確認不再被彈出(5554 當主路由偵測)。
+**未提交**:`bot_config.json`/`tasks/todo.md` 內含先前 session 的 WIP,為免混入無關變更,本次未自動 commit,改動已就緒待使用者決定。
+
+### 追加:偵測器自動切換 + 儀表板顯示 — 2026-06-25
+- 儀表板頂列新增「上線偵測」徽章(`/api/status` `online_monitor` → `routes_status._online_monitor_status` + `dashboard.html`),顯示目前負責偵測的裝置/新鮮度。
+- 使用者回報「都在跑腳本卻沒自動切換、卡在閃電(=emulator-5554)」。根因:舊 `_loop` 啟動就硬連 preferred(不管它在跑腳本→同帳號互踢),且上一版把 5 分鐘冷卻也套到「讓位」→ 卡死。
+- 重寫偵測器選擇(`_select_detector`/`_is_safe_detector`,移除 `_pick_idle_device`/`_should_yield`/`_try_connect`):**只連休眠中的裝置**當偵測器(在跑腳本的一律不選,避免同帳號互踢),preferred 在睡優先用、否則跳別台在睡的、全忙則暫不連線(走一次性備援)。讓位(忙→睡)立即切換;只有「連線失敗/被踢後重連」套 5 分鐘冷卻(防風暴)。
+- 測試:`test_online_monitor.py` 加 `_select_detector` 3 案(preferred 在睡優先 / preferred 忙則讓位 / 全忙回 None)→ 10 passed。
+- 待生效:重啟 `new_main_v2`。
+
+### 追加 2:切換軌跡 + 刷新倒數 + 每卡在線標 — 2026-06-25
+- 切換軌跡:`_set_active()` 記錄偵測器轉移(log `detector switch X->Y`)+ `last_switch`/`get_last_switch()`;徽章 tooltip 顯示「上次切換: X → Y」。測試 `test_last_switch_records_transition`(11 passed)。
+- 刷新倒數(使用者選「下次刷新倒數」):`get_poll_sec()` + `/api/status` 回 `poll_sec`/`refresh_in_sec`;徽章改「上線偵測: 閃電（下次刷新 倒數 Ns）」,前端 1s ticker(`renderOnlineMonitor`)以 server 相對 `refresh_in_sec` 錨定本機時鐘倒數,避免時鐘偏差。
+- 每卡「當前在線」(使用者選「保留 ONLINE 另加小標」):`/api/status` 每裝置加 `account_online`(由 `_account_presence()` 的 snapshot {role_id:online} + `_device_role_id` 解析,以 roleId 比對);卡片右上角保留 ONLINE,另加 `.acct-presence` 小標(在線=綠/離線=灰,unknown 不顯示)。偵測器本身不在自己好友列表→該卡無標(正常)。
