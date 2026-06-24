@@ -54,10 +54,13 @@ IS_FREE = 1
 # Per-config daily cap (configAds ``times``). 13/16/17 are out of the default
 # ad_rewards scope but kept so callers that opt them in are still capped
 # correctly — 13 (AD_TURNTABLE) is claimed by ws_token.turntable, not here.
-TIMES: dict[int, int] = {12: 3, 13: 2, 14: 5, 15: 2, 16: 2, 17: 4}
+TIMES: dict[int, int] = {1: 2, 2: 2, 3: 2, 12: 3, 13: 2, 14: 5, 15: 2, 16: 2, 17: 4}
 
 # Human names for logging (AdType / configAds key).
 AD_NAMES: dict[int, str] = {
+    1: "挖礦鎬子廣告",
+    2: "挖礦鑽頭廣告",
+    3: "挖礦炸彈廣告",
     12: "商城廣告鑽石",
     13: "轉盤廣告次數",
     14: "浮動廣告鑽石",
@@ -67,7 +70,7 @@ AD_NAMES: dict[int, str] = {
 }
 
 # The config_ids auto-claimed by default (user-specified 2026-06-19).
-DEFAULT_CONFIG_IDS: list[int] = [12, 14, 15]
+DEFAULT_CONFIG_IDS: list[int] = [1, 2, 3, 12, 14, 15]
 
 # Server error code when the daily limit is exhausted (mirrors gacha 89).
 _ERROR_DAILY_LIMIT = 89
