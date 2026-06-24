@@ -81,9 +81,10 @@ LOGIN_TASK = "login"
 # 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
-    "ad_rewards", "turntable", "tycoon", "farm", "dungeon", "rogue", "statue",
-    "guild", "steward", "relic", "relic_sprint", "gacha", "gacha_free",
-    "kungfu_store", "spirit", "workshop", "couple", "mining", "lamp")
+    "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
+    "rogue", "statue", "guild", "steward", "relic", "relic_sprint", "gacha",
+    "gacha_free", "kungfu_store", "spirit", "workshop", "couple",
+    "sea_season", "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -372,10 +373,8 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
     seed_id = cfg.get("seed_id")
     team_cfg_id = cfg.get("team_cfg_id")
     buy_list = cfg.get("buy")
-    hcc_cfg = cfg.get("harvest_card_cycle")
-    hcc_enabled = isinstance(hcc_cfg, dict) and bool(hcc_cfg.get("enabled"))
     summary: dict = {"work_status": None, "harvest": None, "plant": None,
-                     "work": None, "buy": None, "harvest_card_cycle": None}
+                     "work": None, "buy": None}
 
     # 1) 打工偵測 (worker module 73, reliable) — 決定是否需要手動收成。
     worker_running = False
@@ -409,8 +408,7 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
             summary["harvest"] = {"skipped": f"home_farm 不可用: {exc}"}
 
     # 3) 打工設定 + 莊園購買 (worker/shop module, reliable) — 獨立於 home module。
-    # 若 harvest_card_cycle 啟用，skip 這裡的 start_work（cycle 自己管開/關）。
-    if team_cfg_id and not worker_running and not hcc_enabled:
+    if team_cfg_id and not worker_running:
         summary["work"] = farm.start_work(client, int(team_cfg_id), device_id=device)
     # 莊園購買: buy each configured farm-shop item UP TO its daily target. Reads
     # today's count first, so an item already bought in the GUI is respected
@@ -418,22 +416,60 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
     if buy_list:
         summary["buy"] = farm.buy_farm_shop(client, buy_list, device_id=device)
 
-    # 4) 豐收卡循環 (可選；獨立完整流程：停打工→施肥→收成→買卡→種特級種子→恢復打工)
-    #    觸發方式：ws_token.farm.harvest_card_cycle.enabled = true
-    #    可選：num_cards（預設 3），fertilizer_id（預設 111）
-    #    inventory_tracker 傳入讓 cycle 能比對特級種子現量，只買缺口數。
-    if hcc_enabled:
-        num_cards = int(hcc_cfg.get("num_cards", 3))
-        fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
-        try:
-            summary["harvest_card_cycle"] = farm.run_harvest_card_cycle(
-                client, role_id, num_cards=num_cards, fertilizer_id=fert_id,
-                inventory_tracker=inventory_tracker, device_id=device)
-        except Exception as exc:
-            logger.warning("ws_token farm: harvest_card_cycle skipped (%s)", exc)
-            summary["harvest_card_cycle"] = {"skipped": str(exc)}
-
     return summary
+
+
+def _harvest_card_week_key(now=None) -> tuple[str, float]:
+    """Return (ISO week key, timestamp) for the weekly harvest-card gate."""
+    from datetime import datetime
+
+    if now is None:
+        now_dt = datetime.now()
+    elif isinstance(now, (int, float)):
+        now_dt = datetime.fromtimestamp(float(now))
+    else:
+        now_dt = now
+    iso = now_dt.isocalendar()
+    return f"{iso.year}-W{iso.week:02d}", float(now_dt.timestamp())
+
+
+def _run_harvest_card(client, *, role_id: int, farm_config: Optional[dict],
+                      inventory_tracker=None, device: str = "",
+                      state_dir=None, now=None) -> dict:
+    """每週豐收卡：獨立 tag，每 ISO week 最多跑一次，預設用 3 張。
+
+    Reuses ``farm.run_harvest_card_cycle`` for the protocol flow; this wrapper
+    only owns config extraction and the weekly idempotency gate.
+    """
+    cfg = farm_config or {}
+    hcc_cfg = cfg.get("harvest_card_cycle")
+    if not (isinstance(hcc_cfg, dict) and bool(hcc_cfg.get("enabled"))):
+        return {"skipped": "harvest_card_cycle disabled"}
+
+    week_key, ts = _harvest_card_week_key(now)
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    state: dict = {}
+    if device:
+        state = ws_state.load_state(device, **kw)
+        hc_state = state.get("harvest_card") or {}
+        if hc_state.get("last_week") == week_key:
+            return {"skipped": f"already done {week_key}"}
+
+    num_cards = int(hcc_cfg.get("num_cards", 3))
+    fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
+    result = farm.run_harvest_card_cycle(
+        client, role_id, num_cards=num_cards, fertilizer_id=fert_id,
+        inventory_tracker=inventory_tracker, device_id=device)
+
+    if device and result.get("ok", True):
+        state["harvest_card"] = {
+            "last_week": week_key,
+            "last_ts": ts,
+            "num_cards": num_cards,
+            "cards_bought": int(result.get("cards_bought") or 0),
+        }
+        ws_state.save_state(device, state, **kw)
+    return result
 
 
 def _run_dungeon(client, *, sweeps: Sequence[Sequence[int]]) -> dict:
@@ -982,6 +1018,47 @@ def _run_relic_sprint(client, tracker: mining.InventoryTracker, *, enabled: bool
         client, tracker, target_spend=target_spend, enabled=True)
 
 
+def _run_sea_season(client, *, device: str, sea_config: Optional[dict],
+                    inventory_tracker=None) -> dict:
+    """航海/賽季 pure WS: claim income + tasks + dispatch + repair + tactic."""
+    from ws_token import sea_season
+    cfg = sea_config or {}
+    wood = 0
+    if inventory_tracker:
+        wood = int(inventory_tracker.counts.get(sea_season.ITEM_WOOD, 0))
+    hg = cfg.get("home_grid")
+    if isinstance(hg, (list, tuple)) and len(hg) == 2:
+        hg = (int(hg[0]), int(hg[1]))
+    else:
+        hg = None
+    rg = cfg.get("relic_grid")
+    if isinstance(rg, (list, tuple)) and len(rg) == 2:
+        rg = (int(rg[0]), int(rg[1]))
+    else:
+        rg = None
+    gg = cfg.get("garrison_grid")
+    if isinstance(gg, (list, tuple)) and len(gg) == 2:
+        gg = (int(gg[0]), int(gg[1]))
+    else:
+        gg = None
+    try:
+        adm = int(cfg.get("attack_daily_max", 4))
+    except (TypeError, ValueError):
+        adm = 4
+    return sea_season.run_sea_season(
+        client,
+        device=device,
+        do_dispatch=bool(cfg.get("dispatch", True)),
+        do_repair=bool(cfg.get("repair", True)),
+        tactic_nodes=cfg.get("tactic_nodes"),
+        wood_amount=wood,
+        home_grid=hg,
+        relic_grid=rg,
+        garrison_grid=gg,
+        attack_daily_max=adm,
+    )
+
+
 def run_device(device: str, *, spend: bool = False,
                sweep_list: Optional[Iterable[Sequence[int]]] = None,
                open_lamp: bool = False,
@@ -1011,10 +1088,12 @@ def run_device(device: str, *, spend: bool = False,
                ad_reward_config_ids: Optional[Iterable[int]] = None,
                gacha_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
+               sea_config: Optional[dict] = None,
                statue_amount: int = 7000,
                progress=None,
                should_abort: Optional[Callable[[], bool]] = None,
-               skip_tasks: Optional[Iterable[str]] = None) -> RunReport:
+               skip_tasks: Optional[Iterable[str]] = None,
+               only_tasks: Optional[Iterable[str]] = None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -1095,6 +1174,7 @@ def run_device(device: str, *, spend: bool = False,
     tasks: dict[str, Any] = {}
     errors: dict[str, str] = {}
     skip_set = set(skip_tasks or ())   # 續做：本輪要跳過（先前已完成）的任務
+    only_set = set(only_tasks) if only_tasks else None  # 白名單：只跑這些任務
     aborted = False                    # 被 should_abort 中斷 → 剩餘任務留 pending
     sweep: tuple[Sequence[int], ...] = tuple(sweep_list or ())
     dsweeps: tuple[Sequence[int], ...] = tuple(dungeon_sweeps or ())
@@ -1189,6 +1269,8 @@ def run_device(device: str, *, spend: bool = False,
             aborted = True
             _notify(name, "aborted", "pending web launch")
             return                       # 任務邊界中斷：本任務未跑 → pending
+        if only_set is not None and name not in only_set:
+            return                       # 白名單模式：不在清單內 → 跳過
         if name in skip_set:
             _notify(name, "skip", "resume: already done")
             return                       # 續做：已完成 → 不重跑、不記錄
@@ -1234,6 +1316,10 @@ def run_device(device: str, *, spend: bool = False,
         _step("farm",
               lambda: _run_farm(client, role_id=role_id_hint, farm_config=farm_config,
                                 inventory_tracker=inventory_tracker, device=device))
+        _step("harvest_card",
+              lambda: _run_harvest_card(
+                  client, role_id=role_id_hint, farm_config=farm_config,
+                  inventory_tracker=inventory_tracker, device=device))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
         _step("statue", lambda: _run_statue(client, device=device, amount=statue_amount))
@@ -1266,6 +1352,11 @@ def run_device(device: str, *, spend: bool = False,
         _step("couple",
               lambda: _run_couple(client, gifts=couple_gifts,
                                   forge_ring=forge_ring, device=device))
+        if sea_config:
+            _step("sea_season",
+                  lambda: _run_sea_season(client, device=device,
+                                          sea_config=sea_config,
+                                          inventory_tracker=inventory_tracker))
         if mining_config and mining_config.get("enabled"):
             _step("mining",
                   lambda: _run_mining(client, inventory_tracker,

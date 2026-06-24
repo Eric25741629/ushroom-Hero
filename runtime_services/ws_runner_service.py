@@ -78,6 +78,14 @@ _PROTECT_WAIT_SEC_DEFAULT = 60.0
 # reconnecting (which would just race the human who logged in elsewhere). The
 # next wake's online-protection probe then decides whether to resume.
 _KICK_COOLDOWN_SEC = 1800.0
+_WS_TASK_LABELS = {
+    "harvest_card": "豐收卡",
+}
+
+
+def _ws_task_label(name: str) -> str:
+    """Dashboard-facing WS task label; internal task keys stay English."""
+    return _WS_TASK_LABELS.get(name, name)
 
 
 def _load_run_device():
@@ -285,6 +293,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         except (TypeError, ValueError):
             relic_sprint_target = None
     mining_config = cfg.get("ws_token_mining") or None
+    sea_config = _ws_nested.get("sea_season") or None
+    only_tasks = _ws_nested.get("only_tasks") or None
     # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
     try:
         lamp_percent = max(0.0, float(_ws_nested.get("lamp_percent", 0) or 0))
@@ -311,18 +321,19 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
+        label = _ws_task_label(name)
         if status == "start":
-            step = f"WS 任務執行中: {name}"
-            logger_obj.info(f"[{ip}] ws_token 任務開始: {name}")
+            step = f"WS 任務執行中: {label}"
+            logger_obj.info(f"[{ip}] ws_token 任務開始: {label}")
         elif status == "ok":
-            step = f"WS 任務完成: {name}"
-            logger_obj.info(f"[{ip}] ws_token 任務完成: {name}")
+            step = f"WS 任務完成: {label}"
+            logger_obj.info(f"[{ip}] ws_token 任務完成: {label}")
         elif status == "progress":
             step = f"WS 開神燈 ({detail})"
             logger_obj.info(f"[{ip}] ws_token 開神燈進度: {detail}")
         else:
-            step = f"WS 任務失敗: {name}"
-            logger_obj.warning(f"[{ip}] ws_token 任務失敗: {name} ({detail})")
+            step = f"WS 任務失敗: {label}"
+            logger_obj.warning(f"[{ip}] ws_token 任務失敗: {label} ({detail})")
         try:
             bot_state.update_state(ip, task="WS 任務", step=step)
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
@@ -350,6 +361,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             tycoon_max_rolls=tycoon_max_rolls,
                             gacha_config=gacha_config,
                             mining_config=mining_config,
+                            sea_config=sea_config,
+                            only_tasks=only_tasks,
                             **extra_kwargs)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)

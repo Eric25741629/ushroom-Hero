@@ -265,6 +265,8 @@ def patched_runner(monkeypatch):
                         relic_sprint_enabled=False, relic_sprint_target=900000,
                         gacha_config=None,
                         mining_config=None,
+                        sea_config=None,
+                        only_tasks=None,
                         progress=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "lamp_percent": lamp_percent,
@@ -285,7 +287,9 @@ def patched_runner(monkeypatch):
                       "relic_sprint_enabled": relic_sprint_enabled,
                       "relic_sprint_target": relic_sprint_target,
                       "gacha_config": gacha_config,
-                      "mining_config": mining_config})
+                      "mining_config": mining_config,
+                      "sea_config": sea_config,
+                      "only_tasks": only_tasks})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -319,7 +323,9 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "relic_sprint_enabled": False,
                         "relic_sprint_target": 900000,
                         "gacha_config": None,
-                        "mining_config": None}
+                        "mining_config": None,
+                        "sea_config": None,
+                        "only_tasks": None}
     assert report.login_ok is True
 
 
@@ -478,8 +484,8 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
                       relic_upgrade=False, relic_max_steps=10,
                       relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
                       gacha_config=None,
-                      mining_config=None,
-                      progress=None):
+                      mining_config=None, sea_config=None,
+                      only_tasks=None, progress=None):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -503,7 +509,8 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
              mail_skill_threshold=None,
              relic_upgrade=False, relic_max_steps=10, relic_fragment_floor=0,
              tycoon=False, tycoon_max_rolls=50,
-             mining_config=None, progress=None):
+             mining_config=None, sea_config=None,
+             only_tasks=None, progress=None):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)
@@ -636,3 +643,29 @@ def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
     assert callable(progress)
     progress("lamp", "progress", "12/34")
     assert ("ws-prog", "WS 開神燈 (12/34)") in steps
+
+
+def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):
+    """harvest_card tag 應在 dashboard 顯示為「豐收卡」。"""
+    import runtime_services.ws_runner_service as svc
+
+    steps: list[tuple] = []
+    monkeypatch.setattr(svc.bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured_progress = {}
+
+    def fake_run_device(ip, *, progress=None, **k):
+        captured_progress["fn"] = progress
+        return types.SimpleNamespace(
+            device=ip, login_ok=True, spend=False, tasks={}, errors={})
+
+    monkeypatch.setattr(svc, "_load_run_device", lambda: fake_run_device)
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-prog-card", cfg, _NullLogger())
+
+    progress = captured_progress["fn"]
+    progress("harvest_card", "start", "")
+    progress("harvest_card", "ok", "")
+    assert ("ws-prog-card", "WS 任務執行中: 豐收卡") in steps
+    assert ("ws-prog-card", "WS 任務完成: 豐收卡") in steps

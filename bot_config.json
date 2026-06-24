@@ -1,1072 +1,1155 @@
 {
-    "devices": {
-        "emulator-5554": {
-            "wake_hour_parity": "even",
-            "wake_minute_offset": 0,
-            "name": "閃電",
-            "web_debug_port": 9230,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_stop_mode": "close_browser",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v1",
-            "mining_save_samples": false,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_screenshot_method": "playwright",
-            "experimental_cocos_navigation": true,
-            "carpark": {
-                "avoid_lots": [
-                    1,
-                    2,
-                    3,
-                    4
-                ],
-                "cluster": true,
-                "cross_lot_preference": "back",
-                "cross_tier": "silver",
-                "daytime_cross": 1,
-                "daytime_total": 6,
-                "enabled": true,
-                "nighttime_cross": 0,
-                "nighttime_total": 5
+  "devices": {
+    "emulator-5554": {
+      "wake_hour_parity": "even",
+      "wake_minute_offset": 0,
+      "name": "閃電",
+      "web_debug_port": 9230,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_stop_mode": "close_browser",
+      "enable_farm": true,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v1",
+      "mining_save_samples": false,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_screenshot_method": "playwright",
+      "experimental_cocos_navigation": true,
+      "carpark": {
+        "avoid_lots": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "cluster": true,
+        "cross_lot_preference": "back",
+        "cross_tier": "silver",
+        "daytime_cross": 1,
+        "daytime_total": 6,
+        "enabled": true,
+        "nighttime_cross": 0,
+        "nighttime_total": 5
+      },
+      "statue_weekly": {
+        "enabled": true,
+        "amount": 7000,
+        "_comment": "WS runner + UI fallback; amount confirmed 2026-06-15"
+      },
+      "enable_mount_sprint": true,
+      "mount_sprint_quantity": 3200,
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "online_check_interval_sec": 30,
+      "online_check_interval": 5,
+      "enabled": true,
+      "use_ws_runner": false,
+      "ws_token_spend": true,
+      "ws_token_open_lamp": true,
+      "ws_token_mining": {
+        "enabled": true,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "ws_token": {
+        "enabled": true,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": true,
+        "open_lamp": true,
+        "lamp_percent": 1.0,
+        "lamp_min_keep": 500000,
+        "farm": {
+          "buy": [
+            {
+              "shop_id": 407,
+              "target": 4
             },
-            "statue_weekly": {
-                "enabled": true,
-                "amount": 7000,
-                "_comment": "WS runner + UI fallback; amount confirmed 2026-06-15"
-            },
-            "enable_mount_sprint": true,
-            "mount_sprint_quantity": 3200,
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30,
-            "online_check_interval": 5,
-            "enabled": true,
-            "use_ws_runner": false,
-            "ws_token_spend": true,
-            "ws_token_open_lamp": true,
-            "ws_token_mining": {
-                "enabled": true,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "ws_token": {
-                "enabled": true,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": true,
-                "open_lamp": true,
-                "lamp_percent": 1.0,
-                "lamp_min_keep": 500000,
-                "farm": {
-                    "buy": [
-                        {
-                            "shop_id": 407,
-                            "target": 4
-                        },
-                        {
-                            "shop_id": 408,
-                            "target": 4
-                        }
-                    ]
-                },
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": true,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": true,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "drain",
-                    "count": 999,
-                    "batches": 1
-                },
-                "ad_rewards": {
-                    "enabled": true,
-                    "config_ids": [
-                        12,
-                        14,
-                        15
-                    ]
-                },
-                "relic_sprint": {
-                    "enabled": false,
-                    "target_spend": 900000
-                }
-            },
-            "ws_token_sweep_list": [],
-            "web_reload_after_goto": false,
-            "ws_token_kungfu_guess": true
-        },
-        "emulator-5556": {
-            "wake_hour_parity": "even",
-            "wake_minute_offset": 15,
-            "name": "菜雞",
-            "web_debug_port": 9223,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": true,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_stop_mode": "close_browser",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 10,
-            "mining_planner_version": "v1",
-            "mining_save_samples": true,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_screenshot_method": "playwright",
-            "experimental_cocos_navigation": true,
-            "carpark": {
-                "avoid_lots": [
-                    1,
-                    2,
-                    3,
-                    4
-                ],
-                "cluster": true,
-                "cross_lot_preference": "back",
-                "cross_tier": "silver",
-                "daytime_cross": 1,
-                "daytime_total": 6,
-                "enabled": true,
-                "nighttime_cross": 0,
-                "nighttime_total": 5
-            },
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30,
-            "online_check_interval": 5,
-            "enabled": true,
-            "use_ws_runner": false,
-            "ws_token_spend": true,
-            "ws_token_open_lamp": true,
-            "ws_token_kungfu_guess": true,
-            "ws_token_mining": {
-                "enabled": true,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "ws_token": {
-                "enabled": true,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": true,
-                "open_lamp": true,
-                "lamp_percent": 0.0,
-                "lamp_min_keep": 0,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": false,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": true,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "drain",
-                    "count": 999,
-                    "batches": 1
-                },
-                "ad_rewards": {
-                    "enabled": true,
-                    "config_ids": [
-                        12,
-                        14,
-                        15
-                    ]
-                },
-                "relic_sprint": {
-                    "enabled": false,
-                    "target_spend": 900000
-                }
-            },
-            "ws_token_sweep_list": [],
-            "web_reload_after_goto": false
-        },
-        "emulator-5558": {
-            "wake_hour_parity": "even",
-            "wake_minute_offset": 5,
-            "name": "修哥帳號",
-            "online_check_target_pid": 89565100511322,
-            "web_debug_port": 9224,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_stop_mode": "close_browser",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v4",
-            "mining_save_samples": false,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_screenshot_method": "playwright",
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 2.75,
-            "online_check_interval_sec": 30,
-            "online_check_interval": 5
-        },
-        "emulator-5560": {
-            "wake_hour_parity": "odd",
-            "wake_minute_offset": 0,
-            "name": "夜路",
-            "web_debug_port": 9225,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_stop_mode": "close_browser",
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v1",
-            "mining_save_samples": true,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "web_screenshot_method": "playwright",
-            "online_check_interval_sec": 30,
-            "online_check_interval": 5,
-            "enabled": true,
-            "use_ws_runner": false,
-            "ws_token_spend": true,
-            "ws_token_open_lamp": true,
-            "ws_token_kungfu_guess": true,
-            "ws_token_mining": {
-                "enabled": true,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "ws_token": {
-                "enabled": true,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": true,
-                "open_lamp": true,
-                "lamp_percent": 0.0,
-                "lamp_min_keep": 0,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": false,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": true,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "drain",
-                    "count": 999,
-                    "batches": 1
-                },
-                "ad_rewards": {
-                    "enabled": true,
-                    "config_ids": [
-                        12,
-                        14,
-                        15
-                    ]
-                },
-                "relic_sprint": {
-                    "enabled": false,
-                    "target_spend": 900000
-                }
-            },
-            "ws_token_sweep_list": [],
-            "web_reload_after_goto": false
-        },
-        "7fe98fc6": {
-            "wake_hour_parity": "odd",
-            "wake_minute_offset": 5,
-            "name": "小寶帳號",
-            "backend": "web_h5",
-            "web_debug_port": 9226,
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_stop_mode": "close_browser",
-            "enable_farm": true,
-            "enable_harvest_card": false,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v1",
-            "mining_save_samples": true,
-            "web_screenshot_method": "playwright",
-            "experimental_cocos_navigation": true,
-            "carpark": {
-                "avoid_lots": [
-                    1,
-                    2,
-                    3,
-                    4
-                ],
-                "cluster": true,
-                "cross_lot_preference": "back",
-                "cross_tier": "silver",
-                "daytime_cross": 1,
-                "daytime_total": 6,
-                "enabled": true,
-                "nighttime_cross": 0,
-                "nighttime_total": 5
-            },
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30,
-            "online_check_interval": 5,
-            "ws_token": {
-                "enabled": true,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": true,
-                "open_lamp": true,
-                "lamp_percent": 1.0,
-                "lamp_min_keep": 500000,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": true,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": true,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "fixed",
-                    "count": 35,
-                    "batches": 3,
-                    "weekend_only": false,
-                    "free_daily": false
-                },
-                "ad_rewards": {
-                    "enabled": true,
-                    "config_ids": [
-                        12,
-                        14,
-                        15
-                    ]
-                },
-                "relic_sprint": {
-                    "enabled": false,
-                    "target_spend": 900000
-                }
-            },
-            "enabled": true,
-            "use_ws_runner": false,
-            "ws_token_spend": true,
-            "ws_token_open_lamp": true,
-            "ws_token_mining": {
-                "enabled": true,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "ws_token_sweep_list": [],
-            "web_reload_after_goto": false,
-            "ws_token_kungfu_guess": true
-        },
-        "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
-            "wake_hour_parity": "odd",
-            "wake_minute_offset": 15,
-            "name": "adb-fc65396d-4LPqmI._adb-tls-connect._tcp",
-            "backend": "adb",
-            "backend_display_id": "",
-            "web_url": "",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_stop_mode": "keep_page",
-            "web_screenshot_method": "playwright",
-            "enable_farm": true,
-            "enable_harvest_card": false,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 2400,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v1",
-            "mining_save_samples": false,
-            "statue_weekly": {
-                "enabled": true,
-                "amount": 7000,
-                "_comment": "ADB device; WS runner will try first, OCR fallback. amount confirmed 2026-06-15."
-            },
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "online_check_interval_sec": 30,
-            "enabled": true,
-            "online_check_interval": 5,
-            "ws_token": {
-                "enabled": true,
-                "bootstrap_token": true,
-                "offline_fallback": true,
-                "fallback_host": "infinite",
-                "spend": true,
-                "open_lamp": true,
-                "lamp_percent": 1.0,
-                "lamp_min_keep": 500000,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": true,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": true,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "drain",
-                    "count": 999,
-                    "batches": 1
-                },
-                "ad_rewards": {
-                    "enabled": true,
-                    "config_ids": [
-                        12,
-                        14,
-                        15
-                    ]
-                },
-                "relic_sprint": {
-                    "enabled": false,
-                    "target_spend": 900000
-                }
-            },
-            "use_ws_runner": false,
-            "ws_token_spend": true,
-            "ws_token_sweep_list": [],
-            "ws_token_open_lamp": true,
-            "web_reload_after_goto": false,
-            "ws_token_mining": {
-                "enabled": true,
-                "allow_bomb": true,
-                "allow_drill": true,
-                "max_steps": 200
-            },
-            "ws_token_kungfu_guess": true
-        },
-        "web-001": {
-            "name": "寶兒",
-            "enabled": false,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_stop_mode": "keep_page",
-            "web_screenshot_method": "playwright",
-            "web_screenshot_jpeg_quality": null,
-            "enable_farm": false,
-            "enable_arena": false,
-            "enable_mining": false,
-            "enable_dungeon": false,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "online_check_interval_sec": 30,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v4",
-            "mining_save_samples": false,
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "online_check_interval": 5,
-            "use_ws_runner": false,
-            "ws_token_spend": false,
-            "ws_token_sweep_list": [],
-            "ws_token_open_lamp": false,
-            "ws_token_kungfu_guess": false,
-            "ws_token_mining": {
-                "enabled": false,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "ws_token": {
-                "enabled": false,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": false,
-                "open_lamp": false,
-                "lamp_percent": 0.0,
-                "lamp_min_keep": 0,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": false,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": false,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "fixed",
-                    "count": 35,
-                    "batches": 3,
-                    "weekend_only": false,
-                    "free_daily": false
-                }
-            },
-            "web_reload_after_goto": false
-        },
-        "web-002": {
-            "name": "暴哥",
-            "enabled": false,
-            "backend": "web_h5",
-            "backend_display_id": "",
-            "use_ws_runner": false,
-            "ws_token_spend": false,
-            "ws_token_sweep_list": [],
-            "ws_token_open_lamp": false,
-            "ws_token_kungfu_guess": false,
-            "ws_token_mining": {
-                "enabled": false,
-                "allow_bomb": false,
-                "allow_drill": false,
-                "max_steps": 200
-            },
-            "web_url": "https://mushroomh5.acenetgame.com/",
-            "web_canvas_selector": "canvas",
-            "web_profile_dir": "playwright_profile/{device_id}",
-            "web_state_file": "auth_state/{device_id}.json",
-            "web_channel": "chrome",
-            "web_headless": false,
-            "web_clear_cookies_on_start": false,
-            "web_viewport_width": 540,
-            "web_viewport_height": 960,
-            "web_manual_viewport_width": 0,
-            "web_manual_viewport_height": 0,
-            "web_stop_mode": "keep_page",
-            "web_screenshot_method": "playwright",
-            "web_screenshot_jpeg_quality": null,
-            "web_reload_after_goto": false,
-            "enable_farm": true,
-            "enable_arena": true,
-            "enable_mining": true,
-            "enable_dungeon": true,
-            "enable_shop_manager": true,
-            "enable_dungeon_manager": true,
-            "enable_fannaoxiao": false,
-            "is_real_phone": false,
-            "keep_screen_on": false,
-            "screenshot_debug": false,
-            "online_check_interval_sec": 30,
-            "lamp_check_interval": 2,
-            "lamp_duration_sec": 300,
-            "mining_duration_min": 6,
-            "mining_planner_version": "v1",
-            "mining_save_samples": false,
-            "sleep_min_hours": 1.0,
-            "sleep_max_hours": 1.0,
-            "ws_token": {
-                "enabled": false,
-                "bootstrap_token": true,
-                "offline_fallback": false,
-                "fallback_host": "",
-                "spend": false,
-                "open_lamp": false,
-                "lamp_percent": 0.0,
-                "lamp_min_keep": 0,
-                "farm": null,
-                "dungeon_sweeps": [],
-                "carpark_target": null,
-                "carpark_auto": false,
-                "carpark_plan": {
-                    "enabled": false,
-                    "silver_levels": [
-                        9,
-                        10
-                    ],
-                    "day": {
-                        "window": [
-                            "10:00",
-                            "22:00"
-                        ],
-                        "cross": 1
-                    },
-                    "night": {
-                        "window": [
-                            "22:00",
-                            "10:00"
-                        ],
-                        "cross": 0
-                    },
-                    "cluster_min": 3,
-                    "grab_window_seconds": 60,
-                    "grab_poll_seconds": 1.0,
-                    "grab_attempts": 8,
-                    "allow_low_noncluster": true
-                },
-                "couple_gifts": true,
-                "forge_ring": false,
-                "workshop_rotate": true,
-                "mail_claim": false,
-                "mail_gem_threshold": null,
-                "mail_skill_threshold": null,
-                "relic_upgrade": false,
-                "relic_max_steps": 10,
-                "relic_fragment_floor": 0,
-                "tycoon": false,
-                "tycoon_max_rolls": 50,
-                "mining": {
-                    "enabled": false,
-                    "allow_bomb": false,
-                    "allow_drill": false,
-                    "max_steps": 200
-                },
-                "gacha": {
-                    "enabled": false,
-                    "types": [
-                        1,
-                        2
-                    ],
-                    "mode": "fixed",
-                    "count": 35,
-                    "batches": 3,
-                    "weekend_only": false,
-                    "free_daily": false
-                }
-            },
-            "online_check_interval": 5
-        }
-    },
-    "global": {
-        "mode": "master",
-        "sea_v2_enabled": true,
-        "master_url": "http://127.0.0.1:5002",
-        "worker_id": "unknown_worker",
-        "worker_sync_timeout_sec": 10.0,
-        "worker_sync_failure_backoff_sec": 6.0,
-        "live_view": {
-            "enabled": true
-        },
-        "ocr": {
-            "servers": [
-                "http://100.64.0.5:5001",
-                "http://100.64.0.7:5001",
-                "http://localhost:5001"
-            ],
-            "server_mode": "main",
-            "timeout_sec": 20,
-            "img_decode_retries": 3,
-            "ocr_empty_retries": 2,
-            "retry_delay_sec": 0.6,
-            "default_region_enabled": false,
-            "default_x_range": [
-                0,
-                0
-            ],
-            "default_y_range": [
-                0,
-                0
-            ],
-            "labeler_endpoint": "http://100.64.0.7:1234/v1/chat/completions",
-            "labeler_model": "qwen/qwen3.5-9b",
-            "labeler_source_dir": "ocr_fails_new",
-            "labeler_output_dir": "OCR_train",
-            "labeler_daily_time": "02:00",
-            "trainer_epochs": "10",
-            "trainer_remove_source": "false"
-        },
-        "host_settings": {
-            "DESKTOP-OV0ASQ4": {
-                "mode": "worker",
-                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
-                "worker_id": "desktop_ov0asq4"
-            },
-            "YOUR-DORM-PC-NAME": {
-                "mode": "master"
-            },
-            "YOUR-LAPTOP-NAME": {
-                "mode": "worker",
-                "master_url": "http://127.0.0.1:5002",
-                "worker_id": "laptop_worker"
+            {
+              "shop_id": 408,
+              "target": 4
             }
+          ]
         },
-        "online_check_checkers": [
-            "*"
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": true,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": true,
+        "workshop_rotate": true,
+        "mail_claim": true,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "relic_sprint": {
+          "enabled": false,
+          "target_spend": 900000
+        },
+        "tycoon": true,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": true,
+          "allow_bomb": true,
+          "allow_drill": true,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": true,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 35,
+          "batches": 1,
+          "weekend_only": true,
+          "free_daily": false
+        },
+        "ad_rewards": {
+          "enabled": true,
+          "config_ids": [
+            12,
+            14,
+            15
+          ]
+        },
+        "sea_season": {
+          "dispatch": true,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ],
+          "attack_daily_max": 4
+        }
+      },
+      "ws_token_sweep_list": [],
+      "web_reload_after_goto": false,
+      "ws_token_kungfu_guess": true
+    },
+    "emulator-5556": {
+      "wake_hour_parity": "even",
+      "wake_minute_offset": 15,
+      "name": "菜雞",
+      "web_debug_port": 9223,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_stop_mode": "close_browser",
+      "enable_farm": true,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 10,
+      "mining_planner_version": "v1",
+      "mining_save_samples": true,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_screenshot_method": "playwright",
+      "experimental_cocos_navigation": true,
+      "carpark": {
+        "avoid_lots": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "cluster": true,
+        "cross_lot_preference": "back",
+        "cross_tier": "silver",
+        "daytime_cross": 1,
+        "daytime_total": 6,
+        "enabled": true,
+        "nighttime_cross": 0,
+        "nighttime_total": 5
+      },
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "online_check_interval_sec": 30,
+      "online_check_interval": 5,
+      "enabled": true,
+      "use_ws_runner": false,
+      "ws_token_spend": true,
+      "ws_token_open_lamp": true,
+      "ws_token_kungfu_guess": true,
+      "ws_token_mining": {
+        "enabled": true,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "ws_token": {
+        "enabled": true,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": true,
+        "open_lamp": true,
+        "lamp_percent": 0.0,
+        "lamp_min_keep": 0,
+        "farm": null,
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": true,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": true,
+        "workshop_rotate": true,
+        "mail_claim": true,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "relic_sprint": {
+          "enabled": false,
+          "target_spend": 900000
+        },
+        "tycoon": true,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": true,
+          "allow_bomb": true,
+          "allow_drill": true,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 999,
+          "batches": 1,
+          "weekend_only": false,
+          "free_daily": false
+        },
+        "ad_rewards": {
+          "enabled": true,
+          "config_ids": [
+            12,
+            14,
+            15
+          ]
+        },
+        "sea_season": {
+          "dispatch": true,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ],
+          "attack_daily_max": 4
+        }
+      },
+      "ws_token_sweep_list": [],
+      "web_reload_after_goto": false
+    },
+    "emulator-5558": {
+      "wake_hour_parity": "even",
+      "wake_minute_offset": 5,
+      "name": "修哥帳號",
+      "online_check_target_pid": 89565100511322,
+      "web_debug_port": 9224,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_stop_mode": "close_browser",
+      "enable_farm": true,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v4",
+      "mining_save_samples": false,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_screenshot_method": "playwright",
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 2.75,
+      "online_check_interval_sec": 30,
+      "online_check_interval": 5,
+      "ws_token": {
+        "enabled": true,
+        "sea_season": {
+          "dispatch": false,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ]
+        },
+        "only_tasks": [
+          "sea_season"
         ]
+      }
+    },
+    "emulator-5560": {
+      "wake_hour_parity": "odd",
+      "wake_minute_offset": 0,
+      "name": "夜路",
+      "web_debug_port": 9225,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_stop_mode": "close_browser",
+      "enable_farm": true,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v1",
+      "mining_save_samples": true,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "web_screenshot_method": "playwright",
+      "online_check_interval_sec": 30,
+      "online_check_interval": 5,
+      "enabled": true,
+      "use_ws_runner": false,
+      "ws_token_spend": true,
+      "ws_token_open_lamp": true,
+      "ws_token_kungfu_guess": true,
+      "ws_token_mining": {
+        "enabled": true,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "ws_token": {
+        "enabled": true,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": true,
+        "open_lamp": true,
+        "lamp_percent": 0.0,
+        "lamp_min_keep": 0,
+        "farm": null,
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": true,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": true,
+        "workshop_rotate": true,
+        "mail_claim": true,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "tycoon": true,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": true,
+          "allow_bomb": true,
+          "allow_drill": true,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "drain",
+          "count": 999,
+          "batches": 1
+        },
+        "ad_rewards": {
+          "enabled": true,
+          "config_ids": [
+            12,
+            14,
+            15
+          ]
+        },
+        "relic_sprint": {
+          "enabled": false,
+          "target_spend": 900000
+        },
+        "sea_season": {
+          "dispatch": true,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ],
+          "attack_daily_max": 4
+        }
+      },
+      "ws_token_sweep_list": [],
+      "web_reload_after_goto": false
+    },
+    "7fe98fc6": {
+      "wake_hour_parity": "odd",
+      "wake_minute_offset": 5,
+      "name": "小寶帳號",
+      "backend": "web_h5",
+      "web_debug_port": 9226,
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_stop_mode": "close_browser",
+      "enable_farm": true,
+      "enable_harvest_card": false,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v4",
+      "mining_save_samples": true,
+      "web_screenshot_method": "playwright",
+      "experimental_cocos_navigation": true,
+      "carpark": {
+        "avoid_lots": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "cluster": true,
+        "cross_lot_preference": "back",
+        "cross_tier": "silver",
+        "daytime_cross": 1,
+        "daytime_total": 6,
+        "enabled": true,
+        "nighttime_cross": 0,
+        "nighttime_total": 5
+      },
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "online_check_interval_sec": 30,
+      "online_check_interval": 5,
+      "ws_token": {
+        "enabled": true,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": true,
+        "open_lamp": true,
+        "lamp_percent": 1.0,
+        "lamp_min_keep": 500000,
+        "farm": {
+          "harvest_card_cycle": {
+            "enabled": true
+          }
+        },
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": true,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": true,
+        "workshop_rotate": true,
+        "mail_claim": true,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "relic_sprint": {
+          "enabled": false,
+          "target_spend": 900000
+        },
+        "tycoon": true,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": true,
+          "allow_bomb": true,
+          "allow_drill": true,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 35,
+          "batches": 3,
+          "weekend_only": false,
+          "free_daily": false
+        },
+        "ad_rewards": {
+          "enabled": true,
+          "config_ids": [
+            12,
+            14,
+            15
+          ]
+        },
+        "sea_season": {
+          "dispatch": true,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ],
+          "attack_daily_max": 4
+        }
+      },
+      "enabled": true,
+      "use_ws_runner": false,
+      "ws_token_spend": true,
+      "ws_token_open_lamp": true,
+      "ws_token_mining": {
+        "enabled": true,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "ws_token_sweep_list": [],
+      "web_reload_after_goto": false,
+      "ws_token_kungfu_guess": true
+    },
+    "adb-fc65396d-4LPqmI._adb-tls-connect._tcp": {
+      "wake_hour_parity": "odd",
+      "wake_minute_offset": 15,
+      "name": "我的手機",
+      "backend": "adb",
+      "backend_display_id": "",
+      "web_url": "",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_stop_mode": "keep_page",
+      "web_screenshot_method": "playwright",
+      "enable_farm": true,
+      "enable_harvest_card": false,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 2400,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v4",
+      "mining_save_samples": false,
+      "statue_weekly": {
+        "enabled": true,
+        "amount": 7000,
+        "_comment": "ADB device; WS runner will try first, OCR fallback. amount confirmed 2026-06-15."
+      },
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "online_check_interval_sec": 30,
+      "enabled": true,
+      "online_check_interval": 5,
+      "ws_token": {
+        "enabled": true,
+        "bootstrap_token": true,
+        "offline_fallback": true,
+        "fallback_host": "infinite",
+        "spend": true,
+        "open_lamp": true,
+        "lamp_percent": 1.0,
+        "lamp_min_keep": 500000,
+        "farm": {
+          "buy": [
+            {
+              "shop_id": 407,
+              "target": 4
+            },
+            {
+              "shop_id": 408,
+              "target": 4
+            }
+          ],
+          "harvest_card_cycle": {
+            "enabled": true
+          }
+        },
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": true,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": true,
+        "workshop_rotate": true,
+        "mail_claim": true,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "relic_sprint": {
+          "enabled": false,
+          "target_spend": 900000
+        },
+        "tycoon": true,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": true,
+          "allow_bomb": true,
+          "allow_drill": true,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 999,
+          "batches": 1,
+          "weekend_only": true,
+          "free_daily": false
+        },
+        "ad_rewards": {
+          "enabled": true,
+          "config_ids": [
+            12,
+            14,
+            15
+          ]
+        },
+        "sea_season": {
+          "dispatch": true,
+          "repair": true,
+          "home_grid": [
+            30,
+            26
+          ],
+          "attack_daily_max": 4
+        }
+      },
+      "use_ws_runner": false,
+      "ws_token_spend": true,
+      "ws_token_sweep_list": [],
+      "ws_token_open_lamp": true,
+      "web_reload_after_goto": false,
+      "ws_token_mining": {
+        "enabled": true,
+        "allow_bomb": true,
+        "allow_drill": true,
+        "max_steps": 200
+      },
+      "ws_token_kungfu_guess": true
+    },
+    "web-001": {
+      "name": "寶兒",
+      "enabled": false,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_stop_mode": "keep_page",
+      "web_screenshot_method": "playwright",
+      "web_screenshot_jpeg_quality": null,
+      "enable_farm": false,
+      "enable_arena": false,
+      "enable_mining": false,
+      "enable_dungeon": false,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "online_check_interval_sec": 30,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v4",
+      "mining_save_samples": false,
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "online_check_interval": 5,
+      "use_ws_runner": false,
+      "ws_token_spend": false,
+      "ws_token_sweep_list": [],
+      "ws_token_open_lamp": false,
+      "ws_token_kungfu_guess": false,
+      "ws_token_mining": {
+        "enabled": false,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "ws_token": {
+        "enabled": false,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": false,
+        "open_lamp": false,
+        "lamp_percent": 0.0,
+        "lamp_min_keep": 0,
+        "farm": null,
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": false,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": false,
+        "workshop_rotate": true,
+        "mail_claim": false,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "tycoon": false,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": false,
+          "allow_bomb": false,
+          "allow_drill": false,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 35,
+          "batches": 3,
+          "weekend_only": false,
+          "free_daily": false
+        }
+      },
+      "web_reload_after_goto": false
+    },
+    "web-002": {
+      "name": "暴哥",
+      "enabled": false,
+      "backend": "web_h5",
+      "backend_display_id": "",
+      "use_ws_runner": false,
+      "ws_token_spend": false,
+      "ws_token_sweep_list": [],
+      "ws_token_open_lamp": false,
+      "ws_token_kungfu_guess": false,
+      "ws_token_mining": {
+        "enabled": false,
+        "allow_bomb": false,
+        "allow_drill": false,
+        "max_steps": 200
+      },
+      "web_url": "https://mushroomh5.acenetgame.com/",
+      "web_canvas_selector": "canvas",
+      "web_profile_dir": "playwright_profile/{device_id}",
+      "web_state_file": "auth_state/{device_id}.json",
+      "web_channel": "chrome",
+      "web_headless": false,
+      "web_clear_cookies_on_start": false,
+      "web_viewport_width": 540,
+      "web_viewport_height": 960,
+      "web_manual_viewport_width": 0,
+      "web_manual_viewport_height": 0,
+      "web_stop_mode": "keep_page",
+      "web_screenshot_method": "playwright",
+      "web_screenshot_jpeg_quality": null,
+      "web_reload_after_goto": false,
+      "enable_farm": true,
+      "enable_arena": true,
+      "enable_mining": true,
+      "enable_dungeon": true,
+      "enable_shop_manager": true,
+      "enable_dungeon_manager": true,
+      "enable_fannaoxiao": false,
+      "is_real_phone": false,
+      "keep_screen_on": false,
+      "screenshot_debug": false,
+      "online_check_interval_sec": 30,
+      "lamp_check_interval": 2,
+      "lamp_duration_sec": 300,
+      "mining_duration_min": 6,
+      "mining_planner_version": "v1",
+      "mining_save_samples": false,
+      "sleep_min_hours": 1.0,
+      "sleep_max_hours": 1.0,
+      "ws_token": {
+        "enabled": false,
+        "bootstrap_token": true,
+        "offline_fallback": false,
+        "fallback_host": "",
+        "spend": false,
+        "open_lamp": false,
+        "lamp_percent": 0.0,
+        "lamp_min_keep": 0,
+        "farm": null,
+        "dungeon_sweeps": [],
+        "carpark_target": null,
+        "carpark_auto": false,
+        "carpark_plan": {
+          "enabled": false,
+          "silver_levels": [
+            9,
+            10
+          ],
+          "day": {
+            "window": [
+              "10:00",
+              "22:00"
+            ],
+            "cross": 1
+          },
+          "night": {
+            "window": [
+              "22:00",
+              "10:00"
+            ],
+            "cross": 0
+          },
+          "cluster_min": 3,
+          "grab_window_seconds": 60,
+          "grab_poll_seconds": 1.0,
+          "grab_attempts": 8,
+          "allow_low_noncluster": true
+        },
+        "couple_gifts": true,
+        "forge_ring": false,
+        "workshop_rotate": true,
+        "mail_claim": false,
+        "mail_gem_threshold": null,
+        "mail_skill_threshold": null,
+        "relic_upgrade": false,
+        "relic_max_steps": 10,
+        "relic_fragment_floor": 0,
+        "tycoon": false,
+        "tycoon_max_rolls": 50,
+        "mining": {
+          "enabled": false,
+          "allow_bomb": false,
+          "allow_drill": false,
+          "max_steps": 200
+        },
+        "gacha": {
+          "enabled": false,
+          "types": [
+            1,
+            2
+          ],
+          "mode": "fixed",
+          "count": 35,
+          "batches": 3,
+          "weekend_only": false,
+          "free_daily": false
+        }
+      },
+      "online_check_interval": 5
     }
+  },
+  "global": {
+    "mode": "master",
+    "sea_v2_enabled": true,
+    "master_url": "http://127.0.0.1:5002",
+    "worker_id": "unknown_worker",
+    "worker_sync_timeout_sec": 10.0,
+    "worker_sync_failure_backoff_sec": 6.0,
+    "live_view": {
+      "enabled": true
+    },
+    "ocr": {
+      "servers": [
+        "http://100.64.0.5:5001",
+        "http://100.64.0.7:5001",
+        "http://localhost:5001"
+      ],
+      "server_mode": "main",
+      "timeout_sec": 20,
+      "img_decode_retries": 3,
+      "ocr_empty_retries": 2,
+      "retry_delay_sec": 0.6,
+      "default_region_enabled": false,
+      "default_x_range": [
+        0,
+        0
+      ],
+      "default_y_range": [
+        0,
+        0
+      ],
+      "labeler_endpoint": "http://100.64.0.7:1234/v1/chat/completions",
+      "labeler_model": "qwen/qwen3.5-9b",
+      "labeler_source_dir": "ocr_fails_new",
+      "labeler_output_dir": "OCR_train",
+      "labeler_daily_time": "02:00",
+      "trainer_epochs": "10",
+      "trainer_remove_source": "false"
+    },
+    "host_settings": {
+      "DESKTOP-OV0ASQ4": {
+        "mode": "worker",
+        "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
+        "worker_id": "desktop_ov0asq4"
+      },
+      "YOUR-DORM-PC-NAME": {
+        "mode": "master"
+      },
+      "YOUR-LAPTOP-NAME": {
+        "mode": "worker",
+        "master_url": "http://127.0.0.1:5002",
+        "worker_id": "laptop_worker"
+      }
+    },
+    "online_check_checkers": [
+      "*"
+    ]
+  }
 }

@@ -32,6 +32,7 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "turntable": ("轉盤金幣",),
     "mining": ("挖礦/Oracle",),
     "gacha": ("抽技能夥伴",),
+    "sea_season": ("航海任務 (Sea)",),
 }
 
 # pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
@@ -194,6 +195,14 @@ _RESUME_TTL_SEC = 30 * 60
 # 時間窗（10:00 搶車位）/ 每輪累積收益類任務即使本輪稍早做過，resume 仍要重跑，
 # 不被 ledger 跳過。
 _RESUME_EXEMPT = frozenset({"carpark", "idle_reward"})
+_WS_TASK_LABELS = {
+    "harvest_card": "豐收卡",
+}
+
+
+def _ws_task_label(name: str) -> str:
+    """Dashboard-facing WS task label; internal task keys stay English."""
+    return _WS_TASK_LABELS.get(name, name)
 
 
 def _substantive_done(report) -> set[str]:
@@ -336,8 +345,10 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         ad_reward_config_ids=_ad_reward_ids(cfg),
         gacha_config=cfg.get("gacha") or None,
         mining_config=cfg.get("mining") or None,
+        sea_config=cfg.get("sea_season") or None,
         should_abort=should_abort,
         skip_tasks=skip_tasks,
+        only_tasks=cfg.get("only_tasks") or None,
     )
     # target 只在有值時帶，否則讓 run_device 用其預設（避免 None 覆寫 int 預設）。
     if sprint_on and sprint_target is not None:
@@ -401,18 +412,19 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
+        label = _ws_task_label(name)
         if status == "start":
-            step = f"WS 任務執行中: {name}"
-            log.info("[%s] WS 任務開始: %s", ip, name)
+            step = f"WS 任務執行中: {label}"
+            log.info("[%s] WS 任務開始: %s", ip, label)
         elif status == "ok":
-            step = f"WS 任務完成: {name}"
-            log.info("[%s] WS 任務完成: %s", ip, name)
+            step = f"WS 任務完成: {label}"
+            log.info("[%s] WS 任務完成: %s", ip, label)
         elif status == "progress":
             step = f"WS 開神燈 ({detail})"
             log.info("[%s] WS 開神燈進度: %s", ip, detail)
         else:
-            step = f"WS 任務失敗: {name}"
-            log.warning("[%s] WS 任務失敗: %s (%s)", ip, name, detail)
+            step = f"WS 任務失敗: {label}"
+            log.warning("[%s] WS 任務失敗: %s (%s)", ip, label, detail)
         try:
             import bot_state
             bot_state.update_state(ip, task="WS 階段", step=step)
