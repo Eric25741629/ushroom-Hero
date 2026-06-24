@@ -1,906 +1,270 @@
-# tasks/todo.md（2026-06-11 重整）
+# tasks/todo.md（2026-06-20 壓縮）
 
-> 已完成項目（含完整 Review）已移至 `tasks/archive/todo_archive_2026-06-11.md`。
-> ws_token 家園三件待辦另見 `tasks/ws_token_home_todo.md`。
-> 重構優先序真相來源：`docs/REFACTORING_OPPORTUNITIES.md`。
-
----
-
-## 🎛️ 2026-06-19 Dashboard 設定 modal — 任務類別橫向頁籤（進階設定內）
-
-設計已核准（memory `project-dashboard-config-category-tabs`）。目標：把 25+ 個藏在
-bot_config.json 的 ws_token 設定全部露出，以任務類別分頁籤，收進「進階設定」摺疊段，
-橫向切換。主視圖維持精簡（方案/排程/4 個常用 enable toggle 保留）。
-
-架構（schema-driven，localized 在這一段）：
-- `TASK_TABS` JS schema（每類別 + 欄位 path/type/label/default/wsOnly；type bool/int/float/select/special）
-- `getPath/setPath(obj,'ws_token.gacha.count',v)` 巢狀存取 helper
-- `renderTaskTabs()` 由 schema 生成橫向頁籤條 + 各 panel；`loadTaskTabs(config)` / `collectTaskTabs(payload)`
-- 既有 id（chkWsOpenLamp/inpWsLampPercent/inpWsLampMinKeep/chkWsMining/chkWsKungfuGuess/
-  chkWsFarm/chkWsOfflineFallback）→ 由 schema 接管，移除舊「WS 任務」details 避免重複 id
-
-類別：農場/神燈/挖礦/遺物/車位/郵件/抽卡/看廣告/競猜/大亨/伴侶加工/副本掃蕩
-
-- [x] P1 外殼+infra+簡單欄位類（神燈/挖礦/遺物/郵件/伴侶/競猜/大亨/連線）+ 接線 + 移除舊 details + 驗證（commit 0aac335b）
-- [x] P2a 農場細項（buy 407/408、看廣告種子 ad#15、harvest_card_cycle、種植/打工）+ 看廣告 ad split（commit 8d5e0f79）
-- [x] P2b 抽卡（gacha 全欄 + select type）+ 車位/副本掃蕩（JSON 輕量）（commit 51666d9a）
-- [ ] （follow-up，低優先）farm/dungeon_sweeps 後端 sanitizer（目前 frontend 控制型別 + runner 防呆，passthrough）
-- [ ] dashboard 重整頁面 live 驗證一輪（改 template，不需重啟 bot）
-
-注意：dashboard.html 共用大檔直接 Edit（勿 Write 覆蓋）；改 template 重整頁面即生效，不需重啟 bot。
-農場頁籤「每週豐收卡」= WS `ws_token.farm.harvest_card_cycle`（與視覺農場 enable_harvest_card 不同條）。
+> 已完成項目（含 Review）已移至 `finish.md`（2026-06-20 archive 區塊）。
+> 重構真相來源：`docs/REFACTORING_OPPORTUNITIES.md`。
+> 其他檔案各自追蹤：見末段。
 
 ---
 
-## 🪟 2026-06-19 進階設定 白話化 + 重新分類 + 浮窗（使用者：看不懂用詞）
+## 🔧 2026-06-24 航海/龍骸聖域 dashboard 燈接線 + 航海改日曆錨點
 
-使用者回饋：進階設定用詞太術語（尤其車位/副本掃蕩）；大亨是活動該獨立；抽卡 drain 工具頁已有；
-遺物平均強化移工具頁、這邊只留每週期解 900K 並顯示本期活動結束日；卡片要大一些（開獨立浮窗）；
-伴侶/加工坊拆開，跟郵件/競猜/抽卡一起放「雜項」。全部只在 `templates/dashboard.html`（Edit，勿 Write）。
+問題:dashboard 每日進度的「航海」燈不亮、龍骸聖域形同沒接。根因:
+- 航海檔期判斷用 `sea_cycle_start`(各裝置「上次跑」時間)推 4 週 → 隨 run 歷史漂移、與遊戲檔期脫鉤、各裝置不一致。本週(06-22)實際開航海,但磁碟 `sea_cycle_start=06-17` 讓它算 off-cycle → badge 被藏 + run 排程也不會跑航海。
+- 點亮用 `check_is_today`:多週活動只在跑的當天亮,隔天又變 ⏳。
 
-### Phase 0 — 前端重整（改 template，reload 即生效，不需重啟 bot）— 完成 2026-06-19
-- [x] A. 浮窗化：進階設定改「按鈕→開獨立較寬浮動 modal `#taskSettingsModal`」（780px，z-index 1100，
-      沿用 .modal/.active CSS）；頁籤條+panel 搬進去，欄位 id 不變；字級/間距上調一階 + 子標題。
-- [x] B. 重新分類 chips（`WS_TASK_TABS`）：移除 大亨/郵件/競猜/抽卡/伴侶加工 5 chip；
-      新增「活動」(events：大亨) +「雜項」(misc：伴侶/加工坊/郵件/競猜/抽卡，各帶 .ws-subhead 小標題)。
-      伴侶 vs 加工坊拆兩區塊（新增 data-slot="workshop"，`workshop_rotate` 改 slot='workshop'）。
-      最終 chips：農場/神燈/挖礦/遺物/看廣告/跨服停車/副本掃蕩/活動/雜項/連線（Playwright 確認 10 chip）。
-- [x] C. 白話改寫各 label：拿掉「WS/純 WS」術語、改動作導向；頂部提示句改白話。車位→「跨服停車」。
-      ⚠ 副本掃蕩本次不動：維持現狀（chip + JSON 文字框照舊），待後續單獨對話討論改版。
-- [x] D. 抽卡移除 drain：拿掉 `gacha.mode` 選單；額外在 `_collectGachaTypes` 釘 `mode='fixed'`
-      （runner 預設是 drain，不釘會偷抽到券盡）。Playwright 確認存檔 gacha.mode='fixed'。
-- [x] E. 遺物精簡：移除「平均強化」三欄（relic_upgrade/relic_max_steps/relic_fragment_floor）；
-      遺物頁只留衝刺（relic_sprint.enabled + target_spend=900000）。既有 relic_upgrade 由 Object.assign 保留。
-- [x] F. Phase0 驗證：Playwright 開浮窗 + 切頁籤 + collectTaskTabs round-trip 全綠（chip/slot/label/gacha-fixed/
-      workshop-split/relic-slim 皆正確）；served HTML 確認 template 已更新。實際 POST 存檔到 bot_config 未跑
-      （避免改到 live 裝置設定，使用者實機存檔即驗）。
+修法(run 排程 + dashboard 共用日曆錨點,全裝置一致):
+- [x] `json_manager/scheduling.py`:新增 `is_sea_week()`(錨點週一 2026-06-22、28 天一輪,與龍骸 `_is_dragon_week` 同形);`should_execute_sea_with_cooldown` 改吃 `is_sea_week`,丟掉 `sea_cycle_start` 週期數學(保留時段視窗 + 4h 冷卻)。
+- [x] `json_manager/__init__.py`:export `is_sea_week`。
+- [x] `control_panel/routes_status.py` `daily_progress`:航海 gate 改 `sea_week`(日曆)、龍骸維持 `triweekly`;兩者點亮改 `period="week"` → `manager.is_same_week`(檔期週整週維持 ✅)。
+- [x] 測試:`tests/test_sea_week_anchor.py`(is_sea_week + run gate 7 例)、`test_daily_progress_badge.py` 補 `is_same_week` + week-predicate 例。
 
-### Phase 1 — 遺物「本期活動結束日（即時讀）」— 完成 2026-06-19（commit 8fdeee7d/b8c95bba）
-- [x] G. recon：`tools/probe_relic_calendar.py` CDP→小寶(9226) 解 6576 `act_cross_limit_rank_calendar`：
-      回 repeated #1 {act_type#1, begin#2, end#3}（Unix 秒，clean UTC+8 日界）。同 act_type 可多窗
-      （269 當期 06-15→06-22 + 未來 07-13 一日重跑）。
-- [x] H. 後端：`ws_token/relic_sprint` 加 `CalWindow`/`parse_calendar`/`read_calendar`/`active_window`
-      （取 begin<=now<=end 的當前窗，多窗取最早結束）；`/api/relic_sprint/plan` 多回 `end_ts`。
-- [x] I. 前端：遺物頁籤開啟即 fetch plan → 顯示「本期活動結束日：YYYY/MM/DD（約剩 N 天）」/「本期沒有活動」/
-      401 軟提示。Playwright 驗證 fetch 路徑+401 分支無 JS error。
-- [x] 測試：`test_ws_token_relic_sprint` 加 5 個 calendar 測（37 passed）；routes 11 passed。
-
-⚠ 待使用者：**重啟控制面板/bot** 後 `/api/relic_sprint/plan` 才會吐 `end_ts`（routes 改動需 reload）；
-重啟後登入工具 session 開遺物頁籤即見 2026/06/22。recon 工具 `tools/probe_relic_calendar.py` 可事後刪。
-
-### ⚠ 並行 instance 衝突事件（2026-06-19，已自救）
-另一個 Claude instance 在共用工作目錄切 branch（feat/overnight→fix/ws-farm-badges→回來），把我 Phase0 的
-commit 沖到 `fix/ws-farm-badges`（現於 worktree `.claude/worktrees/ws-farm-badges`），主目錄 working tree 退回
-Phase0 前。已從 commit 5f518524 還原 Phase0 + 重新接上 Phase1，全部重新 commit 到 feat/overnight-2026-06-14
-（8fdeee7d/b8c95bba）。**殘留：`fix/ws-farm-badges` tip 是我的 5f518524（內容與 feat/overnight 重複）**——
-未動該 branch（別家 instance 在用），待使用者決定是否 `git reset --hard 51666d9a` 清掉。
-教訓見 `tasks/lessons.md`：改碼工作要照 memory 規則先進 git worktree 隔離。
-
-### 後續單獨討論（使用者另開對話）
-- [ ] 副本掃蕩改版 — 用詞白話化 + 是否改逐欄表單（取代 JSON）。本次重整不碰，維持現狀等討論。
-
-Follow-up（暫不做）：車位 full 逐欄表單仍 JSON；既有 drain 裝置不主動遷 fixed。
+Review:
+- 全綠:本批 18 例 + `test_json_manager.py` 85 例(既有航海視窗測試用 05-29=錨點前整 4 週,仍判為航海週,不受影響)。
+- 只在檔期顯示(沿用隱藏 gate),非檔期週仍不顯示。
+- ⚠ 需重啟 `new_main_v2.py` + 中控才生效(無 hot-reload)。
+- 範圍外但同雷:`periodic_tasks.should_execute_sea` / `week_events`(legacy,daily_pipeline 未用)、武道會/坐騎衝刺 badge 仍用 today-predicate + cycle-from-last-run,未動。
+- 錨點若與遊戲實際檔期不符,只改 `_SEA_ANCHOR_MONDAY` / `_SEA_CYCLE_DAYS` 兩常數。
 
 ---
 
-## 🛠️ 2026-06-19 codex review 修正（純 WS 掛機）
+## ✅ log 確認已 LIVE（bot 自 2026-06-19 21:57 起跑此 checkout，2026-06-20 log 核對）
 
-規則: 不 commit、不重啟 bot、不動 live 裝置。每項補/改測試。
+下列已在 5 台（5554/5556/5560/小寶 7fe98fc6/手機 fc）log 確認實際執行、無 error：
+- WS 全 pipeline 每輪跑完（ok 含 carpark/main_tasks/farm/dungeon/relic/relic_sprint/mining/lamp/... ）
+- carpark_plan 跨界停車 + 倉庫收益領取（carpark task + carpark_scheduler 車位檢查）
+- relic_sprint（每輪 clean 完成，無 error；但 spend 細節未入 log → #25 仍待驗）
+- 農場 WS：read_work_status、buy 407/408 to daily target、豐收卡循環「開始」+ ws_farm.log 落檔（#22）
+- **offline_fallback（手機 fc）**：「手機 ADB 不可達，啟用離線純 WS 備援」→ 整輪 WS 跑完，多次重複 OK = #6 LIVE 驗證 ✅
+- **WS 挖礦 hold_floor deadlock 修**：pickaxe 實際遞減（8→7→6）、盤面變動、unconfirmed 自動換格續挖、無卡死 = LIVE 驗證 ✅
+- token bootstrap：手機 fc 走 WS 備援皆成功（token 可用）
 
-- [x] 1. CRITICAL 遺物衝刺 spend 失控 — accrued 驅動 + 硬上限（relic_sprint.py / relic.py）
-- [x] 2. HIGH rounds 結構不符仍花碎片 — open 但 rounds 空回 protocol_mismatch（relic_sprint.py）
-- [x] 3. MEDIUM 徽章誤標 — `_ad_seed_claimed`: claimed>0 或 maxed 才算（ws_phase.py）
-- [x] 4. HIGH `_trackers` 無清理 — per-ip dict 加 OrderedDict LRU 上限 32（routes_relic_sprint.py）
-- [x] 5. MEDIUM log 橋接漏 WS logger — ws_farm_/ws_mining_ 用原始 device_id 命名 + 掛 handler + 前綴納入解析（logging_utils.py）
-- [x] 6. LOW ad_reward ad_info 失敗 log 文字補一句（ws_token/ad_reward.py）
-- [x] LOW 註記 bot_state.append_log lock 競爭（bot_state.py，只加註解）
+## ⚠ 仍需「再次重啟」才生效（on-disk 已超前 running process）
 
-驗證: py_compile 全改動檔 OK + pytest 七測試檔 112 passed。
+running 進程是 06-19 21:57 那版；之後 commit 的改動尚未套用。log 鐵證：
+- **ad_reward 完全沒在 log 出現**，但 on-disk 已 wired（runner.py:84 TASK_ORDER「ad_rewards」）+ bot_config 5 台已開（L152/301/472/616/773）→ **running 版的 TASK_ORDER 沒有它，需重啟才會跑**（#15 卡在這）。
+- 豐收卡循環只 log「開始」，缺 on-disk 的 `[1/7]..[7/7]` 詳細步驟 log（running farm.py 較舊；循環本身仍有跑，farm task=ok）。
+- 其餘待套用：工具面板/遺物升級工具（中控 routes）、徽章 WS 回寫（#19）、online_guard WS online-check（需 `online_check_via_ws:true`）、control_panel 拆分 smoke（P3-CP-8）、遺物本期活動結束日 end_ts。
 
-### Review（2026-06-19）
-- CRITICAL 核心：`relic.spend_to_target` 新增 `should_stop` 參數（每次成功 relic_up 後檢查，
-  True 即停 `target_reached`，例外則保守停 `should_stop_error`）；`run_relic_sprint` 改以
-  server accrued 驅動（`_current_accrued` 重讀 6572）+ 硬上限 `MAX_SPRINT_UPGRADES=30`。
-  frag_unknown 下 tracker delta gate 失效，但 should_stop(accrued) 仍能達標即停；
-  accrued 讀取異常時 max_steps=30 為 backstop。兩條路徑都有測試直接證明不超量。
-- 既有兩個 run_relic_sprint full-flow 測試改成「server accrued 隨升級遞增」的動態 fake
-  （取代原本以 read 次數計數的 fake，因新流程每步多一次重讀）。
-- 新測試：frag_unknown 達標即停、accrued 卡死時硬上限封頂、protocol_mismatch 不花碎片、
-  should_stop frag_unknown 即停 / 例外保守停、claimed=0+error 不標徽章、_trackers LRU 上限、
-  WS logger 名還原 + forward。
+**動作**：重啟 master(infinite)+worker(desktop_ov0asq4) `new_main_v2.py` + 中控 → ad_reward 才會 live；之後即可驗 #15/#25。
+
+**待 commit**：2026-06-19 夜間批次（237 測試綠，commit hold 原因已解除）。
+純新檔（ad_reward.py / relic_sprint.py / routes_ad_reward.py / routes_relic_sprint.py + 各新測試）可單獨乾淨 commit；
+共用檔（config_manager / bot_config.json / logging_utils / log_paths / ws_phase / daily_pipeline）混工作區，待使用者過目全 diff 再決定範圍。
 
 ---
 
-> ⚠ 2026-06-14 注意：本檔曾被郵件 subagent 誤用 Write 覆寫，已 `git checkout` 還原到最後提交版（493 行）。
-> 你「header 之後、下面 `## 🔒 另一 session` 之前」的未提交 WIP 段落（2026-06-13/14 莊園/飛寵/carpark/lamp/
-> rogue/exit-21 等完成紀錄）目前缺；那些段落的完整原文仍在本次 Claude session context，可隨時「reconstruct todo」原樣補回。所述工作本身皆已在 git 近期 commit + docs/ 內，未遺失。
+## 進行中 / 待辦（live 驗證 + config 釘值）
+
+### 手機fc 純 WS 停車
+- [ ] #13 開窗（台灣 10:00-22:00）後跑 `python tools/carpark_cluster_probe.py` 採樣占用者 attrs，確認同服欄位 id；若 kv 不含 server_id 要修 `count_same_server`。
+
+### offline_fallback / token bootstrap
+- [x] offline_fallback：log 已確認 LIVE（手機 fc 多次「ADB 不可達→WS 備援→整輪跑完」，2026-06-20）。
+- [ ] token bootstrap：fc 走 WS 備援皆成功（token 可用），但「creds 缺失時 refresh→force-stop」這條 bootstrap 路徑本身未單獨在 log 看到觸發（目前都已有 creds）。低優先。⚠ fc 與 5554 同帳號，WS 登入互踢，兩台同開 ws 需錯開。
+
+### WS 後端整合（程式零殘項，待 live 釘 config 值）
+- [ ] S7 5556 pilot live 驗證（撈 ticket → 跑一輪，等停機窗）。
+- [ ] live 釘值（未填則該功能自動 skip）：深淵/萬神 dungeon type+id+num（掃蕩 only）、農場 seed_id/team_cfg_id、豐收卡 shop_type/id。
+- [ ] #25 遺物衝刺 live 驗：count 單位（碎片量 vs 次數）、4 輪精確門檻、當期 act_type(13/269)、領獎回應形式。若 count=次數，run_relic_sprint 的 accrued 扣抵邏輯要改。協議 `docs/protocol/RELIC_SPRINT_RECON.md`。
+
+### Dashboard 設定重整 — 收尾
+- [ ] 重整頁面 live 驗一輪（改 template，reload 即生效，不需重啟 bot）。
+- [ ] （低優先）farm/dungeon_sweeps 後端 sanitizer（目前 frontend 控型別 + runner 防呆 passthrough）。
+
+### 菇菇雕像每週消耗（statue_weekly）
+- [ ] `bot_config.json` 兩台（5554、adb-fc65396d）`statue_weekly.amount` 1 → 7000。
+- [ ] 修 ADB flow `send_keys(clear=True)` 不穩（ADB_KEYBOARD_CLEAR_TEXT null ref）：改不帶 clear 直接輸入或走 `adb shell input text`（`statue_weekly.py:425` 附近）。
+
+### v1 挖礦 follow-up（非 deadlock，屬效率）
+- [ ] `mine_until` 遇首個 unconfirmed 即停 → 學 deplete_pickaxes 重讀續挖。
+      註：runner 走的 `mining_supervised` 路徑 log 顯示已會在單步內換多個候選格續挖（2026-06-20，refresh_attempts 最多 9 + 換 block_id），此 follow-up 只剩 standalone `mine_until` 那條。低優先。
 
 ---
 
-## ⛏️ 2026-06-18 v1 空 plan 修復 + 三套演算法 HTML 真實環境評測（dual-codev）
-
-Root cause（A 我 + B opencode 一致）：`smart_planner.solve()` 在起始 state 已達標
-（`remaining_pits==0 且 f7_open`）或無可用動作時，`res.history` 為空 → `steps==[]`。
-這就是「v1 在無 pit + floor7 開時回空步」、WS 監督迴圈被迫改用 v4 的原因。
-
-- [x] 修復：`_descent_fallback_step()`，`solve()` 回傳前若 history 空就補一個「最深可挖格」下潛挖步
-      （鏡像 v4 no_pit descent）；truly 無可挖仍誠實回空；正常 A* 輸出不變。commit fix(miner/v1)。
-- [x] TDD：`tests/test_smart_planner_descent_fallback.py`（RED→GREEN，3 passed；61 planner 測試無回歸）。
-- [x] dual-codev IMPLEMENT：opencode worktree 平行實作，演算法/掛點完全一致 → 取 A（docstring 較清楚）。
-- [x] HTML 真實環境評測（inv 已是 1000/10/10）：見 `tasks/eval_postfix.txt`。
-- [x] 優化分析（下方）。
-
-### 評測結果（mining_sim.html headless, seeds 100-104, max-iters 600, inv 1000/10/10）
-| planner | score | pits | depth | cost | pit/鏟 | bomb操作 | drill操作 | stuck | r0pit% |
-|---------|------:|-----:|------:|-----:|------:|------:|------:|------:|------:|
-| v1 | 3711 | 188 | 667 | 760 | 0.25 | 47.6 | 58.2 | 0 | 0.3 |
-| v3 | 3585 | 184 | 649 | 824 | 0.22 | 41.6 | 32.6 | 0 | 0.0 |
-| v4 | 1649 | 83 | 274 | 344 | 0.14 | 8.6 | 28.4 | 3 | 0.0 |
-（修復前 v1=3711/stuck0 → 修復後完全相同：descent fallback 在 sim 幾乎不觸發，零回歸。）
-
-### 操作優化空間
-1. **v1（預設）已是三套操作效率最高者**，且唯一的操作缺陷（空 plan）本次已修。
-   最有價值的優化：**WS 挖礦現在可從 v4 切回 v1**（v1 不再回空步），等於把 WS 路徑
-   的 score 從 ~1649 拉到 ~3711（2.2x）。屬 runtime routing 變更，需先 live WS 驗證再翻，
-   本次不動。
-2. **v4 是真正的優化目標但屬結構性**：3.6% 稀疏密度下 depth-3 bounded DFS 看不到一顆
-   3x3 cluster（跨 3 row），bomb 操作只有 8.6（v1 的 1/6）→ 抱著炸彈不用 + anti-scroll
-   guard → stuck 3/5、score 砍半。非小修可解（memory 已記），WS 不靠它就先擱置。
-3. **道具成本模型 caveat（低信心，需真實掉落數據）**：sim 會掉落道具所以「多用道具」在
-   sim 是免費的；真實遊戲 drill 較稀有（drill mean 59 vs bomb 588）。v1 用 flat
-   `cost_item=2.99` 不分 drill/bomb，且 v1 drill 操作(58)>bomb(48)→偏吃稀有資源；
-   v4 的權重 drill 2.5 < bomb 3.5 對真實稀缺度是「反的」。若要再壓真實道具經濟，
-   v1 可考慮 drill 成本 > bomb，但須先有真實掉落統計，勿憑 sim 調。
-
-Root cause（fc ws_mining.log + 程式碼鐵證）：`mining_adapter.plan()` 的
-`hold_floor = count_remaining_pits(grid[0:1]) > 0 and not floor7_open(grid)` 用不看 count 的
-grid；`_block_label` 把所有 config 401 礦坑標 reachable_pit → 已採集(count=0)的 row-0 礦坑
-仍讓 hold_floor 永久 True → `_select_dig_step` 只能挑不開 floor-7 的格 → 挑到 server 不收的
-rock → unconfirmed → 第一步就停、鎬子不減 → 時間回復補到 118/118。對照 hold_floor=False 即
-confirmed。次要：mining 無進度仍被記成功 → ws_phase 標「挖礦/Oracle」skip → ADB 後備被抑制。
-
-- [x] 雙路設計（codex + claude opus subagent，唯讀）→ 彙整。三方根因一致；FixDesigner
-      抓到關鍵修正：次修判定用 `confirmed_digs==0`（非 `executed==[]`，因 unconfirmed step
-      也會 append 進 executed），且改用 mining_supervised 加 "skipped" sentinel（ws_phase 零改動）。
-- [x] TDD 失敗測試（hold_floor 判別 + sentinel；RED→GREEN）
-- [x] 主修：`mining_adapter.has_uncollected_row0_pit()`（原始 blocks count>0）+ hold_floor 改用它
-- [x] 次修：`mine_until_pickaxe_empty` 回傳加 "skipped" sentinel（confirmed_digs==0 且
-      stopped∈{no_steps,unconfirmed}；pickaxe_empty 仍算完成）
-- [x] focused 單測（116 passed；唯一 fail=`test_abort_after_main_tasks` 是 pre-existing 8AM
-      gate 時間相依 bug，stash 驗證 HEAD 同樣 fail，與本修無關）+ py_compile OK
-- [x] WS 實機驗證（fc，bot 睡眠窗口）：hold_floor=False、選到有效 frontier、真實 dig 8/8+11
-      confirmed；再用 deplete_pickaxes 把鎬子 118→0（83 digs，stop=pickaxe_empty，礦石 1007↑）
-- [x] commit（只 stage 觸碰檔）+ 更新 memory [[project-ws-mining-verified]]
-- [ ] ⚠ **改完需重啟 new_main_v2.py 生效**（bot 仍跑舊碼=sys.modules cache；standalone 驗證已用新碼）
-- [ ] （建議 follow-up，非本次）`mine_until` 遇首個 unconfirmed 即停 → 可學 deplete_pickaxes
-      的 UNCONFIRMED_LIMIT=3 重讀盤面續挖，讓每輪喚醒能挖更多（非 deadlock，屬效率）
-
-### Review（2026-06-17）
-- Root cause：`_block_label` 不看 count 把已採集(count=0) row-0 礦坑標 reachable_pit →
-  舊 hold_floor=`count_remaining_pits(grid[0:1])>0` 永久 True → fallback 只能挑不開 floor-7 的
-  格 → server 拒絕 → unconfirmed → 第一步就停、鎬子不減 → 時間回復補到 118/118。
-- 修法 surgical：只改 hold_floor 的「輸入來源」(grid 標籤→原始 blocks+count)，不動 planner /
-  `_select_dig_step` / `count_remaining_pits`。次修沿用 `{"skipped":...}` 慣例，ws_phase 零新分支。
-- 三方交叉驗證（我 + codex + FixDesigner opus）；live 證明 fc 從滿格挖到 0。
-
----
-
-## ✅ 已完成歸檔（2026-06-17 移至 finish.md）
-
-> 已完成的工作紀錄已移至 `finish.md`（同日期區塊「todo.md 已完成項歸檔」），
-> 此處只留索引保留脈絡；括號內為尚未收尾的殘項（多為重啟 / live 驗證）。
-
-- 2026-06-17 web_h5 登入衝突 / 啟動 thrash 修復（Fix A press 自癒 / B 重啟上限 / C 放棄時關 Chrome）— 待重啟生效
-- 2026-06-17 徹底排查：孤兒 Chrome + 登入態錯誤 fallback profile（Fix E/F/H 殺孤兒 + in-use 不退 fallback）— 待重啟
-- 2026-06-15 Dashboard「工具優化類」分頁 + 一鍵最佳升級車位裝飾 — 待 dashboard 重啟
-- 2026-06-15 純 WS 一鍵抽卡（技能/同伴）+ 工具優化面板改名 — 待 dashboard 重啟端對端
-- 2026-06-15 WS farm 不穩 + 漏買種子/肥料修復（穩健版，home module 解耦）— 待重啟 + live 一輪
-- 2026-06-15 每日 10:00 搶車位：喚醒打斷加固 — 待 live 窗驗證
-- 2026-06-15 搶位選位分層 + 10:00:00 每秒重試（merge cb707370）— 待 live 窗驗證
-- 2026-06-14 夜間自主批次 9 大需求 + 全面重構 + dashboard 重設計 — 待重啟 + 挑 dashboard 方案 + 開旗標
-- 2026-06-12 couple 送花批次 10 + code=3 降批次重試
-- 2026-06-12 ws_token 預設全開 + steward 副本掃蕩自動推導 — 待重啟
-- 2026-06-12 dashboard 進度徽章認 WS 完成（SKIP_TO_DAILY_RECORD 回寫）— 待重啟
-- 2026-06-13 多代理程式碼審查（8 raw → 5 confirmed 全修）— miner/v5/runtime 舊污染檔待使用者決定
-- 2026-06-15 WS 階段可被「開啟瀏覽器」中斷 + 持久化續做 — 待 live 驗證 + 重啟
-
----
-
-## 🔒 另一 session 進行中（本 session 勿動）
-
-- **挖礦 WS**：由另一個 Claude session 處理中（2026-06-11）。涉及 `ws_token/mining*.py`
-  （mining.py / mining_adapter.py / mining_h5_executor.py / mining_supervised.py）與對應測試。
-  本 session 不要編輯這些檔案、不要重複規劃挖礦 WS 相關工作。
-
----
-
-## ⚠ 待重啟生效（改完未重啟 = 白改）
-
-- master（infinite）+ worker（desktop_ov0asq4）的 `new_main_v2.py` 需重啟，套用：
-  1. 掉線 1h 判離線 fix（2026-06-11）
-  2. 手機離線 WS 降級 + 純 adb 被動撈 token（2026-06-11）
-  3. control_panel_app blueprint 拆分（2026-06-11；重啟後做 dashboard live smoke = P3-CP-8）
-  4. S0-wire：online_guard 純 WS online-check 後端（2026-06-11；改 web_session_service，預設關，
-     需在 checker device config 設 `online_check_via_ws: true` 才啟用）
-- 重啟後待驗：passive token scrape 實機 live 驗證（等手機/模擬器下次冷啟）；
-  若有開 `online_check_via_ws` 的 checker，順帶驗 WS 互檢回 busy/offline/未定三態正確。
-
----
-
-## 進行中 / 待辦
-
-### 手機fc 純 WS 停車：日/夜雙窗口 + 跨界 + 泊銀9/10（2026-06-13，本 session）
-
-Plan：`C:\Users\Eric\.claude\plans\gentle-cuddling-eagle.md`（使用者已核准，後續兩次語意修正）。
-決策（最終，2026-06-13 recon 後）：整合進 ws_token runner（不另建排程）；不做在線保護；窗口內持續補停。
-**範圍修正**：泊銀=跨界停車的檔次（pool 3，鉑銀1..30 = ceng 5..34，search type=4 一次回全部 68 lot，
-停車同一支已驗證 12847）。配額=日 1 跨界 / 夜 0；跨界限定泊銀、優先鉑銀9/10（ceng 13/14）、滿了退
-其他泊銀 lot。「5 本服/好友」遊戲內建自動化，**不做**（使用者 2026-06-13 指示）。
-
-- [x] 1. `ws_token/carpark_plan.py` 窗口/配額純邏輯 + `tests/test_carpark_plan.py`
-- [x] 2. `carpark.py` `auto_select_and_park_many`（泊銀限定、鉑銀9/10 優先、多坐騎跨 lot 補停）+ `tests/test_carpark_many.py`
-- [x] 3. `runner.py` `_run_carpark` plan 路徑 + run_device 參數 + `tests/test_carpark_runner_plan.py`
-- [x] 4. `ws_phase.py` 接線 carpark_plan + 補漏 carpark_auto + 測試
-- [x] 5. `config_manager.py` DEFAULT + `_merge_carpark_plan` sanitizer（silver_levels 1..30 驗證）
-- [x] 6. `ws_runner_service.py` 改讀巢狀 ws_token.carpark_plan（舊平面 key 相容保留）
-- [x] 7. Stage 0 recon（純 WS 唯讀，小寶）：泊銀=跨界 pool 3；search type=4 回全部 68 lot
-      （ceng 1..68，泊銀=5..34=鉑銀1..30）；type=2=本服(master 1467)、type=1=好友；type=3/5 無回應
-- [x] 8. silver 實作（同跨界協議 + ceng 過濾/排序，無需新 cmd）
-- [x] 9. carpark_smoke `--plan` dry-run；live 驗證：小寶選位 dry（30 可停泊銀、首選鉑銀9 pos=1 ✅）
-- [x] 10. bot_config.json 手機fc 開 carpark_plan（day cross=1 / night 0 / 鉑銀[9,10]）
-
-- [x] 11. 追加需求（使用者 2026-06-13 二次指示）：窗口改台灣 10:00-22:00（跨界僅此時段，
-      一人限 1 台）；抱團優先（null_num 升冪 = 越滿越前）；carpark 移到 runner 第一個任務
-      （搶位）；純 WS 收益領取 12846（清單 12845；空倉回 0x0201 code=173，LIVE 小寶驗證），
-      plan 路徑每輪喚醒先領再停
-
-- [x] 12. 抱團=同服（使用者三次指示）：login s2c #3=server_id（LIVE 1467）；排序加同服占用數
-      降冪（count_same_server 掃 info_list/ext kv；無匹配安全退回占用數）；預讀候選上限 8
-- [ ] 13. 開窗（10:00-22:00）後跑 `python tools/carpark_cluster_probe.py` 採樣占用者 attrs，
-      確認同服欄位 id；若 kv 值不含 server_id 要修 count_same_server
-
-#### Review（2026-06-13）
-- 108 tests 綠（plan/many/runner-plan/config/ws_phase/wiring + 既有 carpark 44）。
-- 文件：`docs/protocol/CARPARK_AUTOMATION.md` 新增「純 WS 日/夜窗口跨界停車 plan」節。
-- ⚠ **需重啟 master bot（new_main_v2.py）才生效**（runner/ws_phase/config 都動了）。
-- 真實停車驗證待手機fc 下次 day 窗（08:00-20:00）喚醒：看 main.log `ws_token carpark: parked` +
-  `ws_state/adb-fc65396d-*.json` 的 `carpark_plan.day`。本服/好友 5 台不做（遊戲內建）。
-
-### 手機fc 離線純 WS 掛機備援 offline_fallback（2026-06-12，本 session）
-
-Spec：`docs/superpowers/specs/2026-06-12-ws-offline-fallback-design.md`（使用者已核可方案 B 混合備援）。
-缺口只有三塊（中途斷線降級 2026-06-11 已做）：離線時 thread 不 spawn、init 連線失敗直接死、無 dashboard 開關。
-
-- [x] 1. config：`ws_token.offline_fallback`（預設 false）進 `config_manager.py` DEFAULT；
-      `bot_config.json` 手機fc 設 true（`_merge_ws_token_phase_config` 補 bool 強制轉型）
-- [x] 2. `device_scan_service.py`：`get_ws_fallback_devices()`（backend=adb + ws_token.enabled
-      + offline_fallback + enabled）→ 掃描注入（鏡像 ws_runner 注入；`tests/test_device_scan_ws_fallback.py`）
-- [x] 3. `new_main_v2.py`：init 連線失敗 + 開關開 → WS 等待迴圈（helper 抽到
-      `runtime_services/ws_fallback_service.py`：`should_ws_fallback` + `run_ws_fallback_wait_round`；
-      每輪 `_run_ws_phase_for_wake` + `run_sleep_cycle(phone_offline_ws_only)` + `continue` 重試 init；
-      update_state「WS 備援掛機中，等待手機回線」；例外只記 log 不炸 thread；
-      `tests/test_wake_ws_fallback.py`）
-- [x] 4. dashboard：`chkWsOfflineFallback` checkbox（方案 adb+ws 時顯示）+ saveConfig merge
-      進 ws_token（`test_dashboard_template.py` 追加）
-- [x] 5.（後端部分）focused tests 全綠：`test_device_scan_ws_fallback` / `test_wake_ws_fallback` /
-      `test_wake_phone_reconnect` / `test_wake_loop_escape` / `test_ws_phase`（52 passed）；
-      dashboard template 由 §4 agent 驗
-- [x] 5b. 審查修正：(a) host gate `ws_token.fallback_host`（不分大小寫；空 = 只有 resolved
-      mode=master 注入）防 NAS 同步 master/worker 雙注入互踢 — `ws_fallback_host_allowed`
-      進 `get_ws_fallback_devices` + `should_ws_fallback` 雙保險；fc 設 `"fallback_host": "infinite"`；
-      (b) `run_ws_fallback_wait_round` 的 run_sleep_cycle 失敗 except 加 60s floor sleep 防
-      hot-spin；run_sleep_cycle 改 lazy seam `_load_run_sleep_cycle`（保持 scan 端 import 輕量）
-- [x] 5c. 主審整合驗證（2026-06-13）：全套 88 tests 一起跑綠（scan/wake/ws_phase/ws_runner_wiring/
-      scan_absence/dashboard_template）；py_compile OK；本機（master infinite）live sanity：
-      fc host_allowed=True、should_ws_fallback=True、injected=[fc]、5554 不誤入。
-      順修 pre-existing 測試污染：`test_wake_phone_reconnect.py` 的 device stub 缺
-      `get_adb_devices` → 與 `test_device_scan_absence.py` 同跑炸 collection（HEAD 重現，非本案造成），
-      stub 補一行修掉
-- [ ] 6. 提醒：master+worker `new_main_v2.py` 與中控需重啟生效；手機離線時段 live 驗一輪
-      （log 看到 WS 階段跑完 + 對齊睡眠 + 手機回線恢復）
-
-### Review（手機fc offline_fallback，2026-06-13 主審結論）
-
-- 實作 = spec 三缺口全補：掃描注入（host-gated）、init 失敗 WS 等待迴圈、dashboard 開關；
-  中途斷線路徑沿用 2026-06-11 既有 `PhoneUnreachableError` 降級，未動。
-- 審查抓到並修掉 1 個 critical（NAS 同步雙主機注入互踢 → `fallback_host` host gate）
-  + 1 個 minor（sleep 失敗 hot-spin → 60s floor）。
-- 已知可接受行為：手機離線 >1h dashboard status 仍會被 absence rule 標 OFFLINE（2026-06-11
-  使用者要求的卡片轉離線），但 step 文字會顯示「WS 備援掛機中」；備援輪 WS 登入會踢
-  帶出門正在玩的人（spec §3.5 已記載，緩解 = 既有 kick 偵測，要全保護需補 online_check_target_pid）。
-
-> 注意：下方泊銀停車計畫的「手機離線時 wake loop 不會跑」假設在本案落地後失效，屆時可改掛備援輪。
-
-### adb-fc65396d 每日 10:00 泊銀9/10 自動跨界停車（2026-06-12，本 session）
-
-背景：該手機目前**無**自動跨界停車（carpark_scheduler 限 web_h5；`ws_token.carpark_target` 為 null）。
-手機不在 ADB 上時裝置 wake loop 不會跑，所以不能掛 ws_phase，要做 master 端每日排程，
-用既有 `auth_state/_auth_capture_adb-fc65396d-...json` token 直連 WS。
-需求（使用者 2026-06-12 確認）：每天台灣 10:00 後、手機**不在 ADB**（在線就跳過，避免 WS 登入踢掉手機 session）
-時，停 1 台到泊銀9，滿了改泊銀10。只停不收。
-
-- [ ] 1. `ws_token/carpark.py`：`car_park_info` 解析補 `master_name`；新增
-      `park_into_named_lots(client, names)` — search type=4 → 逐 lot read_lot 比對名稱
-      （正規化簡繁「泊银9/泊銀9」）→ 停第一個空 pos；名單內全滿回 no_free_slot（測試先行）
-- [ ] 2. 新增 `runtime_services/carpark_daily_service.py`：背景 thread 每 60s 檢查
-      （台灣時間 ≥ 設定 hour、今天未成功、目標裝置不在 `adb devices`）→ 載 creds → WS 登入
-      → park_into_named_lots → 記錄當日結果（json record；連線失敗當日內重試，停滿/成功即記完成）
-- [ ] 3. config：device `ws_token.carpark_daily = {"enabled": true, "lot_names": ["泊银9","泊银10"], "hour": 10}`；
-      `config_manager.py` DEFAULT 加預設（disabled）
-- [ ] 4. `new_main_v2.py` 啟動接線（lazy runtime service，比照其他 service）
-- [ ] 5. 測試：名稱比對 / 排程 gate（時間、ADB 在線跳過、一天一次）/ runner 不受影響
-- [ ] 6. Live 驗證：手機離線時段跑一次 dry（search+名稱列舉），確認泊銀9/10 可由 master_name 定位，再真停
-- [ ] 7. 提醒使用者：master `new_main_v2.py` 需重啟生效
-
-### 挖礦 planner 優化 + default 重選（2026-06-12，本 session）
-
-背景（2026-06-12 benchmark，校正後 sim seed200×30 + 299 真實 board）：
-v1 score 948/cost 186 最佳；v4 最快(mean 1.9ms)但 empty-plan 7.02%（21/299 投降，v1 只 2%）、
-fallback 2.7%；v4 常數(BOMB_COST=3.5 等)是舊 9× 過密 sim 掃的；所有 planner 都不會對
-「貼底緣、可能延伸到視窗外的 cluster」延遲用炸彈（真實 3x3 從不完整出現在單一 frame）。
-
-2026-06-12 使用者改方向：**不修舊 planner（T1 修復 agent 已停）**，改寫全新 v5 機率型演算法一起比。
-核心想法（使用者）：空格分布非均勻 → 用歷史經驗學「下方也是空格」的條件機率，挖期望成本最短的
-往下路徑；機率要可驗算；挖礦深度（高度）runtime 抓得到，priors 可依深度條件化。
-
-- [x] T1 歷史統計驗證（2026-06-12 完成）：343 session / 350 條重建 tape / 65598 格。
-      非均勻成立：P(air|air)=27.9%（1.5x lift）、P(pit|pit)=42.5%（13.8x）、貼底 pit 寬 w=1/2/3
-      下延機率 2.1%/43%/77%；深度相關顯著但效應極小 → pooled priors 即可。
-      產出 miner/v5/priors.json + docs/MINING_V5_PRIORS.md + tools/build_v5_priors.py（可重跑）
-- [x] T2 實作 miner/v5/（2026-06-12 完成）：v4 骨架 + priors（期望成本下行、pit 續挖 bias、
-      貼底殘缺正方炸彈延遲、row0 救援、empty-plan 護欄、250ms deadline）；13 tests green
-- [x] T3 接入 benchmark（mining_sim_eval / compare_planners / replay_real_boards 都加 v5）
-- [x] T4 四套對比（2026-06-12）：真實 board 312 張 v5 empty% 0.96%（四套最低，v4 6.73%/
-      v1 1.92%）、ms_max 26ms、0 違規；sim v1 948 仍最高、v5 915 持平 v3/v4
-- [x] T5 default 切 v5：config_manager 三處 + mining_service dispatch（plan_v5 + depth 參數）
-      + fallback + dashboard 選單（移 v2 加 v5）+ routes_status fallback；CLAUDE.md /
-      planner-eval SKILL.md 已更新；被停掉的舊「修 v4」agent 殘留改動已 git checkout 還原。
-      相關測試 79 green。⚠ 需重啟 bot + 中控生效
-- [ ] T8 live 驗證 v5 + 深度追蹤：emulator-5556（使用者指定），manual-hold 取得獨佔，
-      看 miner.log 的 depth=N (+k) 與 planner=v5 stats；確認無 empty-plan 連發/卡死
-- [ ] （既有問題，非本次造成）tests/test_mining_service_shovel_tracking.py import 時 stub
-      miner.core.vision_utils 進 sys.modules 不還原 → 排在 test_mining_screen_check.py 前會
-      害後者 2 個測試假失敗（順序相依污染）。修法：改用 fixture + monkeypatch.setitem 或測完還原
-
-2026-06-12 使用者追加兩需求：
-- [x] T6 深度/捲動追蹤（2026-06-12 完成）：新 miner/depth_tracker.py（DepthTracker.update/
-      set_absolute_depth/last_uncertain；best_scroll 對齊核心抽共用，track_pits_replay 改委派）；
-      mining_service 接線純加（depth log + plan stats depth=N）；12 tests green。
-      ⚠ 需重啟 bot 生效。原設計：
-      a) **權威來源 = WS**：block_id = depth*100+col、MineBoard.baseline（=row5 深度錨點），
-         viewport_top_depth = baseline - 5（ws_token/mining_adapter.py:71，adapter 輸出已含
-         top_depth）→ WS 路徑直接拿絕對深度，免 OCR 免猜
-      b) 純截圖路徑（mining_service 視覺迴圈）fallback：連續兩張 board row-shift 比對累計相對深度
-      c) 深度傳入 plan_v5(depth=...) + 寫進 miner.log/plan stats；⚠ ws_token/mining*.py 是另一
-         session 的範圍，只讀不改，接線做在 v5/mining_service 這側
-      d) live 驗證裝置：使用者指定 **emulator-5556**（manual-hold 取得獨佔再動）
-- [x] T7 動態 priors（2026-06-12 完成）：miner/v5/priors_runtime.py（PriorsAccumulator 捲動揭露
-      列觀測 + 原子寫 miner/v5/runtime/priors_runtime_<device>.json，已 gitignore）；合併規則 =
-      線上計數封頂離線 n 的 20% 再合併（防單裝置偏差淹沒 65k 離線基底）；plan_v5(device=) 走
-      merged priors（mtime 快取）；build_v5_priors.py --include-runtime 可覆核漂移；
-      28+14 tests green、replay v5 無退步（empty 0.96% / ms_max 23.7）。⚠ 需重啟 bot 生效
-
-### 菇菇雕像每週消耗（statue_weekly）查驗紀錄 + 待辦（2026-06-12）
-
-查驗結論（log 驗證，無排程 bug）：
-- 消耗果蔬的就是 `game_actions/statue_weekly.py`（菇菇雕像每週五一鍵消耗），僅週五觸發、成功才記錄、失敗下次喚醒重試。
-- 2026-06-12（週五）手機 fc65396d 跑 3 次 = 失敗重試：01:55 / 03:29 都死在 `send_keys(clear=True)` 的 ADB_KEYBOARD_CLEAR_TEXT 廣播 null reference（未輸入、未消耗）；04:56 成功並記錄，本週不再跑。非週五日子 log 全是「排程跳過」。
-- 手機畫面看到輸入 1 = config 測試值沒改回來。
-
-待辦：
-- [ ] `bot_config.json` 兩台（emulator-5554、adb-fc65396d）`statue_weekly.amount` 1 → 7000（原註解：驗證穩定後改 7000）
-- [ ] 修 ADB flow `send_keys` clear 不穩：輸入框預設為 0，改不帶 clear 直接輸入或改走 `adb shell input text`（`statue_weekly.py:425` 附近）
-
-### 地獄之門 純 WS 串接（小寶 7fe98fc6，2026-06-12 研究中）
-
-協議已解出（client JS + `docs/protocol/MAIN_CHAPTER_PROTO_SCHEMA.json`，2026-06-12 live login 驗證 token 有效）：
-- **地獄之門 = `main_chapter` 模組(13)**，不是 dungeon.py 的深淵(type2)/萬神(type23)。
-  - `main_chapter_info` 3329 c2s{} → s2c{part_id#1, is_unlimited#2}：今日可打關卡。
-  - `main_chapter_enter` 3330 c2s{part_id#1} → s2c{part_id, is_unlimited, battle_checkout#3, random_seed#4:uint64, roles#5:p_battle_role[]}：進場拿戰鬥種子。
-  - `main_chapter_kill_reward` 3332 c2s{part_id, unit_id, pos} → s2c{..., reward_list#4}：**戰鬥中擊殺掉落**（= ADB「恭喜獲得/游荡哥布林」）。
-  - `main_chapter_result` 3331 c2s{part_id#1, result#2, manual_operators#3, operators#4:p_battle_operator[]} → s2c{code#1, part_id#2, is_unlimited#3}：結算。
-  - `main_chapter_reward_info` 3333 / `main_chapter_claim_reward` 3334：領獎。
-- ADB `battle/special.py::hell_door`：進場→挑戰→client 端實時掛機 **10 分鐘**→討伐結束→恭喜獲得。**無掃蕩、單次**。
-- 整合設計文件 `2026-06-10-...integration-design.md:100` 原本把地獄之門列在 WS **不跳**清單。
-- ⚠ 時間窗：地獄之門只能在**每小時 :00-:20** 進場（使用者告知）；被 boss 打死會立刻跳出。
-
-使用者決策（2026-06-12）：**不自己造封包偷跑**。先用 ADB/H5 真打一場，被動抓包讓 server 自己吐
-真實 `main_chapter_result` 的 operators，判斷純 WS 可行性。
-
-待辦：
-- [ ] 下一個 :00-:20 窗口：小寶 7fe98fc6 開 H5(CDP 9230) → `python tools/watch_ws.py --port 9230
-      --seconds 800 --out logs/hellgate_capture.jsonl` → 真打一場地獄之門(進場→等10分→領獎)。
-- [ ] 解碼 capture 的 3331 send frame：operators#4 是否為真實大量回放序列。
-      → 若 operators 非空且 server 用 random_seed 回放驗算 = 純 WS 不可行，維持 ADB/H5。
-      → 若 operators 空/極簡仍 code=0 = 純 WS 可行（只需 enter→sleep~10分→result）。
-- [ ] （若可行）`ws_token/hellgate.py`：build/parse/orchestrator + `tests/test_ws_token_hellgate.py`
-      （照 `tests/test_ws_token_dungeon.py` + `tests/fakes/ws_fakes.py`）。注意 sleep 10 分鐘的設計
-      （WS 階段不可 block 其他任務；可能要獨立排程或放最後）。
-- [ ] 接線：`runner.py` TASK_ORDER + `_run_hellgate`；config 加開關；`ws_phase.WS_TO_PIPELINE_SKIPS`
-      加地獄之門條件式 skip；`daily_pipeline.py` Task 1（`:187`）包 `if not _ws_skip("地獄之門")`。
-- 探測腳本 `tools/tmp_hellgate_probe.py` 已寫但**作廢**（偷跑即時結算方向錯，使用者否決）。
-
-### WS 階段 token bootstrap（adb 裝置首輪自動取 token，待使用者過目）
-
-問題：adb+ws 裝置（如手機 fc65396d）從未撈過 creds 時，每輪 WS 階段
-`FileNotFoundError` → 全跑 Playwright；被動撈取又只在 App 冷啟動時有料，
-warm resume 永遠撈不到 → 永遠 bootstrap 不起來。
-
-方案：WS 階段開跑前，若 creds 缺失（或 WS 登入失敗一次），且 backend=adb，
-主動 `refresh_creds(ip)`（= 冷重啟 App ~30s → logcat 撈 → 寫 capture）→
-`am force-stop` + HOME 鍵回桌面 → 再跑 WS 階段。WS 登入本來就會踢 App
-session，先殺 App 無副作用。
-
-- [x] 1. TDD：tests/test_ws_phase.py 加 bootstrap 案例（creds 缺→refresh 被呼叫→
-      force-stop→run_device 照跑；refresh 失敗→降級回 frozenset()；
-      web_h5 backend 不觸發）
-- [x] 2. ws_token/ 新增 bootstrap helper（creds 存在性檢查 + refresh_creds +
-      adb force-stop/HOME，best-effort 絕不拋）
-- [x] 3. game_actions/ws_phase.py：run_ws_phase 接 bootstrap（cfg 開關
-      `ws_token.bootstrap_token`，預設 true、僅 adb backend 生效）；
-      WS 登入失敗（ticket 過期）也重撈一次再試（adb 版自癒，對齊 web_h5
-      的 ws_ticket_refresh）
-- [ ] 4. live 驗證：手機 fc65396d 下一輪喚醒應看到 refresh→WS 階段成功→skip-set
-- [ ] 5. 重啟跑 bot 的那份 checkout（C:\python_project）
-
-⚠ 注意：fc65396d user0 與 emulator-5554 同帳號，WS 登入會互踢 session，
-兩台同時開 ws 方案需錯開或確認可接受。
-
-### 跨界停車純 WS 自動選位（本 session，pilot 小寶 7fe98fc6）
-
-目標：消除 `carpark_target` 手動值 — 用 `cross_car_park_preview`(12830) 自動取得跨服 lot 清單，
-自選有空位的 lot 停 1 台（仍只停不收，type==3 限定）。
-
-- [x] 1. TDD：tests/test_ws_token_carpark.py 加 search(12808)/null_space 解析 + auto_select 測試（37 綠）
-- [x] 2. ws_token/carpark.py：parse_null_spaces / read_cross_null_spaces / first_free_cross_pos / auto_select_and_park（search-based）
-- [x] 3. ws_token/carpark_smoke.py：--search / --preview / --info / --auto-park
-- [x] 4. live recon（小寶）：CDP 釘 cmd + 客戶端原始碼確認 NEW 流程用 search type=4（非 preview）；pos 1-based、容量10、space_list 只列占用
-- [x] 5. live 驗證 auto-park 一台成功（cmd 0x322f SUCCESS，mount_id=1 停入 1001001065 pos=1，可遊戲手動收回）
-- [x] 6. runner 接線：carpark_auto 旗標（--carpark-auto / ws_token_carpark_auto）+ docs/protocol/CARPARK_AUTOMATION.md 註記
-
-**完成 2026-06-11**：純 WS 跨界停車全閉環。56 測試綠（carpark 37 + runner wiring/phone 19）。
-runner 預設未開（carpark_auto=False）；要啟用設 device config `ws_token_carpark_auto: true`。只停不收。
-
-### WS 後端整合（branch `feat/ws-token-integration` / `feat/dragon-realm`）
-
-**已 live 跑的 runner 任務**：main_tasks、league_solo、guild、steward、redpack、lamp（gate `ws_token_open_lamp`）。
-
-**✅ 已全部 build + 整合（2026-06-11 盤點更正：先前「待 build」表已過時）**：
-
-下列 6 feature 模組皆已實作、有 smoke、且已接進 `ws_token/runner.py` 的 `TASK_ORDER`
-＋ `runtime_services/ws_runner_service.py` 的 config 映射（device config key → run_device 參數）：
-
-| feature | runner 任務 | config key（device 層） | 風險/備註 |
-|---|---|---|---|
-| 轉盤金幣 | turntable | （無；免費次數無條件跑） | 只轉免費次數；WS 拿不到看廣告加倍 |
-| 掛機/離線獎勵 | idle_reward | （無；online+offline push 無條件領） | 離線 type2=login push；8h 上限 |
-| 跨界停車 | carpark | `ws_token_carpark_target` / `ws_token_carpark_auto` | 只停跨界 type==3；預設關 |
-| 深淵之門 | dungeon | `ws_token_dungeon_sweeps`=[(type,id,num)] | **掃蕩 only，永不自動打**（anti-cheat） |
-| 週副本(萬神) | dungeon（同上） | 同 dungeon_sweeps（type=23, gtid 1081） | 同上，掃蕩 only |
-| 農場/打工 | farm | `ws_token_farm_config`={seed_id?,team_cfg_id?} | 空 seed=用免費種子；harvest 無條件跑 |
-
-→ 程式整合面 **零殘項**。要啟用某裝置某功能只需在其 device config 填上對應 key。
-
-**仍待 live 釘的 config 值（非程式工作，要實機跑一次才知道）**：
-深淵/萬神 dungeon type+id+num、農場 seed_id/team_cfg_id、豐收卡 shop_type/id。
-（未填 = 該功能自動 skip，不會誤動。）
-
-**共通風險**：副本 anti-cheat（只走掃蕩、勿送 client result=0）；看廣告加倍 WS 拿不到。
-
-**kick/異地登入（建構中）**：被踢訊號 = cmd 259（0x103, body `{1:20}`）+ 斷線 → 30 分冷卻 → online-check 再查。
-
-**整合步驟殘項（2026-06-11 重新盤點）**：
-- [x] S6b 神燈接進 runner — **已完成**（`open_lamp` 旗標 + `_run_lamp`，gate `ws_token_open_lamp`）
-- [x] guild_members_info(cmd 7440) — **已完成**，落在 `ws_token/online_guard.py`
-      （`build_members_body`/`parse_members`/`is_role_online_in_guild`，非 guild.py，功能等價）
-- [x] S0 `ws_token/online_guard.py` 純 WS 在線檢查模組 — **已完成**（is_role_online 好友列表 +
-      is_role_online_in_guild 公會成員兩路；76 測綠）
-- [x] **S0-wire（2026-06-11 完成，TDD）**：online_guard 接成純 WS online-check 後端。
-      新增 `online_guard.friend_presence`（tri-state Optional[bool]，不在名單=None 不再誤判 offline）、
-      新模組 `runtime_services/ws_online_checker.check_via_ws`（一次性 login ticket 查好友→公會 fallback，
-      任何例外/未定=None 絕不放行，client 必 close）、`web_session_service.process_online_check_requests`
-      加 `_checker_uses_ws` 旁路（device config `online_check_via_ws` 預設 false→走舊瀏覽器路徑）。
-      config 新 key：`online_check_via_ws`(checker 端開關)、`online_check_guild_id`(checker 端公會 fallback)。
-      33 新/相關測試綠 + 87 回歸綠；py_compile 乾淨。⚠ 動到 live 互檢路徑（web_session_service 被
-      new_main_v2 引用）→ **待重啟 master+worker 才生效**；S7 5556 pilot 可順帶 live 驗 WS checker。
-- [ ] S7 5556 pilot live 驗證（撈 ticket → 跑一輪；非程式，等停機窗）
-
-### S0-wire：online_guard 接成純 WS 在線檢查後端（2026-06-11 規劃，待使用者過目後執行）
-
-> 動機：手機帳號流程要保護真人玩家在線時不踢人。現行 checker 判定走 `_run_checker_protocol_only`，
-> 依賴 checker 端開著 web_h5（Playwright）session。若 checker 本身就是純 WS 裝置（無瀏覽器），
-> 現行路徑無法服務 → online_guard 用自己的 login ticket 直接查好友/公會線上狀態補上這個洞。
-
-**對外不變**：mailbox 介面（submit/pop/complete/fail/wait）零改；`online_check_checkers` 設定語意不變。
-
-**設計（最小侵入，新增不改舊）**
-1. 新 `runtime_services/ws_online_checker.py`：`check_via_ws(checker_ip, target_pid, logger) -> Optional[bool]`
-   - `load_creds(checker_ip)` → `WSGameClient` connect（短 timeout）→ `online_guard.is_role_online(target_pid)`；
-     好友列表查不到 → fallback `is_role_online_in_guild`（需 checker 自己的 guild_id，從 login/設定取）→ 仍 None 回 None。
-   - 一律 `finally: client.close()`；任何例外回 None（讓 requester 換手或重試，**絕不誤放行**）。
-2. `web_session_service.process_online_check_requests`：在 `_run_checker_protocol_only` 前加分支 —
-   若 checker 的 device config `online_check_via_ws: true`（預設 false）→ 走 `check_via_ws`，否則維持原瀏覽器路徑。
-   None 結果沿用既有 `fail_online_check_request`（換手/重試）邏輯，行為一致。
-3. config：新 device key `online_check_via_ws`（預設 false）；不填 = 行為 byte-for-byte 不變。
-
-**TDD**：先寫 `tests/test_ws_online_checker.py` —
-   - is_role_online True/False/None 三路；好友 miss → guild fallback；client 例外 → None；close 必呼叫（fake client）。
-   - process_online_check_requests：`online_check_via_ws=true` 時呼 check_via_ws 不碰瀏覽器路徑；false 時走舊路徑。
-
-**風險/守則**
-- 動到 live 互檢路徑（`web_session_service` 被 `new_main_v2` 引用）→ 落地後需重啟 master+worker 才生效。
-- checker 用自己的 ticket 查好友＝需 checker 帳號與被保護玩家為好友/同公會；查無 → None（保守 skip，不放行）。
-- 不改 mailbox、不改 `_run_checker_protocol_only`，只加旁路分支；舊路徑回歸測試必須續綠。
+## 研究待續（未拍板）
+
+### 地獄之門 純 WS（小寶 7fe98fc6）
+協議已解（`main_chapter` 模組 13；docs/protocol/MAIN_CHAPTER_PROTO_SCHEMA.json）。使用者決策：不自造封包偷跑，先真打一場被動抓包。
+- [ ] 下個 :00-:20 窗：小寶 H5(CDP 9230) → `python tools/watch_ws.py --port 9230 --seconds 800 --out logs/hellgate_capture.jsonl` → 真打一場。
+- [ ] 解碼 3331 send frame 的 operators#4：非空回放=純 WS 不可行（維持 ADB/H5）；空/極簡仍 code=0=可行。
+- [ ] （若可行）`ws_token/hellgate.py` + 測試 + runner/config/ws_phase/daily_pipeline 接線（注意 sleep ~10 分不可 block 其他任務）。
+
+### 萬神試煉(Beta) rogue（module 76）
+協議已解（docs/protocol/ROGUE_PROTO_SCHEMA.json，34 cmd 無掃蕩；live 打一場閉環，server 接受 client result）。
+- [ ] 純 WS 可行性：result c2s 只有 {result, precent}，但 client 算勝負 + checkCheat()，偽造勝利風險未知，需專門 live 驗（送 result=0 看 server）。優先級低（roguelike 多關連打不適合純 WS）。
+
+### 純視覺農場退役計畫（待 WS farm 三塊 live 驗後執行）
+取代者：ws_token ad_reward(15) / farm.harvest_card_cycle / farm.buy(407/408)。
+- [ ] 前置：5556/5560/7fe98fc6 接 WS farm 三塊並 live 驗；adb-fc65396d 確認是否接 WS（不接則 ADB/視覺路徑全留）。
+- [ ] **接線缺口（退役前必修）**：`game_actions/ws_phase.py:271` 農場 skip 條件只看 `farm.seed_id`，但 WS 農場用 `farm.buy`/`harvest_card_cycle`（無 seed_id）→ 改成 harvest_card_cycle 跑成功才 skip。未修則刪視覺農場會讓農場任務無人做。
+- [ ] 可刪清單（A 低風險 / B 保留 ADB 後備 / C 順手清死碼）詳見舊版本（git 歷史）；待刪處已加 `# remove-after-ws-farm-verify(2026-06-19)` 註解。**weekly_card.py 不可整檔刪**（check_if_parttime 仍被 harvest_card 用）。
+
+### #20 主 dashboard 重設計（待使用者過目，刻意未動手）
+裝置卡片設定收斂成幾個按鈕/開關。屬改 live 主控面 + config 存檔的結構性重寫，高度依賴外觀驗收。
+- [ ] 盤點 dashboard.html 卡片欄位 + routes_config 存檔對應；ws_token 子開關收進摺疊「WS 任務」分頁；方案用 segmented buttons；進階欄位摺疊；分階段（先一張卡片 → 過目 → 套全部）。
+
+### 進階設定 副本掃蕩改版（後續單獨對話）
+- [ ] 用詞白話化 + 是否改逐欄表單取代 JSON。本次重整不碰。
 
 ### 降運算 Phase 2（需 live 驗證，等拍板）
-
-- [ ] 2.1 Chrome `--disable-gpu` / headless（本機最大 GPU 削減；需驗 Cocos 畫面+OCR）
-- [ ] 2.2 Cocos `cc.game.setFrameRate` 限 FPS（該 build 是否支援未驗）
-- [ ] 2.4 `cv2.matchTemplate` 前 2× 縮圖（需重調 0.8 門檻）
-- [ ] 殘留重疊：`wake_up_handler.py:322` 舊分流延遲與 F4 啟動錯峰疊加（動時須保 5554 online-check 提前 return）
-
-### 重構待辦（真相來源 docs/REFACTORING_OPPORTUNITIES.md，依其 Phase 順序；細節/陷阱以該文件為準）
-
-**前置（最先做）**
-- [ ] 收尾未 commit 工作區項：`oracle()` 優化、`get_stage` OCR 合併、bot_state Phase 2（皆已實作+測試，待 commit）
-      ⚠ 工作區目前混有挖礦 WS session 的改動，等該 session 收尾後再 commit，避免 diff 互混
-
-**Phase 0 — 死碼刪除 / cruft（✅ 2026-06-11 完成，commit `25542e41`；審查 APPROVED）**
-- [x] `git rm --cached` 4 個 `tests/__pycache__/*.pyc.NNNNN`
-- [x] `git rm main.py` + 移除 `SCRIPT_ARCHITECTURE.md` 條目
-- [x] 刪 `game_state/detector.py` `new_stage_check()`（grep 確認零 .py 呼叫者）
-- [x] scratch 腳本歸位（fix_prints/quick_test 刪除；test.py/dashboard_test→tools/scratch/；
-      benchmark_screenshot→tools/；lian_shan_example→docs/examples/；5 個 root test_*.py 去前綴→tools/debug/；
-      spin_and_send_gold_single_runner 依規未動）
-- [x] root `pyproject.toml` testpaths=["tests"]；`test_item_placement_guards.py` 已一併移入 tests/
-      並修 stale import（miner.planning.executor / miner.scripts）+ 斷言對齊現行 base_label 契約
-      （註：`test_json_manager.py` 為 print-based scratch，doc 未指派去向，留 root，TESTING.md 已記載）
-- [x] 刪孤兒 worktree 目錄 ×5（~37.7k 檔；註冊 worktree miner-reverse-search/bugfix/feature 確認完好）
-- [x] 刪空目錄 found_matches/、'2026-01-20 195013'/、trash/；刪 miner/rl/rl_logs/（live miner/rl_logs/ 未動）
-- [x] gitignore cosmetic 補充（capture 目錄 + 時間戳 glob，內容未 purge）
-- [ ] （等 bot 停機）live-tree sync-conflict sweep（~3.6k 檔，在 active profile/logs 內，bot 跑時勿刪）；
-      源頭：`miner/dataset/`、`playwright_profile/`、`logs/` 加進 Syncthing `.stignore`
-
-**Phase 1 — 去重（✅ 2026-06-11 完成，commit `92c1cf8b`；審查 APPROVED，125 tests passed）**
-- [x] device-id 正規化 ×2 改 `LogPaths.safe_device_id()`（manager_factory.py 已 commit；
-      ⚠ new_main_v2.py 兩處同主題改動只在工作區 — 該檔混有他 session diff，待其收尾後與前置一起 commit）
-- [x] `opengold_v2/ui_controller.py` 改呼叫 `sea_v2.navigator.world_to_pixel`（round() 保留、frame=(540,960)、公式等價已測）
-- [x] 新 `utils/json_io.read_json_bom_safe`：json_manager/base.py 與 equipment_cache.py 讀側已導入
-- [x] per-device `{ip}.json` 走 `JsonDataManager`：Mission.py load_data/record（flat schema/檔名不變）、
-      fight_car.flush_logs 改 `_atomic_write_json`；new_main_v2.temporary_reset_cycles 同上 ⚠ 在工作區待 commit
-- [x] 主頁 9 點像素守衛抽 `utils/main_page_guard.is_main_page_with_popup(img)`（device.py + Mission.py 兩份已換，
-      profile byte-identical 驗過；battle/manager.py、park.py、tools.py 三份 inline 副本留待後續）
-
-**Phase 2 — 效率（熱路徑；多數已完成，見 archive）**
-- [x] config mtime 快取 / park sleep / 頁面 CNN inference_slot+device-aware（commit `4d2766e3`）
-- [ ] `oracle()` / `get_stage` OCR 合併 → 在工作區，併入上方「前置 commit」
-- [x] OCR 詞表向 `OpenGoldConfig` 收斂（✅ 2026-06-11，commits `50a7ada2`+stub fix；UNWANTED_COMBOS/SKILL_MAP/
-      pair_rewrite 由 OpenGoldConfig 派生，量→暈 server alias 保留；STAGE_TEXT_REPLACEMENTS 屬 server 專用刻意不收斂）
-
-**Phase 3 — 高風險拆分（每項獨立一輪審查；多數需停 bot 視窗）**
-- [ ] `control_panel_app.py`(2902L) blueprint 漸進拆分 → **詳細計畫見下方「control_panel_app 拆分計畫」段落（2026-06-11 規劃，待使用者過目）**
-      附帶：`831-835` cv2/numpy 重 import 改 lazy、刪 `943` 冗餘 flask import（各自一 commit）
-- [ ] Flask 錯誤封套：抽 `_cdp_action(ip, js)` + `_cdp_err_code(err)`（先做 4 個 fire-and-forget CDP route；
-      `@json_endpoint` 套 21 處延後分批、勿同 commit）
-- [ ] carpark/cocos JS walker 共用化（**熱路徑**）：新 `utils/carpark_js.py` 放 `_FIND_WALKER`/`_WORLD_TO_SCREEN`；
-      先重構 `cocos_navigator` 自身 4 份內部副本證明 helper，再逐點遷 carpark（path_parts 用 JS 陣列參數、
-      每點先 log 新舊座標 assert 相等）；勿同 pass 動 farm_v2/sea_v2
-- [ ] carpark `park_one_silver` 抽 `_reenter_silver_detail_list()`（兩分支 6 行逐字重複回復塊）
-- [ ] carpark `reconcile()`：`_build_snapshot_summary` 升 module-level 純函式（勿抽純 _reconcile_plan）
-- [ ] `PlaywrightGameDevice._start`(150L) 分解：先抽 `utils/web_profile_paths.py` 共用 path 正規化
-      （統一採 normpath + 單測兩路徑一致），再抽 `_launch_persistent_context_with_fallback`（純 code-motion）
-- [ ] V1 神燈死碼移除（gate：V2 prod log 穩定）：刪 `Open_gold_paddle_ocr.py` 4 個函式 + `__main__`、
-      退休 `lian_shan_example.py`、修 stale banner/test docstring
-- [ ] 舊計畫殘項：device_wrapper ~25 silent `pass` → warning log、7 個 bare `except:` → typed catch、
-      抽 `poll_stage(d, target, timeout)` 共用 helper
-
-**每 Phase 共同規則**：完成後獨立審查 + 重啟 `new_main_v2.py`；Phase 間勿混同一 commit。
-
-### control_panel_app 拆分計畫（2026-06-11 規劃，待使用者過目後執行）
-
-> 盤點結論：2902 行、63 條路由 + 1 條 WS、18 個 module-level 全域狀態、~20 個跨路由 helper。
-> 對外相容面：`new_main_v2.py` 用 `app`/`run_server`；tests 用 `app.test_client()` + monkeypatch `_FLY_PET_ICON_DIR`。
-> **原則：path 全部不變、`control_panel_app.app` / `run_server` 介面不變（外觀 façade），測試零改動即綠。**
-
-**目標結構**
-
-```
-control_panel_app.py            # façade：建 app、註冊 blueprints、run_server、re-export 測試用符號
-control_panel/
-├── __init__.py
-├── shared/
-│   ├── cdp.py                  # _cdp_evaluate / _cdp_json_response / _FLY_PET_LOCK_JS
-│   ├── command_queue.py        # _remote_commands/_global_commands/_worker_webhook_endpoints
-│   │                           #   + _commands_lock(RLock) + queue_command/_is_local_command_target
-│   │                           #   + _push_to_worker_webhook/_push_remote_command_if_possible
-│   └── auth.py                 # _fly_pet_auth + _FLY_PET_USERS
-├── routes_pages.py             # / /updates /war-room* /fly-pet 登入登出頁 + frontend_version/bug_feedback
-├── routes_status.py            # /api/status /device_data /daily_progress /analyze_stage + check_ocr_server
-├── routes_control.py           # pause/resume/skip_sleep/wake_delay/manual_release/force_sleep/recover
-├── routes_config.py            # /api/config /api/ocr_config
-├── routes_worker.py            # poll_commands/report_status/register_device/refresh_devices
-├── routes_web_session.py       # web_login*/web_backup_state/web_launch/web_close + _run_web_login_worker(287L)
-├── routes_live_view.py         # /ws/live_view + /api/live_view/*/stop（_live_view_sessions/_live_view_lock）
-├── routes_labeler.py           # labeler/trainer 全部路由 + worker threads + _LineLogWriter
-└── routes_fly_pet.py           # 17 條 /api/fly_pet_*（~750L，最大群）+ /api/fly_pet_icon + cdp_evaluate
-```
-
-**關鍵風險與對策**
-
-1. **全域狀態唯一性**：`_commands_lock` 與三個 command dict 被 worker 路由 + control 路由共用。
-   拆分後**必須只存在一份**（shared/command_queue.py 是唯一真相），blueprint 一律 `from ... import` 模組
-   再以 `module.attr` 存取（不要 `from x import dict` 後重新賦值）。
-2. **flask-sock**：`Sock(app)` 必須在 app 建好後初始化，`/ws/live_view` 路由註冊要在 façade
-   或 `routes_live_view.init(sock)` 內延後綁定；flask_sock 缺席時優雅降級（現行為保留）。
-3. **測試 monkeypatch 面**：`_FLY_PET_ICON_DIR` 等符號要在 `control_panel_app.py` re-export，
-   且 icon 路由讀取時要透過模組屬性（不可在 import 時凍結成 local），否則 monkeypatch 失效。
-4. **無 factory**：維持 module-level `app`（new_main_v2 直接 import）；不引入 create_app，降低改動面。
-5. **bot 在跑**：每步落地後需重啟 master/worker 才生效；安排在停機窗執行。
-
-**執行紀錄（2026-06-11 實作完成，7 個 Opus subagents 平行抽取 + façade 整合）**
-
-- [x] P3-CP-0 `control_panel/` 骨架 + shared/cdp.py、shared/auth.py、shared/command_queue.py
-- [x] P3-CP-1 fly_pet blueprint（840L；test_fly_pet_template/breed_template 的 CONTROL_PANEL 路徑跟著指向新檔）
-- [x] P3-CP-2 labeler/trainer blueprint（435L，自含）
-- [x] P3-CP-3 web_session blueprint（585L，含 _run_web_login_worker）
-- [x] P3-CP-4 worker_sync blueprint（225L）
-- [x] P3-CP-5 control blueprint（84L）
-- [x] P3-CP-6 live_view blueprint（161L；WS 路由經 `init_ws(sock)` 延後綁定）
-- [x] P3-CP-7 pages/status/config blueprints（142/327/53L）；façade 縮到 139L
-- [ ] P3-CP-8 （待停機窗）重啟 master+worker、dashboard 全功能 live smoke（狀態頁/暫停/飛寵頁/live view）
-- [ ] （未 commit）等挖礦 WS session 收尾、工作區 diff 解纏後 commit
-
-**Review（2026-06-11）**
-- 80 tests 全綠（fly_pet 全系列 + smoke_config + worker_routes + pause_routing + register_disabled
-  + dashboard_template + bootstrap_api_services）。
-- 路由 parity 驗證：63+2 條 path 與 HEAD 完全一致（含 /updates/、/war-room/ trailing-slash 變體與
-  /ws/live_view/<ip>）；`_FLY_PET_ICON_DIR` 指 repo 根 static/flypet_icons 正確。
-- 晚綁定面已驗：`_cdp_json_response`/`_FLY_PET_ICON_DIR`/`_push_to_worker_webhook`/
-  `_push_remote_command_if_possible`/`_run_web_login_worker` 全部走 façade 屬性查找，monkeypatch 生效。
-- façade 額外 re-export `requests`（tests monkeypatch `cpa.requests.post`）。
-- 順手修一個**既有**跨檔測試汙染（與本拆分無關）：`test_bootstrap_api_services` 收集期塞 stub
-  `worker_webhook_api` 害 `test_worker_webhook_applies_wake_delay`（掉線判離線 pending diff 新增的測試）
-  import 到 no-op stub → 該測試現在 import 前用 `monkeypatch.delitem` 暫時逐出 stub（測後自動還原）。
-- 附帶項（lazy cv2 import、冗餘 flask import）：原 943 行冗餘 import 已隨 façade 重寫自然消失；
-  cv2/numpy module-level import 照原樣搬進 routes_status（保持 parity，lazy 化另案）。
-
-### 其他既有待辦（檔案各自追蹤）
-
-- `tasks/ws_token_home_todo.md` — 家園三件（守護靈/加工坊/伴侶），feat/ws-token-home 未 merge
-- `tasks/carpark_adb.md` / `tasks/carpark_skip_silver.md` / `tasks/mount_sprint_todo.md` /
-  `tasks/sea_v2_todo.md` / `tasks/mining_ore_ab.md`
+- [ ] 2.1 Chrome `--disable-gpu`/headless（需驗 Cocos 畫面+OCR）；2.2 `cc.game.setFrameRate` 限 FPS（build 是否支援未驗）；2.4 `cv2.matchTemplate` 前 2× 縮圖（需重調 0.8 門檻）。
+- [ ] 殘留重疊：`wake_up_handler.py:322` 舊分流延遲與 F4 啟動錯峰疊加（動時須保 5554 online-check 提前 return）。
 
 ---
 
-## 工作慣例提醒
+## 重構 Phase 3（高風險拆分，真相來源 docs/REFACTORING_OPPORTUNITIES.md）
 
+每項獨立一輪審查 + 重啟 `new_main_v2.py`；Phase 間勿混同 commit。
+- [ ] 前置 commit：`oracle()` 優化、`get_stage` OCR 合併（工作區已實作+測試，待 commit）。
+- [ ] Flask 錯誤封套：抽 `_cdp_action(ip, js)` + `_cdp_err_code(err)`（先 4 個 fire-and-forget CDP route；`@json_endpoint` 套 21 處延後分批）。
+- [ ] carpark/cocos JS walker 共用化（熱路徑）：新 `utils/carpark_js.py`；先重構 cocos_navigator 4 份副本證明 helper，再逐點遷 carpark（每點 log 新舊座標 assert 相等）；勿同 pass 動 farm_v2/sea_v2。
+- [ ] carpark `park_one_silver` 抽 `_reenter_silver_detail_list()`；`reconcile()` 的 `_build_snapshot_summary` 升 module-level 純函式。
+- [ ] `PlaywrightGameDevice._start`(150L) 分解：先抽 `utils/web_profile_paths.py`，再抽 `_launch_persistent_context_with_fallback`（純 code-motion）。
+- [ ] V1 神燈死碼移除（gate：V2 prod log 穩定）：刪 `Open_gold_paddle_ocr.py` 4 函式 + `__main__`、退休 lian_shan_example.py。
+- [ ] device_wrapper ~25 silent `pass` → warning log、7 個 bare `except:` → typed catch、抽 `poll_stage(d, target, timeout)` helper。
+- [ ] Phase 0 殘：live-tree sync-conflict sweep（~3.6k 檔，在 active profile/logs，bot 跑時勿刪；源頭加進 Syncthing `.stignore`）。
+
+---
+
+## Review — 純WS挖礦地形重建（2026-06-20, d2a9c81c）
+- [x] 釘死根因：WS 0x0c01 不送未挖格地形型別（201/202 全 count==0 已挖、僅 401 礦坑 count>0、未挖=純 active）。planner 盲填 dirt、永不對未挖石頭下炸彈 = 效率天花板。
+- [x] 模型：client 把 12 個相異 7×6 模板垂直 7-列堆疊；每 band = 單一模板（CNN 28/28 + WS 22/22 雙重驗證）。
+- [x] 自學：邊挖邊用已挖格 config_id 比中模板、推回未挖地形。phase=1/row 經 14 對齊中唯一無矛盾驗證（5556 帳號）。
+- [x] 安全整合：未挖 active 只在重建為 STONE 時 dirt→rock，其餘不動 → 絕不退步；稀疏資料=no-op。
+- [x] `ws_token/mine_terrain.py` + `mining_adapter`/`mining_supervised` 接線、per-device cache、68 測試綠、live 實測鎖定 phase 並重建 4 個 rock 格。
+- [ ] 待生效：new_main_v2 重啟後上線；隨各帳號挖礦自動累積 band→template（summary log 看 `terrain=`）。
+- 限制（使用者已同意自學）：只重建「已揭露足量」的 band，全未挖的遠方 band 需 client RNG seed（未做）。
+
+## Result — 「以礦為路徑」延伸視野：實測否決（2026-06-20）
+- 量過 7 列 vs 12 列（masked：下方只給礦位置、地形未知）：score +3%(1288→1328) 但**效率變差**(0.36→0.32 pit/鏟)、鏟耗↑(193→217)。raw 分靠多花鏟換、礦沒多收。
+- 機制：下方只知礦位置不知土/岩 → 朝礦衝會撞到未知石頭白花鏟；且礦本來就會隨下挖捲進視野。
+- 效能：v1 A* 到 14 列穩(<25ms)，17+ 偶爆 220ms。
+- **結論：不做 ore-path。** pure-WS 下「每 band 進視野後即時最佳化」已是效率天花板。
+- 改為補完「視野內被遮擋格用模板填」(commit a12c6144) —— 這才是真正提升每-band 最佳化的那一塊。
+- 工具留 `tools/eval_ore_lookahead.py`（要更大樣本重驗可用）。
+
+## Plan — 「以礦為路徑」延伸視野規劃（已否決，保留紀錄）
+目標：planner 不再只看 7 列視窗，而是朝下方礦規劃下挖路線（效率最大化收尾）。
+現況：planner v1 只吃 7 列；WS `map_pits` 給下方 ~17 列礦坑位置但只當 telemetry；未挖 band 地形未知（加權隨機）。
+- [進行中] 上界實驗（零 live 風險）：`tools/eval_ore_lookahead.py` 餵 plan_smart 加高地圖（7/14/21 列，god-mode 真實 tape）量分數增益，判斷「拉長視野」值不值得做。
+- [ ] 若上界有顯著增益 → 做「真實版」：地圖 = 視窗重建地形 + WS map_pits（下方礦坑）+ 已識別 band 的重建地形；未識別 band 地形以平均成本代入。只執行可達（視窗內）挖步，深層只影響下挖方向/炸彈時機。
+- [ ] 在 `mining_adapter.plan` 組「加高 grid」餵 plan_smart；步驟座標映射回 block_id；補測試 + sim 評測對照 v1 baseline。
+- [ ] 限制（誠實）：未挖 band 地形不可預測，下方只能「朝已知礦坑方向」最佳化，視野上限 ~17 列。
+- 動 live 演算法前先讓使用者過目本 plan。
+
+## 工作慣例提醒
 - TDD；subagents 一律 model:"opus"；計畫/進度走本檔。
 - 動 live bot（new_main_v2/device_wrapper/排程）先把 plan 寫此檔給使用者過目。
 - 改完 runtime 檔必提醒重啟（sys.modules cache）。
 
+## 其他既有待辦（檔案各自追蹤）
+- `tasks/ws_token_home_todo.md` — 家園三件（守護靈/加工坊/伴侶），feat/ws-token-home 未 merge
+- `tasks/carpark_adb.md` / `tasks/carpark_skip_silver.md` / `tasks/mount_sprint_todo.md` / `tasks/sea_v2_todo.md` / `tasks/mining_ore_ab.md`
+
+## 萬神試煉 重寫（rogue Beta，2026-06-20 CDP 實測驗證）
+
+### 根因
+舊 `battle/weekly_trials.py::fight_test` 跑舊版 7 場 UI（開始/確定/結束本局/秘寶閣每輪），但遊戲已改成 roguelike「萬神試煉Beta」(RogueView)。OCR 子字串命中「萬神試煉」→ 入場 OK，但進場後按鈕序列全不符 → 空轉 5 分鐘 + 無條件 `time_recording` → 整週鎖死。`dungeon_scheduler.py` 排程決策原用 root `logging`（已改 per-device `logger`，2026-06-20 補 log）。
+
+### 已實測驗證的 OCR 流程（全用內建 `img_tools.click_str_by_server`，canvas 540x960）
+進場（兩種狀態都要吃）：
+- 暖啟（有進行中局，如 5554）：主面板「繼續」(270,744) → 關卡視圖
+- 冷啟（無局，如 小寶 7fe98fc6）：主面板「開始」(271,844) → 開局獎勵頁「開始」(270,724) → 提示「是否確認開啟新一局」→「確定」(370,553) → 「恭喜獲得」頁「進入遊戲」(380,847)〔可選「刷新」重骰〕 → 提示「是否確認進入本次萬神試煉」→「確定」(370,554) → 獎勵 toast「點擊空白處關閉」(269,606) → 關卡視圖
+
+戰鬥迴圈（打到不能打為止）：
+- `開始挑戰`(271,711) → 戰鬥 client 自動跑 ~3-7s（可選點「跳過」）→ 結果「勝利」→「點擊…關閉」→ 自動進下一關 → 重複
+- dismiss 文字有變體：5554=「點擊任意位置關閉」、小寶=「點擊空白處關閉」→ 用子字串「點擊」匹配
+
+### 進度
+- [x] 重寫 `fight_test`(`battle/weekly_trials.py`)：副本→入場(萬神試煉+277,75)→`_advance_to_stage()`(繼續/開始雙路徑+確認鏈通用輪點)→`_battle_loop()`(開始挑戰→點擊關閉直到找不到開始挑戰或偵測失敗，MAX_STAGES=80，可帶 max_stages 測試限關)→`buy_god_everyweek`。回傳 bool。
+- [x] success-gating：`dungeon_scheduler._run_weekly_dungeon` 只在 `fight_test` 回 True 才 `time_recording`(防失敗也鎖一週)。
+- [x] 單元測試：`tests/test_dungeon_scheduler.py` 13 passed(含新增 fight 失敗→不記錄)。
+- [x] live：真 `fight_test` 用 production OCR 跑通；事件關閉時優雅回 False(中止,不誤記錄)。entry+battle loop 已於週六 5554/小寶 驗證連打多關。
+- 異體字非問題：opencc s2t 把「秘」「祕」都正規化→`buy_god_everyweek('秘寶閣')` 命中新 UI「祕寶閣」。
+
+### 退出/結算流程(2026-06-21 實測)
+- 右下角紅色箭頭(≈510,920，OCR 常誤判為 'G') → 提示「選擇暫時離開或結束本局」→ `結束本局` → 提示「是否確認結算本局」→ `確定` → 回副本頁。
+- 對話框按鈕**吃 mouse.click**，但 dialog 轉場需 ~4-5s 等待(2.5s 太短會誤判點不動)。`暫時離開` 在事件已結束時為 no-op(只 `取消`/`結束本局` 有效)。
+- 注意：`RogueView/btnClose`、`RogueEndTipsView` 按鈕的 `emit('click')` 無效(整條祖先鏈無 click listener，cc.Button 走 editor clickEvents)→ 要驅動只能座標點擊+足夠等待，別用 emit。
+
+### 待補實測(事件只到週六 23:59:59，週日關閉；下輪週一下午開)
+- [ ] 自然停止訊號 = 點掉結果窗後「開始挑戰」是否再現(勝→再現續打；敗/次數用盡→消失停)。**不辨識勝敗字**(勝/敗窗長得一樣)。待驗：真實失敗後「開始挑戰」確實消失、本局正常結束(帳號太強沒打到，下輪排程跑+看新 log 補)
+- [ ] 失敗/結束時是否需在 `_battle_loop` 後補「紅箭頭→結束本局→確定」結算(目前靠自然結束)；待真實失敗路徑驗
+- [ ] 結尾 `buy_god_everyweek` 在新 RogueView 後是否走得到祕寶閣(loss 後可能在結算頁非主面板)；待驗
+- [ ] H5 驗證後回測 ADB(小寶手機 adb-fc65396d 純 OCR 場景)
+- 探測工具：`tools/_rogue_drive.py`(步驟驅動)、`tools/_test_fight_test.py`(端到端跑真 fight_test，限關)，皆 `ROGUE_PORT` 指定埠
+- ⚠ runtime 改過 `battle/weekly_trials.py` + `game_actions/dungeon_scheduler.py`，需重啟 new_main_v2 生效(sys.modules cache)
+
+## 天梯每週獎勵 純WS自動選 (2026-06-21)
+
+需求(使用者):打完雙章節天梯(雲纏天梯試煉)後要選每週獎勵;希望未來每週自動照同樣選、走 WS。多帳號(小寶 + 5558)。5558 若沒選滿 25 個 → 用小寶的補滿。
+
+### 協議(live 驗證 小寶 CDP 9226)
+- **cmd `0x4001` (16385) double_ladder_select**(module 64):c2s body = repeated `pick{1:難度,2:index}`;s2c echo = 已存清單 + 尾端 `{2:0}` = 成功。
+- 小寶實抓:25 個 pick,難度 16~25;重放相同 bytes → echo 結尾 `1000` 成功。**冪等**(重送=重存,不會重複領)。
+- 解碼:`難度25:[1,2,4] 24:[1,2] 23:[1,2,3] 22:[1,2,3,4] 21:[1,3] 20:[1,2,3] 19:[1,3] 18:[1] 17:[1,2,3] 16:[1,2]`
+
+### 已完成(不動 bot 行為,安全)
+- [x] `ws_token/ladder_reward.py`:encode/decode/merge picks + `apply_selection`(call 0x4001,err 0x0201 不炸 runner)+ 每裝置存檔 `load/save/get_body_hex/record_device`
+- [x] `ws_token/data/ladder_reward.json`:小寶 `7fe98fc6` 已記錄(25 picks,source live CDP 9226)
+- [x] `tests/test_ladder_reward.py`:5 passed(真實封包解碼 / encode-decode roundtrip / merge 補滿 / 多byte varint)
+- 工具:`tools/probe_xiaobao_reward.py`(PROBE_PORT 指定埠;install/drain/decode/replay/state)
+
+### 待辦
+- [ ] 抓 5558(CDP,例外):開 5558 瀏覽器到天梯頁 → install 監聽 → 手動選一次 → drain 0x4001 → `merge_picks(5558, 小寶)` 補滿 → apply 套用 → record 5558
+- [ ] **runner 接線(需使用者同意,動到正在跑的 bot)**:`ws_token/runner.py` 加 `_run_ladder_reward(client, device)`:gate=該裝置有 record 且 `enabled`(預設 True)+ ws_state 日期閘(每天一次,冪等;daily 閘可覆蓋日/週結算重置)→ `apply_selection`。放 free 任務群(main_tasks 後)。
+- [ ] (可選)dashboard 顯示/重抓按鈕
+- ⚠ 接線後需重啟 new_main_v2 生效(sys.modules cache)
+
+### 實作完成 (2026-06-21) — 改走 CDP/頁面WS、每週二
+依使用者最終指示:頻率=**每週二一次**;5558 走 CDP(無 ws_token);其他可走純ws(許可非強制)。
+最小 bot 改動 → **單一 CDP 路徑**接 daily_pipeline 尾段,涵蓋兩台(小寶+5558 都 web_h5)。
+- [x] `ws_token/ladder_reward.py`:純邏輯(encode/decode/merge/varint)+ store + **週二閘**(`is_due`,ISO 週 marker 去重)+ `apply_if_due(device, today, page=/client=)`(雙傳輸:page=`WebGameAPI.call_raw` CDP / client=純WS,日後小寶要純ws只需加 runner 5 行)
+- [x] `game_actions/ladder_reward_weekly.py`:`run_ladder_reward_if_due(d, ip)`(web_h5 only,拿 `d._page`+today,吞例外)
+- [x] `game_actions/daily_pipeline.py`:Task 14.7 尾段呼叫(try/except)
+- [x] `tests/test_ladder_reward.py`:10 passed(解碼/roundtrip/merge/週二閘/marker去重/no-transport);全套 + test_daily_pipeline 17 passed
+- [x] 兩台已 live 套用本週(小寶 replay echo ok、5558 套小寶模板 echo 25 ok)並記錄 enabled
+- ⚠ **需重啟 new_main_v2** 自動排程才生效(sys.modules cache);本週已手動套用,下週二起自動
+- 限制:body 綁帳號已達難度(16-25);若帳號升難度或改選擇 → 用 `tools/probe_xiaobao_reward.py`(PROBE_PORT)重抓 `drain`→`record_device` 更新
 
 ---
 
-## 2026-06-12 萬神試煉(Beta) 協議研究（使用者：與「萬神試煉」視同一個追蹤；確認無掃蕩）
+## 重寫 ws_token.farm.run_harvest_card_cycle — WS 4 階段豐收卡 (2026-06-22)
 
-裝置：閃電 emulator-5554（CDP 9230，使用者授權）。
-- [x] 入口定位：副本 tab → scrollDungeon cell「萬神試煉Beta」→ `RogueView`
-- [x] 協議模組確認：**`rogue` 模組 (module 76 / 0x4C)**，與週副本 dungeon(type=23) 完全不同協議
-- [x] schema 匯出：`docs/protocol/ROGUE_PROTO_SCHEMA.json`（72 messages + cmd 對照 34 條）
-- [x] **無掃蕩**：34 條 cmd 全列無 sweep 類 → 使用者觀察正確
-- [x] 主流程（client JS 證實）：`rogue_info(0x4c01)` → `rogue_main_enter(0x4c02){return_type}` →
-      `rogue_main_combat(0x4c04){}`(server 回 seed+atk/def battle_role) → client 模擬戰鬥 →
-      `rogue_main_result(0x4c05){result(0=勝,1=敗), precent=剩餘HP%}`（checkCheat 會強制改敗）→
-      `rogue_main_over(0x4c03){return_type}` 結算領 p_rogue_report+rewards
-- [x] 周邊系統：science=神樹祝福(0x4c16~19)、週獎勵(0x4c1a)、轉盤(0x4c13~15)、branch 分支事件(0x4c0a~12,0x4c23)、報告(0x4c08/1b/21)
-- [x] live 打一場（5554 閃電）：開始→確認(btnEnsure)→進場(main_enter回入場獎勵)→開始挑戰→
-      `tx 0x4c04` combat → `rx 0x4c04`(seed+atk/def) → client 模擬 → `tx 0x4c05`(result) →
-      `rx 0x4c05`(reward) 一輪閉環。這關判敗(「手滑出局」)但 **server 仍接受 client 回報的 result**。
-- [ ] 純 WS 可行性：result c2s 只有 {result, precent=HP%}，無 operators 回放序列 → 比 dungeon battle 簡單，
-      但仍是 client 算勝負 + `checkCheat()`（client 端自我審查；server 端是否回放未知）。偽造勝利風險未知，
-      需專門 live 驗（送 result=0 看 server 是否判敗/0x0201）。roguelike 多關連打不適合無腦純 WS。
-- [ ] 規劃自動化路線：rogue 是 roguelike（科技樹/分支事件/逐關），自動化複雜度遠高於掃蕩。
-      建議優先級低；若要做傾向 H5 emit-callback 驅動（座標/emit 都無效，須直呼 click callbackInfos）。
-- 陷阱：RogueView 的按鈕 emit('click') 與 mouse.click 都無效，要直接呼叫
-  `node._eventProcessor.bubblingTarget._callbackTable['click'].callbackInfos[].callback`
+**Context**: 5554 等 WS 豐收卡一直沒效。用 `tools/ws_harvest_step.py`(CDP 接瀏覽器、單步 + sniff/capture)live 反推完整協議 + 對齊正確流程。現有 `run_harvest_card_cycle` 三個結構性問題:漏「清場」、漏「收成 3080」階段、施肥 num=1(該 3)、無 N×5 迴圈。詳見 memory `reference_ws_harvest_fertilize_num3`。
 
----
+**Live 驗證協議 (5554 2026-06-22, 回應長度都對上親手按鈕)**:
+- 種植 = 3078 `{seed_id:103, land_id}` (build_plant_body)
+- 施肥 = 3079 `{role_id:0, land_id, fertilizer_id:111, num:3}` (num 原 1=bug;reply new_land#3 state=2 即熟)
+- 收成 = 3080 pick `{role_id:0, land_id}` (CMD_PICK;reply 3080 code#1;未熟 code=122)
+- 收穫 = 3081 harvest `{land_id}` (build_harvest_body;reply 3081;空地/未熟逾時不回)
+- 買卡 = 6914 `{shop_type:11, shop_id:1604, num}` (買 +1 verified)
+- 打工 18177/18178 → reply 18184 (非自身 cmd)
 
-## 2026-06-18 預設 planner 改 v1 + 移除 v5（使用者指示，本 session）
+**正確流程 (對齊使用者 + farm_v2/operations/harvest_card.py)**:
+1. 取消打工 (18178→18184)
+2. 清場(打工種的便宜作物不能吃卡的 30 株額度): 施肥(num3 催熟)→ 收成(3080) → 收穫(3081)
+3. 買豐收卡 N 張 (N = HARVEST_CARD_BUY_COUNT=3 週上限)
+4. 賺取迴圈 × (bought×5 輪, 30株/卡 ÷ 6株/輪): 種植103 → 施肥(num3) → 收成(3080) → 收穫(3081)
+5. 恢復打工 (18177→18184)
 
-### 結論依據
-真實 3.6% 密度 eval（`docs/superpowers/plans/2026-06-18-...top-pileup-fix.md:547-552`）：
-v5 score 1173 = 四套最低（v1=3126、v3=2963、v4=1359），stuck=3/5。v5 當初選預設是依舊高密度
-eval，密度校正後從未重評。研究法：dual-codev（A=我+Explore、B=opencode 獨立、C 彙整）。
+**Decisions (使用者 2026-06-22)**: 直接跑 cards×5 輪固定,**不偵測 buff 耗盡**(清場後額度全新,基本固定)。land_ids 由開頭 read_farm 讀一次(fresh session 可讀;之後靠 fertilize reply 的 new_land state 判熟,不重讀 3077 因 ~once/session)。
 
-### 決策（dual-codev C）
-- WS mining（`ws_token/mining_adapter.py`）原硬寫 plan_v5 → 改 **v4**（非 v1）。
-  原本想用 v1 但測試 `test_plan_uses_active_cells_to_make_ws_progress_step` 抓到：v1（A*）在無 pit
-  + floor7 已開時直接回空步（goal 達成），但 WS 監督迴圈需要 planner 持續吐 no_pit 進度挖步
-  來捲動。v5=v4+priors，去掉 priors 的等價 = v4(行為+契約完全相同，且接受 max_depth)。
-  → main 截圖迴圈 default=v1（其迴圈自帶 forced-descent 處理空步）；WS 路徑=v4。
-- `miner/depth_tracker.py` **保留**（非 v5 專屬：`tools/track_pits_replay.py` 用 best_scroll + 有自測）；
-  v5 移除後 depth 變純 telemetry。
-- `bot_config.json` 既有 v4 裝置（L323、728）**不動**（使用者只說移除 v5）。
-- ⚠ 注意 todo.md L71-75 的「挖礦 WS 另一 session 勿動」鎖是 2026-06-11 舊註；該工作已於 2026-06-17
-  由本脈絡 merge+live 驗證（見 memory ws-mining-verified），故本次可改 mining_adapter.py。
+**實作 todo**:
+- [ ] `build_pick_body(land_id, role_id=0)` → `{role#1, land#2}`
+- [ ] `pick_lands(client, land_ids)` — 送 3080,檢查 reply code#1,per-land 容錯
+- [ ] `fertilize_until_mature(client, land_ids, num=3, max_rounds=8)` — 迴圈施肥,解析 3079 reply new_land#3 state==2 即停該塊;code19(已熟)也停;封頂避免肥料暴衝
+- [ ] `harvest_lands(client, land_ids)` — 送 3081 per land,短 timeout + 容錯(空地逾時=跳過)
+- [ ] worker stop/start expect 加 18184 → `(18184, cmd, 0x0201)`
+- [ ] 重寫 `run_harvest_card_cycle`: stop_work → read_farm(land_ids + 有作物者) → 清場 → buy N → rounds=bought×5 迴圈 → start_work;回傳含 cleared/cards_bought/rounds/planted/harvested
+- [ ] 更新/加測試 `tests/test_harvest_card_*`(mock client,驗 cmd 序 + 輪數 = bought×5)
+- [ ] 不動 ADB 視覺版 farm_v2/operations/harvest_card.py(僅 WS 路徑)
 
-### EDIT
-- [x] `config_manager.py`: L70 default、L197 default、L998 enum 去 v5（→v1）
-- [x] `miner/mining_service.py`: 去 import plan_v5 / v5 dispatch 分支 / `{"v3","v4","v5"}` 去 v5 /
-      default+fallback v5→v1 / 去 priors_accumulator（v5 專屬）3 段
-- [x] `ws_token/mining_adapter.py`: plan_v5→plan_smart，停傳 max_depth
-- [x] `control_panel/routes_status.py`: L366 default 'v5'→'v1'
-- [x] `templates/dashboard.html`: 去 v5 option + default 'v5'→'v1'
-- [x] `bot_config.json`: v5 裝置（L32,186,362,483,604）→v1
-- [x] eval 工具去 v5 import：`tools/sim_html_eval.py`、`tools/mining_sim_eval.py`、`tools/replay_real_boards.py`
-- [x] CLAUDE.md miner 區段敘述更新
-
-### DELETE
-- [x] `miner/v5/`、`tools/build_v5_priors.py`(+sync-conflict)、`tests/test_miner_v5_*.py`、`docs/MINING_V5_PRIORS.md`
-
-### VERIFY
-- [x] py_compile 改動檔 + grep 全庫無殘留 `miner.v5`/`plan_v5`
-- [x] focused pytest（depth_tracker / mining_service import / ws_token mining import）
-- [x] opencode 獨立 review 最終 diff
-
-### Review（完成後填）
--
-
----
-
-## 2026-06-19 看廣告獎勵純 WS 自動領取（鑽石/種子/肥料）— 研究完成,待實作
-
-研究全部 live-verified(5556 web_h5 CDP 9223,2026-06-19)。完整協議見 memory
-`reference_ws_ad_reward_protocol`。
-
-### 結論：所有「看廣告領X」走同一個 cmd
-- claim = **`ad.ad_reward_c2s` 0x1602** `{config_id#1, ext#2:[], is_free#3=1}`（買免廣告=NO_ADS
-  特權→is_free=1 即時到帳、無影片）。回 0x1602 `{new_ad:{config_id,count,_,next_ts}}` +
-  獎勵走 item_change 0x0406(1030) 推播；拒絕=0x0201{code}（每日上限 code 89）。
-  抽卡免廣告(`ws_token/gacha.py` 0x1602 slot 8/7)就是這個 cmd（slot=AdType enum）。
-- count 查詢 = **`ad.ad_info_c2s` 0x1601 {}** → repeated `{config_id#1, count#2(當日次數),
-  _#3, next_ts#4(冷卻到期,0=可領)}`。未出現的 config_id 視為 count=0（同 shop_info）。
-
-### 要處理的 config_id（使用者指定）+ live 值
-| config_id | 名稱 | 獎勵 | times/日 | cd | 備註 |
-|---|---|---|---:|---:|---|
-| **15** AD_FARM_SEED | 種子 | 初級種子(101)×3 | 2 | 0 | 原始需求 |
-| **14** AD_FLOAT | 鑽石(=口語粉鑽) | 鑽石(2)×100 | 5 | 300 | cd 5min,每 session 約領 1 |
-| **12** AD_PAY_MALL | 鑽石 | 鑽石(2)×200 | 3 | 0 | ⚠ 不在 ad_info 清單,需 live 確認可純 WS 領 |
-
-（16 AD_FARM_FERTILE 普通肥料(112)×3-20 ×2、17 building-skip ×4 = 可選加,預設不開）
-
-### 使用者明確要求
-1. **透過 WS 直接請求**（買了免廣告,is_free=1）。
-2. **config_id 記進 config 以便追蹤**。
-3. **到每日上限就不請求**（讀 count→remaining=times-count,≤0 跳過;next_ts 未到也跳過,
-   避開 cd 拒絕）= 比照既有 farm shop「讀現值→只補差額」紀律。
-
-### 實作計畫（plan,待使用者過目）
-- [ ] 1. `ws_token/ad_reward.py`：`TIMES`/`AD_NAMES` 常數;`read_ad_counts(client)`(送 0x1601 解析
-      {config_id:(count,next_ts)});`claim_ad(client,config_id)`(loop:remaining>0 且 now>=next_ts
-      才送 0x1602,成功更新 next_ts,0x0201 即停);`claim_ads(client,config_ids)` 彙整。
-      ext 空、is_free=1。body builder 重用 `gacha` 的 `pb_uint(1,id)+pb_uint(3,1)`。
-- [ ] 2. `ws_token/runner.py`：`_run_ad_rewards` + TASK_ORDER + run_device 參數 `ad_reward_config_ids`。
-- [ ] 3. `runtime_services/ws_runner_service.py`：device config `ws_token.ad_rewards`
-      `{enabled, config_ids:[12,14,15]}` → run_device 參數映射。
-- [ ] 4. `config_manager.py`：DEFAULT `ws_token.ad_rewards={"enabled":false,"config_ids":[12,14,15]}`
-      + `_merge_*` sanitizer。
-- [ ] 5. `bot_config.json`：5 台開 `ws_token.ad_rewards={enabled:true,config_ids:[12,14,15]}`
-      = 5554 / 5556 / 5560 / 小寶(7fe98fc6) / 手機fc(adb-fc65396d)（皆已開 ws_token,無額外處理）。
-      **5558 先不開**（使用者 2026-06-19 指示;其 ws_token 本就關著）。
-- [ ] 6. `tests/test_ws_token_ad_reward.py`：read_ad_counts 解析 / 到上限跳過 / cd 跳過 /
-      0x0201 即停 / claim_ads 彙整（fake client,比照 `tests/fakes/ws_fakes.py`）。
-- [ ] 7. live 驗證 config 12（AD_PAY_MALL 不在 ad_info,需確認純 WS 可領）+ 一輪端到端。
-- [ ] ⚠ 改完需重啟 new_main_v2.py 生效。
-
-## 2026-06-19 純視覺農場退役計畫(待 WS 驗證後執行)
-
-> 背景:純 WS 農場三塊 — ① 看廣告領種子(ws_token ad_reward config_id=15)② 豐收卡循環
-> (ws_token.farm.run_harvest_card_cycle)③ 打工 start/stop(ws_token.farm)。三塊「全部 live 驗證」
-> 後,farm_v2 的「純視覺每日領取」可退役。本段只是計畫,**程式碼未刪**;待刪處已加
-> `# remove-after-ws-farm-verify(2026-06-19)` 註解標記方便定位(只加註解,未改邏輯)。
-> 盤點來源:Explore 子代理 + 主代理抽驗(行號以抽驗為準,子代理部分行號有偏差已修正)。
-
-### 退役前置條件(全部打勾才開刪)
-- [ ] 每台仍跑視覺農場的 H5 裝置(5556/5560/7fe98fc6;5558 使用者指示先不開)接上並 live 驗證:
-      `ws_token.ad_rewards{enabled:true, config_ids 含 15}` + `ws_token.farm.harvest_card_cycle{enabled:true}`
-      + `ws_token.farm.buy=[{407,4},{408,4}]`(目前只有 5554 設了 buy)。
-- [ ] adb-fc65396d:確認是否接 WS farm。**若不接 → 視覺/ADB 農場路徑必須全留**(該機 backend=adb,
-      無 WS farm 設定)。
-- [ ] **接線缺口(關鍵,退役前必修)**:`game_actions/ws_phase.py:271` 的農場 skip 條件目前是
-      `("farm" in effective_done) and (cfg.get("farm") or {}).get("seed_id")` —— 只看 `farm.seed_id`。
-      但 WS 農場實際用的是 `farm.buy` / `farm.harvest_card_cycle`,**沒有 seed_id**。故即使 WS 跑完豐收卡,
-      daily_pipeline Task 2「農場任務」也不會被 skip,視覺農場仍會重跑。退役時需把此條件改成
-      「harvest_card_cycle 跑成功 → skip 農場任務」(或 ad_rewards+harvest_card_cycle 都做完才 skip)。
-      未修則「刪視覺農場」會直接讓農場任務無人做。
-
-### A. 可刪(WS 驗證後,低風險)
-- [ ] `farm_v2/operations/ad_seed.py` 全檔(claim_ad_seeds 行 41-72 + _claim_h5 行 75-102)。
-      取代者:ws_token ad_reward(15)。ADB 路徑本就 honest stub(行 60-63 永遠回 0,刪它對 ADB 零影響)。
-      呼叫端要改:`farm_v2/manager.py:195` 刪 `claim_ad_seeds(...)` 呼叫 + 頂部 import。
-      連帶:`tests/test_farm_ad_seed.py` 一併刪。
-- [ ] `farm_v2/web_farm.py` 看廣告專屬 primitive(僅被 ad_seed 用):`seed_ad_status`/`tap_seed_ad`/
-      `reward_open`/`close_reward`/`close_seed_select`/`open_seed_select`(若無其他消費者)。
-      **刪前 grep 確認**這些函式除 ad_seed 外沒被 harvest_card 或別處引用(open_seed_select 可能共用,需查)。
-
-### B. 大部分可刪、保留 ADB 後備(WS 驗證後,中風險)
-- [ ] `farm_v2/operations/harvest_card.py`:H5 視覺豐收卡(run_harvest_card 行 706+ 的 H5 分支 +
-      導航 + 購卡 + 種/施肥/收成的 web/page 路徑)。取代者:ws_token.farm.run_harvest_card_cycle。
-      **必留**:ADB 後備分支(`_*_adb` / OCR `click_str_by_server` 路徑)——adb-fc65396d 若無 WS farm 要靠它。
-      **必留**:`harvest_card.py:31 from farm_v2.operations.weekly_card import check_if_parttime`——
-      weekly_card.py **不可整檔刪**(子代理誤判可立即刪;harvest_card 仍 import 它的 check_if_parttime)。
-      呼叫端要改:`farm_v2/manager.py:198-203`(should_run_card 區塊)依「該機是否仍需視覺農場」決定刪或留。
-- [ ] `farm_v2/operations/seed.py::buy_seed`(行 17-82,金幣買種 OCR 流程):取代者 ws_token.farm.buy_farm_shop
-      (shop 407/408)。**前置**:每台 H5 都設了 `farm.buy` 並驗過。ADB 機若無 WS 則保留。
-      呼叫端:`farm_v2/manager.py:188-191`。
-- [ ] `farm_v2/manager.py:205-244` 本地散落獎勵收集 + 手動種植迴圈(find_and_click getting/get_all/plants/put):
-      WS 打工會自動種+收,這段在 WS 全覆蓋後對 H5 多餘。**保留**給 ADB 機(無 WS)。
-
-### C. 已是死碼、與 WS 無關但可順手清(獨立於 WS 驗證)
-- [ ] `farm_v2/states.py`(FarmState/FarmContext):manager.py:14 有 import 但實際未使用,grep 確認 0 消費者後可刪。
-- [ ] `farm_v2/operations/weekly_card.py`:**不可整檔刪**(見上,check_if_parttime 仍被 harvest_card 用)。
-      可考慮把 check_if_parttime 抽到 base.py 後再刪其餘死碼,但屬重構、非退役範圍,先不動。
-- [ ] `farm_v2/manager.py::quick_farm`(行 263-268)+ `game_api.py` 的 TRIGGER_FARMING:memory 標記為死路徑
-      (無 consumer),可獨立清。
-
-### 必留(無論 WS 是否驗證)
-- `farm_v2/manager.py::farm`(主入口)、`navigate_to_farm`/`navigate_to_home`(daily_pipeline Task 2 呼叫)、
-  `farm()` 的 enable_farm gate + 8h farm_visit 節流 gate —— 只要還有任一裝置走視覺農場就必留。
-- `sea_v2.navigator.world_to_pixel`:被 `web_farm.py:21,174` 單向 import;**sea_v2 不反向依賴 farm_v2**,
-  且 sea_v2 自己也用 world_to_pixel,故 world_to_pixel 必留(屬 sea_v2,非農場專屬)。
-- 共用 helper(`img_tools.find_and_click`、`tools.click_white`、`utils.cocos_navigator`、OCR):跨子系統共用,勿動。
-- 反向依賴掃描結論:除 `daily_pipeline.py:31` + 測試外,**無核心模組 import farm_v2**
-  (`game_actions/navigation.py:17` 特意避開以防循環),退役影響面僅 daily_pipeline Task 2 一處。
-
-### 各裝置 backend / WS farm 涵蓋現況(2026-06-19 盤點,決定誰還需要視覺農場)
-- emulator-5554:web_h5,enable_farm,ws_token.farm.buy 已設(種子/肥料 WS 化);ad/豐收卡尚未 WS 化 → 視覺補。
-- emulator-5556 / 5560 / 7fe98fc6:web_h5,enable_farm,**ws_token.farm 未設** → 視覺農場 100% 承擔。
-- emulator-5558:web_h5(使用者指示先不開 WS)。
-- adb-fc65396d:**backend=adb**,enable_farm,無 WS farm → ADB 視覺農場 100% 承擔(ADB 後備務必留)。
-- web-001(enable_farm=false)/ web-002(停用):不相關。
-
-### 驗證(刪除執行時)
-- [ ] 改完跑 `python -m py_compile` 受影響檔 + `python -m pytest tests/test_farm_gate.py
-      tests/test_farm_ad_seed.py tests/test_harvest_card_*.py -q`(刪 ad_seed 時連帶刪其測試)。
-- [ ] daily_pipeline Task 2:WS-done 裝置應被 skip(需先修 ws_phase.py:271 接線缺口);ADB 裝置仍跑視覺一輪。
-- [ ] ⚠ 改完需重啟 new_main_v2.py 生效(sys.modules cache)。
-
----
-
-## 2026-06-19 夜間自主批次完成總結(等使用者醒來過目 + commit)
-
-**全部已實作 + 主代理親跑 237 測試綠、py_compile OK、無交叉回歸。未 commit(原因見下)。**
-
-| 功能 | 狀態 | 我碰的檔 |
-|------|------|------|
-| 看廣告獎勵純WS(鑽石12/14+種子15,到上限/cd不請求) | ✅ 3 個 config_id live 實測到帳 | ws_token/ad_reward.py(新)、runner.py、ws_runner_service.py、config_manager.py、bot_config.json(5台)、test_ws_token_ad_reward.py(新) |
-| 農場WS落保留檔 logs/<dev>/ws_farm.log | ✅ | ws_token/farm.py、runner.py、utils/logging_utils.py、utils/log_paths.py |
-| 遺物碎片衝刺(act2 m25,relic_up自動計入,邊升邊追~900K最小overshoot) | ✅ 後端+接線,**未 live 驗(見下方 #25)** | ws_token/relic.py、ws_token/relic_sprint.py(新)、runner.py、ws_runner_service.py、config_manager.py、bot_config.json(5台)、3 測試檔 |
-| #23 工具面板純WS(ws_session 持久連線 + 看廣告一鍵 + 抽卡遷移) | ✅ | control_panel/routes_ad_reward.py(新)、routes_tools_optimize.py、control_panel_app.py、templates/tools_optimize.html、2 測試檔 |
-| #24 遺物均勻升級兩階段工具(規劃→執行) | ✅ | control_panel/routes_relic_sprint.py(新)、control_panel_app.py、templates/tools_optimize.html、2 測試檔 |
-| #19 徽章每日任務/農場種植(讀側 flat-scalar bug + WS 回寫) | ✅ | control_panel/routes_status.py、game_actions/ws_phase.py、test_daily_progress_badge.py(新)、test_ws_phase.py |
-
-**⚠ commit hold 原因**:共用檔 `config_manager.py / bot_config.json / utils/logging_utils.py / utils/log_paths.py / game_actions/ws_phase.py / daily_pipeline.py` 在開工前已被**別的並行 session** 改過(initial git status 已 M);我的改動與他們 WIP 混在同檔無法乾淨切,故全留工作區不 commit,等使用者過目全 diff 再決定範圍。純新檔(ad_reward.py/relic_sprint.py/routes_ad_reward.py/routes_relic_sprint.py + 各新測試)可單獨乾淨 commit。
-
-**⚠ 重啟生效**:runner/ws_phase/config/logging + 中控 routes_* → 需重啟 `new_main_v2.py` + 中控。
-
-**遺物衝刺待 live 驗(#25)**:count 單位(碎片量 vs 次數)、4 輪精確門檻、當期 act_type(13/269)、領獎回應形式。若 count=次數,run_relic_sprint 的 accrued 扣抵邏輯要改。協議細節見 `docs/protocol/RELIC_SPRINT_RECON.md`。
-
-**既有測試失敗(非本批,別 session WIP,未動)**:test_ws_token_gacha(gacha預設drain→fixed)、test_ws_token_runner(statue缺cmd3107+時鐘)、test_farm_gate(is_same_day)。
-
----
-
-## 2026-06-19 #20 主 dashboard 重設計方案(待使用者過目,**刻意未動手**)
-
-使用者要把裝置卡片「雜亂無章」的設定收斂成「幾個按鈕/開關」。**這是改動控制 live bot 的主控面 `templates/dashboard.html` + config 存檔邏輯的結構性重寫,且高度依賴外觀驗收**——與本夜其他「additive 新面板 + 測試覆蓋」的低風險工作不同。我刻意不在無法視覺驗收時盲改主控面(改壞 config 存檔會誤存裝置設定、影響真機),改成備好方案讓使用者過目/微調後再動。
-
-建議方向(待確認):
-- [ ] 盤點 `templates/dashboard.html` 裝置卡片現有所有設定欄位 + `control_panel/routes_config.py` 存檔對應。
-- [ ] ws_token 一堆子開關(spend/open_lamp/farm/carpark_plan/mining/gacha/ad_rewards/relic_sprint/…)收進可摺疊「WS 任務」分頁,每項一 toggle,取代散落欄位。
-- [ ] 「方案」(adb/adb+ws/h5/h5+ws)等互斥選項用 segmented buttons 取代下拉。
-- [ ] 罕用/進階欄位收進「進階」摺疊區;常用(啟用/方案/喚醒)留卡片正面。
-- [ ] 存檔走既有 routes_config + saveConfig merge,逐欄位保持相容(template 測試先保欄位 hooks 不破)。
-- [ ] 分階段:先做一個裝置卡片新版型 → 使用者看過 → 再套全部。
-
+### Review — 完成 2026-06-22
+全部 todo 已實作 + 測試:
+- ws_token/farm.py: `CMD_WORKER_STATE=18184` + worker stop/start expect 18184;`build_pick_body`;`HARVEST_CARD_WEEKLY_LIMIT=3`/`PLANTS_PER_CARD=30`;新 helper `plant_lands` / `pick_lands` / `harvest_lands`(含逾時重試)/ `fertilize_until_mature`(讀 3079 reply new_land state 判熟);`run_harvest_card_cycle` 重寫為 4 階段(取消打工→清場→買卡→賺取 bought×5 輪→恢復打工)。
+- tests/test_ws_token_farm.py: +4 測試(fertilize_until_mature 迴圈到熟 num=3 / pick_lands 3080 role0 / pick code!=0 失敗 / harvest_lands 獎勵加總)→ **45 passed**。
+- runner 相容:harvest_card + farm 的 11 個 runner 測試 passed(num_cards/fertilizer_id/inventory_tracker/device_id 簽名向後相容)。
+- live 驗證:4 階段協議 + earn 37 增益 end-to-end 在 5554 跑通(tools/ws_harvest_step.py)。
+- 既有失敗(非本次):runner 的 main_tasks 4 測試=08:00 時間閘(現 05:59);fake-transport 259 hang。8 點後/環境問題,與本變更無關。
+- **待生效**:需重啟 new_main_v2(sys.modules cache);5554 等裝置要在 config 設 `ws_token.farm.harvest_card_cycle.enabled=true` 才會跑(目前 5554=null)。ADB 視覺版 farm_v2 未動。

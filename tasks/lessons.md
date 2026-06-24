@@ -340,3 +340,27 @@ While doing the dashboard 進階設定 rework directly in the main working dir, 
 4. **驗證要落地**：用 CNN classifier 視覺對照 + 實際挖一格看 0x0c03 回覆/版面變化，別只靠協議推論。使用者授權「自由實測、無須擔心使用道具」時，挖一格驗證比反覆猜更快更準。
 
 **Rule**: 動挖礦/web_h5 WS 之前——(a) 用 CDP 不用 cold login；(b) 認知模型先對照 CNN classifier 與一次實挖；(c) 先讀既有 code/model/protocol doc 再改。
+
+### 別把舊 recon 文件的斷言當地基，尤其手上有 live session 可驗 (2026-06-20)
+診斷萬神(rogue Beta)為何沒正確執行時，我直接引用 `docs/ROGUE_WANSHEN_BETA_AUTOMATION.md` 的記載「RogueView 按鈕 emit('click')/mouse.click 都無效，必須走 callbackInfos」當成根因機制（「進場後點不動」）。使用者當場糾正：**明明可以點**，該記載有誤，要我移除。當時我**正連著 5554 的 CDP**，完全可以自己驗 clickability，卻選擇照抄文件。
+
+修正後的真正根因：fight_test 用 OCR 子字串命中「萬神試煉Beta」**進得去**、點擊也**有效**，但它跑的是**舊版按鈕序列**(開始挑戰/結束本局/買秘寶閣)，對不上新 roguelike RogueView 流程(入場→btnEnsure→開戰→分支→結算) → 點到錯東西、沒真的清關。不是「點不動」。
+
+**Rule**: 引用任何 recon/研究文件的「實測結論」前，先看那結論能不能**用手上現有手段直接複驗**(有 CDP 就點一顆試)。能複驗就複驗，不能才標為「依文件、未複驗」。文件裡的「實測」可能過時或當初就錯；把它當地基會把錯誤傳播進新診斷。
+
+### rogue fight_test 停止條件：失敗過濾器 + 開始挑戰消失 + 15 分上限 (2026-06-21)
+萬神 rogue 戰鬥迴圈的停止判斷反覆了一輪才定案：我先用 `check_str_in_region('失敗')`；使用者一度指出「勝/敗結果窗長得很像，都只是『點擊…關閉』彈窗」，我就改成純靠「點掉後『開始挑戰』是否再現」當結構訊號；使用者最後拍板：**還是用『失敗』當過濾器**，並加**每輪不得超過 15 分鐘**。
+
+最終 `_battle_loop` 停止條件(任一)：① 偵測到『失敗』(主過濾器) ② 找不到『開始挑戰』(次數用盡/離開視圖，結構 fallback) ③ 單輪 > 15 分鐘(`_RUN_MAX_SECONDS`，`time.monotonic()` wall-clock) ④ `max_stages` 安全上限。
+
+**Rule**: 連續流程的停止判斷用**多重訊號疊加**(明確結果字 + 結構性「能不能繼續」 + wall-clock 時間上限)，別只押一個；長時間 live 迴圈一定要有時間上限避免卡死。最終以哪個為主**以使用者拍板為準**——別把使用者中途一句觀察當成最終設計就定案(這次太快據此改掉失敗偵測，又被回頭改)。
+
+---
+
+## 2026-06-22 — Live 遊戲操作:逐步必先問,別批次跑
+
+使用者要「一步一步來 / 我用瀏覽器看你的動作」做 live 帳號操作(豐收卡 WS 循環)時,我把 6 步(取消打工→施肥→收成→買卡→種→恢復打工)寫成一支腳本**一次跑完**,被糾正:「每一步都要先問我」。
+
+**Rule**: 對 live 帳號(會花錢/改動遊戲狀態)的逐步驗證,**一次只送一個 WS 動作就停**,把結果貼出來、等使用者在瀏覽器確認後,**再問**才做下一步。工具做成單一 atomic step(`--step stop_work|fertilize|harvest|buy|plant|start_work`),不要包成 run-all。使用者說「step by step」= 每步一個 gate,不是「自動跑完但中間 log 很多」。
+
+**附帶技術發現(CDP 接瀏覽器同 session 驅動遊戲 WS)**: shop 類 cmd(6913 shop_info)可用 raw `sock.sendMessage(numericCmd, bytes)` 注入並收到回應;但 home_farm(3077)與 worker(18177/18178)這種**有狀態模組**注入 raw frame 後**伺服器不回**(逾時)。3077 另有「每 session 只回一次」去重,瀏覽器載入莊園時已消耗。診斷用 sniff(送出後收集 N ms 內所有回傳 cmd)。

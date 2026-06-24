@@ -1,1 +1,111 @@
-{}
+{
+    "地獄之門": {
+        "timestamp": 1781716967.828691,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:22:47"
+    },
+    "donate_family": {
+        "timestamp": 1781717030.354434,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:23:50"
+    },
+    "雪國危機": {
+        "count": 2,
+        "check_times": 1,
+        "week": "2026-25",
+        "note": "win",
+        "last_time_utc": "2026-06-17T15:15:49.623191Z",
+        "last_time": "2026-06-17 15:15:49",
+        "last_time_local": "2026-06-17T23:15:49.623191+08:00",
+        "_schema": "utc_v1"
+    },
+    "go_to_family_cooldown": {
+        "timestamp": 1781717054.798797,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:24:14"
+    },
+    "guardian_spirit": {
+        "timestamp": 1781717083.591158,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:24:43"
+    },
+    "Store": {
+        "timestamp": 1781717127.550533,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:25:27"
+    },
+    "衝刺-發條": {
+        "timestamp": 1781709434.387647,
+        "date": "2026-06-17",
+        "datetime": "2026-06-17 23:17:14"
+    },
+    "daily_acceleration": {
+        "timestamp": 1781717140.317899,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:25:40"
+    },
+    "arena_challenges": {
+        "timestamp": 1781717206.806614,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:26:46"
+    },
+    "挖礦": {
+        "timestamp": 1781717560.179925,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:32:40"
+    },
+    "mushroom_arena_cycle_start": {
+        "timestamp": 1781717570.245118,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:32:50"
+    },
+    "mushroom_arena_daily": {
+        "timestamp": 1781717581.379302,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:33:01"
+    },
+    "sea_cycle_start": {
+        "timestamp": 1781709681.607387,
+        "date": "2026-06-17",
+        "datetime": "2026-06-17 23:21:21"
+    },
+    "sea_last_execution": {
+        "timestamp": 1781709681.615939,
+        "date": "2026-06-17",
+        "datetime": "2026-06-17 23:21:21"
+    },
+    "萬神_秘寶閣": {
+        "count": 4,
+        "last_time_utc": "2026-06-17T15:28:27.478835Z",
+        "last_time": "2026-06-17 15:28:27",
+        "last_time_local": "2026-06-17T23:28:27.478835+08:00",
+        "_schema": "utc_v1"
+    },
+    "萬神試煉": {
+        "timestamp": 1781710120.329383,
+        "date": "2026-06-17",
+        "datetime": "2026-06-17 23:28:40"
+    },
+    "daily_gift_friend": {
+        "timestamp": 1781717628.052191,
+        "date": "2026-06-18",
+        "datetime": "2026-06-18 01:33:48",
+        "status": "completed",
+        "total_count": 1,
+        "success_count": 1,
+        "fail_count": 0
+    },
+    "general_lamp_last_execution": {
+        "timestamp": 1781710475.114392,
+        "date": "2026-06-17",
+        "datetime": "2026-06-17 23:34:35"
+    },
+    "daily_mail_claim": {
+        "purchased": true,
+        "last_time_utc": "2026-06-17T17:34:06.274082Z",
+        "last_time": "2026-06-17 17:34:06",
+        "last_time_local": "2026-06-18T01:34:06.274082+08:00",
+        "count": 2,
+        "_schema": "utc_v1"
+    }
+}

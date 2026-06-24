@@ -15,6 +15,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **memory 一律用英文寫**（`~/.claude/.../memory/*.md`）。
 - **複雜或大 context 的任務用 subagents 做上下文隔離**：自行判斷是否需要大量子代理；把研究 / 探索 / 實作 offload 給 subagent，保持主 context 乾淨。
 - 動到正在跑的 bot（`new_main_v2.py` / `device_wrapper.py` / 排程）的大改動：先把 plan 寫進 `tasks/todo.md` 並讓使用者過目，再動手。
+- **Subagent 一律 Opus**：spawn Agent 時加 `model:"opus"`。
+- **Subagent 檔案所有權**：禁止 subagent 用 Write 覆寫共用文件（`todo.md` 等）；用 Edit、列出 owned files、fan-out 前先 commit baseline。
+- **code-editing 走 worktree 隔離**：使用者同時跑多個 Claude Code；改程式碼的 session 開自己的 branch + worktree，完成後 merge 回 main 再刪 worktree + branch。
+- **每段落自動 commit**：做完一個段落就 commit，不用問；只 stage 有動到的檔案（絕不 `git add -A`：~80 WIP 檔 + `auth_state/` secrets）；不 push、不加 attribution footer。
 
 ## 導覽索引 (Navigation Index)
 
@@ -81,7 +85,7 @@ Each device thread runs an independent automation loop with:
 | Wake-up handler | `utils/wake_up_handler.py` | Screen wake/ unlock, connection locking |
 | OCR | `img_tools.py` | Multi-server fallback with circuit breaker |
 | Lamp (開神燈) | `opengold_v2/` | 唯一 live 路徑：`game_actions/lamp_scheduler.py` → `opengold_v2.LampService`。V1 `Open_gold_paddle_ocr.py` 已廢棄 |
-| Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v1**（A*），v1/v3/v4 可切（config `mining_planner_version`）。v2 已移除 (2026-06-05)、v5 已移除 (2026-06-18，真實 3.6% 密度 score 1173 四套最低)。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
+| Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v1**（A*），v1/v3/v4 可切（`mining_planner_version`）。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
 | Mining planner v3/v4 | `miner/v3,v4/` | v3 cluster-aware actions (230ms deadline)、v4 bounded 3-step DFS + branch-and-bound (250ms deadline)。深度追蹤（純 telemetry）：`miner/depth_tracker.py`（row-shift 偵測 + WS baseline 校準口） |
 | OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
 | Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
@@ -102,12 +106,12 @@ Each device thread runs an independent automation loop with:
 
 ## Mining Module (`miner/`)
 
-Search-based automation (planner default **v1** = whole-board A*; v3/v4 = bounded search). Shared mechanics:
+Planner default **v1** (whole-board A*); v3/v4 = bounded search. Shared mechanics:
 - 7-row viewport, scroll-triggered when row 6 cleared
 - Props: bomb (3x3 + cross), drill (vertical + bottom row)
-- Cost model: pickaxe=1.0；v1 props=2.99；v4 rarity weights drill=2.5 / bomb=3.5 (源頭 `miner/v4/planner.py`)
+- Cost model: pickaxe=1.0; v1 props=2.99; v4 drill=2.5 / bomb=3.5
 - Dead-loop detection, auto-aborts after 3 identical states
-- 真實 regime (礦脈**時間追蹤** `tools/track_pits_replay.py`)：cluster 是正方 1x1/2x2/3x3 (數量 66/18/17%，但 3x3 占 ~52% 礦格)；spawn 密度 ~3.6%；每回合 75% no_pit。⚠ 單張快照連通分量會**漏判 3x3** (跨 row 被逐步收集)。planner 比較與礦物出現率校正見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md)
+- Real density ~3.6%; clusters 1x1/2x2/3x3; details in [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md)
 
 Key files:
 - `miner/mining_service.py` - orchestrates screenshot → classify → plan → execute
@@ -125,10 +129,7 @@ Key files:
 - `miner/v4/` — bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。
 - `miner/v3/` — cluster-aware action model (`clusters`/`actions`/`board`); v4 reuses `v3.actions`. 有 230ms wall-clock deadline。
 
-> **v2 已移除** (2026-06-05)：真實 board 重放 18.8% 超過 0.3s。`miner/v2/` 套件保留，因
-> `classifier.py / service.py / types.py / visualization.py` 是 v3/v4 共用的 CNN 分類層；只刪了 `plan_v2`。
-> **v5 已移除** (2026-06-18)：真實 3.6% 密度重評 score 1173 四套最低、stuck 3/5（當初選 v5 是依舊高密度
-> eval，校正後未重評）。`miner/depth_tracker.py` 保留為純 telemetry（仍供 `tools/track_pits_replay.py`）。
+> v2/v5 已移除。`miner/v2/` 套件保留（CNN 分類層共用）；`depth_tracker.py` 保留為 telemetry。
 
 Debug CLIs (run on a single screenshot)：
 ```bash
@@ -213,7 +214,6 @@ logs/
   - `_is_rotatable_active_log()` 過濾，跳過已 rotated 與 `sync-conflict-*`，避免 `name.t1.t2.t3.log` 檔名增生
   - 跳過 `_archive/`、`system/` 子目錄
 - 自動 purge：每個 logger 啟動時清掉 ≥7 天前 rotated 副本（`_DEVICE_LOG_RETENTION_DAYS`），ocr_trace 5 天
-- 從舊 flat layout 遷移：先停 bot，再跑 `python tools/migrate_logs_layout.py --apply`（預設 dry-run；bot 在跑時 `--apply` 會被擋）
 
 ## Common Operations
 
@@ -261,30 +261,14 @@ Tests live in `tests/` with fixtures under `tests/fixtures/` and screenshot fixt
 
 If pytest prints `.pytest_cache` permission warnings on the NAS path, ignore them unless the test result itself failed. If it reports `ModuleNotFoundError: cv2`, the command likely reached tests that import the real `device_wrapper`; narrow the command to the target test files or stub heavy imports inside that test.
 
-### Standalone lamp (神燈) entry
+### Standalone lamp (神燈) — 已廢棄
 
-> 注意：runtime 開神燈一律走 `opengold_v2.LampService`（`game_actions/lamp_scheduler.py`）。下方 V1 CLI 已廢棄，僅保留作獨立除錯參考。
-
-```bash
-python Open_gold_paddle_ocr.py            # 連閃裝備模式預設啟用
-python Open_gold_paddle_ocr.py --no-lian-shan
-```
+Runtime 一律走 `opengold_v2.LampService`（`game_actions/lamp_scheduler.py`）。V1 CLI `Open_gold_paddle_ocr.py` 僅供獨立除錯。
 
 ## OCR 架構
 
-專案有兩套 OCR 使用情境：
-
-| 情境 | 模組 | 說明 |
-|------|------|------|
-| 一般畫面辨識 | `img_tools.py` | 統一管理，支援多 server priority fallback |
-| 開神燈 | `Open_gold_paddle_ocr.py` | 已改用 `img_tools` 共用 fallback 機制 |
-
-**Fallback 順序**：
-1. 配置的多台 OCR server (`bot_config.json` → `global.ocr.servers`)
-2. 本地 paddle OCR
-3. Labeler endpoint (AI 輔助辨識)
-
-**Circuit Breaker**：連續失敗後啟用冷卻機制，避免重複失敗
+統一入口 `img_tools.py`，fallback 順序：配置的 OCR servers → 本地 paddle OCR → Labeler endpoint。
+連續失敗啟用 circuit breaker 冷卻。
 
 ## Runtime Constraints
 
@@ -295,6 +279,15 @@ python Open_gold_paddle_ocr.py --no-lian-shan
 - **Login conflicts**: `StartupLoginConflictError` / `LoginConflictError` force a 30-min device sleep. Treat as expected, not as a bug to catch-and-retry.
 - **RL logs path**: Unified at `miner/rl_logs/<device>/events.jsonl` with rotation. The old `miner/rl/rl_logs/` path is deprecated — don't resurrect it.
 - **`_WEB_DEVICE_LOCK` 必須是 RLock**：`close()` 的 `finally` 會重入此鎖，不可降級為 `Lock`，否則同 thread 會 deadlock。
+- **Hot-reload 不存在**：改了 `utils/`、`game_actions/` 等模組後，正在跑的 bot 不會自動載入新程式碼；須重啟 `new_main_v2.py`（`sys.modules` cache）。
+
+## H5 / Cocos 自動化慣例
+
+- **Viewport 540x960 先行**：H5 session 開始時先 `set_viewport_size(540, 960)` — 否則所有固定座標偏移。
+- **cc.Button 要 mouse.click**：Cocos `cc.Button` 必須用 Playwright `mouse.click(x,y)`，`emit('click')` 無效。`EditBox` 填值用 `editBox.string = '...'` 而非 Playwright type。
+- **UIList Label 不可信**：Cocos UIList 回收 cell，Label 文字可能是舊的；判斷 cell 狀態用 sub-node `.active` 屬性。
+- **測試裝置先 manual-hold**：對正在跑的裝置做 live-test 前，用 dashboard「開啟瀏覽器」取得 manual-hold 排他控制。
+- **雙後端開發順序**：遊戲任務先 H5 開發驗證，再 ADB；u2 `send_keys` 在 H5 webview 無效，文字輸入改 `adb shell input text`。
 
 ## Scheduling Notes
 
