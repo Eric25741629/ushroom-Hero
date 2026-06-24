@@ -1101,5 +1101,33 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
     return out
 
 
+def scan_lots_same_server(
+    client: WSGameClient,
+    lots: list[NullSpace],
+    server_id: int,
+    levels: tuple[int, ...],
+    *,
+    timeout: float | None = None,
+) -> list[tuple[NullSpace, int]]:
+    """Scan silver lots at ``levels`` and count same-server occupants.
+
+    Returns [(lot, same_count)] sorted by count DESC then ceng ASC (lower number
+    first among ties). Only lots present in ``lots`` with matching ceng are probed.
+    """
+    target_cengs = {silver_level_to_ceng(lv) for lv in levels}
+    candidates = [lot for lot in lots if lot.ceng in target_cengs and lot.null_num > 0]
+    results: list[tuple[NullSpace, int]] = []
+    for lot in sorted(candidates, key=lambda l: l.ceng):
+        try:
+            detail = read_lot(client, type=CROSS_TYPE, master_id=lot.master_id,
+                              ceng=lot.ceng, timeout=timeout)
+            cnt = count_same_server(detail, server_id)
+            results.append((lot, cnt))
+        except Exception:  # noqa: BLE001
+            logger.debug("scan_lots: read_lot %s failed", lot.master_id, exc_info=True)
+    results.sort(key=lambda x: (-x[1], x[0].ceng))
+    return results
+
+
 def _as_int(v) -> int:
     return int(v) if isinstance(v, int) else 0

@@ -687,11 +687,108 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
             out.update(_store_next(parked, window_name=win.name, target=target_n))
             return out
 
-        # 搶位重試 (2026-06-15)：grabbing 時時間型——從開窗瞬間迴圈到開窗+grab_window
-        # (10:01)，每輪 park；parked_count>0 即停，park_timeout 不重試 (靠 park_many
-        # 內 read_my_mounts 排除已停 mount 防雙停)，其餘 parked_count==0 每隔 poll 重試
-        # 並重讀 parked_cross 重算 need (防前一輪其實已落地 server 端而重複停)。
-        # 非 grabbing (一般補停) 維持單次。
+        # --- cluster scan (抱團掃描) or normal grab loop -------------------------
+        cs_cfg = cp.parse_cluster_scan(plan_cfg)
+        if grabbing and cs_cfg.enabled and cluster_server_id:
+            # Poll lots for same-server allies before parking.
+            _null, collect = carpark.read_cross_null_and_collect(client)
+            parkable_src = collect or _null
+            today_parked = carpark._load_today_parked_master_ids(
+                device, **({} if state_dir is None else {"state_dir": state_dir}))
+            scan_parkable = [lot for lot in parkable_src
+                             if lot.null_num > 0 and carpark.is_silver_ceng(lot.ceng)
+                             and lot.master_id not in today_parked]
+
+            mounts = carpark.read_my_mounts(client)
+            quality_m = [m for m in mounts
+                         if carpark.MOUNT_QUALITY.get(m.mount_id, 7)
+                         >= carpark.MOUNT_MIN_QUALITY]
+            if quality_m:
+                mounts = quality_m
+            mount_id = mounts[0].mount_id if mounts else None
+
+            scan_deadline = time_fn() + cs_cfg.duration
+            cluster_found = False
+            scan_round = 0
+
+            if mount_id and scan_parkable:
+                while time_fn() < scan_deadline:
+                    scan_round += 1
+                    ranked = carpark.scan_lots_same_server(
+                        client, scan_parkable, cluster_server_id, cs_cfg.levels)
+                    if ranked:
+                        logger.info(
+                            "ws_token carpark: %s cluster_scan round %d: "
+                            "best 鉑銀%d allies=%d (need>=%d)",
+                            device, scan_round,
+                            carpark.silver_ceng_to_level(ranked[0][0].ceng),
+                            ranked[0][1], cs_cfg.min_allies)
+                    if ranked and ranked[0][1] >= cs_cfg.min_allies:
+                        best_lot, best_cnt = ranked[0]
+                        detail = carpark.read_lot(
+                            client, type=carpark.CROSS_TYPE,
+                            master_id=best_lot.master_id, ceng=best_lot.ceng)
+                        pos = detail.first_free_cross_pos()
+                        if pos is not None:
+                            result = carpark.park_into_cross(
+                                client, target_id=best_lot.master_id,
+                                pos=pos, mount_id=mount_id)
+                            if result.success:
+                                carpark._record_park_today(
+                                    device, best_lot.master_id,
+                                    **({}
+                                       if state_dir is None
+                                       else {"state_dir": state_dir}))
+                                lv = carpark.silver_ceng_to_level(best_lot.ceng)
+                                logger.info(
+                                    "ws_token carpark: %s cluster_scan parked "
+                                    "鉑銀%d pos=%d allies=%d rounds=%d",
+                                    device, lv, pos, best_cnt, scan_round)
+                                out["cross"] = {
+                                    "parked_count": 1,
+                                    "reason": "cluster_scan",
+                                    "level": lv, "allies": best_cnt,
+                                    "scan_rounds": scan_round,
+                                    "results": [{
+                                        "target_id": best_lot.master_id,
+                                        "pos": pos, "mount_id": mount_id,
+                                        "success": True}]}
+                                cluster_found = True
+                                break
+                    sleep_fn(cs_cfg.interval)
+                    _null, collect = carpark.read_cross_null_and_collect(client)
+                    parkable_src = collect or _null
+                    scan_parkable = [
+                        lot for lot in parkable_src
+                        if lot.null_num > 0 and carpark.is_silver_ceng(lot.ceng)
+                        and lot.master_id not in today_parked]
+
+            if cluster_found:
+                parked = carpark.read_parked_cross(client)
+                out["current"] = len(parked)
+                out.update(_store_next(parked, window_name=win.name,
+                                       target=target_n))
+                return out
+
+            # Timeout — fallback: park at fallback_level via auto_select
+            logger.info("ws_token carpark: %s cluster_scan timeout %ds, "
+                        "fallback 鉑銀%d",
+                        device, cs_cfg.duration, cs_cfg.fallback_level)
+            res = carpark.auto_select_and_park_many(
+                client, count=need,
+                prefer_levels=(cs_cfg.fallback_level,),
+                cluster_server_id=cluster_server_id,
+                cluster_min=cluster_min,
+                allow_low_noncluster=allow_low,
+                device=device, state_dir=state_dir)
+            out["cross"] = {**res, "cluster_scan_timeout": True}
+            parked = carpark.read_parked_cross(client)
+            out["current"] = len(parked)
+            out.update(_store_next(parked, window_name=win.name,
+                                   target=target_n))
+            return out
+
+        # Normal grab loop (cluster_scan disabled or non-grab wake)
         poll = cp.grab_poll_seconds(plan_cfg)
         grab_window = cp.grab_window_seconds(plan_cfg)
         hard_cap = max(1, cp.grab_attempts(plan_cfg))

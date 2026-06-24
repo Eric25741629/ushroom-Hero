@@ -170,6 +170,46 @@ def allow_low_noncluster(cfg: dict | None) -> bool:
     return bool(v)
 
 
+# --- cluster scan (抱團掃描) ---------------------------------------------------
+
+DEFAULT_CLUSTER_SCAN_LEVELS = tuple(range(1, 11))  # 鉑銀1-10
+DEFAULT_CLUSTER_SCAN_DURATION = 300     # 5 minutes
+DEFAULT_CLUSTER_SCAN_INTERVAL = 5       # poll every 5 seconds
+DEFAULT_CLUSTER_SCAN_MIN_ALLIES = 3     # >= 3 same-server = cluster
+DEFAULT_CLUSTER_SCAN_FALLBACK = 9       # park 鉑銀9 if no cluster found
+
+
+@dataclass(frozen=True)
+class ClusterScanConfig:
+    """Per-device 抱團掃描: at grab time, poll lots for same-server allies before
+    parking.  Disabled by default; enable per device in carpark_plan.cluster_scan."""
+    enabled: bool = False
+    levels: tuple[int, ...] = DEFAULT_CLUSTER_SCAN_LEVELS
+    duration: int = DEFAULT_CLUSTER_SCAN_DURATION
+    interval: int = DEFAULT_CLUSTER_SCAN_INTERVAL
+    min_allies: int = DEFAULT_CLUSTER_SCAN_MIN_ALLIES
+    fallback_level: int = DEFAULT_CLUSTER_SCAN_FALLBACK
+
+
+def parse_cluster_scan(cfg: dict | None) -> ClusterScanConfig:
+    cs = (cfg or {}).get("cluster_scan")
+    if not isinstance(cs, dict) or not cs.get("enabled"):
+        return ClusterScanConfig()
+    levels = cs.get("levels")
+    if isinstance(levels, (list, tuple)):
+        levels = tuple(int(v) for v in levels)
+    else:
+        levels = DEFAULT_CLUSTER_SCAN_LEVELS
+    return ClusterScanConfig(
+        enabled=True,
+        levels=levels,
+        duration=_pos_int(cs.get("duration"), DEFAULT_CLUSTER_SCAN_DURATION),
+        interval=_pos_int(cs.get("interval"), DEFAULT_CLUSTER_SCAN_INTERVAL),
+        min_allies=_pos_int(cs.get("min_allies"), DEFAULT_CLUSTER_SCAN_MIN_ALLIES),
+        fallback_level=_pos_int(cs.get("fallback_level"), DEFAULT_CLUSTER_SCAN_FALLBACK),
+    )
+
+
 # --- open-window timing ------------------------------------------------------
 
 def next_cross_open_dt(plans: list[WindowPlan], now: datetime) -> datetime | None:
