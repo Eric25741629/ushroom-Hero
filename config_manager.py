@@ -86,6 +86,7 @@ DEFAULT_DEVICE_CONFIG = {
         "open_lamp": True,      # WS 開神燈（一批，取代 Playwright 開神燈）
         "lamp_percent": 0,      # WS 開神燈：依當前神燈總數的百分比決定本輪目標（0 = 不依百分比，開到沒燈）
         "lamp_min_keep": 0,     # WS 開神燈：剩餘神燈硬地板（0 = 無下限）
+        "lamp_daily_min": 0,   # WS 開神燈：每日最少開啟數量（0 = 不限制；不受百分比規則約束，仍受 min_keep 地板）
         "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
         "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
         "carpark_target": None, # 跨界停車 master_id（只停不收；legacy 單停模式）
@@ -573,6 +574,8 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
         0.0, _to_float(merged.get("lamp_percent"), default["lamp_percent"]))
     merged["lamp_min_keep"] = max(
         0, _to_int(merged.get("lamp_min_keep"), default["lamp_min_keep"]))
+    merged["lamp_daily_min"] = max(
+        0, _to_int(merged.get("lamp_daily_min"), default["lamp_daily_min"]))
     merged["carpark_auto"] = _to_bool(merged.get("carpark_auto"),
                                       default["carpark_auto"])
     merged["carpark_plan"] = _merge_carpark_plan(merged.get("carpark_plan"),

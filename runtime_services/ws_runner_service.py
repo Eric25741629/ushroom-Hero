@@ -304,6 +304,10 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         lamp_min_keep = max(0, int(_ws_nested.get("lamp_min_keep", 0) or 0))
     except (TypeError, ValueError):
         lamp_min_keep = 0
+    try:
+        lamp_daily_min = max(0, int(_ws_nested.get("lamp_daily_min", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_daily_min = 0
 
     run_device = _load_run_device()
     # 看廣告獎勵預設關 → 不傳此參數 (run_device 走預設 None)，維持既有 wiring 行為；
@@ -343,7 +347,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
                             progress=_progress,
                             open_lamp=open_lamp, lamp_percent=lamp_percent,
-                            lamp_min_keep=lamp_min_keep, farm_config=farm_config,
+                            lamp_min_keep=lamp_min_keep,
+                            lamp_daily_min=lamp_daily_min, farm_config=farm_config,
                             dungeon_sweeps=dungeon_sweeps,
                             carpark_target=carpark_target,
                             carpark_auto=carpark_auto,

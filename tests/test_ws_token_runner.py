@@ -505,7 +505,7 @@ def test_lamp_percent_min_keep_passed_with_initial_count_and_progress(
 
     rep = run_device(
         "dev", spend=False, open_lamp=True,
-        lamp_percent=1.0, lamp_min_keep=500000,
+        lamp_percent=1.0, lamp_min_keep=500000, lamp_daily_min=60,
         progress=lambda name, status, detail="": events.append(
             (name, status, detail)))
 
@@ -520,6 +520,7 @@ def test_lamp_percent_min_keep_passed_with_initial_count_and_progress(
     # second, count-first scenario below; here assert the knobs + callable wiring.
     assert captured.get("lamp_percent") == 1.0
     assert captured.get("lamp_min_keep") == 500000
+    assert captured.get("lamp_daily_min") == 60
     assert callable(captured.get("on_progress"))
     assert "initial_count" in captured
 

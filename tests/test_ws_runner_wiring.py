@@ -254,7 +254,7 @@ def patched_runner(monkeypatch):
     calls = []
 
     def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False,
-                        lamp_percent=0.0, lamp_min_keep=0,
+                        lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
                         farm_config=None, dungeon_sweeps=None, carpark_target=None,
                         carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
                         workshop_rotate=True, kungfu_guess=False,
@@ -270,7 +270,8 @@ def patched_runner(monkeypatch):
                         progress=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "lamp_percent": lamp_percent,
-                      "lamp_min_keep": lamp_min_keep, "farm_config": farm_config,
+                      "lamp_min_keep": lamp_min_keep,
+                      "lamp_daily_min": lamp_daily_min, "farm_config": farm_config,
                       "dungeon_sweeps": dungeon_sweeps, "carpark_target": carpark_target,
                       "carpark_auto": carpark_auto,
                       "carpark_plan": carpark_plan,
@@ -309,7 +310,8 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
     assert len(calls) == 1
     assert calls[0] == {"ip": "ws-x", "spend": True, "sweep_list": [[1, 2, 3]],
                         "open_lamp": False, "lamp_percent": 0.0,
-                        "lamp_min_keep": 0, "farm_config": None,
+                        "lamp_min_keep": 0, "lamp_daily_min": 0,
+                        "farm_config": None,
                         "dungeon_sweeps": None, "carpark_target": None,
                         "carpark_auto": False,
                         "carpark_plan": None,
@@ -475,7 +477,7 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
     svc, calls = patched_runner
 
     def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False,
-                      lamp_percent=0.0, lamp_min_keep=0,
+                      lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
                       farm_config=None, dungeon_sweeps=None, carpark_target=None,
                       carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
                       workshop_rotate=True, kungfu_guess=False,
@@ -501,7 +503,7 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
     svc, _calls = patched_runner
 
     def boom(ip, *, spend=False, sweep_list=None, open_lamp=False,
-             lamp_percent=0.0, lamp_min_keep=0,
+             lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
              farm_config=None, dungeon_sweeps=None, carpark_target=None,
              carpark_auto=False, carpark_plan=None,
              couple_gifts=True, forge_ring=False, workshop_rotate=True,
@@ -605,11 +607,13 @@ def test_run_ws_device_cycle_reads_lamp_percent_min_keep_from_nested(patched_run
     svc, calls = patched_runner
     cfg = config_manager.DeviceConfig.from_dict(
         {"use_ws_runner": True,
-         "ws_token": {"lamp_percent": "1.5", "lamp_min_keep": "500000"}}
+         "ws_token": {"lamp_percent": "1.5", "lamp_min_keep": "500000",
+                     "lamp_daily_min": "60"}}
     )
     svc.run_ws_device_cycle("ws-lamp", cfg, _NullLogger())
     assert calls[0]["lamp_percent"] == 1.5
     assert calls[0]["lamp_min_keep"] == 500000
+    assert calls[0]["lamp_daily_min"] == 60
 
 
 def test_run_ws_device_cycle_lamp_defaults_zero_when_absent(patched_runner):
@@ -618,6 +622,7 @@ def test_run_ws_device_cycle_lamp_defaults_zero_when_absent(patched_runner):
     svc.run_ws_device_cycle("ws-nolamp", cfg, _NullLogger())
     assert calls[0]["lamp_percent"] == 0.0
     assert calls[0]["lamp_min_keep"] == 0
+    assert calls[0]["lamp_daily_min"] == 0
 
 
 def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):

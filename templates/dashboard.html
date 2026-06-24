@@ -1809,7 +1809,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <div class="task-tab-panel" data-tab="lamp">
             <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">自動開神燈（消耗神燈道具；選含連線的方案會自動開）</label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
               <div>
                 <label style="font-size:0.84em;">開到剩百分之幾 %（0＝不依百分比）</label>
                 <input type="number" id="inpWsLampPercent" class="form-control" placeholder="0" step="0.5" min="0">
@@ -1817,6 +1817,10 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
               <div>
                 <label style="font-size:0.84em;">最少保留幾個神燈（0＝無下限）</label>
                 <input type="number" id="inpWsLampMinKeep" class="form-control" placeholder="0" step="1" min="0">
+              </div>
+              <div>
+                <label style="font-size:0.84em;">每日最少開幾個（0＝不限制）</label>
+                <input type="number" id="inpWsLampDailyMin" class="form-control" placeholder="0" step="1" min="0">
               </div>
             </div>
             <div class="ws-schema-slot" data-slot="lamp"></div>
@@ -4159,6 +4163,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           (typeof _existingWsToken.lamp_percent === 'number') ? _existingWsToken.lamp_percent : 0;
         document.getElementById('inpWsLampMinKeep').value =
           (typeof _existingWsToken.lamp_min_keep === 'number') ? _existingWsToken.lamp_min_keep : 0;
+        document.getElementById('inpWsLampDailyMin').value =
+          (typeof _existingWsToken.lamp_daily_min === 'number') ? _existingWsToken.lamp_daily_min : 0;
 
         const wsMining = _existingWsToken.mining;
         const chkWsMining = document.getElementById('chkWsMining');
@@ -4345,6 +4351,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       if (!(lampPercent >= 0)) lampPercent = 0;
       let lampMinKeep = parseInt(document.getElementById('inpWsLampMinKeep').value, 10);
       if (!(lampMinKeep >= 0)) lampMinKeep = 0;
+      let lampDailyMin = parseInt(document.getElementById('inpWsLampDailyMin').value, 10);
+      if (!(lampDailyMin >= 0)) lampDailyMin = 0;
       // farm 由 _collectFarmTab(collectTaskTabs 內)依農場頁籤控制項組裝或設 null。
       payload.ws_token = Object.assign({}, _existingWsToken, {
         enabled: wsEnabled,
@@ -4352,6 +4360,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         open_lamp: wsOpenLamp,
         lamp_percent: lampPercent,
         lamp_min_keep: lampMinKeep,
+        lamp_daily_min: lampDailyMin,
         offline_fallback: wsOfflineFallback,
         mining: Object.assign(
           { allow_bomb: false, allow_drill: false, max_steps: 200 },

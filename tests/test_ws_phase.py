@@ -123,11 +123,12 @@ def test_run_device_passes_lamp_percent_and_min_keep(monkeypatch):
     monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
 
     cfg = {"enabled": True, "open_lamp": True,
-           "lamp_percent": 1.0, "lamp_min_keep": 500000}
+           "lamp_percent": 1.0, "lamp_min_keep": 500000, "lamp_daily_min": 60}
     ws_phase._run_device("dev", cfg)
 
     assert captured["lamp_percent"] == 1.0
     assert captured["lamp_min_keep"] == 500000
+    assert captured["lamp_daily_min"] == 60
 
 
 def test_run_device_lamp_knobs_default_zero(monkeypatch):
@@ -144,6 +145,7 @@ def test_run_device_lamp_knobs_default_zero(monkeypatch):
 
     assert captured["lamp_percent"] == 0
     assert captured["lamp_min_keep"] == 0
+    assert captured["lamp_daily_min"] == 0
 
 
 def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):

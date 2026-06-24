@@ -26,13 +26,15 @@ def test_default_device_config_has_ws_token_disabled():
     # 開神燈百分比 / 最低保留：預設 0（= 不依百分比 / 無下限），維持舊行為（開到沒燈）。
     assert ws["lamp_percent"] == 0
     assert ws["lamp_min_keep"] == 0
+    assert ws["lamp_daily_min"] == 0
 
 
 def test_merge_ws_token_fills_lamp_percent_min_keep_when_absent():
-    # 裝置沒設 lamp_percent / lamp_min_keep → 合併後仍帶回預設 0。
+    # 裝置沒設 lamp_percent / lamp_min_keep / lamp_daily_min → 合併後仍帶回預設 0。
     merged = config_manager._merge_ws_token_phase_config({"enabled": True})
     assert merged["lamp_percent"] == 0
     assert merged["lamp_min_keep"] == 0
+    assert merged["lamp_daily_min"] == 0
 
 
 def test_get_device_config_yields_lamp_defaults_for_bare_device(tmp_path, monkeypatch):
@@ -54,6 +56,7 @@ def test_get_device_config_yields_lamp_defaults_for_bare_device(tmp_path, monkey
     ws = cfg.get("ws_token") or {}
     assert ws.get("lamp_percent") == 0
     assert ws.get("lamp_min_keep") == 0
+    assert ws.get("lamp_daily_min") == 0
 
 
 def test_default_relic_sprint_disabled_with_full_target():
