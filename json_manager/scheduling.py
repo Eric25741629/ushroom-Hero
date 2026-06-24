@@ -172,6 +172,23 @@ def _should_execute_cycle(
 SEA_WINDOW_START_HOUR = 10
 SEA_WINDOW_END_HOUR = 24
 
+# ponytail: 航海日曆錨點 — 2026-06-22(週一)為已知活動週、4 週一輪(與龍骸聖域同錨)。
+# 取代原本以 sea_cycle_start(各裝置「上次跑」時間)往回推 4 週的判週法：那個錨點
+# 會隨各裝置 run 歷史漂移、與遊戲實際檔期脫鉤，導致同一週各裝置顯示/執行不一致。
+# 改用日曆錨點後，run 排程與 dashboard 共用同一真相、全裝置一致。若遊戲改檔期，
+# 只需更新這兩個常數。
+_SEA_ANCHOR_MONDAY = datetime.date(2026, 6, 22)
+_SEA_CYCLE_DAYS = 28  # 4 weeks
+
+
+def is_sea_week(today: Optional[datetime.date] = None) -> bool:
+    """今天是否落在航海活動週(日曆錨點，與龍骸聖域 ``_is_dragon_week`` 同形)。"""
+    if today is None:
+        _tpe = datetime.timezone(datetime.timedelta(hours=8))
+        today = datetime.datetime.now(_tpe).date()
+    monday = today - datetime.timedelta(days=today.weekday())
+    return (monday - _SEA_ANCHOR_MONDAY).days % _SEA_CYCLE_DAYS == 0
+
 
 def should_execute_sea_with_cooldown(
     ip: str,
@@ -193,15 +210,14 @@ def should_execute_sea_with_cooldown(
             )
         return False, False
 
-    in_correct_week, need_week_record = _should_execute_cycle(
-        ip, "sea_cycle_start", cycle_weeks=cycle_weeks, logger=logger
-    )
-    if not in_correct_week:
+    if not is_sea_week(now.date()):
+        if logger:
+            logger.info(f"[{ip}] sea: 非航海週(日曆錨點) → 跳過")
         return False, False
 
     last_execution = _lazy_return_time(ip, "sea_last_execution")
     if last_execution is None:
-        return True, need_week_record
+        return True, True
 
     expired_time = cooldown_hours * 3600
     if is_timestamp_expired(last_execution.get("timestamp", 0), expired_time=expired_time):

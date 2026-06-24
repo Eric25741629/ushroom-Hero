@@ -336,8 +336,13 @@ def get_daily_progress(ip):
                 "key": "mushroom_arena_daily",
                 "cycle": ("mushroom_arena_cycle_start", 4),
             },
-            "航海": {"key": "sea_last_execution", "cycle": ("sea_cycle_start", 4)},
-            "龍骸聖域": {"key": "dragon_realm_last_run", "triweekly": True},
+            # 航海 / 龍骸聖域是多週才開一檔的活動：只在「檔期週」顯示徽章，且「點亮」
+            # 看的是本檔期(本週)有沒有跑過，而非當天 —— 否則活動週跑完隔天又變回 ⏳。
+            # 檔期判斷用日曆錨點(is_sea_week / _is_dragon_week)，全裝置一致。
+            "航海": {"key": "sea_last_execution", "sea_week": True, "period": "week"},
+            "龍骸聖域": {
+                "key": "dragon_realm_last_run", "triweekly": True, "period": "week",
+            },
         }
 
         results = {}
@@ -355,13 +360,20 @@ def get_daily_progress(ip):
                 )
                 if not should_exec:
                     continue  # 本週不執行，直接隱藏
+            if config.get("sea_week"):
+                from json_manager import is_sea_week
+                if not is_sea_week():
+                    continue  # 非航海週，隱藏
             if config.get("triweekly"):
                 from game_actions.dragon_realm_scheduler import _is_dragon_week
                 if not _is_dragon_week():
                     continue
 
-            # 2. 檢查今日是否完成
-            results[display_name] = check_is_today(config["key"])
+            # 2. 點亮條件：多週活動看「本檔期(本週)是否跑過」，其餘看「今日是否完成」。
+            if config.get("period") == "week":
+                results[display_name] = manager.is_same_week(config["key"])
+            else:
+                results[display_name] = check_is_today(config["key"])
 
         return jsonify(results)
     except Exception as e:

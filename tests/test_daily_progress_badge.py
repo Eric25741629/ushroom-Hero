@@ -46,6 +46,17 @@ class _FakeManager:
         rec_date = datetime.datetime.fromtimestamp(float(ts), self.timezone).date()
         return rec_date == datetime.datetime.now(self.timezone).date()
 
+    def is_same_week(self, name):
+        rec = self._data.get(name)
+        if not isinstance(rec, dict):
+            return False
+        ts = rec.get("timestamp")
+        if ts is None:
+            return False
+        rec_d = datetime.datetime.fromtimestamp(float(ts), self.timezone).date()
+        now_d = datetime.datetime.now(self.timezone).date()
+        return rec_d.isocalendar()[:2] == now_d.isocalendar()[:2]
+
 
 def _today_ts():
     return datetime.datetime.now(_TZ).timestamp()
@@ -102,3 +113,20 @@ def test_missing_key_is_not_today():
     data = {}
     mgr = _FakeManager(data)
     assert routes_status._record_is_today(mgr, data, "mission_timestamp") is False
+
+
+def test_week_predicate_lights_earlier_this_week_but_not_today():
+    """航海/龍骸聖域用 period='week'：本週稍早跑過(非今天)仍要點亮。
+
+    這正是修掉的雷 —— 多週活動跑完隔天，用 is_same_day 會變回 ⏳；
+    改用 is_same_week 後整個檔期週都維持 ✅。
+    """
+    # 取「本週內、但不是今天」的一刻：往前推 1~3 天且仍同 ISO 週。
+    now = datetime.datetime.now(_TZ)
+    earlier = now - datetime.timedelta(days=1)
+    if earlier.isocalendar()[:2] != now.isocalendar()[:2]:
+        earlier = now + datetime.timedelta(days=1)  # 週一時改往後找同週日子
+    data = {"sea_last_execution": {"timestamp": earlier.timestamp()}}
+    mgr = _FakeManager(data)
+    assert mgr.is_same_week("sea_last_execution") is True
+    assert mgr.is_same_day("sea_last_execution") is False  # 不是今天
