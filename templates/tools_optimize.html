@@ -243,6 +243,38 @@
     </div>
     <div id="rsMsg" class="note"></div>
   </section>
+
+  <!-- 工具五：龍骸聖域 pure-WS 自動探索 -->
+  <section class="panel">
+    <h2>龍骸聖域 <span class="pill">純 WS · 探索收鑰匙 → 進層</span></h2>
+    <div class="controls">
+      <button id="btnDrRead" class="ghost" onclick="doDrRead()">讀取狀態</button>
+      <button id="btnDrRun" class="warn" onclick="doDrRun()" disabled>一鍵探索（消耗體力）</button>
+    </div>
+    <div class="note">說明：純 WS 送探索封包，自動戰鬥/繞路/求助。收齊鑰匙自動進下一層。
+      第一層需 1 把鑰匙進第二層，第二層集齊 2 把鑰匙即停（第三層由你手動）。
+      每三周開放，週三四五 10:00-22:00。</div>
+
+    <div id="drState" class="empty-state">
+      <div class="es-icon" aria-hidden="true">🐉</div>
+      <div class="es-title">尚未讀取龍骸狀態</div>
+      <div class="es-hint">連線後按「讀取狀態」查看目前層數、體力與鑰匙。</div>
+    </div>
+    <div id="drSkeleton" style="display:none">
+      <div class="skeleton skeleton--block"></div>
+    </div>
+
+    <div id="drCard" style="display:none">
+      <div class="kpi">
+        <div>層數 <b id="drCeng">-</b></div>
+        <div>體力 <b id="drHp">-</b></div>
+        <div>鑰匙 <b id="drKeys">-</b></div>
+        <div>狀態 <b id="drStatus">-</b></div>
+      </div>
+    </div>
+    <div id="drLog" class="log" style="display:none"></div>
+    <div id="drMsg" class="note"></div>
+  </section>
 </main>
 
 <div id="idleModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="idleModalTitle">
@@ -294,13 +326,13 @@ function showToolError(stateId, msg, onRetry){
 
 // Reset every tool panel to its idle state (used on disconnect / connect-fail).
 function showDisconnectedStates(){
-  ['carparkSkeleton','adSkeleton','rsSkeleton'].forEach(id=>_show(id,false));
+  ['carparkSkeleton','adSkeleton','rsSkeleton','drSkeleton'].forEach(id=>_show(id,false));
   ['kpi','tableWrap','log'].forEach(id=>_show(id,false));
-  _show('adGrid',false); _show('rsCard',false);
-  // restore idle prompts (showToolError may have swapped class to error-state)
+  _show('adGrid',false); _show('rsCard',false); _show('drCard',false); _show('drLog',false);
   resetIdleCard('carparkState','🅿️','尚未讀取車位裝飾','連線裝置後，按「讀取並預覽計畫」會花約 30 秒讀取並計算最佳升級。');
   resetIdleCard('adState','📺','尚未讀取當日進度','連線後按「讀取當日進度」查看鑽石/種子的今日可領次數。');
   resetIdleCard('rsState','💠','尚未規劃遺物衝刺','連線後按「① 規劃（只讀，不花費）」查看本期門檻與可領輪獎。');
+  resetIdleCard('drState','🐉','尚未讀取龍骸狀態','連線後按「讀取狀態」查看目前層數、體力與鑰匙。');
 }
 function resetIdleCard(id, icon, title, hint){
   const el=$(id); if(!el) return;
@@ -695,6 +727,48 @@ async function doRsExec(){
     await doRsPlan();
   }catch(e){ $('rsMsg').textContent='執行錯誤：'+e; }
   finally{ $('btnRsPlan').disabled=false; $('btnRsExec').disabled=false; }
+}
+
+/* ===== dragon realm ===== */
+async function doDrRead(){
+  $('btnDrRead').disabled=true; $('drMsg').textContent='';
+  _show('drState',false); _show('drSkeleton',true); _show('drCard',false); _show('drLog',false);
+  try{
+    const r = await fetch(`/api/dragon/status/${dev()}`);
+    const j = await r.json();
+    _show('drSkeleton',false);
+    if(j.status!=='ok'){ showToolError('drState',j.message||'讀取失敗',doDrRead); return; }
+    const d=j.data;
+    _show('drCard',true);
+    $('drCeng').textContent = d.ceng;
+    $('drHp').textContent = d.hp;
+    $('drKeys').textContent = d.keys;
+    const need = d.ceng===1 ? 1 : 2;
+    $('drStatus').textContent = d.keys>=need ? '可進下一層' : `缺 ${need-d.keys} 把鑰匙`;
+    $('drStatus').style.color = d.keys>=need ? 'var(--status-ok-text)' : '';
+    $('btnDrRun').disabled = (d.hp < (d.ceng===1?1:2) && d.keys < need);
+  }catch(e){ showToolError('drState','讀取錯誤：'+e, doDrRead); }
+  finally{ $('btnDrRead').disabled=false; }
+}
+
+async function doDrRun(){
+  if(!confirm('確定要開始龍骸探索？會消耗體力。')) return;
+  $('btnDrRun').disabled=true; $('drMsg').textContent='執行中…';
+  _show('drLog',true); $('drLog').innerHTML='';
+  try{
+    const r = await fetch(`/api/dragon/run/${dev()}`, {method:'POST'});
+    const j = await r.json();
+    if(j.status!=='ok'){ $('drMsg').textContent=j.message||'啟動失敗'; return; }
+    const job = await pollJob(j.job_id, (j)=>{
+      if(j.log) $('drLog').innerHTML = j.log.map(l=>`<div>${l.replace(/</g,'&lt;')}</div>`).join('');
+      $('drLog').scrollTop=$('drLog').scrollHeight;
+    });
+    if(job){
+      $('drMsg').textContent = `完成：${job.result||job.error||''}`;
+      await doDrRead();
+    }
+  }catch(e){ $('drMsg').textContent='錯誤：'+e; }
+  finally{ $('btnDrRun').disabled=false; }
 }
 
 (async function init(){ await loadDevices(); await connectSession(); })();
