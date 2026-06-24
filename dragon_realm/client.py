@@ -24,6 +24,9 @@ _INSTALL_JS = r"""
     if (!window.__drCache && r && r.info && typeof r.info.update === 'function' && r.teamInfo) {
       window.__drCache = r;
     }
+    if (!window.__drBag && r && typeof r.getGoodsCountByGoodsGtid === 'function') {
+      window.__drBag = r;
+    }
     return r;
   };
   const table = (nm._events && nm._events._callbackTable) || {};
@@ -33,6 +36,19 @@ _INSTALL_JS = r"""
   if (ctrl) {
     const proto = Object.getPrototypeOf(ctrl);
     try { proto.on_dragon_realm_unlock_auto_explore_s2c.call(ctrl, {is_open: 0, is_sys: 1, action: []}); } catch(_) {}
+  }
+  // brute-force trigger handlers to capture BagModel (getGoodsCountByGoodsGtid)
+  if (!window.__drBag) {
+    for (const key of Object.keys(table)) {
+      if (window.__drBag) break;
+      const ent = table[key]; const cbs = (ent && ent.callbackInfos) || [];
+      for (const cb of cbs) {
+        if (window.__drBag) break;
+        const t = cb.target; if (!t) continue;
+        const fn = Object.getPrototypeOf(t)['on_' + key.split('.').pop()];
+        if (fn) try { fn.call(t, {}); } catch(_) {}
+      }
+    }
   }
   window.IS = origIS;
   return !!window.__drCache;
@@ -70,7 +86,15 @@ _READ_JS = r"""
       event_type: e.event_type, back_kill_time: e.back_kill_time || 0,
     })),
     help_events: (cache.eventList || []).filter(e => e.event_id).map(e => e.event_id),
-    bag: {},
+    bag: (() => {
+      const bm = window.__drBag;
+      if (!bm) return {};
+      const o = {};
+      for (const gtid of [1515, 1517, 1518, 1519, 1520, 1521, 1527]) {
+        try { const c = bm.getGoodsCountByGoodsGtid(gtid); if (c) o[gtid] = c; } catch(_) {}
+      }
+      return o;
+    })(),
   };
   return {ts: Date.now(), raw: raw};
 }

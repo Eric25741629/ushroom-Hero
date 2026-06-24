@@ -70,5 +70,5 @@ class DragonState:
             back_kill_time=int(data.get(C.K_BACK_KILL_TIME, 0)),
             event_list=tuple(events),
             help_events=tuple(int(x) for x in (raw.get("help_events") or [])),
-            bag=dict(raw.get("bag") or {}),
+            bag={int(k): int(v) for k, v in (raw.get("bag") or {}).items()},
         )
