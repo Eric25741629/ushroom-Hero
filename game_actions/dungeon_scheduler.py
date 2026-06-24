@@ -13,8 +13,6 @@
 """
 from __future__ import annotations
 
-import logging
-
 import bot_state
 import new_battle
 from json_manager import return_time, time_recording
@@ -31,30 +29,44 @@ def _run_weekly_dungeon(
 ) -> None:
     """Run 萬神試煉 if scheduled for this week and appropriate day/time."""
     record_time = return_time(ip, name="萬神試煉")
-    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-    logging.info("萬神試煉紀錄: {}".format(record_time))
-    fight_trial_time = 1
     if record_time is None:
-        fight_trial_time = 0
         should_execute = True
     else:
-        should_execute = record_time.get("is_next_week", False) or fight_trial_time == 0
-        logging.info("fight_trial_time: {}, should_execute: {}, record_time: {}".format(fight_trial_time, should_execute, record_time))
-    if enable_dungeon_manager and should_execute and (
-        (current_time.tm_wday == 0 and current_time.tm_hour > 12) or
-        (1 <= current_time.tm_wday <= 5)
-    ):
-        is_not_sunday = current_time.tm_wday != 6
-        is_monday_afternoon = current_time.tm_wday == 0 and current_time.tm_hour > 12
-        is_after_monday = current_time.tm_wday > 0
-        should_run_fight_test = should_execute and is_not_sunday and (is_monday_afternoon or is_after_monday)
-        if should_run_fight_test:
-            if stage == "主頁面":
-                bot_state.update_state(ip, task="萬神試煉", step="執行中")
-                new_battle.fight_test(d)
-                time_recording(ip, name="萬神試煉")
-            else:
-                log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
+        should_execute = record_time.get("is_next_week", False)
+    logger.info(
+        "[%s] 萬神試煉檢查: 頁面=%s 時間=%02d:%02d wday=%d 副本管家=%s "
+        "should_execute=%s 紀錄=%s",
+        ip, stage, current_time.tm_hour, current_time.tm_min,
+        current_time.tm_wday, enable_dungeon_manager, should_execute, record_time,
+    )
+    if not enable_dungeon_manager:
+        logger.info("[%s] 萬神試煉：副本管家已停用，跳過", ip)
+        return
+    if not should_execute:
+        logger.info("[%s] 萬神試煉：本週已執行(is_next_week=False)，跳過", ip)
+        return
+    # 時間窗：週一下午(tm_hour>12) 或 週二~週六(tm_wday 1~5)，週日(6)跳過
+    in_time_window = (
+        (current_time.tm_wday == 0 and current_time.tm_hour > 12)
+        or (1 <= current_time.tm_wday <= 5)
+    )
+    if not in_time_window:
+        logger.info(
+            "[%s] 萬神試煉：未到執行時間窗(週一下午或週二~週六)，wday=%d，跳過",
+            ip, current_time.tm_wday,
+        )
+        return
+    if stage != "主頁面":
+        log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
+        return
+    logger.info("[%s] 萬神試煉：條件滿足，開始執行 fight_test", ip)
+    bot_state.update_state(ip, task="萬神試煉", step="執行中")
+    ok = new_battle.fight_test(d)
+    if ok:
+        time_recording(ip, name="萬神試煉")
+        logger.info("[%s] 萬神試煉：完成(至少打了一關)，已寫入本週記錄", ip)
+    else:
+        logger.warning("[%s] 萬神試煉：未實際挑戰(入場/進場失敗)，不寫記錄，下次重試", ip)
 
 
 def _run_biweekly_dungeon(
@@ -71,10 +83,10 @@ def _run_biweekly_dungeon(
 
         if biweek_record is None:
             should_execute_biweek = True
-            logging.info("雙週副本紀錄：無（首次執行）")
+            logger.info("[%s] 雙週副本紀錄：無（首次執行）", ip)
         else:
             should_execute_biweek = biweek_record.get("is_next_biweek", False)
-            logging.info("雙週副本紀錄：{}, should_execute: {}".format(biweek_record, should_execute_biweek))
+            logger.info("[%s] 雙週副本紀錄：%s, should_execute: %s", ip, biweek_record, should_execute_biweek)
 
         if (now_local.tm_wday in (5, 6)) and (now_local.tm_hour == 20) and now_local.tm_min >= 0:
             if should_execute_biweek:
@@ -90,4 +102,4 @@ def _run_biweekly_dungeon(
                 else:
                     log_main_page_mismatch(d, ip, stage, "雙週副本", "雙週副本到達執行時間但不在主頁面")
             else:
-                logging.info("[{ip}] 本兩週已執行過雙週副本，跳過本次執行")
+                logger.info("[%s] 本兩週已執行過雙週副本，跳過本次執行", ip)

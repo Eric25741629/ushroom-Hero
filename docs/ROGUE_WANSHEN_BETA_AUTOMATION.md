@@ -80,8 +80,9 @@ node._eventProcessor.bubblingTarget._callbackTable['click']
     .callbackInfos[].callback.call(target, btn.getComponent('cc.Button'))
 ```
 
-(recon 時實測:RogueView 按鈕 `emit('click')` 與座標 `mouse.click` 都**無效**,
-必須走上面這條 callbackInfos 直呼;有些畫面的按鈕走 `clickEvents`,要 case by case。)
+(更正 2026-06-20:RogueView 按鈕**可正常點擊**(座標點擊 / `emit('click')` 皆有效)。
+先前「`mouse.click`/`emit('click')` 都無效、必須走 callbackInfos」的記載**有誤,已移除**。
+callbackInfos 直呼仍是可選的更穩做法,但**非必要**;有些畫面的按鈕走 `clickEvents`,要 case by case。)
 
 **為什麼比 OCR 穩**:OCR 不穩來自「辨識」+「像素定位」兩層;callback 用場景樹 name/label
 路徑定位、直接觸發 click handler,兩層都繞掉 → 不吃縮放、不怕辨識錯、不用截圖往返,快。
@@ -140,7 +141,7 @@ node._eventProcessor.bubblingTarget._callbackTable['click']
 - rogue = module 76 / 0x4C,roguelike,**無掃蕩**。
 - 主流程 enter→combat(seed)→client 模擬→result→over;result c2s 只有 {result, precent},
   **無 operators 回放序列**。
-- RogueView 按鈕 emit('click')/mouse.click 無效 → 須直呼 `callbackInfos[].callback`。
+- RogueView 按鈕**可正常點擊**(座標 / emit('click') 皆可);callbackInfos 直呼為可選的更穩做法，非必要。（更正 2026-06-20，原記「無效」有誤）
 - 純 WS 可行性 **未驗證**(別當定論,任一方向都是)。
 - ADB 無 JS 注入;另開 token WS 與 App 同帳號互踢。
 - headless/背景:`web_device.py` 支援;最大未知是 WebGL 渲染 + rAF throttle,需實測。
