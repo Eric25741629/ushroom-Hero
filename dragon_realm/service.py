@@ -108,7 +108,7 @@ class _StateAdapter:
 
     def read_state(self) -> DragonState:
         return DragonState.from_raw(
-            self._client.read_raw().get("raw") or {"activity_open": True},
+            self._client.read_raw().get("raw") or {"activity_open": False},
             self._role,
         )
 

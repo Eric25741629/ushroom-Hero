@@ -1,4 +1,4 @@
-"""龍骸聖域排程：flag 閘控 + 10:00 時間閘 + 每日一次冷卻。在 daily_pipeline 尾段呼叫。"""
+"""龍骸聖域排程：三周週期 + 週三四五 10-22 時間窗 + 每日一次冷卻。"""
 from __future__ import annotations
 
 import datetime
@@ -10,16 +10,33 @@ from utils.logging_utils import logger
 
 _RECORD_KEY = "dragon_realm_last_run"
 _COOLDOWN_SECONDS = 20 * 3600  # 20h 確保每日一次且不重入
-_OPEN_HOUR = 10                 # 活動每天 10:00 才開（同 sea 的時間閘）
+
+# ponytail: 三周週期錨點 — 2026-06-22 (週一) 是已知活動週；若遊戲改週期需更新錨點
+_ANCHOR_MONDAY = datetime.date(2026, 6, 22)
+_CYCLE_DAYS = 21  # 3 weeks
+_ACTIVE_WEEKDAYS = (2, 3, 4)  # Wed, Thu, Fri (Python weekday)
+_OPEN_HOUR = 10
+_CLOSE_HOUR = 22
+
+
+def _is_dragon_week(today: datetime.date | None = None) -> bool:
+    today = today or datetime.date.today()
+    monday = today - datetime.timedelta(days=today.weekday())
+    return (monday - _ANCHOR_MONDAY).days % _CYCLE_DAYS == 0
 
 
 def _within_open_window(now: datetime.datetime | None = None) -> bool:
     now = now or datetime.datetime.now()
-    return now.hour >= _OPEN_HOUR
+    if now.weekday() not in _ACTIVE_WEEKDAYS:
+        return False
+    return _OPEN_HOUR <= now.hour < _CLOSE_HOUR
 
 
-def _is_due(ip: str) -> bool:
-    if not _within_open_window():
+def _is_due(ip: str, now: datetime.datetime | None = None) -> bool:
+    now = now or datetime.datetime.now()
+    if not _is_dragon_week(now.date()):
+        return False
+    if not _within_open_window(now):
         return False
     record = return_time(ip, name=_RECORD_KEY)
     return is_record_expired(record, _COOLDOWN_SECONDS)

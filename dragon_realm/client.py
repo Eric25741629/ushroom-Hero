@@ -45,7 +45,7 @@ _READ_JS = r"""
   };
   const cur = info.cur_event || info.current || {};
   const raw = {
-    activity_open: true,
+    activity_open: !!(info.ceng || info.hp != null || info.event_list),
     ceng: info.ceng || 1,
     hp: info.hp != null ? info.hp : (info.stamina || 0),
     server_time: info.server_time || 0,
