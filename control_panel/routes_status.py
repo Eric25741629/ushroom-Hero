@@ -337,6 +337,7 @@ def get_daily_progress(ip):
                 "cycle": ("mushroom_arena_cycle_start", 4),
             },
             "航海": {"key": "sea_last_execution", "cycle": ("sea_cycle_start", 4)},
+            "龍骸聖域": {"key": "dragon_realm_last_run", "triweekly": True},
         }
 
         results = {}
@@ -354,6 +355,10 @@ def get_daily_progress(ip):
                 )
                 if not should_exec:
                     continue  # 本週不執行，直接隱藏
+            if config.get("triweekly"):
+                from game_actions.dragon_realm_scheduler import _is_dragon_week
+                if not _is_dragon_week():
+                    continue
 
             # 2. 檢查今日是否完成
             results[display_name] = check_is_today(config["key"])
