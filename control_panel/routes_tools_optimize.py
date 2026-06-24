@@ -1,27 +1,15 @@
 """「工具 優化類」dashboard blueprint — 車位裝飾升級 + 純 WS 一鍵抽卡.
 
-Two tools, both driving the device's live H5 page via the shared raw-CDP JS path
-(``control_panel_app._cdp_evaluate``):
+Two tools, all pure WS over ``ws_session`` persistent connections (no browser):
 
-1. 最佳升級車位裝飾 — reads + buys + upgrades purely over the game WebSocket
-   (car_park_info / shop_info / shop_buy / car_park_skin_up); see
-   docs/protocol/CARPARK_DECORATION_SHOP.md §10. Injected JS in
-   ``control_panel.carpark_tools_js``; brain = ``ws_token.carpark_decoration``.
-2. 一鍵抽卡 (技能/同伴) — PURE WS over the persistent ws_session connection
-   (mirrors the 神器附魔/庫存 panel): the job takes the device's
-   ``ws_session.get_client(ip)`` and calls ``ws_token.gacha.draw_once`` directly
-   (no browser / cocos UI / animation). Pause/resume of the bot loop is owned by
-   ``ws_session`` (ensure pauses on connect, disconnect/sweeper resumes), so the
-   gacha job does NOT touch ``bot_state.set_pause`` itself.
+1. 最佳升級車位裝飾 — reads + buys + upgrades via
+   ``ws_token.carpark_decoration_ws`` (car_park_info 12801 / shop_info 6913 /
+   shop_buy 6914 / car_park_skin_up 12817); brain = ``ws_token.carpark_decoration``.
+2. 一鍵抽卡 (技能/同伴) — ``ws_token.gacha.draw_once``.
+3. 龍骸聖域 — ``ws_token.dragon_realm``.
 
-The carpark-decoration tool still drives the device's live H5 page via raw CDP
-(``control_panel_app._cdp_evaluate``) — its read/exec JS reads cocos config tables
-that have no headless ws_token reader yet, so it keeps the browser path.
-
-Long-running work (the ~30s read walk and the multi-minute execute) runs in a
-background thread tracked by an in-memory job registry; the frontend polls
-``/api/carpark/job/<job_id>``. The carpark execute pauses the device's bot loop
-(``bot_state.set_pause``) so it doesn't fight the navigation, then resumes.
+Long-running work runs in background threads tracked by an in-memory job registry;
+the frontend polls ``/api/carpark/job/<job_id>``.
 """
 import json
 import threading
@@ -32,8 +20,8 @@ from flask import Blueprint, jsonify, render_template, request
 
 import bot_state
 from control_panel import ws_session
-from control_panel.carpark_tools_js import EXEC_STEP_WS_JS, READ_STATE_WS_JS
 from control_panel.shared.auth import _fly_pet_auth
+from ws_token import carpark_decoration_ws as deco_ws
 from ws_token import gacha as gacha_logic
 from ws_token import dragon_realm as dr_logic
 from ws_token.carpark_decoration import DecoUpgradeState, plan_upgrades
@@ -93,27 +81,26 @@ def _job_log(jid: str, msg: str) -> None:
             _jobs[jid].setdefault("log", []).append(msg)
 
 
-def _cdp_json(ip: str, expression: str, timeout: int):
-    """Run injected JS that returns a JSON string; parse it. -> (obj, err)."""
-    import control_panel_app as _cpa
-
-    result, err = _cpa._cdp_evaluate(ip, expression, await_promise=True,
-                                     timeout=timeout)
-    if err:
-        return None, err
-    inner = (result or {}).get("result", {})
-    if (result or {}).get("exceptionDetails"):
-        return None, str(result["exceptionDetails"])
-    if inner.get("type") == "string":
-        try:
-            return json.loads(inner["value"]), None
-        except Exception as exc:  # noqa: BLE001
-            return None, f"parse:{exc}"
-    return None, "unexpected_result"
+def _ws_client(ip: str):
+    """Get or create a WS session client. Returns (client, err)."""
+    client = ws_session.get_client(ip)
+    if client is not None:
+        return client, None
+    res = ws_session.ensure(ip)
+    if res.get("status") == "error":
+        return None, res.get("message", "WS 連線失敗")
+    client = ws_session.get_client(ip)
+    if client is None:
+        return None, "WS 連線未就緒"
+    return client, None
 
 
 def _read_state(ip: str):
-    return _cdp_json(ip, f"({READ_STATE_WS_JS})()", _READ_TIMEOUT)
+    """Read decoration state via pure WS. Returns (state_dict, err)."""
+    client, err = _ws_client(ip)
+    if err:
+        return None, err
+    return deco_ws.read_state(client, timeout=_READ_TIMEOUT)
 
 
 def _build_decos(state: dict):
@@ -137,8 +124,11 @@ def _build_decos(state: dict):
 
 def _plan(state: dict, budget: int, max_steps: int):
     decos, meta = _build_decos(state)
-    coin = int(state.get("coin", 0))
-    eff_budget = min(budget if budget > 0 else coin, coin)
+    coin = int(state.get("coin") or 0)
+    # coin=0 (unknown via WS) + budget>0 → use the user-provided budget as-is
+    eff_budget = budget if budget > 0 else coin
+    if coin > 0:
+        eff_budget = min(eff_budget, coin)
     plan = plan_upgrades(decos, budget=eff_budget, max_steps=max_steps)
     steps = [{
         "id": s.id, "name": s.name,
@@ -175,26 +165,21 @@ def _run_plan_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
 
 
 def _exec_step(ip: str, step: dict):
-    args = [int(step["shop_id"]), int(step["id"]), int(step["frags"]), True]
-    return _cdp_json(ip, f"({EXEC_STEP_WS_JS})({json.dumps(args)})", _EXEC_TIMEOUT)
+    """Execute one buy+upgrade step via pure WS."""
+    client, err = _ws_client(ip)
+    if err:
+        return None, err
+    return deco_ws.exec_buy_and_upgrade(
+        client,
+        shop_id=int(step["shop_id"]),
+        skin_id=int(step["id"]),
+        frags=int(step["frags"]),
+        timeout=_EXEC_TIMEOUT)
 
 
 def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
-    rip = _real_ip(ip)
-    paused = False
+    # ws_session.ensure() already pauses the bot loop; no manual pause needed.
     try:
-        _job_update(jid, phase="pausing")
-        _job_log(jid, f"暫停裝置 {rip} 的 bot loop…")
-        try:
-            bot_state.set_pause(rip, True)
-            paused = True
-            # set_pause no-ops (only warns) for an untracked device key — confirm
-            # it actually took so we don't drive a still-running bot loop blindly.
-            if bot_state.get_pause_event(rip) is None:
-                _job_log(jid, f"⚠ 裝置 {rip} 未在 bot 追蹤中，未實際暫停（續行）")
-        except Exception as exc:  # noqa: BLE001
-            _job_log(jid, f"暫停失敗（續行）：{exc}")
-
         _job_update(jid, phase="reading")
         state, err = _read_state(ip)
         if err:
@@ -223,8 +208,6 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             res, e = _exec_step(ip, step)
             if e or not res or not res.get("ok"):
                 reason = (res or {}).get("err") if res else e
-                # if the buy committed (frags purchased) but the upgrade failed,
-                # the coin WAS spent — count it so budget/report stay honest.
                 coin_spent = step["coin"] if (res and res.get("bought")) else 0
                 spent += coin_spent
                 _job_log(jid, f"   ✗ 停止：{reason}"
@@ -247,13 +230,6 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             "stopped_reason": stopped})
     except Exception as exc:  # noqa: BLE001
         _job_update(jid, status="error", error=f"{type(exc).__name__}: {exc}")
-    finally:
-        if paused:
-            try:
-                bot_state.set_pause(rip, False)
-                _job_log(jid, f"已恢復裝置 {rip} 的 bot loop")
-            except Exception:  # noqa: BLE001
-                pass
 
 
 def _spawn(target, *args) -> str:
