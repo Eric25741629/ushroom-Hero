@@ -109,13 +109,21 @@ SHOP_ID_HIGH_YIELD_FERTILIZER = 408  # → item 111 ×5, 金幣 (階梯價 [0,50
 DEFAULT_SEED_ID: Optional[int] = SEED_ID_FREE        # 管家/種菜預設用免費種子
 DEFAULT_FERTILIZER_ID: Optional[int] = FERTILIZER_ID_HIGH_YIELD
 DEFAULT_TEAM_CFG_ID: Optional[int] = FARM_WORKER_TEAM_CFG_ID
-# 豐收卡 still unverified: 不在 farm shop(type4)，依舊例在跨界停車商店。live-confirm.
+# 豐收卡 (菜園豐收卡): 跨界停車商店 shop_type=11/shop_id=1604 — LIVE-verified
+# (5554 2026-06-22: shop_buy 6914 bought=1, daily count 1→2).
 HARVEST_CARD_SHOP_TYPE: int = 11
 HARVEST_CARD_SHOP_ID: int = 1604
 SEED_ID_PREMIUM = 103         # 特級種子 (configGoods id=103, live-confirmed)
+# 豐收卡放大下 PLANTS_PER_CARD 株作物 2x 產量；rounds = cards_bought × (30 // lands)。
+HARVEST_CARD_WEEKLY_LIMIT = 3  # 菜園豐收卡每週購買上限 (farm_v2.config HARVEST_CARD_BUY_COUNT)
+PLANTS_PER_CARD = 30           # 一張卡放大的株數 (2x 產量)
 # Simple start/cancel cmds (module 71; distinct from worker_setting 18689 which configures):
 CMD_WORKER_START = 18177      # start farm work (body {field1: 1001})
 CMD_WORKER_CANCEL = 18178     # cancel farm work (body {field1: 1001})
+# Live (5554 2026-06-22 via netManager.send hook): start/cancel do NOT echo their
+# own c2s cmd — the server answers on 18184 (worker 71/8 狀態變更 s2c). Expect both
+# 18184 and the original cmd so either transport (raw WS / netManager) is accepted.
+CMD_WORKER_STATE = 18184      # worker state-change s2c (the real reply for 18177/18178)
 FARM_WORK_ID = 1001           # work identifier in cmd body (live-captured 2026-06-15)
 
 
@@ -185,6 +193,16 @@ class FarmInfo:
 def build_plant_body(seed_id: int, land_id: int) -> bytes:
     """home_farm_plant_c2s {seed_id#1, land_id#2} — seed_id FIRST, then land_id."""
     return codec.pb_uint(1, seed_id) + codec.pb_uint(2, land_id)
+
+
+def build_pick_body(land_id: int, role_id: int = 0) -> bytes:
+    """home_farm_pick_c2s {role_id#1(=0 self), land_id#2} — 收成 (cmd 3080).
+
+    Live-captured (5554 2026-06-22): the 一鍵收成 button sends role_id=0 + land_id
+    per land. Distinct from 收穫 (home_farm_harvest 3081). Both are run, in order
+    收成→收穫, on a mature crop during the 豐收卡 cycle.
+    """
+    return codec.pb_uint(1, role_id) + codec.pb_uint(2, land_id)
 
 
 def build_harvest_body(land_id: int) -> bytes:
@@ -580,7 +598,7 @@ def stop_work(
     reply_cmd, reply = client.call_for(
         CMD_WORKER_CANCEL,
         build_worker_start_cancel_body(work_id),
-        expect_cmds=(CMD_WORKER_CANCEL, CMD_ERROR),
+        expect_cmds=(CMD_WORKER_STATE, CMD_WORKER_CANCEL, CMD_ERROR),
         timeout=timeout,
     )
     if reply_cmd == CMD_ERROR:
@@ -609,7 +627,7 @@ def start_work_simple(
     reply_cmd, reply = client.call_for(
         CMD_WORKER_START,
         build_worker_start_cancel_body(work_id),
-        expect_cmds=(CMD_WORKER_START, CMD_ERROR),
+        expect_cmds=(CMD_WORKER_STATE, CMD_WORKER_START, CMD_ERROR),
         timeout=timeout,
     )
     if reply_cmd == CMD_ERROR:
@@ -620,6 +638,176 @@ def start_work_simple(
     return {'ok': True, 'error_code': 0}
 
 
+def plant_lands(
+    client: WSGameClient,
+    seed_id: int,
+    land_ids: Sequence[int],
+    *,
+    spacing: float = 0.2,
+    timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
+) -> dict:
+    """Plant ``seed_id`` on the explicit ``land_ids`` (no home_farm_info read —
+    unlike plant_empty, so it is safe to call repeatedly in a session where the
+    server answers 3077 only once). Returns {attempted, planted, results}."""
+    log = _resolve_logger(device_id)
+    planted = 0
+    results: list[dict] = []
+    for lid in land_ids:
+        ok, code, _b = _farm_action(
+            client, CMD_PLANT, build_plant_body(seed_id, lid), timeout=timeout)
+        if ok:
+            planted += 1
+        results.append({"land_id": lid, "code": code, "ok": ok})
+        if spacing:
+            time.sleep(spacing)
+    log.info("ws_token farm: plant_lands seed=%d attempted=%d planted=%d",
+             seed_id, len(land_ids), planted)
+    return {"attempted": len(land_ids), "planted": planted, "results": results}
+
+
+def pick_lands(
+    client: WSGameClient,
+    land_ids: Sequence[int],
+    *,
+    role_id: int = 0,
+    spacing: float = 0.2,
+    timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
+) -> dict:
+    """收成 (home_farm_pick 3080) every land in ``land_ids``. Reply on 3080 carries
+    code#1 (code!=0 = 未熟/空地). Returns {attempted, picked, results}."""
+    log = _resolve_logger(device_id)
+    picked = 0
+    results: list[dict] = []
+    for lid in land_ids:
+        try:
+            reply_cmd, reply = client.call_for(
+                CMD_PICK, build_pick_body(lid, role_id),
+                expect_cmds=(CMD_PICK, CMD_ERROR), timeout=timeout)
+        except Exception as exc:  # noqa: BLE001 — no reply = nothing to pick
+            results.append({"land_id": lid, "ok": False, "error": str(exc)})
+            continue
+        code = _as_int(codec.walk_dict(reply).get(1))
+        ok = reply_cmd == CMD_PICK and code == 0
+        if ok:
+            picked += 1
+        results.append({"land_id": lid, "code": code, "ok": ok})
+        if spacing:
+            time.sleep(spacing)
+    log.info("ws_token farm: pick_lands attempted=%d picked=%d", len(land_ids), picked)
+    log.info("農場收成: %d 塊 → 收成 %d 塊 (pick 3080)", len(land_ids), picked)
+    return {"attempted": len(land_ids), "picked": picked, "results": results}
+
+
+def harvest_lands(
+    client: WSGameClient,
+    land_ids: Sequence[int],
+    *,
+    spacing: float = 0.2,
+    timeout: Optional[float] = 4.0,
+    retries: int = 1,
+    device_id: Optional[str] = None,
+) -> dict:
+    """收穫 (home_farm_harvest 3081) every land in ``land_ids``. 3081 replies only
+    on a harvestable land; a single-land 收穫 occasionally NO-replies (timeout) even
+    when ripe (live 2026-06-22) — and the 豐收卡 增益 is consumed at 收穫, so a missed
+    harvest leaves a buff unspent + a stuck crop. So no-reply lands are RETRIED up to
+    ``retries`` times. Callers should pass only lands that actually hold a crop (the
+    cycle harvests crop_lands / freshly-grown premium), so a persistent no-reply means
+    truly nothing there. Returns {attempted, harvested, rewards, results}."""
+    log = _resolve_logger(device_id)
+    harvested = 0
+    rewards: dict[int, int] = {}
+    done: dict[int, dict] = {}
+    pending = list(land_ids)
+    for attempt in range(retries + 1):
+        if not pending:
+            break
+        still: list[int] = []
+        for lid in pending:
+            try:
+                reply_cmd, reply = client.call_for(
+                    CMD_HARVEST, build_harvest_body(lid),
+                    expect_cmds=(CMD_HARVEST, CMD_ERROR), timeout=timeout)
+            except Exception:  # noqa: BLE001 — no reply; retry on the next pass
+                still.append(lid)
+                continue
+            code = _as_int(codec.walk_dict(reply).get(1))
+            ok = reply_cmd == CMD_HARVEST and code == 0
+            if ok:
+                harvested += 1
+                for gtid, num in parse_rewards(reply).items():
+                    rewards[gtid] = rewards.get(gtid, 0) + num
+            done[lid] = {"land_id": lid, "code": code, "ok": ok}
+            if spacing:
+                time.sleep(spacing)
+        pending = still
+        if pending and attempt < retries and spacing:
+            time.sleep(spacing)  # brief settle before retrying the no-reply lands
+    for lid in pending:
+        done[lid] = {"land_id": lid, "ok": False, "error": "no-reply"}
+    results = [done[lid] for lid in land_ids]
+    log.info("ws_token farm: harvest_lands attempted=%d harvested=%d rewards=%s",
+             len(land_ids), harvested, rewards)
+    log.info("農場收穫: %d 塊 → 收穫 %d 塊 (harvest 3081) rewards=%s",
+             len(land_ids), harvested, rewards)
+    return {"attempted": len(land_ids), "harvested": harvested,
+            "rewards": rewards, "results": results}
+
+
+def fertilize_until_mature(
+    client: WSGameClient,
+    land_ids: Sequence[int],
+    *,
+    fertilizer_id: int = FERTILIZER_ID_HIGH_YIELD,
+    num: int = 3,
+    max_rounds: int = 8,
+    spacing: float = 0.15,
+    timeout: Optional[float] = None,
+    device_id: Optional[str] = None,
+) -> dict:
+    """Fertilize each land in ``land_ids`` repeatedly (num per application — the
+    in-game 一鍵施肥 sends num=3) until its crop is MATURE.
+
+    Maturity is read from the fertilize reply itself (3079 s2c new_land#3 state),
+    so no home_farm_info re-read is needed (server answers 3077 only ~once per
+    session). A 0x0201 rejection code 19 ("已成熟") also marks the land done; any
+    other rejection (no crop / out of fertilizer) drops the land. Caps total passes
+    at ``max_rounds`` so it can't drain the whole fertilizer stock.
+    Returns {mature, dropped, rounds, fertilized}."""
+    log = _resolve_logger(device_id)
+    mature: set = set()
+    dropped: set = set()
+    fertilized = 0
+    used_rounds = 0
+    for used_rounds in range(1, max_rounds + 1):
+        pending = [l for l in land_ids if l not in mature and l not in dropped]
+        if not pending:
+            break
+        for lid in pending:
+            ok, code, body = _farm_action(
+                client, CMD_FERTILIZE,
+                build_fertilize_body(lid, fertilizer_id, num=num), timeout=timeout)
+            if not ok:
+                if code == 19:           # already mature
+                    mature.add(lid)
+                else:                    # no crop / out of fertilizer → give up
+                    dropped.add(lid)
+                continue
+            fertilized += 1
+            nl = codec.walk_dict(body).get(3)
+            state = _parse_land(bytes(nl)).state if isinstance(nl, (bytes, bytearray)) else 0
+            if state == STATE_MATURE:
+                mature.add(lid)
+            if spacing:
+                time.sleep(spacing)
+    log.info("ws_token farm: fertilize_until_mature mature=%s dropped=%s rounds=%d fertilized=%d",
+             sorted(mature), sorted(dropped), used_rounds, fertilized)
+    return {"mature": sorted(mature), "dropped": sorted(dropped),
+            "rounds": used_rounds, "fertilized": fertilized}
+
+
 def run_harvest_card_cycle(
     client: WSGameClient,
     role_id: int,
@@ -627,144 +815,113 @@ def run_harvest_card_cycle(
     harvest_card_shop_type: int = HARVEST_CARD_SHOP_TYPE,
     harvest_card_shop_id: int = HARVEST_CARD_SHOP_ID,
     premium_seed_id: int = SEED_ID_PREMIUM,
-    num_cards: int = 3,
+    num_cards: int = HARVEST_CARD_WEEKLY_LIMIT,
     fertilizer_id: int = FERTILIZER_ID_HIGH_YIELD,
+    plants_per_card: int = PLANTS_PER_CARD,
     land_ids: Sequence[int] = (),
     inventory_tracker=None,
+    spacing: float = 0.2,
     timeout: Optional[float] = None,
     device_id: Optional[str] = None,
 ) -> dict:
-    """豐收卡 harvest-card cycle via pure WS.
+    """豐收卡 harvest-card cycle via pure WS — the validated 4-stage flow.
 
-    Flow:
-      1. Stop companion worker (cancel 打工)
-      2. Read farm info once (reused for fertilize/harvest)
-      3. Fertilize all plots to force-ripen crops
-      4. Harvest all ready crops (best-effort; 3077 has ~50% timeout)
-      5. Decide cards_to_buy:
-           If inventory_tracker is given and has a count for premium_seed_id:
-             cards_to_buy = max(0, empty_plots − current_seeds), capped at num_cards
-           Otherwise: cards_to_buy = num_cards (config default)
-      6. Buy harvest cards (shop_type=11, shop_id=1604) only when cards_to_buy > 0
-      7. Plant premium seeds (seed_id=103) on every empty plot
-      8. Re-enable companion worker
+    豐收卡 doubles the yield of the next ``plants_per_card`` (=30) crops, and the
+    buff is spent at 收穫 (home_farm_harvest 3081), NOT at planting. So the field is
+    first CLEARED of the 打工 worker's cheap crops (they would otherwise eat the boost
+    quota), then premium 特級種子 are grown in rounds while the boost lasts:
+    rounds = cards_bought × (plants_per_card // lands).
 
-    inventory_tracker — optional mining.InventoryTracker; pass in from runner so
-    the login-time 0x0402 snapshot is available.  When present, buys only the
-    deficit (empty_plots - current_seeds), capped at num_cards.  When absent,
-    falls back to buying num_cards unconditionally.
+    Stages (each 一鍵 button is per-land; live-verified 5554 2026-06-22):
+      1. 取消打工 (worker_cancel 18178 → 18184)
+      2. 讀農場一次 → land ids + which lands currently hold a crop
+      3. 清場: 施肥-到熟 → 收成(pick 3080) → 收穫(harvest 3081) the existing cheap crops
+      4. 買豐收卡 (shop_buy 6914 type11/id1604, deficit-only up to num_cards)
+      5. 賺取迴圈 × (cards_bought × plants_per_card // lands):
+            種植103(3078) → 施肥(num=3 到熟) → 收成(3080) → 收穫(3081, 逾時重試)
+      6. 恢復打工 (worker_start 18177 → 18184)
+
+    ``inventory_tracker`` is accepted for runner back-compat but unused (cards are
+    bought deficit-only via shop_info). ``land_ids`` overrides only when the opening
+    read_farm fails; otherwise land ids come from the farm read (falls back to 1..6).
     """
-    result: dict = {
-        'stopped_work': False,
-        'empty_plots': 0,
-        'seed_before': None,
-        'cards_to_buy': num_cards,
-        'fertilized': 0,
-        'harvested': 0,
-        'cards_bought': 0,
-        'planted': 0,
-        'restarted_work': False,
-        'ok': False,
-    }
-
     log = _resolve_logger(device_id)
-    log.info(
-        '豐收卡循環: 開始 (role_id=%s, num_cards=%d, fertilizer_id=%d, premium_seed=%d)',
-        role_id, num_cards, fertilizer_id, premium_seed_id)
+    result: dict = {
+        'stopped_work': False, 'land_ids': [], 'clear_harvested': 0,
+        'cards_bought': 0, 'rounds': 0, 'planted': 0, 'earn_harvested': 0,
+        'restarted_work': False, 'ok': False,
+    }
+    log.info('豐收卡循環(4階段): 開始 role_id=%s num_cards=%d', role_id, num_cards)
 
-    # 1. Stop companion worker
+    # 1. 取消打工 — must be off so it can't re-plant the field we clear / eat the quota.
     sw = stop_work(client, timeout=timeout, device_id=device_id)
     result['stopped_work'] = sw.get('ok', False)
-    log.info('豐收卡循環[1/7] 取消打工: ok=%s (code=%s)',
-             sw.get('ok', False), sw.get('error_code', 0))
+    log.info('豐收卡循環[1] 取消打工: ok=%s', result['stopped_work'])
 
-    # 2. Read farm info once — reused for fertilize and harvest to avoid the
-    #    session-scoped 3077 dedup (server answers home_farm_info only ~once).
+    # 2. 讀農場一次 → land ids + crop lands (3077 answers ~once/session, so read here only).
     info: Optional[FarmInfo] = None
     try:
         info = read_farm(client, role_id, timeout=timeout)
-    except Exception as exc:
-        log.info('ws_token farm: run_harvest_card_cycle read_farm failed (%s)', exc)
-
-    empty_count = len(info.empty_lands) if info is not None else 0
-    result['empty_plots'] = empty_count
-    total_lands = len(info.lands) if info is not None else 0
-    log.info('豐收卡循環[2/7] 讀農場: 地塊=%d 空地=%d (info=%s)',
-             total_lands, empty_count, '已讀' if info is not None else 'timeout')
-
-    # 3. Fertilize (pass info to skip re-read)
-    fert = fertilize_lands(client, role_id, fertilizer_id, info=info, timeout=timeout,
-                           device_id=device_id)
-    result['fertilized'] = fert.get('fertilized', 0)
-    log.info('豐收卡循環[3/7] 施肥: 施肥 %d/%d 塊 (fert_id=%d)',
-             fert.get('fertilized', 0), fert.get('attempted', 0), fertilizer_id)
-
-    # 4. Harvest ready crops (best-effort; 3077 may timeout; pass info)
-    try:
-        harv = harvest_ready(client, role_id, info=info, timeout=5.0, device_id=device_id)
-        result['harvested'] = harv.get('harvested', 0)
-        log.info('豐收卡循環[4/7] 收成: 收成 %d/%d 塊 rewards=%s',
-                 harv.get('harvested', 0), harv.get('attempted', 0),
-                 harv.get('rewards', {}))
-    except Exception as exc:
-        log.info('ws_token farm: harvest_ready skipped (%s)', exc)
-        log.info('豐收卡循環[4/7] 收成: 跳過 (home_farm 不可用: %s)', exc)
-
-    # 5. Decide how many harvest cards to buy based on 特級種子 現量.
-    #    1 harvest card ≒ 1 premium seed slot. When the tracker has seen the
-    #    item from the login-time 0x0402 snapshot, buy only the deficit; skip
-    #    entirely if we already have enough. Fall back to num_cards when unknown.
-    cards_to_buy = num_cards
-    if inventory_tracker is not None:
-        current_seeds = inventory_tracker.counts.get(int(premium_seed_id))
-        result['seed_before'] = current_seeds
-        if current_seeds is not None:
-            need = max(0, empty_count - current_seeds)
-            cards_to_buy = min(need, num_cards)
-            log.info(
-                'ws_token farm: 特級種子現量=%d 空地=%d need=%d → buy %d cards',
-                current_seeds, empty_count, need, cards_to_buy,
-            )
-    result['cards_to_buy'] = cards_to_buy
-    log.info('豐收卡循環[5/7] 估算買卡: 特級種子現量=%s 空地=%d → 預定買 %d 張 (上限 %d)',
-             result.get('seed_before'), empty_count, cards_to_buy, num_cards)
-
-    # 6. Buy harvest cards (skip when sufficient seeds already in bag)
-    if cards_to_buy > 0:
-        card_result = buy_to_daily_target(
-            client, harvest_card_shop_id, cards_to_buy,
-            shop_type=harvest_card_shop_type, timeout=timeout, device_id=device_id,
-        )
-        result['cards_bought'] = card_result.get('bought', 0)
-        log.info('豐收卡循環[6/7] 買豐收卡: 買到 %d 張 (need=%s ok=%s code=%s shop=%d/%d)',
-                 card_result.get('bought', 0), card_result.get('need'),
-                 card_result.get('ok'), card_result.get('code'),
-                 harvest_card_shop_type, harvest_card_shop_id)
+    except Exception as exc:  # noqa: BLE001
+        log.info('豐收卡循環: read_farm 失敗 (%s) — 用預設 land 1..6', exc)
+    if info is not None and info.lands:
+        lands = [land.id for land in info.lands]
+        crop_lands = [land.id for land in info.lands if not land.is_empty]
+    elif land_ids:
+        lands = list(land_ids)
+        crop_lands = list(land_ids)
     else:
-        log.info('ws_token farm: skip harvest card buy — 特級種子 sufficient (%s)',
-                 result.get('seed_before'))
-        log.info('豐收卡循環[6/7] 買豐收卡: 跳過 (特級種子已足夠, 現量=%s)',
-                 result.get('seed_before'))
+        lands = list(range(1, 7))
+        crop_lands = list(lands)
+    result['land_ids'] = lands
+    log.info('豐收卡循環[2] 讀農場: 地塊=%s 有作物=%s', lands, crop_lands)
 
-    # 7. Plant premium seeds on all empty plots (info=None → fresh read after
-    #    harvest; server may not answer if session-deduped, handled internally)
-    plant = plant_empty(client, role_id, premium_seed_id, timeout=timeout,
-                        device_id=device_id)
-    result['planted'] = plant.get('planted', 0)
-    log.info('豐收卡循環[7/7] 種特級種子: 種了 %d/%d 塊 (seed_id=%d)',
-             plant.get('planted', 0), plant.get('attempted', 0), premium_seed_id)
+    # 3. 清場 — cheap crops must be off the field before buying (they would consume
+    #    the card's 30-plant 2x quota). 施肥到熟 → 收成 → 收穫.
+    if crop_lands:
+        fertilize_until_mature(client, crop_lands, fertilizer_id=fertilizer_id,
+                               spacing=spacing, timeout=timeout, device_id=device_id)
+        pick_lands(client, crop_lands, spacing=spacing, timeout=timeout, device_id=device_id)
+        cleared = harvest_lands(client, crop_lands, spacing=spacing, timeout=timeout,
+                                device_id=device_id)
+        result['clear_harvested'] = cleared.get('harvested', 0)
+    log.info('豐收卡循環[3] 清場: 收穫 %d 塊舊作物', result['clear_harvested'])
 
-    # 8. Re-enable companion worker
+    # 4. 買豐收卡 — deficit-only on the escalating ladder, up to num_cards (週上限).
+    card_res = buy_to_daily_target(
+        client, harvest_card_shop_id, num_cards,
+        shop_type=harvest_card_shop_type, timeout=timeout, device_id=device_id)
+    bought = card_res.get('bought', 0)
+    result['cards_bought'] = bought
+    log.info('豐收卡循環[4] 買卡: 買到 %d 張 (before=%s target=%d ok=%s)',
+             bought, card_res.get('before'), num_cards, card_res.get('ok'))
+
+    # 5. 賺取迴圈 — rounds = bought × (plants_per_card // lands). Buff spent at 收穫.
+    per_round = max(1, len(lands))
+    rounds = bought * (plants_per_card // per_round)
+    result['rounds'] = rounds
+    log.info('豐收卡循環[5] 賺取: %d 張 × (%d÷%d) = %d 輪',
+             bought, plants_per_card, per_round, rounds)
+    for r in range(1, rounds + 1):
+        pl = plant_lands(client, premium_seed_id, lands, spacing=spacing,
+                         timeout=timeout, device_id=device_id)
+        result['planted'] += pl.get('planted', 0)
+        fertilize_until_mature(client, lands, fertilizer_id=fertilizer_id,
+                               spacing=spacing, timeout=timeout, device_id=device_id)
+        pick_lands(client, lands, spacing=spacing, timeout=timeout, device_id=device_id)
+        hv = harvest_lands(client, lands, spacing=spacing, timeout=timeout,
+                           device_id=device_id)
+        result['earn_harvested'] += hv.get('harvested', 0)
+        log.info('豐收卡循環[5] 第 %d/%d 輪: 種%d 收穫%d',
+                 r, rounds, pl.get('planted', 0), hv.get('harvested', 0))
+
+    # 6. 恢復打工
     rs = start_work_simple(client, timeout=timeout, device_id=device_id)
     result['restarted_work'] = rs.get('ok', False)
     result['ok'] = True
-    log.info('豐收卡循環: 恢復打工 ok=%s (code=%s)',
-             rs.get('ok', False), rs.get('error_code', 0))
-
-    log.info(
-        '豐收卡循環: 完成 — 取消打工=%s 施肥=%d 收成=%d 買卡=%d 種植=%d 恢復打工=%s',
-        result['stopped_work'], result['fertilized'], result['harvested'],
-        result['cards_bought'], result['planted'], result['restarted_work'])
+    log.info('豐收卡循環(4階段): 完成 — 清場%d 買卡%d 輪%d 種%d 收穫%d 恢復打工=%s',
+             result['clear_harvested'], result['cards_bought'], result['rounds'],
+             result['planted'], result['earn_harvested'], result['restarted_work'])
     log.info('ws_token farm: run_harvest_card_cycle %s', result)
     return result
 

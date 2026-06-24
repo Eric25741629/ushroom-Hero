@@ -638,3 +638,73 @@ def test_cmd_constants_match_recon():
     assert CMD_GET_OTHER_WORKER == 18690
     assert CMD_SHOP_INFO == 6913
     assert CMD_SHOP_BUY == 6914
+
+
+# --- 4-stage 豐收卡 helpers (live-reverse-engineered on 5554, 2026-06-22) ----
+
+from ws_token.farm import (  # noqa: E402
+    CMD_PICK,
+    fertilize_until_mature,
+    harvest_lands,
+    pick_lands,
+)
+
+
+def test_fertilize_until_mature_loops_until_state_mature_and_sends_num3():
+    # fertilize reply: GROWING on the 1st pass, MATURE on the 2nd → matures in 2 passes.
+    n = {"c": 0}
+
+    def fert(_b):
+        n["c"] += 1
+        state = STATE_MATURE if n["c"] >= 2 else STATE_GROWING
+        new_land = _land(1, _crop(1, 0, 103, 6013, state, end=1))
+        body = codec.pb_uint(1, 0) + codec.pb_uint(2, 0) + codec.pb_msg(3, new_land)
+        return [s2c(CMD_FERTILIZE, body)]
+
+    c, fake = _client({CMD_FERTILIZE: fert})
+    try:
+        res = fertilize_until_mature(c, [1], num=3, spacing=0)
+        assert res["mature"] == [1]
+        assert n["c"] == 2  # stopped fertilizing the moment it read state==MATURE
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_FERTILIZE]
+        assert all(d.get(4) == 3 for d in sent)  # num#4 = 3 (the live 一鍵施肥 amount)
+        assert all(d.get(1) == 0 for d in sent)  # role_id#1 = 0 (self)
+    finally:
+        c.close()
+
+
+def test_pick_lands_sends_pick_3080_with_role0_and_landid():
+    c, fake = _client({CMD_PICK: lambda _b: [s2c(CMD_PICK, codec.pb_uint(1, 0))]})
+    try:
+        res = pick_lands(c, [2, 5], spacing=0)
+        assert res["picked"] == 2
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_PICK]
+        assert [d.get(2) for d in sent] == [2, 5]  # land_id#2
+        assert all(d.get(1) == 0 for d in sent)    # role_id#1 = 0 (self)
+    finally:
+        c.close()
+
+
+def test_pick_lands_code_nonzero_is_failure():
+    # 收成 reply on 3080 carries code#1; code!=0 (e.g. 122 未熟) = failure, not crash.
+    c, _ = _client({CMD_PICK: lambda _b: [s2c(CMD_PICK, codec.pb_uint(1, 122))]})
+    try:
+        res = pick_lands(c, [1], spacing=0)
+        assert res["picked"] == 0
+        assert res["results"][0]["code"] == 122
+    finally:
+        c.close()
+
+
+def test_harvest_lands_counts_and_sums_rewards():
+    reward = codec.pb_msg(5, codec.pb_uint(1, 6013) + codec.pb_uint(2, 225))
+    harv_ok = codec.pb_uint(1, 0) + reward
+    c, fake = _client({CMD_HARVEST: lambda _b: [s2c(CMD_HARVEST, harv_ok)]})
+    try:
+        res = harvest_lands(c, [1, 2, 3], spacing=0)
+        assert res["harvested"] == 3
+        assert res["rewards"] == {6013: 225 * 3}
+        sent = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent() if cmd == CMD_HARVEST]
+        assert [d.get(1) for d in sent] == [1, 2, 3]  # land_id#1
+    finally:
+        c.close()

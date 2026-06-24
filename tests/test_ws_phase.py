@@ -171,6 +171,30 @@ def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
     assert ("dev", "WS 開神燈 (12/34)") in steps
 
 
+def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):
+    """WS-first phase 的 harvest_card tag 應顯示為「豐收卡」。"""
+    _cfg(monkeypatch, {"enabled": True, "farm": {"harvest_card_cycle": {"enabled": True}}})
+    import bot_state
+    steps: list[tuple] = []
+    monkeypatch.setattr(bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured = {}
+
+    def fake_run_device(ip, cfg, progress=None, **_kw):
+        captured["progress"] = progress
+        return _report({"harvest_card": {"cards_bought": 3}})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+
+    progress = captured["progress"]
+    progress("harvest_card", "start", "")
+    progress("harvest_card", "ok", "")
+    assert ("dev", "WS 任務執行中: 豐收卡") in steps
+    assert ("dev", "WS 任務完成: 豐收卡") in steps
+
+
 def test_run_device_passes_carpark_plan_and_auto(monkeypatch):
     captured = {}
 

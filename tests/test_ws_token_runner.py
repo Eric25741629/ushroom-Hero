@@ -160,6 +160,11 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.farm, "buy_farm_shop",
                         lambda c, bl, **k: (calls.append(("farm", "buy_farm_shop"))
                                             or [{"shop_id": 407, "bought": 0, "ok": True}]))
+    monkeypatch.setattr(runner.farm, "run_harvest_card_cycle",
+                        lambda c, rid, **k: (
+                            calls.append(("harvest_card", "run_harvest_card_cycle"))
+                            or {"ok": True, "cards_bought": k.get("num_cards", 0)}
+                        ))
 
     # dungeon (掃蕩 only; gated on dungeon_sweeps)
     monkeypatch.setattr(runner.dungeon, "run_sweep",
@@ -885,6 +890,11 @@ def test_tycoon_task_order_after_turntable():
     assert order.index("turntable") < order.index("tycoon")
 
 
+def test_harvest_card_task_order_after_farm_before_dungeon():
+    order = list(runner.TASK_ORDER)
+    assert order.index("farm") < order.index("harvest_card") < order.index("dungeon")
+
+
 # --- new free tasks: idle_reward / turntable / farm-harvest -----------------
 
 def test_new_free_tasks_run_on_spend_false(patched):
@@ -924,6 +934,18 @@ def test_farm_plant_and_work_run_with_config(patched):
     actions = {(t, a) for t, a in calls}
     assert ("farm", "plant_empty") in actions
     assert ("farm", "start_work") in actions
+
+
+def test_farm_does_not_run_harvest_card_cycle_inside_farm(patched):
+    """豐收卡是獨立 tag，farm 子流程不得再內嵌執行，避免同輪重複買/用卡。"""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {"enabled": True}})
+
+    assert ("harvest_card", "run_harvest_card_cycle") in {(t, a) for t, a in calls}
+    assert "harvest_card" in rep.tasks
+    assert "harvest_card_cycle" not in rep.tasks["farm"]
 
 
 def test_farm_reads_work_status_first(patched):
@@ -991,6 +1013,74 @@ def test_dungeon_sweep_skipped_without_config(patched):
 
     assert ("dungeon", "run_sweep") not in {(t, a) for t, a in calls}
     assert rep.tasks["dungeon"]["skipped"]
+
+
+def test_harvest_card_skipped_without_config(patched):
+    """No harvest_card_cycle config -> harvest_card task is present but skipped."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("harvest_card", "run_harvest_card_cycle") not in {(t, a) for t, a in calls}
+    assert rep.tasks["harvest_card"]["skipped"]
+
+
+def test_harvest_card_runs_three_cards_with_config(patched):
+    """harvest_card_cycle.enabled -> independent tag runs the existing 3-card cycle."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {"enabled": True}})
+
+    assert ("harvest_card", "run_harvest_card_cycle") in {(t, a) for t, a in calls}
+    assert rep.tasks["harvest_card"]["cards_bought"] == 3
+
+
+def test_harvest_card_custom_num_cards_passed(patched, monkeypatch):
+    """num_cards remains configurable while defaulting to weekly 3 cards."""
+    seen = {}
+
+    def fake_cycle(c, rid, **k):
+        seen.update(k)
+        return {"ok": True, "cards_bought": k.get("num_cards")}
+
+    monkeypatch.setattr(runner.farm, "run_harvest_card_cycle", fake_cycle)
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {
+                         "enabled": True, "num_cards": 2, "fertilizer_id": 222
+                     }})
+
+    assert rep.tasks["harvest_card"]["cards_bought"] == 2
+    assert seen["num_cards"] == 2
+    assert seen["fertilizer_id"] == 222
+
+
+def test_harvest_card_weekly_gate_records_success(monkeypatch, tmp_path):
+    """同一 ISO week 只跑一次；成功才寫 gate，避免每次喚醒都用豐收卡。"""
+    from datetime import datetime
+    from ws_token import runner
+
+    calls = []
+    monkeypatch.setattr(
+        runner.farm, "run_harvest_card_cycle",
+        lambda c, rid, **k: calls.append(k) or {"ok": True, "cards_bought": 3},
+    )
+    cfg = {"harvest_card_cycle": {"enabled": True}}
+    now = datetime(2026, 6, 22, 9, 0, 0)
+
+    first = runner._run_harvest_card(
+        object(), role_id=1, farm_config=cfg, inventory_tracker=None,
+        device="dev", state_dir=tmp_path, now=now,
+    )
+    second = runner._run_harvest_card(
+        object(), role_id=1, farm_config=cfg, inventory_tracker=None,
+        device="dev", state_dir=tmp_path, now=now.replace(hour=15),
+    )
+
+    assert first["cards_bought"] == 3
+    assert second["skipped"] == "already done 2026-W26"
+    assert len(calls) == 1
 
 
 def test_dungeon_sweep_runs_with_config(patched):
