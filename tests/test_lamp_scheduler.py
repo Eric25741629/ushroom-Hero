@@ -145,40 +145,46 @@ def captured_lamp_calls(monkeypatch, lamp_mod):
 # ---------------------------------------------------------------------------
 
 def test_run_lamp_routes_to_opengold_v2_when_flag_set(lamp_mod, fake_config, monkeypatch):
-    fake_config["emu"] = {"use_opengold_v2": True}
+    fake_config["emu"] = {"use_opengold_v2": True,
+                          "ws_token": {"lamp_min_keep": 500000}}
     v2_calls: list[dict] = []
 
     class FakeSvc:
         def __init__(self, d, device_ip):
             v2_calls.append({"init_ip": device_ip})
 
-        def run(self, times, is_compare):
-            v2_calls.append({"run_times": times, "is_compare": is_compare})
+        def run(self, times, is_compare, min_keep=0):
+            v2_calls.append({"run_times": times, "is_compare": is_compare,
+                             "min_keep": min_keep})
 
     monkeypatch.setattr(lamp_mod, "_LampServiceV2", FakeSvc)
     monkeypatch.setattr(lamp_mod.random, "randint", lambda a, b: 0)  # no jitter
 
     lamp_mod._run_lamp(SimpleNamespace(), "emu", 300, is_compare=True)
-    assert v2_calls == [{"init_ip": "emu"}, {"run_times": 300, "is_compare": True}]
+    # min_keep 從 ws_token.lamp_min_keep 帶入（WS 失敗 fallback 時仍尊重保留量）
+    assert v2_calls == [{"init_ip": "emu"},
+                        {"run_times": 300, "is_compare": True, "min_keep": 500000}]
 
 
 def test_run_lamp_always_routes_to_v2_even_without_flag(lamp_mod, fake_config, monkeypatch):
     """V1(Open_gold_paddle_ocr)已廢棄：即使 config 沒有 use_opengold_v2，也一律走 V2。"""
-    fake_config["emu"] = {}  # 無 use_opengold_v2 旗標
+    fake_config["emu"] = {}  # 無 use_opengold_v2 旗標、無 ws_token → min_keep 預設 0
     v2_calls: list[dict] = []
 
     class FakeSvc:
         def __init__(self, d, device_ip):
             v2_calls.append({"init_ip": device_ip})
 
-        def run(self, times, is_compare):
-            v2_calls.append({"run_times": times, "is_compare": is_compare})
+        def run(self, times, is_compare, min_keep=0):
+            v2_calls.append({"run_times": times, "is_compare": is_compare,
+                             "min_keep": min_keep})
 
     monkeypatch.setattr(lamp_mod, "_LampServiceV2", FakeSvc)
     monkeypatch.setattr(lamp_mod.random, "randint", lambda a, b: 0)
 
     lamp_mod._run_lamp(SimpleNamespace(), "emu", 300, is_compare=False)
-    assert v2_calls == [{"init_ip": "emu"}, {"run_times": 300, "is_compare": False}]
+    assert v2_calls == [{"init_ip": "emu"},
+                        {"run_times": 300, "is_compare": False, "min_keep": 0}]
 
 
 # ---------------------------------------------------------------------------
