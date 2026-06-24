@@ -508,6 +508,20 @@ h1 {
   white-space: nowrap;
 }
 
+/* account presence (real player online, from online-monitor) */
+.acct-presence {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.6em;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.acct-presence:empty { display: none; }
+.acct-presence.on  { background: var(--mint-wash); color: var(--safe-color); border: 1px solid var(--mint); }
+.acct-presence.off { background: var(--tile-sunk); color: var(--ink-soft); border: 1px solid var(--line); }
+
 /* settings gear */
 .settings-btn {
   background: var(--tile-sunk);
@@ -1252,6 +1266,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       <span id="ocr-status" class="ocr-badge">OCR 檢查中...</span>
 
       <span id="ocr-runtime" class="ocr-runtime"></span>
+
+      <span id="online-monitor-status" class="ocr-badge" title="目前負責偵測各帳號是否上線的裝置">上線偵測: --</span>
 
     </h1>
 
@@ -2232,6 +2248,40 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       if (det) det.style.display = det.style.display === 'none' ? 'block' : 'none';
     }
 
+    // --- online-monitor badge (detector + live refresh countdown + switch trace) ---
+    let omState = null;          // last online_monitor payload from /api/status
+    let omRefreshTarget = 0;     // local epoch (s) of the next monitor refresh
+    let omSwitchAt = 0;          // local epoch (s) the last detector switch happened
+
+    function fmtAgo(s) {
+      if (s < 60) return `${s} 秒前`;
+      if (s < 3600) return `${Math.floor(s / 60)} 分鐘前`;
+      return `${Math.floor(s / 3600)} 小時前`;
+    }
+
+    function renderOnlineMonitor() {
+      const el = document.getElementById('online-monitor-status');
+      if (!el) return;
+      const om = omState;
+      if (!om) { el.textContent = '上線偵測: --'; el.className = 'ocr-badge'; return; }
+      const sw = om.last_switch;
+      const swLine = sw
+        ? `\n上次切換: ${sw.from_name} → ${sw.to_name}（${fmtAgo(Math.max(0, Math.round(Date.now() / 1000 - omSwitchAt)))}）`
+        : '';
+      if (om.running && om.detector) {
+        const stale = !om.fresh;
+        const remain = Math.max(0, Math.round(omRefreshTarget - Date.now() / 1000));
+        const tail = stale ? '資料過時' : `下次刷新 倒數 ${remain}s`;
+        el.textContent = `上線偵測: ${om.detector_name}（${tail}）`;
+        el.className = 'ocr-badge ' + (stale ? 'error' : 'ok');
+        el.title = `負責偵測各帳號是否上線的裝置: ${om.detector}｜${om.age_sec}s 前更新｜追蹤 ${om.tracked} 個帳號${swLine}`;
+      } else {
+        el.textContent = '上線偵測: 啟動中';
+        el.className = 'ocr-badge';
+        el.title = `線上偵測器尚未連線或無快照${swLine}`;
+      }
+    }
+
     async function fetchStatus() {
 
       if (currentPage !== 'dashboard') return;
@@ -2267,6 +2317,17 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         const last = (data.ocr_runtime || {}).last_success_server || '';
 
         document.getElementById('ocr-runtime').textContent = last ? `最近成功: ${last}` : '';
+
+        omState = data.online_monitor || null;
+        // Anchor countdown + switch-age to the local clock from server-relative
+        // seconds (avoids server/client clock skew); the 1s ticker animates them.
+        if (omState && omState.running) {
+          omRefreshTarget = (Date.now() / 1000) + (omState.refresh_in_sec || 0);
+        }
+        if (omState && omState.last_switch) {
+          omSwitchAt = (Date.now() / 1000) - (omState.last_switch.age_sec || 0);
+        }
+        renderOnlineMonitor();
 
 
 
@@ -2894,6 +2955,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
                 <div class="device-ip">${ip}</div>
               </div>
               <div style="display:flex;align-items:center;gap:5px;">
+                <span class="acct-presence" id="presence-${ip}" title="偵測器判定此帳號的真人是否在線"></span>
                 <span class="status-text" id="status-${ip}">${statusText}</span>
                 <button class="settings-btn" onclick="openSettings('${ip}')" title="設定">⚙</button>
               </div>
@@ -2932,6 +2994,20 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         updateText(`title-${ip}`, info.name || ip);
 
         updateText(`status-${ip}`, statusText);
+
+        const presenceEl = document.getElementById(`presence-${ip}`);
+        if (presenceEl) {
+          if (info.account_online === true) {
+            presenceEl.textContent = '當前在線';
+            presenceEl.className = 'acct-presence on';
+          } else if (info.account_online === false) {
+            presenceEl.textContent = '當前離線';
+            presenceEl.className = 'acct-presence off';
+          } else {
+            presenceEl.textContent = '';
+            presenceEl.className = 'acct-presence';
+          }
+        }
 
         updateText(`backend-${ip}`, (info.backend || 'adb') + (info.ws_enabled ? ' +WS' : ''));
 
@@ -4650,6 +4726,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     function startPolling() {
       if (POLL_INTERVALS.length) return; // already running
       POLL_INTERVALS.push(setInterval(fetchStatus, 2000));
+      POLL_INTERVALS.push(setInterval(renderOnlineMonitor, 1000));
       POLL_INTERVALS.push(setInterval(checkFrontendVersion, 4000));
       POLL_INTERVALS.push(setInterval(fetchLabelerStatus, 2000));
       POLL_INTERVALS.push(setInterval(fetchTrainerStatus, 2000));

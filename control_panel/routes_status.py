@@ -1,6 +1,7 @@
 """狀態查詢路由 blueprint（OCR 健康檢查 / 程式資訊 / analyze_stage / device_data / daily_progress / status）。"""
 import base64
 import datetime
+import functools
 import logging
 import os
 import subprocess
@@ -310,74 +311,150 @@ def _record_is_today(manager, data, key_or_list):
     return False
 
 
+# 每日進度徽章追蹤的任務。config 格式：
+#   {"key": json_key|[keys]}                 → 點亮看「今日是否完成」(check_is_today)
+#   {"cycle": (record_name, weeks)}          → 週期未到則隱藏 (坐騎/武道會)
+#   {"sea_week": True} / {"triweekly": True} → 日曆檔期未到則隱藏 (航海/龍骸)
+#   {"period": "week"}                        → 點亮改看「本檔期(本週)是否跑過」而非當天
+# 航海 / 龍骸聖域是多週才開一檔的活動：只在「檔期週」顯示徽章；點亮看本週而非當天，
+# 否則活動週跑完隔天又退回 ⏳。檔期判斷用日曆錨點(is_sea_week / _is_dragon_week)。
+_DAILY_TASKS_CONFIG = {
+    "農場買種": {"key": "farm_seed_purchase"},
+    "農場種植": {"key": "farm_plant_click"},
+    "挖礦": {"key": ["挖礦", "挖礦"]},
+    "地獄之門": {"key": "地獄之門"},
+    "萬神試煉": {"key": "萬神試煉"},
+    "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
+    "商店購買": {"key": "Store"},
+    "每日任務": {"key": "mission_timestamp"},
+    "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4)},
+    "菇菇武道會": {
+        "key": "mushroom_arena_daily",
+        "cycle": ("mushroom_arena_cycle_start", 4),
+    },
+    "航海": {"key": "sea_last_execution", "sea_week": True, "period": "week"},
+    "龍骸聖域": {
+        "key": "dragon_realm_last_run", "triweekly": True, "period": "week",
+    },
+}
+
+
+def _compute_daily_progress(manager, device_id, *, today=None):
+    """回傳 {display_name: 已完成?}；檔期/週期 gate 未過的任務直接省略(隱藏)。
+
+    ``today`` 預設取 manager 時區的當天，可注入供測試。兩個日曆 gate
+    (is_sea_week / _is_dragon_week) 都吃同一個 ``today`` —— 與點亮述語
+    manager.is_same_week 共用 manager.timezone 時鐘，否則非 UTC+8 主機在週界
+    邊緣，gate(本地)與述語(台北)可能落在不同 ISO 週，徽章顯示/點亮會錯週。
+    """
+    data = manager.load_data()
+    if today is None:
+        today = datetime.datetime.now(manager.timezone).date()
+    results = {}
+    for display_name, config in _DAILY_TASKS_CONFIG.items():
+        # 1. gate：未到週期/檔期則隱藏
+        if "cycle" in config:
+            record_name, weeks = config["cycle"]
+            should_exec, _ = json_manager._should_execute_cycle(
+                device_id, record_name, cycle_weeks=weeks
+            )
+            if not should_exec:
+                continue
+        if config.get("sea_week") and not json_manager.is_sea_week(today):
+            continue
+        if config.get("triweekly"):
+            from game_actions.dragon_realm_scheduler import _is_dragon_week
+            if not _is_dragon_week(today):
+                continue
+
+        # 2. 點亮：多週活動看「本週是否跑過」，其餘看「今日是否完成」
+        if config.get("period") == "week":
+            results[display_name] = manager.is_same_week(config["key"])
+        else:
+            results[display_name] = _record_is_today(manager, data, config["key"])
+    return results
+
+
 @bp.route("/api/daily_progress/<ip>", methods=["GET"])
 def get_daily_progress(ip):
     """獲取設備的今日進度統計"""
     try:
-        real_device_id = ip
-        if ":" in ip:
-            real_device_id = ip.split(":")[-1]
-
+        real_device_id = ip.split(":")[-1] if ":" in ip else ip
         manager = json_manager.JsonDataManager(real_device_id)
-
-        # 定義要追蹤的任務清單
-        # config 格式: { "key": json_key, "cycle": (record_name, weeks) }
-        tasks_config = {
-            "農場買種": {"key": "farm_seed_purchase"},
-            "農場種植": {"key": "farm_plant_click"},
-            "挖礦": {"key": ["挖礦", "挖礦"]},
-            "地獄之門": {"key": "地獄之門"},
-            "萬神試煉": {"key": "萬神試煉"},
-            "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
-            "商店購買": {"key": "Store"},
-            "每日任務": {"key": "mission_timestamp"},
-            "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4)},
-            "菇菇武道會": {
-                "key": "mushroom_arena_daily",
-                "cycle": ("mushroom_arena_cycle_start", 4),
-            },
-            # 航海 / 龍骸聖域是多週才開一檔的活動：只在「檔期週」顯示徽章，且「點亮」
-            # 看的是本檔期(本週)有沒有跑過，而非當天 —— 否則活動週跑完隔天又變回 ⏳。
-            # 檔期判斷用日曆錨點(is_sea_week / _is_dragon_week)，全裝置一致。
-            "航海": {"key": "sea_last_execution", "sea_week": True, "period": "week"},
-            "龍骸聖域": {
-                "key": "dragon_realm_last_run", "triweekly": True, "period": "week",
-            },
-        }
-
-        results = {}
-        data = manager.load_data()
-
-        def check_is_today(key_or_list):
-            return _record_is_today(manager, data, key_or_list)
-
-        for display_name, config in tasks_config.items():
-            # 1. 檢查週期 (如果有的話)
-            if "cycle" in config:
-                record_name, weeks = config["cycle"]
-                should_exec, _ = json_manager._should_execute_cycle(
-                    real_device_id, record_name, cycle_weeks=weeks
-                )
-                if not should_exec:
-                    continue  # 本週不執行，直接隱藏
-            if config.get("sea_week"):
-                from json_manager import is_sea_week
-                if not is_sea_week():
-                    continue  # 非航海週，隱藏
-            if config.get("triweekly"):
-                from game_actions.dragon_realm_scheduler import _is_dragon_week
-                if not _is_dragon_week():
-                    continue
-
-            # 2. 點亮條件：多週活動看「本檔期(本週)是否跑過」，其餘看「今日是否完成」。
-            if config.get("period") == "week":
-                results[display_name] = manager.is_same_week(config["key"])
-            else:
-                results[display_name] = check_is_today(config["key"])
-
-        return jsonify(results)
+        return jsonify(_compute_daily_progress(manager, real_device_id))
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+def _online_monitor_status():
+    """Which device currently holds the persistent online-check WS connection.
+
+    Reads the live snapshot's ``detector`` (the account the online-monitor is
+    logged in as right now to read everyone's presence). ``running: False`` when
+    the monitor hasn't produced a snapshot yet.
+    """
+    def _name(dev):
+        if not dev:
+            return "—"
+        try:
+            return config_manager.get_device_config(dev).get("name") or dev
+        except Exception:
+            return dev
+
+    try:
+        from ws_token.online_monitor import (
+            get_snapshot, get_last_switch, get_poll_sec)
+        snap = get_snapshot()
+        last = get_last_switch()
+        poll = float(get_poll_sec() or 30.0)
+    except Exception:
+        return {"running": False}
+
+    switch = None
+    if last:
+        switch = {
+            "from": last.get("frm"),
+            "from_name": _name(last.get("frm")),
+            "to": last.get("to"),
+            "to_name": _name(last.get("to")),
+            "age_sec": round(time.time() - float(last.get("ts") or 0), 1),
+        }
+
+    if snap is None:
+        return {"running": False, "last_switch": switch, "poll_sec": poll}
+    age = time.time() - float(snap.timestamp)
+    detector = snap.detector
+    return {
+        "running": True,
+        "detector": detector,
+        "detector_name": _name(detector),
+        "age_sec": round(age, 1),
+        "fresh": age < 60,
+        "poll_sec": poll,
+        "refresh_in_sec": round(max(0.0, poll - age), 1),
+        "tracked": len(snap.entries),
+        "last_switch": switch,
+    }
+
+
+@functools.lru_cache(maxsize=64)
+def _device_role_id(device):
+    """roleId for a device (from its captured creds), cached. None if unknown."""
+    try:
+        from ws_token.creds import load_creds
+        return int(load_creds(device).role_id)
+    except Exception:
+        return None
+
+
+def _account_presence():
+    """{role_id: online} from the online-monitor snapshot (empty if unavailable)."""
+    try:
+        from ws_token.online_monitor import get_snapshot
+        snap = get_snapshot()
+    except Exception:
+        return {}
+    return {e.role_id: e.online for e in snap.entries} if snap else {}
 
 
 @bp.route("/api/status")
@@ -394,10 +471,13 @@ def get_status():
     live_view_enabled = bool(
         (config_manager.get_global_config().get("live_view") or {}).get("enabled", False)
     )
+    presence = _account_presence()  # {role_id: online} from online-monitor
     for ip, info in states.items():
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         cfg = config_manager.get_device_config(real_ip)
         info["name"] = cfg.get("name") or real_ip
+        rid = _device_role_id(ip)
+        info["account_online"] = presence.get(rid) if rid is not None else None
         info["enabled"] = bool(cfg.get("enabled", True))
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")
@@ -440,5 +520,6 @@ def get_status():
         }
 
     return jsonify(
-        {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime}
+        {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime,
+         "online_monitor": _online_monitor_status()}
     )
