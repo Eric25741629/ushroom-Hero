@@ -213,10 +213,14 @@ def run_saturday_help_single(d, ip: str) -> None:
 
 
 def run_weekly_cloud_fighting_single(d, ip: str) -> None:
-    """單一 IP 版本：每週日執行一次 cloud_fighting。"""
-    today = datetime.date.today()
-    if today.weekday() != 6:
-        print("今天不是週日，跳過 weekly cloud_fighting 任務")
+    """單一 IP 版本：每週一凌晨 3 點後執行一次 cloud_fighting。裝置未上線時 bot 喚醒循環會持續重試。"""
+    now = datetime.datetime.now()
+    today = now.date()
+    if today.weekday() != 0:
+        print("今天不是週一，跳過 weekly cloud_fighting 任務")
+        return
+    if now.hour < 3:
+        print("尚未到週一凌晨 3 點，跳過 weekly cloud_fighting 任務")
         return
 
     try:
@@ -239,7 +243,7 @@ def run_weekly_cloud_fighting_single(d, ip: str) -> None:
         print(f"{ip} 本週已執行過 cloud_fighting，跳過")
         return
 
-    print(f"準備在本週週日對 {ip} 執行 cloud_fighting 並記錄本週執行")
+    print(f"準備在本週週一對 {ip} 執行 cloud_fighting 並記錄本週執行")
     try:
         cloud_fighting(d, ip)
         time_recording(ip, name="cloud_fighting_weekly")
