@@ -55,10 +55,10 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 from ws_token import (
-    ad_reward, carpark, couple, dungeon, farm, gacha, guild, idle_reward,
-    kungfu_store, league_solo, main_tasks, mining, mining_supervised, redpack,
-    relic, relic_sprint, rogue, spirit, statue, steward, turntable, tycoon,
-    workshop,
+    ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
+    idle_reward, kungfu_store, league_solo, main_tasks, mining,
+    mining_supervised, redpack, relic, relic_sprint, rogue, spirit, statue,
+    steward, turntable, tycoon, workshop,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -84,7 +84,7 @@ TASK_ORDER: tuple[str, ...] = (
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
     "rogue", "statue", "guild", "steward", "relic", "relic_sprint", "gacha",
     "gacha_free", "kungfu_store", "spirit", "workshop", "couple",
-    "sea_season", "mining", "lamp")
+    "dragon_realm", "sea_season", "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -1018,6 +1018,20 @@ def _run_relic_sprint(client, tracker: mining.InventoryTracker, *, enabled: bool
         client, tracker, target_spend=target_spend, enabled=True)
 
 
+def _run_dragon_realm(client, tracker: mining.InventoryTracker) -> dict:
+    """龍骸聖域 pure-WS: explore + collect keys + tier transition.
+    Triweekly gate (Wed/Thu/Fri 10-22) checked here; skip outside window."""
+    from game_actions.dragon_realm_scheduler import _is_dragon_week, _within_open_window
+    import datetime
+    now = datetime.datetime.now()
+    if not _is_dragon_week(now.date()):
+        return {"skipped": "not dragon week"}
+    if not _within_open_window(now):
+        return {"skipped": "outside 10-22 window"}
+    reason = dragon_realm.run(client, tracker)
+    return {"stop_reason": reason}
+
+
 def _run_sea_season(client, *, device: str, sea_config: Optional[dict],
                     inventory_tracker=None) -> dict:
     """航海/賽季 pure WS: claim income + tasks + dispatch + repair + tactic."""
@@ -1089,6 +1103,7 @@ def run_device(device: str, *, spend: bool = False,
                gacha_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
                sea_config: Optional[dict] = None,
+               dragon_realm_enabled: bool = True,
                statue_amount: int = 7000,
                progress=None,
                should_abort: Optional[Callable[[], bool]] = None,
@@ -1352,6 +1367,9 @@ def run_device(device: str, *, spend: bool = False,
         _step("couple",
               lambda: _run_couple(client, gifts=couple_gifts,
                                   forge_ring=forge_ring, device=device))
+        if dragon_realm_enabled:
+            _step("dragon_realm",
+                  lambda: _run_dragon_realm(client, inventory_tracker))
         if sea_config:
             _step("sea_season",
                   lambda: _run_sea_season(client, device=device,

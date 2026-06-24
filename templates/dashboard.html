@@ -1854,6 +1854,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <div class="task-tab-panel" data-tab="events">
             <div class="ws-field-note">限時活動：活動沒開時會自動跳過，可先設定好等開放。</div>
+            <label class="checkbox-item"><input type="checkbox" id="chkDragonRealm" checked>龍骸聖域（每三周 週三四五 10-22 自動探索收鑰匙；非活動周自動跳過）</label>
             <div class="ws-schema-slot" data-slot="tycoon"></div>
           </div>
 
@@ -4167,6 +4168,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           !!(config.ws_token_mining && typeof config.ws_token_mining === 'object' && config.ws_token_mining.enabled === true);
 
         document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
+        document.getElementById('chkDragonRealm').checked = config.dragon_realm_enabled !== false;
 
         // 進階設定任務頁籤：載入 25+ 個展開欄位(挖礦params/遺物/郵件/大亨/伴侶/連線…)
         loadTaskTabs(config);
@@ -4268,6 +4270,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         ws_token_open_lamp: wsOpenLamp,
 
         ws_token_kungfu_guess: wsKungfuGuess,
+
+        dragon_realm_enabled: document.getElementById('chkDragonRealm').checked,
 
         web_url: document.getElementById('editWebUrl').value.trim(),
 
