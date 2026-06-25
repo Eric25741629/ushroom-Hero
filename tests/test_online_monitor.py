@@ -287,3 +287,25 @@ def test_force_refresh_never_picks_excluded_5558(monkeypatch):
     mon._role_map = {2: "emulator-5558"}  # 只剩被排除的 → 無從強制
     assert mon._select_detector(current=None, snapshot=snap) is None
     assert mon._last_pick_forced is False
+
+
+def test_setup_monitor_log_writes_to_dedicated_file(tmp_path, monkeypatch):
+    """偵測器 log 獨立成 logs/system/online_monitor.log（方便排錯）。"""
+    from logging.handlers import RotatingFileHandler
+    from utils.log_paths import LogPaths
+    monkeypatch.setattr(LogPaths, "ROOT", tmp_path)
+    om._log_handler_attached = False
+    try:
+        om._setup_monitor_log()
+        om.logger.info("hello-detector-probe")
+        for h in om.logger.handlers:
+            h.flush()
+        f = tmp_path / "system" / "online_monitor.log"
+        assert f.exists()
+        assert "hello-detector-probe" in f.read_text(encoding="utf-8")
+    finally:
+        for h in list(om.logger.handlers):
+            if isinstance(h, RotatingFileHandler):
+                om.logger.removeHandler(h)
+                h.close()
+        om._log_handler_attached = False

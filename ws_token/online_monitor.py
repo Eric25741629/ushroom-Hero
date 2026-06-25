@@ -434,6 +434,34 @@ class OnlineMonitor:
 
 # --- module-level singleton for dashboard integration -------------------------
 _monitor: Optional[OnlineMonitor] = None
+_log_handler_attached = False
+
+
+def _setup_monitor_log() -> None:
+    """Route this detector's logger to a dedicated, isolated file
+    (``logs/system/online_monitor.log``) so the presence machinery is debuggable
+    on its own. ``ws_token.online_monitor`` otherwise reaches no per-device
+    main.log, which is why detector switches / connect / poll-fail were invisible.
+    Idempotent; never blocks startup.
+    """
+    global _log_handler_attached
+    if _log_handler_attached:
+        return
+    try:
+        from logging.handlers import RotatingFileHandler
+        from utils.log_paths import LogPaths
+        path = LogPaths.system_log("online_monitor")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(str(path), maxBytes=2_000_000,
+                                      backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"))
+        logger.setLevel(logging.INFO)
+        logger.addHandler(handler)
+        _log_handler_attached = True
+        logger.info("online-monitor: dedicated log -> %s", path)
+    except Exception:  # noqa: BLE001 — logging setup must never block startup
+        logger.debug("online-monitor: dedicated log setup failed", exc_info=True)
 
 
 def get_snapshot() -> Optional[Snapshot]:
@@ -512,6 +540,7 @@ def ensure_started(preferred: str = "emulator-5554", poll_sec: float = 30.0,
     one-shot WS path. 0 = don't wait.
     """
     global _monitor
+    _setup_monitor_log()
     if _monitor is None:
         _monitor = OnlineMonitor(preferred=preferred, poll_sec=poll_sec,
                                  protected_role_ids=resolve_protected_role_ids())
