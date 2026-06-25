@@ -6,6 +6,79 @@
 
 ---
 
+## 🚧 2026-06-25 統一在線保護（全裝置共用，使用者拍板）
+
+問題：所有帳號都是真人，但「啟動前查帳號在不在線、在線就讓位」目前只有 5558（唯一設
+`online_check_target_pid`）真的會被擋；其餘 emulator 喚醒到點直接啟動 → 異地登入踢真人。
+且同一件事散成 4~5 套：`web_session_service` gate / `wake_up_handler` requester loop /
+`ws_runner._protected_player_online`（舊 target_pid 跨檢）+ `ws_phase._wait_until_human_offline`
+（新 snapshot 直讀，僅 human_played）+ `online_monitor`。「一套那邊一套」。
+
+設計（best-effort 輪替偵測；對話 2026-06-25 拍板）：
+- [x] **Phase 1 單一 roleId 解析器** `config_manager.get_device_role_id(device)`：顯式 target_pid
+      優先，否則 creds.role_id，都沒有回 None。消滅 routes_status/web_session/wake_up/ws_runner/
+      ws_phase 五處重複解析（順帶修 routes_status 5558 badge）。commit 3ce4dd68。
+- [x] **Phase 2 所有裝置啟動前查自己 roleId 在線**（不只 5558）：`ws_phase._wait_until_human_offline`
+      從「只 human_played」放寬到全裝置，吃 `online_monitor.account_online` snapshot 直讀（WS 登入
+      是最早的踢人點，擋在這裡就涵蓋整輪）。commit ac052aa7。
+- [x] **Gate 特例**：裝置若正是當前健康偵測器 → 直接啟動（monitor 連著它=不可能有真人）。
+- [x] **Fail-safe**：確認在線→等；查不到（None）→ human_played 無限等（沿用 2026-06-25），
+      emulator best-effort 重查 3 輪後放行。可被「開啟網頁」中斷。
+- [x] **Phase 3 偵測器政策**（`online_monitor`）：起點 5554；只連 snapshot 確認離線的帳號；黏著
+      （不跳回 5554）；只在(異地登入/斷線)或(自己 `next_wake_at` 進提前量 120s)時交接；交接對象
+      挑「離線+休眠+短期不喚醒」；**永遠排除 5558 及所有無 creds 裝置**。commit e066c900。
+- [x] 測試：128 例綠（test_device_role_id 4 + test_ws_human_offline_gate +5 + test_online_monitor +5
+      + 既有 gate/phase/runner/decoupled/config 回歸全綠）。
+- ⚠ 改完需重啟 `new_main_v2.py`（無 hot-reload）才生效。
+
+調和結果（流程圖確認後）：
+- None fail-safe：human_played 手機維持無限等；emulator best-effort 有限放行（已實作）。
+- `online_check_service` 一次性 WS fallback：保留（mailbox 已 snapshot-first，blast radius 較小）。
+
+未做（已知，影響小，待使用者決定是否要收）：
+- gate 1（web_session `wait_for_checker_gate_before_start`）對 5558 仍以舊 fail-safe「查不到→無限等」
+  跑。5558 是 ws_token.enabled → ws_phase 已守門，gate 1 變冗餘；但它在 ws_phase 之前，冷啟動且
+  monitor 全盲時 5558 可能卡在 gate 1。常見情況（monitor 有 snapshot）會拿到確定答覆、不卡。
+  要徹底收：gate 1 對 ws-enabled 裝置不啟動 + 處理 gate2 的 skip_online_check_once 連動，較大改動。
+- gate 2（wake_up requester loop）同理冗餘；目前靠 `skip_online_check_once` 抑制，未動。
+
+Review：
+- 範圍：使用者整個 fleet 是 web_h5 + ws_token.enabled → 全部走 ws_phase 守門，已受保護。
+- 安全性：穩定態（monitor 健康）零踢人——偵測器只連已確認離線帳號、bot 只在確認離線或自己就是
+  偵測器時才登入；殘留只剩冷啟動盲區（使用者已接受）。
+- 風險窗：gate 1 對 5558 的舊 fail-safe（見上）；偵測器 snapshot 過期 60s 內的競態（極窄）。
+
+---
+
+## 🔧 2026-06-25 human_played 裝置:自己的 WS 階段別把真人踢下線
+
+問題:`adb-fc65396d`(手機,`human_played=True`、`ws_token.enabled=True`)每次喚醒先跑 WS 階段,
+WS 登入「會踢同帳號其他 session」(`ws_phase.py:4`),真人正在手機上玩時就被自己的腳本異地登入踢掉。
+`human_played` guard 目前只接到 online_monitor(偵測器不拿真人帳號登入),**沒接到裝置自己的 WS 階段**。
+
+設計(使用者 2026-06-25 拍板:維持偵測器自動輪換;觀察者看不到該帳號時當作可能在線、繼續等):
+- [x] `ws_token/online_monitor.py`:加純讀函式 `account_online(role_id, *, max_age_sec=60, now=)`
+      (快照存在且 ≤60s 新鮮 → 回該 roleId 的 online;否則/不在好友清單 → None)。
+- [x] `game_actions/ws_phase.py`:`run_ws_phase` 對 `human_played` 裝置,在 bootstrap/登入前
+      先 `_wait_until_human_offline(ip)`:`False` 才放行;`True`(在玩)或 `None`(看不到)
+      都每 30s 重查直到 `False`。無 creds(解不出 roleId)→ 直接放行(本來就登不進、踢不了人)。
+      涵蓋正常 WS(`new_main_v2.py:284`)與離線 fallback(`:207`)兩條路(都走 `run_ws_phase`)。
+      間接層 `_account_role_id` / `_account_online`(tests monkeypatch 用)。
+- [x] 不動 wake loop 核心、不動偵測器選擇邏輯、不 pin 觀察者(維持現狀:preferred=5554、忙了輪換)。
+- [x] 測試 `tests/test_ws_human_offline_gate.py`(12 例):online→等待、offline→放行、None→等待、
+      無creds→放行、human_played 才檢查/bot 裝置不檢查、account_online 新鮮/過期/缺/不在好友清單。
+- 觀察者現況(實測):detector=5554「閃電」、追蹤 50 好友、看得到手機(account_online=False)。
+- ⚠ 改完需重啟 `new_main_v2.py` 才生效(無 hot-reload)。
+- ponytail 上限:真人連玩數小時 → 該裝置整段 park(每 30s 重查),不設硬上限,符合「直到下線」。
+
+Review:
+- 全綠:新 12 例 + `test_ws_phase.py` 47 例 + `test_online_monitor.py`/`test_config_human_played.py` 11 例。
+- 範圍:只擋「裝置自己的 WS 登入」(異地登入踢人的唯一來源)。ADB UI 任務同客戶端不會踢人;
+  且閘門在 WS 階段(ADB 任務之後)→ 真人在玩時整輪自然延後,等下線才跑,順帶不搶螢幕。
+- 邊界:觀察者輪換到非好友帳號 → 該帳號 None → 當可能在線繼續等(使用者指定);最常見情況
+  5554 閒置當 detector、看得到手機 → 不誤等。
+- 未動:`bot_config.json` 不需改;`new_main_v2.py` 不需改(閘門全在 `run_ws_phase` 內)。
+
 ## 🔧 2026-06-24 航海/龍骸聖域 dashboard 燈接線 + 航海改日曆錨點
 
 問題:dashboard 每日進度的「航海」燈不亮、龍骸聖域形同沒接。根因:
