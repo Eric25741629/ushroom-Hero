@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import threading
 import time
 from dataclasses import dataclass, field
@@ -110,6 +111,8 @@ class OnlineMonitor:
                  poll_sec: float = 30.0, threshold_sec: int = 120,
                  protected_role_ids: frozenset = frozenset(),
                  switch_cooldown_sec: float = 300.0,
+                 force_refresh_sec: float = 300.0,
+                 force_exclude=("emulator-5558",),
                  now: "Callable[[], float]" = time.time):
         self._preferred = preferred
         self._poll_sec = poll_sec
@@ -117,6 +120,12 @@ class OnlineMonitor:
         self._protected_rids = frozenset(protected_role_ids or ())
         self._switch_cooldown = float(switch_cooldown_sec)
         self._now = now
+        # stale-escape: snapshot 過期超過此秒數，且驗不出任何離線候選時，強制盲選
+        # 一台 idle bot 直接登入刷新（可能踢到剛好在玩該 bot 帳號的真人）。
+        # ``force_exclude`` 的裝置永不被強制選中（5558 = 最受保護的真人主帳）。
+        self._force_refresh_sec = float(force_refresh_sec)
+        self._force_exclude = frozenset(force_exclude or ())
+        self._last_pick_forced = False  # 本次選擇是否為強制盲選（_loop 用來繞過節流）
         self._last_switch_ts = 0.0  # epoch of last detector connect/switch
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -261,6 +270,20 @@ class OnlineMonitor:
                 pool.append(dev)
         return pool
 
+    def _stale_for(self, snapshot: Optional[Snapshot]) -> float:
+        """Seconds since the last successful refresh (0 when no snapshot yet)."""
+        if snapshot is None:
+            return 0.0
+        return self._now() - float(snapshot.timestamp)
+
+    def _force_pick(self, pool: List[str]) -> Optional[str]:
+        """Random idle-bot candidate for a stale-escape blind connect, with the
+        excluded devices (5558) removed. ``None`` when nothing is left to try."""
+        candidates = [d for d in pool if d not in self._force_exclude]
+        if not candidates:
+            return None
+        return random.choice(candidates)  # ponytail: stdlib random pick per user spec
+
     def _select_detector(self, current: Optional[str] = None,
                          snapshot: Optional[Snapshot] = None) -> Optional[str]:
         """Pick the device to read presence from, applying the sticky policy.
@@ -275,6 +298,10 @@ class OnlineMonitor:
         - **Cold start** (``snapshot is None``): nothing to verify against, so
           connect blind to a bot-idle candidate — the one unavoidable risk
           window the user accepted (best-effort).
+        - **Stale escape** (snapshot older than ``force_refresh_sec`` and nothing
+          verified-offline): the verification is exactly what's keeping us stuck,
+          so blind-connect to a RANDOM idle bot (``force_exclude`` removed),
+          accepting it may kick a human on that bot's account.
         - Returns ``None`` when nothing is safe to connect → stay disconnected,
           the one-shot WS fallback covers checks meanwhile.
         """
@@ -285,16 +312,25 @@ class OnlineMonitor:
             states = {}
         pool = self._eligible_pool(states)
         if current is not None and current in pool:
+            self._last_pick_forced = False
             return current  # sticky
         if snapshot is not None:
             safe = [d for d in pool if self._snapshot_offline(d, snapshot) is True]
         else:
             safe = pool  # cold-start blind
-        if not safe:
-            return None
-        if self._preferred in safe:
-            return self._preferred
-        return safe[0]
+        if safe:
+            self._last_pick_forced = False
+            return self._preferred if self._preferred in safe else safe[0]
+        # Nothing the snapshot confirms human-free. Once it's been stale past the
+        # force threshold, verification can't recover (it's why we're stuck) →
+        # blind-pick a random idle bot (5558 excluded). May kick a human.
+        if self._stale_for(snapshot) > self._force_refresh_sec:
+            forced = self._force_pick(pool)
+            if forced is not None:
+                self._last_pick_forced = True
+                return forced
+        self._last_pick_forced = False
+        return None
 
     def _connect(self, device: str) -> Optional[WSGameClient]:
         try:
@@ -354,9 +390,18 @@ class OnlineMonitor:
                 gate_reconnect = False
 
             if client is None:
-                if gate_reconnect and not self._switch_allowed():
+                # A forced (stale-escape) pick bypasses the anti-storm throttle:
+                # the user wants it to retry a fresh random bot every cycle until
+                # the snapshot refreshes.
+                if (gate_reconnect and not self._switch_allowed()
+                        and not self._last_pick_forced):
                     self._sleep()
                     continue
+                if self._last_pick_forced:
+                    logger.warning(
+                        "online-monitor: snapshot stale >%.0fs — FORCE blind-connect "
+                        "as %s (may kick a human; excluded=%s)",
+                        self._force_refresh_sec, desired, sorted(self._force_exclude))
                 client = self._connect(desired)
                 self._last_switch_ts = self._now()
                 if client is None:

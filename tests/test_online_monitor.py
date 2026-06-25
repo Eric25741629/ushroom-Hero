@@ -226,3 +226,64 @@ def test_discover_role_map_excludes_protected(tmp_path, monkeypatch):
 
     assert 89555436834913 in mapping
     assert 89565100509472 not in mapping
+
+
+# --- stale-escape: 過期 >5min 時強制盲選 idle bot 重新刷新 -----------------------
+# 使用者 2026-06-25：snapshot 卡住超過 5 分鐘沒更新 → 強制隨機挑一台「沒在跑
+# ws/h5 的 bot」直接登入刷新，跳過離線驗證（可能踢到剛好在玩該 bot 帳號的真人）。
+# 5558 永遠不可被選中。human_played 主帳仍排除（不在 role_map）。
+
+def test_force_refresh_blind_picks_when_snapshot_stale(monkeypatch):
+    """卡 >門檻：有 idle bot 但 snapshot 驗不出離線（顯示在線）→ 仍盲連一台。"""
+    import config_manager
+    t = 1_000_000.0
+    mon = om.OnlineMonitor(preferred="emulator-5554",
+                           force_refresh_sec=300.0, now=lambda: t)
+    mon._role_map = {1: "emulator-5554"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {"emulator-5554": {"task": "休眠中"}})
+    monkeypatch.setattr(config_manager, "get_device_role_id", lambda dev: 11)
+    # snapshot 6 分鐘前、且 5554 顯示在線 → 正常路徑 safe 為空
+    snap = om.Snapshot("x", t - 360.0, (om.StatusEntry(11, "a", True, None),))
+    assert mon._select_detector(current=None, snapshot=snap) == "emulator-5554"
+    assert mon._last_pick_forced is True
+
+
+def test_no_force_when_snapshot_fresh(monkeypatch):
+    """未過門檻：safe 空就維持 None（不強制、不踢人）。"""
+    import config_manager
+    t = 1_000_000.0
+    mon = om.OnlineMonitor(preferred="emulator-5554",
+                           force_refresh_sec=300.0, now=lambda: t)
+    mon._role_map = {1: "emulator-5554"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {"emulator-5554": {"task": "休眠中"}})
+    monkeypatch.setattr(config_manager, "get_device_role_id", lambda dev: 11)
+    snap = om.Snapshot("x", t - 60.0, (om.StatusEntry(11, "a", True, None),))
+    assert mon._select_detector(current=None, snapshot=snap) is None
+    assert mon._last_pick_forced is False
+
+
+def test_force_refresh_never_picks_excluded_5558(monkeypatch):
+    """5558 縱使有 creds、idle 也永不被強制選中。"""
+    import config_manager
+    t = 1_000_000.0
+    mon = om.OnlineMonitor(preferred="emulator-5554", force_refresh_sec=300.0,
+                           force_exclude=("emulator-5558",), now=lambda: t)
+    mon._role_map = {1: "emulator-5556", 2: "emulator-5558"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5556": {"task": "休眠中"},
+        "emulator-5558": {"task": "休眠中"},
+    })
+    monkeypatch.setattr(config_manager, "get_device_role_id",
+                        lambda dev: {"emulator-5556": 22, "emulator-5558": 58}.get(dev))
+    snap = om.Snapshot("x", t - 360.0, (
+        om.StatusEntry(22, "b", True, None),
+        om.StatusEntry(58, "c", True, None),
+    ))
+    assert mon._select_detector(current=None, snapshot=snap) == "emulator-5556"
+
+    mon._role_map = {2: "emulator-5558"}  # 只剩被排除的 → 無從強制
+    assert mon._select_detector(current=None, snapshot=snap) is None
+    assert mon._last_pick_forced is False
