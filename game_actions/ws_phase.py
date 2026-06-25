@@ -364,11 +364,14 @@ def _bootstrap_token(ip: str, log, *, force: bool = False) -> bool:
     return bootstrap_token(ip, logger_obj=log, force=force)
 
 
-# --- human_played 在線閘門：自己的 WS 登入別把真人踢下線 -----------------------
-# WS 登入會「踢同帳號其他 session」(本檔 docstring)。human_played 裝置上真人正在
-# 玩時若跑 WS 階段,就會異地登入把真人踢掉。故在自己的 WS 登入「之前」先用觀察者
-# (online_monitor 快照,別台好友清單讀來的在線旗標)確認帳號離線才放行。
+# --- 在線閘門：自己的 WS 登入別把真人踢下線（全裝置共用）-----------------------
+# WS 登入會「踢同帳號其他 session」(本檔 docstring)。所有帳號都是真人 → 每台裝置
+# 在自己的 WS 登入「之前」都先用觀察者(online_monitor 快照,別台好友清單讀來的在線
+# 旗標)確認帳號離線才放行。判定零登入成本(只讀快照)。
 _HUMAN_WAIT_POLL_SEC = 30
+# 觀察者看不到帳號狀態(None)時，非 human_played 裝置最多重查幾輪就 best-effort 放行，
+# 避免冷啟動還沒有任何偵測器時整機卡死。human_played(手機主帳號)不設上限。
+_UNDETERMINED_MAX_POLLS = 3
 
 
 def _account_role_id(ip: str):
@@ -385,26 +388,64 @@ def _account_online(role_id):
         return None
 
 
-def _wait_until_human_offline(ip: str, log) -> None:
-    """human_played：擋在自己的 WS 登入前，直到觀察者確認帳號離線才放行。
+def _current_detector():
+    """間接層（tests monkeypatch 這裡）：當前在線偵測器裝置序號；無則 None。"""
+    try:
+        from ws_token.online_monitor import current_detector
+        return current_detector()
+    except Exception:  # noqa: BLE001
+        return None
 
-    ``_account_online`` 回 ``False``（確認離線）→ 立即放行；``True``（真人在玩）或
-    ``None``（觀察者暫時看不到——使用者 2026-06-25 指定「當作可能在線」）→ 每
-    ``_HUMAN_WAIT_POLL_SEC`` 秒重查，直到 ``False``。解不出 roleId（無 creds）→
-    直接放行：本來就登不進、踢不了人。
-    ponytail: 無硬上限（符合「直到下線」）；真人連玩數小時則該裝置整段 park，每 30s
-    重查。若日後要可中斷/設上限，再從這裡加。
+
+def _web_launch_pending(ip: str) -> bool:
+    """間接層（tests monkeypatch 這裡）：使用者按了「開啟網頁」＝最高優先放行。"""
+    try:
+        import bot_state
+        return bool(bot_state.has_pending_web_launch_request(ip))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> None:
+    """擋在自己的 WS 登入前，直到觀察者確認帳號離線才放行（所有裝置共用）。
+
+    ``_account_online`` 回：
+      - ``False``（確認離線）→ 放行。
+      - ``True``（真人在玩）→ 每 ``_HUMAN_WAIT_POLL_SEC`` 秒重查，直到離線（不設上限）。
+      - ``None``（觀察者看不到）：``human_played``（手機主帳號，最該保護）比照 True
+        無限等（使用者 2026-06-25 指定）；其他（emulator）最多重查
+        ``_UNDETERMINED_MAX_POLLS`` 輪就 best-effort 放行，避免冷啟動無偵測器時卡死。
+
+    提前放行的兩個特例：
+      - 解不出 roleId（無 creds）→ 直接放行（本來就登不進、踢不了人）。
+      - **本裝置正是當前在線偵測器** → 直接放行：monitor 正以本帳號連線＝不可能有真人
+        （真人登入早把 monitor 踢了），登入只會踢掉 monitor，monitor 自會交接。
+    可中斷：使用者按「開啟網頁」→ 立即放行（web_h5 manual override，符合
+    feedback-open-browser-always-responsive）。
     """
     rid = _account_role_id(ip)
     if rid is None:
         return
+    if _current_detector() == ip:
+        return
+    undetermined_polls = 0
     waited = 0
     while True:
+        if _web_launch_pending(ip):
+            log.info("[%s] 偵測到開啟網頁請求，放行 WS 在線閘門", ip)
+            return
         online = _account_online(rid)
         if online is False:
             if waited:
-                log.info("[%s] 真人已下線，恢復腳本（等了約 %ds）", ip, waited)
+                log.info("[%s] 帳號已離線，恢復腳本（等了約 %ds）", ip, waited)
             return
+        if online is None and not human_played:
+            undetermined_polls += 1
+            if undetermined_polls > _UNDETERMINED_MAX_POLLS:
+                log.warning(
+                    "[%s] 觀察者連 %d 輪看不到帳號狀態，best-effort 放行（可能冷啟動無偵測器）",
+                    ip, _UNDETERMINED_MAX_POLLS)
+                return
         reason = "帳號在線(真人在玩)" if online else "觀察者暫時看不到(當作可能在線)"
         try:
             import bot_state
@@ -475,10 +516,11 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _kf = device_cfg.get("ws_token_kungfu_guess")
         if _kf is not None:
             cfg = {**cfg, "kungfu_guess": bool(_kf)}
-    # human_played：在自己的 WS 登入「之前」先等真人下線（WS 登入會異地登入踢掉真人
-    # 正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
-    if device_cfg.get("human_played"):
-        _wait_until_human_offline(ip, log)
+    # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
+    # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
+    # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。
+    _wait_until_human_offline(
+        ip, log, human_played=bool(device_cfg.get("human_played")))
 
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     can_bootstrap = _should_bootstrap(backend_kind, cfg)

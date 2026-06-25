@@ -315,6 +315,38 @@ def get_snapshot() -> Optional[Snapshot]:
     return _monitor.snapshot if _monitor else None
 
 
+def current_detector() -> Optional[str]:
+    """Device serial the monitor is currently connected AS, or None.
+
+    A start-gate uses this for a fast pass: if a device is itself the active
+    detector, the monitor holds that account's live WS session, so no human can
+    be on it (a human login would have kicked the monitor) → the device is safe
+    to start immediately. The device's own login then kicks the monitor, which
+    fails over to another idle account.
+    """
+    return _monitor._active_detector if _monitor else None
+
+
+def account_online(role_id: int, *, max_age_sec: float = 60.0,
+                   now: Optional[float] = None) -> Optional[bool]:
+    """Presence of ``role_id`` from the live snapshot: ``True``/``False``, or
+    ``None`` when unknown — monitor not running, no snapshot yet, snapshot older
+    than ``max_age_sec``, or the account is not in the current detector's friend
+    list. Callers that must never act on a stale/blind read treat ``None`` as
+    "maybe online" (see ws_phase human-played gate). ``now`` injectable for tests.
+    """
+    snap = get_snapshot()
+    if snap is None:
+        return None
+    t = time.time() if now is None else now
+    if (t - float(snap.timestamp)) > max_age_sec:
+        return None
+    for e in snap.entries:
+        if int(e.role_id) == int(role_id):
+            return bool(e.online)
+    return None
+
+
 def get_last_switch() -> Optional[dict]:
     """Latest detector transition {frm, to, ts} (None if monitor not running)."""
     return _monitor.last_switch if _monitor else None
