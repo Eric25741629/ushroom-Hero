@@ -6,6 +6,36 @@
 
 ---
 
+## 🚧 2026-06-26 rogue 週積分 timeout bug + WS 階段 log 補原因
+
+問題:`emulator-5560` 每週五 WS `errors=['rogue']`。根因:萬神試煉週積分(cmd 19482)事件
+休眠時 server 不回任何 frame(非 0x0201),撞滿 15s call timeout → WSTimeoutError → 被記成
+task error;成功才寫日期標記,故每個週五每小時喚醒都重撞。與 guild 尋寶「休眠不回應」同型
+(guild 已 except WSTimeoutError + 短探測,rogue 漏了)。Log:錯誤原因其實已逐筆寫進裝置
+main.log(ws_phase.py:564 WARNING),只有 summary 行只列任務名沒原因 → 補上即可(範圍=最小高效,
+使用者 2026-06-26 選定)。
+
+- [x] 研究根因(rogue.py / runner.py / ws_phase.py + 實際 log 比對)
+- [x] TDD:`test_run_rogue_dormant_timeout_is_benign`(timeout→休眠跳過/不進 errors/短探測/不寫標記)→ red→green
+- [x] runner.py `_run_rogue` catch WSTimeoutError 當休眠跳過 + `_ROGUE_PROBE_S=6.0` 短探測
+- [x] runner.py / rogue.py docstring 修正「失敗=0x0201」錯誤假設
+- [x] ws_phase.py summary:`list(report.errors)` → `dict(report.errors)`(帶原因)
+- [x] focused tests + py_compile → green(rogue 5 例綠 + ws_phase/ws_ok_summary/rogue 全綠)
+
+### Review
+- 根因:萬神試煉週積分(cmd 19482)休眠時 server 不回任何 frame(非 0x0201)→ 15s timeout
+  → errors['rogue'],且成功才寫標記 → 每週五每小時重撞。修法同 guild 尋寶:catch
+  WSTimeoutError 當休眠跳過 + 6s 短探測,不寫標記(事件開了下個 Friday 仍領)。
+- Log:錯誤原因本來就逐筆寫在裝置 main.log(ws_phase.py:564 WARNING);只補 summary
+  改帶原因 dict。範圍=最小高效(使用者選),未做 traceback 導流/JSONL。
+- 既有 6 個 test_ws_token_runner.py 失敗(order/整合測試 `_SpyClient` 無 call_for、
+  TASK_ORDER 含 dragon_realm/sea_season)→ 已用 git stash 在乾淨 HEAD 重現,證實是
+  既有 WIP(carpark/dragon_realm/sea_season 重構)留下的 stale test,非本次造成,未動。
+- ⚠ commit:runner.py / ws_phase.py 本來就帶他人 WIP(M),未自動 commit 以免綁進
+  未完成重構;rogue.py / 測試 / todo.md 為乾淨隔離。等使用者定奪 commit 方式。
+
+---
+
 ## 🚧 2026-06-25 統一在線保護（全裝置共用，使用者拍板）
 
 問題：所有帳號都是真人，但「啟動前查帳號在不在線、在線就讓位」目前只有 5558（唯一設

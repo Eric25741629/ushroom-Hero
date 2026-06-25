@@ -1623,6 +1623,38 @@ def test_run_rogue_failure_not_persisted_so_retries(tmp_path):
     assert len(client.calls) == 2
 
 
+def test_run_rogue_dormant_timeout_is_benign(tmp_path):
+    """A dormant 萬神試煉 週積分 event never answers 19482 — and sends NO 0x0201
+    error frame either — so the call times out (WSTimeoutError). _run_rogue must
+    treat that as a benign skip (returns a dict, NOT re-raised) so _safe records it
+    under tasks not errors, must probe with the SHORT timeout (not the 15s default),
+    and must NOT persist last_date so a later Friday wake (event opened) re-probes.
+    Mirrors guild treasure's dormant-event handling.
+    """
+    from ws_token import runner
+    from ws_token.client import WSTimeoutError
+
+    class _TimeoutRogueClient:
+        def __init__(self):
+            self.calls: list = []
+
+        def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+            self.calls.append((cmd, bytes(body), timeout))
+            raise WSTimeoutError(
+                "no response for cmd=19482 (expected one of (19482, 513))")
+
+    client = _TimeoutRogueClient()
+    friday = _a_friday()
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert out["claimed_run"] is False
+    assert "dormant" in out["reason"]
+    # short probe timeout used (fail fast), not the 15s default call_timeout
+    assert client.calls[0][2] == runner._ROGUE_PROBE_S
+    # not persisted -> a later Friday wake re-probes (sends again, no permanent skip)
+    runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert len(client.calls) == 2
+
+
 def test_run_couple_no_partner_skips(monkeypatch):
     from ws_token import runner
     monkeypatch.setattr(runner.couple, "read_favor_info", lambda c: [])

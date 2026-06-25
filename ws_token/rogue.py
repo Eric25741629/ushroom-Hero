@@ -14,8 +14,13 @@ docs/protocol/ROGUE_PROTO_SCHEMA.json:
   c2s 19482 {}  ->  s2c 19482 {1=[1..10], 2=[(1501,200),(2,1800),(1291,1),(1,10000)]}
 
 The s2c carries NO code field, so any 19482 reply is success; an empty get_list
-just means "nothing left to claim this week" (still success). A real failure
-(event not open / not unlocked) arrives as a 0x0201 error frame instead.
+just means "nothing left to claim this week" (still success).
+
+NOTE (2026-06-26): a DORMANT event (not open / not unlocked / nothing to claim)
+does NOT reliably send the 0x0201 error frame this used to assume — live it sends
+no frame at all, so ``call_for`` times out. The runner (``runner._run_rogue``)
+treats that WSTimeoutError as a benign skip with a short probe timeout, the same
+way it handles a dormant guild 尋寶 event.
 """
 from __future__ import annotations
 

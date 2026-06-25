@@ -641,8 +641,9 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     _record_daily_done(ip, skips, log)
     _record_ws_daily_progress(ip, report, effective_done, log)
 
+    # errors 帶原因（dict 而非只列任務名）→ 一行 summary 即可排查，不必往上捲找 WARNING。
     log.info(
         "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s aborted=%s skip=%s",
-        ip, time.time() - started, list(report.tasks), list(report.errors),
+        ip, time.time() - started, list(report.tasks), dict(report.errors),
         report.kicked, report.aborted, sorted(skips))
     return frozenset(skips)

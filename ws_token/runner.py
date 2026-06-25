@@ -94,6 +94,9 @@ _LAMP_BATCH_DELAY_SEC: float = 0.2
 # 萬神試煉 本周積分獎勵：每週五領一次（使用者 2026-06-13 指定）。
 # Python weekday(): Mon=0 … Fri=4 … Sun=6.
 _ROGUE_WEEKDAY: int = 4
+# 休眠的萬神試煉週積分事件不回任何 frame（連 0x0201 都不發）→ 短探測 timeout 快速降級，
+# 不空等 15s 預設 call_timeout（與 guild 尋寶 _TREASURE_PROBE_S 同型）。
+_ROGUE_PROBE_S: float = 6.0
 # 菇菇雕像 每週五消耗果蔬：同樣週五一次。
 _STATUE_WEEKDAY: int = 4
 
@@ -502,7 +505,13 @@ def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
     in ws_state/<device>.json ``{"rogue": {"last_date": "YYYY-MM-DD"}}`` so repeated
     hourly wakes on the same Friday only claim once. Non-Friday wakes skip without
     sending anything. The week marker is written ONLY on a successful reply, so a
-    transient failure (0x0201 / timeout) retries on the next Friday wake.
+    transient failure (0x0201) retries on the next Friday wake.
+
+    A DORMANT event (not open / nothing to claim) answers with NO frame at all —
+    not even the 0x0201 the protocol notes assumed — so the call times out. That is
+    the same shape as a dormant guild 尋寶 event: treat it as a benign skip (never an
+    error), probe with a short timeout to fail fast, and DON'T persist the marker so
+    a later Friday wake re-probes once the event opens.
 
     Returns ``{claimed_run, reason?}`` when skipped, else
     ``{claimed_run, success, claimed, rewards, error_code}``.
@@ -518,7 +527,14 @@ def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
     if (st.get("rogue") or {}).get("last_date") == today:
         return {"claimed_run": False, "reason": f"already claimed {today}"}
 
-    r = rogue.claim_week_reward(client)
+    try:
+        r = rogue.claim_week_reward(client, timeout=_ROGUE_PROBE_S)
+    except WSTimeoutError:
+        # 事件休眠/無可領 → server 不回任何 frame（非 0x0201）。視為跳過（不是任務失敗），
+        # 不寫週標記 → 事件之後若開了，下個 Friday 喚醒仍會領到。
+        logger.info("ws_token rogue: %s week_reward 無回應（事件休眠/無可領），跳過",
+                    device)
+        return {"claimed_run": False, "reason": "event dormant (no response)"}
     if r.success:
         st["rogue"] = {"last_date": today, "last_ts": now.timestamp()}
         ws_state.save_state(device, st, **kw)
