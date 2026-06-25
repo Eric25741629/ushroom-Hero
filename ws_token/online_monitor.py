@@ -242,6 +242,14 @@ class OnlineMonitor:
         """
         if snapshot is None:
             return None
+        # The detector that PRODUCED this snapshot is never in its own friend
+        # list, so it would be unverifiable (None) forever and reselect could
+        # never re-pick it — leaving the monitor stale whenever it's the only
+        # idle device. We held its WS session, so treat self as offline (a
+        # controlled bot account). A human who kicked it is still guarded by
+        # _loop's gate_reconnect throttle, not by this verification.
+        if dev == snapshot.detector:
+            return True
         try:
             import config_manager
             rid = config_manager.get_device_role_id(dev)

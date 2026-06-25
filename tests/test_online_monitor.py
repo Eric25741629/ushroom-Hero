@@ -289,6 +289,32 @@ def test_force_refresh_never_picks_excluded_5558(monkeypatch):
     assert mon._last_pick_forced is False
 
 
+def test_snapshot_offline_treats_self_as_offline():
+    """偵測器讀不到自己(不在自己好友列表)→ 視為離線，否則永遠無法重選回自己。"""
+    mon = om.OnlineMonitor()
+    snap = om.Snapshot("7fe98fc6", 1000.0, ())  # 空好友列表，不含自己
+    assert mon._snapshot_offline("7fe98fc6", snap) is True
+
+
+def test_reselect_repicks_previous_detector_not_in_own_friendlist(monkeypatch):
+    """只剩上一任偵測器 idle 且它不在自己好友列表 → 立即重選回來(不必等強制刷新)。"""
+    import config_manager
+    mon = om.OnlineMonitor(preferred="emulator-5554", now=lambda: 1_000_000.0)
+    mon._role_map = {99: "7fe98fc6", 11: "emulator-5554"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "7fe98fc6": {"task": "休眠中"},        # 上一任偵測器，現在 idle
+        "emulator-5554": {"task": "挖礦"},      # 其他在忙 → 不在 pool
+    })
+    monkeypatch.setattr(config_manager, "get_device_role_id",
+                        lambda dev: {"7fe98fc6": 99, "emulator-5554": 11}.get(dev))
+    # 小寶讀的 snapshot：含好友 5554，但「不含小寶自己」(rid 99)，且很新(5s)。
+    snap = om.Snapshot("7fe98fc6", 1_000_000.0 - 5.0,
+                       (om.StatusEntry(11, "5554", False, None),))
+    assert mon._select_detector(current=None, snapshot=snap) == "7fe98fc6"
+    assert mon._last_pick_forced is False  # 正常重選，不是強制盲選
+
+
 def test_setup_monitor_log_writes_to_dedicated_file(tmp_path, monkeypatch):
     """偵測器 log 獨立成 logs/system/online_monitor.log（方便排錯）。"""
     from logging.handlers import RotatingFileHandler
