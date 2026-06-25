@@ -767,6 +767,34 @@ def get_global_config() -> Dict[str, Any]:
     return final_cfg
 
 
+def get_device_role_id(device: str) -> "int | None":
+    """The account roleId this device represents — single source of truth.
+
+    Resolution order (mirrors every online-check call site so they never drift):
+    1. explicit ``online_check_target_pid`` in device config — for creds-less
+       devices that share a human's account (e.g. emulator-5558);
+    2. the captured creds ``role_id`` — devices with their own WS login;
+    3. ``None`` when neither is available.
+
+    Used by the dashboard presence badge and every start-gate so they always
+    agree on which account a device maps to.
+    """
+    try:
+        pid = get_device_config(device).get("online_check_target_pid")
+    except Exception:
+        pid = None
+    if pid:
+        try:
+            return int(pid)
+        except (TypeError, ValueError):
+            pass
+    try:
+        from ws_token.creds import load_creds
+        return int(load_creds(device).role_id)
+    except Exception:
+        return None
+
+
 def get_online_check_checkers() -> "list[str]":
     """Return the list of device serials allowed to serve cross-device
     online-check requests.

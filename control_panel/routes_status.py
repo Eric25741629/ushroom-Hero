@@ -439,12 +439,8 @@ def _online_monitor_status():
 
 @functools.lru_cache(maxsize=64)
 def _device_role_id(device):
-    """roleId for a device (from its captured creds), cached. None if unknown."""
-    try:
-        from ws_token.creds import load_creds
-        return int(load_creds(device).role_id)
-    except Exception:
-        return None
+    """roleId this device represents (target_pid or creds), cached. None if unknown."""
+    return config_manager.get_device_role_id(device)
 
 
 def _account_presence():

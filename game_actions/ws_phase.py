@@ -364,9 +364,94 @@ def _bootstrap_token(ip: str, log, *, force: bool = False) -> bool:
     return bootstrap_token(ip, logger_obj=log, force=force)
 
 
+# --- human_played 在線閘門：自己的 WS 登入別把真人踢下線 -----------------------
+# WS 登入會「踢同帳號其他 session」(本檔 docstring)。human_played 裝置上真人正在
+# 玩時若跑 WS 階段,就會異地登入把真人踢掉。故在自己的 WS 登入「之前」先用觀察者
+# (online_monitor 快照,別台好友清單讀來的在線旗標)確認帳號離線才放行。
+_HUMAN_WAIT_POLL_SEC = 30
+
+
+def _account_role_id(ip: str):
+    """間接層（tests monkeypatch 這裡）：裝置代表的帳號 roleId（target_pid 或 creds）；無則回 None。"""
+    return config_manager.get_device_role_id(ip)
+
+
+def _account_online(role_id):
+    """間接層（tests monkeypatch 這裡）：觀察者快照看到的 online；看不到回 None。"""
+    try:
+        from ws_token.online_monitor import account_online
+        return account_online(role_id)
+    except Exception:  # noqa: BLE001 — 讀快照失敗 → None（視為可能在線）
+        return None
+
+
+def _wait_until_human_offline(ip: str, log) -> None:
+    """human_played：擋在自己的 WS 登入前，直到觀察者確認帳號離線才放行。
+
+    ``_account_online`` 回 ``False``（確認離線）→ 立即放行；``True``（真人在玩）或
+    ``None``（觀察者暫時看不到——使用者 2026-06-25 指定「當作可能在線」）→ 每
+    ``_HUMAN_WAIT_POLL_SEC`` 秒重查，直到 ``False``。解不出 roleId（無 creds）→
+    直接放行：本來就登不進、踢不了人。
+    ponytail: 無硬上限（符合「直到下線」）；真人連玩數小時則該裝置整段 park，每 30s
+    重查。若日後要可中斷/設上限，再從這裡加。
+    """
+    rid = _account_role_id(ip)
+    if rid is None:
+        return
+    waited = 0
+    while True:
+        online = _account_online(rid)
+        if online is False:
+            if waited:
+                log.info("[%s] 真人已下線，恢復腳本（等了約 %ds）", ip, waited)
+            return
+        reason = "帳號在線(真人在玩)" if online else "觀察者暫時看不到(當作可能在線)"
+        try:
+            import bot_state
+            bot_state.update_state(
+                ip, task="等待真人下線",
+                step=f"{reason}，{_HUMAN_WAIT_POLL_SEC}s 後重查")
+        except Exception:  # noqa: BLE001 — 狀態回報失敗不影響等待
+            log.debug("[%s] 等待真人下線狀態回報失敗", ip, exc_info=True)
+        log.info("[%s] 等待真人下線：%s", ip, reason)
+        time.sleep(_HUMAN_WAIT_POLL_SEC)
+        waited += _HUMAN_WAIT_POLL_SEC
+
+
 def _should_bootstrap(backend_kind: str, cfg: dict) -> bool:
-    """只有 adb+WS-first 需要冷啟 App 撈 token；web_h5 走頁面回寫。"""
+    """adb+WS-first：每輪冷啟撈 token（bootstrap_token 內部 has_creds 命中則 no-op）。
+
+    web_h5 不走這條（它有「失敗即短路跳過 WS」語意）；web_h5 的初次種子改走
+    best-effort 的 _should_seed_web_h5。
+    """
     return backend_kind == "adb" and bool(cfg.get("bootstrap_token", True))
+
+
+def _has_ws_creds(ip: str) -> bool:
+    """間接層（tests monkeypatch 這裡）：是否已有可讀的 WS capture。"""
+    from ws_token.bootstrap import has_creds
+    return has_creds(ip)
+
+
+def _adb_reachable(ip: str) -> bool:
+    """間接層（tests monkeypatch 這裡）：ip 是否出現在 adb devices 清單。"""
+    from runtime_services.ws_runner_service import _is_adb_reachable
+    return _is_adb_reachable(ip)
+
+
+def _should_seed_web_h5(ip: str, backend_kind: str, cfg: dict) -> bool:
+    """web_h5 模擬器「缺 capture」時是否該自動冷啟原生 App 撈一次種子。
+
+    Playwright 的頁面回寫（utils.ws_ticket_refresh）只能「刷新既有 capture」、湊不出
+    page 讀不到的 uname/plat，無法種第一份。模擬器多半裝有原生 App，故缺檔 + adb 可達
+    時冷啟撈一次種子，之後交給頁面回寫維持（has_creds 為真 → 不再冷啟）。adb 不可達的
+    純雲端 web 裝置（web-xxx，不在 adb devices）自然被排除，避免每輪空跑 adb_token_login。
+    """
+    if backend_kind != "web_h5" or not cfg.get("bootstrap_token", True):
+        return False
+    if _has_ws_creds(ip):
+        return False  # 已有種子 → 交給 Playwright refresh，不冷啟
+    return _adb_reachable(ip)
 
 
 def run_ws_phase(ip: str, logger_obj=None, *, now=None,
@@ -390,6 +475,11 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _kf = device_cfg.get("ws_token_kungfu_guess")
         if _kf is not None:
             cfg = {**cfg, "kungfu_guess": bool(_kf)}
+    # human_played：在自己的 WS 登入「之前」先等真人下線（WS 登入會異地登入踢掉真人
+    # 正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
+    if device_cfg.get("human_played"):
+        _wait_until_human_offline(ip, log)
+
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     can_bootstrap = _should_bootstrap(backend_kind, cfg)
     started = time.time()
@@ -435,6 +525,17 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
 
     if can_bootstrap and not _bootstrap_token(ip, log, force=False):
         return frozenset()
+
+    # web_h5 模擬器初次種子（best-effort）：缺 capture + adb 可達才冷啟原生 App 撈一次，
+    # 種完交給 Playwright 頁面回寫維持，之後 has_creds 為真 → 不再冷啟。失敗只 log，往下
+    # 走 → _run_device 的 load_creds 會再失敗 → 自動降級 Playwright（行為同舊）。
+    # ponytail: 缺 App 的 adb 可達 web_h5 會每輪重試（adb_token_login ~2min）；模擬器實務
+    # 上都有 App，種一次即止，故不加退避；若日後出現空試 hang 再補「種子嘗試退避」。
+    if _should_seed_web_h5(ip, backend_kind, cfg):
+        if _bootstrap_token(ip, log, force=False):
+            log.info("[%s] web_h5 WS 種子成功，本輪續跑 WS", ip)
+        else:
+            log.info("[%s] web_h5 WS 種子失敗，本輪降級 Playwright", ip)
 
     def _run_once():
         return _run_device(ip, cfg, _progress,

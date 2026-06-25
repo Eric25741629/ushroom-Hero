@@ -90,7 +90,7 @@ def wait_for_checker_gate_before_start(
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
-            target_pid = config_manager.get_device_config(ip).get("online_check_target_pid")
+            target_pid = config_manager.get_device_role_id(ip)
             req_id = bot_state.submit_online_check_request(
                 requester_ip=ip,
                 checker_ip=checker_ip,

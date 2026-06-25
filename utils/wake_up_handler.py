@@ -291,7 +291,7 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     # 互檢；checker 不再寫死 5554（由 online_check_checkers 清單動態決定）。預設
     # 只有 5558 設了 target_pid → 行為與舊版相同。is_online_check_checker(ip) 用來
     # 避免 checker 自己對自己發起互檢。
-    _online_check_target_pid = config_manager.get_device_config(ip).get('online_check_target_pid')
+    _online_check_target_pid = config_manager.get_device_role_id(ip)
     _wants_online_check = (
         bool(_online_check_target_pid)
         and not skip_online_check_once

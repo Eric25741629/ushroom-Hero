@@ -171,9 +171,11 @@ def _protected_player_online(ip: str, cfg: Any, logger_obj) -> Optional[bool]:
     (timeout / no checker / error) is treated as **online** — we would rather
     not run than kick a live player.
     """
-    target_pid = cfg.get("online_check_target_pid")
+    # cfg (caller-supplied) wins for the explicit target; resolver adds the
+    # creds fallback so this matches get_device_role_id everywhere else.
+    target_pid = cfg.get("online_check_target_pid") or config_manager.get_device_role_id(ip)
     if not target_pid:
-        return False  # nothing to protect — original behaviour
+        return False  # nothing to protect — no creds, no config
 
     try:
         wait_sec = float(cfg.get("online_check_timeout_sec", _PROTECT_WAIT_SEC_DEFAULT))
