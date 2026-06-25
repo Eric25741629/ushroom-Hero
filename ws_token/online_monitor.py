@@ -36,6 +36,10 @@ AUTH_DIR = Path(__file__).resolve().parents[1] / "auth_state"
 # session is closed, so logging in as its account won't kick a live session.
 _IDLE_TASKS = ("休眠中", "啟動後休眠")
 
+# Hand the detector off this many seconds BEFORE its own bot is scheduled to
+# wake, so the bot's start never races the borrowed monitor session.
+_HANDOFF_LEAD_SEC = 120.0
+
 
 @dataclass(frozen=True)
 class StatusEntry:
@@ -196,24 +200,101 @@ class OnlineMonitor:
             return True
         return str(st.get("task") or "") in _IDLE_TASKS
 
-    def _select_detector(self) -> Optional[str]:
-        """Pick an idle bot device to read presence from.
+    def _has_creds(self, dev: str) -> bool:
+        """True iff we can load WS creds for ``dev`` (so the monitor can log in
+        AS it). Excludes creds-less devices like emulator-5558 — its account is
+        the most-protected human main and must never be a detector.
+        """
+        try:
+            load_creds(dev)
+            return True
+        except Exception:
+            return False
 
-        Never a busy bot (same-account login would kick its running session) nor
-        a human account (filtered from role_map). Prefers the configured
-        ``preferred`` when idle, else any other idle device, else ``None`` (no
-        safe detector right now → stay disconnected, one-shot fallback covers it).
+    def _about_to_wake(self, dev: str, states: Dict[str, dict]) -> bool:
+        """True iff ``dev``'s bot is scheduled to start within
+        ``_HANDOFF_LEAD_SEC``. We hand the detector off before that so the bot's
+        own login doesn't race the borrowed monitor session.
+        """
+        nwa = (states.get(dev) or {}).get("next_wake_at")
+        if not nwa:
+            return False
+        try:
+            return (float(nwa) - self._now()) <= _HANDOFF_LEAD_SEC
+        except (TypeError, ValueError):
+            return False
+
+    def _snapshot_offline(self, dev: str,
+                          snapshot: Optional[Snapshot]) -> Optional[bool]:
+        """Is ``dev``'s account OFFLINE per ``snapshot``? ``True``/``False``, or
+        ``None`` when unknown (no snapshot, unresolved roleId, or not in the
+        detector's friend list). Used to verify a candidate is human-free BEFORE
+        logging in as it, so the monitor's own login never kicks a live player.
+        """
+        if snapshot is None:
+            return None
+        try:
+            import config_manager
+            rid = config_manager.get_device_role_id(dev)
+        except Exception:
+            rid = None
+        if rid is None:
+            return None
+        for e in snapshot.entries:
+            if int(e.role_id) == int(rid):
+                return not e.online
+        return None
+
+    def _eligible_pool(self, states: Dict[str, dict]) -> List[str]:
+        """Detector candidates: have creds, bot-idle/offline, not about to wake.
+
+        Deduped, role_map order preserved. Snapshot-offline verification is
+        applied later (only when picking a NEW detector), not here, so a sticky
+        current detector — which is online via the monitor itself — still
+        qualifies.
+        """
+        pool: List[str] = []
+        for dev in dict.fromkeys(self._role_map.values()):
+            if (self._has_creds(dev)
+                    and self._is_safe_detector(dev, states)
+                    and not self._about_to_wake(dev, states)):
+                pool.append(dev)
+        return pool
+
+    def _select_detector(self, current: Optional[str] = None,
+                         snapshot: Optional[Snapshot] = None) -> Optional[str]:
+        """Pick the device to read presence from, applying the sticky policy.
+
+        - **Sticky**: keep ``current`` while it stays eligible (idle + has creds
+          + not about to wake); never bounce back to ``preferred`` just because
+          it freed up.
+        - **Reselect** (current gone / busy / about-to-wake) chooses only among
+          accounts the latest ``snapshot`` confirms OFFLINE — so logging in as
+          the new detector never kicks a human. Prefers ``preferred`` (5554)
+          when it is eligible-and-offline, else any.
+        - **Cold start** (``snapshot is None``): nothing to verify against, so
+          connect blind to a bot-idle candidate — the one unavoidable risk
+          window the user accepted (best-effort).
+        - Returns ``None`` when nothing is safe to connect → stay disconnected,
+          the one-shot WS fallback covers checks meanwhile.
         """
         try:
             import bot_state as _bs
             states = _bs.get_all_states()
         except Exception:
             states = {}
-        candidates = [dev for dev in self._role_map.values()
-                      if self._is_safe_detector(dev, states)]
-        if self._preferred in candidates:
+        pool = self._eligible_pool(states)
+        if current is not None and current in pool:
+            return current  # sticky
+        if snapshot is not None:
+            safe = [d for d in pool if self._snapshot_offline(d, snapshot) is True]
+        else:
+            safe = pool  # cold-start blind
+        if not safe:
+            return None
+        if self._preferred in safe:
             return self._preferred
-        return candidates[0] if candidates else None
+        return safe[0]
 
     def _connect(self, device: str) -> Optional[WSGameClient]:
         try:
@@ -247,7 +328,7 @@ class OnlineMonitor:
         gate_reconnect = False  # throttle only reopen-after-failure (anti-storm)
 
         while self._running:
-            desired = self._select_detector()
+            desired = self._select_detector(current, self.snapshot)
 
             # No idle bot to safely log in as → drop any connection rather than
             # squat on a busy account and kick its running bot. Go stale; the

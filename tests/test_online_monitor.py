@@ -59,9 +59,15 @@ def _states(monkeypatch, mapping):
     monkeypatch.setattr(bot_state, "get_all_states", lambda: mapping)
 
 
+def _allow_creds(monkeypatch):
+    """All synthetic devices have loadable (unprotected) creds."""
+    monkeypatch.setattr(om, "load_creds", lambda dev: _FakeCreds(1))
+
+
 def test_select_detector_prefers_idle_preferred(monkeypatch):
     mon = om.OnlineMonitor(preferred="emulator-5554")
     mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
     _states(monkeypatch, {
         "emulator-5554": {"task": "休眠中"},
         "emulator-5556": {"task": "休眠中"},
@@ -72,6 +78,7 @@ def test_select_detector_prefers_idle_preferred(monkeypatch):
 def test_select_detector_hands_off_when_preferred_busy(monkeypatch):
     mon = om.OnlineMonitor(preferred="emulator-5554")
     mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
     _states(monkeypatch, {
         "emulator-5554": {"task": "喚醒檢查"},  # busy bot → never use as detector
         "emulator-5556": {"task": "休眠中"},     # idle → hand off here
@@ -82,11 +89,90 @@ def test_select_detector_hands_off_when_preferred_busy(monkeypatch):
 def test_select_detector_none_when_all_busy(monkeypatch):
     mon = om.OnlineMonitor(preferred="emulator-5554")
     mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
     _states(monkeypatch, {
         "emulator-5554": {"task": "挖礦"},
         "emulator-5556": {"task": "農場"},
     })
     assert mon._select_detector() is None
+
+
+def test_select_detector_excludes_creds_less_device(monkeypatch):
+    """5558 (no creds) is never a detector — only ever a monitored target."""
+    mon = om.OnlineMonitor(preferred="emulator-5554")
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5558"}
+
+    def _load(dev):
+        if dev == "emulator-5558":
+            raise FileNotFoundError
+        return _FakeCreds(1)
+
+    monkeypatch.setattr(om, "load_creds", _load)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中"},
+        "emulator-5558": {"task": "休眠中"},
+    })
+    assert mon._select_detector() == "emulator-5554"
+
+    mon._role_map = {2: "emulator-5558"}  # only the creds-less device
+    assert mon._select_detector() is None
+
+
+def test_select_detector_sticky_keeps_current(monkeypatch):
+    """Once on a detector, stay — never bounce back to preferred when it frees."""
+    mon = om.OnlineMonitor(preferred="emulator-5554")
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中"},  # preferred is free…
+        "emulator-5556": {"task": "休眠中"},
+    })
+    # …but current 5556 is still eligible → keep it (sticky).
+    assert mon._select_detector(current="emulator-5556", snapshot=None) == "emulator-5556"
+
+
+def test_select_detector_reselect_only_picks_snapshot_offline(monkeypatch):
+    """Reselect connects only to accounts the snapshot confirms OFFLINE, even
+    if that means skipping the preferred (which a human is on)."""
+    import config_manager
+    mon = om.OnlineMonitor(preferred="emulator-5554")
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中"},
+        "emulator-5556": {"task": "休眠中"},
+    })
+    monkeypatch.setattr(config_manager, "get_device_role_id",
+                        lambda dev: {"emulator-5554": 11, "emulator-5556": 22}.get(dev))
+    snap = om.Snapshot(detector="x", timestamp=1000.0, entries=(
+        om.StatusEntry(11, "a", True, None),    # 5554 online (human) → exclude
+        om.StatusEntry(22, "b", False, None),   # 5556 offline → safe
+    ))
+    assert mon._select_detector(current=None, snapshot=snap) == "emulator-5556"
+
+
+def test_select_detector_excludes_about_to_wake(monkeypatch):
+    """A candidate whose bot wakes within the lead window is skipped."""
+    mon = om.OnlineMonitor(preferred="emulator-5554", now=lambda: 1000.0)
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中", "next_wake_at": 1030.0},   # 30s < lead → skip
+        "emulator-5556": {"task": "休眠中", "next_wake_at": 9_999_999.0},
+    })
+    assert mon._select_detector() == "emulator-5556"
+
+
+def test_select_detector_sticky_breaks_when_current_about_to_wake(monkeypatch):
+    """Current detector about to run its own script → hand off before it wakes."""
+    mon = om.OnlineMonitor(preferred="emulator-5554", now=lambda: 1000.0)
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中", "next_wake_at": 1030.0},  # current, waking soon
+        "emulator-5556": {"task": "休眠中"},
+    })
+    assert mon._select_detector(current="emulator-5554", snapshot=None) == "emulator-5556"
 
 
 def test_last_switch_records_transition():
