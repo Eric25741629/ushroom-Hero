@@ -12,6 +12,8 @@ WS commands:
   - 6913  shop_info      (buy counts per shop_id, shop_type=11)
   - 6914  shop_buy       (buy frags)
   - 12817 car_park_skin_up  (upgrade one star)
+  - 769   role_info (0x0301)  (菇車幣 = numeric role attr 201; empty c2s -> fresh
+          snapshot, so each read returns the LATEST balance)
 """
 from __future__ import annotations
 
@@ -30,8 +32,9 @@ CMD_SHOP_INFO = 6913
 CMD_SHOP_BUY = 6914
 CMD_SKIN_UP = 12817
 CMD_ERROR = 0x0201  # 513
-CMD_INVENTORY_QUERY = 0x0401  # full bag snapshot; repeated {item_id#1, uid#2, count#3}
-GOODS_MUSHROOM_CAR_COIN = 201  # 菇車幣 role attribute
+CMD_ROLE_INFO = 0x0301  # 769 — role.role_info; empty c2s body -> fresh role
+                        # snapshot (server replies 769 AND re-pushes 769).
+ROLE_ATTR_CAR_COIN = 201  # 菇車幣 = numeric role attribute id (NOT a bag item)
 
 _DATA_DIR = Path(__file__).parent / "data"
 _CATALOG_PATH = Path(__file__).resolve().parent.parent / "docs" / "protocol" / "PARKING_DESIGN_CATALOG.json"
@@ -142,22 +145,49 @@ def _parse_skin_list(body: bytes) -> list[tuple[int, int]]:
     return skins
 
 
-def _query_coin(client: WSGameClient, timeout: float) -> int | None:
-    """Query 菇車幣 via 0x0401 inventory snapshot. Returns count or None."""
+def parse_role_num_attrs(body: bytes) -> dict[int, int]:
+    """Parse numeric role attributes ``{attr_id: value}`` from a 0x0301 body.
+
+    role_info_s2c (769) structure, live-verified on 7fe98fc6 (2026-06-27):
+        {1: {1: repeated attr_id(varint),
+             2: {1: repeated num_attr{1:id, 2:int_value},
+                 2: repeated str_attr{1:id, 2:bytes}}}}
+    Only the numeric table (path 1.2.1[]) is returned; 菇車幣 = attr 201.
+    """
+    out: dict[int, int] = {}
+    for f1, v1 in codec.walk(body):
+        if f1 == 1 and isinstance(v1, (bytes, bytearray)):           # 1
+            for f2, v2 in codec.walk(bytes(v1)):
+                if f2 == 2 and isinstance(v2, (bytes, bytearray)):    # 1.2
+                    for f3, v3 in codec.walk(bytes(v2)):
+                        if f3 == 1 and isinstance(v3, (bytes, bytearray)):  # 1.2.1[]
+                            d = codec.walk_dict(bytes(v3))
+                            aid, val = d.get(1), d.get(2)
+                            if isinstance(aid, int) and isinstance(val, int):
+                                out[aid] = val
+    return out
+
+
+def read_car_coin(client: WSGameClient, *, timeout: float = 10.0) -> tuple[int | None, str | None]:
+    """Read the LATEST 菇車幣 via pure WS. Returns ``(coin, error)``.
+
+    Sends an empty c2s 769 (role_info); the server answers with a fresh role
+    snapshot whose numeric attribute 201 is the current 菇車幣 balance. This is
+    an on-demand read, so the value is always live — no stale login cache.
+    菇車幣 is a role attribute (gtid < 1000), so it is NOT in the 0x0401 bag
+    snapshot nor the 0x0402 item pushes; role_info is the only WS source.
+    """
     try:
         cmd, reply = client.call_for(
-            CMD_INVENTORY_QUERY, b"",
-            expect_cmds=(CMD_INVENTORY_QUERY,), timeout=timeout)
-        if cmd != CMD_INVENTORY_QUERY or not reply:
-            return None
-        for fnum, val in codec.walk(reply):
-            if fnum == 1 and isinstance(val, (bytes, bytearray)):
-                d = codec.walk_dict(bytes(val))
-                if d.get(1) == GOODS_MUSHROOM_CAR_COIN:
-                    return int(d.get(3, 0))
-    except Exception:
-        pass
-    return None
+            CMD_ROLE_INFO, b"", expect_cmds=(CMD_ROLE_INFO,), timeout=timeout)
+        if cmd != CMD_ROLE_INFO or not reply:
+            return None, "role_info_empty"
+        coin = parse_role_num_attrs(reply).get(ROLE_ATTR_CAR_COIN)
+        if coin is None:
+            return None, "attr_201_absent_in_role_info"
+        return int(coin), None
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
 
 
 def _parse_shop_buy_info(body: bytes) -> dict[int, int]:
@@ -228,8 +258,14 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
 
         decos.sort(key=lambda d: d["id"])
 
-        coin = _query_coin(client, timeout)
-        return {"coin": coin, "decos": decos, "deco_count": len(decos)}, None
+        coin, coin_error = read_car_coin(client, timeout=timeout)
+        return {
+            "coin": coin,
+            "coin_source": "role_info_0x0301",
+            "coin_error": coin_error,
+            "decos": decos,
+            "deco_count": len(decos),
+        }, None
 
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"

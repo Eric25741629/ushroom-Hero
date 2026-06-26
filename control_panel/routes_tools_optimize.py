@@ -124,12 +124,18 @@ def _build_decos(state: dict):
 
 def _plan(state: dict, budget: int, max_steps: int):
     decos, meta = _build_decos(state)
-    coin = int(state.get("coin") or 0)
-    # coin=0 (unknown via WS) + budget>0 → use the user-provided budget as-is
-    eff_budget = budget if budget > 0 else coin
-    if coin > 0:
+    raw_coin = state.get("coin")
+    coin = int(raw_coin) if raw_coin is not None else None
+    # WS 不一定能讀到菇車幣。讀不到時不能假裝是 0；使用者有手填預算才可規劃。
+    if coin is None:
+        eff_budget = budget if budget > 0 else 0
+    else:
+        eff_budget = budget if budget > 0 else coin
         eff_budget = min(eff_budget, coin)
-    plan = plan_upgrades(decos, budget=eff_budget, max_steps=max_steps)
+    if coin is None and budget <= 0:
+        plan = None
+    else:
+        plan = plan_upgrades(decos, budget=eff_budget, max_steps=max_steps)
     steps = [{
         "id": s.id, "name": s.name,
         "shop_id": meta.get(s.id, {}).get("shop_id"),
@@ -137,12 +143,17 @@ def _plan(state: dict, budget: int, max_steps: int):
         "to_level": s.to_level, "frags": s.frags, "coin": s.coin,
         "attr_gain": s.attr_gain,
         "coin_per_attr": round(s.coin_per_attr, 3),
-    } for s in plan.steps]
+    } for s in (plan.steps if plan else ())]
     return {
         "coin": coin, "budget": eff_budget,
-        "steps": steps, "total_coin": plan.total_coin,
-        "total_attr": plan.total_attr, "total_frags": plan.total_frags,
-        "skipped_reason": plan.skipped_reason,
+        "coin_source": state.get("coin_source"),
+        "coin_error": state.get("coin_error") if coin is None else None,
+        "steps": steps, "total_coin": plan.total_coin if plan else 0,
+        "total_attr": plan.total_attr if plan else 0,
+        "total_frags": plan.total_frags if plan else 0,
+        "skipped_reason": (
+            "coin_unknown_need_budget" if plan is None else plan.skipped_reason
+        ),
         "owned_count": len(decos),
     }
 
@@ -157,8 +168,10 @@ def _run_plan_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             return
         _job_update(jid, phase="planning")
         plan = _plan(state, budget, max_steps)
+        coin_text = f"{plan['coin']:,}" if plan["coin"] is not None else "未知"
+        coin_note = f"（{plan['coin_error']}）" if plan.get("coin_error") else ""
         _job_log(jid, f"已擁有可升裝飾 {plan['owned_count']} 個，"
-                      f"菇車幣 {plan['coin']:,}，計畫 {len(plan['steps'])} 步")
+                      f"菇車幣 {coin_text}{coin_note}，計畫 {len(plan['steps'])} 步")
         _job_update(jid, status="done", phase="done", result=plan)
     except Exception as exc:  # noqa: BLE001
         _job_update(jid, status="error", error=f"{type(exc).__name__}: {exc}")

@@ -302,6 +302,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => (n==null?'-':Number(n).toLocaleString());
+const fmtCoin = n => (n==null?'未知':fmt(n));
 function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
 function dev(){ return $('dev').value; }
 
@@ -381,11 +382,11 @@ function renderPlan(res){
   if (!res){ return; }
   _show('carparkState', false); _show('carparkSkeleton', false);
   $('kpi').style.display='flex';
-  $('kCoin').textContent = fmt(res.coin);
+  $('kCoin').textContent = fmtCoin(res.coin);
   $('kSteps').textContent = (res.steps||[]).length;
   $('kCost').textContent = fmt(res.total_coin);
   $('kAttr').textContent = '+'+fmt(res.total_attr);
-  $('kLeft').textContent = fmt((res.coin||0) - (res.total_coin||0));
+  $('kLeft').textContent = res.coin==null ? '未知' : fmt(res.coin - (res.total_coin||0));
   const body = $('planBody'); body.innerHTML='';
   let cum = 0;
   (res.steps||[]).forEach((s,i)=>{
@@ -399,11 +400,21 @@ function renderPlan(res){
   });
   $('tableWrap').style.display = (res.steps||[]).length ? 'block':'none';
   if (!(res.steps||[]).length){
-    setStatus('沒有可升級步驟：'+(res.skipped_reason||'—'), false);
+    const reason = res.skipped_reason==='coin_unknown_need_budget'
+      ? coinUnknownReason(res)
+      : (res.skipped_reason||'—');
+    setStatus('沒有可升級步驟：'+reason, false);
   }
 }
 
 let LAST_PLAN = null;
+
+function coinUnknownReason(res){
+  if (res && res.coin_error){
+    return '讀不到菇車幣餘額（'+res.coin_error+'）；請手動填預算上限後再預覽';
+  }
+  return '讀不到菇車幣餘額；請手動填預算上限後再預覽';
+}
 
 async function doPlan(){
   if (!dev()){ setStatus('請先選裝置', true); return; }
