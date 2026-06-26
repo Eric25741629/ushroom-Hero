@@ -137,9 +137,10 @@ def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
     - min_keep only               -> raw = floor_cap
     - neither                     -> raw = total (open the whole lot)
 
-    ``lamp_daily_min`` (>0) overrides the percentage limit: if today's opened
-    count has not reached the daily minimum, the target is boosted to cover
-    the remaining daily quota, still capped by ``lamp_min_keep`` floor and
+    ``lamp_daily_min`` (>0) is a HARD daily floor: if today's opened count has
+    not reached the daily minimum, the target is boosted to cover the remaining
+    daily quota. This OVERRIDES both the percentage limit and the
+    ``lamp_min_keep`` reserve (it may dig below the reserve), capped only by
     ``max_open``.
     """
     floor_cap = max(0, total - lamp_min_keep)
@@ -155,8 +156,8 @@ def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
     if lamp_daily_min > 0:
         remaining_daily = max(0, lamp_daily_min - opened_today)
         if remaining_daily > normal:
-            boosted = min(remaining_daily, floor_cap) if lamp_min_keep > 0 else remaining_daily
-            return min(max(0, round_to_nearest_20(boosted)), max_open)
+            # Hard daily floor: overrides the min_keep reserve (may dig below it).
+            return min(max(0, round_to_nearest_20(remaining_daily)), max_open)
     return normal
 
 
@@ -382,7 +383,9 @@ def open_lamp(
       - The loop stops on ANY of: ``opened >= target``; out-of-lamps (the
         existing timeout / CMD_ERROR / empty-drops paths); or, when
         ``lamp_min_keep > 0`` and ``remaining`` is known,
-        ``remaining <= lamp_min_keep``.
+        ``remaining <= lamp_min_keep`` — except this reserve stop is suspended
+        while today's ``lamp_daily_min`` quota is still unmet (the daily floor
+        overrides the reserve).
       - ``on_progress(opened, target)`` fires after each batch once target is
         known (a raising callback never aborts the loop).
 
@@ -552,7 +555,12 @@ def open_lamp(
             # Per-batch stop conditions (any one ends the run).
             if feature_on and target >= 0 and opened >= target:
                 break
-            if (lamp_min_keep > 0 and remaining is not None
+            # The min_keep reserve stop is suspended while today's daily floor
+            # is still unmet — lamp_daily_min is a hard guarantee that overrides
+            # the reserve (the target stop above caps it at the daily quota).
+            daily_unmet = (lamp_daily_min > 0
+                           and opened_today + opened < lamp_daily_min)
+            if (lamp_min_keep > 0 and not daily_unmet and remaining is not None
                     and remaining <= lamp_min_keep):
                 log.info("ws_token lamp: remaining=%d <= min_keep=%d; stop",
                          remaining, lamp_min_keep)

@@ -173,11 +173,20 @@ def test_compute_lamp_target_daily_min_overrides_percent_with_min_keep():
         lamp_daily_min=8000, opened_today=0) == 8000
 
 
-def test_compute_lamp_target_daily_min_respects_min_keep_floor():
-    # total=1000, min_keep=900 -> floor_cap=100, daily_min=200 -> capped to 100
+def test_compute_lamp_target_daily_min_overrides_min_keep_floor():
+    # total=1000, min_keep=900 -> floor_cap=100, daily_min=200.
+    # daily floor is a hard guarantee: it overrides the reserve -> 200 (not 100).
     assert lamp.compute_lamp_target(
         1000, lamp_percent=0.0, lamp_min_keep=900, max_open=10000,
-        lamp_daily_min=200, opened_today=0) == 100
+        lamp_daily_min=200, opened_today=0) == 200
+
+
+def test_compute_lamp_target_daily_min_overrides_reserve_when_below_floor():
+    # stock(300000) < min_keep(500000) -> floor_cap=0, % rule opens nothing,
+    # but daily_min=8000 must still drive the target to 8000.
+    assert lamp.compute_lamp_target(
+        300000, lamp_percent=1.0, lamp_min_keep=500000, max_open=10000,
+        lamp_daily_min=8000, opened_today=0) == 8000
 
 
 def test_compute_lamp_target_daily_min_partial_day():
@@ -318,6 +327,34 @@ def test_open_lamp_min_keep_stops_early_when_remaining_hits_floor():
         assert res["opened"] == 20                # stopped early on the guard
         assert batches["n"] == 1
         assert res["remaining"] == 60
+    finally:
+        c.close()
+
+
+def test_open_lamp_daily_min_digs_below_min_keep_floor():
+    # stock(100) < min_keep(500): floor_cap=0 so the % rule opens nothing, and
+    # remaining is always <= min_keep. daily_min=80 must override the reserve
+    # and open the full daily quota (4 batches) instead of stopping at batch 1.
+    batches = {"n": 0}
+
+    def open_reply(_b):
+        batches["n"] += 1
+        first = 1500 + batches["n"] * 100
+        uids = list(range(first, first + 20))
+        remaining = 100 - batches["n"] * 20       # 80,60,40,20 — all <= min_keep
+        return [s2c(CMD_OPEN_ALL, _open_all_s2c(uids)),
+                s2c(CMD_INVENTORY_PUSH,
+                    _inv_push(EVT_LAMP_CONSUME,
+                              [_inv_item(lamp.ITEM_LAMP, remaining)]))]
+
+    c, _fake = _client(_base_extra(open_reply))
+    try:
+        res = lamp.open_lamp(c, dry_run=True, batch_num=20, max_batches=10,
+                             lamp_min_keep=500, lamp_daily_min=80,
+                             opened_today=0, initial_count=100, push_wait=0.5)
+        assert res["target"] == 80                # daily floor, not reserve-clamped
+        assert res["opened"] == 80                # dug below the 500 reserve
+        assert batches["n"] == 4
     finally:
         c.close()
 
