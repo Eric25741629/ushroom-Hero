@@ -342,6 +342,10 @@
                         20,
                         24
                     ]
+                },
+                "secret_jewel": {
+                    "draw_free": true,
+                    "buy_daily": true
                 }
             },
             "ws_token_sweep_list": [],

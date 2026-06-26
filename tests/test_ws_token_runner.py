@@ -1503,7 +1503,12 @@ def test_task_order_has_home_features_before_lamp():
     assert order.index("spirit") > order.index("carpark")
     assert order.index("mining") > order.index("couple")
     assert order.index("mining") < order.index("lamp")
-    assert order[-5:] == ["spirit", "workshop", "couple", "mining", "lamp"]
+    # 守護靈→秘寶→工坊→伴侶 home-feature tail sits before mining/lamp; 秘寶(尋寶)
+    # runs right after 守護靈(spirit). (robust relative order — tolerates the
+    # dragon_realm/sea_season tasks that sit between couple and mining.)
+    assert order.index("spirit") < order.index("secret_jewel") < order.index("workshop")
+    assert order.index("workshop") < order.index("couple") < order.index("mining")
+    assert order[-1] == "lamp"
     # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
     assert order.index("dungeon") < order.index("rogue") < order.index("guild")
     # 競猜商店 (粉鑽 買競猜幣) sits with the shopping/cost group: after steward,

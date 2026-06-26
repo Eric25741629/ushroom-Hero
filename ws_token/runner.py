@@ -57,8 +57,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 from ws_token import (
     ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
     idle_reward, kungfu_store, league_solo, main_tasks, mining,
-    mining_supervised, redpack, relic, relic_sprint, rogue, spirit, statue,
-    steward, turntable, tycoon, workshop,
+    mining_supervised, redpack, relic, relic_sprint, rogue, secret_jewel,
+    spirit, statue, steward, turntable, tycoon, workshop,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -83,7 +83,7 @@ TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
     "rogue", "statue", "guild", "steward", "relic", "relic_sprint", "gacha",
-    "gacha_free", "kungfu_store", "spirit", "workshop", "couple",
+    "gacha_free", "kungfu_store", "spirit", "secret_jewel", "workshop", "couple",
     "dragon_realm", "sea_season", "mining", "lamp")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
@@ -853,6 +853,21 @@ def _run_spirit(client) -> dict:
     return spirit.draw_all_free(client)
 
 
+def _run_secret_jewel(client, *, draw_free: bool, buy_daily: bool) -> dict:
+    """秘寶(塵世)尋寶: 免費抽 (draw_free) + 每日買尋寶圖 (buy_daily, SPENDS 粉鑽).
+
+    兩動作各自 opt-in (使用者 2026-06-27)。只做塵世秘寶 (pool_type=1，傳說/遠古未開放)。
+    免費抽只吃 free_times (2/日)；買尋寶圖補到每日 10 (粉鑽，server 端上限/已買數冪等)。
+    兩者皆靠 server 端每日計數器,每次喚醒跑都安全 — 無 ws_state 日期閘。
+    """
+    summary: dict = {"free": None, "buy": None}
+    if draw_free:
+        summary["free"] = secret_jewel.draw_free(client)
+    if buy_daily:
+        summary["buy"] = secret_jewel.buy_daily_maps(client)
+    return summary
+
+
 def _run_kungfu_store(client) -> dict:
     """菇菇武道會 競猜商店: 用粉鑽把 4 個競猜幣檔位(免費/600/1500/3000)買到上限.
 
@@ -1238,6 +1253,7 @@ def run_device(device: str, *, spend: bool = False,
                tycoon_max_rolls: int = 50,
                ad_reward_config_ids: Optional[Iterable[int]] = None,
                gacha_config: Optional[dict] = None,
+               secret_jewel_config: Optional[dict] = None,
                mining_config: Optional[dict] = None,
                sea_config: Optional[dict] = None,
                dragon_realm_enabled: bool = True,
@@ -1498,6 +1514,13 @@ def run_device(device: str, *, spend: bool = False,
         if kungfu_guess:
             _step("kungfu_store", lambda: _run_kungfu_store(client))
         _step("spirit", lambda: _run_spirit(client))
+        _sj_cfg = secret_jewel_config or {}
+        if _sj_cfg.get("draw_free") or _sj_cfg.get("buy_daily"):
+            _step("secret_jewel",
+                  lambda: _run_secret_jewel(
+                      client,
+                      draw_free=bool(_sj_cfg.get("draw_free")),
+                      buy_daily=bool(_sj_cfg.get("buy_daily"))))
         if workshop_rotate:
             _step("workshop",
                   lambda: _run_workshop(client, inventory_tracker, device=device))

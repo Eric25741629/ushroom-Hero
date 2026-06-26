@@ -264,6 +264,12 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     tycoon = bool(_ws_nested.get("tycoon", False))
     # 抽卡 (技能/同伴) — 巢狀 ws_token.gacha 子設定 (預設關)；消耗抽卡券。
     gacha_config = _ws_nested.get("gacha") or None
+    # 秘寶 (塵世尋寶) — 巢狀 ws_token.secret_jewel 子設定 (預設關)。
+    # draw_free=免費抽 (免費)；buy_daily=每日買尋寶圖 (SPENDS 粉鑽)。任一開才傳。
+    _sj_cfg = _ws_nested.get("secret_jewel")
+    secret_jewel_config = None
+    if isinstance(_sj_cfg, dict) and (_sj_cfg.get("draw_free") or _sj_cfg.get("buy_daily")):
+        secret_jewel_config = _sj_cfg
     # 看廣告獎勵 (鑽石/種子) — 巢狀 ws_token.ad_rewards 子設定 (預設關)；is_free=1 純 WS 領。
     # enabled 且 config_ids 非空才傳 list，否則保持不傳 (run_device 該任務 self-skip)。
     _ad_cfg = _ws_nested.get("ad_rewards")
@@ -323,6 +329,9 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         extra_kwargs["relic_sprint_enabled"] = True
         if relic_sprint_target is not None:
             extra_kwargs["relic_sprint_target"] = relic_sprint_target
+    # 秘寶預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
+    if secret_jewel_config is not None:
+        extra_kwargs["secret_jewel_config"] = secret_jewel_config
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
     def _progress(name: str, status: str, detail: str = "") -> None:
