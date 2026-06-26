@@ -32,6 +32,15 @@ def _within_open_window(now: datetime.datetime | None = None) -> bool:
     return _OPEN_HOUR <= now.hour < _CLOSE_HOUR
 
 
+def is_dragon_open(now: datetime.datetime | None = None) -> bool:
+    """龍骸聖域目前是否開放（三周週期的活動週 ∧ 週三四五 10-22 時間窗）。
+
+    供 dashboard SOS 按鈕判斷可見性用；不含 per-device 冷卻（那是排程跑任務的事）。
+    """
+    now = now or datetime.datetime.now()
+    return _is_dragon_week(now.date()) and _within_open_window(now)
+
+
 def _is_due(ip: str, now: datetime.datetime | None = None) -> bool:
     now = now or datetime.datetime.now()
     if not _is_dragon_week(now.date()):

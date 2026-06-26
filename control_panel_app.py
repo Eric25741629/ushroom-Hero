@@ -75,6 +75,7 @@ from control_panel import (  # noqa: E402
     routes_tools_optimize,
     routes_config,
     routes_control,
+    routes_dragon_sos,
     routes_fly_pet,
     routes_inventory,
     routes_labeler,
@@ -100,6 +101,7 @@ for _mod in (
     routes_tools_optimize,
     routes_ad_reward,
     routes_relic_sprint,
+    routes_dragon_sos,
     ws_session,
 ):
     app.register_blueprint(_mod.bp)

@@ -6,6 +6,29 @@
 
 ---
 
+## 🚧 2026-06-26 龍骸 SOS 救援按鈕（dashboard，純 WS 自動協助）
+
+需求（使用者 2026-06-26）：手機在龍骸踩陷阱求助時，dashboard 按一顆「SOS」→ 指定的協助號
+用純 WS 上線、自動協助所有 pending 求助隊友。**每台 web_h5 裝置一顆按鈕、只在龍骸開放時段顯示，
+使用者自己挑哪台當協助號。** 動態讀求助清單救所有 pending（不寫死）。
+
+協議（2026-06-26 live-verified，5554 CDP 抓 + 純 WS 實測救援成功，使用者手機確認）：
+- `help_event_list_c2s/s2c = 0x4F15 (20245)`；c2s body 空；s2c = {event_list: repeated p_dragon_realm_event #1, help_hp:u32 #2}
+- `p_dragon_realm_event = {id:u64 #1, event_id:u32 #2, role_id:u64 #3, status:u32 #4(0=pending), data:repeated #5}`
+- `provide_help_c2s = 0x4F14 (20244) = {help_target:u64 #1, event_id:u32 #2}`；fire-and-forget，重讀清單確認
+- 重用 `control_panel/ws_session`（ensure→get_client→disconnect；內建暫停 bot/踢線/sweeper）
+- `codec.walk()` 保留 repeated（多事件）；`walk_dict` last-wins 只能解單欄
+
+- [x] TDD `tests/test_dragon_sos.py`：rescue_pending（fake client，2 事件1pending→只對 pending 送 0x4F14、重讀回報）；is_dragon_open（注入時間）— 11 測過
+- [x] `ws_token/dragon_sos.py`：`read_help_list` / `rescue_pending(client)` / `rescue_via_ws(ip, session=ws_session)`
+- [x] `game_actions/dragon_realm_scheduler.py`：加公開 `is_dragon_open(now=None)`（純加，不動現有）
+- [x] `control_panel/routes_dragon_sos.py`：`POST /api/dragon_sos/<ip>` + `GET /api/dragon_sos/status`；註冊進 control_panel_app
+- [x] `templates/dashboard.html`：每 web_h5 列加 SOS 鈕（status.open 才顯示）+ 點擊 POST + toast
+- [x] `read_help_list` 對真實 0x4F15 s2c 驗證（help_hp=2 正確、空清單不 crash）
+- [ ] 重啟 control panel live 驗證整顆按鈕（協議+解析器+provide_help 皆已實證；剩 dashboard plumbing。龍骸窗口今晚 22:00 關，下次約 3 週後）
+
+---
+
 ## 🚧 2026-06-26 龍骸 WS 卡 CAVE → 加 dead-loop 偵測（防禦性修復）
 
 現象（5554 CDP 排錯）：`ws_token/dragon_realm.py` 的 `run()` 卡在 CAVE 神秘洞穴
