@@ -6,6 +6,24 @@
 
 ---
 
+## 🚧 2026-06-26 龍骸 WS 卡 CAVE → 加 dead-loop 偵測（防禦性修復）
+
+現象（5554 CDP 排錯）：`ws_token/dragon_realm.py` 的 `run()` 卡在 CAVE 神秘洞穴
+（event_id=16, type=6, event_data=[]空），對它狂送 200 次 advance 全無效 →
+`budget_exhausted, keys=0`（06-26 10:00/12:00 兩次）。`waits=0` 所以無偵測攔住。
+CDP 驗證：瀏覽器 netManager 送同樣 event_choice(1,uid) **能推進**（eid 16→0），
+driver 順暢推到三層。精確機制（ws_token socket 為何對 CAVE choice 無效、瀏覽器有效）
+**未定位**，CAVE 已推掉無法即時重現，待下次 CAVE 用 ws_token client 抓對比。
+
+防禦性修復（不需重現 CAVE，治標止血）：
+- [ ] `run()` 加 state-signature dead-loop 偵測：連續 `max_stuck`(預設6) 次
+      `(ceng,hp,eid,euid)` 完全不變 → return `"deadloop"`，避免 200 次空轉
+- [ ] TDD：StuckClient（info 固定不變）→ 應回 deadloop 且 send < 20 次；
+      FakeServer（explore/choice 正常改狀態）→ 不誤判，最終 out_of_stamina
+- [ ] 7fe98fc6（小寶）等遊戲更新後也測（最多第二層，不進三層）
+
+---
+
 ## 🚧 2026-06-26 rogue 週積分 timeout bug + WS 階段 log 補原因
 
 問題:`emulator-5560` 每週五 WS `errors=['rogue']`。根因:萬神試煉週積分(cmd 19482)事件

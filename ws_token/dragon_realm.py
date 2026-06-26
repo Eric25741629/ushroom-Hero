@@ -57,7 +57,7 @@ def _infer_type(ed: dict) -> str:
 
 
 def run(client: WSGameClient, tracker: InventoryTracker,
-        *, max_actions: int = 200, pace: float = 1.0) -> str:
+        *, max_actions: int = 200, pace: float = 1.0, max_stuck: int = 6) -> str:
     """Run dragon realm loop. Returns stop reason."""
     try:
         tracker.seed_from_query(client)
@@ -68,10 +68,30 @@ def run(client: WSGameClient, tracker: InventoryTracker,
                 info["ceng"], info["hp"], tracker.counts.get(KEY_ITEM, 0))
 
     actions = 0
+    last_sig = None
+    stuck = 0
     while actions < max_actions:
         info = _read_info(client)
         ceng, hp, eid, euid, ed = (
             info["ceng"], info["hp"], info["eid"], info["euid"], info["ed"])
+
+        # Dead-loop guard: if the server state is byte-identical for max_stuck
+        # consecutive reads, our actions aren't moving it (observed live: a CAVE
+        # whose choice has no effect froze the loop into 200 wasted sends). Bail
+        # fast instead of burning the whole action budget. waits==0 means the
+        # WAIT-based detector in dragon_realm.service can't catch this case.
+        sig = (ceng, hp, eid, euid)
+        if sig == last_sig:
+            stuck += 1
+            if stuck >= max_stuck:
+                logger.warning(
+                    "[dragon_ws] dead-loop: state frozen %dx (ceng=%d hp=%d eid=%d), abort",
+                    stuck, ceng, hp, eid)
+                return "deadloop"
+        else:
+            stuck = 0
+        last_sig = sig
+
         keys = tracker.counts.get(KEY_ITEM, 0)
 
         # tier transition
