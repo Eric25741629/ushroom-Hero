@@ -12,6 +12,7 @@ import time
 import img_tools
 from utils.logging_utils import logger
 
+from ._helpers import _recover_to_home
 from .store import buy_god_everyweek
 
 # 副本清單『萬神試煉』文字 → 該列『入場』鈕的偏移 (實測 540x960：文字中心+(277,75)≈入場鈕)
@@ -89,31 +90,38 @@ def fight_test(d, max_stages: int = _BATTLE_MAX_STAGES) -> bool:
     logger.info("[萬神試煉] 開始：點『副本』")
     img_tools.click_str_by_server(d, "副本")
     time.sleep(2)
-    # 副本清單找『萬神試煉』(Beta)：命中文字+偏移=該列入場鈕；找不到就上滑捲動再試
-    entered = False
-    for _ in range(4):
-        if img_tools.click_str_by_server(
-            d, "萬神試煉", shift_x=_ENTER_SHIFT[0], shift_y=_ENTER_SHIFT[1]
-        ):
-            entered = True
-            break
-        d.swipe(239, 600, 239, 300, 0.2)
-        time.sleep(1)
-    if not entered:
-        logger.warning("[萬神試煉] 副本清單找不到『萬神試煉』入口 → 中止(未挑戰)")
-        return False
-    time.sleep(2)
-
-    if not _advance_to_stage(d):
-        logger.warning("[萬神試煉] 無法進入關卡視圖 → 中止")
-        return False
-
-    fought = _battle_loop(d, max_stages=max_stages)
-    logger.info("[萬神試煉] 戰鬥結束，共完成 %d 關", fought)
-
+    # rogue 結算 / 秘寶閣面板不會自動回主頁；不主動返回的話，本輪後續任務
+    # (雲端戰鬥/好友禮物/開神燈/轉盤金幣) 會全部因「不在主頁面」被跳過。
+    # 進『副本』後一律在收尾返回主頁（成功與中止路徑皆然）。
     try:
-        buy_god_everyweek(d)  # 每週祕寶閣購買(週積分由 WS rogue 週五領)
-    except Exception:
-        logger.exception("[萬神試煉] 祕寶閣購買流程異常")
+        # 副本清單找『萬神試煉』(Beta)：命中文字+偏移=該列入場鈕；找不到就上滑捲動再試
+        entered = False
+        for _ in range(4):
+            if img_tools.click_str_by_server(
+                d, "萬神試煉", shift_x=_ENTER_SHIFT[0], shift_y=_ENTER_SHIFT[1]
+            ):
+                entered = True
+                break
+            d.swipe(239, 600, 239, 300, 0.2)
+            time.sleep(1)
+        if not entered:
+            logger.warning("[萬神試煉] 副本清單找不到『萬神試煉』入口 → 中止(未挑戰)")
+            return False
+        time.sleep(2)
 
-    return fought > 0
+        if not _advance_to_stage(d):
+            logger.warning("[萬神試煉] 無法進入關卡視圖 → 中止")
+            return False
+
+        fought = _battle_loop(d, max_stages=max_stages)
+        logger.info("[萬神試煉] 戰鬥結束，共完成 %d 關", fought)
+
+        try:
+            buy_god_everyweek(d)  # 每週祕寶閣購買(週積分由 WS rogue 週五領)
+        except Exception:
+            logger.exception("[萬神試煉] 祕寶閣購買流程異常")
+
+        return fought > 0
+    finally:
+        # ponytail: 單次 best-effort 回主頁；殘留面板時下次對齊喚醒由 detector 重啟恢復。
+        _recover_to_home(d)
