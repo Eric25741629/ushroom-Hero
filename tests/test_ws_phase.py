@@ -292,16 +292,51 @@ def test_adb_bootstrap_refresh_failure_returns_empty(tmp_path, monkeypatch):
     assert run_calls == []
 
 
-def test_web_h5_backend_does_not_adb_bootstrap(monkeypatch):
-    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True}, backend="web_h5")
-    bootstrap_calls = []
+def _patch_seed_env(monkeypatch, *, has_creds, adb_reachable):
+    """注入 web_h5 種子 gate 的兩個 indirection,並回傳 (seed_calls, reach_calls)。"""
+    seed_calls, reach_calls = [], []
+    monkeypatch.setattr(ws_phase, "_has_ws_creds", lambda ip: has_creds)
+    monkeypatch.setattr(ws_phase, "_adb_reachable",
+                        lambda ip: reach_calls.append(ip) or adb_reachable)
     monkeypatch.setattr(ws_phase, "_bootstrap_token",
-                        lambda ip, log, force=False: bootstrap_calls.append(force) or True)
+                        lambda ip, log, force=False: seed_calls.append((ip, force)) or True)
     monkeypatch.setattr(ws_phase, "_run_device",
-                        lambda ip, cfg, progress=None, **_kw:_report({"redpack": {}}))
+                        lambda ip, cfg, progress=None, **_kw: _report({"redpack": {}}))
+    return seed_calls, reach_calls
 
+
+def test_web_h5_not_adb_reachable_does_not_seed(monkeypatch):
+    """純雲端 web（不在 adb devices）：缺 capture 也不冷啟,免每輪空跑 adb_token_login。"""
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True}, backend="web_h5")
+    seed_calls, _ = _patch_seed_env(monkeypatch, has_creds=False, adb_reachable=False)
     assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
-    assert bootstrap_calls == []
+    assert seed_calls == []
+
+
+def test_web_h5_missing_creds_adb_reachable_seeds(monkeypatch):
+    """web_h5 模擬器缺 capture + adb 可達 → 自動冷啟撈一次種子,本輪續跑 WS。"""
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True}, backend="web_h5")
+    seed_calls, _ = _patch_seed_env(monkeypatch, has_creds=False, adb_reachable=True)
+    assert ws_phase.run_ws_phase("dev") == frozenset({"紅包檢查"})
+    assert seed_calls == [("dev", False)]
+
+
+def test_web_h5_with_creds_does_not_seed(monkeypatch):
+    """已有 capture → has_creds 命中即短路,不冷啟、連 adb 檢查都不做。"""
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": True}, backend="web_h5")
+    seed_calls, reach_calls = _patch_seed_env(
+        monkeypatch, has_creds=True, adb_reachable=True)
+    ws_phase.run_ws_phase("dev")
+    assert seed_calls == []
+    assert reach_calls == []
+
+
+def test_web_h5_seed_disabled_by_flag(monkeypatch):
+    """bootstrap_token=False → web_h5 不種子。"""
+    _cfg(monkeypatch, {"enabled": True, "bootstrap_token": False}, backend="web_h5")
+    seed_calls, _ = _patch_seed_env(monkeypatch, has_creds=False, adb_reachable=True)
+    ws_phase.run_ws_phase("dev")
+    assert seed_calls == []
 
 
 def _patch_time_recording(monkeypatch):

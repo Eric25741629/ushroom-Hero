@@ -272,6 +272,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 resume_sleep_until_ts, resume_sleep_reason, _skip = _maybe_resume_sleep(
                     ip, Cnn_model, resume_sleep_until_ts, resume_sleep_reason, logger
                 )
+                
                 if _skip:
                     continue
 
@@ -573,6 +574,11 @@ def temporary_reset_cycles():
 
 if __name__ == "__main__":
     import config_manager
+    # 讓外部 auto-reload wrapper 用 CTRL_BREAK 請求乾淨重啟，重用 Ctrl+C 的 shutdown 路徑。
+    # ponytail: dev 便利用途；正常執行不受影響。
+    import signal as _signal
+    if hasattr(_signal, "SIGBREAK"):
+        _signal.signal(_signal.SIGBREAK, _signal.default_int_handler)
     rotate_existing_logs_once()
     ensure_push_server_started(base_dir=os.path.dirname(os.path.abspath(__file__)))
     import control_panel_app
@@ -585,6 +591,11 @@ if __name__ == "__main__":
         # 裝置永遠不為互檢被叫醒（解 web_h5 每 30s 冷啟重登的重啟迴圈）。
         from runtime_services.online_check_service import ensure_online_check_service_started
         ensure_online_check_service_started()
+        try:
+            from ws_token.online_monitor import ensure_started as _start_monitor
+            _start_monitor()
+        except Exception:
+            logger.debug("online_monitor start failed", exc_info=True)
     else:
         logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
         ensure_worker_webhook_started()

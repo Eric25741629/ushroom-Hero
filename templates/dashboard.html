@@ -1892,6 +1892,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             <label class="checkbox-item"><input type="checkbox" id="chkGachaSkill">抽技能</label>
             <label class="checkbox-item"><input type="checkbox" id="chkGachaPartner">抽同伴</label>
             <div class="ws-field-note">「付費抽卡一鍵抽到券盡」請到上方「工具」面板手動執行。</div>
+            <div class="ws-subhead">秘寶（塵世尋寶）</div>
+            <div class="ws-schema-slot" data-slot="secret_jewel"></div>
           </div>
 
           <div class="task-tab-panel" data-tab="conn">
@@ -3156,7 +3158,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-force`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
@@ -3170,13 +3172,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             // 能先登入並填好設定再啟用。一般卡片的「開啟網頁」走 /api/web_launch 信箱，
             // 需要運行中的 thread 消費；停用裝置沒有 thread → 那條路按了不會有反應。
             const webSetupBtn = info.backend === 'web_h5'
-              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本)</button>`
+              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
               : '';
             actionBar.innerHTML = `
 
               ${webSetupBtn}
 
-              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用腳本掛機</button>
+              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用腳本掛機(會運行所有腳本，非長時間在線)</button>
 
             `;
 
@@ -3191,6 +3193,10 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
               : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">暫停</button>`
 
             }
+
+            ${(showWebLaunch && _dragonOpen)
+              ? `<button class="btn btn-recover" onclick="dragonSos('${ip}')" title="龍骸：用此號純 WS 上線，自動協助所有 pending 求助隊友（會踢掉此號瀏覽器）">🆘 SOS 救援</button>`
+              : ''}
 
             ${showWebLaunch
               ? (webOpen
@@ -3755,6 +3761,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       { slot:'gacha', path:'ws_token.gacha.count', type:'int', label:'每批抽幾抽（15/35/999）', def:35 },
       { slot:'gacha', path:'ws_token.gacha.batches', type:'int', label:'每次抽幾批', def:3 },
       { slot:'gacha', path:'ws_token.gacha.weekend_only', type:'bool', label:'只在週六/日執行', def:false },
+      { slot:'secret_jewel', path:'ws_token.secret_jewel.draw_free', type:'bool', label:'每日免費尋寶（只吃免費次數 2/日，不花鑽）', def:false },
+      { slot:'secret_jewel', path:'ws_token.secret_jewel.buy_daily', type:'bool', label:'每日買尋寶圖（補到 10 張／日，消耗粉鑽 600/張）', def:false },
       { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'舊版單一停車目標 master_id（空＝不用）', def:null },
       { slot:'carpark', path:'ws_token.carpark_auto', type:'bool', label:'舊版自動掃停可停車位', def:false },
     ];
@@ -4617,6 +4625,44 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       callApi(`/api/skip_sleep/${ip}`);
 
+    }
+
+    // 龍骸 SOS：是否在開放時段（決定每台 SOS 鈕顯示與否）。每 5 分鐘刷新即可（時間窗以小時為界）。
+    let _dragonOpen = false;
+    async function refreshDragonSosStatus() {
+      try {
+        const r = await fetch('/api/dragon_sos/status');
+        const j = await r.json();
+        _dragonOpen = !!j.open;
+      } catch (e) { /* 保持原值；下次再試 */ }
+    }
+    refreshDragonSosStatus();
+    setInterval(refreshDragonSosStatus, 300000);
+
+    // SOS：用此號純 WS 上線，自動協助所有 pending 求助隊友（會踢掉此號瀏覽器，異地登入）。
+    async function dragonSos(ip) {
+      if (!ip) return;
+      window.UI.toast(`SOS：${ip} 純 WS 上線協助中…（會踢掉此號瀏覽器）`, 'info');
+      try {
+        const resp = await fetch(`/api/dragon_sos/${ip}`, { method: 'POST' });
+        const r = await resp.json();
+        if (!resp.ok || r.status === 'error') {
+          window.UI.toast(`SOS 失敗：${r.message || '未知錯誤'}`, 'err');
+          return;
+        }
+        if (!r.attempted) {
+          window.UI.toast(`SOS：${ip} 目前沒有待協助的求助隊友`, 'info');
+        } else {
+          window.UI.toast(
+            `SOS：協助了 ${r.attempted} 個求助，剩餘 ${r.remaining}` +
+            `（help_hp ${r.help_hp_before}→${r.help_hp_after}）`,
+            r.remaining === 0 ? 'ok' : 'warn');
+        }
+      } catch (e) {
+        window.UI.toast(`SOS 失敗：${e}`, 'err');
+      } finally {
+        fetchStatus();
+      }
     }
 
 

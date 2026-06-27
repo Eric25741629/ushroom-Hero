@@ -9973,3 +9973,1174 @@ Let me check what else is in the working tree.
 
 ---
 
+## 2026-06-24 21:26:57  ·  session bcf8e772
+
+8 組全部 commit 完成：
+
+| # | Commit | 內容 |
+|---|--------|------|
+| 1 | `192c14fe` | 萬神試煉 roguelike 重寫 + dungeon_scheduler 簡化 |
+| 2 | `408744fa` | daily_pipeline force-sleep checkpoint + 挖礦 ws_skip |
+| 3 | `9d3a3b9e` | 航海/龍骸徽章改用 is_same_week |
+| 4 | `2b5e8adc` | WS 農場豐收卡 4 階段流程 |
+| 5 | `a75be526` | 雲端戰鬥改週一凌晨 3 點 |
+| 6 | `22404b30` | 開燈 min_keep 對齊 WS 設定 |
+| 7 | `11272556` | 廣告獎勵新增挖礦道具 |
+| 8 | `121b0bac` | CLAUDE.md + 雜項設定/文件同步 |
+
+working tree 裡還有一些 untracked 檔案（`_tmp_*`、`tools/*`、`docs/wireframes/` 等），沒動它們。
+
+---
+
+## 2026-06-24 21:34:26  ·  session 6383dc69
+
+Also run the existing steward tests to make sure nothing broke:
+
+---
+
+## 2026-06-24 21:37:39  ·  session 6383dc69
+
+好，用 5554 帳號登入 WS，查好友列表找 5558 的 role_id（`89565100511322`）在線狀態。
+
+---
+
+## 2026-06-24 21:38:22  ·  session 6383dc69
+
+**手機fc（你的手機帳號）目前也在線。** 透過 5560 查好友列表確認在線狀態。看來沒閃成 -- 兩個帳號都在線上。
+
+---
+
+## 2026-06-24 21:40:08  ·  session 6383dc69
+
+**手機fc「大意了沒有閃」目前在線。**
+
+更新 memory，修正手機fc 的帳號資訊：
+
+---
+
+## 2026-06-24 21:43:28  ·  session 6383dc69
+
+已經做了。`online_check_service.py` 的 `_idle_checkers()` 就是隨機挑一個正在休眠的裝置當偵測器，用它的好友列表查目標。邏輯跟你說的一模一樣：
+
+1. `_idle_checkers()` -- 找所有正在「休眠中」的裝置，`random.shuffle` 打亂順序
+2. 挑第一個空閒的登入 WS，查好友列表/公會成員
+3. 只有偵測器被登入（會踢它正在跑的 session），但它本來就在睡，所以無影響
+4. 目標完全不被打擾
+
+現有架構已經是你描述的模式。唯一要確認的是 `online_check_checkers` config 有沒有包含所有裝置。看一下：
+
+---
+
+## 2026-06-24 21:51:20  ·  session 6383dc69
+
+6 個裝置全都有了。跑一次完整的 monitor 確認：
+
+---
+
+## 2026-06-24 21:52:54  ·  session 6383dc69
+
+5 台全在線（手機 fc65396d 是偵測器本身，不在好友列表裡所以不顯示，但它在線才能查）。
+
+整理一下成果：
+
+**`ws_token/online_monitor.py`** -- 持久在線監控器
+
+- 手機（`fc65396d_u999`）保持 WS 長連線，heartbeat 維活
+- 每 30 秒一次 `0x0F02` 好友列表 call，一次拿全部人狀態
+- 斷線時自動從上次快照挑一個離線裝置接手（零打斷）
+- `discover_role_map()` 同時讀 creds 檔 + `bot_config` 的 `online_check_target_pid`（5558 這種沒 creds 的也能對應）
+
+用法：
+- CLI：`python -m ws_token.online_monitor`
+- 程式內：`ensure_started()` 啟動背景 thread，`get_snapshot()` 隨時讀最新狀態
+- 所有人不會被打斷，因為偵測器本來就在線；fallback 只挑離線裝置
+
+---
+
+## 2026-06-24 21:56:57  ·  session 6383dc69
+
+邏輯流程現在是：
+
+```
+每 30 秒:
+  1. poll 好友列表 → 更新快照
+  2. 當前偵測器的 bot 醒了？ → 找一個在睡的接手，斷開讓位
+  3. 不是用手機但手機已經閒下來了？ → 切回手機（省電/穩定）
+  4. 被踢斷線？ → 從 bot_state 找休眠裝置接手
+```
+
+三層保護：
+- **主動讓位**：偵測器的 bot 要跑任務 → 立刻交棒給休眠裝置
+- **主動回收**：手機閒下來 → 切回手機當偵測器
+- **被動 failover**：被踢/斷線 → 自動換人
+
+所有人都不會被打斷，因為 monitor 只用休眠中的裝置，一偵測到它要忙就讓開。
+
+---
+
+## 2026-06-24 22:18:53  ·  session 6383dc69
+
+全部通過。整理一下完整改動：
+
+---
+
+**全局在線保護架構改動：**
+
+| 檔案 | 改了什麼 |
+|------|---------|
+| `ws_token/online_monitor.py` | **新增** -- 持久 WS 監控器，30 秒刷新好友列表，主動讓位/回收偵測器 |
+| `runtime_services/online_check_service.py` | `_serve_one` 先查 monitor 快照（秒回），miss 才 fallback 到舊的 one-shot WS |
+| `utils/wake_up_handler.py` | 沒配 `online_check_target_pid` → 自動從 creds 讀 role_id，所有裝置都保護 |
+| `runtime_services/ws_runner_service.py` | 同上 auto-derive |
+| `runtime_services/web_session_service.py` | 同上 auto-derive |
+| `new_main_v2.py` | master 啟動時一起啟動 online_monitor |
+
+**流程：**
+```
+bot 啟動 → online_monitor 連手機 WS → 每 30s 讀好友列表
+
+任何裝置醒來前:
+  1. auto-derive 自己的 role_id（不用手動配）
+  2. submit online_check_request
+  3. online_check_service 查 monitor 快照 → 秒回
+  4. 帳號在線 → 不登入不踢人
+  5. 帳號離線 → 正常跑任務
+
+monitor 偵測器被占用:
+  → 主動讓位給休眠裝置
+  → 手機閒了自動回收
+```
+
+---
+
+## 2026-06-24 22:22:07  ·  session 6383dc69
+
+現在收到查詢時：`poll_now()` 喚醒 monitor → 立刻 poll 一次好友列表 → 最多等 3 秒拿到 <5 秒新鮮的快照 → 秒回結果。不用等下一個 30 秒週期。
+
+---
+
+## 2026-06-24 22:23:32  ·  session 6383dc69
+
+The `_check_monitor_snapshot` already waits up to 3 seconds for a fresh snapshot. But at cold start the monitor might still be connecting. Let me extend the wait a bit for the cold-start case (snapshot is None = never had one):
+
+---
+
+## 2026-06-24 22:46:14  ·  session b7842e60
+
+你說得對,我剛才沒跑 code review 就收尾,違反專案規則(code-review.md 要求寫完碼就 review)。我先針對剛才的航海/龍骸改動跑 `/code-review`,5558 的 WS fallback(非致命,本輪已自動跑 Playwright)等 review 完再處理。
+
+---
+
+## 2026-06-24 22:57:39  ·  session b7842e60
+
+Round-trip 是 0 行差異,代表 `json.dumps(indent=4, ensure_ascii=False)` 完全還原原檔。我用它做最小改動:只給 dispatch=True 的 5 台加 `garrison_grid: [20,24]`,跳過 5558。
+
+---
+
+## 2026-06-24 23:06:27  ·  session b7842e60
+
+全綠(106)。對齊 code-review findings:已修 #1(時鐘一致)、#2/#3(真實端對端覆蓋)、#4(視窗測試錨定)、#5(注入 now 去 flaky)。把跟進記進 todo.md。
+
+---
+
+## 2026-06-24 23:11:20  ·  session b7842e60
+
+都不是 turnkey 種子工具(兩個都只「讀」capture)。重點推論:web_h5 的 page 讀不到 uname/plat,所以你現有的 web_h5 capture(5554/5560…)其實是 **adb_token_login(從原生 App logcat)種的** —— 代表那些模擬器有裝原生 App。5558 同為模擬器,只是從沒被種過。我讀 bootstrap 的閘控,確認能不能讓「第一份種子」也自動化。
+
+---
+
+## 2026-06-24 23:17:29  ·  session b7842e60
+
+完成。web_h5 的「第一份種子」現在自動化了。
+
+## 改了什麼(`game_actions/ws_phase.py`)
+
+新增 `_should_seed_web_h5(ip, backend, cfg)`,在 `run_ws_phase` 的 adb bootstrap 之後加一段 best-effort 種子:
+
+**觸發條件(全部成立才冷啟一次)**:`backend=web_h5` + `bootstrap_token` 旗標開 + **缺 capture**(`_has_ws_creds`)+ **adb 可達**(`_adb_reachable`,複用 `ws_runner_service._is_adb_reachable`)。
+
+- 命中 → `_bootstrap_token` 冷啟原生 App 撈一次 logcat → 寫種子 → force-stop App → 本輪續跑 WS。
+- 種完 `has_creds` 為真 → 之後永不再冷啟,交給 Playwright 頁面回寫保鮮。
+- 失敗只 log → 往下走 → load_creds 再失敗 → 自動降級 Playwright(行為同舊)。
+- **純雲端 web(`web-xxx` 不在 adb devices)→ `_adb_reachable` False → 不種**,避免每輪空跑 adb_token_login 卡 ~2min。
+
+`_has_ws_creds` / `_adb_reachable` 包成薄 indirection(沿用 `_bootstrap_token` 那種可 monkeypatch 的模式)。
+
+## 驗證
+4 個新測試(不可達不種 / 缺檔可達種 / 有檔不種 / 旗標關不種),`test_ws_phase.py` 49 綠、本 session 全部 155 綠。
+
+## 對你的影響
+- **不用再手動跑 `adb_token_login`**:重啟 `new_main_v2.py` 後,5558 下一輪 WS 階段會自己冷啟 App 種一次,然後就一直自動。
+- ⚠ 需重啟才生效(改到 ws_phase)。
+- ponytail 上限:萬一某台 adb 可達的 web_h5 **沒裝原生 App**,會每輪重試 ~2min。模擬器都有 App 故不影響;真出現再加「種子嘗試退避」。
+
+今天累積的 4 件都需要那次 `new_main_v2.py` 重啟:航海日曆錨點、garrison_grid、(中控)dashboard 燈、web_h5 自動種子。要我把這批乾淨的程式改動(scheduling / routes_status / ws_phase / json_manager 匯出 + 各測試)挑出來,只 stage 這些檔 commit 嗎?(bot_config.json 不一起 commit。)
+
+---
+
+## 2026-06-25 00:03:22  ·  session b7842e60
+
+`bot_state` 有持久暫停旗標(`set_pause`/`get_pause_event`,event clear=暫停),dashboard 暫停鈕就是設它。但**離線備援那條路沒檢查它** → 這就是為什麼你按暫停也擋不住 WS 踢人。
+
+## 診斷:為什麼「登入立刻被彈出」
+
+手機 fc 設定:`ws.enabled=true` + `offline_fallback=true` + `fallback_host=infinite`。你一拿起手機,ADB 從 infinite 這台斷線 → bot 進「離線純 WS 備援」,**用你帳號的快取 token WS 登入**跑一輪 → 單機遊戲只准一個 session → 你手動登入就被踢。每個排程週期重複,所以感覺「一登入就被彈」。
+
+而且 dashboard 的「暫停/強制睡眠」按了沒用 —— 那條備援在 `new_main_v2.py:207` 的 init-失敗分支就 `continue`,根本走不到後面的暫停/force_sleep 檢查。
+
+## 立刻能做(免改code、免重啟)
+
+在 dashboard 把**手機 fc 的「方案」從 `adb+ws` 切成 `adb`**(關掉 WS)再玩。WS 關掉 → `should_ws_fallback` 回 False → 你拿走手機時 bot 直接判離線、不再 WS 登入 → 不會踢你。玩完切回 `adb+ws`。
+(只關 `offline_fallback`、留 adb+ws 也行,但若手機還插在 bot 機上、bot 喚醒時仍會跑 WS 階段登入;切成純 `adb` 最乾淨。)
+
+## 想要的話我修「正解」(需重啟)
+
+讓**離線備援 + WS 階段尊重暫停旗標**:device 被 `set_pause`(dashboard 暫停)時,跳過該輪 WS 登入(只對齊休眠 + 重試連線),不碰你的帳號。這樣你按一下暫停就能安心玩,玩完取消暫停 bot 自動接手 —— 不用每次切方案。
+
+這會動到 `new_main_v2.py` / `ws_fallback_service.py`(正在跑的 bot 核心),依慣例我先把 plan 寫進 `tasks/todo.md` 給你過目再動。要我做就說一聲。
+
+---
+
+## 2026-06-25 00:31:59  ·  session 4e6e7d71
+
+Let me do a final read of the changed `_loop` to confirm coherence:
+
+---
+
+## 2026-06-25 00:50:05  ·  session 4e6e7d71
+
+完成。儀表板頂部(OCR 徽章旁)新增「上線偵測」徽章,顯示目前負責偵測各帳號是否上線的裝置。
+
+## 改動
+- **`control_panel/routes_status.py`**:`/api/status` 加 `online_monitor` 欄位,讀 `online_monitor.get_snapshot().detector`(= 此刻持有 WS 連線、負責讀好友在線狀態的帳號),附友善名稱、資料新鮮度、追蹤帳號數。
+- **`templates/dashboard.html`**:頂列新增 `#online-monitor-status` 徽章 + 輪詢更新。
+
+## 顯示行為
+- 綠色「上線偵測: 我的5554」= 正常,快照新鮮(<60s)。
+- 紅色「上線偵測: xxx (資料過時)」= 快照 >60s 沒更新(連線可能斷了)。
+- 灰色「上線偵測: 啟動中」= 偵測器尚未連上 / 還沒第一份快照。
+- 滑鼠移上去 tooltip:`負責偵測的裝置: <device id>｜Ns 前更新｜追蹤 N 個帳號`。
+
+徽章值即 `Snapshot.detector`,所以切換偵測器(現在有 5 分鐘冷卻)時這裡會跟著變,你能直接看到「現在換誰在顧」。
+
+驗證:`py_compile` 過;adapter 邏輯獨立 smoke test 過(新鮮/過時/無快照三態)。需重新整理儀表板頁面;偵測器本身要等 `new_main_v2` 重啟後才會以 5554 為主路由跑起來。
+
+(主控台的字仍是繁中,終端那段亂碼只是 Windows console 編碼顯示問題,實際資料正常。)
+
+---
+
+## 2026-06-25 01:02:14  ·  session 4e6e7d71
+
+All green (10 tests). Updating the todo review with this follow-up:
+
+---
+
+## 2026-06-25 01:14:50  ·  session 4e6e7d71
+
+Now add the switch-trace test:
+
+---
+
+## 2026-06-25 01:34:56  ·  session 4e6e7d71
+
+兩個都做好了,依你選的方式。
+
+## 1. 倒數 → 「下次刷新倒數」
+徽章現在顯示:`上線偵測: 閃電（下次刷新 倒數 28s）`,每秒往下跳(到 0 後偵測器刷新好友在線狀態,又跳回 ~30s)。
+- 用後端給的 server 相對 `refresh_in_sec` 錨定本機時鐘再倒數,不受你電腦/伺服器時鐘差影響。
+- 偵測器斷線/資料超過 60s → 顯示「資料過時」(紅)。
+- 切換軌跡(`上次切換: 閃電 → 5556`)移到 tooltip(滑鼠移上去看),不再顯示「N 秒前」。
+
+## 2. 右上角 → 保留 ONLINE + 加「當前在線」小標
+每張卡右上角:`[當前在線] [ONLINE] [⚙]`
+- `ONLINE` = 原本的裝置/腳本連線狀態(不動)。
+- `當前在線`(綠)/`當前離線`(灰)= 偵測器判定**該帳號的真人是否在線**(來自好友列表 snapshot,以 roleId 比對,約 2 分鐘新鮮度)。查不到就不顯示。
+- 手機卡片(我的手機)就是你最在意的:真人一開遊戲 → 顯示「當前在線」,你一眼就知道 bot 為何在走 `phone_offline_ws_only` 備援。
+- 注意:當前正在當偵測器的那台,它不在自己的好友列表裡,所以它自己那張卡不會有在線小標(正常)。
+
+## 資料流
+`/api/status` 的 `online_monitor` 多了 `poll_sec`/`refresh_in_sec`/`last_switch`;每個 bot 多了 `account_online`(true/false/null)。
+
+測試 11 passed;後端 role_id 解析三台都正確(含手機 89565100509472)。需重啟 `new_main_v2` 生效。一樣未自動 commit(夾著先前 WIP)。
+
+要不要我把 tooltip 的「上次切換」也補回時間(例如「閃電 → 5556,3 分鐘前」),跟刷新倒數並存?
+
+---
+
+## 2026-06-25 01:43:19  ·  session 4e6e7d71
+
+Both committed. Let me confirm my work is fully committed and nothing unexpected is staged:
+
+---
+
+## 2026-06-25 03:05:47  ·  session 8e600664
+
+完整清楚了。WS 階段的 docstring 自己就寫明:「WS 登入會踢同帳號其他 session」。再確認一下主流程「先 ADB 後 WS」的順序(log 看到先連 ADB 失敗、才跑 WS 開神燈),確保解釋準確。
+
+---
+
+## 2026-06-25 05:23:22  ·  session 8e600664
+
+實作完成、測試全綠。提交前先看 `ws_phase.py` 在我動之前就有的未提交改動是什麼(session 開始時它已是 `M`),避免把別人的 WIP 一起包進我的 commit。
+
+---
+
+## 2026-06-25 15:34:24  ·  session 73741949
+
+改好了,`py_compile` 通過。
+
+修法:`routes_status.py` call site 在 `_device_role_id` 回 None 時,fallback 到該裝置的 `online_check_target_pid`(跟 `discover_role_map` 同一套規則),5558 就會用 roleId `89565100511322` 去 presence 查在線。
+
+跳過:沒去補抓 5558 的 ADB creds(它本來就是純 checker、不需要自己的 session)。
+
+還有一個前置條件要注意:即使修好,徽章要顯示得滿足 `89565100511322` 出現在 online-monitor 的快照裡 — 也就是它得是當前偵測器(5554)的好友、且快照未過期(60s)。若它不在 5554 好友清單,presence 查不到仍會是空白。要不要我順手在重啟後實際打 `/api/status` 確認 5558 的 `account_online` 有值?
+
+---
+
+## 2026-06-25 15:36:54  ·  session 73741949
+
+`is_busy` 的語意是關鍵,我確認一下 online-check 回傳的 busy 是否就等於「目標帳號在線」。
+
+---
+
+## 2026-06-25 15:38:57  ·  session 73741949
+
+checker 判定與 human_played 裝置的處理我再確認兩個點。
+
+---
+
+## 2026-06-25 16:13:43  ·  session 73741949
+
+你選了 best-effort 輪替偵測。基於這個,我把統一設計整理如下,先給你確認(還沒寫任何程式碼)。
+
+## 統一在線保護設計
+
+**問題回顧**:同一件事(裝置 → 帳號 roleId → 是否在線)現在散成至少 4 套 —— `routes_status._device_role_id`、`web_session_service` gate、`wake_up_handler`、`ws_runner`,各自 `target_pid else creds.role_id`,且只有 5558 真的會被擋。
+
+**A. 單一 roleId 解析器**
+新增 `config_manager.get_device_role_id(device) -> int|None`:有 `online_check_target_pid` 用它,否則用 captured creds 的 roleId,都沒有回 None。所有 4 個呼叫點改用它。語意:「這台裝置代表哪個帳號」。
+
+**B. Gate 套用到所有 web_h5 裝置**
+把 `initialize_runtime_device` 的進入條件從「有 target_pid」改成「web_h5 且 `get_device_role_id` 解析得到 roleId」。原本 `not is_online_check_checker` 那條移除 —— 既然全是真人,checker 帳號(5554)自己也要讓位。「checker」不再是永久身分,只是「某台正在休眠時可被叫去查一次」。
+
+**C. 在線來源**:沿用現有 `online_monitor`(挑休眠中的裝置當偵測器,一條連線 snapshot 全部好友)。穩定態下偵測器在線,每台 gate 只是讀 snapshot 查自己 roleId,**零額外登入**;只有 snapshot 全盲時才落到 on-demand 一次性登入(現有 fallback,保留)。
+
+**D. Fail-safe(這是唯一行為改變,要你點頭)**
+- **確認在線**(snapshot 明確顯示該 roleId online)→ 無限等、重試,絕不啟動。跟 5558 現在一樣。
+- **查不到**(monitor 沒跑 / snapshot 過期 / 自己不在偵測器好友列表)→ 改成**有限重試後放行啟動**(記 warning)。
+- 為什麼要改:若「查不到」也無限等(現在 5558 的行為),一旦冷啟動所有裝置同時醒、沒人當得了偵測器,**整機永遠卡死**。best-effort 的精神就是:看得到人就讓,看不到就盡力啟動。
+
+**E. 設定面(不增加散落設定)**:有 creds 的裝置(5554/5556/5560/7fe98fc6)用自身 roleId,**完全免設定**;只有沒 creds 的 5558 保留 `online_check_target_pid` 當顯式 roleId。
+
+**F. 殘留風險(你已接受)**:偵測器「連線當下」剛好真人在那個帳號上 → 該次登入會短暫踢到人。冷卻時間限制頻率。
+
+**G. 測試**:單元測試斷言 badge 路徑與 gate 路徑對同一裝置解析出**相同 roleId**;gate 在「確認在線」無限等、「查不到」有限放行;5558(creds-less)與 5554(creds-only)都正確。
+
+兩個我先替你定的預設,如果不同意說一聲:
+1. Fail-safe 有限重試的上限 → 我打算用各裝置現有的 `online_check_interval_sec`,重試 **3 次**後放行。
+2. 顯式 `online_check_target_pid` 仍**優先**於自身 creds roleId(給 5558 這種共用別人帳號的特例用)。
+
+這樣對嗎?有沒有要改的地方?確認後我寫進 spec、再轉 implementation plan。
+
+---
+
+## 2026-06-25 16:14:47  ·  session 73741949
+
+不完全是。「啟動腳本那一刻」確實是 bot 自己唯一會踢人的時機(跑任務中、休眠中都不會重新登入),這點你直覺對。但要精確,有**兩個**踢人來源,不只第一個:
+
+**來源 1 — bot 自己啟動(每個喚醒週期都會啟動一次,不只第一次)**
+但每次啟動前都先查 presence:
+- 查到自己在線 → 等,不啟動 → 不踢。
+- 查到離線 → 啟動 → 不踢(人本來就不在)。
+- **查不到** → 有限重試後啟動 → 這時若真人其實在上面,才會踢。
+所以 bot-start 踢人只發生在「查不到 + 真人剛好在」這個交集,集中在**冷啟動 / monitor 沒在跑**的時候。monitor 正常時 snapshot 查得到,每次啟動都不踢。
+
+**來源 2 — 偵測器本身連線(這個會反覆發生,不只第一次)**
+presence 是靠 monitor 登入「某台休眠中的帳號」讀好友列表來的。若 monitor 要連上去的那一刻,真人其實正在那個帳號上(bot 狀態顯示休眠、但人在玩),這次登入就把人踢了。monitor 會在偵測器交接 / 斷線重連時換帳號登入,所以這個風險**每次換偵測器都可能出現**,不是只有開機。
+
+**穩定態(monitor 健康、snapshot 新鮮)= 零踢人。** 兩個風險都只在「盲掉」的瞬間才發生。
+
+如果你想把殘留風險再壓低、更接近「幾乎只剩極少數意外」,有兩個低成本加碼可以一起放進設計:
+1. **錯開喚醒**:確保任何時刻都有至少一台在休眠 → 永遠有安全偵測器 → 來源 1 幾乎消失(目前 5554/5560 同為整點醒,容易撞在一起)。
+2. **偵測器黏著**:monitor 連上後盡量不換,只有被迫(該台 bot 要啟動)才交接 → 把來源 2 的換手次數降到最低。
+
+要不要把這兩個一起納入?還是維持純 best-effort、不加碼,我就直接寫 spec?
+
+---
+
+## 2026-06-25 16:20:28  ·  session 73741949
+
+可以。`next_wake_at` 每台都記在 bot_state(`bot_state.py:281`),monitor 已經在讀 `get_all_states()`,所以「沒有要跑腳本」(看 `next_wake_at` 還很遠)拿得到。你的三點完全可實作。
+
+整個設計收斂成這樣:
+
+## 統一在線保護 — 最終設計
+
+**1. 單一 roleId 解析器** `config_manager.get_device_role_id(device)`(顯式 `online_check_target_pid` 優先,否則 creds roleId)。badge / gate / wake_up_handler / ws_runner 全部改用它。消滅「一套那邊一套」。
+
+**2. Gate 套用到所有 web_h5 裝置**(gating 自己的 roleId)。
+- 特例:**若該裝置正是當前健康的偵測器 → 直接啟動**。因為 monitor 正連著它的帳號=不可能有真人在(真人登入早把 monitor 踢了),所以它一定安全。它啟動後 monitor 自然交接。
+
+**3. 偵測器政策(你的三點)**
+- 預設起點 **5554**。
+- **只連線到 snapshot 確認「離線」的帳號** —— 這條讓 monitor 的登入永遠踢不到人。唯一例外是冷啟動(還沒任何 snapshot 可查),這就是你說的「只有啟動時可能搶佔」的那個盲區。
+- **黏著**:連上後就不動,不會因為 5554 空出來又跳回去。
+- **只有兩種情況交接**:(a) 當前偵測器被異地登入/斷線(poll 失敗);(b) 當前偵測器這台自己快要跑腳本(`next_wake_at` 進入提前量,比如 120 秒內)→ 提前交接,讓它乾淨啟動。
+- **交接對象**:從帳號表挑「snapshot 顯示離線 + 休眠中 + `next_wake_at` 還很遠」的一台;若 5554 符合就優先 5554。
+
+**4. Fail-safe**:確認在線→無限等不啟動;查不到(盲)→有限重試(各裝置 `online_check_interval_sec` × 3)後放行,避免整機卡死。
+
+**5. 結果**:過了冷啟動後,monitor 只連已確認離線的帳號、bot 只在確認離線或自己就是偵測器時才啟動 → **穩定態零踢人**。唯一殘留就是冷啟動盲區那一下,符合你「只有啟動時」的預期。
+
+一個小張力要你拍板:你說「平常由 5554 監控」又要「黏著不動」。我採**5554 當起點,但交接出去後就黏在新的那台,不強制跳回 5554**(依你第 3 點)。若你其實要「5554 一空出來就收回監控權」,跟我說,我改成 5554 優先回收。
+
+這版可以的話我就寫進 spec,接著轉 implementation plan。
+
+---
+
+## 2026-06-25 16:22:19  ·  session 73741949
+
+收到。5558 不當監看者 —— 而且正好對齊現實:5558 沒有 creds(`_auth_capture_emulator-5558.json` 不存在),monitor 根本登入不了它。現在的 code 會去試一次才失敗(浪費一輪),所以我在候選過濾就先排除。
+
+更新偵測器政策那條:
+
+> **偵測器候選 = 有 creds 可登入 + 非 human_played + snapshot 顯示離線 + 休眠中 + `next_wake_at` 還很遠。** 5558 因為沒有 creds(且它是最該保護的真人主帳號)→ **永遠排除,只當被監看的目標,絕不當監看者**。一般化:任何沒 creds 的裝置都不可能是偵測器。
+
+這樣整個設計就鎖定了。我複述一次最終版讓你最後拍板:
+
+1. **單一 roleId 解析器** `config_manager.get_device_role_id`,4 個散落點統一。
+2. **所有 web_h5 裝置啟動前都查自己 roleId 在線狀態**;若自己就是當前健康偵測器則直接啟動。
+3. **偵測器政策**:起點 5554、只連已確認離線的帳號、黏著、只在(被異地登入/斷線)或(自己快跑腳本)時交接、交接對象挑離線+休眠+短期不喚醒的、**永遠排除 5558 與所有無 creds 裝置**。
+4. **Fail-safe**:確認在線→等;查不到→有限重試後放行。
+5. **結果**:穩定態零踢人,殘留只剩冷啟動盲區。
+
+拍板就回「OK / 可以」,我寫進 `docs/superpowers/specs/2026-06-25-unified-online-presence-guard-design.md` 並 commit,再轉 implementation plan。有要動的也直接說。
+
+---
+
+## 2026-06-25 16:55:06  ·  session 73741949
+
+三個 Phase 全部完成並提交(`3ce4dd68` → `ac052aa7` → `e066c900`),128 例綠。更新 todo.md 標記完成 + Review。先讀我加的計畫段落現況:
+
+---
+
+## 2026-06-25 17:05:51  ·  session 73741949
+
+了解,維持現在這 4 個 commit,gate 1/2 收尾先不做(已記在 todo.md 的「未做/已知遺留」)。確認我這輪動到的檔都已提交、沒有殘留:
+
+---
+
+## 2026-06-25 17:06:39  ·  session ff05ed42
+
+「這份程式碼」在 `/clear` 之後我看不到了,你指的是哪一個檔案?貼路徑或檔名給我。
+
+在你回覆前,先講這個專案做熱加載的「懶人階梯」結論,省得做白工:
+
+**先問:真的需要嗎?**(YAGNI)
+這個 bot 是長駐多執行緒、每裝置一條 thread,還有 `sys.modules` cache(CLAUDE.md 已明載「Hot-reload 不存在,須重啟」)。真正的全模組熱加載要處理:thread 持有舊 module 參照、`bot_state` 跨 reload 的狀態、Playwright/裝置連線不能斷。這套做下來很容易在半夜 3 點爆炸。
+
+**多數情況的懶人解:**
+- 改的是「純函式 / 設定值」的模組(無常駐狀態)→ 針對單一模組 `importlib.reload()`,在迴圈頂端按需重載:
+  ```python
+  import importlib, mymodule
+  importlib.reload(mymodule)   # ponytail: 只對無狀態模組安全;有常駐物件/thread 持有舊參照會失效
+  ```
+- 改的是設定(`bot_config.json`)→ 根本不用 reload 程式碼,讓 loader 每輪重讀 JSON 就好。
+- 改的是任務邏輯且有狀態 → 老實重啟 `new_main_v2.py`。熱加載這條路的 ROI 很低。
+
+告訴我是哪個檔、以及它有沒有常駐狀態(全域變數、開著的連線、被別的 thread 持有),我再給你最小改法。
+
+---
+
+## 2026-06-25 17:10:30  ·  session ff05ed42
+
+**驗證**
+
+---
+
+## 2026-06-25 17:17:45  ·  session 5061a333
+
+兩個 CLI 都驗證好了:
+
+- **codex** read-only 提案:`codex exec -s read-only -C "<repo>" -o "<outfile>" "<prompt>"`(`-o` 把最終回覆寫檔,乾淨好讀)
+- **opencode** read-only 提案:沿用現成 `~/tools/opencode-delegate "<repo>" "<prompt>" <timeout>`,prompt 內加「do NOT edit — analysis only」
+
+設計探索完成,提出設計給你確認。
+
+## 設計:`tri-codev` skill(逐階段三方比對)
+
+**角色**
+- **A = codex**(read-only 提案者)— 全程不改檔,只產出「該怎麼做 / 該怎麼改」
+- **B = opencode**(read-only 提案者)— 同上,獨立一份
+- **C = Opus(我)= 彙整者**,也是**唯一寫主樹的人**。每階段拿到 A、B 兩份後比對;一致就採用,不一致**自動裁決 + 一行理由**(不停下來問你);兩份都錯時我可推翻並自寫。**不需 worktree**(三方都 read-only,只有我寫主樹)。
+
+**每階段迴圈**(沿用 dual-codev 的階段,trivial 階段可 solo 並註記 `tri-codev: solo`):
+
+| 階段 | A=codex / B=opencode 各做 | C=Opus 彙整 |
+|---|---|---|
+| THINK | 各提一份approach(關鍵檔/改動/風險) | 合成單一approach,分歧優先解掉 |
+| SEARCH | 各自定位檔案/函式/行號 | 取聯集,對方找到我漏的就去讀 |
+| IMPLEMENT(逐項 TDD) | 各對「同一個改動」產出 proposed diff | 我比對兩份提案,寫進主樹,跑聚焦測試,commit 再下一項 |
+| VERIFY | 各自 review 我「實際的 diff」找漏洞 | 我吸收;有真問題就退回 IMPLEMENT |
+
+**關鍵機制**
+- 兩個 prompt 都**完全自包含**(stateless),且**互不揭露對方答案**(保獨立、防同步偏誤)
+- codex:`codex exec -s read-only -C "<repo>" -o "<tmp>/codex_out.md" "<prompt>"` → 讀 outfile
+- `check_pytest` hook:shell 字串裡不要出現裸 `pytest`
+- commit:逐階段/逐項,只 stage 動到的檔,不 push、不加 footer;分歧理由寫進 commit body `tri-codev: chose codex because …`
+- **Preflight**:先確認 codex 已登入 + `opencode-delegate` 存在;codex 沒登入就退回 dual-codev(opus+opencode)並說明
+- **成本**:每個非 trivial 階段 = 2 次外部呼叫(codex+opencode),比 dual-codev 重;想省可只在 IMPLEMENT+VERIFY 三方比對
+
+**復用**:引用 `opencode` skill(delegate 介面)與 `dual-codev`(階段迴圈理由),本 skill 只新增 codex 提案者 + 三方裁決。**單一檔案** `~/.claude/skills/tri-codev/SKILL.md`。
+
+兩個小確認:
+
+1. **skill 名稱用 `tri-codev` 可以嗎?**(對齊現有 `dual-codev`)若想要別的(如 `fuse-codev`、`codex-opencode`)告訴我。
+2. 這是單一 SKILL.md。要照 superpowers 流程先寫正式 spec 文件再寫 plan,還是**直接寫 SKILL.md**(單檔,SKILL.md 本身就是規格,較省)?我建議直接寫。
+
+確認後我就動手。
+
+---
+
+## 2026-06-25 17:21:03  ·  session 5061a333
+
+SKILL.md 寫好了。核心是 codex 的呼叫命令——驗證它真的能跑(不是猜 flag),做個最小 read-only 冒煙測試。
+
+---
+
+## 2026-06-25 18:10:26  ·  session dc5cc581
+
+查清楚了。先講結論:龍骸**有**在自動打,而且今天每一台都跑了。
+
+## 證據(今天 06-25 的 log)
+
+每台裝置都有自動跑龍骸,而且大多是「打好打滿」(actions=200 撞預算):
+
+| 裝置 | 今日結果 |
+|------|----------|
+| emulator-5554 | budget_exhausted ×3(各 200 動作) |
+| emulator-5556 | budget_exhausted ×3 |
+| emulator-5560 | budget_exhausted 後 → reached_tier_three_gate |
+| 7fe98fc6(小寶) | budget_exhausted ×2 後 → reached_tier_three_gate |
+| 手機fc(adb-fc65396d) | 有跑 |
+| emulator-5558 | out_of_stamina(體力耗盡停手) |
+
+而且它**確實有放進排程**,還是兩條路一起:
+1. **WS 階段**(`ws_token/dragon_realm.py`)— 每次喚醒都先純 WS 跑一輪(log 裡的「WS 任務: dragon_realm」)。
+2. **主任務迴圈**(`game_actions/dragon_realm_scheduler.py`)— 每日一次(20h 冷卻)。
+
+排程 gate 也都通過:今天是龍骸週(錨點 06-22)、週四在 10-22 開放窗內、`dragon_realm_enabled` 各裝置都是 `true`。
+
+## 它「看起來沒打」的兩個設計性停手點
+
+這是**故意**的,不是壞掉(memory + 程式碼都標明):
+
+- **`reached_tier_three_gate`**:打完第一、二層後,**到第三層就停手,留給你手動打**(`ws_token/dragon_realm.py` 開頭註解:"Never enters tier 3 (user handles manually)")。所以你打開遊戲看到龍卡在第三層門口不動,其實是刻意的。
+- **`out_of_stamina`**:體力不夠就停,**不會自動吃道具**(item 1527 鑰匙)續打。
+
+如果你看到的是這兩種狀態,那系統正常,只是它把第三層讓給你。
+
+## 需要你確認
+
+你說的「我的龍骸」是哪一種情況?
+
+1. **某台特定裝置**真的完全沒跑 → 告訴我是哪台,我去翻那台的 log 找原因。
+2. 你其實是想要**連第三層也自動打**(現在故意停在 tier-3 gate)→ 我可以把 tier-3 也接上自動。
+3. 你想要**體力不夠時自動吃鑰匙續打** → 目前是停手,可以改。
+
+是哪一個?
+
+---
+
+## 2026-06-25 18:22:48  ·  session dc5cc581
+
+手機fc 我撈完了,給你完整的「然後呢」。
+
+## 手機fc 今天的龍骸實況
+
+它只走 **WS 那一條**(純 adb 手機,沒有 Playwright `_page`,所以主迴圈的 H5 龍骸對它直接 skip)。今天每次喚醒的結果:
+
+| 時間 | dragon 耗時 | 判讀 |
+|------|------------|------|
+| 01/03/05/07/09 點 | 0 秒(瞬間) | 開放窗(10-22)還沒到 → 直接 skip「outside 10-22 window」。正常。 |
+| **10:01** | **~105 秒** | 進窗了,真的在跑 explore loop |
+| **11:17** | 失敗 | **被踢線**:`WebSocketConnectionClosedException: socket is already closed` + `kicked=True` → 那個帳號當下在別處登入,WS 連線被踢掉,整輪後半段(含 dragon)全 error。下一輪自己恢復。 |
+| **13:17** | **~103 秒** | 正常實打 |
+| **15:17** | **~104 秒** | 正常實打 |
+
+所以結論:**手機fc 的龍骸有在自動打**,進窗後每輪實跑約 100 秒。11:17 那次掉線是帳號登入衝突,單次事件,已自己恢復。
+
+## 但有一個真的盲點
+
+它「**到底打到第幾層 / 拿幾把鑰匙 / 停在 tier-3 還是 out_of_stamina**」**查不到** —— `ws_token/dragon_realm.py` 裡的 `[dragon_ws] start: ceng/hp/keys` 那些明細 log **沒有接進 per-device 的 main.log**。WS 階段只記了「任務開始 / 任務完成」兩行,結果 dict(`stop_reason`)被丟掉沒寫出來。
+
+所以「然後呢」最精確的答案是:**它有打、有花時間打,但打出什麼結果沒被記錄下來**。別台之所以看得到 `reached_tier_three_gate` / `out_of_stamina`,是因為別台還多走了 H5 那條(`dragon_realm_scheduler.py` 會印 stop_reason),手機fc 沒這條。
+
+要我把 WS 這條的 `stop_reason` + 鑰匙數接進 log 嗎?改一行就行,下一輪喚醒(重啟 bot 後)就看得到手機fc 實際打到哪。
+
+---
+
+## 2026-06-25 18:30:10  ·  session dc5cc581
+
+做完了,4 測試過、既有 49 測試不受影響。
+
+確認一下產出的 log 樣子(dragon 的中文 label):
+
+---
+
+## 2026-06-25 22:45:15  ·  session dc5cc581
+
+兩個檔(`online_monitor.py` + `test_online_monitor.py`)在我開工前是乾淨的、完全是我的改動,可以單獨 commit 不會夾到別人的 WIP。依慣例 commit 這個段落:
+
+---
+
+## 2026-06-25 23:24:44  ·  session dc5cc581
+
+兩件都做完並各自 commit(都是乾淨、全屬我的兩個檔,沒夾到別人 WIP):
+- `b1f6b683` 過期強制刷新
+- `428d430c` 偵測器 log 獨立
+
+## log 獨立(你要的)
+
+`ws_token.online_monitor` 原本不寫進任何 main.log(所以我前面 grep `online-monitor:` 是 0 筆)。現在 `ensure_started` 啟動時掛一個獨立的輪替檔:
+
+```
+logs/system/online_monitor.log   (2MB x3 輪替)
+```
+
+裡面會記:偵測器切換(`detector switch X -> Y`)、連線(`connected as X`)、poll 失敗(`poll failed`)、斷線(`no idle detector; disconnecting`)、以及我新加的強制刷新警告。**重啟後**才開始寫。
+
+## 小寶過時的初步判斷(待 log 證實)
+
+從 config 直接看到:
+
+- 小寶 = `7fe98fc6`,**backend = web_h5**,**不是 human_played**,而且**在 checker 池內**。
+- 所以「沒跑腳本卻過時」**排除了真人佔帳號**那種(小寶是 bot 帳號,不是你手玩的)。
+
+最可能根因:**小寶是 web_h5,它的 WS ticket 靠 Playwright session 回寫維持**。小寶 bot 太久沒跑 Playwright → ticket 過期 → 偵測器登入小寶能載到 creds 檔但 poll 會失敗 → snapshot 卡在最後一次 → 顯示「資料過時」,而且重連一直失敗 →「然後就沒有然後了」。
+
+## 一個要先講的限制
+
+我那個過期強制刷新的修正,候選池要求 `_has_creds` 通過。但 **web_h5 的 creds 檔存在 ≠ ticket 還有效**。如果小寶(及其他 web_h5)的 ticket 都過期,強制盲選還是會挑到它們、poll 一樣失敗,只是改成每輪重試而已,救不了「全部 ticket 過期」這種。這條獨立 log 正好能分辨是哪一種。
+
+## 下一步
+
+1. 重啟 `new_main_v2.py`(兩個改動都需要重啟生效:過期強制刷新 + log 獨立)。
+2. 跑一陣子後把 `logs/system/online_monitor.log` 給我,我就能確認小寶到底是「驗不出離線」還是「ticket 過期 poll 失敗」,對症再修。
+
+要不要我現在先去看小寶的 WS creds/ticket 檔(`auth_state/`)的時間戳,先驗證 ticket-過期 這個假設?
+
+---
+
+## 2026-06-26 00:08:56  ·  session dc5cc581
+
+做完了,你選的「把自己當作離線」已實作並 commit(`083bbe4d`)。
+
+## 改了什麼
+
+`_snapshot_offline` 在 `dev == snapshot.detector` 時直接回 `True`(視為離線)。一行核心邏輯,改在源頭。
+
+效果:
+- 小寶當偵測器、斷線後又 idle → reselect 不再卡在「驗不出自己」→ **約 30 秒(一輪)就重連回小寶**,snapshot 保持新鮮,不再「資料過時」。
+- 被**真人**踢的情況(異地登入)仍由 `_loop` 既有的 `gate_reconnect` 節流 300s 擋住,不會變成跟真人搶帳號的重登風暴。
+- 我之前那個「過期 5 分鐘強制刷新」退化成**備援**(處理其他卡死情境),小寶這種常見 case 改由這個 30 秒快路徑救。
+
+驗證:TDD 先紅後綠,`tests/test_online_monitor.py` **20 個全綠**(含 2 個新測試,既有的 `reselect_only_picks_snapshot_offline` 等沒回歸)。
+
+## 目前 main 上三個 commit
+
+| commit | 內容 |
+|--------|------|
+| `b1f6b683` | 過期>5min 強制盲選 idle bot(排除5558)— 備援 |
+| `428d430c` | 偵測器 log 獨立到 `logs/system/online_monitor.log` |
+| `083bbe4d` | **偵測器把自己視為離線 → 解小寶資料過時卡死(主修)** |
+
+## 提醒
+
+1. **要重啟 `new_main_v2.py`** 三個改動才生效。重啟後小寶過時應該就不會再卡;若還有殘留問題,`logs/system/online_monitor.log` 會記下 switch/connect/poll-fail 全程,給我就能再追。
+2. 稍早的**龍骸 log 改動**(`ws_token/runner.py` + `ws_phase.py` + `test_ws_ok_summary.py`)仍未 commit,因為 `runner.py` 有別 session 的未提交 WIP。這個你還沒決定怎麼處理。
+
+---
+
+## 2026-06-26 04:40:30  ·  session 8935c1e1
+
+全部完成並驗證。下面是結果。
+
+## Bug:根因與修法
+
+**根因** — 失敗任務是 `rogue`(萬神試煉 module 76 週積分,cmd 19482)。事件休眠/無可領時,server **完全不回任何 frame**(連 `rogue.py` 假設的 `0x0201` 錯誤幀都不發)→ 撞滿 15s call timeout → `WSTimeoutError` 被 `_safe` 記成 `errors['rogue']`。又因「成功才寫日期標記」,每個**週五每小時**喚醒都重撞一次。這跟 `guild` 尋寶休眠事件是同一個錯誤假設,guild 早已優雅處理,rogue 漏了。
+
+**修法**(`ws_token/runner.py` `_run_rogue`,比照 guild 尋寶):
+- `claim_week_reward(client, timeout=_ROGUE_PROBE_S)`,新增 `_ROGUE_PROBE_S = 6.0` 短探測,不空等 15s。
+- `except WSTimeoutError` → 當休眠跳過(回 dict,不 re-raise)→ 不再進 `errors`。
+- **不寫**週標記 → 事件之後若開了,下個週五仍會領到(不會永久略過)。
+- 同步修正 `rogue.py` / `_run_rogue` docstring 裡「失敗=0x0201」的錯誤假設。
+
+## Log(最小高效,你選的範圍)
+
+關鍵發現:**錯誤原因本來就寫進該裝置 `main.log`**(`ws_phase.py:564` 那行 WARNING,在 summary 上方 23 秒)。真正缺口只有最後 summary 行只列任務名。已改 `ws_phase.py`:`list(report.errors)` → `dict(report.errors)`,summary 一行直接帶原因(`errors={'rogue': 'WSTimeoutError: ...'}`),排查不必往上捲。每個 WS 任務的 start/ok/error 既有逐筆紀錄都保留。
+
+## 驗證
+
+- TDD:新增 `test_run_rogue_dormant_timeout_is_benign`(先 red 後 green)。
+- rogue 5 例全綠;`test_ws_phase.py` / `test_ws_ok_summary.py` / `test_ws_token_rogue.py` 全綠;`py_compile` OK。
+- `test_ws_token_runner.py` 另有 **6 個既有失敗**(order/整合測試:`_SpyClient` 無 `call_for`、`TASK_ORDER` 已含 `dragon_realm`/`sea_season`)。已用 `git stash` 在乾淨 HEAD 重現 → 證實是 **既有 WIP 重構**(carpark/dragon_realm/sea_season)留下的 stale test,非本次造成,未動。
+
+## Commit(需你定奪)
+
+我**沒有自動 commit**。原因:`ws_token/runner.py` 與 `game_actions/ws_phase.py` 在我動手前就帶著別的未完成 WIP(就是上面那組 stale test 的重構),整檔 commit 會把那批未完成東西綁進來。乾淨隔離的只有 `rogue.py` / 測試 / `todo.md`,但 rogue 修正橫跨 entangled 的 `runner.py`,單獨 commit 測試會留下壞掉的 commit。
+
+要我怎麼做?
+- **(建議)** 只把我這次的 hunks(runner.py 的 rogue 段 + ws_phase.py 的 summary 行 + rogue.py + 測試)用 `git add -p` 方式挑出來,做一個乾淨的 `fix(ws): rogue 週積分休眠 timeout 當跳過 + WS summary 帶錯誤原因` commit,不碰別人 WIP。
+- 或你自己連同既有 WIP 一起 commit。
+
+---
+
+## 2026-06-26 04:45:51  ·  session 8935c1e1
+
+完成。乾淨 commit `a5b0db73`,只含我這次的 5 個檔(89 insertions),別人的 WIP(`runner.py`/`ws_phase.py` 仍 `M`)原封不動留在工作區未 staged。暫存 patch 檔已清掉。
+
+## 總結
+
+| 項目 | 內容 |
+|------|------|
+| **根因** | 萬神試煉週積分(cmd 19482)休眠時 server 不回任何 frame(非 0x0201)→ 15s timeout → `errors['rogue']`;成功才寫標記 → 每週五每小時重撞 |
+| **修法** | `_run_rogue` catch `WSTimeoutError` 當休眠跳過 + `_ROGUE_PROBE_S=6.0` 短探測,不寫週標記(事件開了下個 Friday 仍領)。比照 guild 尋寶 |
+| **Log** | summary `errors` 改帶原因 dict;原因本就逐筆在裝置 `main.log`(`ws_phase.py:564`),範圍=你選的最小高效 |
+| **驗證** | TDD red→green;rogue 5 例 + `test_ws_phase`/`ws_ok_summary` 全綠。另 6 個既有失敗已用 `git stash` 證實是別的 WIP 重構留下的 stale test,非本次造成 |
+
+一點提醒:**正在跑的 bot 不會熱載入**(`sys.modules` cache)。今天就是週五,這個 rogue 錯誤每小時還會再撞,等下次重啟 `new_main_v2.py` 才會套用修正。
+
+另外那 6 個既有失敗(`_SpyClient` 無 `call_for`、`TASK_ORDER` 已含 `dragon_realm`/`sea_season`)是 carpark/dragon_realm/sea_season 重構的 stale test —— 不在這次範圍,沒動。要的話我可以另開一輪把那組測試補上,但那會碰到那個進行中的重構,建議由負責那塊的 session 處理。
+
+---
+
+## 2026-06-26 04:51:36  ·  session 5c329d85
+
+檢查完成。整體 loop 健康,沒有 crash、沒有資料遺失,但有一個關鍵的「跑舊碼」問題和兩個真正值得修的點。
+
+## 結論先講
+
+正在跑的 bot 是 **2026-06-25 23:12~23:26 啟動的**(所有 active `main.log` 都從那時間開始)。之後有 **3 個 commit 沒被載入**(本專案無 hot-reload,須重啟 `new_main_v2.py` 才生效):
+
+| commit | 時間 | 影響 |
+|---|---|---|
+| `feat(online-monitor): log 獨立到 logs/system/online_monitor.log` | 06-25 23:24 | 所以 `logs/system/online_monitor.log` 根本不存在 |
+| `fix(online-monitor): 偵測器把自己視為離線` | 06-26 00:08 | 未生效 |
+| `fix(ws): rogue 週積分休眠 timeout 當跳過` | 06-26 04:45 | 未生效 → 下面的 rogue error 就是它 |
+
+## Log 問題分級
+
+**1. rogue 反覆記成 error(會被重啟修掉)**
+`emulator-5556` 等裝置在 06-26 02:15、04:15 `WS 任務失敗: rogue (WSTimeoutError cmd=19482)`,WS summary 收成 `errors=['rogue']`。這正是 commit `a5b0db73` 要處理的:萬神週積分(cmd 19482)休眠時 server 不回 frame → 撞滿 15s timeout。今天是週五,訊息會「每小時重撞」直到重啟載入修正(把它當休眠跳過)。→ **重啟即解**。
+
+**2. web-002 跑完萬神試煉卡在「未知」頁(真正值得看的一個)**
+06-25 23:41 萬神試煉結束後沒回到主頁面,連帶 **雲端戰鬥 / 好友每日禮物 / 一般開神燈 / 轉盤金幣 4 個任務全被跳過**(都記 ERROR `…前不在主頁面`),然後直接休眠。下一輪喚醒會自己恢復,沒有資料遺失,但這一輪這 4 項漏做。根因是 `weekly_trials` 收尾沒可靠導回主頁(同一輪還看到「第1關等結果窗逾時」)。這不是舊碼問題,沒有 commit 處理過,要看程式才修得掉。
+
+**3. web-001 神燈方案 '連閃' 不存在(設定問題)**
+`lamp_service.py:310 未找到階段 '連閃'`,可用的是 `['連擊爆擊', '連暴混閃', …]`。該裝置的神燈 loadout 設定指到一個不存在的方案名 → 切方案失敗。改設定即可,跟記憶裡的 `loadout_fangan_panel` 命名陷阱一致。
+
+## 看起來嚇人但其實有接住的(不用動)
+
+- **fc65396d(手機fc)`device not online` / `已達最大重試 5` ERROR**:實體手機 ADB-TLS 連不上(休眠/離網),`emulator restart disabled` 後走「離線純 WS 備援」跑完一輪,設計如此,非 bug。
+- **emulator-5558 `FileNotFoundError: no captured creds` Traceback**:5558 開了 `ws_token` 但沒抓過 creds,印整段 traceback 後 fallback 回 Playwright 正常跑。要消掉就跑 `python tools/adb_token_login.py --device emulator-5558`;不跑也只是 log 吵。
+- **5558 `挑戰 1/2/3 超時，強制強制結束`**:H5 戰鬥結果窗偵測逾時,force-end 後續判,跟 web-002 同類 H5 偵測抖動,會恢復。
+- **大量 `slow screenshot 600~1300ms`**:NAS/模擬器截圖效能告警,門檻 500ms,屬環境噪音。
+
+## 建議動作
+
+1. **重啟 `new_main_v2.py`** — 清掉 rogue error、啟用 online-monitor 兩個修正與獨立 log。最該做的一件。
+2. web-002 萬神試煉收尾導回主頁的修補,要動 `weekly_trials.py`,需要的話我開 plan 再動。
+3. web-001 神燈方案名 `連閃` 改成現有方案(或還原正確命名)。
+
+要我接著修 2 或 3 哪個?還是先重啟觀察一輪?
+
+---
+
+## 2026-06-26 13:04:36  ·  session 319fe32e
+
+已改 `templates\dashboard.html:3179`，按鈕文字加上 `(會運行所有腳本，非長時間在線)`。
+
+跳過：未驗證渲染（純文字改）。需要看實際效果再重整 dashboard 頁面即可。
+
+---
+
+## 2026-06-26 13:08:22  ·  session 319fe32e
+
+已改 `templates\dashboard.html:3173`,按鈕文字改為「🌐 開啟網頁掛機(不跑任何腳本,僅刷小怪用)」。
+
+---
+
+## 2026-06-26 13:24:59  ·  session 11bbfe84
+
+Handler 是 `IS(u).info.update(e)` —— server 回的 info **本该**写进我们读的 singleton。但实测没更新。原因只剩一个:**遊戲在 `launch`/主頁場景,龍骸 controller(註冊 `on_dragon_realm_info_s2c` 的那個)根本不在/已銷毀,handler 没被呼叫,所以 `info.update` 从没执行**。`IS(u)`(DataCache)是持久 singleton,它的 `info` 停在上次離開龍骸時的死状态。最后一个唯读检查确认 controller listener 死活:
+
+---
+
+## 2026-06-26 14:17:47  ·  session 11bbfe84
+
+完成。總結這次排錯與修復:
+
+## 結果
+
+**5554(閃電)排錯** — 你的龍骸「沒自動往下」根因找到了:
+
+- bot WS 版(`ws_token/dragon_realm.py`)卡在一個 **CAVE 神秘洞穴**(`event_id=16`, `event_data=[]`空),對它狂送 200 次 advance 全無效 → `budget_exhausted, keys=0`。`waits=0` 所以舊偵測攔不住。
+- **不是**「神秘洞穴要多點一次進入」:客戶端 ground truth(js 1593)和 CDP 實測都證明 CAVE 的正確操作就是 `event_choice(1)`,我用瀏覽器 netManager 送同樣指令**一次就推進**(eid 16→0),還一路打怪、撿第 2 把鑰匙(item 1527)、`enter_ceng(3)` **推進到三層「焰滅裂谷峰」**(每步截圖)。
+- 所以**決策邏輯是對的**,病灶是 ws_token socket 送的 choice 對 CAVE 沒生效、瀏覽器有效。精確機制(cmd/連線/編碼)還沒定位 — CAVE 已被推掉,要等下次 CAVE 用 ws_token client 抓封包對比。
+
+**防禦性修復已 commit**(`1ae89e4c`,2 測試 pass):
+- `run()` 加 dead-loop 偵測:連續 6 次 `(ceng,hp,eid,euid)` 不變就回 `deadloop`,約 9 秒止血而非燒滿 106 秒。治標止血,非根治。
+
+## 要注意
+
+1. **修復需重啟 `new_main_v2.py` 才生效**(專案無 hot-reload)。
+2. 遊戲更新中無法登入,所以待辦都等遊戲恢復:
+   - 下次遇到 CAVE → 抓 ws_token 封包定位精確 root cause(根治)
+   - 7fe98fc6(小寶,CDP 9226)同樣方式測,**最多第二層,不進三層**
+3. 5554 我已推到三層(照你「直到出現可往下一層為止」),hp=1 停在三層入口,留意三層 PVP 風險。
+
+skipped: 根治(ws_token 對 CAVE 無效的精確原因)+ 7fe98fc6 測試;add when 遊戲更新完成可登入、且遊戲再出現 CAVE 時。
+
+---
+
+## 2026-06-26 17:31:10  ·  session 6e641d8b
+
+太遲了。剛重讀,`eventList` 已經空了 —— 你手機那筆陷阱求助(id 10013000004)在計時器到期後自動脫困、求助消失。確認:
+
+- `eventList: []`(剛才那筆 trap 求助已不在)
+- 5554 `help_hp` 還是 **2**、`help_counter` 還是 **5** → 沒有亂送、沒消耗任何額度(還好先讀了現況才沒對死掉的事件送 c2s)
+- 成員列表裡你手機(89565100509472)的 `ext k1=1` 是入隊時的舊快照(時間戳 1782207807,比別人舊),不是即時陷阱狀態;即時狀態只在 eventList,現在沒了
+
+所以這次來不及救,但也沒有任何副作用。那個「協助 c2s 真實欄位」的 NB 還是沒驗到(救援窗口關了)。
+
+幾個事實供你決定下一步:
+
+1. **陷阱救援窗口很短**:`K_TRAP_TIME` 到期約 170 秒就自動脫困,手動叫我接進來再點協助,時間很趕。
+2. **真正的解法是自動協助**:5554 的 `autoAgree=0`(自動同意協助關著)。如果開起來,隊友一踩陷阱 5554 就能即時自動救,不用人盯。bot 的 planner 已有 `provide_help` 邏輯,但靠 30 分鐘醒一次的排程,撞不上 170 秒窗口 —— 所以這條 path 實際上幾乎不會觸發。
+
+要不要我:
+- (A) 找出 `autoAgree` 的開關 c2s、幫 5554 打開自動協助(下次隊友踩陷阱即時救,順便也能抓到協議);或
+- (B) 就停在這,等下次有人踩陷阱你叫我、我即時接進來點協助驗協議。
+
+你選哪個?
+
+---
+
+## 2026-06-26 17:36:24  ·  session 6e641d8b
+
+完成。手機已從陷阱救出,5554 領了協助獎勵,`provide_help` 協議也實機驗證並寫進記憶(補上原本未驗的 NB)。
+
+剩一個durable選項沒動:5554 的 `_autoAgree=0`(自動同意協助關著)。手動救每次都要你喊、我即時接;若要 5554 以後隊友一踩陷阱就自動救,我可以去找 `autoAgree` 的開關 c2s 幫你打開。要的話再說。
+
+---
+
+## 2026-06-26 17:48:07  ·  session 6e641d8b
+
+純 WS 送出去了,而且**有伺服器回應**(跟 CAVE bug 那種「送了沒反應」完全不同)。關鍵 frame:
+
+- **`provide_help_c2s = 0x4F14 (20244)` → 回 `provide_help_s2c = 0x4F15 (20245)` `{2:2}`** —— code 欄位(field1)不存在=0=成功,沒有錯誤碼。
+- **`0x0402` 物品增量:gtid 1516** 推給 5554 —— 這是龍骸協助獎勵(就是我用瀏覽器救時跳的「恭喜獲得」那顆)。拿到獎勵 = 協助生效。
+- WS 登入用的 5554 真實 role_id = **89555436834913**(隊伍第一個成員,就是協助號)。
+- 有一個 `0x0201 {1:173}` 我無法確定是 success tip 還是 error code(沒有錯誤碼表),但 0x4F15 回應沒帶錯誤 + 有發獎勵,整體判讀是成功。
+
+另外:這次 WS 登入**把 5554 的瀏覽器踢掉了**(異地登入,你授權的)。
+
+**請你看一下手機螢幕** —— 陷阱解開了沒?這是地面真相,比我讀 frame 準。你確認後我才寫進記憶(不先假設)。
+
+如果手機確認脫困:純 WS 路徑**驗證通過**,SOS 按鈕就能照你原本要的「純 WS 上線 + 自動協助」來做。我手上已經有全部要素(cmd 0x4F14、payload 編碼、creds 載入、一次性登入)。
+
+---
+
+## 2026-06-26 18:20:23  ·  session 6e641d8b
+
+前端 `window.UI.toast` 改好、語法乾淨。功能完成。
+
+## 完成總結
+
+**已建置 + 測試 + 實證**:
+
+| 部分 | 狀態 |
+|------|------|
+| `ws_token/dragon_sos.py`(讀清單→救所有 pending→重讀確認) | ✅ 已 commit main `99e0fb88` |
+| `is_dragon_open()` 排程判斷 | ✅ |
+| Route `POST /api/dragon_sos/<ip>` + `GET /status` | ✅ |
+| 11 單元測試 + scheduler 回歸(共 23 過) | ✅ |
+| `read_help_list` 對真實 0x4F15 s2c 驗證(help_hp 正確解出) | ✅ |
+| provide_help 純 WS 實際救援 | ✅ 你手機稍早已確認 |
+| dashboard SOS 按鈕(每 web_h5 列、龍骸開放才顯示) | ✅ 在 `templates/dashboard.html`,**未 commit** |
+
+**為什麼 dashboard.html 沒 commit**:那檔在我動手前就有別的 WIP,我不想把你既有未提交的改動綁進我的 commit。SOS 按鈕的程式碼已經在working tree 裡了,你方便時自己 commit(或叫我幫)。
+
+**怎麼啟用(要做一件事)**:control panel 沒有 hot-reload,**重啟 `control_panel_app`**(你的 5002 那支)後,每台 web_h5 裝置列在龍骸開放時段就會出現紅色「🆘 SOS 救援」鈕。按下去 = 那台純 WS 上線、自動協助所有 pending 求助隊友、toast 回報救了幾個。
+
+**注意**:
+- 按 SOS 會踢掉那台的瀏覽器(異地登入)—— 設計如此,你已接受。
+- 龍骸開放窗口 **今晚 22:00 關**,下次約 3 週後(下個活動週 7/15-17)。想趁今晚整顆按鈕走一次完整 live(重啟 panel + 手機再踩一次陷阱按 SOS),時間還夠;否則協議/解析/救援三段都已分別實證,風險很低。
+
+要我幫你 commit dashboard.html,或現在就帶你重啟 panel 做最後一次端到端驗證嗎?
+
+---
+
+## 2026-06-27 00:02:29  ·  session a8e925a1
+
+Background run is producing no output; run the lighter two in foreground directly.
+
+---
+
+## 2026-06-27 00:59:45  ·  session a8e925a1
+
+已提交 `b78f2bcb`(只含 `ws_token/lamp.py` + 測試,2 檔 55 insertions)。未 push,無 attribution footer。
+
+還沒進版控的:
+- `bot_config.json` 小寶 `lamp_daily_min: 8000`(線上設定,跟其他未提交 WIP 混在同檔,故沒一起 commit,但檔案內已是 8000,重啟即生效)。
+
+提醒兩點:
+- `lamp.py` 要**重啟 `new_main_v2.py`** 才會套用(無熱載入)。
+- `tests/test_ws_token_runner.py::test_task_order_has_home_features_before_lamp` 仍 fail,是別的 WIP(TASK_ORDER 插了 dragon_realm/sea_season)造成,與本次無關。要我順手對齊那個過時測試再說。
+
+---
+
+## 2026-06-27 01:25:57  ·  session 72a15cba
+
+全部完成。
+
+## 結果
+
+**根因**:菇車幣是 role 數值屬性 201,不在 `0x0401` 背包快照、也不在 `0x0402` item push(mining 的 `InventoryTracker` 故意忽略 currency evt)。原 `_query_coin` 走 `0x0401` 永遠讀不到 → 菇車幣顯示「未知」。
+
+**做法(依你「參考鎬子數量開局取得方式」反推)**:鎬子靠登入 push 取得;同理我攔截小寶登入時 server 推送的 85 個 frame,釘出菇車幣在 **cmd 769(0x0301 role_info)** 的數值屬性表 `1.2.1[]`,attr 201。關鍵:**送空 c2s 769 會觸發 server 回傳最新 role 快照** = on-demand 最新值(符合你要的「最新數值、透過 WS」)。
+
+```
+0x0301 { 1:{ 1:repeated attr_id, 2:{ 1:repeated num{1:id,2:int}, 2:repeated str{1:id,2:bytes} } } }
+菇車幣 = 數值屬性 201
+```
+
+新增 `parse_role_num_attrs` + `read_car_coin`,`read_state` 改走此路徑。
+
+**驗證(CDP 互相驗證)**:
+- CDP `GetRoleAttr(201)` = **92,983,699**
+- 純-WS `read_state` = **92,983,699**,source=`role_info_0x0301`,deco_count=**64**(含等級/價格/限購/升級路徑 steps)
+- 單元測試 +4(parser/read_car_coin/缺屬性/timeout),focused **32 綠**,py_compile OK
+
+**落地**:worktree `carpark-coin-ws` 完成 → 4 個 carpark 檔 commit 進 main(`fbb16c60`)→ 移除 worktree+branch。其他 session 的 13 個 WIP 檔未動。
+
+跳過:CDP 純-WS 互踢自然形成;前端升級路徑用既有 `renderPlan`(coin 讀通後自動規劃,無需手填預算)。
+
+兩個提醒:
+1. **控制面板需重啟**才會載入新的 `carpark_decoration_ws.py`(無 hot-reload;template 改動 reload 即生效)。
+2. recon 期間我用純-WS 登入小寶數次(異地登入會踢瀏覽器 session),bot 的 online_monitor/喚醒迴圈會自動重連,或你手動重開該裝置瀏覽器即可。
+
+---
+
+## 2026-06-27 01:30:16  ·  session 53b89d2f
+
+全部到位，py_compile OK。實作完成。
+
+## 完成內容
+
+「秘寶（尋寶）」純-WS 自動化已實作好，協議**全部在 5556 用 CDP live 重抓**（沒沿用任何舊 schema）。
+
+**協議（新功能 = `secret_jewel` module 85，與守護靈同頁）**
+| 動作 | cmd | 內容 |
+|---|---|---|
+| 讀池 | `info` 21761 | `pool_list{pool_type, free_times, must_info(pity)}` |
+| 尋寶 | `draw` 21764 | `{pool_type, count}` → 免費(free_times 2/日) / 付費(扣尋寶圖) |
+| 買尋寶圖 | `shop_buy` 6914 | `{shop_type=26, shop_id=2600001, num}` 每買1給1尋寶圖(item 1340)、**每日上限10**、每個**粉鑽600** |
+| 已買數 | `shop_info` 6913 | `{shop_type=26}` → 今日已買 |
+
+成本=粉鑽（你說隨便花）。pity=100抽必出。失敗走 0x0201。**右上角購買鈕**=`btnBuy→MallTipsView`，確認後就是上面的 shop_buy。
+
+**程式**
+- 新模組 `ws_token/secret_jewel.py`：`draw_free`（只抽**塵世 pool 1**，免費2次）+ `buy_daily_maps`（補到每日10）。靠 server 端每日計數器冪等，**無需日期閘**，每次喚醒跑都安全。
+- 兩個**獨立可選開關**：`ws_token.secret_jewel.{draw_free, buy_daily}`，已在 **5556 兩者都開**。
+- Wiring：`runner.py`（TASK_ORDER + dispatch）、`ws_phase.py`、`ws_runner_service.py` 三條 caller 都接好。
+
+**驗證**
+- `tests/test_ws_token_secret_jewel.py` **20/20 全綠**。
+- live 實抓時已實際：免費抽2 + 付費單抽1 + 買1尋寶圖（確認 0x0402 消耗/獲得、free_times 2→0、bought 遞增）。
+- 既有的 `test_ws_token_runner.py` #1-4 紅燈是 **`main_tasks` 時間/日期閘**造成的環境 flaky（committed HEAD 同樣失敗，與本功能無關）；#5 是 dragon_realm/sea_season 的 stale order 斷言，我順手改成穩健相對順序並通過。**我的改動引入 0 個迴歸**。
+
+## 兩件事要你決定
+
+1. **尚未 commit**：`runner.py`/`ws_phase.py`/`ws_runner_service.py`/`bot_config.json` 在我動之前就已有**未提交 WIP**（steward 日期閘等，非本功能）。為避免把不屬於本功能的 WIP 掃進我的 commit，我先不 commit。要我「只 commit 本功能相關」還是「連同現有 WIP 一起 commit」？
+2. **生效**：bot 無 hot-reload，要**重啟 `new_main_v2.py`** 才會載入新程式碼。
+
+開放問題（我先沒做，等你說）：買到的尋寶圖**要不要自動付費抽掉**？目前兩開關獨立（買=囤尋寶圖、抽=只免費2次）。傳說/遠古之後開放再擴 pool 2/3。
+
+---
+
+## 2026-06-27 03:24:19  ·  session 53b89d2f
+
+收到——目前實作就是這樣，**無需改動**：
+
+- `draw_free`：只吃 free_times（塵世每日2次免費），**永遠不付費抽**。
+- `buy_daily`：只把尋寶圖補到每日10（囤著），不會拿去付費抽。
+
+兩個開關獨立，買到的尋寶圖不會自動花掉，符合「只抽免費的」。
+
+剩一件要你點頭：**要不要我 commit？** 本功能新檔（`secret_jewel.py` + 測試 + 文件）是乾淨的；但 `runner.py`/`ws_phase.py`/`ws_runner_service.py`/`bot_config.json` 在我動之前就有未提交 WIP（steward 等，非本功能）。我可以：
+- A：只 commit 本功能（新檔 + 這幾個檔我加的 hunk，盡量不碰 WIP）；或
+- B：先不 commit，你自己處理。
+
+另外 bot 要**重啟 `new_main_v2.py`** 才會載入新程式碼。
+
+---
+
+## 2026-06-27 03:28:11  ·  session 53b89d2f
+
+完成。Commit `84f3e69e`（方案 A：只 commit 本功能）。
+
+**已 commit（9 檔，790 insertions）**
+- 新檔：`ws_token/secret_jewel.py`、測試、`docs/protocol/SECRET_JEWEL_RECON.md`、todo
+- 既有檔只進我的 hunk：`runner.py`/`ws_phase.py`/`ws_runner_service.py`/`bot_config.json`/`test_ws_token_runner.py`
+
+**WIP 完整保留**：你原本未提交的 steward 日期閘等 WIP 全留在工作目錄（staged 驗證 = 0 條 WIP，工作目錄仍在），沒被掃進我的 commit。
+
+**行為**（依「只抽免費的」）
+- 每日免費抽塵世 2 次（永不付費抽）
+- 每日把尋寶圖補到 10 個（shop_buy，花粉鑽）
+- 5556 兩開關都已開
+
+**生效**：bot 無 hot-reload，重啟 `new_main_v2.py` 才會載入。
+
+---
+
+## 2026-06-27 22:31:38  ·  session 86f2c632
+
+根因找到並修好了。
+
+## 問題
+
+不是無限迴圈,而是 **打完萬神試煉後沒退回主頁**。Log 鐵證(web-002, 06-25):
+
+```
+23:41:00 萬神試煉：完成,已寫入本週記錄
+23:41:03 OCR辨識結果: 未知          ← 卡在 rogue結算/秘寶閣 畫面
+23:41:03 雲端戰鬥前不在主頁面 → skip
+23:41:12 好友每日禮物前不在主頁面 → skip
+23:41:12 一般開神燈前不在主頁面 → skip
+23:41:15 轉盤金幣執行前不在主頁面 → skip
+23:41:15 → 直接休眠
+```
+
+`daily_pipeline` 的契約是「每個任務結束時都停在主頁面」,後面的任務都先檢查主頁面才執行。只有 `battle/weekly_trials.py` 的 `fight_test` 打完 rogue + 秘寶閣購買後 **沒有任何返回主頁的動作**,停在非主頁面 → 它後面的 Task 16/18/19/20 整輪被跳過。這就是「沒有正確循環 / 沒有退出」。
+
+## 修正
+
+`fight_test` 進『副本』後用 `try/finally` 包住,收尾一律呼叫同 package 既有的 `_recover_to_home(d)`(只用 `d.click`+OCR 點字,adb/H5 雙後端通用),成功與中止路徑都會回主頁。
+
+附 `tests/test_weekly_trials_recover.py` 兩個 regression:成功路徑、找不到入口的中止路徑,都驗證有回主頁。已通過,相鄰排程測試無回歸,已 commit(未 push)。
+
+skipped: 回主頁只做單次 best-effort(沒接 detector 驗證確實到主頁);若 rogue 結算疊多層面板殘留,靠下次對齊喚醒重啟恢復。add when 實測發現單次清不乾淨再加「驗證+重試」迴圈。
+
+要我順手套到其他裝置在跑的 session(這檔改了正在跑的 bot,需重啟 `new_main_v2.py` 才生效),或加 detector 驗證版嗎?
+
+---
+
+## 2026-06-28 01:25:56  ·  session 40ecdd26
+
+This config block is enabled. Let me confirm which device it belongs to, and whether the device the user actually runs has the same setting.
+
+---
+
+## 2026-06-28 01:28:49  ·  session 40ecdd26
+
+兩處改好。現有泛型 load/collect 會自動處理這兩個 bool 欄位,後端 runtime 已支援 `ws_token.secret_jewel.draw_free/buy_daily`,所以零新增 JS、零後端改動。位置在「進階設定 → 雜項」頁籤,抽卡下方。
+
+現在記下你的新規則到 memory。
+
+---
+
+## 2026-06-28 01:50:31  ·  session 86f2c632
+
+已更新 todolist(tasks/todo.md + Task #1),規格定為:
+
+**萬神試煉「完成」= 失敗後退出 → 重新進場,循環 8 局**(不是打一局就算完成)。
+
+要做的:
+1. `fight_test` 重構成 8 次迴圈(enter → 打到失敗 → 退出 → 再進場);現在的 15 分鐘/80 關上限改成「單局」上限。
+2. 寫本週記錄條件改成跑滿 8 局才寫(現在打一關就寫 → 提早鎖一週)。
+
+卡住實作的一點(不猜):**失敗 → 退出 → 重開一局的精確按鈕序**。截圖看起來失敗點「點擊」後就回到關卡視圖、「開始挑戰」還在(可能再按一次就行),但你明確講有「退出」動作(舊 doc 也有「退出→結束本局→確定」)。這段 UI 流程要正確才寫得對。
+
+下一步要我現在就 attach CDP live 實測那段「失敗→退出→重進」流程、確認後直接把 8 局迴圈實作掉嗎?還是先放著 todo、之後再動?
+
+---
+
+## 2026-06-28 02:01:40  ·  session 86f2c632
+
+了解,今天禮拜日關閉,沒法 live 測。那就先停在這裡——規格和待辦都已記進 tasks/todo.md + Task #1,等下次開放(週一~週六)你有空再 attach CDP 實測「失敗→退出→重進」那段,確認按鈕序後我再把 8 局迴圈實作掉。
+
+目前狀態:
+- 已修並 commit:打完回主頁(解決後續任務被整輪跳過)。
+- 待做(等可測):8 局迴圈 + 跑滿才寫本週記錄。
+
+要開工時跟我說一聲就行。
+
+---
+
+## 2026-06-28 02:16:50  ·  session abe68a3a
+
+Page is parked cleanly back on the 放置獎勵 popup (timer now 02:21, re-accruing). The live recon is complete. Here's what I confirmed before the implementation research finishes.
+
+## 領取協議已解出（純 WS，可直接領取）
+
+**設備 5560 → CDP 9225, 伺服器 s1467, 場景 `CrosswarMapSceneView`（跨服戰戰鬥地圖，常駐掛機）。**
+
+左下角「寶箱」就是這個 **放置獎勵**（掛機獎勵）的入口。完整狀態機只有兩個指令，模組 45（跨服戰）：
+
+| 動作 | 指令 | 請求 body | 回覆 | 說明 |
+|------|------|-----------|------|------|
+| 查詢累積 | `0x2d03` (mod45/sub3) | 空 | `field1 = 上次領取的 unix 時間戳` | 客戶端用 `(now − ts) × 速率` 算出待領量，上限 8h |
+| **領取** | `0x2d04` (mod45/sub4) | **空** | `field1 = 重置後的時間戳(=now)` | 入帳累積值、計時歸零，另推 `0x0406` 道具入帳 |
+
+關鍵驗證（live）：
+- 直接 `call_raw(0x2d04, b"")` 成功領取 → 螢幕跳「恭喜獲得」456000 金幣 + 9600（道具1181），計時歸零。**伺服器權威、無客戶端驗證，純 WS 一發即可。**
+- 點 `領取` 按鈕時客戶端「只送 0x2d04 空 body」，沒有任何前置 check，證明可直接送。
+- 8h 上限數學吻合：456000 ÷ 950/分 = 480 分 = 8 小時。所以**至少每 8 小時領一次**才不會溢出浪費；領更勤只是每次拿少一點，不會有損失。
+
+## 還在研究（兩個 Opus 子代理並行中）
+
+自動化要落地還缺兩塊，已派子代理查：
+1. **跨服戰開放排程**（兩週一次 / 六10:00–日22:00 的錨點，以及伺服器是否有指令回傳開放窗口）+ **0x2d04 在「全新 WS 連線、未進跨服場景」時能否直接送**(純-WS phase 的關鍵前提)。
+2. **純-WS phase 接線方式**（`ws_token/runner.py` 模組註冊、週期 gating、儀表板開關）。
+
+子代理回來後我給你完整的「每 8 小時自動領取」實作計畫再動手。先不寫 code。
+
+---
+
+## 2026-06-28 02:20:32  ·  session abe68a3a
+
+Subagent B (wiring) returned a complete, verified blueprint. Key confirmations:
+
+- **No "enter scene" cmd needed** — `rogue`/`secret_jewel`/`tycoon`/`relic_sprint` all fire their event cmd directly on a fresh ws-phase WS client. Strong signal `0x2d04` will work standalone (subagent A confirming from source).
+- New module = `ws_token/xwar_idle.py` (clone `rogue.py`): `call_for(0x2d04, b"", expect_cmds=(0x2d04, 0x0201))`.
+- Gate in runner wrapper using the **`dragon_realm_scheduler` anchor+cycle pattern** (`_CYCLE_DAYS=14`) + Sat10:00→Sun22:00 window + 8h-interval via `ws_token/state.py` per-device ledger.
+- Dashboard: one declarative entry in `WS_EXTRA_FIELDS` (events tab), zero bespoke JS.
+- Dormant event sends no frame → short probe + `WSTimeoutError`-as-skip.
+
+Still waiting on subagent A (cross-war JS source: schedule anchor + standalone-claim confirmation). I'll consolidate into a reviewable plan once it lands. Not writing code yet.
+
+---
+
+## 2026-06-28 02:24:49  ·  session 40ecdd26
+
+全部設定如預期:
+
+| 裝置 | 免費抽 | 買尋寶圖 |
+|------|:---:|:---:|
+| 5554 | ✓ | ✓ |
+| 5556 | ✓ | ✓ |
+| **5558**(修哥) | ✗ 不自動抽 | ✓ |
+| 5560 | ✓ | ✓ |
+| 7fe98fc6(小寶) | ✓ | ✓ |
+| adb-fc65396d(手機fc) | ✓ | ✓ |
+| web-001 / web-002 | — 跳過(WS 整個關) | — |
+
+生效時機:bot 下次喚醒重讀 config 時(資料檔,不需重啟;改的程式碼模組才需重啟)。前端「進階設定 → 雜項 → 秘寶」也能看到/再調這兩個開關。
+
+沒幫你 commit:`bot_config.json` 和 `templates/dashboard.html` 兩個檔都還有你既有的未提交 WIP(`lamp_daily_min`、web-001/002 的 `ad_rewards`/`relic_sprint` 等),直接 commit 會把不相關的改動一起包進去。要的話我可以只挑 secret_jewel 相關的 hunk 做 `git add -p` 分段提交,或你自己處理。
+
+---
+

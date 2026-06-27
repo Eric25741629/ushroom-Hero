@@ -553,7 +553,10 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             log.info("[%s] WS 任務開始: %s", ip, label)
         elif status == "ok":
             step = f"WS 任務完成: {label}"
-            log.info("[%s] WS 任務完成: %s", ip, label)
+            if detail:
+                log.info("[%s] WS 任務完成: %s（%s）", ip, label, detail)
+            else:
+                log.info("[%s] WS 任務完成: %s", ip, label)
         elif status == "progress":
             step = f"WS 開神燈 ({detail})"
             log.info("[%s] WS 開神燈進度: %s", ip, detail)

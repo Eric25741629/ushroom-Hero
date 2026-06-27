@@ -80,16 +80,56 @@ def _guild_for(checker_ip: str) -> Optional[int]:
         return None
 
 
+def _check_monitor_snapshot(target_pid: int) -> Optional[bool]:
+    """Fast path: signal monitor to refresh, then read the snapshot.
+
+    Cold start (snapshot is None): wait up to 10s for the first snapshot.
+    Warm path (snapshot exists): signal poll_now, wait up to 3s for a <5s-fresh one.
+    """
+    try:
+        from ws_token.online_monitor import get_snapshot, _monitor
+        if _monitor is None:
+            return None
+        _monitor.poll_now()
+        # cold start: wait longer for monitor to connect + first poll
+        max_wait = 10.0 if get_snapshot() is None else 3.0
+        deadline = time.time() + max_wait
+        while time.time() < deadline:
+            snap = get_snapshot()
+            if snap and time.time() - snap.timestamp < 5:
+                break
+            time.sleep(0.3)
+        else:
+            snap = get_snapshot()
+        if snap is None:
+            return None
+        if time.time() - snap.timestamp > 60:
+            return None
+        for entry in snap.entries:
+            if entry.role_id == target_pid:
+                return entry.online
+    except Exception:  # noqa: BLE001 — monitor import/read must never block
+        pass
+    return None
+
+
 def _serve_one(req: Dict[str, Any], candidates: List[str]) -> None:
-    """Answer one request: try idle checkers until one gives a definite
-    True/False; fail it only when every candidate is undetermined (``None``),
-    so the requester retries and never 放行 on an unknown result."""
+    """Answer one request: monitor snapshot first (instant), then one-shot WS fallback."""
     req_id = req.get("id")
     target_pid = req.get("target_pid")
     if not target_pid:
         bot_state.fail_online_check_request(req_id, "online_check_target_pid not set")
         return
 
+    # fast path: persistent monitor has a fresh answer
+    cached = _check_monitor_snapshot(int(target_pid))
+    if cached is not None:
+        bot_state.complete_online_check_request(
+            req_id, is_busy=cached,
+            detail=f"online-monitor snapshot (busy={cached})")
+        return
+
+    # slow path: one-shot WS login (fallback when monitor is not running)
     threshold_sec = _threshold_for(req.get("requester_ip"))
     for checker in candidates:
         result = check_via_ws(

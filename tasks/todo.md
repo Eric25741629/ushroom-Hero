@@ -6,6 +6,37 @@
 
 ---
 
+## 🚧 2026-06-28 萬神試煉「假完成」— 偵測一次失敗就收手,實際沒打完
+
+現象（使用者 2026-06-28）：log 寫「[萬神試煉] 戰鬥結束,共完成 6 關」+「萬神試煉:完成,
+已寫入本週記錄」,但**實際沒有完成**。
+
+證據（web-002, 06-25 23:38–23:41）：
+- `battle/weekly_trials.py::_battle_loop` 偵測到第 6 關「失敗」就 `break` 收手。
+- 收手當下截圖（`logs/web-002/error_screenshots/20260625_234103_..._雲端戰鬥前不在主頁面_未知.jpg`）
+  顯示仍停在 rogue 關卡視圖「第55關 王者-15」,綠色「開始挑戰」還在 → **還能繼續打,但放棄了**。
+- `dungeon_scheduler._run_weekly_dungeon` 在 `fought>0` 就寫本週記錄（is_next_week=False）
+  → 把「假完成」鎖住一整週,下週才會再跑。
+
+已修（上一段落,commit 146b27b9）：收尾 `_recover_to_home` 回主頁（解決「沒退出」害後續任務全跳過）。
+
+**完成語意（使用者 2026-06-28 定案）：失敗後「退出 → 重複」,整個循環 8 次才算完成。**
+不是打一局就結束,是要打 8 局。
+
+待辦：
+- [ ] 重構 `fight_test`：把 enter→`_battle_loop`(打到失敗) 包成 8 次迴圈,每局失敗後「退出」
+      再重新進場,共 8 局。`_BATTLE_MAX_STAGES`/15min 上限變成「單局」上限。
+- [ ] **確認「失敗→退出→重新開始一局」的精確 UI 按鈕序**（這步別猜）：
+      截圖顯示失敗點「點擊」後回到關卡視圖、「開始挑戰」仍在 → 重進可能只是再按開始挑戰；
+      但使用者明講有「退出」動作（舊 doc §4 有「退出→結束本局→確定」）。
+      → 需 live CDP 實測 / 使用者提供精確序,才能正確實作。
+- [ ] 寫本週記錄條件：改成跑滿 8 局（或盡力跑完）才寫,避免提早鎖一週（目前打一關就寫）。
+- [ ] 截圖左上「13❤」是否為剩餘挑戰次數/生命？確認是否與「8 次」相關。
+
+參考：`docs/ROGUE_WANSHEN_BETA_AUTOMATION.md`（協議 + §4 舊流程有退出/結束本局）、記憶 [[reference_ws_hellgate_protocol]]。
+
+---
+
 ## 🚧 2026-06-26 龍骸 SOS 救援按鈕（dashboard，純 WS 自動協助）
 
 需求（使用者 2026-06-26）：手機在龍骸踩陷阱求助時，dashboard 按一顆「SOS」→ 指定的協助號
@@ -477,3 +508,49 @@ running 進程是 06-19 21:57 那版；之後 commit 的改動尚未套用。log
 - 切換軌跡:`_set_active()` 記錄偵測器轉移(log `detector switch X->Y`)+ `last_switch`/`get_last_switch()`;徽章 tooltip 顯示「上次切換: X → Y」。測試 `test_last_switch_records_transition`(11 passed)。
 - 刷新倒數(使用者選「下次刷新倒數」):`get_poll_sec()` + `/api/status` 回 `poll_sec`/`refresh_in_sec`;徽章改「上線偵測: 閃電（下次刷新 倒數 Ns）」,前端 1s ticker(`renderOnlineMonitor`)以 server 相對 `refresh_in_sec` 錨定本機時鐘倒數,避免時鐘偏差。
 - 每卡「當前在線」(使用者選「保留 ONLINE 另加小標」):`/api/status` 每裝置加 `account_online`(由 `_account_presence()` 的 snapshot {role_id:online} + `_device_role_id` 解析,以 roleId 比對);卡片右上角保留 ONLINE,另加 `.acct-presence` 小標(在線=綠/離線=灰,unknown 不顯示)。偵測器本身不在自己好友列表→該卡無標(正常)。
+
+## 跨服戰「放置獎勵」純-WS 自動領取（每8小時）— 計畫 2026-06-28
+
+### 背景 / 已驗證協議（live CDP 9225, 5560, 伺服器 s1467）
+跨服戰 = Activity type 33（biweekly，六10:00→日22:00）。「左下角寶箱」= 放置獎勵（掛機）入口。
+模組 45 `cross_war`（cmd = 45*256 + sub）:
+- `0x2d03` cross_war_idle_reward（查詢，空 body）→ reply `last_time`（上次領取 ts）+ report_list。
+- `0x2d04` cross_war_get_idle_reward（**領取**，空 body）→ reply `new_last_time`。
+- 累積量 = ratePerMin × floor(clamp(now-last_time, 0, 28800s) / 60)，**上限 8h，溢出丟棄**，rate 依戰力分級。輸掉 PvP 會把 last_time 往後推（吃掉累積）。
+- **0x2d04 為伺服器權威、空 body、無前置 enter-scene**（領取鈕只送這一發；client 無任何 check；回覆僅帶新時間戳）。→ 純-WS 一發即領，不需進場景。
+- live 實證:`call_raw(0x2d04, b"")` 成功領取 456000 金幣 + 9600 道具1181,計時歸零。
+- 開放窗口由伺服器經 `act.act_list`(0x180c, 模組24) 下發 type33 `{state,start_time,end_time}`;biweekly 錨點非 client 硬編。
+
+### 設計決策（lazy + robust）
+- **不解析 act_list、不硬編 biweekly 錨點**:gate 只用「週末窗口(六10:00→日22:00) + 距上次嘗試≥8h」,送出 0x2d04 後**讓伺服器當權威**:非開放週末→伺服器拒(0x0201)或不回(timeout)→ benign skip。永不漏領(每個週末都試),off-week 僅多幾個無害 probe frame。
+- 8h 間隔 = 對齊 8h 上限,符合使用者「每8小時」;領更勤無損失但多 chatter,故守 8h。
+- dormant event 可能不回 frame → 短 probe timeout(6s)+ `WSTimeoutError`/0x0201 當 skip,不寫 marker。
+- 無 Playwright 對應 → **不需** `WS_TO_PIPELINE_SKIPS` 條目。
+
+### 實作清單（off by default;對 running bot 為新增 opt-in,不改既有行為）
+- [ ] `ws_token/xwar_idle.py`(仿 `rogue.py`):`claim_idle(client)` → `call_for(0x2d04, b"", expect_cmds=(0x2d04, 0x0201))`;解析 reply 道具入帳(仿 secret_jewel `_parse_rewards`,讀 0x0406 推送或 reply)。
+- [ ] `ws_token/runner.py`:`_run_xwar_idle(client, *, enabled, device, state_dir, now)` wrapper(仿 `_run_rogue`+`_run_dragon_realm`):週末窗口 + 8h 間隔(ws_state ledger `xwar_idle.{last_attempt_ts,last_success_ts,last_new_time}`,**attempt 一律寫 last_attempt_ts** 以節流 off-week)。import + 加 guarded `_step("xwar_idle", ...)` + `run_device(..., xwar_idle_enabled=False)` 簽章。
+- [ ] thread flag:`game_actions/ws_phase.py:_run_device` kwargs + `runtime_services/ws_runner_service.py` extra_kwargs/run_device 呼叫。
+- [ ] `config_manager.py`:`DEFAULT_DEVICE_CONFIG["ws_token"]["xwar_idle"]=False` + `_merge_ws_token_phase_config` 加 `_to_bool` 強制。
+- [ ] `templates/dashboard.html`:`WS_EXTRA_FIELDS` 加 `{slot:'events', path:'ws_token.xwar_idle', type:'bool', label:'跨服戰每兩週自動領閒置獎勵（六10:00–日22:00,每8h上限）', def:false}`（零 bespoke JS）。
+- [ ] `tests/test_xwar_idle.py`:gate 邏輯(窗口邊界 / 8h 間隔 / timeout & 0x0201 skip / marker 持久化),注入 now= + state_dir=tmp_path。
+- [ ] `docs/protocol/CROSS_WAR_IDLE_REWARD.md`:記錄模組45 cmd 表 + 領取流程(目前無此文件)。
+- [ ] live 驗證:用 5560 creds 起一條 fresh WSGameClient 送 0x2d04,確認 fresh 連線(非場景內)可領 → 證實「不需 enter」。
+
+### FINALIZED gate（使用者選 act_list 權威判斷）— 2026-06-28
+act_list 已 live 解出（0x180c 空 body,top repeated field 1 = 每個活動）:
+type33 entry 欄位 `f2=type(33)`, `f5=state(2=Open)`, `f6=start_ts`, `f7=end_ts`, f8=phases, f9=reward cfg。
+**開放判斷 = 送 0x180c → 找 f2==33 → open iff f5==2（亦可加 serverTime∈[f6,f7] 雙保險）。**
+
+最終 gate（runner wrapper `_run_xwar_idle`,ledger `ws_state["xwar_idle"]={last_attempt_ts,last_success_ts,last_new_time}`）:
+1. enabled? 否→skip。
+2. now - last_attempt_ts ≥ 8h? 否→skip（純本地,節流所有 chatter 到 8h）。
+3. set last_attempt_ts=now（持久化）。
+4. 送 0x180c → type33 state==2? 否→skip（活動未開）。
+5. 送 0x2d04 領取 → 成功則 last_success_ts/last_new_time 持久化 + log 入帳。
+- 不需週末/biweekly 硬編（act_list 即權威,零漂移）。dormant/0x0201/timeout → benign skip 不寫 success。
+- ponytail: 窗口末端 ≤8h 殘餘可能因 8h 節流落在關閉後而未領（每兩週至多漏一截）;升級路徑=end_ts 距今<8h 時放寬節流補領一次。先不做。
+
+### 待使用者確認:實作隔離方式
+目標檔有 3 個已有未提交 WIP:`game_actions/ws_phase.py`、`ws_token/runner.py`、`templates/dashboard.html`。
+worktree-from-HEAD 會漏掉這些 WIP 且 merge 易衝突 → 建議直接在主工作樹改（變更為 off-by-default opt-in,不影響既有行為,bot 需重啟才載入）。待確認後動手 + 走 TDD（先寫 test）。

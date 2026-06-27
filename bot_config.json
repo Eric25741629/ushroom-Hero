@@ -176,6 +176,10 @@
                         20,
                         24
                     ]
+                },
+                "secret_jewel": {
+                    "draw_free": true,
+                    "buy_daily": true
                 }
             },
             "ws_token_sweep_list": [],
@@ -482,6 +486,10 @@
                         26
                     ],
                     "repair": true
+                },
+                "secret_jewel": {
+                    "draw_free": false,
+                    "buy_daily": true
                 }
             },
             "enabled": true,
@@ -638,6 +646,10 @@
                         20,
                         24
                     ]
+                },
+                "secret_jewel": {
+                    "draw_free": true,
+                    "buy_daily": true
                 }
             },
             "ws_token_sweep_list": [],
@@ -708,7 +720,7 @@
                 "open_lamp": true,
                 "lamp_percent": 1.0,
                 "lamp_min_keep": 500000,
-                "lamp_daily_min": 4000,
+                "lamp_daily_min": 8000,
                 "farm": {
                     "harvest_card_cycle": {
                         "enabled": true
@@ -796,6 +808,10 @@
                         20,
                         24
                     ]
+                },
+                "secret_jewel": {
+                    "draw_free": true,
+                    "buy_daily": true
                 }
             },
             "enabled": true,
@@ -965,6 +981,10 @@
                         20,
                         24
                     ]
+                },
+                "secret_jewel": {
+                    "draw_free": true,
+                    "buy_daily": true
                 }
             },
             "use_ws_runner": false,
@@ -1038,6 +1058,7 @@
                 "open_lamp": false,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
+                "lamp_daily_min": 0,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -1077,6 +1098,10 @@
                 "relic_upgrade": false,
                 "relic_max_steps": 10,
                 "relic_fragment_floor": 0,
+                "relic_sprint": {
+                    "enabled": false,
+                    "target_spend": 900000
+                },
                 "tycoon": false,
                 "tycoon_max_rolls": 50,
                 "mining": {
@@ -1096,9 +1121,18 @@
                     "batches": 3,
                     "weekend_only": false,
                     "free_daily": false
+                },
+                "ad_rewards": {
+                    "enabled": false,
+                    "config_ids": [
+                        12,
+                        14,
+                        15
+                    ]
                 }
             },
-            "web_reload_after_goto": false
+            "web_reload_after_goto": false,
+            "dragon_realm_enabled": true
         },
         "web-002": {
             "name": "暴哥",
@@ -1158,6 +1192,7 @@
                 "open_lamp": false,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
+                "lamp_daily_min": 0,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -1197,6 +1232,10 @@
                 "relic_upgrade": false,
                 "relic_max_steps": 10,
                 "relic_fragment_floor": 0,
+                "relic_sprint": {
+                    "enabled": false,
+                    "target_spend": 900000
+                },
                 "tycoon": false,
                 "tycoon_max_rolls": 50,
                 "mining": {
@@ -1216,9 +1255,18 @@
                     "batches": 3,
                     "weekend_only": false,
                     "free_daily": false
+                },
+                "ad_rewards": {
+                    "enabled": false,
+                    "config_ids": [
+                        12,
+                        14,
+                        15
+                    ]
                 }
             },
-            "online_check_interval": 5
+            "online_check_interval": 5,
+            "dragon_realm_enabled": true
         }
     },
     "global": {

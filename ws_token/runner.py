@@ -1048,12 +1048,11 @@ def _run_guild(client, *, spend: bool) -> dict:
 
 
 def _run_steward(client, *, spend: bool, serv_time: int,
-                 sweep_list: Sequence[Sequence[int]]) -> dict:
-    """read_info (free); shopping + dungeon sweep + renew only when spend.
+                 sweep_list: Sequence[Sequence[int]],
+                 device: str = "", state_dir=None) -> dict:
+    """read_info (free); shopping (once/day) + dungeon sweep (every wake) when spend.
 
-    The dungeon sweep needs a caller-supplied chapter list (``sweep_list`` —
-    steward does NOT auto-derive level/times); with no chapters configured the
-    sweep is skipped even on spend, matching the live wiring.
+    購物管家 每日只跑一次（ws_state 日期閘）；副本管家 每次喚醒都跑。
     """
     summary: dict = {
         "info": None, "shopping": None, "sweep": None,
@@ -1063,12 +1062,24 @@ def _run_steward(client, *, spend: bool, serv_time: int,
     if not spend:
         return summary
 
-    # renew=True spends 家園幣 only when the selected service is expired.
-    shopping_active = steward.ensure_active(
-        client, steward.SERVICE_SHOPPING, serv_time=serv_time, renew=True)
-    summary["shopping_active"] = shopping_active
-    if shopping_active:
-        summary["shopping"] = steward.run_shopping(client)
+    # --- 購物管家: once per day ---
+    from datetime import datetime
+    today = datetime.now().strftime("%Y-%m-%d")
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    st = ws_state.load_state(device, **kw) if device else {}
+    steward_st = st.get("steward") or {}
+
+    if steward_st.get("shopping_date") == today:
+        summary["shopping_skipped"] = f"already shopped {today}"
+    else:
+        shopping_active = steward.ensure_active(
+            client, steward.SERVICE_SHOPPING, serv_time=serv_time, renew=True)
+        summary["shopping_active"] = shopping_active
+        if shopping_active:
+            summary["shopping"] = steward.run_shopping(client)
+            if device:
+                st["steward"] = {**steward_st, "shopping_date": today}
+                ws_state.save_state(device, st, **kw)
 
     # caller 沒給 sweep_list 時，從遊戲內掃蕩設定自動推導章節（2026-06-12）。
     effective_sweeps: Sequence[Sequence[int]] = sweep_list
@@ -1180,7 +1191,7 @@ def _run_dragon_realm(client, tracker: mining.InventoryTracker) -> dict:
     if not _within_open_window(now):
         return {"skipped": "outside 10-22 window"}
     reason = dragon_realm.run(client, tracker)
-    return {"stop_reason": reason}
+    return {"stop_reason": reason, "keys": tracker.counts.get(dragon_realm.KEY_ITEM, 0)}
 
 
 def _run_sea_season(client, *, device: str, sea_config: Optional[dict],
@@ -1494,7 +1505,7 @@ def run_device(device: str, *, spend: bool = False,
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
-                                   sweep_list=sweep))
+                                   sweep_list=sweep, device=device))
         _step("relic",
               lambda: _run_relic(client, inventory_tracker,
                                  enabled=relic_upgrade,
@@ -1572,6 +1583,21 @@ def run_device(device: str, *, spend: bool = False,
                      tasks=tasks, errors=errors, kicked=kicked, aborted=aborted)
 
 
+def _ok_summary(result) -> str:
+    """Compact one-liner for the 'ok' log so a task's outcome reaches main.log.
+
+    Only surfaces the few self-describing keys WS tasks return (stop_reason /
+    skipped / keys); other result shapes log nothing (empty string).
+    """
+    if not isinstance(result, dict):
+        return ""
+    parts = [f"{k}={result[k]}" for k in ("stop_reason", "skipped")
+             if result.get(k)]
+    if "keys" in result:
+        parts.append(f"keys={result['keys']}")
+    return ", ".join(parts)
+
+
 def _safe(tasks: dict, errors: dict, name: str, fn, notify=None) -> None:
     """Run one task with its own error boundary; record result OR error.
 
@@ -1582,9 +1608,10 @@ def _safe(tasks: dict, errors: dict, name: str, fn, notify=None) -> None:
     if notify:
         notify(name, "start", "")
     try:
-        tasks[name] = fn()
+        result = fn()
+        tasks[name] = result
         if notify:
-            notify(name, "ok", "")
+            notify(name, "ok", _ok_summary(result))
     except WSRunAborted:
         # 中斷不是任務錯誤：往上拋給 _step，讓該任務維持 pending（不記 errors）。
         raise

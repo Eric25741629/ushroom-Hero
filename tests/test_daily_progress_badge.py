@@ -30,11 +30,21 @@ _TZ = pytz.timezone("Asia/Taipei")
 
 
 class _FakeManager:
-    """最小 JsonDataManager 替身：只需 timezone + is_same_day(讀 dict schema)。"""
+    """最小 JsonDataManager 替身：timezone + load_data + is_same_day/week。
 
-    def __init__(self, data):
+    ``now`` 可注入,讓「本週非今天」這類判定不依賴真實時鐘(避免午夜邊界 flaky)。
+    """
+
+    def __init__(self, data, now=None):
         self._data = data
         self.timezone = _TZ
+        self._now = now
+
+    def load_data(self):
+        return self._data
+
+    def _now_date(self):
+        return (self._now or datetime.datetime.now(self.timezone)).date()
 
     def is_same_day(self, name):
         rec = self._data.get(name)
@@ -44,7 +54,7 @@ class _FakeManager:
         if ts is None:
             return False
         rec_date = datetime.datetime.fromtimestamp(float(ts), self.timezone).date()
-        return rec_date == datetime.datetime.now(self.timezone).date()
+        return rec_date == self._now_date()
 
     def is_same_week(self, name):
         rec = self._data.get(name)
@@ -54,8 +64,7 @@ class _FakeManager:
         if ts is None:
             return False
         rec_d = datetime.datetime.fromtimestamp(float(ts), self.timezone).date()
-        now_d = datetime.datetime.now(self.timezone).date()
-        return rec_d.isocalendar()[:2] == now_d.isocalendar()[:2]
+        return rec_d.isocalendar()[:2] == self._now_date().isocalendar()[:2]
 
 
 def _today_ts():
@@ -115,18 +124,72 @@ def test_missing_key_is_not_today():
     assert routes_status._record_is_today(mgr, data, "mission_timestamp") is False
 
 
-def test_week_predicate_lights_earlier_this_week_but_not_today():
-    """航海/龍骸聖域用 period='week'：本週稍早跑過(非今天)仍要點亮。
+# ── _compute_daily_progress：實際 shipped 路徑(gate + period 述語)的端對端覆蓋 ──
+#
+# 航海日曆錨點 = 週一 2026-06-22、4 週一輪(見 json_manager.scheduling.is_sea_week)。
+_SEA_WEEK_DAY = datetime.date(2026, 6, 22)      # 航海週(亦為龍骸週)
+_OFF_WEEK_DAY = datetime.date(2026, 6, 29)      # 非航海週
 
-    這正是修掉的雷 —— 多週活動跑完隔天，用 is_same_day 會變回 ⏳；
-    改用 is_same_week 後整個檔期週都維持 ✅。
-    """
-    # 取「本週內、但不是今天」的一刻：往前推 1~3 天且仍同 ISO 週。
-    now = datetime.datetime.now(_TZ)
-    earlier = now - datetime.timedelta(days=1)
-    if earlier.isocalendar()[:2] != now.isocalendar()[:2]:
-        earlier = now + datetime.timedelta(days=1)  # 週一時改往後找同週日子
-    data = {"sea_last_execution": {"timestamp": earlier.timestamp()}}
+
+def _stub_dragon(monkeypatch, is_week):
+    """攔截 _compute_daily_progress 內 lazy import 的 _is_dragon_week,使其確定性。"""
+    stub = types.ModuleType("game_actions.dragon_realm_scheduler")
+    stub._is_dragon_week = lambda today=None: is_week
+    monkeypatch.setitem(
+        sys.modules, "game_actions.dragon_realm_scheduler", stub)
+
+
+def _no_cycle_gate(monkeypatch):
+    """坐騎/武道會的週期 gate 讀磁碟;測航海/龍骸時讓它一律可見(不關心)。"""
+    monkeypatch.setattr(
+        routes_status.json_manager, "_should_execute_cycle",
+        lambda *a, **k: (True, True))
+
+
+def _ts_on(day, hour=12):
+    return datetime.datetime(day.year, day.month, day.day, hour, tzinfo=_TZ).timestamp()
+
+
+def test_sea_badge_shown_and_lit_in_sea_week(monkeypatch):
+    """航海週 + sea_last_execution 落在本週 → 航海徽章顯示且 ✅。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=True)
+    now = datetime.datetime(2026, 6, 24, 12, tzinfo=_TZ)  # 航海週的週三
+    data = {"sea_last_execution": {"timestamp": _ts_on(datetime.date(2026, 6, 22))}}
+    mgr = _FakeManager(data, now=now)
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["航海"] is True
+
+
+def test_sea_badge_lit_when_ran_earlier_this_week_not_today(monkeypatch):
+    """修掉的雷:本週稍早跑過(非今天)仍要 ✅(period=week 用 is_same_week 而非 is_same_day)。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 24, 12, tzinfo=_TZ)        # 週三
+    data = {"sea_last_execution": {"timestamp": _ts_on(datetime.date(2026, 6, 22))}}  # 週一
+    mgr = _FakeManager(data, now=now)
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["航海"] is True                  # is_same_week → 整週維持亮
+    assert mgr.is_same_day("sea_last_execution") is False  # 而當天述語會是暗
+
+
+def test_sea_badge_hidden_off_week(monkeypatch):
+    """非航海週 → 航海徽章直接隱藏(不出現在結果)。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    data = {"sea_last_execution": {"timestamp": _ts_on(datetime.date(2026, 6, 22))}}
     mgr = _FakeManager(data)
-    assert mgr.is_same_week("sea_last_execution") is True
-    assert mgr.is_same_day("sea_last_execution") is False  # 不是今天
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_OFF_WEEK_DAY)
+    assert "航海" not in res
+    assert "龍骸聖域" not in res  # dragon stub False → 同樣隱藏
+
+
+def test_dragon_badge_shown_in_dragon_week(monkeypatch):
+    """龍骸週(stub True)→ 顯示;本週跑過 → ✅。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=True)
+    now = datetime.datetime(2026, 6, 24, 12, tzinfo=_TZ)
+    data = {"dragon_realm_last_run": {"timestamp": _ts_on(datetime.date(2026, 6, 24))}}
+    mgr = _FakeManager(data, now=now)
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["龍骸聖域"] is True
