@@ -554,3 +554,15 @@ type33 entry 欄位 `f2=type(33)`, `f5=state(2=Open)`, `f6=start_ts`, `f7=end_ts
 ### 待使用者確認:實作隔離方式
 目標檔有 3 個已有未提交 WIP:`game_actions/ws_phase.py`、`ws_token/runner.py`、`templates/dashboard.html`。
 worktree-from-HEAD 會漏掉這些 WIP 且 merge 易衝突 → 建議直接在主工作樹改（變更為 off-by-default opt-in,不影響既有行為,bot 需重啟才載入）。待確認後動手 + 走 TDD（先寫 test）。
+
+### Review — 跨服戰放置獎勵 純-WS 自動領取 完成 2026-06-28（branch feat/xwar-idle-reward）
+協議 live 解出 + 接線完成（off by default opt-in；不動既有行為，bot 需重啟才載入）。
+- [x] `ws_token/xwar_idle.py`：`parse_act_list`/`parse_claim`/`read_window`/`claim_idle`/`claim_if_due`（8h 節流 + act_list Open 閘 + ws_state ledger）。
+- [x] `ws_token/runner.py`：import + `_run_xwar_idle` 薄包 + `run_device(xwar_idle_enabled=False)` + guarded `_step`。
+- [x] caller wiring：`game_actions/ws_phase.py`（讀 cfg.ws_token.xwar_idle）+ `runtime_services/ws_runner_service.py`（啟用才入 extra_kwargs）。
+- [x] `config_manager.py`：`ws_token.xwar_idle=False` 預設 + `_merge_ws_token_phase_config` `_to_bool` 強制。
+- [x] `templates/dashboard.html`：活動頁新增 slot `xwar` + `WS_EXTRA_FIELDS` 一條（零 bespoke JS）。
+- [x] `tests/test_xwar_idle.py`：12 案（parser + gate 邊界 + ledger 持久化）全綠。
+- [x] `docs/protocol/CROSS_WAR_IDLE_REWARD.md`：協議文件。
+- [x] 驗證：parser 對「真實 live bytes」（act_list 1572B + claim reply）解出 type33 Open / claim ok；回歸 test_ws_phase(49)/wiring+config(55) 全綠；config round-trip OK。
+- [ ] 待使用者：fresh ws_token 登入 E2E（會踢掉 parked Playwright session）；或啟用開關 + 重啟 bot 自然驗證。merge 回 main + 刪 worktree。

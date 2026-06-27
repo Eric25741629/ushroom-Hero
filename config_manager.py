@@ -119,6 +119,7 @@ DEFAULT_DEVICE_CONFIG = {
         },
         "tycoon": False,         # 傳奇大亨（大富翁）自動擲骰；免費骰子純收益，活動沒開=no-op；預設關
         "tycoon_max_rolls": 50,  # 傳奇大亨每輪擲骰次數上限
+        "xwar_idle": False,      # 跨服戰 放置獎勵 每 ≤8h 自動領取；只在 act_list 活動 Open 才送，沒開=no-op；預設關
         "mining": {             # WS 挖礦；成功後可跳過 Playwright 挖礦任務
             "enabled": True,
             "allow_bomb": True,   # 預設開：炸彈一次清 3x3+十字，省鏟效率高 (2026-06-20)
@@ -591,6 +592,7 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
     merged["relic_sprint"] = _sanitize_relic_sprint_config(
         merged.get("relic_sprint"), default["relic_sprint"])
     merged["tycoon"] = _to_bool(merged.get("tycoon"), default["tycoon"])
+    merged["xwar_idle"] = _to_bool(merged.get("xwar_idle"), default["xwar_idle"])
     merged["tycoon_max_rolls"] = max(
         0, _to_int(merged.get("tycoon_max_rolls"), default["tycoon_max_rolls"]))
     return merged

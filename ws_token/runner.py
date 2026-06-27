@@ -58,7 +58,7 @@ from ws_token import (
     ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
     idle_reward, kungfu_store, league_solo, main_tasks, mining,
     mining_supervised, redpack, relic, relic_sprint, rogue, secret_jewel,
-    spirit, statue, steward, turntable, tycoon, workshop,
+    spirit, statue, steward, turntable, tycoon, workshop, xwar_idle,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -1194,6 +1194,17 @@ def _run_dragon_realm(client, tracker: mining.InventoryTracker) -> dict:
     return {"stop_reason": reason, "keys": tracker.counts.get(dragon_realm.KEY_ITEM, 0)}
 
 
+def _run_xwar_idle(client, *, device: str, state_dir=None, now=None) -> dict:
+    """跨服戰 放置獎勵 純-WS 自動領取（每 ≤8h，只在 biweekly 開放窗口內）.
+
+    Thin wrapper over ``xwar_idle.claim_if_due``: the 8h cadence throttle, the
+    open-window gate (act_list 0x180c → cross-war type 33 state==Open, server-
+    authoritative so no hardcoded biweekly date drifts) and the ws_state ledger
+    all live in the module. Dormant event (no frame) / 0x0201 → benign skip.
+    """
+    return xwar_idle.claim_if_due(client, device=device, state_dir=state_dir, now=now)
+
+
 def _run_sea_season(client, *, device: str, sea_config: Optional[dict],
                     inventory_tracker=None) -> dict:
     """航海/賽季 pure WS: claim income + tasks + dispatch + repair + tactic."""
@@ -1268,6 +1279,7 @@ def run_device(device: str, *, spend: bool = False,
                mining_config: Optional[dict] = None,
                sea_config: Optional[dict] = None,
                dragon_realm_enabled: bool = True,
+               xwar_idle_enabled: bool = False,
                statue_amount: int = 7000,
                progress=None,
                should_abort: Optional[Callable[[], bool]] = None,
@@ -1541,6 +1553,9 @@ def run_device(device: str, *, spend: bool = False,
         if dragon_realm_enabled:
             _step("dragon_realm",
                   lambda: _run_dragon_realm(client, inventory_tracker))
+        if xwar_idle_enabled:
+            _step("xwar_idle",
+                  lambda: _run_xwar_idle(client, device=device))
         if sea_config:
             _step("sea_season",
                   lambda: _run_sea_season(client, device=device,
