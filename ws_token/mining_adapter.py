@@ -35,6 +35,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
+from ws_token import mine_terrain  # deterministic undug-terrain lookup (no learning)
+
 logger = logging.getLogger(__name__)
 
 # Mirror miner.core.config GRID_CFG (H=7, W=6) and DEFAULT_CLASSES labels,
@@ -151,26 +153,23 @@ def has_uncollected_row0_pit(mine_board: Any) -> bool:
     return False
 
 
-def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]], list[dict], list[dict]]:
+def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[dict]]:
     """Project WS board into planner grid and record what the projection drops.
 
-    ``terrain`` (optional ``mine_terrain.TerrainModel``): WS never sends the type
-    of an undug cell, so undug actives default to "dirt". When a learned terrain
-    model reconstructs that cell as STONE (202) we upgrade it to "rock" so the
-    planner can cost it correctly / bomb dense stone. DIRT/AIR/unknown keep the
-    safe "dirt" default — the override only ever *adds* stone knowledge.
-
-    OCCLUDED cells: WS sends only dug cells, frontier ``actives`` and pits — it
-    never sends a viewport cell that is undug but NOT on the diggable frontier (a
-    solid pocket the descent walked past). Those default to EMPTY (air), which
-    wrongly tells the planner it can pass through them. When ``terrain`` has the
-    band identified we fill them from the template as ``unreachable_dirt/rock``
-    (solid but off-frontier; the planner's own reachability pass promotes them
-    once a path opens). WS truth always wins (dug/pit/active set first).
+    Undug terrain comes from ``mine_terrain.terrain_at(depth, col, area_info)`` —
+    a deterministic lookup into ``configMine_template`` keyed by the board's own
+    ``area_info`` (0x0c01 field-6). This is exact for every cell whose area is in
+    ``area_info`` (the viewport always is), so undug actives are labelled
+    dirt/rock precisely and OFF-FRONTIER occluded cells (which WS never reports)
+    are filled as solid ``unreachable_dirt/rock`` instead of wrongly defaulting to
+    passable air. When ``area_info`` does not cover a depth (very rare in-viewport)
+    the lookup returns ``None`` and we keep the safe legacy defaults (dirt / air).
+    WS truth always wins (dug/pit/active set first).
     """
     grid: List[List[str]] = [[EMPTY for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     top_depth = viewport_top_depth(baseline)
+    area_info = getattr(mine_board, "area_info", None) or {}
     dropped_blocks: list[dict] = []
     dropped_actives: list[dict] = []
     ws_known: set[tuple[int, int]] = set()  # cells WS actually reports (active/block)
@@ -189,15 +188,9 @@ def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]
                 "cell_id": cell_id, "row": row, "col": col, "reason": reason,
             })
             continue
-        # active 且無 block feature = 未挖泥土 (CDP dig 2026-06-20 + MINING_SCHEMA L204
-        # "active 無 block entry = 未挖泥土" + user)。舊版填 "rock" 把未挖泥土當石頭、
-        # 成本高估，也讓盤面更顯「實心」。實際未挖格大多是泥土；石頭/礦會帶 count>0 block。
-        label = "dirt"
-        if terrain is not None:
-            # 202 == STONE (ws_token.mine_terrain.STONE); literal to keep this
-            # pure projection import-free.
-            if terrain.terrain_at(depth, col) == 202:
-                label = "rock"
+        # active 且無 block feature = 未挖格。地形由 area_info 決定論查表得知:
+        # template STONE(202)→rock、其餘(dirt/air/未涵蓋)→dirt(保守、可挖成本 1)。
+        label = "rock" if mine_terrain.terrain_at(depth, col, area_info) == mine_terrain.STONE else "dirt"
         grid[row][col] = label
         ws_known.add((row, col))
 
@@ -231,32 +224,32 @@ def _project_board(mine_board: Any, terrain: Any = None) -> tuple[List[List[str]
         ws_known.add((row, col))
 
     # Occluded fill: viewport cells WS never reported (not active, not a block)
-    # default to EMPTY=air. If the band is identified, fill solid ones from the
-    # template so the planner sees off-frontier pockets as walls, not passages.
-    if terrain is not None:
-        for r in range(GRID_ROWS):
-            depth = top_depth + r
-            for c in range(GRID_COLS):
-                if (r, c) in ws_known or grid[r][c] != EMPTY:
-                    continue
-                t = terrain.terrain_at(depth, c)
-                if t == 201:
-                    grid[r][c] = "unreachable_dirt"
-                elif t == 202:
-                    grid[r][c] = "unreachable_rock"
+    # default to EMPTY=air — wrong, the planner would walk through them. Fill solid
+    # ones from the deterministic template so off-frontier pockets read as walls.
+    # Template AIR(100)/uncovered(None) stay EMPTY (genuinely passable air).
+    for r in range(GRID_ROWS):
+        depth = top_depth + r
+        for c in range(GRID_COLS):
+            if (r, c) in ws_known or grid[r][c] != EMPTY:
+                continue
+            t = mine_terrain.terrain_at(depth, c, area_info)
+            if t == mine_terrain.DIRT:
+                grid[r][c] = "unreachable_dirt"
+            elif t == mine_terrain.STONE:
+                grid[r][c] = "unreachable_rock"
 
     return grid, dropped_blocks, dropped_actives
 
 
-def board_to_grid(mine_board: Any, terrain: Any = None) -> List[List[str]]:
+def board_to_grid(mine_board: Any) -> List[List[str]]:
     """Project a MineBoard's blocks into a 7x6 grid of planner labels.
 
-    Pure: no planner import, no side effects. Undug ``actives`` default to
-    "dirt"; an optional learned ``terrain`` model upgrades cells it has
-    reconstructed as stone (see ``_project_board``). Blocks outside the 7-row
-    viewport [baseline-5, baseline+2) or outside columns 1..6 are dropped.
+    Pure: no planner import, no side effects. Undug terrain (actives + occluded
+    off-frontier cells) is filled deterministically from ``configMine_template``
+    via the board's ``area_info`` (see ``_project_board``). Blocks outside the
+    7-row viewport [baseline-5, baseline+2) or outside columns 1..6 are dropped.
     """
-    grid, _dropped_blocks, _dropped_actives = _project_board(mine_board, terrain)
+    grid, _dropped_blocks, _dropped_actives = _project_board(mine_board)
     return grid
 
 
@@ -289,8 +282,8 @@ def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
 
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
-         *, max_depth: Optional[int] = None, terrain: Any = None) -> Dict[str, Any]:
-    """Build the grid, run the planner (v4), and translate steps back to block_ids.
+         *, max_depth: Optional[int] = None) -> Dict[str, Any]:
+    """Build the grid, run the planner (v1 A*), and translate steps back to block_ids.
 
     Returns the plan dict augmented with:
       ``ws_steps``: list of step + {block_id, row, col}.
@@ -305,14 +298,7 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     from miner.v3.board import floor7_open
     from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
-    # Self-learning terrain: feed this board's dug cells (their real config_id)
-    # into the model, then project with stone-aware undug cells. No-op if no model.
-    if terrain is not None:
-        try:
-            terrain.observe_board(mine_board)
-        except Exception:
-            pass
-    grid = board_to_grid(mine_board, terrain)
+    grid = board_to_grid(mine_board)
     inv = inventory or {}
     shovels = float(inv.get("pickaxe", 0))
     items = {"drill": int(inv.get("drill", 0)), "bomb": int(inv.get("bomb", 0))}

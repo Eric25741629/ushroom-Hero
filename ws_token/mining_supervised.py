@@ -451,20 +451,9 @@ def mine_until_pickaxe_empty(
         except Exception:
             pass
 
-    # Per-device self-learning terrain model (pure WS, no CNN): reconstructs the
-    # type of undug cells from the static templates so the planner can bomb stone.
-    terrain = None
-    terrain_path = None
-    try:
-        from ws_token.mine_terrain import TerrainModel, default_path
-        if device_id:
-            terrain_path = default_path(device_id)
-            terrain = TerrainModel.load(terrain_path)
-        else:
-            terrain = TerrainModel()
-    except Exception:
-        terrain = None
-
+    # Undug terrain is reconstructed deterministically inside mining_adapter via
+    # mine_terrain.terrain_at(depth, col, area_info) — no per-device learning,
+    # no cache, no CNN. The board's own area_info indexes configMine_template.
     seen = tracker.has_item(mining.GOODS_PICKAXE)
     inventory = dict(tracker.as_props())
     if not seen:
@@ -491,7 +480,6 @@ def mine_until_pickaxe_empty(
             current_board,
             inventory,
             max_depth=max_depth,
-            terrain=terrain,
         )
         plans.append(plan_result)
         _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog)
@@ -564,28 +552,16 @@ def mine_until_pickaxe_empty(
         if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
 
-    # Persist what the terrain model learned this run (best-effort) + surface its
-    # convergence (phase/orientation locked, bands identified) for monitoring.
-    terrain_stats = None
-    if terrain is not None:
-        try:
-            terrain_stats = terrain.stats()
-            if terrain_path:
-                terrain.save(terrain_path)
-        except Exception:
-            pass
-
     _summary_log = _wlog or logger
     _summary_log.info(
         "ws_mining summary: stopped=%s digs=%s hold_floor_rounds=%s "
-        "pickaxe %s→%s drill %s→%s bomb %s→%s terrain=%s",
+        "pickaxe %s→%s drill %s→%s bomb %s→%s",
         stopped_reason,
         len(executed),
         sum(1 for p in plans if p.get("hold_floor")),
         initial_inventory.get("pickaxe"), inventory.get("pickaxe"),
         initial_inventory.get("drill"), inventory.get("drill"),
         initial_inventory.get("bomb"), inventory.get("bomb"),
-        terrain_stats,
     )
 
     result: Dict[str, Any] = {
