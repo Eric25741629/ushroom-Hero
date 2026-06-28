@@ -407,6 +407,17 @@ def _select_dig_step(
             ]
             cands = pit_cands or cands
 
+    # Pit-directed steering: prefer the frontier cell that begins the cheapest
+    # dig-path to the nearest uncollected pit (incl. below-viewport map_pits),
+    # via terrain-cost Dijkstra. Keeps the shaft heading for the reward instead of
+    # "deepest frontier, lowest col" (the root of 繞著礦坑挖 + 礦堆到 r=0). Only used
+    # when its target is a server-valid, hold-floor-safe candidate; else fall
+    # through to the deepest-frontier _key below.
+    cand_set = set(cands)
+    target = mining_adapter.pit_directed_next(board, exclude=excl)
+    if target is not None and target in cand_set:
+        return {"type": "dig", "block_id": target, "step_cost": 1.0}
+
     def _key(bid: int):
         blk = block_by_id.get(bid)
         depth, col = divmod(bid, 100)

@@ -281,6 +281,99 @@ def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
     return depth * 100 + game_col
 
 
+def pit_directed_next(mine_board: Any, exclude: Any = None) -> Optional[int]:
+    """Block_id of the diggable frontier cell that begins the cheapest dig-path to
+    the nearest uncollected pit, or ``None`` when no pit is in the known region.
+
+    Why this and not "deepest frontier, lowest col": the old fallback descended a
+    shaft blind to where the reward is, so pits drifted up to row 0 uncollected
+    and the dig "circled" the ore. Here we run a multi-source Dijkstra from every
+    uncollected pit (including below-viewport ``map_pits``) back across the now-
+    deterministic terrain — entering a cell costs its dig cost (dug/air 0, dirt 1,
+    stone 2) — and pick the frontier cell with the smallest distance. So the shaft
+    heads straight for the reward column through the cheapest terrain, and a
+    reachable pit is pursued before it can scroll out of view. Tiebreak: deepest
+    then lowest col (keep descending). Pure: terrain via ``mine_terrain``, no
+    planner import. The executed cell is always a real ``active`` (server-valid).
+    """
+    import heapq
+
+    actives = {int(a) for a in (getattr(mine_board, "actives", None) or [])}
+    if not actives:
+        return None
+    excl = {int(x) for x in (exclude or ())}
+    area_info = getattr(mine_board, "area_info", None) or {}
+
+    block_by_pos: Dict[tuple, Any] = {}
+    pits: List[tuple] = []
+    for blk in getattr(mine_board, "blocks", []) or []:
+        pos = (int(blk.y), int(blk.x) - 1)
+        block_by_pos[pos] = blk
+        if int(getattr(blk, "count", 0) or 0) > 0 and (
+            int(getattr(blk, "config_id", 0) or 0) == TERRAIN_PIT
+            or int(getattr(blk, "is_reward", 0) or 0)
+        ):
+            pits.append(pos)
+    if not pits:
+        return None
+
+    def _diggable(bid: int) -> bool:
+        if bid in excl:
+            return False
+        d, gc = divmod(bid, 100)
+        blk = block_by_pos.get((d, gc - 1))
+        return blk is None or int(getattr(blk, "count", 0) or 0) > 0
+
+    active_pos = {(d, gc - 1): bid
+                  for bid in actives if _diggable(bid)
+                  for d, gc in [divmod(bid, 100)]}
+    if not active_pos:
+        return None
+
+    depths = [p[0] for p in pits] + [p[0] for p in active_pos]
+    dmin, dmax = min(depths), max(depths)
+
+    def _cost(d: int, c: int) -> int:
+        blk = block_by_pos.get((d, c))
+        if blk is not None and int(getattr(blk, "count", 0) or 0) == 0:
+            return 0  # already dug -> air
+        t = mine_terrain.terrain_at(d, c, area_info)
+        if t == mine_terrain.AIR:
+            return 0
+        if t == mine_terrain.STONE:
+            return 2
+        return 1  # dirt / undug-unknown default (every cell is diggable)
+
+    INF = float("inf")
+    dist: Dict[tuple, float] = {}
+    pq: list = []
+    for p in pits:
+        dist[p] = 0
+        heapq.heappush(pq, (0, p[0], p[1]))
+    while pq:
+        dc, d, c = heapq.heappop(pq)
+        if dc > dist.get((d, c), INF):
+            continue
+        for nd, nc in ((d - 1, c), (d + 1, c), (d, c - 1), (d, c + 1)):
+            if not (0 <= nc < GRID_COLS) or not (dmin <= nd <= dmax):
+                continue
+            nv = dc + _cost(nd, nc)
+            if nv < dist.get((nd, nc), INF):
+                dist[(nd, nc)] = nv
+                heapq.heappush(pq, (nv, nd, nc))
+
+    best_key = None
+    best_bid = None
+    for (d, c), bid in active_pos.items():
+        dd = dist.get((d, c))
+        if dd is None:
+            continue
+        key = (dd, -d, c)  # nearest pit, then deepest, then lowest col
+        if best_key is None or key < best_key:
+            best_key, best_bid = key, bid
+    return best_bid
+
+
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
          *, max_depth: Optional[int] = None) -> Dict[str, Any]:
     """Build the grid, run the planner (v1 A*), and translate steps back to block_ids.
