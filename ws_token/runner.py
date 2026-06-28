@@ -1195,9 +1195,9 @@ def _run_dragon_realm(client, tracker: mining.InventoryTracker) -> dict:
 
 
 def _run_xwar_idle(client, *, device: str, state_dir=None, now=None) -> dict:
-    """跨服戰 放置獎勵 純-WS 自動領取（每 ≤8h，只在 biweekly 開放窗口內）.
+    """跨服戰 放置獎勵 純-WS 自動領取（每 ≤4h，只在 biweekly 開放窗口內）.
 
-    Thin wrapper over ``xwar_idle.claim_if_due``: the 8h cadence throttle, the
+    Thin wrapper over ``xwar_idle.claim_if_due``: the 4h cadence throttle, the
     open-window gate (act_list 0x180c → cross-war type 33 state==Open, server-
     authoritative so no hardcoded biweekly date drifts) and the ws_state ledger
     all live in the module. Dormant event (no frame) / 0x0201 → benign skip.

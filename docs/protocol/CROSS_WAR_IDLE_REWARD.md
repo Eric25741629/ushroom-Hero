@@ -35,7 +35,7 @@ reqCrossWarGetIdelReward = () => netManager.send("cross_war.cross_war_get_idle_r
 `amount = ratePerMin * floor(min(serverTime - last_time, CAP) / 60)`，
 `CAP = 28800s = 8h`，**溢出丟棄**，rate 依戰力分級。輸 PvP 會把 `last_time` 往後推
 （吃掉累積）。實證：456000 金幣 ÷ 950/分 = 480 分 = 8h。
-→ **至少每 8h 領一次最佳**；領更勤無損失（只是每次拿少一點）。
+→ 8h 上限決定「至少每 8h 領一次」才不溢出；本 bot 採 **每 4h 領一次**（留 headroom，領更勤無損失，只是每次拿少一點）。
 
 ## 開放窗口判斷 = `act_list`（伺服器權威，無硬編日期）
 
@@ -64,7 +64,7 @@ reqCrossWarGetIdelReward = () => netManager.send("cross_war.cross_war_get_idle_r
 - `claim_idle(client)` → `call_for(0x2d04, b"", expect_cmds=(0x2d04, 0x0201))` → `ClaimResult`。
 - `claim_if_due(client, device, ...)` gate（per-device `ws_state/<device>.json` ledger
   `xwar_idle = {last_attempt_ts, last_success_ts, last_new_time}`）：
-  1. 距 `last_attempt_ts` < 8h → skip（純本地，不發任何封包；把 off-window chatter 壓到每 8h 一次）。
+  1. 距 `last_attempt_ts` < 4h（`MIN_INTERVAL_S`）→ skip（純本地，不發任何封包；把 off-window chatter 壓到每 4h 一次）。
   2. `read_window`；非 Open → skip（記 `last_attempt_ts`）。
   3. `claim_idle`；成功記 `last_success_ts`/`last_new_time`。
   - timeout / `0x0201` → benign skip，不記 success。
@@ -74,5 +74,5 @@ reqCrossWarGetIdelReward = () => netManager.send("cross_war.cross_war_get_idle_r
   設定 `config_manager` `ws_token.xwar_idle`（預設 False）；
   儀表板「活動」頁 `WS_EXTRA_FIELDS` slot `xwar`（純宣告，無 bespoke JS）。
 
-> ponytail: 窗口末端 ≤8h 殘餘可能因 8h 節流落在關閉後而未領（每兩週至多漏一截）；
-> 升級路徑＝`end_ts` 距今 < 8h 時放寬節流補領一次。先不做。
+> ponytail: 窗口末端 ≤4h 殘餘可能因 4h 節流落在關閉後而未領（每兩週至多漏一截）；
+> 升級路徑＝`end_ts` 距今 < 4h 時放寬節流補領一次。先不做。

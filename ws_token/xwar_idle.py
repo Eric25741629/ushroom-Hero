@@ -3,7 +3,8 @@
 The 跨服戰 (cross-server war, ActivityType=33) runs biweekly (Sat 10:00 → Sun
 22:00). Its 放置獎勵 popup (the bottom-left chest on CrosswarMapSceneView) accrues
 gold + a second currency by combat-power bracket, capped at 8h; over-cap is
-discarded, so claiming at least every 8h is optimal.
+discarded, so claiming no less often than every 8h avoids waste (this bot claims
+every 4h, ``MIN_INTERVAL_S``, leaving headroom).
 
 LIVE-decoded 2026-06-28 on 5560 (s1467, CDP 9225), cross-checked against the
 client source (docs/game_client_sources/...index.966f5.js, ``CrossWarControl``).
@@ -47,9 +48,10 @@ CMD_ERROR = 0x0201        # error.error_info_s2c {error_code#1}
 ACT_TYPE_CROSS_WAR = 33   # ActivityType.CrossWar
 STATE_OPEN = 2            # ActivityState.Open (Null=0/Preview=1/Open=2/EndShow=3)
 
-# Cadence: claim at most once per 8h (== the accrual cap). Short probe timeout so
-# a dormant event that sends no frame degrades fast instead of blocking the run.
-MIN_INTERVAL_S: float = 8 * 3600
+# Cadence: claim at most once per 4h (the accrual cap is 8h, so a 4h cadence keeps
+# headroom and never overflows). Short probe timeout so a dormant event that sends
+# no frame degrades fast instead of blocking the run.
+MIN_INTERVAL_S: float = 4 * 3600
 PROBE_TIMEOUT_S: float = 6.0
 
 _LEDGER_KEY = "xwar_idle"
@@ -142,7 +144,7 @@ def claim_idle(client: WSGameClient, *, timeout: Optional[float] = None) -> Clai
     return r
 
 
-# --- cadence gate (8h interval + act_list open-window) -----------------------
+# --- cadence gate (4h interval + act_list open-window) -----------------------
 
 def claim_if_due(
     client: WSGameClient, *, device: str, state_dir=None, now=None,
@@ -152,12 +154,12 @@ def claim_if_due(
 
     Gate (all server-authoritative — no hardcoded biweekly date):
       1. throttle: skip if < ``min_interval_s`` since the last attempt (no socket
-         traffic at all — keeps off-window chatter to one act_list read per 8h);
+         traffic at all — keeps off-window chatter to one act_list read per 4h);
       2. window: read act_list (0x180c); skip unless cross-war is Open (state==2);
       3. claim: send 0x2d04; persist ``last_success_ts``/``last_new_time`` on ok.
 
     ``last_attempt_ts`` advances on every due check (success, rejection, or
-    no-response) so the 8h throttle holds even while the event is closed. A
+    no-response) so the 4h throttle holds even while the event is closed. A
     timeout (dormant event sends no frame) is a benign skip. Returns a summary
     dict for the runner's RunReport.
     """

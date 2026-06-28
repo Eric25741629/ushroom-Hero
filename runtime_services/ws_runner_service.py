@@ -262,7 +262,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     # 遺物 平均強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：單一真相在巢狀 ws_token dict。
     relic_upgrade = bool(_ws_nested.get("relic_upgrade", False))
     tycoon = bool(_ws_nested.get("tycoon", False))
-    # 跨服戰 放置獎勵 純-WS 每 ≤8h 自動領取 (預設關)；只在 act_list 顯示活動 Open 才送。
+    # 跨服戰 放置獎勵 純-WS 每 ≤4h 自動領取 (預設關)；只在 act_list 顯示活動 Open 才送。
     xwar_idle_enabled = bool(_ws_nested.get("xwar_idle", False))
     # 抽卡 (技能/同伴) — 巢狀 ws_token.gacha 子設定 (預設關)；消耗抽卡券。
     gacha_config = _ws_nested.get("gacha") or None
