@@ -72,13 +72,15 @@ def _fake_device():
 
 
 def test_recovers_to_home_after_successful_run(wt, monkeypatch, patched):
-    # 單局完整流程：入場 → 開始挑戰(打一關後敗) → 結束本局/確定 → 回主頁
+    # 單局完整流程：入場 → 開始挑戰(打一關後敗) → 結束本局/確定 → 回主頁。
+    # _settle_run 細節由 test_weekly_trials_rounds 專測；此處只鎖「成功路徑 recover 恰一次」契約，
+    # 故 mock _settle_run，避免 _FakeImg 要去模擬回主面板偵測。
     d = _fake_device()
+    monkeypatch.setattr(wt, "_settle_run", lambda d: True)
     monkeypatch.setattr(wt, "img_tools", _FakeImg(
         click_map={
             "副本": True, "萬神試煉": True,
             "開始挑戰": [True, False], "點擊": True,
-            "結束本局": True, "確定": True,   # _settle_run 退出序
         },
         region_map={"開始挑戰": True, "點擊": True, "失敗": True},
     ))

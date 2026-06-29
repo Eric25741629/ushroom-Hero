@@ -113,3 +113,85 @@ def test_default_rounds_is_eight(wt, monkeypatch, harness):
     _wire(monkeypatch, wt, harness, advance=[True] * 8, battle=[1] * 8, settle=[True] * 8)
     assert wt.fight_test(_fake_device()) is True  # 不帶 rounds → 預設 8
     assert harness.calls.count("advance") == 8
+
+
+# ---- _settle_run fail-safe (2026-06-30「沒有正常退出」回歸防護) -------------------
+
+class _RecDevice:
+    def __init__(self):
+        self.clicks = []
+
+    def click(self, x, y, *a, **k):
+        self.clicks.append((x, y))
+        return True
+
+    def swipe(self, *a, **k):
+        return True
+
+
+def _settle_img(monkeypatch, wt, *, region, click):
+    monkeypatch.setattr(wt.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(wt, "img_tools", types.SimpleNamespace(
+        check_str_in_region=lambda d, kw, **_: region.get(kw, False),
+        click_str_by_server=lambda d, kw, **_: click.get(kw, False),
+    ))
+
+
+def test_settle_true_when_back_home(wt, monkeypatch):
+    # 結束本局→確定→偵測到回主面板(神樹祝福、無開始挑戰) → True，且只點過紅箭頭(無盲點 ✕)
+    _settle_img(monkeypatch, wt,
+                region={"結束本局": True, "開始挑戰": False, "神樹祝福": True},
+                click={"結束本局": True, "確定": True})
+    dev = _RecDevice()
+    assert wt._settle_run(dev) is True
+    assert dev.clicks == [wt._EXIT_ARROW_XY]  # 只點紅箭頭；回主面板前未盲點報告 ✕
+
+
+def test_settle_false_and_no_blind_taps_when_never_home(wt, monkeypatch):
+    # 還停在關卡視圖(開始挑戰 一直在)、無報告字 → 回 False，且**絕不**盲點報告 ✕(舊 bug 根因)
+    _settle_img(monkeypatch, wt,
+                region={"結束本局": True, "開始挑戰": True},  # 永遠不在主面板
+                click={"結束本局": True, "確定": True})
+    dev = _RecDevice()
+    assert wt._settle_run(dev) is False
+    assert dev.clicks == [wt._EXIT_ARROW_XY]  # 只點紅箭頭；未盲點 (270,875) 誤開新局
+    assert wt._REPORT_CLOSE_XY not in dev.clicks
+
+
+def test_settle_false_when_no_end_dialog(wt, monkeypatch):
+    # 紅箭頭沒開出『結束本局』對話框 → 直接 False(不在可結算狀態)
+    _settle_img(monkeypatch, wt, region={"結束本局": False}, click={})
+    dev = _RecDevice()
+    assert wt._settle_run(dev) is False
+    assert dev.clicks == [wt._EXIT_ARROW_XY]
+
+
+def test_settle_taps_report_close_only_when_report_visible(wt, monkeypatch):
+    # 報告可見(試煉之心) → 點 ✕ 後回主面板 → True
+    seq = {"n": 0}
+    def _region(d, kw, **_):
+        # 第一輪:報告在(試煉之心)、非主面板;點 ✕ 後第二輪:回主面板
+        if kw == "開始挑戰":
+            return False
+        if kw == "試煉之心":
+            return seq["n"] == 0
+        if kw == "神樹祝福":
+            return seq["n"] >= 1
+        if kw == "結束本局":
+            return True
+        return False
+    monkeypatch.setattr(wt.time, "sleep", lambda *_a, **_k: None)
+    monkeypatch.setattr(wt, "img_tools", types.SimpleNamespace(
+        check_str_in_region=_region,
+        click_str_by_server=lambda d, kw, **_: kw in ("結束本局", "確定"),
+    ))
+    dev = _RecDevice()
+    # 點 ✕ 那刻推進 seq → 下一輪 _at_rogue_home True
+    orig_click = dev.click
+    def _click(x, y, *a, **k):
+        if (x, y) == wt._REPORT_CLOSE_XY:
+            seq["n"] += 1
+        return orig_click(x, y, *a, **k)
+    dev.click = _click
+    assert wt._settle_run(dev) is True
+    assert wt._REPORT_CLOSE_XY in dev.clicks  # 報告可見時有點 ✕

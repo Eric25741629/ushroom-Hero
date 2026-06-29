@@ -39,7 +39,9 @@ _RUN_MAX_SECONDS = 15 * 60    # 單局戰鬥迴圈上限 15 分鐘(使用者 202
 _EXIT_ARROW_XY = (510, 920)   # 右下紅色離開箭頭(RogueMainView/view/btnClose)
 _REPORT_CLOSE_XY = (270, 875) # 本局報告 RogueRecordInfoView 的 ✕(無文字，OCR 點不到)
 _DIALOG_WAIT = 4.5            # RogueEndTipsView / 結算確認窗 轉場等待(2026-06-21 實測需 4-5s)
-_SETTLE_DISMISS_TRIES = 5     # 結算後關掉「本局報告 + 獎勵」窗的嘗試次數
+_SETTLE_DISMISS_TRIES = 8     # 結算後關掉「本局報告 + 獎勵」窗的嘗試次數
+# RogueView 主面板辨識字(可開新局):這些在主面板有、關卡視圖/RogueEnterView 沒有。
+_ROGUE_HOME_MARKERS = ("神樹祝福", "結算倒計時")
 
 
 def _advance_to_stage(d) -> bool:
@@ -101,27 +103,49 @@ def _battle_loop(d, max_stages: int = _BATTLE_MAX_STAGES) -> int:
     return fought
 
 
-def _settle_run(d) -> bool:
-    """結束本局並回主面板:右下紅箭頭 → RogueEndTipsView『結束本局』→ 確認窗『確定』→ 關結算窗。
+def _at_rogue_home(d) -> bool:
+    """是否在 RogueView 主面板(可開新局):非關卡視圖(無『開始挑戰』) 且 有主面板辨識字。"""
+    if img_tools.check_str_in_region(d, "開始挑戰"):
+        return False  # 還在關卡視圖
+    return any(img_tools.check_str_in_region(d, kw) for kw in _ROGUE_HOME_MARKERS)
 
-    回傳是否成功送出『結束本局』(找不到 = 不在可結算狀態，視為失敗 → 上層停止、不寫週記錄)。
-    退出序與等待時間取自 2026-06-21/06-29 live recon(對話框轉場需 4-5s)。
+
+def _settle_run(d) -> bool:
+    """結束本局並回 RogueView 主面板:右下紅箭頭 → 『結束本局』→ 確認窗『確定』→ 關結算窗。
+
+    回傳是否「確認回到主面板」(可開下一局)。**fail-safe**:只在偵測到結算窗(獎勵『點擊』/
+    本局報告)時才點關閉,**絕不盲點座標**(舊版盲點 (270,875) 連點誤觸主面板『開始』又開新局,
+    是 2026-06-30『沒有正常退出』的根因);無法確認回主面板就回 False,讓上層中止 + 回主頁。
+    退出序/等待取自 2026-06-21/06-29 live recon(對話框轉場需 4-5s)。
     """
-    d.click(*_EXIT_ARROW_XY)  # 右下紅箭頭(OCR 誤判，用座標)
+    d.click(*_EXIT_ARROW_XY)  # 右下紅箭頭(OCR 誤判成 'G'，用座標)
     time.sleep(_DIALOG_WAIT)
-    if not img_tools.click_str_by_server(d, "結束本局"):
-        logger.warning("[萬神試煉] 結算:找不到『結束本局』(不在可結算狀態) → 本局結算失敗")
+    if not img_tools.check_str_in_region(d, "結束本局"):
+        logger.warning("[萬神試煉] 結算:紅箭頭未開出『結束本局』對話框 → 中止本局結算")
+        return False
+    img_tools.click_str_by_server(d, "結束本局")
+    time.sleep(_DIALOG_WAIT)
+    if not img_tools.click_str_by_server(d, "確定"):  # 確認窗『是否確認結算本局』
+        logger.warning("[萬神試煉] 結算:找不到『確定』(結算確認窗) → 中止")
         return False
     time.sleep(_DIALOG_WAIT)
-    img_tools.click_str_by_server(d, "確定")  # 確認窗『是否確認結算本局』
-    time.sleep(_DIALOG_WAIT)
-    # 結算後跳『本局報告(✕)』+『獎勵(點擊空白)』；關掉以回主面板供下一局進場。
+    # 關結算窗(獎勵『點擊空白』+ 本局報告『✕』無文字)。逐步驗證:回到主面板即停;
+    # 只在報告可見(『試煉之心』/『抵達關卡』)時才點 ✕ 座標 → 不會誤觸主面板。
     for _ in range(_SETTLE_DISMISS_TRIES):
-        if not img_tools.click_str_by_server(d, "點擊"):
-            d.click(*_REPORT_CLOSE_XY)  # 報告 ✕(無文字)
-        time.sleep(1.2)
-    logger.info("[萬神試煉] 本局已結束(結束本局→確定→關結算窗)")
-    return True
+        if _at_rogue_home(d):
+            logger.info("[萬神試煉] 本局已結束,回到 RogueView 主面板")
+            return True
+        if img_tools.click_str_by_server(d, "點擊"):       # 獎勵『點擊空白處關閉』
+            time.sleep(1.2)
+        elif img_tools.check_str_in_region(d, "試煉之心") or img_tools.check_str_in_region(d, "抵達關卡"):
+            d.click(*_REPORT_CLOSE_XY)                       # 僅當『本局報告』可見才點 ✕
+            time.sleep(1.2)
+        else:
+            time.sleep(1.0)                                  # 轉場中,等一下再判,不盲點
+    ok = _at_rogue_home(d)
+    if not ok:
+        logger.warning("[萬神試煉] 結算後未確認回 RogueView 主面板 → 視為結算失敗(中止,不誤開新局)")
+    return ok
 
 
 def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
