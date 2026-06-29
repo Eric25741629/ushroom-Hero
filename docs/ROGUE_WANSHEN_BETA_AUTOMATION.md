@@ -145,3 +145,63 @@ callbackInfos 直呼仍是可選的更穩做法,但**非必要**;有些畫面的
 - 純 WS 可行性 **未驗證**(別當定論,任一方向都是)。
 - ADB 無 JS 注入;另開 token WS 與 App 同帳號互踢。
 - headless/背景:`web_device.py` 支援;最大未知是 WebGL 渲染 + rAF throttle,需實測。
+
+## 9. 2026-06-29 live recon(5554,週一 rogue 重置,CDP 9230,全程 read-only)
+
+用 cocos 場景樹 + WS ring-buffer hook 把整套 flow 與協議欄位重抓一遍。與 06-12 文件一致,並補上欄位細節與一個重大導航發現。
+
+### 9.1 完整 UI flow(節點路徑 + 對應 WS)
+canvas DOM = 540x960,**Cocos 設計解析度 = 720x1280**(`cc.view.getVisibleSize()`),縮放 0.75。
+worldPosition(design,原點左下)→ css tap:`x*0.75, (1280-y)*0.75`。
+
+進場(冷啟,本帳號本週重置後為冷啟「開始」非「繼續」):
+1. 主頁底部 tab `MainView/tab/scrollTab/view/content/3`(副本)→ 副本列表(rogue 在 `萬神試煉Beta` 卡,列表卡**無次數顯示**)
+2. 點該卡入場 → `RogueView`(主面板),按鈕:`RogueView/view/btnStart`(開始/繼續)、`btnRecord`(神戰報告)、`btnScience`(神樹祝福)、`btnStore`(秘寶閣)、`btnReward/score`=週積分、`btnReward/num`=獎勵里程碑
+3. `btnStart` → `RogueEnterView`(開局設定,`bg/txtLev`=第N關、`bg/btn`=開始、`bg/btnClose`=✕、`bg/btnLast`=往前選起點)
+4. `RogueEnterView/bg/btn`(開始)→ **確認窗「是否確認開啟新一局試煉」** → `確定`
+5. → `tx rogue_main_enter(0x4c02){1:1}` → `RogueMainView`(關卡視圖)+ `RogueGoodsGetView`(開局獎勵窗,點空白關)
+
+關卡循環(勝利):
+6. `RogueMainView/view/btnStart`(開始挑戰)→ `tx combat(0x4c04){}` → `rx{1:code,2:seed,3:atk_role,4:def_role}` → client 本地模擬 → `tx result(0x4c05){1:result,2:precent}`(**client 回報**)→ `rx attr_up(0x4c09)+bag(0x4c07)+result s2c{2:is_win}+rogue_info` → `RogueBattleResultView`(勝利/對決窗)
+7. 點空白關結果窗 → 回 `RogueMainView`,**關卡 +1**,重送 `enter(0x4c02){1:<新關>}` →(回 6 續打)
+
+退出/結算:
+8. `RogueMainView/view/btnClose`(右下紅箭頭)→ `RogueEndTipsView`(`desc`=選擇暫時離開或結束本局、`btn1`=結束本局、`btn2`=暫時離開、`btn3`=取消)
+9. `btn1`(結束本局)→ **確認窗「是否確認結算本局」** → `確定`
+10. → `tx over(0x4c03){1:0}` → `RogueRecordInfoView`(本局報告)+ `GoodsGetView`(獎勵入帳,主帳號 attr_up)。run **bank** 在當前關,下次進場 RogueEnterView 顯示該關(「基於上一局試煉終點」)。
+
+### 9.2 ⚠ 重大導航發現(可能是「假完成」/ 點不動的根因)
+rogue 的兩個確認窗 **「是否確認開啟新一局試煉」「是否確認結算本局」掛在 `TopView/MessageView`(通用訊息框),不在 `NormalView`**。
+→ 任何「只看 NormalView active overlay」的狀態判斷都看不到它們;`MessageView` 是節點池,殘留字串不可信,要靠截圖/OCR 或讀**當前可見**節點判斷。
+→ 對 bot:`_advance_to_stage` 輪點「開始」後若沒處理這個 TopView 確認窗,就會卡在 RogueEnterView(OCR 點「開始」回 True 但畫面不動,實測重現)。確認窗按鈕走 `MessageView` 內的「確定/取消」。
+
+### 9.3 資源/狀態語意(本局報告 RogueRecordInfoView 權威)
+- **「試煉之心」= ❤(左上紅心計數)= 局內生命**;報告欄「剩餘試煉之心」。使用者先前說的「13❤」就是這個。實測:**勝一關 ❤ 不變(16→16)**,推測敗北才扣(自然失敗未驗,見 9.5)。
+- **古銀幣 = 左上金幣計數**(176→182,勝利 +6);報告欄「本局獲得古銀幣總數」。
+- 左上第三個計數(53)= 某試煉道具/卷軸。
+- `RogueView` 主面板「0/2500」= 週積分進度;「0/10」= **獎勵里程碑檔位數(非次數)**。
+- 列表卡與主面板**都沒有顯示「剩餘挑戰次數」**;未發現硬性每日/每週開局次數上限欄位。
+
+### 9.4 WS 欄位細節(本次實抓,補 ROGUE_PROTO_SCHEMA.json)
+- `rogue_info(0x4c01)` s2c:`{1:當前關卡(實=36→勝後37), 2:古銀幣, 3:週結算時間戳(1783267200), 7:[{id,值} 大清單=主帳號資源鏡像]}`。
+- `rogue_main_enter(0x4c02)` c2s `{1:return_type}`;s2c `{1:{1:關卡, 2:{角色/技能/裝備"梅利號"...}, 3:[敵人/關卡陣列]}}`。
+- `rogue_main_combat(0x4c04)` c2s `{}`;s2c `{1:code, 2:seed(uint), 3:atk_role, 4:def_role}`(本帳號鏡像戰:atk/def name 皆=自己「下不維力炸醬麵」)。
+- `rogue_main_result(0x4c05)` c2s `{1:result(0勝/1敗), 2:precent}`;s2c `{1:code, 2:is_win, 3:precent, 4:run_state, 5:{...}}`。
+- `rogue_main_over(0x4c03)` c2s `{1:return_type=0}`;s2c `{1:{1:積分?,2:抵達關卡,...,7:剩餘試煉之心,8:古銀幣,12:[bag]}, 2:{run reward}}`。
+- 其他出現:`rogue_bag(0x4c07)`、`rogue_science(0x4c16,神樹各節點等級)`、`rogue_attr_up(0x4c09)`、`0x4c20`(redpoint?)、`rogue_red(0x4c1e)`。
+
+### 9.5 自然敗北行為(2026-06-29 grind 實證,5554)
+從第37關開新局自動連打:第1-4關勝(關卡 37→41),**第5關(宗師-05,第40關)敗北**。實證:
+- **敗北結果窗 = 同一個 `RogueBattleResultView`,banner 變藍色「失敗」(勝為金色「勝利」)**,顯示「對決 X vs 宗師-05」+ **「失去 ❤1」**。判定來源:`result(0x4c05)` s2c `{2:is_win}`(1勝/0敗,client 開打即算好送出,動畫稍後才播完顯示窗;`is_win` 是最可靠的勝負信號,別靠 OCR「勝利/失敗」字)。
+- **敗北 = 扣 1 試煉之心(❤),停在同一關重試**(不進關)。點空白關失敗窗 → 回 `RogueMainView` 同關,重送 `enter(0x4c02)`,`開始挑戰` 仍在。背包 ❤ 16→…→14(每敗 -1)。
+- **run 不因單次敗北結束**;**試煉之心(❤)歸 0 才真正結束一局**。banked = 最高抵達關。
+- ⇒ **「假完成」bug 根因確證**:`battle/weekly_trials.py::_battle_loop` 偵測到「失敗」就 `break` 是錯的 — 敗北是 run 內正常事件(扣心重試)。正確停止信號是 **❤(試煉之心)=0 → 該局結束**,或主動「結束本局」。
+- 戰鬥動畫播放時畫面在 **BattleView 層**(「與對手激烈搏鬥！正在挑戰…/逃跑」),此時 `NormalView` overlay=空 → 別把「空 overlay」誤判為離開 rogue。
+
+### 9.6 「8 局」語意(使用者 2026-06-29 定案)
+**「8 局」= 使用者選定的每週開局(局)目標,非遊戲硬限**(協議無對應硬欄位)。一局 = 開始→爬到 ❤ 歸 0 自然結束(或主動結束本局)→結算。跑滿 8 局才寫週記錄。
+→ 重寫 `fight_test` 方向:把 enter→(開始挑戰 loop 到 ❤=0 / run 結束)→結束本局→重進 包成 **8 次迴圈**;每局內**敗北不 break,續打到 ❤=0**;單局/單關仍保留時間上限防呆。
+
+### 9.7 recon 工具
+scratchpad `rogue_recon.py`(attach CDP 9230 + WS ring hook + 場景樹 dump/find + emit-click/clickEvents + 座標 tap + protobuf walker)。
+點擊可靠度:`emit('click')` 對有 'click' listener 的鈕穩(btnStart/btnClose/各 view btnClose);**確認窗(MessageView)的確定/取消用座標 tap**(emit 不一定到);RogueEndTipsView 結束本局用座標。
