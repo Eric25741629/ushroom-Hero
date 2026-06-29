@@ -37,11 +37,17 @@ _BATTLE_SETTLE_TRIES = 9      # 每關等結算輪詢次數 (~2s/次 ≈ 18s)
 _RUN_MAX_SECONDS = 15 * 60    # 單局戰鬥迴圈上限 15 分鐘(使用者 2026-06-21)
 # 退出/結算座標(540x960 邏輯座標;OCR 會把紅箭頭誤判成 'G' 故用座標)。實測值，必要時 live 微調。
 _EXIT_ARROW_XY = (510, 920)   # 右下紅色離開箭頭(RogueMainView/view/btnClose)
-_REPORT_CLOSE_XY = (270, 875) # 本局報告 RogueRecordInfoView 的 ✕(無文字，OCR 點不到)
+# 『結束本局』按鈕座標(btn1):OCR 子字串「結束本局」會誤命中說明文字「選擇暫時離開或結束本局」
+# (中央 ~(269,433)),故按鈕用座標點。2026-06-30 live 實測 btn1 css=(168,522)。
+_END_RUN_BTN_XY = (168, 522)
+_REPORT_CLOSE_XY = (270, 875) # 本局報告 RogueRecordInfoView 的 ✕(無文字，OCR 點不到;2026-06-30 實測)
 _DIALOG_WAIT = 4.5            # RogueEndTipsView / 結算確認窗 轉場等待(2026-06-21 實測需 4-5s)
 _SETTLE_DISMISS_TRIES = 8     # 結算後關掉「本局報告 + 獎勵」窗的嘗試次數
 # RogueView 主面板辨識字(可開新局):這些在主面板有、關卡視圖/RogueEnterView 沒有。
 _ROGUE_HOME_MARKERS = ("神樹祝福", "結算倒計時")
+# 結算/報告/獎勵/關卡 覆蓋層 marker:任一在 = 還有窗沒關,不算回到主面板。
+# (主面板底部按鈕「神樹祝福」會在報告蓋不到處透出 → 不能只靠它判 home,2026-06-30 假陽性教訓)
+_ROGUE_OVERLAY_MARKERS = ("開始挑戰", "試煉時間", "抵達關卡", "恭喜", "結束本局")
 
 
 def _advance_to_stage(d) -> bool:
@@ -104,9 +110,13 @@ def _battle_loop(d, max_stages: int = _BATTLE_MAX_STAGES) -> int:
 
 
 def _at_rogue_home(d) -> bool:
-    """是否在 RogueView 主面板(可開新局):非關卡視圖(無『開始挑戰』) 且 有主面板辨識字。"""
-    if img_tools.check_str_in_region(d, "開始挑戰"):
-        return False  # 還在關卡視圖
+    """是否在 RogueView 主面板(可開新局):無任何覆蓋層(關卡/報告/獎勵) 且 有主面板辨識字。
+
+    注意:主面板底部『神樹祝福』會在報告蓋不到處透出,故**必須先排除覆蓋層 marker**,
+    不能只看『有神樹祝福、無開始挑戰』就判 home(2026-06-30 假陽性 → settle 沒關報告就回報成功)。
+    """
+    if any(img_tools.check_str_in_region(d, kw) for kw in _ROGUE_OVERLAY_MARKERS):
+        return False  # 還有關卡/報告/獎勵窗
     return any(img_tools.check_str_in_region(d, kw) for kw in _ROGUE_HOME_MARKERS)
 
 
@@ -123,7 +133,8 @@ def _settle_run(d) -> bool:
     if not img_tools.check_str_in_region(d, "結束本局"):
         logger.warning("[萬神試煉] 結算:紅箭頭未開出『結束本局』對話框 → 中止本局結算")
         return False
-    img_tools.click_str_by_server(d, "結束本局")
+    # 用按鈕座標點(OCR 子字串會誤命中說明文字「選擇暫時離開或結束本局」中央 → 點不到按鈕)
+    d.click(*_END_RUN_BTN_XY)
     time.sleep(_DIALOG_WAIT)
     if not img_tools.click_str_by_server(d, "確定"):  # 確認窗『是否確認結算本局』
         logger.warning("[萬神試煉] 結算:找不到『確定』(結算確認窗) → 中止")

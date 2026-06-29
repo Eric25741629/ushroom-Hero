@@ -129,69 +129,72 @@ class _RecDevice:
         return True
 
 
-def _settle_img(monkeypatch, wt, *, region, click):
+def _stateful_settle(monkeypatch, wt, region_fn, click_set):
     monkeypatch.setattr(wt.time, "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(wt, "img_tools", types.SimpleNamespace(
-        check_str_in_region=lambda d, kw, **_: region.get(kw, False),
-        click_str_by_server=lambda d, kw, **_: click.get(kw, False),
+        check_str_in_region=lambda d, kw, **_: region_fn(kw),
+        click_str_by_server=lambda d, kw, **_: kw in click_set,
     ))
 
 
 def test_settle_true_when_back_home(wt, monkeypatch):
-    # 結束本局→確定→偵測到回主面板(神樹祝福、無開始挑戰) → True，且只點過紅箭頭(無盲點 ✕)
-    _settle_img(monkeypatch, wt,
-                region={"結束本局": True, "開始挑戰": False, "神樹祝福": True},
-                click={"結束本局": True, "確定": True})
+    # 結束本局(按鈕座標)→確定→無覆蓋層+神樹祝福 → True;點過 紅箭頭+結束本局按鈕,無盲點報告 ✕
+    calls = {"end": 0}
+    def region(kw):
+        if kw == "結束本局":   # gate 第一次 True(對話框在),之後 False(已點掉)
+            calls["end"] += 1
+            return calls["end"] == 1
+        return kw in ("神樹祝福", "結算倒計時")  # 主面板字常駐;覆蓋層字皆 False
+    _stateful_settle(monkeypatch, wt, region, {"確定"})
     dev = _RecDevice()
     assert wt._settle_run(dev) is True
-    assert dev.clicks == [wt._EXIT_ARROW_XY]  # 只點紅箭頭；回主面板前未盲點報告 ✕
+    assert dev.clicks == [wt._EXIT_ARROW_XY, wt._END_RUN_BTN_XY]  # 結束本局走按鈕座標(非 OCR)
+    assert wt._REPORT_CLOSE_XY not in dev.clicks
 
 
 def test_settle_false_and_no_blind_taps_when_never_home(wt, monkeypatch):
-    # 還停在關卡視圖(開始挑戰 一直在)、無報告字 → 回 False，且**絕不**盲點報告 ✕(舊 bug 根因)
-    _settle_img(monkeypatch, wt,
-                region={"結束本局": True, "開始挑戰": True},  # 永遠不在主面板
-                click={"結束本局": True, "確定": True})
+    # 一直停在關卡視圖(開始挑戰 覆蓋層字常在) → 回 False，且**絕不**盲點報告 ✕(舊 bug 根因)
+    def region(kw):
+        return kw in ("結束本局", "開始挑戰")  # 對話框在(gate 過)、開始挑戰=永遠覆蓋層
+    _stateful_settle(monkeypatch, wt, region, {"確定"})
     dev = _RecDevice()
     assert wt._settle_run(dev) is False
-    assert dev.clicks == [wt._EXIT_ARROW_XY]  # 只點紅箭頭；未盲點 (270,875) 誤開新局
+    assert dev.clicks == [wt._EXIT_ARROW_XY, wt._END_RUN_BTN_XY]  # 紅箭頭+結束本局;未盲點 ✕
     assert wt._REPORT_CLOSE_XY not in dev.clicks
 
 
 def test_settle_false_when_no_end_dialog(wt, monkeypatch):
-    # 紅箭頭沒開出『結束本局』對話框 → 直接 False(不在可結算狀態)
-    _settle_img(monkeypatch, wt, region={"結束本局": False}, click={})
+    # 紅箭頭沒開出『結束本局』對話框 → 直接 False(不在可結算狀態),連按鈕都不點
+    _stateful_settle(monkeypatch, wt, lambda kw: False, set())
     dev = _RecDevice()
     assert wt._settle_run(dev) is False
     assert dev.clicks == [wt._EXIT_ARROW_XY]
 
 
-def test_settle_taps_report_close_only_when_report_visible(wt, monkeypatch):
-    # 報告可見(試煉之心) → 點 ✕ 後回主面板 → True
-    seq = {"n": 0}
-    def _region(d, kw, **_):
-        # 第一輪:報告在(試煉之心)、非主面板;點 ✕ 後第二輪:回主面板
-        if kw == "開始挑戰":
-            return False
-        if kw == "試煉之心":
-            return seq["n"] == 0
-        if kw == "神樹祝福":
-            return seq["n"] >= 1
+def test_settle_home_false_positive_guard_report_overlay(wt, monkeypatch):
+    # 報告蓋著但主面板『神樹祝福』透出 → 不可判 home;偵測『抵達關卡』點 ✕ 關報告後才回主面板。
+    phase = {"n": 0}  # 0=對話框 1=報告(神樹祝福透出) 2=乾淨主面板
+    def region(kw):
         if kw == "結束本局":
-            return True
+            return phase["n"] == 0
+        if kw == "抵達關卡":
+            return phase["n"] == 1          # 報告覆蓋層字
+        if kw == "神樹祝福":
+            return phase["n"] >= 1          # 透出:報告階段就看得到(假陽性誘餌)
+        if kw == "結算倒計時":
+            return phase["n"] >= 2
         return False
-    monkeypatch.setattr(wt.time, "sleep", lambda *_a, **_k: None)
-    monkeypatch.setattr(wt, "img_tools", types.SimpleNamespace(
-        check_str_in_region=_region,
-        click_str_by_server=lambda d, kw, **_: kw in ("結束本局", "確定"),
-    ))
+    _stateful_settle(monkeypatch, wt, region, {"確定"})
     dev = _RecDevice()
-    # 點 ✕ 那刻推進 seq → 下一輪 _at_rogue_home True
-    orig_click = dev.click
+    orig = dev.click
     def _click(x, y, *a, **k):
-        if (x, y) == wt._REPORT_CLOSE_XY:
-            seq["n"] += 1
-        return orig_click(x, y, *a, **k)
+        if (x, y) == wt._END_RUN_BTN_XY and phase["n"] == 0:
+            phase["n"] = 1
+        elif (x, y) == wt._REPORT_CLOSE_XY and phase["n"] == 1:
+            phase["n"] = 2
+        return orig(x, y, *a, **k)
     dev.click = _click
     assert wt._settle_run(dev) is True
-    assert wt._REPORT_CLOSE_XY in dev.clicks  # 報告可見時有點 ✕
+    # 報告階段(神樹祝福透出)沒被誤判 home → 有去點報告 ✕
+    assert wt._REPORT_CLOSE_XY in dev.clicks
+    assert dev.clicks == [wt._EXIT_ARROW_XY, wt._END_RUN_BTN_XY, wt._REPORT_CLOSE_XY]
