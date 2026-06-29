@@ -364,3 +364,19 @@ While doing the dashboard 進階設定 rework directly in the main working dir, 
 **Rule**: 對 live 帳號(會花錢/改動遊戲狀態)的逐步驗證,**一次只送一個 WS 動作就停**,把結果貼出來、等使用者在瀏覽器確認後,**再問**才做下一步。工具做成單一 atomic step(`--step stop_work|fertilize|harvest|buy|plant|start_work`),不要包成 run-all。使用者說「step by step」= 每步一個 gate,不是「自動跑完但中間 log 很多」。
 
 **附帶技術發現(CDP 接瀏覽器同 session 驅動遊戲 WS)**: shop 類 cmd(6913 shop_info)可用 raw `sock.sendMessage(numericCmd, bytes)` 注入並收到回應;但 home_farm(3077)與 worker(18177/18178)這種**有狀態模組**注入 raw frame 後**伺服器不回**(逾時)。3077 另有「每 session 只回一次」去重,瀏覽器載入莊園時已消耗。診斷用 sniff(送出後收集 N ms 內所有回傳 cmd)。
+
+## 2026-06-30 — UI 自動化:不可在迴圈盲點座標 + 未 live 驗證不算完成
+
+萬神 8-局重寫 merge 後,bot 首次真跑就「沒有正常退出」。根因:`_settle_run` 結算後用
+`for _ in range(N): if 找不到文字: d.click(固定座標)` **盲點 (270,875) 連點**,該座標與
+RogueView 主面板「開始」(y~847)重疊 → 誤開新局;且只要找到「結束本局」就 `return True`,
+**從不驗證真的回到目標頁**。下一局 `_advance_to_stage` step0 立刻見「開始挑戰」即鐵證。
+
+**Rule 1(盲點座標)**:UI 自動化的關閉/收尾,**只在偵測到該窗時才點對應座標**(用 OCR 字辨識
+當前在哪一頁),**絕不**在迴圈裡無條件 `d.click(固定座標)`。座標點擊前後都要有狀態 gate。
+**Rule 2(狀態驗證)**:每個導航步驟回傳「是否真的到達目標頁」(用目標頁專屬字驗證,如
+RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰」),驗不到就 fail-safe 回 False
+讓上層中止+回主頁,**寧可乾淨中止重試,也不要硬推**(避免卡死/誤開新局/假完成)。
+**Rule 3(live 驗證)**:OCR/座標型流程的單元測試只驗「編排邏輯」,**證明不了真實點擊行為**。
+不要在沒 live 跑過真帳號前說「完成」。我犯的:用「主動退出(非敗北)」recon 的座標序去寫
+「敗北後退出」,兩者狀態不同,沒實測就 merge。**動 runtime UI 流程 = merge 前必須 live 驗一輪**。
