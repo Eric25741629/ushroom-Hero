@@ -1739,6 +1739,14 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           </div>
 
+          <div style="grid-column:span 2;">
+
+            <label style="font-size:0.8em;">萬神試煉每週局數（一局＝爬到第一次失敗→結束本局，預設 8）</label>
+
+            <input type="number" id="editWanshenRounds" class="form-control" placeholder="8" min="1" max="50">
+
+          </div>
+
         </div>
 
       </div>
@@ -4228,6 +4236,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         document.getElementById('editMiningDuration').value = config.mining_duration_min || 6;
 
+        document.getElementById('editWanshenRounds').value = config.wanshen_rounds || 8;
+
         document.getElementById('editSleepMinHours').value = config.sleep_min_hours || 1;
 
         document.getElementById('editSleepMaxHours').value = config.sleep_max_hours || 1;
@@ -4371,6 +4381,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
         mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
+
+        wanshen_rounds: parseInt(document.getElementById('editWanshenRounds').value || '8', 10),
 
         backend: selectedBackendPlan.replace('+ws', ''),
 

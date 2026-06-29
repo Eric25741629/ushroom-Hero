@@ -14,10 +14,19 @@
 from __future__ import annotations
 
 import bot_state
+import config_manager
 import new_battle
 from json_manager import return_time, time_recording
 from utils.logging_utils import logger
 from utils.screenshot_helpers import log_main_page_mismatch
+
+
+def _wanshen_rounds(ip: str) -> int:
+    """讀本機 萬神試煉 每週開局數(可調 config `wanshen_rounds`，預設 8)。讀失敗則退預設。"""
+    try:
+        return int(config_manager.get_device_config(ip).get("wanshen_rounds", 8))
+    except Exception:
+        return 8
 
 
 def _run_weekly_dungeon(
@@ -59,14 +68,15 @@ def _run_weekly_dungeon(
     if stage != "主頁面":
         log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
         return
-    logger.info("[%s] 萬神試煉：條件滿足，開始執行 fight_test", ip)
+    rounds = _wanshen_rounds(ip)
+    logger.info("[%s] 萬神試煉：條件滿足，開始執行 fight_test (目標 %d 局)", ip, rounds)
     bot_state.update_state(ip, task="萬神試煉", step="執行中")
-    ok = new_battle.fight_test(d)
+    ok = new_battle.fight_test(d, rounds=rounds)
     if ok:
         time_recording(ip, name="萬神試煉")
-        logger.info("[%s] 萬神試煉：完成(至少打了一關)，已寫入本週記錄", ip)
+        logger.info("[%s] 萬神試煉：完成(跑滿 %d 局)，已寫入本週記錄", ip, rounds)
     else:
-        logger.warning("[%s] 萬神試煉：未實際挑戰(入場/進場失敗)，不寫記錄，下次重試", ip)
+        logger.warning("[%s] 萬神試煉：未跑滿 %d 局(入場/進場/結算失敗)，不寫記錄，下次重試", ip, rounds)
 
 
 def _run_biweekly_dungeon(

@@ -74,6 +74,7 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
     "mining_planner_version": "v1",  # v1 / v3 / v4 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
     "mining_save_samples": False,  # save low-confidence mining cell samples
+    "wanshen_rounds": 8,  # 萬神試煉每週開局(局)數;一局=爬到第一次失敗→結束本局→重進(可調 1-50)
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
@@ -213,6 +214,7 @@ class DeviceConfig:
     mining_duration_min: int = 6
     mining_planner_version: str = "v1"
     mining_save_samples: bool = False
+    wanshen_rounds: int = 8
 
     # Sleep schedule
     sleep_min_hours: float = 1.0
@@ -1113,6 +1115,9 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["mining_save_samples"] = _to_bool(
             current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
             DEFAULT_DEVICE_CONFIG["mining_save_samples"],
+        )
+        current["wanshen_rounds"] = _clamp_int(
+            current.get("wanshen_rounds"), 1, 50, DEFAULT_DEVICE_CONFIG["wanshen_rounds"]
         )
         _sleep_min = _clamp_float(
             current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]

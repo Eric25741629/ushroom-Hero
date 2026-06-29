@@ -86,15 +86,17 @@ def fake_bot_state(monkeypatch, dungeon_mod):
 def fake_battle(monkeypatch, dungeon_mod):
     calls: list[dict] = []
 
-    def _fight_test(d):
-        calls.append({"fn": "fight_test", "d": d})
-        return True  # 模擬實際打了至少一關 → 排程會寫本週記錄
+    def _fight_test(d, rounds=8):
+        calls.append({"fn": "fight_test", "d": d, "rounds": rounds})
+        return True  # 模擬跑滿 rounds 局 → 排程會寫本週記錄
 
     def _biweekly(d, ip, *, logger_obj, should_stop):
         calls.append({"fn": "biweekly", "ip": ip})
 
     monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", _fight_test)
     monkeypatch.setattr(dungeon_mod.new_battle, "run_biweekly_bounty_road_single", _biweekly)
+    # 隔離 config 檔 I/O：固定每週局數
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 8)
     return calls
 
 
@@ -163,13 +165,27 @@ def test_weekly_runs_on_tuesday_with_no_record(
 def test_weekly_not_recorded_when_fight_fails(
     monkeypatch, dungeon_mod, fake_bot_state, fake_records, fake_mismatch,
 ):
-    # fight_test 回 False(未實際挑戰) → 不寫本週記錄，下次可重試(防失敗也鎖一週)
-    monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", lambda d: False)
+    # fight_test 回 False(未跑滿局數) → 不寫本週記錄，下次可重試(防失敗也鎖一週)
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 8)
+    monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", lambda d, rounds=8: False)
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
         enable_dungeon_manager=True, current_time=_tuesday_10am(),
     )
     assert fake_records["_recorded"] == []
+
+
+def test_weekly_passes_configured_rounds_to_fight_test(
+    monkeypatch, dungeon_mod, fake_bot_state, fake_battle, fake_records, fake_mismatch,
+):
+    # _run_weekly_dungeon 讀 config wanshen_rounds 並傳給 fight_test
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 5)
+    dungeon_mod._run_weekly_dungeon(
+        SimpleNamespace(), "emu-1", "主頁面",
+        enable_dungeon_manager=True, current_time=_tuesday_10am(),
+    )
+    fights = [c for c in fake_battle if c["fn"] == "fight_test"]
+    assert fights and fights[0]["rounds"] == 5
 
 
 def test_weekly_skipped_when_dungeon_manager_disabled(

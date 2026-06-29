@@ -28,6 +28,10 @@ if "uiautomator2" not in sys.modules:
     _u2.Device = object
     sys.modules["uiautomator2"] = _u2
 
+# battle/__init__ → battle.manager 需要 easyocr.Reader;別的測試檔可能先以缺 .Reader 的 stub
+# 佔住 sys.modules，這裡補上，避免 collection order 造成 import error。
+sys.modules["easyocr"].Reader = getattr(sys.modules["easyocr"], "Reader", object)
+
 
 @pytest.fixture
 def wt():
@@ -68,12 +72,17 @@ def _fake_device():
 
 
 def test_recovers_to_home_after_successful_run(wt, monkeypatch, patched):
+    # 單局完整流程：入場 → 開始挑戰(打一關後敗) → 結束本局/確定 → 回主頁
     d = _fake_device()
     monkeypatch.setattr(wt, "img_tools", _FakeImg(
-        click_map={"副本": True, "萬神試煉": True, "開始挑戰": [True, False], "點擊": True},
+        click_map={
+            "副本": True, "萬神試煉": True,
+            "開始挑戰": [True, False], "點擊": True,
+            "結束本局": True, "確定": True,   # _settle_run 退出序
+        },
         region_map={"開始挑戰": True, "點擊": True, "失敗": True},
     ))
-    assert wt.fight_test(d) is True
+    assert wt.fight_test(d, rounds=1) is True
     assert patched == [d]  # _recover_to_home called exactly once with the device
 
 
@@ -83,5 +92,5 @@ def test_recovers_to_home_when_entry_not_found(wt, monkeypatch, patched):
         click_map={"副本": True, "萬神試煉": False},  # entry never found → abort
         region_map={},
     ))
-    assert wt.fight_test(d) is False
+    assert wt.fight_test(d, rounds=8) is False
     assert patched == [d]  # still returns home on the abort path

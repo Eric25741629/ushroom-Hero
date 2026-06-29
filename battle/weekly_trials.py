@@ -1,10 +1,19 @@
-"""萬神試煉Beta (roguelike / RogueView) — 進場 → 打到不能打 → 每週祕寶閣購買。
+"""萬神試煉Beta (roguelike / RogueView) — 進副本 → 跑 N 局(每局打到第一次失敗→結束本局)→ 每週祕寶閣。
 
-2026-06-20 重寫：遊戲已把舊「萬神試煉」改成 roguelike「萬神試煉Beta」，舊版 7 場
-(開始/確定/結束本局/每輪秘寶閣) UI 已不存在。本版走 CDP live 實測驗證的流程
-(5554 暖啟『繼續』/ 小寶 7fe98fc6 冷啟『開始』+ 多層確認窗)。
+2026-06-29 重寫(live recon 5554，見 docs/ROGUE_WANSHEN_BETA_AUTOMATION.md §9)：
+rogue 一次失敗只扣 1「試煉之心」、可續打、❤=0 才真結束;舊版 `_battle_loop` 偵測到「失敗」
+就 break + 寫週記錄 = 「假完成」(只打一局就鎖一週)。使用者定案:
+  一局 = 開始 → 爬到第一次失敗 → 「結束本局」(退出) → 重進;跑滿 N 局(預設 8、可調
+  `wanshen_rounds`)才算完成 → 才寫週記錄。
+
+流程(全程內建 `img_tools.click_str_by_server` / `check_str_in_region` OCR 子字串比對):
+  點副本 → 萬神試煉 入場(到 RogueView 主面板)
+  for _ in range(rounds):
+      _advance_to_stage  # 輪點 開始/繼續→確定(確認窗)→點空白(開局獎勵) 直到「開始挑戰」
+      _battle_loop       # 連打到第一次「失敗」/逾時/「開始挑戰」消失
+      _settle_run        # 右下紅箭頭(座標)→結束本局→確定(確認窗)→關結算窗 回主面板
+  buy_god_everyweek      # 每週祕寶閣(週積分由 WS rogue 週五領)
 週積分獎勵由 WS rogue 週五領取(ws_token.runner._run_rogue)，本版只負責真打 + 祕寶閣。
-全程用內建 img_tools.click_str_by_server / check_str_in_region(OCR 子字串比對)。
 """
 
 import time
@@ -19,15 +28,26 @@ from .store import buy_god_everyweek
 _ENTER_SHIFT = (277, 75)
 # 進場確認窗輪點優先序：確定(確認窗蓋在按鈕上→最先點) > 進入遊戲 > 繼續 > 開始 > 點擊(獎勵 toast)。
 # 注意：每步先檢查『開始挑戰』(已到關卡視圖)才點；且『開始挑戰』含『開始』，故不可把開始排在偵測前。
+# 確認窗「是否確認開啟新一局試煉」掛在 TopView/MessageView，OCR 看得到「確定」(不分 cocos 層)。
 _ENTRY_BUTTONS = ("確定", "進入遊戲", "繼續", "開始", "點擊")
 _ENTRY_MAX_STEPS = 14
-_BATTLE_MAX_STAGES = 80       # 安全上限；rogue 一局有限(終會失敗或次數用盡)
+_DEFAULT_ROUNDS = 8           # 每週開局(局)數;一局=爬到第一次失敗→結束本局(使用者 2026-06-29 定案、可調)
+_BATTLE_MAX_STAGES = 80       # 單局安全上限關數;rogue 一局有限(終會失敗或逾時)
 _BATTLE_SETTLE_TRIES = 9      # 每關等結算輪詢次數 (~2s/次 ≈ 18s)
-_RUN_MAX_SECONDS = 15 * 60    # 單輪戰鬥迴圈上限 15 分鐘(使用者 2026-06-21)
+_RUN_MAX_SECONDS = 15 * 60    # 單局戰鬥迴圈上限 15 分鐘(使用者 2026-06-21)
+# 退出/結算座標(540x960 邏輯座標;OCR 會把紅箭頭誤判成 'G' 故用座標)。實測值，必要時 live 微調。
+_EXIT_ARROW_XY = (510, 920)   # 右下紅色離開箭頭(RogueMainView/view/btnClose)
+_REPORT_CLOSE_XY = (270, 875) # 本局報告 RogueRecordInfoView 的 ✕(無文字，OCR 點不到)
+_DIALOG_WAIT = 4.5            # RogueEndTipsView / 結算確認窗 轉場等待(2026-06-21 實測需 4-5s)
+_SETTLE_DISMISS_TRIES = 5     # 結算後關掉「本局報告 + 獎勵」窗的嘗試次數
 
 
 def _advance_to_stage(d) -> bool:
-    """從萬神主面板/任意確認窗，輪點確認窗直到出現『開始挑戰』(關卡視圖)。"""
+    """從萬神主面板/任意確認窗，輪點確認窗直到出現『開始挑戰』(關卡視圖)。
+
+    首局由副本『入場』進來、後續各局由上一局『結束本局』後的主面板進來，皆走同一輪點:
+    開始/繼續 → 確認窗『確定』→ 開局獎勵『點擊空白』→ 關卡視圖。
+    """
     for step in range(_ENTRY_MAX_STEPS):
         if img_tools.check_str_in_region(d, "開始挑戰"):
             logger.info("[萬神試煉] 已到關卡視圖 (step %d)", step)
@@ -46,48 +66,71 @@ def _advance_to_stage(d) -> bool:
 
 
 def _battle_loop(d, max_stages: int = _BATTLE_MAX_STAGES) -> int:
-    """連續 開始挑戰 → 等結果彈窗 → 點擊關閉。回傳完成關卡數。
+    """單局：連續 開始挑戰 → 等結果彈窗 → 點擊關閉，打到第一次『失敗』為止。回傳完成關卡數。
 
     停止條件(任一)：
-    1. 偵測到『失敗』(過濾器；本局結束)
-    2. 找不到『開始挑戰』(次數用盡 / 已離開關卡視圖)
-    3. 單輪超過 15 分鐘(_RUN_MAX_SECONDS 上限)
+    1. 偵測到『失敗』(本局打到第一次敗北 → 該局結束，交給 _settle_run 退出)
+    2. 找不到『開始挑戰』(已離開關卡視圖 / 異常)
+    3. 單局超過 15 分鐘(_RUN_MAX_SECONDS;帳號太強連勝不止時的保底)
     4. 達 max_stages 安全上限
     """
     fought = 0
     start = time.monotonic()
     for _ in range(max_stages):
         if time.monotonic() - start > _RUN_MAX_SECONDS:
-            logger.info("[萬神試煉] 達單輪 15 分鐘上限 → 停止 (已 %d 關)", fought)
+            logger.info("[萬神試煉] 達單局 15 分鐘上限 → 停止 (已 %d 關)", fought)
             break
         if not img_tools.click_str_by_server(d, "開始挑戰"):
             logger.info("[萬神試煉] 找不到『開始挑戰』→ 本局結束/不能打 (已 %d 關)", fought)
             break
         fought += 1
         logger.info("[萬神試煉] 第 %d 關 開始挑戰", fought)
-        # 戰鬥由 client 自動跑；出現『點擊…關閉』提示即代表結果窗已出(勝敗同一種窗)
+        # 戰鬥由 client 自動跑；出現『點擊…關閉』提示即代表結果窗已出(勝敗同一種窗，只差橫幅顏色)
         for _ in range(_BATTLE_SETTLE_TRIES):
             time.sleep(2.0)
             if img_tools.check_str_in_region(d, "點擊"):
                 break
         else:
             logger.warning("[萬神試煉] 第 %d 關等結果窗逾時，仍嘗試關閉續判", fought)
-        lost = img_tools.check_str_in_region(d, "失敗")  # 失敗過濾器
+        lost = img_tools.check_str_in_region(d, "失敗")  # 失敗過濾器(藍色失敗橫幅)
         img_tools.click_str_by_server(d, "點擊")          # 關掉結果窗(勝敗皆點)
         time.sleep(1.5)
         if lost:
-            logger.info("[萬神試煉] 第 %d 關 偵測到『失敗』→ 本局結束", fought)
+            logger.info("[萬神試煉] 第 %d 關 偵測到『失敗』→ 本局結束(將結束本局退出)", fought)
             break
     return fought
 
 
-def fight_test(d, max_stages: int = _BATTLE_MAX_STAGES) -> bool:
-    """萬神試煉Beta：進副本 → 入場 → 打到不能打 → 每週祕寶閣購買。
+def _settle_run(d) -> bool:
+    """結束本局並回主面板:右下紅箭頭 → RogueEndTipsView『結束本局』→ 確認窗『確定』→ 關結算窗。
 
-    回傳是否「實際打了至少一關」，供排程決定要不要寫本週記錄(避免失敗也鎖一週)。
-    max_stages 僅供測試限關用；排程呼叫不帶參數(=打到不能打)。
+    回傳是否成功送出『結束本局』(找不到 = 不在可結算狀態，視為失敗 → 上層停止、不寫週記錄)。
+    退出序與等待時間取自 2026-06-21/06-29 live recon(對話框轉場需 4-5s)。
     """
-    logger.info("[萬神試煉] 開始：點『副本』")
+    d.click(*_EXIT_ARROW_XY)  # 右下紅箭頭(OCR 誤判，用座標)
+    time.sleep(_DIALOG_WAIT)
+    if not img_tools.click_str_by_server(d, "結束本局"):
+        logger.warning("[萬神試煉] 結算:找不到『結束本局』(不在可結算狀態) → 本局結算失敗")
+        return False
+    time.sleep(_DIALOG_WAIT)
+    img_tools.click_str_by_server(d, "確定")  # 確認窗『是否確認結算本局』
+    time.sleep(_DIALOG_WAIT)
+    # 結算後跳『本局報告(✕)』+『獎勵(點擊空白)』；關掉以回主面板供下一局進場。
+    for _ in range(_SETTLE_DISMISS_TRIES):
+        if not img_tools.click_str_by_server(d, "點擊"):
+            d.click(*_REPORT_CLOSE_XY)  # 報告 ✕(無文字)
+        time.sleep(1.2)
+    logger.info("[萬神試煉] 本局已結束(結束本局→確定→關結算窗)")
+    return True
+
+
+def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
+    """萬神試煉Beta：進副本 → 入場 → 跑滿 rounds 局(每局打到第一次失敗→結束本局)→ 祕寶閣。
+
+    回傳是否「跑滿 rounds 局」,供排程決定要不要寫本週記錄(跑滿才算完成;否則下次重試)。
+    rounds 由 device config `wanshen_rounds` 帶入(預設 8);傳小值供測試。
+    """
+    logger.info("[萬神試煉] 開始：點『副本』(目標 %d 局)", rounds)
     img_tools.click_str_by_server(d, "副本")
     time.sleep(2)
     # rogue 結算 / 秘寶閣面板不會自動回主頁；不主動返回的話，本輪後續任務
@@ -109,19 +152,27 @@ def fight_test(d, max_stages: int = _BATTLE_MAX_STAGES) -> bool:
             return False
         time.sleep(2)
 
-        if not _advance_to_stage(d):
-            logger.warning("[萬神試煉] 無法進入關卡視圖 → 中止")
-            return False
-
-        fought = _battle_loop(d, max_stages=max_stages)
-        logger.info("[萬神試煉] 戰鬥結束，共完成 %d 關", fought)
+        completed = 0
+        for r in range(rounds):
+            if not _advance_to_stage(d):
+                logger.warning("[萬神試煉] 第 %d/%d 局無法進入關卡視圖 → 停止", r + 1, rounds)
+                break
+            fought = _battle_loop(d)
+            logger.info("[萬神試煉] 第 %d/%d 局完成 %d 關(打到失敗/逾時)", r + 1, rounds, fought)
+            if not _settle_run(d):
+                logger.warning("[萬神試煉] 第 %d/%d 局結算退出失敗 → 停止", r + 1, rounds)
+                break
+            completed += 1
+            logger.info("[萬神試煉] 已完成 %d/%d 局", completed, rounds)
 
         try:
             buy_god_everyweek(d)  # 每週祕寶閣購買(週積分由 WS rogue 週五領)
         except Exception:
             logger.exception("[萬神試煉] 祕寶閣購買流程異常")
 
-        return fought > 0
+        done = completed >= rounds
+        logger.info("[萬神試煉] 結束：完成 %d/%d 局，跑滿=%s", completed, rounds, done)
+        return done
     finally:
         # ponytail: 單次 best-effort 回主頁；殘留面板時下次對齊喚醒由 detector 重啟恢復。
         _recover_to_home(d)
