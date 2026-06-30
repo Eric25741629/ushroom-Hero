@@ -389,3 +389,24 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   又沒有「開始挑戰」→「無開始挑戰 + 有神樹祝福」誤判成回主面板,沒關報告就回報成功。**判「乾淨
   在某頁」要先排除所有覆蓋層專屬字(報告/獎勵/對話框),不能只靠某個會透出的底部字 + 缺某字**。
 - 驗法:rounds=2 端到端(不是 rounds=1)才測得到「上一局結算→下一局重進」的轉場回歸點。
+
+## 挖礦演算法 debug:看圖對 ≠ 軌跡對;驗證要逐步、用 CNN、每步存圖(2026-07-01 5554 CDP live)
+
+使用者報「挖礦軌跡很奇怪/演算法有問題」。我先修了「看圖」層(WS board_to_grid 把 AIR active 標 empty
+而非 dirt),CNN vs WS 分歧 5/42→0/42,就宣稱修好。**錯**:分歧 0 只證明「兩邊看到同一張圖」,
+**完全沒驗 planner 的決策軌跡**。真正的浪費在決策層,被使用者連續打臉才回去讀演算法。
+
+- **「感知對」不等於「決策對」**:CNN/WS 0 分歧只代表讀圖一致。軌跡怪要去讀 planner(smart_planner
+  + mining_adapter._project_board + mining_supervised._select_dig_step),不是停在 divergence。
+  **宣稱修好前,必須證明「選的那一步是效益最優」,不是只證明「看到的盤面正確」**。
+- **逐步驗、別信批次腳本一輪**:我跑 descent_audit --digs 6 信了它印的 `OPENS_FLOOR7(v1)`,但同一列
+  `scroll=False/→f7=False` 就打臉它。classifier 是「模擬預測」,**真效果要當場讀 baseline 有沒有真捲動**。
+  每個動作後當場檢查,不要批次跑完才看 summary。
+- **CNN 是「我的」檢查手段,不是丟給使用者批准**:有視覺就自己對拍判斷,別問「這樣可以嗎」。
+  使用者要的是自主 judge+act,不是把每步攤給他確認。
+- **每步都要截圖追蹤**:live 挖礦每一步存 raw + WS/CNN overlay(挖點圈註),否則「用了 CNN」卻沒存證=
+  沒有可追軌跡。用內部 CNN 算 divergence 但不存圖 = 違規。
+- 兩個真 bug(都在決策層,非感知層):(1) `_project_board` 底列缺格盲填 unreachable_empty(假空氣)→
+  v1 把「挖上一列曝光假空氣」當 cost-1 floor7 開口 → 挖整列不捲;改 terrain_at 實填。(2)
+  `_select_dig_step` 先回 v1 floor7-opener,v1 對 map_pits(視窗下方礦)全盲 → 蛇行繞礦;補
+  pit_directed_next 優先。修法見 commit cae3ddd3。
