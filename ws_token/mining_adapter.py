@@ -401,6 +401,80 @@ def pit_directed_next(mine_board: Any, exclude: Any = None) -> Optional[int]:
     return best_bid
 
 
+def _bomb_blast_cells(depth: int, col: int) -> set:
+    """Absolute (depth, col) cells a bomb at (depth,col) clears: 3x3 + cross±2.
+
+    Mirrors miner.core.mechanics.get_bomb_affected_cells but in ABSOLUTE board
+    coords (no 7-row clamp), so the blast that reaches BELOW the viewport bottom is
+    represented — that below-frontier reach is the bomb's unique value (a pickaxe
+    can only hit the frontier). Columns clamp to 0..5; depth is unbounded.
+    """
+    cells = {(depth + dd, col + dc) for dd in (-1, 0, 1) for dc in (-1, 0, 1)}
+    cells |= {(depth + 2, col), (depth - 2, col), (depth, col + 2), (depth, col - 2)}
+    return {(d, c) for d, c in cells if 0 <= c < GRID_COLS}
+
+
+def prop_step_for_pit(board: Any, inventory: Optional[Dict[str, int]], *,
+                      allow_bomb: bool, allow_drill: bool,
+                      min_pits: int = 2) -> Optional[Dict[str, Any]]:
+    """A bomb/drill step ONLY when one prop collects >= ``min_pits`` uncollected pits
+    in a single use — the unambiguous "一個道具 > 2.5-3 個鎬子" case (each pit would
+    else need its own descent-and-dig). Pure; returns None otherwise.
+
+    Deliberately conservative (props are precious, pickaxes regenerate): we do NOT
+    spend a prop to clear plain terrain — for pure descent a prop saves no pickaxes
+    (each scroll only needs the one bottom cell dug; cleared extras scroll away). The
+    win is collecting MULTIPLE ore at once.
+
+    - bomb: an active-cell blast (3x3 + cross±2, which reaches BELOW the viewport — a
+      pickaxe can't) covering >= min_pits pits. Center MUST be an active frontier cell
+      (MINING_SCHEMA §8).
+    - drill: an active cell whose column (placement depth downward) holds >= min_pits
+      pits.
+
+    Caller gates on allow_* + inventory and must verify the block_id is still
+    server-diggable. Returns the planner-style ``use`` step (type/item/block_id).
+    """
+    actives = {int(a) for a in (getattr(board, "actives", None) or [])}
+    if not actives:
+        return None
+    inv = inventory or {}
+    pits = {(int(b.y), int(b.x) - 1) for b in (getattr(board, "blocks", None) or [])
+            if int(getattr(b, "count", 0) or 0) > 0
+            and (int(getattr(b, "config_id", 0) or 0) == TERRAIN_PIT
+                 or int(getattr(b, "is_reward", 0) or 0))}
+    if len(pits) < min_pits:
+        return None
+    top = viewport_top_depth(int(getattr(board, "baseline", 0) or 0))
+
+    # bomb: blast covering >= min_pits pits
+    if allow_bomb and int(inv.get("bomb", 0) or 0) > 0:
+        best = None
+        for a in actives:
+            ad, ac = a // 100, a % 100 - 1
+            hit = len(_bomb_blast_cells(ad, ac) & pits)
+            if hit >= min_pits and (best is None or hit > best[0]):
+                best = (hit, a, ad, ac)
+        if best is not None:
+            _, a, ad, ac = best
+            return {"type": "use", "item": "bomb", "block_id": int(a),
+                    "row": ad - top, "col": ac, "step_cost": 2.99}
+
+    # drill: an active cell whose column holds >= min_pits pits at/below it
+    if allow_drill and int(inv.get("drill", 0) or 0) > 0:
+        best = None
+        for a in actives:
+            ad, ac = a // 100, a % 100 - 1
+            hit = sum(1 for (pd, pc) in pits if pc == ac and pd >= ad)
+            if hit >= min_pits and (best is None or hit > best[0]):
+                best = (hit, a, ad, ac)
+        if best is not None:
+            _, a, ad, ac = best
+            return {"type": "use", "item": "drill", "block_id": int(a),
+                    "row": ad - top, "col": ac, "step_cost": 2.99}
+    return None
+
+
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
          *, max_depth: Optional[int] = None) -> Dict[str, Any]:
     """Build the grid, run the planner (v1 A*), and translate steps back to block_ids.

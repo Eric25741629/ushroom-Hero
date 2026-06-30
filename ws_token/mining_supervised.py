@@ -344,6 +344,9 @@ def _select_dig_step(
     hold_floor: bool = False,
     grid=None,
     exclude=None,
+    inventory: Optional[Dict[str, int]] = None,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """Pick the next server-valid step from the planner output.
 
@@ -379,6 +382,14 @@ def _select_dig_step(
         below_pit = any(p["row"] >= mining_adapter.GRID_ROWS
                         for p in mining_adapter.map_pits(board))
         if below_pit:
+            # 道具優先(只在「1 道具 > ~3 鎬」時出手):鑽頭沿礦的 column 一次清開下挖井、
+            # 炸彈一砲收 ≥2 顆礦(且能炸到視窗下方)。道具珍貴、鎬會回,所以門檻設在省 ≥3 鎬;
+            # prop_step_for_pit 內部已套此門檻 + active 落點規則。其落點仍需 server-diggable。
+            prop = mining_adapter.prop_step_for_pit(
+                board, inventory, allow_bomb=allow_bomb, allow_drill=allow_drill)
+            if prop is not None and int(prop["block_id"]) not in excl \
+                    and _is_diggable(actives, block_by_id, int(prop["block_id"])):
+                return prop
             steer = mining_adapter.pit_directed_next(board, exclude=excl)
             if steer is not None and _is_diggable(actives, block_by_id, int(steer)):
                 return {"type": "dig", "block_id": int(steer), "step_cost": 1.0}
@@ -529,6 +540,9 @@ def mine_until_pickaxe_empty(
                 hold_floor=bool(plan_result.get("hold_floor")),
                 grid=plan_result.get("grid"),
                 exclude=rejected,
+                inventory=inventory,
+                allow_bomb=allow_bomb,
+                allow_drill=allow_drill,
             )
             if step is None:
                 break

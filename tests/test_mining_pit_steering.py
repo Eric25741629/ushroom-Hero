@@ -85,3 +85,66 @@ def test_select_dig_step_no_pit_keeps_v1_step():
     v1_steps = [{"type": "dig", "block_id": col3, "row": 6, "col": 3}]
     step = _select_dig_step(board, v1_steps, hold_floor=False, grid=None)
     assert int(step["block_id"]) == col3
+
+
+# --- prop_step_for_pit: 1 道具 > ~3 鎬 = 一砲收 >=2 顆礦 -----------------------
+
+def _pit(depth, gcol):  # gcol = 1-indexed game col
+    return MineBlock(block_id=depth * 100 + gcol, x=gcol, y=depth,
+                     config_id=401, count=1, is_reward=1)
+
+
+def test_prop_bomb_fires_for_two_pits_in_one_blast():
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)  # active bomb center
+    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]               # both in the 3x3 blast
+    board = _board(baseline, blocks=pits, actives=[center])
+    step = ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
+                                allow_bomb=True, allow_drill=True)
+    assert step["type"] == "use" and step["item"] == "bomb", step
+    assert int(step["block_id"]) == center
+
+
+def test_prop_drill_fires_for_two_pits_in_column_when_bomb_off():
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    center = ma.grid_pos_to_block_id(baseline, row=6, col=1)  # active in col 1
+    pits = [_pit(top + 7, 2), _pit(top + 8, 2)]               # both col 1, at/below
+    board = _board(baseline, blocks=pits, actives=[center])
+    step = ma.prop_step_for_pit(board, {"bomb": 0, "drill": 5},
+                                allow_bomb=True, allow_drill=True)
+    assert step["type"] == "use" and step["item"] == "drill", step
+    assert int(step["block_id"]) == center
+
+
+def test_prop_skipped_for_single_pit():
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
+    board = _board(baseline, blocks=[_pit(top + 7, 3)], actives=[center])
+    assert ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
+                                allow_bomb=True, allow_drill=True) is None
+
+
+def test_prop_gated_off_when_not_allowed():
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
+    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]
+    board = _board(baseline, blocks=pits, actives=[center])
+    assert ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
+                                allow_bomb=False, allow_drill=False) is None
+
+
+def test_select_dig_step_prefers_prop_over_pickaxe():
+    """Below-viewport 2-pit blast -> _select_dig_step returns the bomb, not a dig."""
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
+    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]
+    board = _board(baseline, blocks=pits, actives=[center])
+    step = _select_dig_step(board, [], hold_floor=False, grid=None,
+                            inventory={"bomb": 5}, allow_bomb=True, allow_drill=False)
+    assert step is not None and step.get("type") == "use", step
+    assert step["item"] == "bomb" and int(step["block_id"]) == center
