@@ -387,8 +387,9 @@ def _select_dig_step(
             # prop_step_for_pit 內部已套此門檻 + active 落點規則。其落點仍需 server-diggable。
             prop = mining_adapter.prop_step_for_pit(
                 board, inventory, allow_bomb=allow_bomb, allow_drill=allow_drill)
-            if prop is not None and int(prop["block_id"]) not in excl \
-                    and _is_diggable(actives, block_by_id, int(prop["block_id"])):
+            # props target a count==0 AIR cell (空地/挖完礦洞), so DON'T run the
+            # solid-cell _is_diggable gate (it would reject every valid placement).
+            if prop is not None and int(prop["block_id"]) not in excl:
                 return prop
             steer = mining_adapter.pit_directed_next(board, exclude=excl)
             if steer is not None and _is_diggable(actives, block_by_id, int(steer)):

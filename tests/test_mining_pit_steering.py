@@ -88,41 +88,55 @@ def test_select_dig_step_no_pit_keeps_v1_step():
 
 
 # --- prop_step_for_pit: 1 道具 > ~3 鎬 = 一砲收 >=2 顆礦 -----------------------
+# Props go on an AIR cell (count==0 空地/挖完礦洞), NOT a solid frontier cell.
 
-def _pit(depth, gcol):  # gcol = 1-indexed game col
+def _pit(depth, gcol):  # uncollected pit (count>0), gcol = 1-indexed game col
     return MineBlock(block_id=depth * 100 + gcol, x=gcol, y=depth,
                      config_id=401, count=1, is_reward=1)
+
+
+def _air(depth, gcol):  # dug cell (count==0) = valid prop placement
+    return MineBlock(block_id=depth * 100 + gcol, x=gcol, y=depth,
+                     config_id=201, count=0, is_reward=0)
 
 
 def test_prop_bomb_fires_for_two_pits_in_one_blast():
     baseline = 1000
     top = ma.viewport_top_depth(baseline)
-    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)  # active bomb center
-    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]               # both in the 3x3 blast
-    board = _board(baseline, blocks=pits, actives=[center])
+    place = _air(top + 5, 1)                       # air cell center, col 0
+    pits = [_pit(top + 6, 1), _pit(top + 6, 2)]    # both in the 3x3 blast
+    board = _board(baseline, blocks=[place, *pits])
     step = ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
                                 allow_bomb=True, allow_drill=True)
     assert step["type"] == "use" and step["item"] == "bomb", step
-    assert int(step["block_id"]) == center
+    assert int(step["block_id"]) == place.block_id
 
 
 def test_prop_drill_fires_for_two_pits_in_column_when_bomb_off():
     baseline = 1000
     top = ma.viewport_top_depth(baseline)
-    center = ma.grid_pos_to_block_id(baseline, row=6, col=1)  # active in col 1
-    pits = [_pit(top + 7, 2), _pit(top + 8, 2)]               # both col 1, at/below
-    board = _board(baseline, blocks=pits, actives=[center])
+    place = _air(top + 4, 2)                        # air cell in col 1
+    pits = [_pit(top + 5, 2), _pit(top + 6, 2)]     # both col 1, at/below placement
+    board = _board(baseline, blocks=[place, *pits])
     step = ma.prop_step_for_pit(board, {"bomb": 0, "drill": 5},
                                 allow_bomb=True, allow_drill=True)
     assert step["type"] == "use" and step["item"] == "drill", step
-    assert int(step["block_id"]) == center
+    assert int(step["block_id"]) == place.block_id
 
 
 def test_prop_skipped_for_single_pit():
     baseline = 1000
     top = ma.viewport_top_depth(baseline)
-    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
-    board = _board(baseline, blocks=[_pit(top + 7, 3)], actives=[center])
+    board = _board(baseline, blocks=[_air(top + 5, 1), _pit(top + 6, 1)])
+    assert ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
+                                allow_bomb=True, allow_drill=True) is None
+
+
+def test_prop_skipped_without_air_placement():
+    """>=2 pits but no count==0 cell to place on -> can't use a prop."""
+    baseline = 1000
+    top = ma.viewport_top_depth(baseline)
+    board = _board(baseline, blocks=[_pit(top + 6, 1), _pit(top + 6, 2)])
     assert ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
                                 allow_bomb=True, allow_drill=True) is None
 
@@ -130,9 +144,8 @@ def test_prop_skipped_for_single_pit():
 def test_prop_gated_off_when_not_allowed():
     baseline = 1000
     top = ma.viewport_top_depth(baseline)
-    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
-    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]
-    board = _board(baseline, blocks=pits, actives=[center])
+    board = _board(baseline, blocks=[_air(top + 5, 1),
+                                     _pit(top + 6, 1), _pit(top + 6, 2)])
     assert ma.prop_step_for_pit(board, {"bomb": 5, "drill": 5},
                                 allow_bomb=False, allow_drill=False) is None
 
@@ -141,10 +154,10 @@ def test_select_dig_step_prefers_prop_over_pickaxe():
     """Below-viewport 2-pit blast -> _select_dig_step returns the bomb, not a dig."""
     baseline = 1000
     top = ma.viewport_top_depth(baseline)
-    center = ma.grid_pos_to_block_id(baseline, row=6, col=2)
-    pits = [_pit(top + 7, 3), _pit(top + 7, 4)]
-    board = _board(baseline, blocks=pits, actives=[center])
+    place = _air(top + 6, 1)                        # air cell at the bottom, col 0
+    pits = [_pit(top + 7, 1), _pit(top + 7, 2)]     # row 7 = below viewport, in blast
+    board = _board(baseline, blocks=[place, *pits])
     step = _select_dig_step(board, [], hold_floor=False, grid=None,
                             inventory={"bomb": 5}, allow_bomb=True, allow_drill=False)
     assert step is not None and step.get("type") == "use", step
-    assert step["item"] == "bomb" and int(step["block_id"]) == center
+    assert step["item"] == "bomb" and int(step["block_id"]) == place.block_id

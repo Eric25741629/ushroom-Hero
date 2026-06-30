@@ -426,51 +426,60 @@ def prop_step_for_pit(board: Any, inventory: Optional[Dict[str, int]], *,
     (each scroll only needs the one bottom cell dug; cleared extras scroll away). The
     win is collecting MULTIPLE ore at once.
 
-    - bomb: an active-cell blast (3x3 + cross±2, which reaches BELOW the viewport — a
-      pickaxe can't) covering >= min_pits pits. Center MUST be an active frontier cell
-      (MINING_SCHEMA §8).
-    - drill: an active cell whose column (placement depth downward) holds >= min_pits
-      pits.
+    Placement: props go on an AIR cell — 空地 or 挖完的礦洞 (a count==0 dug block) —
+    NOT a solid frontier cell (live-verified: a bomb on a solid active cell is
+    rejected; on a count==0 cell it consumes and clears its blast).
+    - bomb: an air cell whose 3x3 + cross±2 blast (which reaches BELOW the viewport —
+      a pickaxe can't) covers >= min_pits pits.
+    - drill: an air cell whose column (placement depth downward) holds >= min_pits pits.
 
-    Caller gates on allow_* + inventory and must verify the block_id is still
-    server-diggable. Returns the planner-style ``use`` step (type/item/block_id).
+    Returns the planner-style ``use`` step (type/item/block_id). The block_id is the
+    count==0 placement cell, so the caller must NOT gate it through the solid-cell
+    ``_is_diggable`` check.
     """
-    actives = {int(a) for a in (getattr(board, "actives", None) or [])}
-    if not actives:
-        return None
     inv = inventory or {}
-    pits = {(int(b.y), int(b.x) - 1) for b in (getattr(board, "blocks", None) or [])
+    blocks = getattr(board, "blocks", None) or []
+    pits = {(int(b.y), int(b.x) - 1) for b in blocks
             if int(getattr(b, "count", 0) or 0) > 0
             and (int(getattr(b, "config_id", 0) or 0) == TERRAIN_PIT
                  or int(getattr(b, "is_reward", 0) or 0))}
     if len(pits) < min_pits:
         return None
+    # placement cells: props go on AIR — 空地 or 挖完的礦洞 (count==0 dug block),
+    # NOT a solid frontier cell (live-verified 5554 2026-07-01: bomb on a solid active
+    # cell is rejected/no-consume; on a count==0 cell it consumes + clears the blast).
+    air_cells = [(int(b.y), int(b.x) - 1) for b in blocks
+                 if int(getattr(b, "count", 0) or 0) == 0]
+    if not air_cells:
+        return None
     top = viewport_top_depth(int(getattr(board, "baseline", 0) or 0))
 
-    # bomb: blast covering >= min_pits pits
+    def _bid(depth: int, col: int) -> int:
+        return depth * 100 + col + 1
+
+    # bomb: an air cell whose 3x3+cross±2 blast (reaches below the viewport) covers
+    # >= min_pits pits. Footprint live-verified to match _bomb_blast_cells.
     if allow_bomb and int(inv.get("bomb", 0) or 0) > 0:
         best = None
-        for a in actives:
-            ad, ac = a // 100, a % 100 - 1
+        for (ad, ac) in air_cells:
             hit = len(_bomb_blast_cells(ad, ac) & pits)
             if hit >= min_pits and (best is None or hit > best[0]):
-                best = (hit, a, ad, ac)
+                best = (hit, ad, ac)
         if best is not None:
-            _, a, ad, ac = best
-            return {"type": "use", "item": "bomb", "block_id": int(a),
+            _, ad, ac = best
+            return {"type": "use", "item": "bomb", "block_id": _bid(ad, ac),
                     "row": ad - top, "col": ac, "step_cost": 2.99}
 
-    # drill: an active cell whose column holds >= min_pits pits at/below it
+    # drill: an air cell whose column (downward) holds >= min_pits pits.
     if allow_drill and int(inv.get("drill", 0) or 0) > 0:
         best = None
-        for a in actives:
-            ad, ac = a // 100, a % 100 - 1
+        for (ad, ac) in air_cells:
             hit = sum(1 for (pd, pc) in pits if pc == ac and pd >= ad)
             if hit >= min_pits and (best is None or hit > best[0]):
-                best = (hit, a, ad, ac)
+                best = (hit, ad, ac)
         if best is not None:
-            _, a, ad, ac = best
-            return {"type": "use", "item": "drill", "block_id": int(a),
+            _, ad, ac = best
+            return {"type": "use", "item": "drill", "block_id": _bid(ad, ac),
                     "row": ad - top, "col": ac, "step_cost": 2.99}
     return None
 
