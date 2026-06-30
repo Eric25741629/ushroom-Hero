@@ -172,6 +172,16 @@ f2 varint = cell_id   (從 0x0c01 f5 list 拿)
 4001、4002、4003 都走同一個 `home_mine_use_goods`。自動化預設只允許鎬子；
 炸彈與鑽頭必須由設定明確開啟，避免未授權消耗。
 
+### 落點規則（5554 CDP live 2026-07-01 實測，重要）
+- **鎬子 (4001)**：放在 **solid 前沿格**（`actives` 內、未清除）。送出後伺服器**有 0x0c03 回覆**。
+- **炸彈 (4003) / 鑽頭 (4002)**：必須放在 **AIR 空氣格 = 空地或挖完的礦洞（`blocks` 中 count==0 的格）**，
+  **不是** solid 前沿格。放在 solid 格會被**靜默拒絕**（不消耗、版面不變、無回覆）。道具是
+  **send-only**（無 0x0c03 回覆），用 `mining.send_dig`（`client.send`）送，不要用等回覆的 call/RPC。
+- **炸彈 footprint**：以落點為中心 **3x3 + 十字往四方各延 2 格**（= `miner.core.mechanics.get_bomb_affected_cells`）。
+  範圍**會跨過視窗底炸到尚未捲進的下方格**（實測中心 (d,c) 清掉 (d+2,c) 等 below-frontier 格），
+  一砲可捲動**多層**（實測放 count==0 格清 6 格、捲 2 層）。鎬子做不到這個下方覆蓋，這是炸彈的獨門價值。
+- WS 純挖礦的道具感知：`mining_adapter.prop_step_for_pit`（只在「一道具一次收 ≥2 礦」時出手）。
+
 ### rx body
 ```
 f1 varint            ← round_id
