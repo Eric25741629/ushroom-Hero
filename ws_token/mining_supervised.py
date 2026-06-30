@@ -365,6 +365,24 @@ def _select_dig_step(
     actives = {int(a) for a in (getattr(board, "actives", None) or [])}
     block_by_id = {int(b.block_id): b for b in (getattr(board, "blocks", None) or [])}
 
+    # Below-viewport ore steering. v1 plans on a 7-row grid and is BLIND to pits
+    # below the viewport (mining_adapter.map_pits row >= GRID_ROWS). When such ore
+    # exists, v1's floor7-opener drifts to an arbitrary column and the ore needs an
+    # extra horizontal traverse once it scrolls into reach. pit_directed_next runs a
+    # terrain-cost Dijkstra from EVERY uncollected pit (incl. below-viewport) back to
+    # the frontier, so it steers the shaft straight down the ore's column. Prefer it
+    # over v1's pit-blind step here. Skipped under hold_floor (protecting a row-0 pit
+    # must not trigger a scroll) — the existing hold_floor-safe pit_directed call
+    # below still runs in that case. 5554 CDP live 2026-07-01: pit @d120829 c1 was
+    # being bypassed for a c2 floor7-opener.
+    if not hold_floor:
+        below_pit = any(p["row"] >= mining_adapter.GRID_ROWS
+                        for p in mining_adapter.map_pits(board))
+        if below_pit:
+            steer = mining_adapter.pit_directed_next(board, exclude=excl)
+            if steer is not None and _is_diggable(actives, block_by_id, int(steer)):
+                return {"type": "dig", "block_id": int(steer), "step_cost": 1.0}
+
     for step in plan_steps:
         bid = step.get("block_id")
         if bid is not None and int(bid) not in excl and _is_diggable(actives, block_by_id, int(bid)):

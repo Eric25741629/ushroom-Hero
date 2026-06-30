@@ -205,9 +205,26 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
         ws_known.add((row, col))
 
     if any(cell != EMPTY for cell in grid[GRID_ROWS - 1]):
+        bottom_depth = top_depth + (GRID_ROWS - 1)
         for col, cell in enumerate(grid[GRID_ROWS - 1]):
-            if cell == EMPTY:
-                # 純 WS 沒有證據證明底列缺失格是可達空氣；避免誤判已下樓。
+            if cell != EMPTY:
+                continue
+            # 底列缺格：先查決定論地形表。STONE/DIRT → 不可達「實體」，AIR/未涵蓋(None)
+            # → 保守標 unreachable_empty。
+            # 為何不能一律 unreachable_empty：unreachable_empty 是「空氣但不可達」，v1 的
+            # reachability pass 只要挖開正上方那格就把它曝光成「可達空氣」→ 判定 floor7 開
+            # (cost 1)。但底列缺格其實多半是「未傳輸的實體地形」(不在 actives)，挖了上一列
+            # 不會真的捲動。於是 v1 一路挑「上一列假開口」逐 col 挖、把整列 r5 挖空才碰到真正
+            # 進 frontier 的底列格(5554 CDP live 2026-07-01「挖空整列 r5」根因)。改用 terrain_at
+            # 把已知實體標 unreachable_rock/dirt 後，假開口消失，v1 只能挖真實 active 底列格 →
+            # 一挖就捲。AIR/None 仍標 unreachable_empty：純 WS 無法證明該空氣可達，維持「不誤判
+            # 已下樓」(hold_floor 測試用空 area_info → None → 行為不變)。
+            t = mine_terrain.terrain_at(bottom_depth, col, area_info)
+            if t == mine_terrain.STONE:
+                grid[GRID_ROWS - 1][col] = "unreachable_rock"
+            elif t == mine_terrain.DIRT:
+                grid[GRID_ROWS - 1][col] = "unreachable_dirt"
+            else:
                 grid[GRID_ROWS - 1][col] = "unreachable_empty"
 
     for blk in getattr(mine_board, "blocks", []) or []:
