@@ -189,8 +189,18 @@ def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[d
             })
             continue
         # active 且無 block feature = 未挖格。地形由 area_info 決定論查表得知:
-        # template STONE(202)→rock、其餘(dirt/air/未涵蓋)→dirt(保守、可挖成本 1)。
-        label = "rock" if mine_terrain.terrain_at(depth, col, area_info) == mine_terrain.STONE else "dirt"
+        # STONE(202)→rock(成本 2)、AIR(100)→empty(空氣口袋,可穿越成本 0)、
+        # 其餘(dirt/未涵蓋)→dirt(保守、可挖成本 1)。
+        # AIR 必須標 empty 而非 dirt:5554 CDP live 對拍(CNN 像素 vs WS,2026-07-01)
+        # 證實 active 且 terrain_at==AIR 的格在畫面上就是已開的空氣口袋,舊版盲標 dirt
+        # 會灌水盤面密度→A* 成本失真→下挖軌跡偏掉(使用者回報「軌跡很奇怪」根因)。
+        t = mine_terrain.terrain_at(depth, col, area_info)
+        if t == mine_terrain.STONE:
+            label = "rock"
+        elif t == mine_terrain.AIR:
+            label = EMPTY
+        else:
+            label = "dirt"
         grid[row][col] = label
         ws_known.add((row, col))
 
