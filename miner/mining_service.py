@@ -23,6 +23,7 @@ from miner.planning.executor import (
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
 from miner.depth_tracker import DepthTracker
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
+from miner.core.ws_inventory import read_ws_prop_counts
 from miner.planning.item_planner import find_tool_candidate
 from miner.planning.planner import (
     base_label,
@@ -419,11 +420,17 @@ def _verify_items_pre_execution(
     if not planned_item_uses:
         return False
 
-    live_frame = d.screenshot(format="opencv")
-    live_counts = {
-        "drill": check_drill_num(d, frame=live_frame),
-        "bomb": check_boom_num(d, frame=live_frame),
-    }
+    # web_h5: authoritative drill/bomb現量 from WS (0x0401); browser-screenshot
+    # bomb OCR mis-reads 0. adb / WS-unavailable falls back to OCR.
+    ws_counts = read_ws_prop_counts(d)
+    if ws_counts is not None:
+        live_counts = {"drill": ws_counts["drill"], "bomb": ws_counts["bomb"]}
+    else:
+        live_frame = d.screenshot(format="opencv")
+        live_counts = {
+            "drill": check_drill_num(d, frame=live_frame),
+            "bomb": check_boom_num(d, frame=live_frame),
+        }
     needs_replan = False
     for item_name, need_count in planned_item_uses.items():
         live_count = int(live_counts.get(item_name, 0))
@@ -484,10 +491,19 @@ def run(
             items_available["drill"] = 0
             items_available["bomb"] = 0
             return
-        for name, value in {
-            "drill": check_drill_num(d, frame=shared_frame),
-            "bomb": check_boom_num(d, frame=shared_frame),
-        }.items():
+        # web_h5: read authoritative drill/bomb現量 from WS (0x0401). The browser
+        # screenshot bomb OCR mis-reads 0, which blacklists bombs and kills the
+        # drill->bomb combo (5554 live: bomb=930, OCR=0). adb / WS-unavailable
+        # falls back to OCR.
+        ws_counts = read_ws_prop_counts(d)
+        if ws_counts is not None:
+            item_counts = {"drill": ws_counts["drill"], "bomb": ws_counts["bomb"]}
+        else:
+            item_counts = {
+                "drill": check_drill_num(d, frame=shared_frame),
+                "bomb": check_boom_num(d, frame=shared_frame),
+            }
+        for name, value in item_counts.items():
             if name in item_blacklist:
                 items_available[name] = 0
                 continue
