@@ -6,6 +6,26 @@
 
 ---
 
+## ✅ 2026-07-01 ponytail 全repo稽核 — 4 組 subagent 並行清理死碼/過度工程（完成）
+
+背景：舊 `docs/REFACTORING_OPPORTUNITIES.md`（效率/熱路徑項）已全部驗證做完。本次是 2 個 Opus
+subagent 重新稽核後的新發現，已用 grep 逐項驗證零呼叫者才列入。**執行中使用者指示加一道審核關卡**
+（見 memory `feedback_review_before_merge_subagent_fixes`）：每組 worktree-isolated subagent 做完
+後，先派獨立 Opus 審核 subagent 驗證 diff 才 merge，不直接信任第一個 subagent 的自我報告。
+
+- [x] **Group 1**（死碼刪除）：刪 `utils/carpark_adb.py`+`screen_recovery.py`+`ui_layouts.py`+`ocr_clicker.py`+`model_loader.py`、`miner/ai_tuner.py`+`algo_evolver.py`+`auto_optimizer.py`+`simulator_bridge.py`、`miner/v2/llm_judge.py`+`debug_with_image_llm.py`+`tests/test_miner_v2_llm_judge.py`、`device.py` 拼錯名 `close_nofication`/`open_nofication`。**審核抓到一個錯**：原計畫誤判 `miner/v2/visualization.py` 為死碼，實際仍被 `miner/v2/debug_with_image.py`（CLAUDE.md 記載的 live debug CLI）用，已保留。Merge commit `5d6d01d7`（含解一個跟舊 backward-compat alias 相關的小 conflict）。**非阻擋跟進**：CLAUDE.md:133、`miner/v2/README.md`、`docs/INDEX.md` 等仍列被刪模組為可用 CLI，之後找時間補刪。
+- [x] **Group 2**（`routes_fly_pet.py` import 收斂）：**沒有執行**。Subagent 自己發現原計畫前提錯誤——`import control_panel_app as _cpa` 不是繞路重複 import，是刻意的 late-binding，供 4 個測試檔 `monkeypatch.setattr(cpa, "_cdp_json_response", ...)` 用，改了會讓 4 個測試壞掉。維持原狀。
+- [x] **Group 3**（`routes_tools_optimize.py` 拆 3 blueprint + JS 檔搬移）：拆成 `routes_carpark_decorate_tools.py`(4 routes)/`routes_gacha_tools.py`(1 route)/`routes_dragon_tools.py`(2 routes)，job registry 抽共用 `control_panel/tools_optimize_jobs.py`；`carpark_tools_js.py`/`gacha_tools_js.py` 搬進 `tools/`。**附帶發現**：repo 根目錄 `tools.py` 永久遮蔽 `tools/` 目錄成為 package（`tools/` 無 `__init__.py`），`from tools.X import Y` 全 repo 都不可行，改用 top-level import。審核逐條核對路由字串未改、job registry 真共用、`import control_panel_app` 正常。Merge commit `7776f198`。
+- [x] **Group 4**（`device_wrapper.py` 小修）：刪 `click_pct`/`swipe_pct` 薄 wrapper（零呼叫者已驗）；`click()`/`tap()` 雙重 trace 改成只記一筆（下游無硬依賴 "click" 字串）。審核用 baseline 比對排除 2 個既存無關 failure。Merge commit `d73982e2`。**⚠ 需重啟 `new_main_v2.py` 才生效**（連同 Group3 動到的 control_panel 路由，中控也要重啟）。
+
+**本批排除、未處理**：
+- `device_wrapper.py` 的 `MonitoredDevice`/`PlaywrightGameDevice` 拆分（1607 行大重構，需單獨設計討論）。
+- `memory/2026-06-22.md` 這個專案根目錄的雜散檔要不要刪，待使用者回覆。
+- `tools/` 底下 18 個未 commit 的 probe/read/grid/nav/verify/eval 一次性腳本——原計畫要「先摘要進 docs/protocol/+memory 再刪」，這步還沒做，先留著（`tools/eval_ore_lookahead.py` 已確認要保留，不算在這 18 個內）。
+- 3380 個 `*.sync-conflict-*` 裡九成在 `.claude/worktrees/*`（其他 session 的獨立 worktree），不能碰；只清了根目錄與 `tools/` 裡明確孤兒的一小批（9 個根目錄 scratch + 6 個 tools/ 內 sync-conflict 重複檔）。
+
+---
+
 ## 🚧 2026-06-28 萬神試煉「假完成」— 偵測一次失敗就收手,實際沒打完
 
 現象（使用者 2026-06-28）：log 寫「[萬神試煉] 戰鬥結束,共完成 6 關」+「萬神試煉:完成,
@@ -34,6 +54,19 @@
 - [ ] 截圖左上「13❤」是否為剩餘挑戰次數/生命？確認是否與「8 次」相關。
 
 參考：`docs/ROGUE_WANSHEN_BETA_AUTOMATION.md`（協議 + §4 舊流程有退出/結束本局）、記憶 [[reference_ws_hellgate_protocol]]。
+
+### 🔬 2026-06-29（週一 rogue 重置）live recon 結果（5554，read-only，已完成）
+完整記錄在 `docs/ROGUE_WANSHEN_BETA_AUTOMATION.md` §9。重點：
+- [x] manual-hold + CDP 9230 attach（scratchpad `rogue_recon.py`）。
+- [x] WS hook + 場景樹全 dump：完整節點路徑見 §9.1。
+- [x] **「13❤」=「試煉之心」(局內生命)**：勝一關不扣（16→16），推測敗北才扣（自然敗未驗）。古銀幣=金幣計數。「0/10」=獎勵里程碑非次數。未發現硬性開局次數上限。
+- [x] 勝利循環 + 退出結算全程 WS 抓齊（enter 0x4c02 / combat 0x4c04 seed / result 0x4c05 client回報 / over 0x4c03），欄位見 §9.4。勝利→關卡+1 自動續。
+- [x] **重大發現**：rogue 兩個確認窗「是否確認開啟新一局試煉 / 是否確認結算本局」掛在 **`TopView/MessageView`，不在 NormalView** → 任何只看 NormalView 的狀態判斷會漏看；OCR 點「開始」回 True 但卡住的根因很可能就是沒處理這個 TopView 確認窗（實測重現）。見 §9.2。
+- [x] **grind 到自然敗北已驗**（2026-06-29，5554）：敗北窗=同一 `RogueBattleResultView` 藍色「失敗」+「失去 ❤1」；**敗北扣 1 試煉之心、停同關重試、run 不結束**；**❤(試煉之心)=0 才結束一局**。判勝負用 `result(0x4c05)` s2c `{2:is_win}`，不靠 OCR。
+- [x] **「8 局」語意（使用者定案）**：=使用者選定的每週開局目標（非遊戲硬限）。一局=開始→爬到 ❤=0/主動結束→結算；跑滿 8 局才寫週記錄。
+
+> **2026-06-28 待辦的 4 個「別猜」項已全解**（見 docs §9）：① 8 局=8 runs；② 失敗→退出→重進 UI 序已抓（敗不退出而是續打到 ❤=0，「退出」=右下紅箭頭→結束本局→確認窗確定）；③ 寫週記錄=跑滿 8 局；④「13❤」=試煉之心(局內生命)。
+> ✅ **重寫已完成（2026-06-29，commit 827312ab，main）**：`fight_test(d, rounds=8)` 8-局迴圈（敗不停整任務、每局結束本局重進、跑滿才回 True）；`_settle_run` 退出序；`wanshen_rounds` config(1-50,預設8)+ dashboard 局數輸入；`dungeon_scheduler` 讀 config 傳 rounds + 跑滿才 time_recording；30 tests 綠。⚠ **動了 runtime（weekly_trials/dungeon_scheduler/config_manager），需重啟 new_main_v2 生效**。座標（紅箭頭510,920 / 報告✕270,875 / 等待4.5s）為實測值，首次上線可 live 微調。
 
 ---
 
@@ -313,15 +346,18 @@ running 進程是 06-19 21:57 那版；之後 commit 的改動尚未套用。log
 
 ## 重構 Phase 3（高風險拆分，真相來源 docs/REFACTORING_OPPORTUNITIES.md）
 
+> 2026-07-01 稽核後更新：以下 4 項已驗證完成，從清單移除——
+> `oracle()`/`get_stage` OCR 合併（config cache/inference_mode 等已在 code 裡確認）、
+> carpark `_reenter_silver_detail_list()`/`reconcile()._build_snapshot_summary` 已是
+> module-level 純函式、V1 神燈死碼已刪、device_wrapper silent pass/bare except 已全清（0 個）。
+> `carpark/cocos JS walker 共用化` 這項本次稽核判定 yagni（`carpark_js.py` 現存 walker 抽象
+> 用量太少，`cocos_navigator.py` 僅 5 處、`carpark_auto.py` 30 處，不值得為此立一個共用檔），
+> 移除此項、不再追蹤。剩下真正還開著的：
+
 每項獨立一輪審查 + 重啟 `new_main_v2.py`；Phase 間勿混同 commit。
-- [ ] 前置 commit：`oracle()` 優化、`get_stage` OCR 合併（工作區已實作+測試，待 commit）。
 - [ ] Flask 錯誤封套：抽 `_cdp_action(ip, js)` + `_cdp_err_code(err)`（先 4 個 fire-and-forget CDP route；`@json_endpoint` 套 21 處延後分批）。
-- [ ] carpark/cocos JS walker 共用化（熱路徑）：新 `utils/carpark_js.py`；先重構 cocos_navigator 4 份副本證明 helper，再逐點遷 carpark（每點 log 新舊座標 assert 相等）；勿同 pass 動 farm_v2/sea_v2。
-- [ ] carpark `park_one_silver` 抽 `_reenter_silver_detail_list()`；`reconcile()` 的 `_build_snapshot_summary` 升 module-level 純函式。
-- [ ] `PlaywrightGameDevice._start`(150L) 分解：先抽 `utils/web_profile_paths.py`，再抽 `_launch_persistent_context_with_fallback`（純 code-motion）。
-- [ ] V1 神燈死碼移除（gate：V2 prod log 穩定）：刪 `Open_gold_paddle_ocr.py` 4 函式 + `__main__`、退休 lian_shan_example.py。
-- [ ] device_wrapper ~25 silent `pass` → warning log、7 個 bare `except:` → typed catch、抽 `poll_stage(d, target, timeout)` helper。
-- [ ] Phase 0 殘：live-tree sync-conflict sweep（~3.6k 檔，在 active profile/logs，bot 跑時勿刪；源頭加進 Syncthing `.stignore`）。
+- [ ] `PlaywrightGameDevice._start`(787-909, ~123行) 分解：已抽出 3 個 nested helper(`_clear_chrome_singleton_locks`/`_build_launch_kwargs`/`_launch_fn`)+`web_profile_paths`/`_launch_with_profile_recovery`，剩最後一段整併（2026-07-01 稽核判定「半部分完成，剩的價值有限」，低優先）。
+- [ ] Phase 0 殘：live-tree sync-conflict sweep（~3.6k 檔，90% 在 `.claude/worktrees/*` 其他 session 的獨立 worktree 內，**不能碰**；其餘在 active profile/logs，bot 跑時勿刪；源頭加進 Syncthing `.stignore`）。2026-07-01 已清根目錄+tools/裡明確孤兒的一批，範圍很小，這項本質沒動。
 
 ---
 
@@ -566,3 +602,35 @@ worktree-from-HEAD 會漏掉這些 WIP 且 merge 易衝突 → 建議直接在�
 - [x] `docs/protocol/CROSS_WAR_IDLE_REWARD.md`：協議文件。
 - [x] 驗證：parser 對「真實 live bytes」（act_list 1572B + claim reply）解出 type33 Open / claim ok；回歸 test_ws_phase(49)/wiring+config(55) 全綠；config round-trip OK。
 - [ ] 待使用者：fresh ws_token 登入 E2E（會踢掉 parked Playwright session）；或啟用開關 + 重啟 bot 自然驗證。merge 回 main + 刪 worktree。
+
+---
+
+## Plan: WS 挖礦 A(挖步導向) + B(決定論地形) — 2026-06-29（待使用者過目）
+
+**動機（live 實證,5558+5554 CDP）**:WS `board_to_grid` 與 CNN 分類器（已確認為真相）逐格比對差 24/42。
+根因有二,均純-WS 可解:
+- A 挖步導向:executor fallback `_select_dig_step._key` 用「最深前緣、col 由小到大」,完全不看 `map_pits`。
+  → 礦沒被優先收 → 漂到 r0 堆積/捲出視窗永久消失（5554 實測有 pit 卡在 r0 col2）。= 「繞著礦坑挖」。
+- B 地形半盲:`0x0c01` 不送未挖格地形;前端用 `configMine_template` 客戶端自鋪。現 `mine_terrain` 邊挖邊學(慢、半盲)。
+
+### B 規則已 live 解出並驗證(2 帳號 54/54 未挖格 0 誤)
+```
+q=depth+6 ; area=q//7 ; tpl_row=q%7
+terrain[depth][col] = configMine_template[ area_info[area] ][tpl_row][col]   # 100 air / 201 dirt / 202 stone
+```
+- `area_info` 的 value 就是 template id（`board.area_info` 已解析,在 0x0c01 裡）。
+- area_info 帶 prev/cur/next 3 個 area = 21 列,覆蓋 7 列視窗(跨 ≤2 area)綽綽有餘。
+- 模板來源:`docs/protocol/mine_config_tables.json`(已有,= live configMine_template)。
+
+### 實作項目(TDD,worktree branch `feat/ws-mining-terrain-steering`)
+- [ ] B1 `ws_token/mine_terrain.py`:新增 `terrain_at_static(depth,col,area_info)` 走上式直接查表(免學習)。
+  保留舊學習路徑當 area_info 缺失時 fallback。
+- [ ] B2 `ws_token/mining_adapter._project_board`:off-frontier 未挖格改用 static 查表(精確 dirt/rock/air),
+  取代現「預設 dirt + 學習模型 override」。WS 真相(dug/pit/active)仍最優先。
+- [ ] B3 test:用 5558/5554 兩盤 fixture,重建地形 == 擷取到的 BlockRoot/CNN(逐格)。
+- [ ] A1 `ws_token/mining_supervised._select_dig_step`:fallback 改 pit-directed —
+  在可挖 frontier 中選「離最近未採集礦坑(含 `map_pits` 下方)直線距離最小」者,優先沿礦欄下挖;tiebreak 最深。
+- [ ] A2 收礦優先:可達 pit(在 actives)未收前不捲動越過(強化既有 hold_floor,涵蓋「漂到 r0」)。
+- [ ] A3 test:合成盤面 pit 欄 ≠ 最深前緣欄 → 斷言選 pit-directed 格,而非最深-最小-col。
+- [ ] 驗證:對 5554/5558 擷取盤面 replay,確認導向朝礦 + 地形 == CNN;py_compile + 相關 pytest。
+- [ ] off-by-default? 否 — 此為修正既有 WS 挖礦行為(非新功能),預設生效;bot 重啟才載入。merge 回 main + 刪 worktree。
