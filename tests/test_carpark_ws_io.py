@@ -1,9 +1,9 @@
 """Contract tests for pure-WS car-park decoration read + write.
 
-Validates that routes_tools_optimize plumbing correctly carries shop_id,
+Validates that routes_carpark_decorate_tools plumbing correctly carries shop_id,
 plans with the WS-shaped state dict, and delegates exec to the WS module.
 """
-import control_panel.routes_tools_optimize as routes
+import control_panel.routes_carpark_decorate_tools as routes
 from ws_token import carpark_decoration_ws as deco_ws
 from ws_token import codec
 
