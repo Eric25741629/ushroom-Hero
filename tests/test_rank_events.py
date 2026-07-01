@@ -116,7 +116,7 @@ def test_skips_when_not_tue_to_thu(sched, monkeypatch):
     assert sched["recorded"] == []
 
 
-@pytest.mark.parametrize("day", [2, 3, 4])  # 6/2 Tue, 6/3 Wed, 6/4 Thu
+@pytest.mark.parametrize("day", [2, 3])  # 6/2 Tue, 6/3 Wed
 def test_runs_during_event_window(sched, monkeypatch, day):
     feeds = []
     monkeypatch.setattr(rank_events, "_run_feed_flow", lambda *a, **k: feeds.append(1) or True)
@@ -126,11 +126,19 @@ def test_runs_during_event_window(sched, monkeypatch, day):
     assert sched["recorded"] == ["衝刺-發條"]
 
 
-def test_skips_thursday_after_settlement(sched, monkeypatch):
+def test_skips_wednesday_after_settlement(sched, monkeypatch):
     feeds = []
     monkeypatch.setattr(rank_events, "_run_feed_flow", lambda *a, **k: feeds.append(1) or True)
-    thu_late = datetime.datetime(2026, 6, 4, 22, 30, tzinfo=_TPE)
-    rank_events.park_spring(FakeDevice(), "dev", now=thu_late)
+    wed_late = datetime.datetime(2026, 6, 3, 22, 30, tzinfo=_TPE)  # weekday 2, >=22:00
+    rank_events.park_spring(FakeDevice(), "dev", now=wed_late)
+    assert feeds == []
+
+
+def test_skips_thursday_entirely(sched, monkeypatch):
+    feeds = []
+    monkeypatch.setattr(rank_events, "_run_feed_flow", lambda *a, **k: feeds.append(1) or True)
+    thu = datetime.datetime(2026, 6, 4, 10, 0, tzinfo=_TPE)  # weekday 3 no longer allowed
+    rank_events.park_spring(FakeDevice(), "dev", now=thu)
     assert feeds == []
 
 
