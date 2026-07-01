@@ -1,4 +1,4 @@
-"""Test harness: run control_panel.carpark_tools_js.READ_STATE_JS via raw CDP."""
+"""Test harness: run carpark_tools_js.READ_STATE_JS via raw CDP."""
 from __future__ import annotations
 import argparse, io, json, os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -6,7 +6,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, ROOT)
 from rawcdp import RawCDP  # noqa: E402  (also sets sys.stdout to a UTF-8 wrapper)
-from control_panel.carpark_tools_js import READ_STATE_JS, EXEC_STEP_JS  # noqa: E402
+from carpark_tools_js import READ_STATE_JS, EXEC_STEP_JS  # noqa: E402  (tools/ on sys.path)
 
 
 def main():

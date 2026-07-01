@@ -280,9 +280,9 @@ def cmd_send(port: int, cmd_id: int, type_: int, count: int) -> None:
 
 
 def cmd_drawjs(port: int, type_: int, count: int) -> None:
-    """Run the EXACT dashboard payload control_panel.gacha_tools_js.DRAW_ONCE_JS
+    """Run the EXACT dashboard payload gacha_tools_js.DRAW_ONCE_JS
     via CDP — same code path the /api/gacha/draw route uses."""
-    from control_panel.gacha_tools_js import DRAW_ONCE_JS
+    from gacha_tools_js import DRAW_ONCE_JS  # tools/ (script dir) on sys.path
     ticket = {1: 1012, 2: 1013}.get(type_, 0)
     pw, _, page = _attach(port)
     expr = f"({DRAW_ONCE_JS})({json.dumps([type_, count, ticket, 6000])})"
