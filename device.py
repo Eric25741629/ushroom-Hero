@@ -128,7 +128,3 @@ def open_notification(d):
         time.sleep(1)
     except Exception as e:
         logger.error(f"An error occurred: {e}")
-
-# Backward-compatible aliases
-close_nofication = close_notification
-open_nofication = open_notification
