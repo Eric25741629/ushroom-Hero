@@ -301,20 +301,11 @@ class MonitoredDevice:
         return self._d.click(x, y, *args, **kwargs)
 
     def click(self, x, y, *args, **kwargs):
-        """點擊前先檢查是否暫停"""
-        meaning = str(
-            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
-        )
-        payload = {"x": x, "y": y}
-        self._trace(
-            "click", payload, meaning=self._auto_meaning("click", meaning, payload)
-        )
-        kwargs["trace_meaning"] = meaning
-        return self.tap(x, y, *args, **kwargs)
+        """點擊入口 — 直接委派給 tap（tap 內含 pause_guard / _to_px / trace）。
 
-    def click_pct(self, x_ratio: float, y_ratio: float, *args, **kwargs):
-        """以螢幕比例點擊。"""
-        return self.tap(x_ratio, y_ratio, *args, **kwargs)
+        不在此處另記 trace，避免單次點擊被 click + tap 重複記兩筆。
+        """
+        return self.tap(x, y, *args, **kwargs)
 
     def gesture_swipe(self, *args, **kwargs):
         self._pause_guard()
@@ -348,10 +339,6 @@ class MonitoredDevice:
                 "swipe", payload, meaning=self._auto_meaning("swipe", meaning, payload)
             )
         return self.gesture_swipe(*args, **kwargs)
-
-    def swipe_pct(self, x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs):
-        """以螢幕比例滑動。"""
-        return self.swipe(x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs)
 
     def screenshot(self, *args, **kwargs):
         """截圖前也檢查暫停，確保不會在暫停時瘋狂截圖"""
