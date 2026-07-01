@@ -796,6 +796,14 @@ def get_device_role_id(device: str) -> "int | None":
         from ws_token.creds import load_creds
         return int(load_creds(device).role_id)
     except Exception:
+        pass
+    # Lenient fallback: a web_h5 device seeded by ws_ticket_refresh has a capture
+    # with roleId but no uname/plat, so load_creds() rejects it. The monitor only
+    # needs the roleId — read it directly.
+    try:
+        from ws_token.creds import load_role_id
+        return load_role_id(device)
+    except Exception:
         return None
 
 

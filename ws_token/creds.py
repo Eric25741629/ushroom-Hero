@@ -100,6 +100,27 @@ def load_creds(device: str, *, auth_dir: Path = AUTH_DIR) -> Creds:
     return Creds.from_dict(data["creds"])
 
 
+def load_role_id(device: str, *, auth_dir: Path = AUTH_DIR) -> "int | None":
+    """Read just the roleId from a capture file, tolerating a partial capture.
+
+    The online monitor / start-gate only needs the roleId to map a device to an
+    account; it does not need a loginable :class:`Creds`. A web_h5 device seeded
+    by :func:`utils.ws_ticket_refresh.refresh_from_device` has no ``uname``/``plat``
+    (unreadable from the page), so :func:`load_creds` would reject it — this
+    lenient reader returns the roleId anyway. Returns ``None`` when the file is
+    missing/unreadable or carries no roleId.
+    """
+    path = _capture_path(device, auth_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        rid = int((data.get("creds") or {}).get("roleId") or 0)
+    except (OSError, ValueError, TypeError):
+        return None
+    return rid or None
+
+
 def refresh_creds(
     device: str,
     *,

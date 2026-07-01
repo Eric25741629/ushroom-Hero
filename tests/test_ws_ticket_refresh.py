@@ -56,10 +56,25 @@ def test_refresh_updates_ticket_preserves_uname_plat(tmp_path):
     assert data["_source"] == "playwright_refresh"
 
 
-def test_refresh_no_capture_file_is_noop(tmp_path):
+def test_refresh_no_capture_file_seeds(tmp_path):
     ok = wtr.refresh_from_device(_FakeDevice(_FakePage(_FRESH)), "dev1",
                                  auth_dir=tmp_path)
+    assert ok is True
+    data = json.loads((tmp_path / "_auth_capture_dev1.json")
+                      .read_text(encoding="utf-8-sig"))
+    assert data["creds"]["roleId"] == 42
+    assert data["creds"]["loginTicket"] == "newticket"
+    assert data["_source"] == "playwright_seed"
+    assert data["_partial"] is True          # page 讀不到 uname/plat
+    assert "uname" not in data["creds"]
+
+
+def test_seed_without_role_id_is_noop(tmp_path):
+    bad = dict(_FRESH, roleId=0)
+    ok = wtr.refresh_from_device(_FakeDevice(_FakePage(bad)), "dev1",
+                                 auth_dir=tmp_path)
     assert ok is False
+    assert not (tmp_path / "_auth_capture_dev1.json").exists()
 
 
 def test_refresh_no_page_is_noop(tmp_path):

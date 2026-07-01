@@ -6,6 +6,11 @@ attach）讀出來，merge 回 auth_state/_auth_capture_<ip>.json —— 只更�
 欄位（loginTicket/pKey/loginTime/...），保留 page 上讀不到的 uname/plat。
 下一輪 WS 階段永遠拿到 <1 cycle 舊的 ticket。
 
+無既有 capture 檔（純 web_h5 帳號，例如寶兒/暴哥）時「種一份」：寫入 page 讀得到
+的欄位（含 roleId）。這份 seed 缺 uname/plat，load_creds() 會拒收（故不會被誤當成
+可登入 creds → has_creds 仍 False → 不觸發 WS 登入/checker），但 roleId 讓
+online monitor 能認得這台帳號（get_device_role_id 的寬鬆 fallback → 上線監測/保護）。
+
 一律 best-effort：任何失敗只 log 回 False，絕不打斷 wake cycle。
 """
 from __future__ import annotations
@@ -54,9 +59,7 @@ def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
         logger.debug("[%s] ws ticket refresh: no _page on device, skip", ip)
         return False
     path = Path(auth_dir) / f"_auth_capture_{ip}.json"
-    if not path.exists():
-        logger.info("[%s] ws ticket refresh: 無既有 capture 檔 (%s)，跳過", ip, path)
-        return False
+    seeding = not path.exists()
     try:
         fresh = page.evaluate(_CAPTURE_JS)
     except Exception as exc:  # noqa: BLE001 — page 可能剛好關閉/導航，不能炸 wake cycle
@@ -65,20 +68,27 @@ def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
     if not isinstance(fresh, dict) or not fresh.get("loginTicket"):
         logger.warning("[%s] ws ticket refresh: 讀不到 loginTicket，跳過", ip)
         return False
+    # 種第一份時 roleId 是這份檔唯一的價值（給 online monitor 認帳號），沒有就別種。
+    if seeding and not fresh.get("roleId"):
+        logger.info("[%s] ws ticket refresh: seed 讀不到 roleId，跳過建檔", ip)
+        return False
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = {} if seeding else json.loads(path.read_text(encoding="utf-8-sig"))
         creds = dict(data.get("creds") or {})
         for k in _REFRESH_KEYS:
             if fresh.get(k) not in (None, "", 0) or k == "isWhiteIp":
                 creds[k] = fresh[k]
         data["creds"] = creds
-        data["_source"] = "playwright_refresh"
+        data["_source"] = "playwright_seed" if seeding else "playwright_refresh"
+        # seed 缺 page 讀不到的 uname/plat → 標記為半份，load_creds 仍會拒收。
+        data["_partial"] = bool(seeding and not (creds.get("uname") and creds.get("plat")))
         data["_captured_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                         encoding="utf-8")
         age_h = (time.time() - float(creds.get("loginTime") or 0)) / 3600.0
-        logger.info("[%s] ws ticket refresh: 已回寫 ticket (loginTime age %.1fh)",
-                    ip, age_h)
+        logger.info("[%s] ws ticket refresh: %s (loginTime age %.1fh)",
+                    ip, "已種 seed capture (roleId=%s)" % creds.get("roleId")
+                    if seeding else "已回寫 ticket", age_h)
         return True
     except (OSError, ValueError) as exc:
         logger.warning("[%s] ws ticket refresh: 寫回失敗: %s", ip, exc)
