@@ -1880,6 +1880,16 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             <div class="ws-field-note">留空＝不改（保留既有）；要清除請填 []。</div>
           </div>
 
+          <div class="task-tab-panel" data-tab="sea">
+            <label class="checkbox-item"><input type="checkbox" id="chkWsSea">自動航海賽季（派遣＋領獎＋維修；取消＝整個航海子任務跳過）</label>
+            <div class="ws-field ws-field-row"><label>每日攻擊次數上限</label><input type="number" id="inpSeaAttackMax" class="form-control" min="0" step="1" placeholder="4"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkSeaDispatch">自動派遣艦隊（dispatch）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkSeaRepair">自動維修（repair）</label>
+            <div class="ws-field ws-field-row"><label>母港座標 home_grid（x,y）</label><input type="text" id="inpSeaHomeGrid" class="form-control" placeholder="30,26"></div>
+            <div class="ws-field ws-field-row"><label>駐防座標 garrison_grid（x,y）</label><input type="text" id="inpSeaGarrisonGrid" class="form-control" placeholder="20,24"></div>
+            <div class="ws-field-note">座標留空＝沿用現有；整體取消勾選＝停用航海任務。座標由伺服器格線決定，不確定就別動。</div>
+          </div>
+
           <div class="task-tab-panel" data-tab="events">
             <div class="ws-field-note">限時活動：活動沒開時會自動跳過，可先設定好等開放。</div>
             <label class="checkbox-item"><input type="checkbox" id="chkDragonRealm" checked>龍骸聖域（每三周 週三四五 10-22 自動探索收鑰匙；非活動周自動跳過）</label>
@@ -3747,7 +3757,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     const WS_TASK_TABS = [
       ['farm', '農場'], ['lamp', '神燈'], ['mining', '挖礦'], ['relic', '遺物'],
       ['adreward', '看廣告'], ['carpark', '跨服停車'], ['dungeon', '副本掃蕩'],
-      ['events', '活動'], ['misc', '雜項'], ['conn', '連線'],
+      ['sea', '航海'], ['events', '活動'], ['misc', '雜項'], ['conn', '連線'],
     ];
     // slot = 頁籤 id；path = config 內完整路徑(全部 ws_token.*)；type bool/int/intnull/text。
     const WS_EXTRA_FIELDS = [
@@ -3756,6 +3766,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       { slot:'mining', path:'ws_token.mining.max_steps', type:'int', label:'每輪步數上限', def:200 },
       { slot:'relic', path:'ws_token.relic_sprint.enabled', type:'bool', label:'每週期把遺物碎片衝到目標、領回合獎勵', def:false },
       { slot:'relic', path:'ws_token.relic_sprint.target_spend', type:'int', label:'本期目標消耗碎片（預設 900000＝第 4 回合）', def:900000 },
+      { slot:'relic', path:'ws_token.relic_upgrade', type:'bool', label:'每輪自動平均強化遺物（消耗遺物碎片；與上方衝刺可同開）', def:false },
+      { slot:'relic', path:'ws_token.relic_max_steps', type:'int', label:'每輪最多強化幾次', def:10 },
+      { slot:'relic', path:'ws_token.relic_fragment_floor', type:'int', label:'保留碎片下限，低於就不強化（0＝不保留）', def:0 },
       { slot:'mail', path:'ws_token.mail_claim', type:'bool', label:'每日領取全部郵件附件', def:false },
       { slot:'mail', path:'ws_token.mail_gem_threshold', type:'intnull', label:'神器附魔寶石達此量就提醒（空＝不查）', def:null },
       { slot:'mail', path:'ws_token.mail_skill_threshold', type:'intnull', label:'武魂達此量就提醒（空＝不查）', def:null },
@@ -3771,6 +3784,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       { slot:'gacha', path:'ws_token.gacha.count', type:'int', label:'每批抽幾抽（15/35/999）', def:35 },
       { slot:'gacha', path:'ws_token.gacha.batches', type:'int', label:'每次抽幾批', def:3 },
       { slot:'gacha', path:'ws_token.gacha.weekend_only', type:'bool', label:'只在週六/日執行', def:false },
+      { slot:'gacha', path:'ws_token.gacha.free_daily', type:'bool', label:'每日免費召喚（只吃免費次數，不花抽卡券）', def:false },
+      { slot:'gacha', path:'ws_token.gacha.mode', type:'select', label:'抽卡模式（fixed＝固定批數安全；drain＝抽到券盡，會用光抽卡券！）', options:[['fixed','固定批數（安全）'],['drain','抽到券盡（危險）']], def:'fixed' },
       { slot:'secret_jewel', path:'ws_token.secret_jewel.draw_free', type:'bool', label:'每日免費尋寶（只吃免費次數 2/日，不花鑽）', def:false },
       { slot:'secret_jewel', path:'ws_token.secret_jewel.buy_daily', type:'bool', label:'每日買尋寶圖（補到 10 張／日，消耗粉鑽 600/張）', def:false },
       { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'舊版單一停車目標 master_id（空＝不用）', def:null },
@@ -3975,9 +3990,40 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       const arr = [];
       GACHA_TYPES.forEach(([n, cid]) => { const el = document.getElementById(cid); if (el && el.checked) arr.push(n); });
       setPath(payload, 'ws_token.gacha.types', arr);
-      // 「抽到券盡 drain」已從此面板移除(改走工具頁一鍵)。recurring runner 的 mode 預設是
-      // drain,故此面板存檔一律釘成 fixed,確保自動掛機絕不偷抽到券盡。
-      setPath(payload, 'ws_token.gacha.mode', 'fixed');
+      // mode 由 gacha 頁籤的下拉選單管(WS_EXTRA_FIELDS ws_token.gacha.mode,collectTaskTabs
+      // 先於此執行已寫入)。runner 缺 mode 時預設 drain,故 select 一律顯式存(預設 fixed),
+      // 使用者要 drain 才會抽到券盡。
+    }
+    // 航海賽季(sea_season)：presence=啟用(空 dict runner 視為關)，含兩個座標陣列，
+    // 故走 bespoke(仿農場)，非單一 key。保留既有非 UI 欄位。
+    function _gridToStr(g) { return (Array.isArray(g) && g.length >= 2) ? (g[0] + ',' + g[1]) : ''; }
+    function _parseGrid(id) {
+      const el = document.getElementById(id); if (!el) return null;
+      const s = (el.value || '').trim(); if (s === '') return null;
+      const m = s.split(',').map(x => parseInt(x.trim(), 10));
+      return (m.length >= 2 && m.every(n => n >= 0)) ? [m[0], m[1]] : null;
+    }
+    function _loadSeaTab(config) {
+      const sea = getPath(config, 'ws_token.sea_season', null);
+      const on = !!(sea && typeof sea === 'object');
+      document.getElementById('chkWsSea').checked = on;
+      const s = on ? sea : {};
+      document.getElementById('inpSeaAttackMax').value = (typeof s.attack_daily_max === 'number') ? s.attack_daily_max : '';
+      document.getElementById('chkSeaDispatch').checked = s.dispatch === true;
+      document.getElementById('chkSeaRepair').checked = s.repair === true;
+      document.getElementById('inpSeaHomeGrid').value = _gridToStr(s.home_grid);
+      document.getElementById('inpSeaGarrisonGrid').value = _gridToStr(s.garrison_grid);
+    }
+    function _collectSeaTab(payload) {
+      if (!document.getElementById('chkWsSea').checked) { setPath(payload, 'ws_token.sea_season', null); return; }
+      const existing = (_existingWsToken.sea_season && typeof _existingWsToken.sea_season === 'object') ? _existingWsToken.sea_season : {};
+      const sea = Object.assign({}, existing);
+      const am = _numOrNull('inpSeaAttackMax'); if (am !== null) sea.attack_daily_max = am; else delete sea.attack_daily_max;
+      sea.dispatch = document.getElementById('chkSeaDispatch').checked;
+      sea.repair = document.getElementById('chkSeaRepair').checked;
+      const hg = _parseGrid('inpSeaHomeGrid'); if (hg) sea.home_grid = hg; else delete sea.home_grid;
+      const gg = _parseGrid('inpSeaGarrisonGrid'); if (gg) sea.garrison_grid = gg; else delete sea.garrison_grid;
+      setPath(payload, 'ws_token.sea_season', sea);
     }
     const WS_JSON_FIELDS = [
       { id: 'txtCarparkPlan', path: 'ws_token.carpark_plan' },
@@ -4019,6 +4065,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       _loadFarmTab(config);
       _loadAdRewards(config);
       _loadGachaTypes(config);
+      _loadSeaTab(config);
       _loadJsonFields(config);
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
@@ -4050,6 +4097,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       _collectFarmTab(payload);
       _collectAdRewards(payload);
       _collectGachaTypes(payload);
+      _collectSeaTab(payload);
       _collectJsonFields(payload);
     }
     // Live-view decode pipeline: single-slot pending, dropping older frames if

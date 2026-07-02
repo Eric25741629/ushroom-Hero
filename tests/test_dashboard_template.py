@@ -245,6 +245,29 @@ def test_interrupt_buttons_route_through_locked_control():
     assert "ctrlBtnLocked(ip)" in html
 
 
+def test_dashboard_exposes_previously_config_only_ws_controls():
+    """Gap-close (2026-07-02): sea_season / recurring relic_upgrade / gacha
+    free_daily + selectable mode were config-file-only; each must now have a
+    dashboard control wired through the task-tabs load/collect path.
+    """
+    html = _html()
+    # 航海 sea_season tab + bespoke fields (presence=enable, grid arrays)
+    assert "['sea', '航海']" in html
+    assert 'id="chkWsSea"' in html
+    assert 'id="inpSeaHomeGrid"' in html
+    assert 'id="inpSeaGarrisonGrid"' in html
+    assert "_loadSeaTab(config)" in html
+    assert "_collectSeaTab(payload)" in html
+    # recurring relic auto-upgrade (distinct from relic_sprint)
+    assert "ws_token.relic_upgrade" in html
+    assert "ws_token.relic_max_steps" in html
+    assert "ws_token.relic_fragment_floor" in html
+    # gacha daily free draw + user-selectable mode (pin removed)
+    assert "ws_token.gacha.free_daily" in html
+    assert "ws_token.gacha.mode" in html
+    assert "setPath(payload, 'ws_token.gacha.mode', 'fixed')" not in html
+
+
 def test_control_button_lock_and_animation_helpers_present():
     """The press feedback (spinner+pulse animation) and the debounce lock that
     blocks repeated presses must both exist."""
