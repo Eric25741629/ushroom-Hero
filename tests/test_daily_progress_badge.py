@@ -193,3 +193,51 @@ def test_dragon_badge_shown_in_dragon_week(monkeypatch):
     mgr = _FakeManager(data, now=now)
     res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
     assert res["龍骸聖域"] is True
+
+
+# ── 坐騎衝刺：活動開放窗 gate(週二~週三22:00)。週期週內但活動結算後應隱藏 ──
+# 2026-06-22 為週一 → 06-23 週二、06-24 週三、06-25 週四。
+def _mount_data():
+    return {"衝刺-發條": {"timestamp": _ts_on(datetime.date(2026, 6, 23))}}
+
+
+def test_mount_sprint_badge_shown_tuesday(monkeypatch):
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 23, 12, tzinfo=_TZ)  # 週二
+    mgr = _FakeManager(_mount_data())
+    res = routes_status._compute_daily_progress(
+        mgr, "dev", today=_SEA_WEEK_DAY, now=now)
+    assert "坐騎衝刺" in res
+
+
+def test_mount_sprint_badge_shown_wed_before_close(monkeypatch):
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 24, 21, tzinfo=_TZ)  # 週三 21:00
+    mgr = _FakeManager(_mount_data())
+    res = routes_status._compute_daily_progress(
+        mgr, "dev", today=_SEA_WEEK_DAY, now=now)
+    assert "坐騎衝刺" in res
+
+
+def test_mount_sprint_badge_hidden_wed_after_close(monkeypatch):
+    """週三22:00後活動結算 → 徽章隱藏(即使仍在週期週)。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 24, 22, tzinfo=_TZ)  # 週三 22:00
+    mgr = _FakeManager(_mount_data())
+    res = routes_status._compute_daily_progress(
+        mgr, "dev", today=_SEA_WEEK_DAY, now=now)
+    assert "坐騎衝刺" not in res
+
+
+def test_mount_sprint_badge_hidden_thursday(monkeypatch):
+    """非活動日(週四)→ 隱藏。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 25, 12, tzinfo=_TZ)  # 週四
+    mgr = _FakeManager(_mount_data())
+    res = routes_status._compute_daily_progress(
+        mgr, "dev", today=_SEA_WEEK_DAY, now=now)
+    assert "坐騎衝刺" not in res

@@ -74,17 +74,27 @@ _SET_QTY_JS = r"""
 """
 
 
+def is_mount_sprint_open(now=None):
+    """坐騎衝刺是否在活動開放窗內：週二全天 + 週三 22:00(台灣)前。
+
+    只判斷「窗內」，不含 4 週週期判斷(那是 should_execute_cycle 的事)。
+    park_spring 與 dashboard 徽章共用此判定，避免活動結束後徽章繼續顯示。
+    """
+    now = now or datetime.datetime.now(_TPE)
+    weekday = now.weekday()  # 0=Mon ... 6=Sun
+    if weekday not in ALLOWED_WEEKDAYS:
+        return False
+    if weekday == SPRINT_CLOSE_WEEKDAY and now.hour >= SPRINT_CLOSE_HOUR:
+        return False
+    return True
+
+
 def park_spring(d, ip, now=None):
     """坐騎衝刺 (衝刺-發條)。每 4 週活動週的週二~週三餵養無限時發條一次。"""
     now = now or datetime.datetime.now(_TPE)
-    weekday = now.weekday()  # 0=Mon ... 6=Sun
 
-    # 1. 僅限週二~週三
-    if weekday not in ALLOWED_WEEKDAYS:
-        return
-    # 週三 22:00 (台灣時間) 後活動結算,不再執行
-    if weekday == SPRINT_CLOSE_WEEKDAY and now.hour >= SPRINT_CLOSE_HOUR:
-        logger.info(f"[{ip}] 週三 22:00 後已結算,跳過衝刺-發條。")
+    # 1. 僅限活動開放窗(週二~週三22:00)
+    if not is_mount_sprint_open(now):
         return
 
     # 2. 本週是否已執行過

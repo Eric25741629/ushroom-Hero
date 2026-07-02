@@ -327,7 +327,7 @@ _DAILY_TASKS_CONFIG = {
     "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
     "商店購買": {"key": "Store"},
     "每日任務": {"key": "mission_timestamp"},
-    "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4)},
+    "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4), "event_open": "mount_sprint"},
     "菇菇武道會": {
         "key": "mushroom_arena_daily",
         "cycle": ("mushroom_arena_cycle_start", 4),
@@ -339,7 +339,7 @@ _DAILY_TASKS_CONFIG = {
 }
 
 
-def _compute_daily_progress(manager, device_id, *, today=None):
+def _compute_daily_progress(manager, device_id, *, today=None, now=None):
     """回傳 {display_name: 已完成?}；檔期/週期 gate 未過的任務直接省略(隱藏)。
 
     ``today`` 預設取 manager 時區的當天，可注入供測試。兩個日曆 gate
@@ -359,6 +359,11 @@ def _compute_daily_progress(manager, device_id, *, today=None):
                 device_id, record_name, cycle_weeks=weeks
             )
             if not should_exec:
+                continue
+        # 活動開放窗 gate：週期週內但活動已結算(如坐騎衝刺週三22:00後)則隱藏
+        if config.get("event_open") == "mount_sprint":
+            from rank_events import is_mount_sprint_open
+            if not is_mount_sprint_open(now):
                 continue
         if config.get("sea_week") and not json_manager.is_sea_week(today):
             continue
