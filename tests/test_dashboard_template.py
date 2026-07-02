@@ -164,7 +164,7 @@ def test_settings_ws_and_advanced_groups_are_collapsible():
     html = _html()
     assert "進階設定 — 各任務細項" in html
     assert 'id="taskTabBar"' in html  # 任務類別橫向頁籤條
-    assert "<summary>進階</summary>" in html
+    assert "<summary>進階設定</summary>" in html
     # 常用任務改名後的群組標題
     assert "常用任務開關" in html
 
