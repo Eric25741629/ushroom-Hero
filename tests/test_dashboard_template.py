@@ -162,7 +162,7 @@ def test_settings_ws_and_advanced_groups_are_collapsible():
     WS 任務細項改成「進階設定」摺疊段內的任務類別橫向頁籤（taskTabBar）。
     """
     html = _html()
-    assert "進階設定 — 任務細項（WS，需 +ws 方案）" in html
+    assert "進階設定 — 各任務細項" in html
     assert 'id="taskTabBar"' in html  # 任務類別橫向頁籤條
     assert "<summary>進階</summary>" in html
     # 常用任務改名後的群組標題
@@ -186,8 +186,8 @@ def test_skip_sleep_button_replaces_manual_wake_adjustment():
 
 
 def _fly_pet_nav_tag(html: str) -> str:
-    """Return the opening <a ...> tag of the 飛寵管理 side-rail entry."""
-    match = re.search(r'<a[^>]*href="/fly-pet"[^>]*>', html)
+    """Return the opening <button ...> tag of the 飛寵管理 side-rail entry."""
+    match = re.search(r'<button[^>]*id="navFlypet"[^>]*>', html)
     assert match, "fly-pet nav entry not found in dashboard"
     return match.group(0)
 
@@ -195,12 +195,9 @@ def _fly_pet_nav_tag(html: str) -> str:
 def test_fly_pet_nav_item_consistent_with_buttons():
     """飛寵管理 must render like the other .nav-btn items.
 
-    Regression (2026-06-05): the fly-pet link was an <a> carrying inline
-    `display:flex; align-items:center; color:inherit`, while every other nav
-    item is a bare <button class="nav-btn">. content-box + overflow:hidden
-    clipped its right edge and color:inherit gave it the body colour
-    (--text-primary #e0e0e0) instead of the buttons' #ddd, so it looked off.
-    The anchor should now rely entirely on the shared class.
+    The fly-pet entry is now an in-page nav button (switchPage('flypet') → iframe),
+    a bare <button class="nav-btn"> like every other side-rail item — no divergent
+    inline styling. (Earlier it was an <a href="/fly-pet"> that clipped/mis-coloured.)
     """
     tag = _fly_pet_nav_tag(_html())
     assert 'class="nav-btn"' in tag
