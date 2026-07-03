@@ -15,6 +15,7 @@ entry point is `run(ctx)`.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import random
 import time
@@ -219,8 +220,10 @@ def _run_tasks(ctx: DailyContext) -> None:
         stage = get_stage_with_check(d, ip, Cnn_model)
         logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
         # due 判斷唯一來源：task_due.is_due("地獄之門")（record.is_next_day + 當前分鐘<20）。
-        # now 用預設即時台北時間，與 current_time 同一 wall clock（原用 current_time.tm_min）。
-        if task_due.is_due("地獄之門", ip):
+        # 傳入 pipeline 開頭捕捉的 current_time（非即時 now）：Task 1 前隔了紅包/車位/
+        # get_stage_with_check（秒級），即時 now 可能跨過 :20 minute 邊界而漏做，故用捕捉時鐘
+        # 還原原碼 current_time.tm_min 的等價（_due_hellgate 只讀 .minute，naive datetime 即足）。
+        if task_due.is_due("地獄之門", ip, datetime.datetime(*current_time[:6])):
             if stage == "主頁面":
                 bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
                 new_battle.hell_door(d, ip)
