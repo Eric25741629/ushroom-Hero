@@ -355,6 +355,45 @@ def test_fannaoxiao_not_due_when_scheduler_says_no(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# 抽技能夥伴 — 讀 ws_state gacha_free.last_date；讀不到/無記錄 → 保守 due(True)
+# --------------------------------------------------------------------------
+def _stub_gacha_state(monkeypatch, state, *, raises=False):
+    from ws_token import state as ws_state
+
+    def fake_load_state(ip, **kw):
+        if raises:
+            raise RuntimeError("boom")
+        return state
+
+    monkeypatch.setattr(ws_state, "load_state", fake_load_state)
+
+
+def test_gacha_due_when_no_state(monkeypatch):
+    _stub_gacha_state(monkeypatch, {})
+    assert task_due.is_due("抽技能夥伴", "ip", now=_dt(2026, 7, 6)) is True
+
+
+def test_gacha_not_due_when_done_today(monkeypatch):
+    _stub_gacha_state(monkeypatch, {"gacha_free": {"last_date": "2026-07-06"}})
+    assert task_due.is_due("抽技能夥伴", "ip", now=_dt(2026, 7, 6, 15)) is False
+
+
+def test_gacha_due_when_last_date_prior_day(monkeypatch):
+    _stub_gacha_state(monkeypatch, {"gacha_free": {"last_date": "2026-07-05"}})
+    assert task_due.is_due("抽技能夥伴", "ip", now=_dt(2026, 7, 6)) is True
+
+
+def test_gacha_due_when_gacha_free_has_no_last_date(monkeypatch):
+    _stub_gacha_state(monkeypatch, {"gacha_free": {"last_total": 3}})
+    assert task_due.is_due("抽技能夥伴", "ip", now=_dt(2026, 7, 6)) is True
+
+
+def test_gacha_due_when_state_read_raises(monkeypatch):
+    _stub_gacha_state(monkeypatch, {}, raises=True)
+    assert task_due.is_due("抽技能夥伴", "ip", now=_dt(2026, 7, 6)) is True
+
+
+# --------------------------------------------------------------------------
 # unknown task
 # --------------------------------------------------------------------------
 def test_unknown_task_raises_keyerror(monkeypatch):

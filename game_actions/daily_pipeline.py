@@ -284,8 +284,15 @@ def _run_tasks(ctx: DailyContext) -> None:
     _force_sleep_checkpoint()
     if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
         if stage == "主頁面":
+            # WS 付費抽 (gacha 0x0902) 已完成 → 只跳過 ADB 週末付費抽 (weekend_to_buy)，
+            # 但每日免費紅點抽 (get_skill_and_partner 前半段) WS 不涵蓋（free_daily 永遠
+            # 關，遊戲自理，見 tasks/lessons.md 2026-06-15），故仍照跑，避免漏做。
+            # skip 來源：WS_TO_PIPELINE_SKIPS["gacha"] → "抽技能夥伴"（ctx.ws_done）。
+            skip_weekend_draw = "抽技能夥伴" in ctx.ws_done
+            if skip_weekend_draw:
+                logger.info("[%s] 抽技能夥伴: WS 付費抽已完成，跳過週末購買（免費紅點抽照跑）", ip)
             bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
-            get_skill_and_partner(d)
+            get_skill_and_partner(d, skip_weekend_draw=skip_weekend_draw)
             time.sleep(3)
         else:
             log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")

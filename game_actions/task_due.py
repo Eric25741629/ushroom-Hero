@@ -198,6 +198,25 @@ def _due_fannaoxiao(ip: str, now: datetime.datetime) -> bool:
     return bool(fx._is_due(ip))
 
 
+def _due_gacha_skill_partner(ip: str, now: datetime.datetime) -> bool:
+    # 對照 ws_token/runner.py:_run_gacha_free 的每日 gate（ws_state 的
+    # gacha_free.last_date）。== 今天(台北) → 本日已跑客戶端抽 → not due；
+    # 否則 due。讀不到 state / 無 gacha_free / 無 last_date → 保守回 True
+    # （due = 仍需客戶端，Phase D 不會誤跳這個唯一靠截圖紅點的任務）。
+    # lazy import：task_due 頂層只依賴 json_manager；ws_token.state 依賴輕
+    #（json/os/pathlib）但沿用 lazy 慣例避免頂層擴散並防 import 循環。
+    try:
+        from ws_token import state as ws_state
+
+        st = ws_state.load_state(ip)
+        last_date = (st.get("gacha_free") or {}).get("last_date")
+    except Exception:
+        return True
+    if not last_date:
+        return True
+    return bool(last_date != now.strftime("%Y-%m-%d"))
+
+
 _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {
     "地獄之門": _due_hellgate,
     "每日加速": _due_daily_acceleration,
@@ -212,6 +231,7 @@ _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {
     "菇菇雕像每週": _due_statue_weekly,
     "龍骸聖域": _due_dragon_realm,
     "煩惱消": _due_fannaoxiao,
+    "抽技能夥伴": _due_gacha_skill_partner,
 }
 
 
