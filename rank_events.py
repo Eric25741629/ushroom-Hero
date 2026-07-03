@@ -93,21 +93,10 @@ def park_spring(d, ip, now=None):
     """坐騎衝刺 (衝刺-發條)。每 4 週活動週的週二~週三餵養無限時發條一次。"""
     now = now or datetime.datetime.now(_TPE)
 
-    # 1. 僅限活動開放窗(週二~週三22:00)
-    if not is_mount_sprint_open(now):
-        return
-
-    # 2. 本週是否已執行過
-    record = json_manager.return_time(ip, name=SPRINT_RECORD)
-    if record and not record.get("is_next_week", True):
-        logger.info(f"[{ip}] 本週已執行過衝刺-發條,不再重複。")
-        return
-
-    # 3. 是否為 4 週週期的執行週
-    should_run, _ = json_manager.should_execute_cycle(
-        ip, SPRINT_RECORD, cycle_weeks=4, allowed_weekdays=ALLOWED_WEEKDAYS
-    )
-    if not should_run:
+    # 1~3. due 判斷（活動開放窗 + 本週未執行 + 4 週週期）改由 task_due registry 統一。
+    #      lazy import 破循環：task_due 反過來會 import 本模組取 is_mount_sprint_open。
+    from game_actions.task_due import is_due
+    if not is_due("坐騎衝刺", ip, now=now):
         return
 
     # 4. 設定 gating + 數量
