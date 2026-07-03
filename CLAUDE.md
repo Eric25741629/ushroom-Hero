@@ -94,6 +94,7 @@ Each device thread runs an independent automation loop with:
 | WS-first 階段 | `game_actions/ws_phase.py` | 喚醒後、瀏覽器啟動前先跑純 WS 任務（`ws_token/runner.py`），成功項由 `daily_pipeline`（`ctx.ws_done`）跳過；ticket 由 Playwright 階段回寫（`utils/ws_ticket_refresh.py`）。裝置開關 `ws_token.enabled`（dashboard「方案」選擇器 adb/adb+ws/h5/h5+ws） |
 | Equipment cache | `utils/equipment_cache.py` | 解析神燈掉落二進位資料，持久化並依 uid 查詢裝備 |
 | Log paths | `utils/log_paths.py` | 集中管理 log 路徑；測試用 `LogPaths.with_root(tmp_path)` 沙箱 |
+| Dashboard auth | `control_panel/shared/auth.py` + `utils/dashboard_settings.py` | 全站登入/帳號審核/裝置可見性/host_role 覆寫；設定檔 `dashboard_settings.json` 為 gitignored |
 
 ### Runtime Services (lazy-started)
 
@@ -227,6 +228,7 @@ python new_main_v2.py
 ```
 http://127.0.0.1:5002
 ```
+全站需登入；首次登入帳密由 env 遷移產生，總後台（帳號審核/裝置可見性/host_role）在 `/admin`。
 
 ### Check device state
 ```python
