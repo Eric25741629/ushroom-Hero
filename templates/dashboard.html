@@ -1573,10 +1573,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <div>
 
-            <label style="font-size:0.8em; display:flex; align-items:center; gap:6px;">
-              <input type="checkbox" id="chkCarparkEnabled" onchange="onCarparkEnabledChange()">
-              啟用跨服車位（carpark.enabled）
-            </label>
+            <label style="font-size:0.8em;">跨服車位泊銀等級（總開關在上方「任務開關」的「跨服停車」）</label>
 
             <select id="editCarparkTier" class="form-control" style="margin-top:4px;">
               <option value="silver">鉑銀（silver）— 唯一已驗證</option>
@@ -1765,17 +1762,31 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       <div class="form-group">
 
-        <label>常用任務開關</label>
+        <label>任務開關</label>
 
         <div class="checkbox-group">
 
-          <label class="checkbox-item"><input type="checkbox" id="chkFarm">啟用農場（Farm）</label>
+          <label class="checkbox-item"><input type="checkbox" id="chkFarm">農場</label>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkArena">啟用競技場（Arena）</label>
+          <label class="checkbox-item"><input type="checkbox" id="chkArena">競技場</label>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkMining">啟用挖礦（Mining）</label>
+          <label class="checkbox-item"><input type="checkbox" id="chkMining">挖礦</label>
 
-          <label class="checkbox-item"><input type="checkbox" id="chkDungeon">啟用副本（地獄之門/萬神試煉/雙週賞金）</label>
+          <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">神燈（消耗神燈道具；需含連線的方案）</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkAdEnabled">看廣告獎勵（免看真實廣告，直接領）</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkCarparkEnabled" onchange="onCarparkEnabledChange()">跨服停車</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkWsSea">航海</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkHellgate">地獄之門</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkWanshen">萬神試煉</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkCloudBattle">雲端戰鬥</label>
+
+          <label class="checkbox-item"><input type="checkbox" id="chkBiweekly">雙週賞金</label>
 
         </div>
 
@@ -1812,9 +1823,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         <div class="task-tab-panels">
 
           <div class="task-tab-panel" data-tab="farm">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsFarm">自動農場（莊園收成＋購買＋豐收卡；取消＝整個農場子任務跳過）</label>
-            <div class="ws-field ws-field-row"><label>莊園每日買 種子(407) 目標數（空＝不買）</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
-            <div class="ws-field ws-field-row"><label>莊園每日買 肥料(408) 目標數（空＝不買）</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
+            <!-- 農場總開關已移到外層「任務開關」；chkWsFarm 降為隱藏 slave，存檔前由 chkFarm 鏡射。 -->
+            <input type="checkbox" id="chkWsFarm" style="display:none" aria-hidden="true">
+            <div class="ws-field-note">農場總開關在上方「任務開關」；以下為細項參數。</div>
+            <label class="checkbox-item"><input type="checkbox" id="chkFarmBuy407" onchange="onFarmBuyToggle()">莊園每日買 種子(407)</label>
+            <div class="ws-field ws-field-row" id="rowFarmBuy407"><label>種子(407) 目標數</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
+            <label class="checkbox-item"><input type="checkbox" id="chkFarmBuy408" onchange="onFarmBuyToggle()">莊園每日買 肥料(408)</label>
+            <div class="ws-field ws-field-row" id="rowFarmBuy408"><label>肥料(408) 目標數</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
             <label class="checkbox-item"><input type="checkbox" id="chkAdSeed">看廣告拿種子（每日免費領，免看真實廣告；獨立於上方開關）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkHarvestCycle">每週豐收卡循環（停打工→施肥→收成→買卡→種特級→恢復打工）</label>
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
@@ -1828,7 +1843,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           </div>
 
           <div class="task-tab-panel" data-tab="lamp">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsOpenLamp">自動開神燈（消耗神燈道具；選含連線的方案會自動開）</label>
+            <div class="ws-field-note">神燈總開關在上方「任務開關」；以下為細項參數。</div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
               <div>
                 <label style="font-size:0.84em;">開到剩百分之幾 %（0＝不依百分比）</label>
@@ -1847,7 +1862,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           </div>
 
           <div class="task-tab-panel" data-tab="mining">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsMining">自動挖礦（挖到鎬子用完）</label>
+            <!-- 挖礦總開關已移到外層「任務開關」；chkWsMining 降為隱藏 slave，存檔前由 chkMining 鏡射（WS 挖礦仍受 +ws 方案 gate）。 -->
+            <input type="checkbox" id="chkWsMining" style="display:none" aria-hidden="true">
+            <div class="ws-field-note">挖礦總開關在上方「任務開關」；WS 挖礦需含連線的方案才生效。以下為細項參數。</div>
             <div class="ws-schema-slot" data-slot="mining"></div>
           </div>
 
@@ -1858,7 +1875,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           </div>
 
           <div class="task-tab-panel" data-tab="adreward">
-            <label class="checkbox-item"><input type="checkbox" id="chkAdEnabled">自動領看廣告獎勵（免看真實廣告，直接領）</label>
+            <div class="ws-field-note">看廣告獎勵總開關在上方「任務開關」；以下為細項參數。</div>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（每日免費）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（每日免費）</label>
             <div class="ws-field-note">看廣告拿種子的開關在「農場」頁籤。</div>
@@ -1877,7 +1894,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           </div>
 
           <div class="task-tab-panel" data-tab="sea">
-            <label class="checkbox-item"><input type="checkbox" id="chkWsSea">自動航海賽季（派遣＋領獎＋維修；取消＝整個航海子任務跳過）</label>
+            <div class="ws-field-note">航海總開關在上方「任務開關」；以下為細項參數。</div>
             <div class="ws-field ws-field-row"><label>每日攻擊次數上限</label><input type="number" id="inpSeaAttackMax" class="form-control" min="0" step="1" placeholder="4"></div>
             <label class="checkbox-item"><input type="checkbox" id="chkSeaDispatch">自動派遣艦隊（dispatch）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkSeaRepair">自動維修（repair）</label>
@@ -3255,6 +3272,15 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       if (chk && sel) sel.disabled = !chk.checked;
     }
 
+    // 農場買種子/肥料：勾選才顯示數量欄（未勾＝不買，_collectFarmTab 略過）。
+    function onFarmBuyToggle() {
+      [['chkFarmBuy407', 'rowFarmBuy407'], ['chkFarmBuy408', 'rowFarmBuy408']].forEach(([c, r]) => {
+        const chk = document.getElementById(c);
+        const row = document.getElementById(r);
+        if (chk && row) row.style.display = chk.checked ? '' : 'none';
+      });
+    }
+
     function isWsPlanSelected(value) {
       const backend = value || document.getElementById('editBackend').value || 'adb';
       return backend === 'ws_token' || backend.endsWith('+ws');
@@ -3933,8 +3959,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.getElementById('chkWsFarm').checked = on;
       const buy = (farm && Array.isArray(farm.buy)) ? farm.buy : [];
       const byShop = id => { const it = buy.find(b => b && b.shop_id === id); return it ? it.target : ''; };
-      document.getElementById('inpFarmBuy407').value = byShop(407);
-      document.getElementById('inpFarmBuy408').value = byShop(408);
+      const v407 = byShop(407);
+      const v408 = byShop(408);
+      document.getElementById('chkFarmBuy407').checked = (v407 !== '' && v407 != null);
+      document.getElementById('inpFarmBuy407').value = v407;
+      document.getElementById('chkFarmBuy408').checked = (v408 !== '' && v408 != null);
+      document.getElementById('inpFarmBuy408').value = v408;
+      onFarmBuyToggle();
       const hcc = (farm && farm.harvest_card_cycle && typeof farm.harvest_card_cycle === 'object') ? farm.harvest_card_cycle : {};
       document.getElementById('chkHarvestCycle').checked = hcc.enabled === true;
       document.getElementById('inpHcNumCards').value = (typeof hcc.num_cards === 'number') ? hcc.num_cards : '';
@@ -3948,8 +3979,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       const existing = (_existingWsToken.farm && typeof _existingWsToken.farm === 'object') ? _existingWsToken.farm : {};
       const farm = Object.assign({}, existing);
       const buy = [];
-      const t407 = _numOrNull('inpFarmBuy407'); if (t407 !== null) buy.push({ shop_id: 407, target: t407 });
-      const t408 = _numOrNull('inpFarmBuy408'); if (t408 !== null) buy.push({ shop_id: 408, target: t408 });
+      if (document.getElementById('chkFarmBuy407').checked) {
+        const t407 = _numOrNull('inpFarmBuy407'); if (t407 !== null) buy.push({ shop_id: 407, target: t407 });
+      }
+      if (document.getElementById('chkFarmBuy408').checked) {
+        const t408 = _numOrNull('inpFarmBuy408'); if (t408 !== null) buy.push({ shop_id: 408, target: t408 });
+      }
       if (buy.length) farm.buy = buy; else delete farm.buy;
       if (document.getElementById('chkHarvestCycle').checked) {
         const hcc = { enabled: true };
@@ -4268,7 +4303,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         document.getElementById('chkMining').checked = config.enable_mining !== false;
 
-        document.getElementById('chkDungeon').checked = config.enable_dungeon !== false;
+        document.getElementById('chkHellgate').checked = config.enable_hellgate !== false;
+
+        document.getElementById('chkWanshen').checked = config.enable_wanshen !== false;
+
+        document.getElementById('chkCloudBattle').checked = config.enable_cloud_battle !== false;
+
+        document.getElementById('chkBiweekly').checked = config.enable_biweekly !== false;
 
         document.getElementById('chkRealPhone').checked = config.is_real_phone === true;
 
@@ -4396,6 +4437,14 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       const wsKungfuGuess = wsSelected && document.getElementById('chkWsKungfuGuess').checked;
 
+      // 農場/挖礦：外層單一總開關同時控 ADB 與 WS。chkWsFarm/chkWsMining 已降為隱藏
+      // slave，存檔前由對應 master 鏡射，讓既有 _collectFarmTab / ws_token_mining
+      // 組裝邏輯不變。WS 挖礦仍受 +ws 方案 gate（wsEnabled && chkWsMining.checked）。
+      const _sFarm = document.getElementById('chkWsFarm');
+      if (_sFarm) _sFarm.checked = document.getElementById('chkFarm').checked;
+      const _sMining = document.getElementById('chkWsMining');
+      if (_sMining) _sMining.checked = document.getElementById('chkMining').checked;
+
       const payload = {
 
         name: document.getElementById('editName').value,
@@ -4408,7 +4457,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         enable_mining: document.getElementById('chkMining').checked,
 
-        enable_dungeon: document.getElementById('chkDungeon').checked,
+        enable_hellgate: document.getElementById('chkHellgate').checked,
+
+        enable_wanshen: document.getElementById('chkWanshen').checked,
+
+        enable_cloud_battle: document.getElementById('chkCloudBattle').checked,
+
+        enable_biweekly: document.getElementById('chkBiweekly').checked,
 
         is_real_phone: document.getElementById('chkRealPhone').checked,
 
