@@ -271,6 +271,14 @@ class TestAdminApi(unittest.TestCase):
             r = getattr(self.client, method)(path, json={})
             self.assertEqual(r.status_code, 403, f"{method} {path}")
 
+    # --- /admin 頁 route 存在性 + 權限 gating ---
+    def test_admin_page_renders_for_admin_and_gates_non_admin(self):
+        self._login("boss", True)
+        self.assertEqual(self.client.get("/admin").status_code, 200)
+        self._login("viewer", False)
+        # 頁面（非 /api/）非管理員由 require_admin redirect ``/``。
+        self.assertIn(self.client.get("/admin").status_code, (302, 403))
+
     # --- list ---
     def test_list_accounts_excludes_hash(self):
         self._login("boss", True)

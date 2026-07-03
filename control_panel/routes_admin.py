@@ -8,13 +8,24 @@
 實際消費覆寫是 Task 5 的事。因此本 API 的 ``effective`` 由
 ``config_manager.get_global_config()`` 疊上覆寫值自行組出，回報「將會生效」的值。
 """
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, render_template, request
 
 import config_manager
 from control_panel.shared.auth import require_admin
 from utils import dashboard_settings as ds
 
 bp = Blueprint("admin_console", __name__)
+
+
+@bp.route("/admin", methods=["GET"])
+@require_admin
+def admin_settings_page():
+    """總後台設定頁（管理員專屬）。非管理員由 ``require_admin`` redirect ``/``。"""
+    from control_panel.routes_pages import _get_frontend_version
+
+    return render_template(
+        "admin_settings.html", frontend_version=_get_frontend_version()
+    )
 
 
 def _ok(**extra):

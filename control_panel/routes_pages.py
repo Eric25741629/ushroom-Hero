@@ -4,7 +4,7 @@ import json
 import logging
 from pathlib import Path
 
-from flask import Blueprint, jsonify, redirect, render_template, request, send_from_directory
+from flask import Blueprint, jsonify, redirect, render_template, request, send_from_directory, session
 
 from control_panel.shared.auth import _fly_pet_auth
 
@@ -81,6 +81,7 @@ def index():
         "dashboard.html",
         program_info=_get_program_info(),
         frontend_version=_get_frontend_version(),
+        is_admin=session.get("dash_admin", False),
     )
 
 
