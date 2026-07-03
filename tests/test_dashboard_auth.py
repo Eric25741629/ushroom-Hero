@@ -1,6 +1,8 @@
 """dashboard 帳號/認證/可見性測試。不碰真實裝置。"""
+import importlib
 import os
 import sys
+import types
 import unittest
 import tempfile
 
@@ -10,12 +12,30 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils import dashboard_settings as ds
 
 
+def _install_lightweight_stubs():
+    """Stub the ADB / detector / CNN heavy modules so ``control_panel_app``
+    imports headless (mirrors tests/test_worker_routes_integration.py)."""
+    for name, attrs in (
+        ("adb_operations", {"run_adb": lambda *a, **k: ""}),
+        ("game_state.detector", {"stage_by_str": lambda d, ocr, img: "unknown"}),
+        ("new_cnn.cnn_model", {"load_cnn_model": lambda path: None}),
+    ):
+        if name not in sys.modules:
+            mod = types.ModuleType(name)
+            for key, value in attrs.items():
+                setattr(mod, key, value)
+            sys.modules[name] = mod
+
+
 class TestSettingsStore(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self._orig_settings_path = ds.settings_path()
         ds.set_settings_path(os.path.join(self.tmp.name, "dashboard_settings.json"))
 
     def tearDown(self):
+        # 還原 module-global 設定路徑，避免污染後續測試（守門會讀 settings）。
+        ds.set_settings_path(self._orig_settings_path)
         self.tmp.cleanup()
 
     def test_migration_creates_admin_from_env(self):
@@ -69,6 +89,70 @@ class TestSettingsStore(unittest.TestCase):
         self.assertEqual(ds.get_host_role()["mode"], "worker")
         ds.set_host_role(None, None)
         self.assertIsNone(ds.get_host_role())
+
+
+class TestAuthGuard(unittest.TestCase):
+    """全站 before_request 守門 + 登入/申請/登出流程。"""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_lightweight_stubs()
+        existing = sys.modules.get("control_panel_app")
+        if existing is not None and not hasattr(existing, "app"):
+            del sys.modules["control_panel_app"]
+        cls.cpa = importlib.import_module("control_panel_app")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_settings_path = ds.settings_path()
+        ds.set_settings_path(os.path.join(self.tmp.name, "dashboard_settings.json"))
+        ds.load_settings()
+        ds.create_account("boss", "pw123456", True, [])
+        ds.create_account("viewer", "pw123456", False, ["emulator-5554"])
+        self.client = self.cpa.app.test_client()
+
+    def tearDown(self):
+        # 還原 module-global 設定路徑，避免污染後續測試（守門會讀 settings）。
+        ds.set_settings_path(self._orig_settings_path)
+        self.tmp.cleanup()
+
+    def test_page_redirects_to_login_when_anonymous(self):
+        r = self.client.get("/")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/login", r.headers["Location"])
+
+    def test_api_returns_401_when_anonymous(self):
+        r = self.client.get("/api/status")
+        self.assertEqual(r.status_code, 401)
+
+    def test_worker_endpoints_exempt(self):
+        r = self.client.post("/api/report_status", json={})
+        self.assertNotEqual(r.status_code, 401)
+
+    def test_login_logout_cycle(self):
+        r = self.client.post("/login", data={"username": "boss", "password": "pw123456"})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self.client.get("/api/status").status_code, 200)
+        self.client.get("/logout")
+        self.assertEqual(self.client.get("/api/status").status_code, 401)
+
+    def test_pending_cannot_login(self):
+        ds.create_application("waiting", "pw123456")
+        r = self.client.post("/login", data={"username": "waiting", "password": "pw123456"})
+        self.assertEqual(r.status_code, 200)  # 留在登入頁帶錯誤訊息
+        self.assertEqual(self.client.get("/api/status").status_code, 401)
+
+    def test_apply_rate_limit(self):
+        for i in range(5):
+            self.client.post("/apply", data={"username": f"user_{i}", "password": "pw123456"})
+        r = self.client.post("/apply", data={"username": "user_x", "password": "pw123456"})
+        self.assertEqual(r.status_code, 429)
+
+    def test_corrupt_settings_fail_closed(self):
+        with open(ds.settings_path(), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        r = self.client.get("/api/status")
+        self.assertEqual(r.status_code, 503)
 
 
 if __name__ == "__main__":

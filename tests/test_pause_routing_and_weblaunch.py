@@ -174,7 +174,12 @@ def test_wake_delay_api_routes_seconds_to_local_wake_override(monkeypatch):
     )
 
     try:
-        resp = cpa.app.test_client().post(
+        client = cpa.app.test_client()
+        # 全站登入牆（before_request）：/api/wake_delay 不豁免，需已登入。
+        with client.session_transaction() as sess:
+            sess["dash_user"] = "boss"
+            sess["dash_admin"] = True
+        resp = client.post(
             f"/api/wake_delay/{ip}",
             json={"delay_sec": 15},
         )

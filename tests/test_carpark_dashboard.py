@@ -39,10 +39,19 @@ def _patch(monkeypatch, *, plan_enabled, snapshot):
                         if snapshot is not None else {})
 
 
+def _client(cpa):
+    """已登入 admin 的 test client（全站 before_request 登入牆需要）。"""
+    c = cpa.app.test_client()
+    with c.session_transaction() as sess:
+        sess["dash_user"] = "boss"
+        sess["dash_admin"] = True
+    return c
+
+
 def test_carpark_endpoint_disabled_plan(monkeypatch):
     cpa = _import_control_panel_app()
     _patch(monkeypatch, plan_enabled=False, snapshot=None)
-    resp = cpa.app.test_client().get("/api/carpark/dev1")
+    resp = _client(cpa).get("/api/carpark/dev1")
     assert resp.status_code == 200
     assert resp.get_json() == {"enabled": False}
 
@@ -50,7 +59,7 @@ def test_carpark_endpoint_disabled_plan(monkeypatch):
 def test_carpark_endpoint_no_snapshot_yet(monkeypatch):
     cpa = _import_control_panel_app()
     _patch(monkeypatch, plan_enabled=True, snapshot=None)
-    data = cpa.app.test_client().get("/api/carpark/dev1").get_json()
+    data = _client(cpa).get("/api/carpark/dev1").get_json()
     assert data["enabled"] is True
     assert data["captured"] is False
 
@@ -65,7 +74,7 @@ def test_carpark_endpoint_computes_elapsed_and_remaining(monkeypatch):
                   "start_time": now - 7200}],   # parked 2h ago
     }
     _patch(monkeypatch, plan_enabled=True, snapshot=snap)
-    data = cpa.app.test_client().get("/api/carpark/dev1").get_json()
+    data = _client(cpa).get("/api/carpark/dev1").get_json()
     assert data["enabled"] is True and data["captured"] is True
     assert data["current"] == 1 and data["target"] == 1
     car = data["cars"][0]
@@ -86,7 +95,7 @@ def test_carpark_endpoint_flags_non_unix_epoch(monkeypatch):
                   "start_time": 12345}],   # bogus -> not unix epoch
     }
     _patch(monkeypatch, plan_enabled=True, snapshot=snap)
-    data = cpa.app.test_client().get("/api/carpark/dev1").get_json()
+    data = _client(cpa).get("/api/carpark/dev1").get_json()
     assert data["cars"][0]["epoch_sane"] is False
     assert data["epoch_sane"] is False
 
@@ -107,6 +116,6 @@ def test_carpark_endpoint_strips_host_prefix(monkeypatch):
 
     monkeypatch.setattr(config_manager, "get_device_config", _cfg)
     monkeypatch.setattr(ws_state, "load_state", _load)
-    cpa.app.test_client().get("/api/carpark/laptop:adb-fc65396d")
+    _client(cpa).get("/api/carpark/laptop:adb-fc65396d")
     assert seen["cfg_ip"] == "adb-fc65396d"     # host prefix stripped
     assert seen["state_ip"] == "adb-fc65396d"
