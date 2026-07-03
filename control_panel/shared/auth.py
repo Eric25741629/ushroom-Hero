@@ -88,21 +88,33 @@ def current_visible_devices():
 
 
 def filter_visible_states(states):
-    """依當前使用者可見裝置過濾 states dict（key=裝置 ip）。管理員原樣回傳。"""
+    """依當前使用者可見裝置過濾 states dict（key=裝置 ip）。管理員原樣回傳。
+
+    state key 可能是 ``worker_id:emulator-5554`` 複合形式，可見性比對一律
+    正規化成真實裝置 id（``key.split(":")[-1]``）後再比。
+    """
     visible = current_visible_devices()
     if visible is None:
         return states
     allowed = set(visible)
-    return {ip: st for ip, st in (states or {}).items() if ip in allowed}
+    return {
+        key: st
+        for key, st in (states or {}).items()
+        if key.split(":")[-1] in allowed
+    }
 
 
 def require_device_access(ip):
-    """當前使用者不可見該裝置時 ``abort(403)``。管理員一律放行。"""
+    """當前使用者不可見該裝置時 ``abort(403)``。管理員一律放行。
+
+    ``ip`` 可能是 ``worker_id:emulator-5554`` 複合形式，正規化成真實裝置
+    id 後再比。403 訊息固定 ``"forbidden"``，不洩漏裝置是否存在。
+    """
     visible = current_visible_devices()
     if visible is None:
         return
-    if ip not in set(visible):
-        abort(403)
+    if ip.split(":")[-1] not in set(visible):
+        abort(403, description="forbidden")
 
 
 def _fly_pet_auth(f):

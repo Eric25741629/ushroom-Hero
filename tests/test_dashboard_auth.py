@@ -155,5 +155,73 @@ class TestAuthGuard(unittest.TestCase):
         self.assertEqual(r.status_code, 503)
 
 
+class TestVisibility(unittest.TestCase):
+    """裝置可見性過濾：/api/status 出口過濾 + 控制端點 403。"""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_lightweight_stubs()
+        existing = sys.modules.get("control_panel_app")
+        if existing is not None and not hasattr(existing, "app"):
+            del sys.modules["control_panel_app"]
+        cls.cpa = importlib.import_module("control_panel_app")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_settings_path = ds.settings_path()
+        ds.set_settings_path(os.path.join(self.tmp.name, "dashboard_settings.json"))
+        ds.load_settings()
+        ds.create_account("boss", "pw123456", True, [])
+        ds.create_account("viewer", "pw123456", False, ["emulator-5554"])
+        # stub bot_state.get_all_states 回傳兩台裝置（不碰真實裝置）
+        import bot_state
+        self._orig_get_all_states = bot_state.get_all_states
+        bot_state.get_all_states = lambda: {
+            "emulator-5554": {"status": "RUNNING", "logs": []},
+            "emulator-5556": {"status": "RUNNING", "logs": []},
+        }
+        self.client = self.cpa.app.test_client()
+
+    def tearDown(self):
+        import bot_state
+        bot_state.get_all_states = self._orig_get_all_states
+        ds.set_settings_path(self._orig_settings_path)
+        self.tmp.cleanup()
+
+    def _login(self, username, admin=None):
+        if admin is None:
+            admin = username == "boss"
+        with self.client.session_transaction() as sess:
+            sess["dash_user"] = username
+            sess["dash_admin"] = admin
+
+    def test_admin_sees_all(self):
+        self._login("boss")
+        bots = self.client.get("/api/status").get_json()["bots"]
+        self.assertIn("emulator-5554", bots)
+        self.assertIn("emulator-5556", bots)
+
+    def test_viewer_sees_only_assigned(self):
+        self._login("viewer")  # visible=["emulator-5554"]
+        bots = self.client.get("/api/status").get_json()["bots"]
+        self.assertIn("emulator-5554", bots)
+        self.assertNotIn("emulator-5556", bots)
+
+    def test_viewer_control_forbidden_on_hidden_device(self):
+        self._login("viewer")
+        r = self.client.post("/api/pause/emulator-5556")
+        self.assertEqual(r.status_code, 403)
+
+    def test_viewer_control_allowed_on_visible_device(self):
+        self._login("viewer")
+        r = self.client.post("/api/pause/emulator-5554")
+        self.assertNotEqual(r.status_code, 403)
+
+    def test_composite_worker_key_matches_real_id(self):
+        self._login("viewer")
+        r = self.client.post("/api/pause/laptop_worker:emulator-5554")
+        self.assertNotEqual(r.status_code, 403)
+
+
 if __name__ == "__main__":
     unittest.main()
