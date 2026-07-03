@@ -126,26 +126,39 @@ def _host_settings_has_key(hostname, key):
     return False
 
 
+_VALID_MODES = ("master", "worker")
+
+
 @bp.route("/api/admin/host_role", methods=["GET"])
 @require_admin
 def get_host_role():
-    override = ds.get_host_role()
+    """回報主機角色。
+
+    ``effective`` 疊算方式對齊 Task 5 語意：覆寫的 key 只在「有值（truthy）」時才
+    蓋過 base，否則落回 ``config_manager.get_global_config()`` 的值。故部分覆寫
+    （例如只設 mode）不會把另一 key 洗成 null。``source`` 為單一字串、以 ``mode``
+    key 為判準：覆寫存在且至少一個 truthy key 時為 "override"；否則若 raw
+    ``host_settings`` 本機 entry 帶 mode 為 "host_settings"；再否則 "default"。
+    """
+    override = ds.get_host_role() or {}
     hostname = config_manager.get_hostname()
     base = config_manager.get_global_config()
 
-    if override is not None:
+    mode = override.get("mode") or base.get("mode")
+    master_url = override.get("master_url") or base.get("master_url")
+
+    has_truthy_override = bool(override.get("mode") or override.get("master_url"))
+    if has_truthy_override:
         source = "override"
-        mode = override.get("mode")
-        master_url = override.get("master_url")
+    elif _host_settings_has_key(hostname, "mode"):
+        source = "host_settings"
     else:
-        mode = base.get("mode")
-        master_url = base.get("master_url")
-        source = "host_settings" if _host_settings_has_key(hostname, "mode") else "default"
+        source = "default"
 
     return _ok(
         hostname=hostname,
         effective={"mode": mode, "master_url": master_url, "source": source},
-        override=override,
+        override=ds.get_host_role(),
     )
 
 
@@ -155,5 +168,7 @@ def set_host_role():
     b = _body()
     mode = b.get("mode") or None
     master_url = b.get("master_url") or None
+    if mode is not None and mode not in _VALID_MODES:
+        return _err("mode 只能是 master 或 worker")
     ds.set_host_role(mode, master_url)
     return _ok(note="重啟 new_main_v2.py 後生效")

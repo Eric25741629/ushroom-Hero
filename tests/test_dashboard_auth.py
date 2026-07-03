@@ -384,6 +384,32 @@ class TestAdminApi(unittest.TestCase):
         self.client.post("/api/admin/host_role", json={"mode": "", "master_url": ""})
         self.assertIsNone(ds.get_host_role())
 
+    def test_host_role_partial_override_falls_back_for_missing_key(self):
+        self._login("boss", True)
+        base = self.client.get("/api/admin/host_role").get_json()["effective"]
+        # 只覆寫 mode，master_url 留空 → effective master_url 應落回 base 值，非 null。
+        self.client.post("/api/admin/host_role",
+                         json={"mode": "worker", "master_url": ""})
+        eff = self.client.get("/api/admin/host_role").get_json()["effective"]
+        self.assertEqual(eff["mode"], "worker")
+        self.assertEqual(eff["master_url"], base["master_url"])
+        self.assertEqual(eff["source"], "override")
+
+    def test_host_role_invalid_mode_returns_400(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/host_role",
+                             json={"mode": "garbage", "master_url": ""})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["status"], "error")
+        self.assertIsNone(ds.get_host_role())  # 不合法值不得寫入
+
+    def test_host_role_clear_via_empty_body(self):
+        self._login("boss", True)
+        ds.set_host_role("worker", "http://10.0.0.1:5002")
+        r = self.client.post("/api/admin/host_role", json={})
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNone(ds.get_host_role())
+
     # --- delete / last-admin guard ---
     def test_delete_account(self):
         self._login("boss", True)
