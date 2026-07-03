@@ -160,5 +160,7 @@ miner/v5/runtime/
 
 # Playwright/app recovery state + decompiled APK + app private_data (secrets, large binaries)
 auth_state/
+# dashboard 帳號設定（含密碼雜湊，勿進版控）
+dashboard_settings.json
 # Per-host runtime daily-task tracking (JsonDataManager output, not source)
 dev.json
