@@ -124,22 +124,58 @@ def test_dashboard_exposes_ws_offline_fallback_toggle():
     assert "adb+ws" in html
 
 
-def test_dungeon_label_describes_real_dungeon_tasks():
-    """chkDungeon = enable_dungeon，真正控制副本（地獄之門/萬神試煉/雙週賞金）。
+def test_dungeon_split_into_four_independent_toggles():
+    """單一 chkDungeon 拆成 4 個獨立後端開關（地獄之門/萬神試煉/雲端戰鬥/雙週賞金）。
 
-    Regression (2026-06-19): 原標籤寫成「啟用地城（螺旋/秘境）」——遊戲沒有螺旋/秘境，
-    且 config 鍵是 enable_dungeon（config_manager.py 註解：啟用副本(地獄/萬神)）。
-    標籤必須改成描述真正受控的副本任務，且 id 與存檔對應不可變。
+    重構 (2026-07-02)：外層「任務開關」放每個主要任務總開關；副本從一個
+    enable_dungeon 勾選拆成 4 個 enable_* granular flag，各自 load/save，id 唯一。
+    舊的 chkDungeon / enable_dungeon 必須完全消失。
     """
     html = _html()
-    assert 'id="chkDungeon"' in html
-    # 新標籤點名真正的副本任務
-    assert "啟用副本（地獄之門/萬神試煉/雙週賞金）" in html
-    # 錯誤的舊文案必須消失
-    assert "螺旋/秘境" not in html
-    # 存檔對應維持
-    assert "config.enable_dungeon" in html
-    assert "enable_dungeon: document.getElementById('chkDungeon').checked" in html
+    # 舊單一開關徹底消失
+    assert "chkDungeon" not in html
+    assert "enable_dungeon" not in html
+    # 4 個新 checkbox 各出現一次
+    for cid in ("chkHellgate", "chkWanshen", "chkCloudBattle", "chkBiweekly"):
+        assert f'id="{cid}"' in html, f"missing dungeon toggle id={cid}"
+        assert html.count(f'id="{cid}"') == 1, f"duplicate dungeon toggle id={cid}"
+    # load：各自 config.enable_X !== false
+    for key in ("enable_hellgate", "enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
+        assert f"config.{key} !== false" in html, f"missing load for {key}"
+    # save：各自寫回 payload
+    assert "enable_hellgate: document.getElementById('chkHellgate').checked" in html
+    assert "enable_wanshen: document.getElementById('chkWanshen').checked" in html
+    assert "enable_cloud_battle: document.getElementById('chkCloudBattle').checked" in html
+    assert "enable_biweekly: document.getElementById('chkBiweekly').checked" in html
+
+
+def test_outer_task_toggles_host_moved_master_switches():
+    """外層「任務開關」收納 8 類主要任務總開關（神燈/看廣告/跨服停車/航海從浮窗上移）。"""
+    html = _html()
+    for cid in ("chkFarm", "chkArena", "chkMining", "chkWsOpenLamp",
+                "chkAdEnabled", "chkCarparkEnabled", "chkWsSea"):
+        assert f'id="{cid}"' in html, f"missing master toggle id={cid}"
+        assert html.count(f'id="{cid}"') == 1, f"duplicate master toggle id={cid}"
+
+
+def test_farm_buy_seed_fertilizer_independent_checkboxes():
+    """農場買種子(407)/肥料(408)改成獨立勾選：勾了才顯示數量欄，collect 依勾選寫入。"""
+    html = _html()
+    for cid in ("chkFarmBuy407", "chkFarmBuy408"):
+        assert f'id="{cid}"' in html, f"missing farm-buy checkbox id={cid}"
+        assert html.count(f'id="{cid}"') == 1, f"duplicate farm-buy checkbox id={cid}"
+    # collect 依勾選 gate
+    assert "document.getElementById('chkFarmBuy407').checked" in html
+    assert "document.getElementById('chkFarmBuy408').checked" in html
+    # 顯示切換函式
+    assert "function onFarmBuyToggle" in html
+
+
+def test_farm_mining_master_mirror_hidden_slaves():
+    """農場/挖礦外層總開關存檔前鏡射到隱藏 slave chkWsFarm/chkWsMining。"""
+    html = _html()
+    assert "_sFarm.checked = document.getElementById('chkFarm').checked" in html
+    assert "_sMining.checked = document.getElementById('chkMining').checked" in html
 
 
 def test_device_settings_core_toggle_ids_intact():
@@ -147,7 +183,8 @@ def test_device_settings_core_toggle_ids_intact():
     否則 saveConfig/loadConfig 會抓不到元素 → 存檔壞掉。"""
     html = _html()
     for cid in (
-        "chkEnabled", "chkFarm", "chkArena", "chkMining", "chkDungeon",
+        "chkEnabled", "chkFarm", "chkArena", "chkMining",
+        "chkHellgate", "chkWanshen", "chkCloudBattle", "chkBiweekly",
         "chkRealPhone", "chkWsOpenLamp", "chkWsMining", "chkWsKungfuGuess",
         "chkWsOfflineFallback", "inpWsLampPercent", "inpWsLampMinKeep",
     ):
@@ -165,8 +202,8 @@ def test_settings_ws_and_advanced_groups_are_collapsible():
     assert "進階設定 — 各任務細項" in html
     assert 'id="taskTabBar"' in html  # 任務類別橫向頁籤條
     assert "<summary>進階設定</summary>" in html
-    # 常用任務改名後的群組標題
-    assert "常用任務開關" in html
+    # 外層任務總開關群組標題（原「常用任務開關」重構為「任務開關」）
+    assert ">任務開關</label>" in html
 
 
 def test_device_grid_does_not_stretch_cards():

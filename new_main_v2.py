@@ -138,6 +138,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             config_manager.get_device_config(ip).get("enable_dungeon", True),
         )
     )
+    # Granular 每日任務開關。向後相容 fallback（舊 config 只有 enable_dungeon /
+    # enable_dungeon_manager 時的 legacy 推導）在 config_manager._get_raw_device_config
+    # 的 merge 點完成——這裡讀到的值已是推導後結果，直接取用即可。
+    # enable_dungeon_manager 本身保留原樣，繼續餵給 sleep/ws-fallback 路徑。
+    cfg = config_manager.get_device_config(ip)
+    enable_hellgate = bool(cfg.get("enable_hellgate", True))
+    enable_wanshen = bool(cfg.get("enable_wanshen", True))
+    enable_cloud_battle = bool(cfg.get("enable_cloud_battle", True))
+    enable_biweekly = bool(cfg.get("enable_biweekly", True))
+    enable_arena = bool(cfg.get("enable_arena", True))
+    enable_mining = bool(cfg.get("enable_mining", True))
     d_orig = None
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
@@ -414,6 +425,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     rl_recorder=rl_recorder,
                     current_time=time.localtime(),
                     enable_dungeon_manager=enable_dungeon_manager,
+                    enable_hellgate=enable_hellgate,
+                    enable_arena=enable_arena,
+                    enable_mining=enable_mining,
+                    enable_wanshen=enable_wanshen,
+                    enable_cloud_battle=enable_cloud_battle,
+                    enable_biweekly=enable_biweekly,
                     wheel_manager=wheel_manager,
                     mission_manager=mission_manager,
                     family_manager=family_manager,
