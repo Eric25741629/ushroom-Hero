@@ -159,6 +159,9 @@
                 "ad_rewards": {
                     "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
                         15
@@ -329,6 +332,9 @@
                 "ad_rewards": {
                     "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
                         15
@@ -625,6 +631,9 @@
                 "ad_rewards": {
                     "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
                         15
@@ -791,6 +800,9 @@
                 "ad_rewards": {
                     "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
                         15
@@ -964,6 +976,9 @@
                 "ad_rewards": {
                     "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
                         15
