@@ -223,5 +223,186 @@ class TestVisibility(unittest.TestCase):
         self.assertNotEqual(r.status_code, 403)
 
 
+class TestAdminApi(unittest.TestCase):
+    """總後台 API：帳號 CRUD / 審核 / 可見裝置 / 主機角色。管理員專屬。"""
+
+    @classmethod
+    def setUpClass(cls):
+        _install_lightweight_stubs()
+        existing = sys.modules.get("control_panel_app")
+        if existing is not None and not hasattr(existing, "app"):
+            del sys.modules["control_panel_app"]
+        cls.cpa = importlib.import_module("control_panel_app")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self._orig_settings_path = ds.settings_path()
+        ds.set_settings_path(os.path.join(self.tmp.name, "dashboard_settings.json"))
+        ds.load_settings()  # 產生預設 admin（migration）
+        ds.create_account("boss", "pw123456", True, [])
+        ds.create_account("viewer", "pw123456", False, ["emulator-5554"])
+        self.client = self.cpa.app.test_client()
+
+    def tearDown(self):
+        ds.set_settings_path(self._orig_settings_path)
+        self.tmp.cleanup()
+
+    def _login(self, username, admin):
+        with self.client.session_transaction() as sess:
+            sess["dash_user"] = username
+            sess["dash_admin"] = admin
+
+    # --- 權限 ---
+    def test_non_admin_gets_403_on_any_admin_route(self):
+        self._login("viewer", False)
+        for method, path in (
+            ("get", "/api/admin/accounts"),
+            ("post", "/api/admin/accounts"),
+            ("get", "/api/admin/pending_count"),
+            ("get", "/api/admin/host_role"),
+            ("post", "/api/admin/host_role"),
+            ("delete", "/api/admin/accounts/boss"),
+            ("post", "/api/admin/accounts/boss/password"),
+            ("post", "/api/admin/accounts/boss/visible_devices"),
+            ("post", "/api/admin/accounts/boss/admin"),
+            ("post", "/api/admin/accounts/boss/approve"),
+            ("post", "/api/admin/accounts/boss/reject"),
+        ):
+            r = getattr(self.client, method)(path, json={})
+            self.assertEqual(r.status_code, 403, f"{method} {path}")
+
+    # --- list ---
+    def test_list_accounts_excludes_hash(self):
+        self._login("boss", True)
+        data = self.client.get("/api/admin/accounts").get_json()
+        self.assertEqual(data["status"], "ok")
+        names = {a["username"] for a in data["accounts"]}
+        self.assertIn("boss", names)
+        self.assertIn("viewer", names)
+        for acct in data["accounts"]:
+            self.assertNotIn("password_hash", acct)
+
+    # --- create ---
+    def test_create_account(self):
+        self._login("boss", True)
+        r = self.client.post(
+            "/api/admin/accounts",
+            json={"username": "fresh", "password": "pw123456",
+                  "is_admin": False, "visible_devices": ["emulator-5560"]},
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()["status"], "ok")
+        self.assertIsNotNone(ds.verify_login("fresh", "pw123456"))
+
+    def test_create_duplicate_returns_400(self):
+        self._login("boss", True)
+        r = self.client.post(
+            "/api/admin/accounts",
+            json={"username": "boss", "password": "pw123456",
+                  "is_admin": False, "visible_devices": []},
+        )
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["status"], "error")
+
+    # --- password / visible_devices / admin ---
+    def test_set_password(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/viewer/password",
+                             json={"password": "newpw123"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIsNotNone(ds.verify_login("viewer", "newpw123"))
+
+    def test_set_visible_devices(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/viewer/visible_devices",
+                             json={"visible_devices": ["emulator-5556"]})
+        self.assertEqual(r.status_code, 200)
+        acct = next(a for a in ds.list_accounts() if a["username"] == "viewer")
+        self.assertEqual(acct["visible_devices"], ["emulator-5556"])
+
+    def test_set_admin(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/viewer/admin",
+                             json={"is_admin": True})
+        self.assertEqual(r.status_code, 200)
+        acct = next(a for a in ds.list_accounts() if a["username"] == "viewer")
+        self.assertTrue(acct["is_admin"])
+
+    def test_unknown_username_returns_400(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/nobody/password",
+                             json={"password": "pw123456"})
+        self.assertEqual(r.status_code, 400)
+
+    # --- approve / reject ---
+    def test_approve_pending(self):
+        ds.create_application("waiting", "pw123456")
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/waiting/approve",
+                             json={"visible_devices": ["emulator-5554"]})
+        self.assertEqual(r.status_code, 200)
+        acct = ds.verify_login("waiting", "pw123456")
+        self.assertIsNotNone(acct)
+        self.assertEqual(acct["visible_devices"], ["emulator-5554"])
+
+    def test_reject_pending(self):
+        ds.create_application("waiting", "pw123456")
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/waiting/reject", json={})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(ds.pending_count(), 0)
+
+    def test_approve_nonexistent_returns_400(self):
+        self._login("boss", True)
+        r = self.client.post("/api/admin/accounts/ghost/approve",
+                             json={"visible_devices": []})
+        self.assertEqual(r.status_code, 400)
+
+    # --- pending_count ---
+    def test_pending_count(self):
+        ds.create_application("waiting", "pw123456")
+        self._login("boss", True)
+        data = self.client.get("/api/admin/pending_count").get_json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["count"], 1)
+
+    # --- host_role ---
+    def test_host_role_roundtrip(self):
+        self._login("boss", True)
+        data = self.client.get("/api/admin/host_role").get_json()
+        self.assertEqual(data["status"], "ok")
+        self.assertIsNone(data["override"])
+        r = self.client.post("/api/admin/host_role",
+                             json={"mode": "worker", "master_url": "http://10.0.0.1:5002"})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("note", r.get_json())
+        data = self.client.get("/api/admin/host_role").get_json()
+        self.assertEqual(data["override"]["mode"], "worker")
+        self.assertEqual(data["effective"]["mode"], "worker")
+        self.assertEqual(data["effective"]["source"], "override")
+        # 清除覆寫
+        self.client.post("/api/admin/host_role", json={"mode": "", "master_url": ""})
+        self.assertIsNone(ds.get_host_role())
+
+    # --- delete / last-admin guard ---
+    def test_delete_account(self):
+        self._login("boss", True)
+        r = self.client.delete("/api/admin/accounts/viewer")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("viewer", {a["username"] for a in ds.list_accounts()})
+
+    def test_delete_last_admin_returns_400(self):
+        self._login("boss", True)
+        # 預設 migration admin + boss 共兩名管理員；先刪 boss 再刪最後一名。
+        default_admin = next(
+            a["username"] for a in ds.list_accounts()
+            if a.get("is_admin") and a["username"] != "boss"
+        )
+        self.assertEqual(self.client.delete("/api/admin/accounts/boss").status_code, 200)
+        r = self.client.delete(f"/api/admin/accounts/{default_admin}")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.get_json()["status"], "error")
+
+
 if __name__ == "__main__":
     unittest.main()

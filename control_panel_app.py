@@ -71,6 +71,7 @@ from control_panel.shared.command_queue import (  # noqa: E402,F401
 # --- blueprints ---
 from control_panel import (  # noqa: E402
     routes_ad_reward,
+    routes_admin,
     routes_auth,
     routes_relic_sprint,
     routes_carpark_decorate_tools,
@@ -92,6 +93,7 @@ from control_panel import (  # noqa: E402
 
 for _mod in (
     routes_auth,
+    routes_admin,
     routes_pages,
     routes_status,
     routes_config,
