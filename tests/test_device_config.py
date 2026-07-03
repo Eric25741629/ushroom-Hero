@@ -9,6 +9,67 @@ def test_device_config_has_expected_defaults():
     assert cfg.enable_mining is True
 
 
+def test_device_config_granular_dungeon_flags_default_true():
+    """New granular 副本/任務 toggles default True in both dict and dataclass."""
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+    cfg = DeviceConfig()
+    for key in ("enable_hellgate", "enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
+        assert DEFAULT_DEVICE_CONFIG[key] is True, f"DEFAULT_DEVICE_CONFIG[{key!r}] should be True"
+        assert key in DeviceConfig.__dataclass_fields__, f"{key} missing from DeviceConfig"
+        assert cfg.get(key) is True, f"DeviceConfig().{key} should default True"
+
+
+def _raw_config_for(monkeypatch, user_config):
+    """monkeypatch load_config 餵假 config，回傳 _get_raw_device_config 的 merge 結果。"""
+    import config_manager
+    monkeypatch.setattr(
+        config_manager, "load_config",
+        lambda: {"devices": {"test-ip": user_config}},
+    )
+    return config_manager._get_raw_device_config("test-ip")
+
+
+def test_legacy_enable_dungeon_false_migrates_to_hellgate_false(monkeypatch):
+    """舊 config 只有 enable_dungeon: false → 地獄之門 granular flag 推導為 False。"""
+    merged = _raw_config_for(monkeypatch, {"enable_dungeon": False})
+    assert merged["enable_hellgate"] is False
+    # enable_dungeon_manager 未設 → _dm fallback 到 enable_dungeon=False → 其餘三個也 False
+    assert merged["enable_wanshen"] is False
+    assert merged["enable_cloud_battle"] is False
+    assert merged["enable_biweekly"] is False
+
+
+def test_legacy_dungeon_manager_false_migrates_but_hellgate_stays_true(monkeypatch):
+    """只有 enable_dungeon_manager: false → wanshen/cloud/biweekly False，hellgate 仍 True。"""
+    merged = _raw_config_for(monkeypatch, {"enable_dungeon_manager": False})
+    assert merged["enable_hellgate"] is True
+    assert merged["enable_wanshen"] is False
+    assert merged["enable_cloud_battle"] is False
+    assert merged["enable_biweekly"] is False
+
+
+def test_explicit_granular_keys_win_over_legacy(monkeypatch):
+    """user_config 有明確 granular key 時尊重 granular，不做 legacy 推導。"""
+    merged = _raw_config_for(monkeypatch, {
+        "enable_dungeon": False,
+        "enable_dungeon_manager": False,
+        "enable_hellgate": True,
+        "enable_wanshen": True,
+    })
+    assert merged["enable_hellgate"] is True
+    assert merged["enable_wanshen"] is True
+    # 未明確給的仍走 legacy 推導 (_dm=False)
+    assert merged["enable_cloud_battle"] is False
+    assert merged["enable_biweekly"] is False
+
+
+def test_no_legacy_keys_granular_defaults_true(monkeypatch):
+    """全新 config（無 legacy 也無 granular）→ 四個 granular 皆預設 True。"""
+    merged = _raw_config_for(monkeypatch, {})
+    for key in ("enable_hellgate", "enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
+        assert merged[key] is True, f"{key} should default True"
+
+
 def test_device_config_from_dict():
     from config_manager import DeviceConfig
     raw = {"enable_farm": False, "lamp_check_interval": 4}

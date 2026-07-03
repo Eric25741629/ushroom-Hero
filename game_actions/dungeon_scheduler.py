@@ -33,7 +33,7 @@ def _run_weekly_dungeon(
     d,
     ip: str,
     stage: str,
-    enable_dungeon_manager: bool,
+    enable_wanshen: bool,
     current_time,
 ) -> None:
     """Run 萬神試煉 if scheduled for this week and appropriate day/time."""
@@ -43,13 +43,13 @@ def _run_weekly_dungeon(
     else:
         should_execute = record_time.get("is_next_week", False)
     logger.info(
-        "[%s] 萬神試煉檢查: 頁面=%s 時間=%02d:%02d wday=%d 副本管家=%s "
+        "[%s] 萬神試煉檢查: 頁面=%s 時間=%02d:%02d wday=%d 啟用=%s "
         "should_execute=%s 紀錄=%s",
         ip, stage, current_time.tm_hour, current_time.tm_min,
-        current_time.tm_wday, enable_dungeon_manager, should_execute, record_time,
+        current_time.tm_wday, enable_wanshen, should_execute, record_time,
     )
-    if not enable_dungeon_manager:
-        logger.info("[%s] 萬神試煉：副本管家已停用，跳過", ip)
+    if not enable_wanshen:
+        logger.info("[%s] 萬神試煉：已停用，跳過", ip)
         return
     if not should_execute:
         logger.info("[%s] 萬神試煉：本週已執行(is_next_week=False)，跳過", ip)
@@ -83,11 +83,11 @@ def _run_biweekly_dungeon(
     d,
     ip: str,
     stage: str,
-    enable_dungeon_manager: bool,
+    enable_biweekly: bool,
     now_local,
 ) -> None:
     """Run 雙週副本 for emulator-5556 on Sat/Sun at 20:xx if due this biweek."""
-    if ip == "emulator-5556" and enable_dungeon_manager:
+    if ip == "emulator-5556" and enable_biweekly:
         biweek_record = return_time(ip, name="雙週副本")
         should_execute_biweek = False
 

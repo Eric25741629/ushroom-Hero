@@ -57,7 +57,11 @@ DEFAULT_DEVICE_CONFIG = {
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
-    "enable_dungeon": True,  # 啟用副本(地獄/萬神)
+    "enable_dungeon": True,  # 啟用副本(地獄/萬神) — legacy 總開關，向後相容 fallback 用
+    "enable_hellgate": True,  # 啟用地獄之門 (granular 副本開關)
+    "enable_wanshen": True,  # 啟用萬神試煉 (granular 副本開關)
+    "enable_cloud_battle": True,  # 啟用雲端戰鬥 (granular 副本開關)
+    "enable_biweekly": True,  # 啟用雙週賞金副本 (granular 副本開關)
     "enable_shop_manager": True,  # 啟用購物管家
     "enable_dungeon_manager": True,  # 啟用副本管家
     "enable_fannaoxiao": False,  # 煩惱消 (act_type 224 左右消除小遊戲)；H5 only、每日一次、預設 off
@@ -197,6 +201,10 @@ class DeviceConfig:
     enable_arena: bool = True
     enable_mining: bool = True
     enable_dungeon: bool = True
+    enable_hellgate: bool = True
+    enable_wanshen: bool = True
+    enable_cloud_battle: bool = True
+    enable_biweekly: bool = True
     enable_shop_manager: bool = True
     enable_dungeon_manager: bool = True
     enable_fannaoxiao: bool = False
@@ -995,6 +1003,15 @@ def _get_raw_device_config(ip: str) -> Dict[str, Any]:
     merged_config = copy.deepcopy(DEFAULT_DEVICE_CONFIG)
     merged_config.update(user_config)
     merged_config["ws_token"] = _merge_ws_token_phase_config(user_config.get("ws_token"))
+
+    # Granular 副本開關 migration：舊 config 沒有這些 key 時，從 legacy 開關推導。
+    # （放在 merge 點做，才不會被 DEFAULT 的 True 蓋掉 legacy False——單一真相。）
+    _dm = user_config.get("enable_dungeon_manager", user_config.get("enable_dungeon", True))
+    if "enable_hellgate" not in user_config:
+        merged_config["enable_hellgate"] = bool(user_config.get("enable_dungeon", True))
+    for _k in ("enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
+        if _k not in user_config:
+            merged_config[_k] = bool(_dm)
 
     return merged_config
 
