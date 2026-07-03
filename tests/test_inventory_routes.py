@@ -34,6 +34,8 @@ def _import_control_panel_app():
 def _login_fly_pet(client):
     with client.session_transaction() as sess:
         sess["fly_pet_auth"] = True
+        sess["dash_user"] = "boss"
+        sess["dash_admin"] = True
 
 
 def _patch_live_client(monkeypatch):
@@ -193,7 +195,7 @@ def test_inventory_page_redirects_when_unauthenticated():
     client = cpa.app.test_client()
     resp = client.get("/inventory")
     assert resp.status_code in (301, 302)
-    assert "/fly-pet/login" in resp.headers.get("Location", "")
+    assert "/login" in resp.headers.get("Location", "")
 
 
 def test_inventory_apis_return_401_when_unauthenticated():

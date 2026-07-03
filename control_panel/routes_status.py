@@ -17,6 +17,7 @@ import bot_state
 import config_manager
 import json_manager
 import new_cnn.cnn_model as cnn_model_module
+from control_panel.shared.auth import filter_visible_states, require_device_access
 from game_state.detector import stage_by_str
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,7 @@ def analyze_stage():
 @bp.route("/api/device_data/<ip>", methods=["GET"])
 def get_device_data(ip):
     """讀取設備的執行紀錄 JSON (例如 emulator-5554.json)"""
+    require_device_access(ip)
     try:
         # 處理分散式架構的 IP (例如: school_laptop:emulator-5554)
         # 因為使用 SMB 共用，所有 json 都在同一個目錄下，只要還原出真實的 device_id 即可
@@ -215,6 +217,7 @@ def get_carpark(ip):
     以及下次重停喚醒時刻。同時做 start_time epoch 校準判斷 (--parked 的
     dashboard 版)。**不從面板主動 WS 登入** (會踢掉裝置 session)。
     """
+    require_device_access(ip)
     real = ip.split(":")[-1] if ":" in ip else ip
     try:
         cfg = config_manager.get_device_config(real) or {}
@@ -383,6 +386,7 @@ def _compute_daily_progress(manager, device_id, *, today=None, now=None):
 @bp.route("/api/daily_progress/<ip>", methods=["GET"])
 def get_daily_progress(ip):
     """獲取設備的今日進度統計"""
+    require_device_access(ip)
     try:
         real_device_id = ip.split(":")[-1] if ":" in ip else ip
         manager = json_manager.JsonDataManager(real_device_id)
@@ -519,6 +523,9 @@ def get_status():
             "logs": [],
             "live_view_available": False,
         }
+
+    # 出口統一過濾：非管理員只看得到自己可見的裝置（含上面 disabled 回填）。
+    states = filter_visible_states(states)
 
     return jsonify(
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime,

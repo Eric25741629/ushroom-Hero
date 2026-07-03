@@ -41,6 +41,10 @@ class TestConfigApiSmoke(unittest.TestCase):
         config_manager.CONFIG_FILE = os.path.join(self.tmpdir.name, 'bot_config.json')
 
         self.client = self.control_panel_app.app.test_client()
+        # 全站登入牆（before_request）：測試以已登入 admin session 跑。
+        with self.client.session_transaction() as sess:
+            sess["dash_user"] = "boss"
+            sess["dash_admin"] = True
 
     def tearDown(self):
         config_manager.CONFIG_FILE = self._old_cfg_file

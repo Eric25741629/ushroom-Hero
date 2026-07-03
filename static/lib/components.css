@@ -415,6 +415,9 @@
   border: 1px solid var(--line-accessible);
   background: var(--tile);
 }
+/* the author `display` above defeats UA `[hidden]{display:none}` — restore it so
+   `hidden` badges (e.g. pendingBadge at count=0) actually disappear. */
+.badge[hidden] { display: none !important; }
 /* count badge on a primary control — fill carries the hue, text white-on-deep */
 .badge--count {
   color: #fff;

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from flask import Blueprint, jsonify, redirect, render_template, request, send_from_directory, session
 
-from control_panel.shared.auth import _FLY_PET_USERS, _fly_pet_auth
+from control_panel.shared.auth import _fly_pet_auth
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ def index():
         "dashboard.html",
         program_info=_get_program_info(),
         frontend_version=_get_frontend_version(),
+        is_admin=session.get("dash_admin", False),
     )
 
 
@@ -125,24 +126,14 @@ def dashboard_redesigns_file(filename):
 
 @bp.route("/fly-pet/login", methods=["GET", "POST"])
 def fly_pet_login():
-    if request.method == "POST":
-        u = (request.form.get("username") or "").strip()
-        p = request.form.get("password") or ""
-        if _FLY_PET_USERS.get(u) == p:
-            session["fly_pet_auth"] = True
-            return redirect("/fly-pet")
-        return render_template(
-            "fly_pet_login.html",
-            error="帳號或密碼錯誤",
-            frontend_version=_get_frontend_version(),
-        )
-    return render_template("fly_pet_login.html", frontend_version=_get_frontend_version())
+    # 飛寵登入已整併進全站統一登入（control_panel.routes_auth）。舊書籤/連結
+    # 一律導向 /login，登入後可正常進 /fly-pet（同一 dash_user session）。
+    return redirect("/login")
 
 
 @bp.route("/fly-pet/logout")
 def fly_pet_logout():
-    session.pop("fly_pet_auth", None)
-    return redirect("/fly-pet/login")
+    return redirect("/logout")
 
 
 @bp.route("/fly-pet")

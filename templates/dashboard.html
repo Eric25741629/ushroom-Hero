@@ -1228,6 +1228,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 .task-modal .task-tab-panel .ws-field-note,
 .task-modal .ws-schema-slot .ws-field-note{font-size:.8em;}
 .btn.open-task-settings{text-transform:none;letter-spacing:0;font-size:.9em;}
+#navAdmin{position:relative;}
+.admin-pending-badge{position:absolute;top:2px;right:2px;background:var(--danger-fill);color:#fff;min-width:16px;padding:0 4px;border-radius:8px;font-size:.7em;line-height:16px;text-align:center;}
   </style>
 
 </head>
@@ -1248,6 +1250,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     <button id="navFlypet" class="nav-btn" onclick="switchPage('flypet')" aria-label="飛寵管理">&#x1F985; <span class="nav-label">飛寵管理</span></button>
     <button id="navInventory" class="nav-btn" onclick="switchPage('inventory')" aria-label="倉庫 (守護靈/神器附魔)">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></button>
     <button id="navTools" class="nav-btn" onclick="switchPage('tools')" aria-label="工具 優化類">&#x1F6E0;&#xFE0F; <span class="nav-label">工具 優化類</span></button>
+    {% if is_admin %}
+    <button id="navAdmin" class="nav-btn" onclick="window.location='/admin'" aria-label="系統設定">&#x2699;&#xFE0F; <span class="nav-label">系統設定</span><span id="pendingBadge" class="badge badge--count admin-pending-badge" hidden></span></button>
+    {% endif %}
 
   </nav>
 
@@ -4912,6 +4917,21 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     startPolling();
     fetchStatus();
     checkFrontendVersion();
+
+    // 管理員：載入待審核申請數，>0 時在「系統設定」按鈕顯示紅點。
+    (function loadPendingBadge() {
+      var badge = document.getElementById('pendingBadge');
+      if (!badge) return;  // 非管理員不渲染此按鈕
+      fetch('/api/admin/pending_count')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.status === 'ok' && d.count > 0) {
+            badge.textContent = d.count;
+            badge.hidden = false;
+          }
+        })
+        .catch(function () { /* 靜默：紅點僅為輔助提示 */ });
+    })();
 
   </script>
 
