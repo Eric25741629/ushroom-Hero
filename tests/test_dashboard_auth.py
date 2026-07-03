@@ -222,6 +222,22 @@ class TestVisibility(unittest.TestCase):
         r = self.client.post("/api/pause/laptop_worker:emulator-5554")
         self.assertNotEqual(r.status_code, 403)
 
+    def test_viewer_config_write_forbidden_on_hidden_device(self):
+        # 集中式守門涵蓋 control/status 以外的所有 <ip> 端點（此處為 config POST）。
+        self._login("viewer")
+        r = self.client.post("/api/config/emulator-5556", json={"enable_farm": True})
+        self.assertEqual(r.status_code, 403)
+
+    def test_viewer_config_read_allowed_on_visible_device(self):
+        self._login("viewer")  # visible=["emulator-5554"]
+        r = self.client.get("/api/config/emulator-5554")
+        self.assertNotEqual(r.status_code, 403)
+
+    def test_admin_config_read_not_forbidden_on_any_device(self):
+        self._login("boss")
+        r = self.client.get("/api/config/emulator-5556")
+        self.assertNotEqual(r.status_code, 403)
+
 
 class TestAdminApi(unittest.TestCase):
     """總後台 API：帳號 CRUD / 審核 / 可見裝置 / 主機角色。管理員專屬。"""

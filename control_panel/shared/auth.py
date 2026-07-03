@@ -32,6 +32,15 @@ def check_request_auth():
     if any(p.startswith(pre) for pre in EXEMPT_PREFIXES):
         return None
     if session.get("dash_user"):
+        # 已登入：對非管理員套用集中式裝置可見性守門。routing 先於
+        # before_request 完成，故 ``request.view_args`` 已填。任何帶裝置 id
+        # path param 的端點（全站一律命名 ``<ip>``；``device_id``/``device``
+        # 為防禦性備援）不可見即 abort(403)，涵蓋所有 <ip> 端點而不需逐路由加守門。
+        if not session.get("dash_admin"):
+            view_args = request.view_args or {}
+            for key in ("ip", "device_id", "device"):
+                if key in view_args:
+                    require_device_access(view_args[key])
         return None
     try:
         dashboard_settings.load_settings()
