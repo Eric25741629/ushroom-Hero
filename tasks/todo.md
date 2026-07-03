@@ -6,6 +6,67 @@
 
 ---
 
+## 🚧 2026-07-04 統一任務 due 狀態檢測（single source of truth + 精簡）— 待使用者過目
+
+### 背景 / 動機
+使用者：把每個「需要開遊戲客戶端執行」的任務的「今天/本週期 due 了沒」統一成單一狀態檢測
+（`不管網頁有沒有 但我們就要統一這些狀態檢測`）。目的有二：① 消除散落重複的閘門（drift 風險，
+同 `docs/REFACTOR_STATE_MANAGEMENT.md` 病根，只是這裡是 json_manager 每日狀態層，非 bot_state
+runtime 訊號層）；② 為下游「client 任務全做完就不必喚醒 h5」optimization 鋪路（optional，見 Phase D）。
+
+### 已確認事實（audit 完成）
+`json_manager` 已是每日/週期狀態存儲；`should_execute_*` / `is_record_expired` / `return_time+is_next_day`
+全是**純 cache 判斷、不碰客戶端**。缺的只是「單一入口」。client 任務 due-source 盤點：
+
+| 任務 | due 邏輯現居 | 記錄名 / 判準 | 純 cache? |
+|------|------------|--------------|-----------|
+| 地獄之門 | pipeline inline (`daily_pipeline.py:218-230`) | `地獄之門` + is_next_day + tm_min<20 | ✅ |
+| 每日加速 | execute 內 guard (`daily_tasks.py:16-21`) | `daily_acceleration` + is_next_day | ✅ |
+| 競技場挑戰 | execute 內 guard (`daily_tasks.py:82-87`) | `arena_challenges` + is_next_day | ✅ |
+| 坐騎衝刺 | execute 內 guard (`rank_events.py:77-109`) | `衝刺-發條` + is_mount_sprint_open + should_execute_cycle | ✅ |
+| 菇菇武道會 | `_run_periodic_cycle` (`periodic_tasks.py:38-48`) | mushroom cycle + daily_limit `mushroom_arena_daily` | ✅ |
+| 航海 | `_run_periodic_cycle` + `should_execute_sea_with_cooldown` | sea 日曆錨點 + 4h 冷卻 + 時段 | ✅ |
+| 雲端戰鬥 | execute 內 guard (`battle/cloud.py:219-244`) | `cloud_fighting_weekly` + 週一+時+週序 | ✅ |
+| 萬神試煉 | `dungeon_scheduler._run_weekly_dungeon` | 週記錄 is_next_week | ✅ |
+| 雙週副本 | `dungeon_scheduler._run_biweekly_dungeon` | 雙週排程 | ✅ |
+| 天梯每週 | `run_ladder_reward_if_due` | 週記錄 | ✅ |
+| 菇菇雕像每週 | `run_statue_weekly_if_due` | 週五記錄 | ✅ |
+| 龍骸聖域 | `run_dragon_realm_if_due`（flag 預設 off） | 三週檔期 | ✅ |
+| 煩惱消 | `run_fannaoxiao_if_due`（flag 預設 off） | 每日記錄 | ✅ |
+| 抽技能夥伴 | `Skill.py:7-25` 截圖紅點 | 無記錄 | ❌ 靠客戶端；有現成 WS 版 `ws_token/gacha.py` `_run_gacha_free`（`gacha_free.last_date` cache）可取代 |
+| 車位戰鬥 | `run_carpark_check_if_due` | 被攻擊狀態（WS 讀） | ⚠ 非純 cache（被攻擊與否要讀狀態）→ skip 判斷保守當「due」 |
+
+### Phase A — 建 due-registry（single source of truth，零行為變更）
+- [ ] 新增 `game_actions/task_due.py`：`is_due(task: str, ip: str, now) -> bool`，內含每個 client 任務的
+      純 predicate。**一律複用/抽取現有 json_manager 判斷，不重寫邏輯**。時間統一用台北 tz（UTC+8）。
+- [ ] 對「due 藏在 execute 函式內」的 4 個（每日加速/競技場/坐騎衝刺/雲端戰鬥）：把 guard clause
+      抽成 `task_due` 內純函式；**execute 函式改呼叫它**（消滅重複、單一真相）。
+- [ ] characterization 測試 `tests/test_task_due.py`：對代表性記錄狀態，`is_due` 結果 == 目前 pipeline
+      /guard 行為（先證 parity 再重構）。
+
+### Phase B — pipeline 消費 registry（精簡；behavior-preserving，逐任務）
+- [ ] `daily_pipeline.py` 各任務 inline 閘門改成 `if task_due.is_due(name, ip, now): <執行+記錄>`，
+      刪掉重複的 `return_time + is_next_day` 樣板。**逐任務改、逐任務測**，不一次全換。
+- [ ] 每改一個跑對應 focused test + `py_compile`。
+
+### Phase C — 抽技能夥伴 → WS（讓 client 任務 100% cache-judgeable）
+- [ ] 把 `_run_gacha_free`（已存在，`gacha_free.last_date` 每日 gate）接進走 WS 的裝置；adb 紅點版
+      保留為 fallback 或退役（待定）。完成後每個 client 任務的 due 都能不開客戶端判斷。
+
+### Phase D（optional，使用者說「不管網頁有沒有」→ 非必要，先記錄）
+- [ ] `any_client_due(ip, now)` = registry OR。new_main_v2 web_h5：WS 成功 + 無 client due + ws ticket
+      新鮮 → 跳過喚醒瀏覽器直接對齊休眠（token 自癒：ticket 過期時 WS 失敗會回退開瀏覽器刷新）。
+      車位戰鬥保守當「due」不誤跳。
+- [ ] dashboard per-device toggle（memory `feedback_new_feature_toggle_must_have_frontend`）。
+
+### 邊界 / 明確不做
+- 不新造狀態存儲；registry 只是現有 json_manager 記錄的統一讀取入口。
+- 不動 WS-skippable 任務（紅包/農場/寶箱/家族/守護靈/商店/挖礦/日常/好友禮/神燈/轉盤，已由 `ws_done` 處理）。
+- 車位「被攻擊」非純 cache → 不強塞進 registry 的純 predicate；skip 判斷保守處理。
+- ⚠ 動到 `daily_pipeline.py` + 各 execute 函式 = runtime，需重啟 `new_main_v2.py` 生效（sys.modules cache）。
+
+---
+
 ## ✅ 2026-07-01 ponytail 全repo稽核 — 4 組 subagent 並行清理死碼/過度工程（完成）
 
 背景：舊 `docs/REFACTORING_OPPORTUNITIES.md`（效率/熱路徑項）已全部驗證做完。本次是 2 個 Opus
