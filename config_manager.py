@@ -776,6 +776,18 @@ def get_global_config() -> Dict[str, Any]:
     if matched_key is not None:
         final_cfg.update(host_settings[matched_key])
 
+    # dashboard 總後台的主機角色覆寫優先於 host_settings（部分覆寫允許）。
+    # 設定檔壞掉或任何例外都不可擋主程式啟動——log warning 後沿用原邏輯。
+    try:
+        from utils import dashboard_settings as _ds
+        _role = _ds.get_host_role()
+        if _role:
+            for _k in ("mode", "master_url"):
+                if _role.get(_k):
+                    final_cfg[_k] = _role[_k]
+    except Exception as e:  # noqa: BLE001 — 設定檔問題不可擋主程式啟動
+        logging.warning("dashboard host_role override skipped: %s", e)
+
     return final_cfg
 
 

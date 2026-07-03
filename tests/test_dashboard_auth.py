@@ -430,5 +430,74 @@ class TestAdminApi(unittest.TestCase):
         self.assertEqual(r.get_json()["status"], "error")
 
 
+class TestHostRoleOverride(unittest.TestCase):
+    """config_manager.get_global_config() 讀 dashboard host_role 覆寫。
+
+    優先序：dashboard host_role override > host_settings > global 預設。
+    fail-open：settings 檔壞掉時絕不能讓 get_global_config() raise（主程式啟動保護）。
+    """
+
+    def setUp(self):
+        import json as _json
+
+        import config_manager
+
+        self.config_manager = config_manager
+        self.tmp = tempfile.TemporaryDirectory()
+
+        # 沙箱 dashboard settings。
+        self._orig_settings_path = ds.settings_path()
+        ds.set_settings_path(os.path.join(self.tmp.name, "dashboard_settings.json"))
+        ds.load_settings()
+
+        # 沙箱 bot_config.json：已知 base（mode=master），無 host_settings 命中。
+        self._orig_cfg_file = config_manager.CONFIG_FILE
+        cfg_path = os.path.join(self.tmp.name, "bot_config.json")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            _json.dump(
+                {"devices": {}, "global": {
+                    "mode": "master",
+                    "master_url": "http://127.0.0.1:5002",
+                    "host_settings": {},
+                }},
+                f,
+            )
+        config_manager.CONFIG_FILE = cfg_path
+        config_manager._invalidate_config_cache()
+
+    def tearDown(self):
+        self.config_manager.CONFIG_FILE = self._orig_cfg_file
+        self.config_manager._invalidate_config_cache()
+        ds.set_settings_path(self._orig_settings_path)
+        self.tmp.cleanup()
+
+    def test_override_applies(self):
+        self.assertEqual(self.config_manager.get_global_config()["mode"], "master")
+        ds.set_host_role("worker", "http://10.0.0.1:5002")
+        cfg = self.config_manager.get_global_config()
+        self.assertEqual(cfg["mode"], "worker")
+        self.assertEqual(cfg["master_url"], "http://10.0.0.1:5002")
+
+    def test_clear_override_restores_base(self):
+        ds.set_host_role("worker", "http://10.0.0.1:5002")
+        self.assertEqual(self.config_manager.get_global_config()["mode"], "worker")
+        ds.set_host_role(None, None)
+        self.assertEqual(self.config_manager.get_global_config()["mode"], "master")
+
+    def test_partial_override_keeps_base_for_empty_key(self):
+        # 只覆寫 mode，master_url 留空 → master_url 落回 base 值，非被清掉。
+        ds.set_host_role("worker", "")
+        cfg = self.config_manager.get_global_config()
+        self.assertEqual(cfg["mode"], "worker")
+        self.assertEqual(cfg["master_url"], "http://127.0.0.1:5002")
+
+    def test_corrupt_settings_does_not_raise(self):
+        with open(ds.settings_path(), "w", encoding="utf-8") as f:
+            f.write("{broken")
+        # fail-open：設定檔壞掉沿用 base，絕不 raise。
+        cfg = self.config_manager.get_global_config()
+        self.assertEqual(cfg["mode"], "master")
+
+
 if __name__ == "__main__":
     unittest.main()
