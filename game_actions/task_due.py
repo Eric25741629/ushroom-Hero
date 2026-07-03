@@ -121,6 +121,87 @@ def _due_sea(ip: str, now: datetime.datetime) -> bool:
     return bool(should)
 
 
+def _due_wanshen(ip: str, now: datetime.datetime) -> bool:
+    # 對照 game_actions/dungeon_scheduler.py:41-61（_run_weekly_dungeon 的排程判斷）。
+    # 只抽「本週未做（is_next_week）+ 星期時間窗」；enable_wanshen flag 與
+    # 主頁面/戰鬥皆為呼叫端/side-effect，不進 predicate。
+    record = json_manager.return_time(ip, name="萬神試煉")
+    if record is None:
+        should_execute = True
+    else:
+        should_execute = record.get("is_next_week", False)
+    if not should_execute:
+        return False
+    # 時間窗：週一下午(weekday==0 且 hour>12) 或 週二~週六(1<=weekday<=5)，週日(6)跳過。
+    # datetime.weekday()：Mon=0..Sun=6，與 time.struct_time.tm_wday 一致。
+    return bool(
+        (now.weekday() == 0 and now.hour > 12)
+        or (1 <= now.weekday() <= 5)
+    )
+
+
+def _due_biweekly(ip: str, now: datetime.datetime) -> bool:
+    # 對照 game_actions/dungeon_scheduler.py:94-101（_run_biweekly_dungeon 的排程判斷）。
+    # 只抽「本雙週未做（is_next_biweek）+ 週六/日 20:xx 時間窗」；
+    # 原碼的 ip=="emulator-5556" 屬裝置範圍限定（等同 enable，呼叫端只在該機呼叫），
+    # 不進 predicate。
+    record = json_manager.return_time(ip, name="雙週副本")
+    if record is None:
+        should_execute = True
+    else:
+        should_execute = record.get("is_next_biweek", False)
+    if not should_execute:
+        return False
+    return bool(now.weekday() in (5, 6) and now.hour == 20)
+
+
+def _due_ladder_reward(ip: str, now: datetime.datetime) -> bool:
+    # 對照 ws_token/ladder_reward.py:165-183（is_due gate）— 被
+    # game_actions/ladder_reward_weekly.py:27 完整委派。gate = 週二 + 有記錄 +
+    # 該記錄 enabled + 有 body + 本週未套用；純讀 ws_token/data/ladder_reward.json，
+    # 無 client/page side-effect。此處的 rec.enabled 是「捕捉記錄」旗標（排程/記錄層），
+    # 非 config enable flag。
+    # lazy import：task_due 頂層只留 json_manager。ladder_reward 依賴輕（json/os/pathlib）。
+    from ws_token import ladder_reward
+
+    due, _reason = ladder_reward.is_due(ip, now.date())
+    return bool(due)
+
+
+def _due_statue_weekly(ip: str, now: datetime.datetime) -> bool:
+    # 對照 game_actions/statue_weekly.py:88-99（_should_execute_for，純日期規則：
+    # 週五 + 每日一次）+ :130-136（_should_execute_for_ip 讀 json_manager 記錄）。
+    # 直接複用該純函式；enable flag 與 WS fast-exit 是呼叫端責任，不進 predicate。
+    # lazy import：statue_weekly 頂層 import img_tools（重）→ 函式內 import。
+    from game_actions import statue_weekly
+
+    return bool(statue_weekly._should_execute_for_ip(ip, today=now.date()))
+
+
+def _due_dragon_realm(ip: str, now: datetime.datetime) -> bool:
+    # 對照 game_actions/dragon_realm_scheduler.py:44-51（_is_due）。
+    # 複用現成 is_dragon_open（三周週期活動週 ∧ 週三四五 10-22 窗，:35）+ 記錄冷卻。
+    # use_dragon_realm flag 是呼叫端責任，不進 predicate。
+    # lazy import：dragon_realm_scheduler 會拉 dragon_realm 套件（重），函式內 import。
+    from game_actions import dragon_realm_scheduler as drs
+
+    if not drs.is_dragon_open(now):
+        return False
+    record = json_manager.return_time(ip, name=drs._RECORD_KEY)
+    return bool(json_manager.is_record_expired(record, drs._COOLDOWN_SECONDS))
+
+
+def _due_fannaoxiao(ip: str, now: datetime.datetime) -> bool:
+    # 對照 game_actions/fannaoxiao_scheduler.py:42-44（_is_due，每日一次：
+    # is_record_expired 20h 冷卻 + 跨日視為過期）。
+    # enable_fannaoxiao / backend==web_h5 是呼叫端責任，不進 predicate。
+    # lazy import：沿用 scheduler 常數（record key / cooldown），避免複製 magic number。
+    from game_actions import fannaoxiao_scheduler as fx
+
+    record = json_manager.return_time(ip, name=fx._RECORD_KEY)
+    return bool(json_manager.is_record_expired(record, fx._COOLDOWN_SECONDS))
+
+
 _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {
     "地獄之門": _due_hellgate,
     "每日加速": _due_daily_acceleration,
@@ -129,6 +210,12 @@ _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {
     "雲端戰鬥": _due_cloud_fighting,
     "菇菇武道會": _due_mushroom_arena,
     "航海": _due_sea,
+    "萬神試煉": _due_wanshen,
+    "雙週副本": _due_biweekly,
+    "天梯每週獎勵": _due_ladder_reward,
+    "菇菇雕像每週": _due_statue_weekly,
+    "龍骸聖域": _due_dragon_realm,
+    "煩惱消": _due_fannaoxiao,
 }
 
 

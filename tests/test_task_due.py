@@ -44,6 +44,33 @@ def _stub_periodic(monkeypatch, should):
     monkeypatch.setitem(sys.modules, "game_actions.periodic_tasks", mod)
 
 
+def _stub_statue(monkeypatch, should):
+    mod = types.ModuleType("game_actions.statue_weekly")
+    mod._should_execute_for_ip = lambda ip, today=None: should
+    monkeypatch.setitem(sys.modules, "game_actions.statue_weekly", mod)
+
+
+def _stub_dragon(monkeypatch, is_open):
+    mod = types.ModuleType("game_actions.dragon_realm_scheduler")
+    mod.is_dragon_open = lambda now=None: is_open
+    mod._RECORD_KEY = "dragon_realm_last_run"
+    mod._COOLDOWN_SECONDS = 20 * 3600
+    monkeypatch.setitem(sys.modules, "game_actions.dragon_realm_scheduler", mod)
+
+
+def _stub_fannaoxiao(monkeypatch):
+    mod = types.ModuleType("game_actions.fannaoxiao_scheduler")
+    mod._RECORD_KEY = "fannaoxiao_last_run"
+    mod._COOLDOWN_SECONDS = 20 * 3600
+    monkeypatch.setitem(sys.modules, "game_actions.fannaoxiao_scheduler", mod)
+
+
+def _stub_ladder_store(monkeypatch, store):
+    """讓真 ladder_reward.is_due 跑，只換掉 load_store 回傳假 store。"""
+    from ws_token import ladder_reward
+    monkeypatch.setattr(ladder_reward, "load_store", lambda: store)
+
+
 # --------------------------------------------------------------------------
 # 地獄之門
 # --------------------------------------------------------------------------
@@ -202,6 +229,144 @@ def test_sea_due_when_cooldown_says_yes(monkeypatch):
 def test_sea_not_due_when_cooldown_says_no(monkeypatch):
     monkeypatch.setattr(json_manager, "should_execute_sea_with_cooldown", lambda *a, **k: (False, False))
     assert task_due.is_due("航海", "ip", now=_dt(2026, 7, 6, 12)) is False
+
+
+# --------------------------------------------------------------------------
+# 萬神試煉（週副本）— record is_next_week + 星期時間窗（週日跳過）
+# --------------------------------------------------------------------------
+def test_wanshen_due_when_no_record_in_window(monkeypatch):
+    # 2026-07-07 = 週二（weekday 1）→ 時間窗內
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("萬神試煉", "ip", now=_dt(2026, 7, 7, 10)) is True
+
+
+def test_wanshen_not_due_when_done_this_week(monkeypatch):
+    _patch_records(monkeypatch, {"萬神試煉": {"is_next_week": False}})
+    assert task_due.is_due("萬神試煉", "ip", now=_dt(2026, 7, 7, 10)) is False
+
+
+def test_wanshen_due_when_next_week_and_in_window(monkeypatch):
+    _patch_records(monkeypatch, {"萬神試煉": {"is_next_week": True}})
+    assert task_due.is_due("萬神試煉", "ip", now=_dt(2026, 7, 7, 10)) is True
+
+
+def test_wanshen_not_due_on_sunday(monkeypatch):
+    # 2026-07-12 = 週日（weekday 6）→ 時間窗外，即使 due 也跳過
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("萬神試煉", "ip", now=_dt(2026, 7, 12, 15)) is False
+
+
+def test_wanshen_not_due_monday_morning(monkeypatch):
+    # 2026-07-06 = 週一（weekday 0）：需 hour>12，早上不在窗
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("萬神試煉", "ip", now=_dt(2026, 7, 6, 9)) is False
+
+
+# --------------------------------------------------------------------------
+# 雙週副本 — is_next_biweek + 週六/日 20:xx
+# --------------------------------------------------------------------------
+def test_biweekly_due_when_no_record_in_window(monkeypatch):
+    # 2026-07-11 = 週六（weekday 5），20:xx
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("雙週副本", "ip", now=_dt(2026, 7, 11, 20, 5)) is True
+
+
+def test_biweekly_not_due_when_done_this_biweek(monkeypatch):
+    _patch_records(monkeypatch, {"雙週副本": {"is_next_biweek": False}})
+    assert task_due.is_due("雙週副本", "ip", now=_dt(2026, 7, 11, 20, 5)) is False
+
+
+def test_biweekly_not_due_outside_time_window(monkeypatch):
+    # 週六但非 20 點
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("雙週副本", "ip", now=_dt(2026, 7, 11, 19, 5)) is False
+
+
+def test_biweekly_not_due_on_weekday(monkeypatch):
+    # 2026-07-07 = 週二，非週六/日
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("雙週副本", "ip", now=_dt(2026, 7, 7, 20, 5)) is False
+
+
+# --------------------------------------------------------------------------
+# 天梯每週獎勵 — 週二 + 有記錄/enabled/body + 本週未套用（複用 ladder_reward.is_due）
+# --------------------------------------------------------------------------
+def test_ladder_due_on_tuesday_with_record(monkeypatch):
+    _stub_ladder_store(monkeypatch, {"ip": {"enabled": True, "body_hex": "0a"}})
+    # 2026-07-07 = 週二
+    assert task_due.is_due("天梯每週獎勵", "ip", now=_dt(2026, 7, 7)) is True
+
+
+def test_ladder_not_due_on_non_tuesday(monkeypatch):
+    _stub_ladder_store(monkeypatch, {"ip": {"enabled": True, "body_hex": "0a"}})
+    # 2026-07-06 = 週一
+    assert task_due.is_due("天梯每週獎勵", "ip", now=_dt(2026, 7, 6)) is False
+
+
+def test_ladder_not_due_when_no_record(monkeypatch):
+    _stub_ladder_store(monkeypatch, {})
+    assert task_due.is_due("天梯每週獎勵", "ip", now=_dt(2026, 7, 7)) is False
+
+
+def test_ladder_not_due_when_already_this_week(monkeypatch):
+    # 本 ISO 週已套用 → not due
+    store = {"ip": {"enabled": True, "body_hex": "0a", "last_applied_week": "2026-W28"}}
+    _stub_ladder_store(monkeypatch, store)
+    assert task_due.is_due("天梯每週獎勵", "ip", now=_dt(2026, 7, 7)) is False
+
+
+# --------------------------------------------------------------------------
+# 菇菇雕像每週 — 複用 statue_weekly._should_execute_for_ip
+# --------------------------------------------------------------------------
+def test_statue_due_when_scheduler_says_yes(monkeypatch):
+    _stub_statue(monkeypatch, should=True)
+    assert task_due.is_due("菇菇雕像每週", "ip", now=_dt(2026, 7, 10)) is True
+
+
+def test_statue_not_due_when_scheduler_says_no(monkeypatch):
+    # 例：非週五或本週已做
+    _stub_statue(monkeypatch, should=False)
+    assert task_due.is_due("菇菇雕像每週", "ip", now=_dt(2026, 7, 6)) is False
+
+
+# --------------------------------------------------------------------------
+# 龍骸聖域 — is_dragon_open（活動窗）+ 記錄冷卻
+# --------------------------------------------------------------------------
+def test_dragon_not_due_when_window_closed(monkeypatch):
+    _stub_dragon(monkeypatch, is_open=False)
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is False
+
+
+def test_dragon_due_when_open_and_record_expired(monkeypatch):
+    _stub_dragon(monkeypatch, is_open=True)
+    _patch_records(monkeypatch, {})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: True)
+    assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is True
+
+
+def test_dragon_not_due_when_open_but_cooldown_active(monkeypatch):
+    _stub_dragon(monkeypatch, is_open=True)
+    _patch_records(monkeypatch, {"dragon_realm_last_run": {"timestamp": 1.0}})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: False)
+    assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is False
+
+
+# --------------------------------------------------------------------------
+# 煩惱消 — 每日一次（is_record_expired 20h 冷卻）
+# --------------------------------------------------------------------------
+def test_fannaoxiao_due_when_record_expired(monkeypatch):
+    _stub_fannaoxiao(monkeypatch)
+    _patch_records(monkeypatch, {})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: True)
+    assert task_due.is_due("煩惱消", "ip", now=_dt(2026, 7, 6, 12)) is True
+
+
+def test_fannaoxiao_not_due_when_done_today(monkeypatch):
+    _stub_fannaoxiao(monkeypatch)
+    _patch_records(monkeypatch, {"fannaoxiao_last_run": {"timestamp": 1.0}})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: False)
+    assert task_due.is_due("煩惱消", "ip", now=_dt(2026, 7, 6, 12)) is False
 
 
 # --------------------------------------------------------------------------
