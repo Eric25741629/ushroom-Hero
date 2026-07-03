@@ -102,13 +102,20 @@ def fake_battle(monkeypatch, dungeon_mod):
 
 @pytest.fixture
 def fake_records(monkeypatch, dungeon_mod):
-    """Control return_time() output per record name."""
+    """Control return_time() output per record name.
+
+    due 判斷已收斂到 task_due.is_due（讀 json_manager.return_time），故 patch
+    json_manager.return_time 而非 dungeon_mod（後者已不再直接讀記錄）。
+    time_recording 仍由 scheduler 於跑滿後呼叫 → 續 patch dungeon_mod。
+    """
+    import json_manager
+
     state: dict[str, dict | None] = {}
 
-    def _return(ip, name):
+    def _return(ip, name=""):
         return state.get(name)
 
-    monkeypatch.setattr(dungeon_mod, "return_time", _return)
+    monkeypatch.setattr(json_manager, "return_time", _return)
     recorded: list[dict] = []
     monkeypatch.setattr(dungeon_mod, "time_recording", lambda ip, name: recorded.append({"ip": ip, "name": name}))
     state["_recorded"] = recorded  # stash for easy test access

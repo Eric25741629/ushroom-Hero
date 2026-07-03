@@ -179,27 +179,23 @@ def _due_statue_weekly(ip: str, now: datetime.datetime) -> bool:
 
 
 def _due_dragon_realm(ip: str, now: datetime.datetime) -> bool:
-    # 對照 game_actions/dragon_realm_scheduler.py:44-51（_is_due）。
-    # 複用現成 is_dragon_open（三周週期活動週 ∧ 週三四五 10-22 窗，:35）+ 記錄冷卻。
+    # 單一來源：完全委派 dragon_realm_scheduler._is_due（三周週期活動週 ∧
+    # 週三四五 10-22 窗 ∧ per-device 20h 冷卻）。task_due 只包一層，不重寫 due 數學。
     # use_dragon_realm flag 是呼叫端責任，不進 predicate。
     # lazy import：dragon_realm_scheduler 會拉 dragon_realm 套件（重），函式內 import。
     from game_actions import dragon_realm_scheduler as drs
 
-    if not drs.is_dragon_open(now):
-        return False
-    record = json_manager.return_time(ip, name=drs._RECORD_KEY)
-    return bool(json_manager.is_record_expired(record, drs._COOLDOWN_SECONDS))
+    return bool(drs._is_due(ip, now))
 
 
 def _due_fannaoxiao(ip: str, now: datetime.datetime) -> bool:
-    # 對照 game_actions/fannaoxiao_scheduler.py:42-44（_is_due，每日一次：
-    # is_record_expired 20h 冷卻 + 跨日視為過期）。
+    # 單一來源：完全委派 fannaoxiao_scheduler._is_due（每日一次：is_record_expired
+    # 20h 冷卻 + 跨日視為過期）。task_due 只包一層，不重寫。now 不參與（純記錄冷卻）。
     # enable_fannaoxiao / backend==web_h5 是呼叫端責任，不進 predicate。
-    # lazy import：沿用 scheduler 常數（record key / cooldown），避免複製 magic number。
+    # lazy import：fannaoxiao_scheduler 依賴輕，但沿用 lazy 慣例避免頂層擴散。
     from game_actions import fannaoxiao_scheduler as fx
 
-    record = json_manager.return_time(ip, name=fx._RECORD_KEY)
-    return bool(json_manager.is_record_expired(record, fx._COOLDOWN_SECONDS))
+    return bool(fx._is_due(ip))
 
 
 _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {

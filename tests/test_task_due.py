@@ -50,18 +50,17 @@ def _stub_statue(monkeypatch, should):
     monkeypatch.setitem(sys.modules, "game_actions.statue_weekly", mod)
 
 
-def _stub_dragon(monkeypatch, is_open):
+def _stub_dragon(monkeypatch, due):
+    """task_due 委派 dragon_realm_scheduler._is_due；此處只需注入其回傳。"""
     mod = types.ModuleType("game_actions.dragon_realm_scheduler")
-    mod.is_dragon_open = lambda now=None: is_open
-    mod._RECORD_KEY = "dragon_realm_last_run"
-    mod._COOLDOWN_SECONDS = 20 * 3600
+    mod._is_due = lambda ip, now=None: due
     monkeypatch.setitem(sys.modules, "game_actions.dragon_realm_scheduler", mod)
 
 
-def _stub_fannaoxiao(monkeypatch):
+def _stub_fannaoxiao(monkeypatch, due):
+    """task_due 委派 fannaoxiao_scheduler._is_due；此處只需注入其回傳。"""
     mod = types.ModuleType("game_actions.fannaoxiao_scheduler")
-    mod._RECORD_KEY = "fannaoxiao_last_run"
-    mod._COOLDOWN_SECONDS = 20 * 3600
+    mod._is_due = lambda ip: due
     monkeypatch.setitem(sys.modules, "game_actions.fannaoxiao_scheduler", mod)
 
 
@@ -330,42 +329,28 @@ def test_statue_not_due_when_scheduler_says_no(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 龍骸聖域 — is_dragon_open（活動窗）+ 記錄冷卻
+# 龍骸聖域 — 單一來源：完全委派 dragon_realm_scheduler._is_due（該函式另有測試）
 # --------------------------------------------------------------------------
-def test_dragon_not_due_when_window_closed(monkeypatch):
-    _stub_dragon(monkeypatch, is_open=False)
-    _patch_records(monkeypatch, {})
+def test_dragon_not_due_when_scheduler_says_no(monkeypatch):
+    _stub_dragon(monkeypatch, due=False)
     assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is False
 
 
-def test_dragon_due_when_open_and_record_expired(monkeypatch):
-    _stub_dragon(monkeypatch, is_open=True)
-    _patch_records(monkeypatch, {})
-    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: True)
+def test_dragon_due_when_scheduler_says_yes(monkeypatch):
+    _stub_dragon(monkeypatch, due=True)
     assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is True
 
 
-def test_dragon_not_due_when_open_but_cooldown_active(monkeypatch):
-    _stub_dragon(monkeypatch, is_open=True)
-    _patch_records(monkeypatch, {"dragon_realm_last_run": {"timestamp": 1.0}})
-    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: False)
-    assert task_due.is_due("龍骸聖域", "ip", now=_dt(2026, 7, 8, 12)) is False
-
-
 # --------------------------------------------------------------------------
-# 煩惱消 — 每日一次（is_record_expired 20h 冷卻）
+# 煩惱消 — 單一來源：完全委派 fannaoxiao_scheduler._is_due（該函式另有測試）
 # --------------------------------------------------------------------------
-def test_fannaoxiao_due_when_record_expired(monkeypatch):
-    _stub_fannaoxiao(monkeypatch)
-    _patch_records(monkeypatch, {})
-    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: True)
+def test_fannaoxiao_due_when_scheduler_says_yes(monkeypatch):
+    _stub_fannaoxiao(monkeypatch, due=True)
     assert task_due.is_due("煩惱消", "ip", now=_dt(2026, 7, 6, 12)) is True
 
 
-def test_fannaoxiao_not_due_when_done_today(monkeypatch):
-    _stub_fannaoxiao(monkeypatch)
-    _patch_records(monkeypatch, {"fannaoxiao_last_run": {"timestamp": 1.0}})
-    monkeypatch.setattr(json_manager, "is_record_expired", lambda *a, **k: False)
+def test_fannaoxiao_not_due_when_scheduler_says_no(monkeypatch):
+    _stub_fannaoxiao(monkeypatch, due=False)
     assert task_due.is_due("煩惱消", "ip", now=_dt(2026, 7, 6, 12)) is False
 
 

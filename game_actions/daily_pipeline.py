@@ -50,6 +50,7 @@ from game_actions.periodic_tasks import (
 from game_actions.reward_manager import reward
 from game_actions.skill_manager import switch_skill
 from game_actions.stage_guard import _run_at_main_page, get_stage_with_check
+from game_actions import task_due
 from runtime_services.device_runtime_service import ForceSleepRequested
 from json_manager import (
     is_record_expired,
@@ -216,18 +217,10 @@ def _run_tasks(ctx: DailyContext) -> None:
         logger.info("[%s] 地獄之門：已停用，跳過", ip)
     else:
         stage = get_stage_with_check(d, ip, Cnn_model)
-        record_time = return_time(ip, name="地獄之門")
         logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-        logging.info("地獄之門紀錄: {}".format(record_time))
-        # NB: previously had `hell_gate_time = 1` + `or hell_gate_time == 0` here.
-        # The flag was always 1 inside this else branch so the `== 0` clause was
-        # dead. Simplified to plain "is_next_day" check.
-        if record_time is None:
-            should_execute = True
-        else:
-            should_execute = record_time.get("is_next_day", False)
-            logging.info("should_execute: {}, record_time: {}".format(should_execute, record_time))
-        if should_execute and current_time.tm_min < 20:
+        # due 判斷唯一來源：task_due.is_due("地獄之門")（record.is_next_day + 當前分鐘<20）。
+        # now 用預設即時台北時間，與 current_time 同一 wall clock（原用 current_time.tm_min）。
+        if task_due.is_due("地獄之門", ip):
             if stage == "主頁面":
                 bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
                 new_battle.hell_door(d, ip)
