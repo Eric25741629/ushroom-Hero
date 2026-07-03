@@ -103,8 +103,8 @@ def test_ad_reward_claim_returns_summary(monkeypatch):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["status"] == "ok" and body["total_claimed"] == 3
-    # 預設 config_ids = [12,14,15]
-    assert captured["ids"] == [12, 14, 15]
+    # 預設 config_ids = [1,2,3,12,14,15]（含挖礦鎬子/鑽頭/炸彈）
+    assert captured["ids"] == [1, 2, 3, 12, 14, 15]
     by_name = {r["name"]: r for r in body["results"]}
     n = rar.ws_ad.AD_NAMES
     assert by_name[n[12]]["claimed"] == 2 and by_name[n[12]]["config_id"] == 12

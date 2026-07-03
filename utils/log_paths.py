@@ -72,6 +72,10 @@ class LogPaths:
         return cls.device_root(device_id) / "ws_farm.log"
 
     @classmethod
+    def ws_ad_reward_log(cls, device_id: str) -> Path:
+        return cls.device_root(device_id) / "ws_ad_reward.log"
+
+    @classmethod
     def ws_lamp_log(cls, device_id: str) -> Path:
         return cls.device_root(device_id) / "ws_lamp.log"
 
@@ -123,6 +127,9 @@ class _ScopedLogPaths:
 
     def ws_farm_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "ws_farm.log"
+
+    def ws_ad_reward_log(self, device_id: str) -> Path:
+        return self.device_root(device_id) / "ws_ad_reward.log"
 
     def ws_lamp_log(self, device_id: str) -> Path:
         return self.device_root(device_id) / "ws_lamp.log"

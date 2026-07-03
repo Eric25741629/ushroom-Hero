@@ -1878,6 +1878,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             <div class="ws-field-note">看廣告獎勵總開關在上方「任務開關」；以下為細項參數。</div>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（每日免費）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（每日免費）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdPick1">挖礦鎬子（每日免費，需開挖礦）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdDrill2">挖礦鑽頭（每日免費，需開挖礦）</label>
+            <label class="checkbox-item"><input type="checkbox" id="chkAdBomb3">挖礦炸彈（每日免費，需開挖礦）</label>
             <div class="ws-field-note">看廣告拿種子的開關在「農場」頁籤。</div>
           </div>
 
@@ -3997,11 +4000,11 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       setPath(payload, 'ws_token.farm', farm);
     }
     // 看廣告獎勵 config_ids 跨兩頁籤(種子15在農場、鑽石12/14在看廣告)，共用同一 array。
-    const AD_CONFIGS = [[12, 'chkAdGem12'], [14, 'chkAdGem14'], [15, 'chkAdSeed']];
+    const AD_CONFIGS = [[1, 'chkAdPick1'], [2, 'chkAdDrill2'], [3, 'chkAdBomb3'], [12, 'chkAdGem12'], [14, 'chkAdGem14'], [15, 'chkAdSeed']];
     function _loadAdRewards(config) {
       const ad = getPath(config, 'ws_token.ad_rewards', {}) || {};
       document.getElementById('chkAdEnabled').checked = ad.enabled === true;
-      const ids = Array.isArray(ad.config_ids) ? ad.config_ids : [12, 14, 15];
+      const ids = Array.isArray(ad.config_ids) ? ad.config_ids : [1, 2, 3, 12, 14, 15];
       AD_CONFIGS.forEach(([id, cid]) => { document.getElementById(cid).checked = ids.indexOf(id) !== -1; });
     }
     function _collectAdRewards(payload) {

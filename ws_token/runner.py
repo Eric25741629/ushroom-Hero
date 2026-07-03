@@ -239,7 +239,8 @@ def _run_idle_reward(client, offline_pushes: list) -> dict:
     return summary
 
 
-def _run_ad_rewards(client, *, config_ids, enabled: bool) -> dict:
+def _run_ad_rewards(client, *, config_ids, enabled: bool,
+                    device: Optional[str] = None) -> dict:
     """看廣告獎勵 (鑽石/種子) opt-in: 純 WS 直接領 (is_free=1, 帳號買了免廣告).
 
     Only reached with a non-empty ``config_ids`` (gated by run_device → enabled).
@@ -250,7 +251,7 @@ def _run_ad_rewards(client, *, config_ids, enabled: bool) -> dict:
     """
     if not enabled or not config_ids:
         return {"skipped": "ad_rewards disabled (set ws_token.ad_rewards.enabled=True)"}
-    return ad_reward.claim_ads(client, list(config_ids))
+    return ad_reward.claim_ads(client, list(config_ids), device_id=device)
 
 
 def _run_turntable(client) -> dict:
@@ -1499,7 +1500,7 @@ def run_device(device: str, *, spend: bool = False,
         if _ad_ids:
             _step("ad_rewards",
                   lambda: _run_ad_rewards(client, config_ids=_ad_ids,
-                                          enabled=True))
+                                          enabled=True, device=device))
         _step("turntable", lambda: _run_turntable(client))
         _step("tycoon",
               lambda: _run_tycoon(client, enabled=tycoon,
