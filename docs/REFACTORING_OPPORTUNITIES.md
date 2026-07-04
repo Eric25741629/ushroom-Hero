@@ -121,13 +121,13 @@
 ### 4. per-device `{ip}.json` 直接 `open`+`json.load/dump`，繞過 `JsonDataManager`（dup-2）
 
 - **位置**：
-  - `new_main_v2.py:452-465`（`temporary_reset_cycles()` 手動讀改寫刪 `衝刺-發條`，**非原子**）
+  - ~~`new_main_v2.py`（`temporary_reset_cycles()` 手動讀改寫刪 `衝刺-發條`，**非原子**）~~ ✅ 2026-07-05 死碼清理已移除該函式，此點作廢
   - `Mission.py:93-110`（`load_data`）+ `112-134`（`record`）：自寫 default `{'mission_timestamp':0,'mission_num':0}` + JSONDecodeError fallback，與 `json_manager/base.py:157-177` 重疊；`record()` 非原子寫
   - `fight_car.py:488-530`（`flush_logs()`）：**MISGROUPED**——寫固定路徑 `push_project/web/car_fight.json`，非 `{ip}.json`
   - `test_mount_rush.py:37-44`（dev 拋棄腳本，最低優先）
   - 正規來源：`json_manager.JsonDataManager`（含 `_atomic_write_json` temp+os.replace、損毀備份）
 - **建議**：
-  - `new_main_v2.py`：改 `mgr=JsonDataManager(ip); data=mgr.load_data(); pop '衝刺-發條'; mgr.save_data(data)`（鏡像 `control_panel_app.py:1154` 既有用法，原子）。
+  - ~~`new_main_v2.py`：改 `mgr=JsonDataManager(ip); ...`~~ ✅ 作廢：`temporary_reset_cycles()` 已於 2026-07-05 隨死碼清理移除。
   - `Mission.py`：`load_data/record` 委派檔案 IO 給 `JsonDataManager(self.device_ip)` 但**保留 flat keys**（用 `load_data(default=...)`+`save_data()`，**勿**改用 `record_timestamp()`，否則改 on-disk schema、破壞 dashboard 讀 `mission_timestamp`）。
   - `fight_car.py:529-530`：**勿用 JsonDataManager**（固定路徑），改 `json_manager._atomic_write_json(...)` 取得原子安全。
 - **consolidation target**：`json_manager.JsonDataManager` / `_atomic_write_json`。
@@ -166,7 +166,7 @@
   - `farm_v2/web_farm.py:40-43,47-48,73-77`、`opengold_v2/ui_controller.py:459-471`、`sea_v2/rewards.py:61-70`
   - `utils/cocos_navigator.py:90-307`（**自身 4 份** `find=(root,parts)` 散在 `_CLICK_JS`/`_VIEW_STATE_JS`/`_DISMISS_TOP_POPUPS_JS`/`_FIND_CLOSE_BTN_JS`）
   - 真正合適的 home 是 `utils/cocos_navigator.py`（已擁有 `COCOS_PATHS`）；**非** `utils/web_game_api.py`（純 WS-RPC/protobuf，原 finding 誤指）
-- **位置（carpark 內，cx-2）**：`utils/carpark_auto.py` find walker 16x、worldToScreen 10x，散在 `_click_pool_tier:363`、`_click_silver_lot_by_idx:420`、`_click_empty_spot_in_current_lot:454-512`、`_pick_zero_minute_car_and_park:559`、`recall_one_cross:783-857`、`claim_warehouse:945-981` 等；`utils/carpark_state.py:283,311`（`_AVAILABLE_CARS_JS`/`_CAR_DETAIL_JS`）已抽成 module-level 常數，是 2-file single-source 問題。
+- **位置（carpark 內，cx-2）**：`utils/carpark_auto.py` find walker 16x、worldToScreen 10x，散在 `_click_pool_tier:363`、`_click_silver_lot_by_idx:420`、`_click_empty_spot_in_current_lot:454-512`、`_pick_zero_minute_car_and_park:559`、`claim_warehouse:945-981` 等（原列的 `recall_one_cross` 已於 2026-07-05 死碼清理移除）；`utils/carpark_state.py:283,311`（`_AVAILABLE_CARS_JS`/`_CAR_DETAIL_JS`）已抽成 module-level 常數，是 2-file single-source 問題。
 - **證據**：worldToScreen 字面量在每處 byte-identical（`Math.round(r.left + wp.x*r.width/v.width)` / `Math.round(r.top + (v.height-wp.y)*r.height/v.height)`）；這正是 540x960 MEMORY note 警告的可攜座標單一真相風險。
 - **建議（additive、逐點 live 驗證、勿大爆改）**：
   1. 新 `utils/carpark_js.py`（或在 `cocos_navigator`）放純字串片段 `_FIND_WALKER`、`_WORLD_TO_SCREEN`，及 `node_world_pos(page, path)` helper（鏡像 `ui_controller._WORLD_POS_JS`，含 `convertToWorldSpaceAR` fallback）。

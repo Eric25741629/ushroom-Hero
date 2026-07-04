@@ -88,7 +88,7 @@ Each device thread runs an independent automation loop with:
 | Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v1**（A*），v1/v3/v4 可切（`mining_planner_version`）。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |
 | Mining planner v3/v4 | `miner/v3,v4/` | v3 cluster-aware actions (230ms deadline)、v4 bounded 3-step DFS + branch-and-bound (250ms deadline)。深度追蹤（純 telemetry）：`miner/depth_tracker.py`（row-shift 偵測 + WS baseline 校準口） |
 | OpenGold v2 | `opengold_v2/` | 神燈 refactor — split into 8 modules, central `OpenGoldConfig`, auto-detect 連閃裝備 |
-| Farm v2 | `farm_v2/` | Farm-task refactor with state machine (`states.py`, `manager.py`, `operations/`) |
+| Farm v2 | `farm_v2/` | Farm-task refactor：`manager.py` + `operations/`（舊 `states.py` 狀態機 2026-07-05 移除，未接線） |
 | Task sandbox | `task_sandbox/` | 通用任務開發/驗證框架，以神燈為第一個實作，基於 NavTarget 導航 |
 | WS listener | `utils/ws_listener.py` | WebSocket frame 擷取與回放，用於協議分析 |
 | WS-first 階段 | `game_actions/ws_phase.py` | 喚醒後、瀏覽器啟動前先跑純 WS 任務（`ws_token/runner.py`），成功項由 `daily_pipeline`（`ctx.ws_done`）跳過；ticket 由 Playwright 階段回寫（`utils/ws_ticket_refresh.py`）。裝置開關 `ws_token.enabled`（dashboard「方案」選擇器 adb/adb+ws/h5/h5+ws） |
@@ -125,9 +125,10 @@ Key files:
 `mining_service.py` dispatches on `mining_planner_version` (default **v1**, see `config_manager.py` `DEFAULT_DEVICE_CONFIG`). Selectable per device:
 - v1 (`miner/planning/smart_planner.py`, A*) — **current default** (2026-06-18)：whole-board A*，
   真實 3.6% 密度 eval score/省鏟最高（v1=3126 vs v4=1359；v5=1173 已移除）。
-  ⚠ WS 挖礦 (`ws_token/mining_adapter.py`) 走 **v4**（非 v1）：v1 在無 pit + floor7 開時直接回空步，
-  WS 監督迴圈需要 planner 持續吐 no_pit 進度挖步來捲動，故沿用 v4（v5 的骨架）。
-- `miner/v4/` — bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。
+  WS 挖礦 (`ws_token/mining_adapter.py`) 也走 **v1** `plan_smart`（`mining_adapter.py` ~:521）：
+  早期改用 v4 是因為舊 v1 在無 pit + floor7 開時會回空步卡住捲動；smart_planner 現有
+  descent-dig fallback，v1 在 no_pit 時仍持續吐進度挖步，sim 3711 vs v4 1649，故 WS 已切回 v1。
+- `miner/v4/` — bounded 3-step rolling-horizon DFS + branch-and-bound (250ms deadline)；reuses `core.mechanics` + `v3.actions`。no_pit 時有 `_cheapest_progress_dig` fallback（`miner/v4/planner.py`，2026-07-05 補）。
 - `miner/v3/` — cluster-aware action model (`clusters`/`actions`/`board`); v4 reuses `v3.actions`. 有 230ms wall-clock deadline。
 
 > v2/v5 已移除。`miner/v2/` 套件保留（CNN 分類層共用）；`depth_tracker.py` 保留為 telemetry。

@@ -1,4 +1,4 @@
-"""狀態查詢路由 blueprint（OCR 健康檢查 / 程式資訊 / analyze_stage / device_data / daily_progress / status）。"""
+"""狀態查詢路由 blueprint（OCR 健康檢查 / 程式資訊 / analyze_stage / daily_progress / status）。"""
 import base64
 import datetime
 import functools

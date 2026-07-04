@@ -32,7 +32,7 @@ farm_v2/
   __init__.py
   config.py
   manager.py
-  states.py
+  # states.py（FarmState/FarmContext 狀態機）已於 2026-07-05 移除：未接線、死碼
   operations/
     __init__.py
     base.py
@@ -167,9 +167,11 @@ everyday_mission/
 ---
 
 ### 3.5 把 `farm_v2` 的狀態機延伸成專案通用模式
-**現狀**
-- `farm_v2/states.py` 是目前最接近正規狀態機的設計。
-- `FarmState` + `FarmContext` 比其它模組清楚很多。
+> ⚠ 2026-07-05 更新：`farm_v2/states.py`（`FarmState`/`FarmContext`）從未接線，已隨死碼清理移除。
+> 以下屬歷史提案；若日後要做通用狀態機，需重新設計範本，勿再引用已刪的 farm_v2 狀態機。
+
+**現狀（已過時）**
+- 曾以 `farm_v2/states.py` 為最接近正規狀態機的設計（`FarmState` + `FarmContext`），但實際未被 `manager.py` 使用，已移除。
 
 **建議**
 - 以 `farm_v2` 為範本，建立通用狀態機基底：
@@ -331,7 +333,7 @@ everyday_mission/
 ## 4.2 狀態機設計
 
 ### 現況優點
-- `farm_v2/states.py` 是目前最好的設計，有明確的 `FarmState` 與 `FarmContext`。
+- ~~`farm_v2/states.py`（`FarmState`/`FarmContext`）~~ 已於 2026-07-05 移除（未接線死碼）；此優點作廢。
 - `sea_v2/session.py` 的節點路徑、前置條件、備註都很清楚。
 - `game_initialization.py` 有 `resolve_stage_until_stable()`，已經朝共用狀態解析走。
 

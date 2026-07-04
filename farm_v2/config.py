@@ -14,7 +14,6 @@ COORD = {
     "farm_entry": (208, 584),
     "farm_tab": (480, 929),
     "work_button": (479, 207),
-    "cancel_work": (252, 707),
     "close": (272, 868),
     "fertilize_btn": (362, 430),
     "fertilize_confirm": (270, 600),

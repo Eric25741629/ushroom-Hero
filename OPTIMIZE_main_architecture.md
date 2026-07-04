@@ -260,7 +260,7 @@ target_cfg = config_manager.get_device_config('emulator-5558')  # 硬編碼
 **建議：**
 - 在 `bot_config.json` 的設備設定中增加 `is_real_phone`, `enable_online_check`, `enable_screen_reset` 等布林旗標
 - 將「是否保護」、「是否需要螢幕重置」等邏輯改為讀取 config flag
-- `check_on_line()` 的目標設備改為 config-driven：`config_manager.get_device_config(ip).get("online_check_target")`
+- 線上檢查的目標設備改為 config-driven：`config_manager.get_device_config(ip).get("online_check_target")`（線上檢查已由純 WS `runtime_services/online_check_service.py` + `ws_online_checker.check_via_ws` 承接，舊 `check_on_line()` 於 2026-07-05 移除）
 
 ---
 
@@ -285,11 +285,15 @@ if event:
 
 ### 🟡 P2 — 改進建議
 
-#### 9. `game_initialization.py` 的 `check_on_line()` 職責過重
+#### 9. ~~`game_initialization.py` 的 `check_on_line()` 職責過重~~ ✅ 已解決（2026-07-05）
 
-**現狀：** `check_on_line()` 包含兩條完全獨立的檢查路徑（protocol + OCR），各自有完整的設備連線、遊戲啟動、截圖、OCR 判定邏輯。OCR 路徑 (`_check_on_line_via_ocr_legacy`) 長達 70+ 行，包含 `time.sleep(20+random)` 的硬等待。
+> 此 finding 已作廢：舊 `check_on_line()`（含 protocol path 與 `_check_on_line_via_ocr_legacy` OCR path）
+> 已於 2026-07-05 死碼清理整個移除。線上檢查改由純 WS 的 `runtime_services/online_check_service.py`
+> + `ws_online_checker.check_via_ws` 承接，不再有 OCR 硬等待。以下策略模式提案僅存歷史參考。
 
-**建議：**
+**原現狀（已移除）：** `check_on_line()` 曾包含 protocol + OCR 兩條獨立檢查路徑。
+
+**原建議（已作廢）：**
 - 將 protocol path 和 OCR path 拆為獨立的 strategy 類別
 - 使用策略模式選擇檢查方式：
 
@@ -408,7 +412,7 @@ logger = logging.getLogger(__name__)
 - [ ] `main()` → `DeviceLifecycle` 狀態機
 - [ ] 消除硬編碼設備判斷，改為 config-driven
 - [ ] 整合或移除 `event_manager.py`
-- [ ] `check_on_line()` → 策略模式
+- [x] ~~`check_on_line()` → 策略模式~~ 2026-07-05 改採純 WS `online_check_service` + `check_via_ws`（舊函式已刪，提案作廢）
 
 ### Phase 4：效能優化（2-3 天）
 
@@ -426,7 +430,7 @@ logger = logging.getLogger(__name__)
 2. **`DeviceConfig` dataclass** — 從 dict 升級到 typed config，`_extra` 保持向後相容，是務實的遷移策略
 3. **`resolve_stage_until_stable()` 彈窗鏈處理** — 用循環 + max_chain 處理疊加彈窗，比硬編碼序列更健壯
 4. **`_pause_guard` 機制** — 在每個設備操作前檢查暫停/強制休眠，確保控制面板的指令能及時生效
-5. **protocol + OCR 雙重驗證** — `check_on_line()` 的保守策略（兩者都判離線才放行）避免了誤操作
+5. **線上檢查的保守策略** — 舊 `check_on_line()`（protocol + OCR 雙重驗證，兩者都判離線才放行）避免了誤操作；2026-07-05 已由純 WS `online_check_service` + `check_via_ws` 取代
 6. **`safe_log()` 容錯** — 防止 logging handler 故障導致 worker thread 崩潰
 
 ---

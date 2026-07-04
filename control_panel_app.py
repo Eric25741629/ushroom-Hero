@@ -4,7 +4,7 @@
 
 - ``control_panel/shared/``        — command queue / CDP / 飛寵認證（跨 blueprint 共用真相）
 - ``control_panel/routes_pages``   — dashboard / updates / war-room / fly-pet 頁面
-- ``control_panel/routes_status``  — /api/status、device_data、daily_progress、analyze_stage
+- ``control_panel/routes_status``  — /api/status、daily_progress、analyze_stage
 - ``control_panel/routes_config``  — /api/config、/api/ocr_config
 - ``control_panel/routes_control`` — pause/resume/skip_sleep/wake_delay/.../recover
 - ``control_panel/routes_worker``  — poll_commands/report_status/register/refresh（master-worker 同步）
