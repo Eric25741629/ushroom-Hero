@@ -720,3 +720,26 @@ terrain[depth][col] = configMine_template[ area_info[area] ][tpl_row][col]   # 1
 - [ ] A3 test:合成盤面 pit 欄 ≠ 最深前緣欄 → 斷言選 pit-directed 格,而非最深-最小-col。
 - [ ] 驗證:對 5554/5558 擷取盤面 replay,確認導向朝礦 + 地形 == CNN;py_compile + 相關 pytest。
 - [ ] off-by-default? 否 — 此為修正既有 WS 挖礦行為(非新功能),預設生效;bot 重啟才載入。merge 回 main + 刪 worktree。
+
+## Plan: 移除工具頁「看廣告獎勵」獨立面板 — 2026-07-04（已完成 98910dd1）
+
+**動機**: 看廣告獎勵已整合進每日純 WS 腳本（`ws_token/runner.py` `_step("ad_rewards")`，
+由 dashboard「任務開關 → 看廣告獎勵」`ws_token.ad_rewards.enabled` 控制），
+tools_optimize 頁的手動面板（讀取當日進度 / 一鍵領取）冗餘。
+
+**保留（每日腳本依賴，不動）**:
+- `ws_token/ad_reward.py` + `tests/test_ws_token_ad_reward.py`
+- `ws_token/runner.py` ad_rewards step、`game_actions/ws_phase.py` `_ad_reward_ids`
+- `templates/dashboard.html` 的 ws_token 設定開關（chkAdEnabled / chkAdSeed / config_ids UI）
+- `tests/test_config_ad_rewards_default.py`
+
+**移除項目**:
+- [x] `templates/tools_optimize.html`: 看廣告獎勵 section（HTML + JS：status/claim fetch、adMsg 等）
+- [x] `control_panel/routes_ad_reward.py`: 整檔刪除（blueprint 僅供該面板）
+- [x] `control_panel_app.py`: 移除 routes_ad_reward import + 註冊（2 處）
+- [x] `tests/test_ad_reward_routes.py`: 整檔刪除
+- [x] `tests/test_tools_optimize_template.py`: 刪 `test_ad_reward_section_hooks`
+- [x] 驗證: py_compile + `python -m pytest tests/test_tools_optimize_template.py tests/test_ws_token_ad_reward.py -q`
+
+**注意**: bot_config.json 有 2 台裝置 `ad_rewards.enabled=false`（其餘皆 true）。
+面板移除後這 2 台沒有手動領取入口，要領就到 dashboard 開啟該裝置的看廣告獎勵開關。
