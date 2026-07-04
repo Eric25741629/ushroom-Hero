@@ -468,3 +468,11 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   「省 CNN 截圖迴圈」這種 ADB 論點完全不適用。且 live WS 的道具決策大多走
   `_select_dig_step` 的 prop_step_for_pit/pit_directed 覆寫路徑，不是 plan_smart 的 lookahead —
   分析 planner 本體之前先追「執行面誰真的在做決策」。
+- **Subagent 迷路 commit 到主樹（第二次）**：即使 brief 第一行寫「Work from: <worktree絕對路徑>」，
+  implementer 每次 bash 仍 cd 到主 repo root 並把 commit 落在 main。既有 lesson 的「收工 git status 主樹」
+  只能事後發現。**加強版規則：dispatch prompt 必須要求「每次 commit 前先 `git rev-parse --show-toplevel`
+  比對 worktree 路徑，不符即停」**；若 commit 已落 main 且與他人 commit 交錯，不 rewrite、就地審查補救。
+- **pytest 收集期 sys.modules stub 是全 process 污染**：test_mining_item_logic.py 模組層
+  `sys.modules["miner.planning.smart_planner"]=空步stub` 讓同批執行的 WS 挖礦測試全拿空 plan
+  （WS adapter lazy-import plan_smart）。規則：測試要 stub 就用 fixture/monkeypatch（會還原）；
+  純 Python 輕量模組（smart_planner）根本不需要 stub。單跑綠、整批紅 → 先懷疑收集期 import 副作用。

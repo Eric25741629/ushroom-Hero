@@ -702,6 +702,35 @@ worktree-from-HEAD 會漏掉這些 WIP 且 merge 易衝突 → 建議直接在�
 ### B 規則已 live 解出並驗證(2 帳號 54/54 未挖格 0 誤)
 ```
 q=depth+6 ; area=q//7 ; tpl_row=q%7
+
+---
+
+## Plan: 挖礦 多步道具組合規劃（先A再B再C）— 2026-07-05
+
+**目標（使用者兩次糾正後收斂）**：純 WS 挖礦路徑；道具是庫存不是無限（不降價狂用）；
+同樣道具支出下用「多步組合」最大化每顆道具效益。
+
+- [x] 1. 研究：v1/v3/v4 道具決策機制 + 執行面 — 結論：live WS 的道具決策大多走
+      `_select_dig_step` 的 `prop_step_for_pit`（單發貪婪、炸彈無條件優先=bug），繞過 plan_smart lookahead
+- [x] 2. 研究：真實 log — bomb 庫存數百(淨累積)、drill 數十(真稀缺)、2+道具 plan 僅 0.23%
+- [x] 3. Baseline：sim v1 948/186（同 skill 記錄）；32 真實 board 全 <300ms
+- [x] 4. Phase A 掃描：道具降價=省鎬不加分(AB40 246→231)、v4 加深無效(925→920)、
+      v1adb(967)>v1(948) → 短路保留；結論=量不是槓桿、「用得準」才是
+- [x] 5. 實作：`prop_combo_for_pits` 有界 DFS 道具序列(≤3、每顆自身≥2 pit 門檻、
+      庫存/allow 尊重、修炸彈優先偏置、tie-break 省 drill)，`prop_step_for_pit` API 不變
+      回傳組合首步（commits 02d40536 test + 94c3786d feat；implementer 誤 commit 到 main，就地審查通過）
+- [x] 6. 評估：eval_prop_combo 3 seeds x2000 盤 → 每盤收礦 +3.7~4.0%、組合率 61→68%、
+      決策改變率 ~44%、avg ~1ms；99 個相關測試全綠；sim(948/186)/真實board(0 empty, max 185ms) 回歸無漂移
+- [x] 7. 報告 — 見下方 Review
+
+### Review — 挖礦多步道具組合（純 WS）完成 2026-07-05
+- 交付：`ws_token/mining_adapter.py` `prop_combo_for_pits` + `tools/eval_prop_combo.py`（MC A/B）
+  + `tests/test_ws_prop_combo.py`（10 案）。順手修既有測試污染（test_mining_item_logic 收集期
+  stub smart_planner → 同批 WS 測試全空 plan）commit cbbf63fb。
+- 效益：同一 ≥2 pit 價值門檻下，組合搜尋每盤多收 ~3.8% 礦；修掉炸彈優先偏置（drill 命中多時改選 drill）。
+- 未做（政策留給使用者）：道具重定價（sim 顯示可省鎬 60%+ 但道具=庫存不重定價）；
+  v1 的 drill→bomb 配比調整（b2.0/d4.0：分數持平、drill 消耗 -63%、bomb +11/局，數據在此不動手）。
+- 可選後續：live WS session A/B（fresh 登入會踢 parked Playwright，擇機）；更保守可調 min_pits=3。
 terrain[depth][col] = configMine_template[ area_info[area] ][tpl_row][col]   # 100 air / 201 dirt / 202 stone
 ```
 - `area_info` 的 value 就是 template id（`board.area_info` 已解析,在 0x0c01 裡）。
