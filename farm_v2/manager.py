@@ -11,14 +11,11 @@ if TYPE_CHECKING:
 import img_tools
 import new_cnn.cnn_model as _cnn_module
 from farm_v2.config import COORD, TIMING, MAX_PLANT_PER_DAY, FARM_VISIT_INTERVAL_HOURS
-from farm_v2.states import FarmState, FarmContext
 from farm_v2.operations import (
     click_with_jitter,
     wait_jitter,
     buy_seed,
     check_if_parttime,
-    plant_one,
-    plant_cycle,
     run_harvest_card,
     claim_ad_seeds,
 )

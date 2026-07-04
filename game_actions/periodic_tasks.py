@@ -6,13 +6,7 @@ import img_tools
 from tools import click_white
 
 # 週期常數
-SEA_CYCLE_WEEKS = 4
 MUSHROOM_ARENA_CYCLE_WEEKS = 3
-
-
-def should_execute_sea(ip: str) -> tuple:
-    """判斷是否該執行 sea（每4週執行1週）"""
-    return _should_execute_cycle(ip, "sea_cycle_start", cycle_weeks=SEA_CYCLE_WEEKS, logger=logger)
 
 
 def should_execute_mushroom_arena(ip: str) -> tuple:
