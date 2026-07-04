@@ -86,7 +86,9 @@ def patch_env(monkeypatch):
         return state["record"]
 
     def fake_is_record_expired(record, seconds, **kw):
-        return record is None
+        # None -> never run (due). A cross-day record (is_next_day) -> expired
+        # (due again), mirroring json_manager so Sat+Sun each run once.
+        return record is None or bool(record.get("is_next_day"))
 
     def fake_time_recording(ip, name=""):
         recorded.append(name)
@@ -147,6 +149,18 @@ def test_skip_when_already_ran(patch_env):
     drv = FakeDriver()
     sched.run_escort_if_due(FakeDevice(FakePage()), "dev1", driver=drv)
     assert drv.enter_calls == 0 and recorded == []
+
+
+def test_runs_again_next_day(patch_env):
+    # Sat run recorded; on Sun the record is cross-day (is_next_day) -> due again,
+    # so the weekend yields two runs total (once Sat, once Sun).
+    configure, recorded = patch_env
+    configure(enable=True, record={"timestamp": 1_700_000_000, "is_next_day": True},
+              now=SAT_11)
+    drv = FakeDriver()
+    sched.run_escort_if_due(FakeDevice(FakePage()), "dev1", driver=drv)
+    assert drv.enter_calls == 1 and drv.fight_calls == 1
+    assert recorded == ["escort_last_run"]
 
 
 def test_skip_when_no_page(patch_env):
