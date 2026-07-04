@@ -5,7 +5,6 @@ import os
 # 關閉 .pyc 檔案寫入，避免在網路路徑產生大量 I/O 導致卡頓
 sys.dont_write_bytecode = True
 
-import os
 from adb_operations import (
     connect_u2_with_retries, unlock_screen,
     start_game_by_icon, check_in_game, set_screen_for_game, reset_screen_settings,
@@ -302,7 +301,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 else:
                     img = d.screenshot(format='opencv')
                     # 進行ocr
-                    if state_manager.get_state() == "滑動解除節電模式'":
+                    if state_manager.get_state() == "滑動解除節電模式":
                         unlock_screen(d)
                     in_game = check_in_game(d)
 
@@ -509,35 +508,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 # ``runtime_services.thread_registry`` 以避免循環匯入。
 
 _running_threads = {} # {ip: Thread}
-def temporary_reset_cycles():
-    """臨時重置函數：強制將本週設為活動週期的開始"""
-    import os
-    from device import get_adb_devices
-    from json_manager import JsonDataManager
-
-    logger.info("[System] 執行臨時週期重置 (重置週專用)...")
-    try:
-        devices = get_adb_devices()
-        for ip in devices:
-            filename = f"{ip}.json"
-            # 沒有檔案就沒有衝刺紀錄可清，跳過（避免 load_data 建立空檔）。
-            if not os.path.exists(filename):
-                continue
-            mgr = JsonDataManager(ip)
-            data = mgr.load_data()
-
-            # 僅清除衝刺紀錄，讓 json_manager 判定這週為衝刺執行週
-            keys_to_reset = ["衝刺-發條"]
-            for key in keys_to_reset:
-                if key in data:
-                    del data[key]
-                    logger.info(f"  - [{ip}] 已清除 {key}")
-
-            # 原子寫回（temp + os.replace），取代原本非原子的直接覆寫。
-            mgr.save_data(data)
-        logger.info("[System] 週期重置完成。")
-    except Exception as e:
-        logger.error(f"[System] 重置失敗：{e}")
 
 if __name__ == "__main__":
     import config_manager

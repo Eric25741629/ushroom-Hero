@@ -38,19 +38,6 @@ _OCR_PROBE_THREAD = None
 _OCR_LAST_SUCCESS_SERVER = None
 
 
-def set_ocr_server_mode(mode: str):
-    """Set OCR server mode at runtime: main / backup / auto."""
-    global _OCR_SERVER_MODE
-    normalized = (mode or "main").strip().lower()
-    if normalized not in {"main", "backup", "auto"}:
-        raise ValueError(f"Invalid OCR server mode: {mode}")
-    _OCR_SERVER_MODE = normalized
-
-
-def get_ocr_server_mode() -> str:
-    return _OCR_SERVER_MODE
-
-
 def _get_ocr_mode_from_config() -> str:
     """Read OCR mode from config_manager if available; fallback to runtime/env mode."""
     try:
@@ -221,15 +208,6 @@ def check_red_dot(d, roi: tuple) -> bool:
     contours, _ = cv2.findContours(red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     return any(cv2.contourArea(c) > 46 for c in contours)
 
-def save_stage_debug_image(stage_name: str, img: np.ndarray):
-    """Helper function to save an image for debugging a specific stage."""
-    dir_path = f"debug_{stage_name}"
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-    timestamp = time.strftime("%Y%m%d-%H%M%S")
-    filename = f"{dir_path}/{stage_name}_{timestamp}.jpg"
-    # cv2.imwrite(filename, img)
-    logger.info(f"Saved debug image for stage '{stage_name}' to {filename}")
 def encode_image(img):
     """將圖片編碼為 base64"""
     _, buffer = cv2.imencode('.jpg', img)
@@ -426,22 +404,12 @@ def analyze_stage_via_server(img, OCR_SERVER_URL=None):
     )
 def find_and_click(d, findImgPath, threshold=0.8, x=0, y=0):
     img = d.screenshot(format='opencv')
-    if not os.path.exists("find_img"):
-        os.makedirs("find_img")
     findImg = cv2.imread(findImgPath)
     res = cv2.matchTemplate(img, findImg, cv2.TM_CCOEFF_NORMED)
     loc = np.where(res >= threshold)
     if len(loc[0]) > 0:
         pt_x, pt_y = loc[1][0], loc[0][0]
         h, w = findImg.shape[:2]
-        matched_region = img[pt_y:pt_y + h, pt_x:pt_x + w]
-        if not os.path.exists("found_matches"):
-            os.makedirs("found_matches")
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        template_name = os.path.splitext(os.path.basename(findImgPath))[0]
-        save_path = os.path.join("found_matches", f"matched_{template_name}_{timestamp}.jpg")
-        # cv2.imwrite(save_path, matched_region)
-        # logger.info(f"Matched region saved to {save_path}")
         center = [int(pt_x + w / 2), int(pt_y + h / 2)]
         d.click(center[0] + x, center[1] + y)
         logger.info(f"Clicked at: {center[0] + x}, {center[1] + y}")

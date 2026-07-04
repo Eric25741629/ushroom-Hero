@@ -6,7 +6,7 @@ import bot_state
 import logging
 import cv2
 import numpy as np
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
 from utils.ws_listener import WSFrameTracker
@@ -34,115 +34,6 @@ def _reset_thread_event_loop() -> None:
         asyncio.set_event_loop(asyncio.new_event_loop())
     except Exception as e:
         logger.debug(f"asyncio.set_event_loop fresh-loop install failed: {e}")
-
-
-DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS: Dict[str, Any] = {
-    "viewport": {"width": 960, "height": 540},
-}
-
-
-class PlaywrightContextConfig:
-    """Playwright `browser.new_context(...)` 的設定容器。
-
-    先把預設值集中管理，後續若要擴充 cookies、locale、user_agent、
-    storage_state 等選項，直接從這裡延伸即可。
-    """
-
-    def __init__(
-        self,
-        viewport: Optional[Dict[str, int]] = None,
-        device_scale_factor: float = 1.0,
-        **extra_options: Any,
-    ):
-        self.viewport = dict(viewport or DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS["viewport"])
-        self.extra_options = dict(extra_options)
-
-    def to_kwargs(self) -> Dict[str, Any]:
-        options: Dict[str, Any] = {
-            "viewport": dict(self.viewport),
-        }
-        options.update(self.extra_options)
-        return options
-
-
-class PlaywrightContextAdapter:
-    """Playwright context 抽象層。
-
-    目的：
-    1. 把 `browser.new_context(viewport={...})` 集中封裝。
-    2. 預留 cookies / storage_state / new_page 等操作介面。
-    3. 讓上層程式未來可無痛切換到 Playwright。
-    """
-
-    def __init__(
-        self,
-        browser: Any = None,
-        context: Any = None,
-        config: Optional[PlaywrightContextConfig] = None,
-    ):
-        self._browser = browser
-        self._context = context
-        self._config = config or PlaywrightContextConfig()
-
-    @property
-    def browser(self) -> Any:
-        return self._browser
-
-    @property
-    def context(self) -> Any:
-        return self._context
-
-    @property
-    def config(self) -> PlaywrightContextConfig:
-        return self._config
-
-    def bind_browser(self, browser: Any) -> "PlaywrightContextAdapter":
-        self._browser = browser
-        return self
-
-    def set_context(self, context: Any) -> Any:
-        self._context = context
-        return context
-
-    def create_context(self, browser: Any = None, **overrides: Any) -> Any:
-        browser = browser or self._browser
-        if browser is None:
-            raise ValueError("Playwright browser 尚未綁定，無法建立 context")
-
-        options = self._config.to_kwargs()
-        options.update(overrides)
-        context = browser.new_context(**options)
-        self._browser = browser
-        self._context = context
-        return context
-
-    def get_context(self) -> Any:
-        if self._context is None:
-            raise RuntimeError("Playwright context 尚未初始化")
-        return self._context
-
-    def new_page(self) -> Any:
-        return self.get_context().new_page()
-
-    def cookies(self) -> Any:
-        return self.get_context().cookies()
-
-    def add_cookies(self, cookies: Iterable[Dict[str, Any]]) -> Any:
-        return self.get_context().add_cookies(list(cookies))
-
-    def clear_cookies(self) -> Any:
-        return self.get_context().clear_cookies()
-
-    def storage_state(self, path: Optional[str] = None) -> Any:
-        context = self.get_context()
-        if path:
-            return context.storage_state(path=path)
-        return context.storage_state()
-
-    def close(self) -> None:
-        if self._context is not None:
-            self._context.close()
-            self._context = None
 
 
 class MonitoredDevice:

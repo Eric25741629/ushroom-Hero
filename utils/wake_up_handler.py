@@ -6,7 +6,6 @@ from adb_operations import connect_u2_with_retries, get_battery_level
 
 logger = logging.getLogger(__name__)
 from device import close_notification
-from game_initialization import check_on_line
 import bot_state # 引入狀態管理
 import config_manager # 引入設定管理
 from runtime_services.device_runtime_service import (
@@ -176,14 +175,6 @@ def _honor_dashboard_controls(ip: str) -> None:
 # Global lock for synchronization
 _wakeup_lock = False
 
-def get_lock_status():
-    global _wakeup_lock
-    return _wakeup_lock
-
-def set_lock_status(status):
-    global _wakeup_lock
-    _wakeup_lock = status
-
 def release_wakeup_lock(ip):
     """
     Releases the lock for specific devices if they are holding it.
@@ -243,38 +234,8 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     """
     Handles the device wake-up, unlock, and synchronization logic.
     """
-    global _wakeup_lock
-
     if _should_skip_wake(ip, logger):
         return d
-
-    def _is_5554_busy_by_state() -> bool:
-        """Fallback busy check for web_h5 backend to avoid cross-thread Playwright access."""
-        states = bot_state.get_all_states()
-        st = states.get('emulator-5554', {}) or {}
-        status = str(st.get("status", "OFFLINE")).upper()
-        if status == "OFFLINE":
-            return False
-
-        task = str(st.get("task", "") or "")
-        step = str(st.get("step", "") or "")
-        text = f"{task} {step}"
-
-        # Explicit free/idle markers first.
-        free_markers = ["休眠", "離線", "等待喚醒", "等待啟動", "thread exit"]
-        if any(m in text for m in free_markers):
-            return False
-
-        # Explicit busy markers.
-        busy_markers = ["喚醒中", "啟動", "挖礦", "任務", "戰鬥", "執行", "忙碌", "主頁面"]
-        if any(m in text for m in busy_markers):
-            return True
-
-        # Heartbeat stale => treat as not busy.
-        last_update = float(st.get("last_update", 0) or 0)
-        if last_update > 0 and (time.time() - last_update) > 120:
-            return False
-        return True
 
     # --- 核心邏輯：requester 啟動前透過 checker 檢查帳號線上狀態 ---
     # 解耦 (2026-06-09): 任何設定了 online_check_target_pid 的 requester 都會走
