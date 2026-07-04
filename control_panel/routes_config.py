@@ -2,6 +2,7 @@
 from flask import Blueprint, jsonify, request
 
 import config_manager
+from control_panel.shared.auth import require_admin
 
 bp = Blueprint("config", __name__)
 
@@ -28,6 +29,14 @@ def set_device_conf(ip):
         data = request.json
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         config_manager.update_device_config(real_ip, data)
+        # 設定可能改到 online_check_target_pid（決定 account_online 徽章對應的
+        # roleId）。狀態頁 _device_role_id 有 lru_cache，不清會顯示舊 roleId 直到
+        # 重啟。best-effort 清快取；失敗只影響徽章即時性，不擋設定寫入。
+        try:
+            from control_panel.routes_status import _device_role_id
+            _device_role_id.cache_clear()
+        except Exception:
+            pass
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -43,8 +52,9 @@ def get_ocr_conf():
 
 
 @bp.route("/api/ocr_config", methods=["POST"])
+@require_admin
 def set_ocr_conf():
-    """更新 OCR 全域設定（動態生效，所有讀取端下次呼叫即使用新值）。"""
+    """更新 OCR 全域設定（動態生效，所有讀取端下次呼叫即使用新值）。僅限管理員。"""
     try:
         data = request.json or {}
         config_manager.update_ocr_config(data)

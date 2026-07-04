@@ -18,6 +18,7 @@ import requests
 from flask import Blueprint, jsonify, request
 
 import config_manager
+from control_panel.shared.auth import require_admin
 
 bp = Blueprint("labeler", __name__)
 
@@ -311,6 +312,7 @@ def get_labeler_config():
 
 
 @bp.route("/api/labeler/config", methods=["POST"])
+@require_admin
 def set_labeler_config():
     try:
         payload = request.json or {}
@@ -325,6 +327,7 @@ def set_labeler_config():
 
 
 @bp.route("/api/labeler/run_once", methods=["POST"])
+@require_admin
 def run_labeler_once():
     with _labeler_lock:
         if _labeler_state["running"]:
@@ -352,6 +355,7 @@ def get_labeler_status():
 
 
 @bp.route("/api/labeler/pause", methods=["POST"])
+@require_admin
 def pause_labeler():
     try:
         os.makedirs(_labeler_control_dir, exist_ok=True)
@@ -364,6 +368,7 @@ def pause_labeler():
 
 
 @bp.route("/api/labeler/resume", methods=["POST"])
+@require_admin
 def resume_labeler():
     try:
         pause_flag = Path(_labeler_control_dir) / "pause.flag"
@@ -377,6 +382,7 @@ def resume_labeler():
 
 
 @bp.route("/api/labeler/terminate", methods=["POST"])
+@require_admin
 def terminate_labeler():
     try:
         os.makedirs(_labeler_control_dir, exist_ok=True)
@@ -387,6 +393,7 @@ def terminate_labeler():
 
 
 @bp.route("/api/trainer/run_once", methods=["POST"])
+@require_admin
 def run_trainer_once():
     with _trainer_lock:
         if _trainer_state["running"]:

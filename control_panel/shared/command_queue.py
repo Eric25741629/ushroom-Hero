@@ -119,6 +119,5 @@ def queue_command(ip, cmd_key, cmd_val):
             bot_state.request_force_sleep(ip)
         elif cmd_key == "wake_delay_sec":
             bot_state.set_wake_override(ip, cmd_val)
-        elif cmd_key == "recover" and cmd_val:
-            # 本地直接執行 ADB (recover_screen 函數會處理)
-            pass
+        # 註：本地 recover 不經此處——recover_screen 路由對本地裝置直接跑 ADB，
+        # 只有遠端裝置才會 queue_command(ip, "recover", ...) 走上面的 remote 分支。

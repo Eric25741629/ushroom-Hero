@@ -40,11 +40,6 @@ def poll_commands():
 
         # --- 1+2 在同一把鎖內完成快照，避免讀寫競態 ---
         with _commands_lock:
-            global_resp = {}
-            if _global_commands["refresh_needed"]:
-                global_resp["refresh_needed"] = True
-                # 注意：這裡不能立刻設為 False，否則其他 Worker 就收不到了
-
             response_cmds = {}
             for ip in ips:
                 remote_id = f"{worker_id}:{ip}"

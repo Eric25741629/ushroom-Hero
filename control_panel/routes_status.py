@@ -52,9 +52,8 @@ def check_ocr_server():
 
         if mode == "backup":
             priority = [backup, main, local]
-        elif mode == "auto":
-            priority = [main, backup, local]
         else:
+            # main / auto / 其餘皆同一優先序（保留 mode 只為 backup 分支）
             priority = [main, backup, local]
 
         for s in servers:
@@ -177,26 +176,6 @@ def analyze_stage():
         return jsonify({"success": True, "stage": stage, "ocr_text": ocr_result})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
-
-@bp.route("/api/device_data/<ip>", methods=["GET"])
-def get_device_data(ip):
-    """讀取設備的執行紀錄 JSON (例如 emulator-5554.json)"""
-    require_device_access(ip)
-    try:
-        # 處理分散式架構的 IP (例如: school_laptop:emulator-5554)
-        # 因為使用 SMB 共用，所有 json 都在同一個目錄下，只要還原出真實的 device_id 即可
-        real_device_id = ip
-        if ":" in ip:
-            # 取最後一部分作為真實 ID
-            real_device_id = ip.split(":")[-1]
-
-        manager = json_manager.JsonDataManager(real_device_id)
-        data = manager.load_data()
-        return jsonify(data)
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
 
 
 def _fmt_ts(ts):
