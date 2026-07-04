@@ -1794,6 +1794,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <label class="checkbox-item"><input type="checkbox" id="chkBiweekly">雙週賞金</label>
 
+          <label class="checkbox-item"><input type="checkbox" id="chkEscort">賞金之路（六日≥11點自動打NPC）</label>
+
         </div>
 
       </div>
@@ -4322,6 +4324,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         document.getElementById('chkMining').checked = config.enable_mining !== false;
 
+        document.getElementById('chkEscort').checked = config.enable_escort === true;
+
         document.getElementById('chkHellgate').checked = config.enable_hellgate !== false;
 
         document.getElementById('chkWanshen').checked = config.enable_wanshen !== false;
@@ -4477,6 +4481,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         enable_arena: document.getElementById('chkArena').checked,
 
         enable_mining: document.getElementById('chkMining').checked,
+
+        enable_escort: document.getElementById('chkEscort').checked,
 
         enable_hellgate: document.getElementById('chkHellgate').checked,
 
