@@ -45,10 +45,9 @@ if "miner.core.ocr_utils" not in sys.modules:
         check_drill_num=lambda *_args, **_kwargs: 0,
         check_boom_num=lambda *_args, **_kwargs: 0,
     )
-if "miner.planning.smart_planner" not in sys.modules:
-    sys.modules["miner.planning.smart_planner"] = types.SimpleNamespace(
-        plan_smart=lambda *_args, **_kwargs: {"ok": False, "steps": []},
-    )
+# NB: 不可在此永久 stub miner.planning.smart_planner —— 它是純 Python（無重依賴），
+# 而 ws_token.mining_adapter.plan() 會 lazy-import plan_smart；收集期塞進 sys.modules
+# 的空步 stub 會讓同 process 後續所有 WS 挖礦測試拿到空 plan（2026-07-05 踩過）。
 if "miner.rl.rl_recorder" not in sys.modules:
     sys.modules["miner.rl.rl_recorder"] = types.SimpleNamespace(RLRecorder=object)
 if "miner.core.vision_utils" not in sys.modules:
