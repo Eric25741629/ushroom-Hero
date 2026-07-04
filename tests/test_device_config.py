@@ -146,6 +146,16 @@ def test_device_config_web_reload_after_goto_defaults_false():
     assert DeviceConfig(web_reload_after_goto=True).get("web_reload_after_goto") is True
 
 
+def test_device_config_skip_browser_when_all_done_defaults_false():
+    """Phase D2: opt-in 純 WS 掛機旗標，預設 False → 行為與現況相同（一定會喚醒瀏覽器）。"""
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+
+    assert DEFAULT_DEVICE_CONFIG["skip_browser_when_all_done"] is False
+    assert "skip_browser_when_all_done" in DeviceConfig.__dataclass_fields__
+    assert DeviceConfig().skip_browser_when_all_done is False
+    assert DeviceConfig(skip_browser_when_all_done=True).get("skip_browser_when_all_done") is True
+
+
 def test_device_config_all_defaults_match_default_dict():
     """DeviceConfig defaults must match DEFAULT_DEVICE_CONFIG for the fields it covers."""
     from config_manager import DeviceConfig, DEFAULT_DEVICE_CONFIG

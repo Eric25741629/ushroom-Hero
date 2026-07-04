@@ -1759,6 +1759,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         <div class="checkbox-group" style="border:none; border-radius:0; margin-top:4px;">
           <label class="checkbox-item"><input type="checkbox" id="chkRealPhone"><b>實機模式（顯示恢復按鈕）</b></label>
+          <label class="checkbox-item" title="戰鬥/每日任務都完成後，該裝置改用純 WS，不再喚醒瀏覽器（省資源）。WS 失敗會自動改開瀏覽器。"><input type="checkbox" id="chkSkipBrowserWhenDone">做完客戶端任務後純 WS 掛機（僅「h5＋WS」方案有效）</label>
         </div>
 
       </details>
@@ -3326,6 +3327,16 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         if (!adbWsSelected) chkWsOfflineFallback.checked = false;
       }
 
+      // 「做完客戶端任務後純 WS 掛機」只在 h5+ws 方案有效（純 WS 補刀需 ws_token.enabled，
+      // 且要有瀏覽器可省 → 只有 web_h5+ws 同時滿足）。非此方案隱藏＋清勾選。
+      const h5WsSelected = backend === 'web_h5+ws';
+      const chkSkipBrowserWhenDone = document.getElementById('chkSkipBrowserWhenDone');
+      if (chkSkipBrowserWhenDone) {
+        chkSkipBrowserWhenDone.closest('.checkbox-item').style.display = h5WsSelected ? '' : 'none';
+        chkSkipBrowserWhenDone.disabled = !h5WsSelected;
+        if (!h5WsSelected) chkSkipBrowserWhenDone.checked = false;
+      }
+
     }
 
 
@@ -4321,6 +4332,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         document.getElementById('chkRealPhone').checked = config.is_real_phone === true;
 
+        document.getElementById('chkSkipBrowserWhenDone').checked = config.skip_browser_when_all_done === true;
+
         document.getElementById('editOnlineInterval').value = config.online_check_interval || 5;
 
         document.getElementById('editLampInterval').value = config.lamp_check_interval || 2;
@@ -4474,6 +4487,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         enable_biweekly: document.getElementById('chkBiweekly').checked,
 
         is_real_phone: document.getElementById('chkRealPhone').checked,
+
+        skip_browser_when_all_done:
+          selectedBackendPlan === 'web_h5+ws' && document.getElementById('chkSkipBrowserWhenDone').checked,
 
         online_check_interval: parseInt(document.getElementById('editOnlineInterval').value || '5', 10),
 

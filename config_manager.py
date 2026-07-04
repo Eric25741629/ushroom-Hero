@@ -73,6 +73,9 @@ DEFAULT_DEVICE_CONFIG = {
     # 全機隊都是 web_h5、睡覺時瀏覽器關閉,瀏覽器路徑(_run_checker_protocol_only)
     # 會 page closed 失敗並冷啟重登;WS 路徑無此問題。預設 True。
     "online_check_via_ws": True,
+    # 做完客戶端任務後純 WS 掛機（省資源）：僅 web_h5 + ws_token.enabled 生效（見
+    # game_actions/browser_skip.should_skip_browser）。opt-in，預設 False → 行為與現況相同。
+    "skip_browser_when_all_done": False,
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
@@ -215,6 +218,8 @@ class DeviceConfig:
     screenshot_debug: bool = False
     online_check_interval_sec: int = 30
     online_check_via_ws: bool = True
+    # 做完客戶端任務後純 WS 掛機（僅 web_h5 + ws_token.enabled 生效）；opt-in，預設 False。
+    skip_browser_when_all_done: bool = False
 
     # Task durations / intervals
     lamp_check_interval: int = 2
@@ -1174,6 +1179,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             "enable_shop_manager",
             "enable_dungeon_manager",
             "enable_fannaoxiao",
+            "skip_browser_when_all_done",
             "is_real_phone",
             "keep_screen_on",
             "screenshot_debug",
