@@ -110,6 +110,7 @@
 | 執行期服務 | `runtime_services/` | lazy-start 服務 + 主迴圈構件（見下節） | **runtime** |
 | 戰鬥任務 | `battle/`（`new_battle.py` 為 compat shim） | 每日/每週/雙週副本（hell_door/cloud/biweekly/weekly_trials/store/manager） | **runtime** |
 | 中控/協調 | `control_panel_app.py`(149L façade) + `control_panel/`（blueprint:`routes_*` + `shared/`）/ `worker_webhook_api.py` / `runtime_services/worker_sync_service.py` | master 儀表板 + worker 回報/命令 | **runtime**（blueprint 拆分已完成 2026-06-11） |
+| 儀表板登入/總後台 | `control_panel/shared/auth.py`（before_request 守門 + 豁免清單 + 可見性 helper）+ `routes_auth.py`（/login /apply /logout）+ `routes_admin.py`（/admin + /api/admin/*）+ `utils/dashboard_settings.py`（gitignored `dashboard_settings.json`） | 全站登入制 + 帳號審核 + 裝置可見性 + host_role 覆寫（重啟生效） | **runtime**（飛寵登入已整併至 /login） |
 
 ### orchestration / runtime_services 細部
 

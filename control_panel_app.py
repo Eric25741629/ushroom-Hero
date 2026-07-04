@@ -48,8 +48,8 @@ app.secret_key = hashlib.sha256(
 
 # --- shared 層 re-export（與 blueprint 共用同一批物件） ---
 from control_panel.shared.auth import (  # noqa: E402,F401
-    _FLY_PET_USERS,
     _fly_pet_auth,
+    check_request_auth,
 )
 from control_panel.shared.cdp import (  # noqa: E402,F401
     _FLY_PET_LOCK_JS,
@@ -71,6 +71,8 @@ from control_panel.shared.command_queue import (  # noqa: E402,F401
 # --- blueprints ---
 from control_panel import (  # noqa: E402
     routes_ad_reward,
+    routes_admin,
+    routes_auth,
     routes_relic_sprint,
     routes_carpark_decorate_tools,
     routes_gacha_tools,
@@ -90,6 +92,8 @@ from control_panel import (  # noqa: E402
 )
 
 for _mod in (
+    routes_auth,
+    routes_admin,
     routes_pages,
     routes_status,
     routes_config,
@@ -140,6 +144,12 @@ except Exception as _sock_exc:  # pragma: no cover - optional dep
 
 routes_live_view.init_ws(sock)
 routes_status.init_ws(sock)
+
+
+@app.before_request
+def _global_auth_guard():
+    # 全站登入牆：豁免清單與守門邏輯集中在 control_panel.shared.auth。
+    return check_request_auth()
 
 
 @app.after_request

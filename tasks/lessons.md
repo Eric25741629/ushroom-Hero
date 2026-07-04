@@ -424,3 +424,19 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   send-only 無回覆**(用 `dig_cell`/call_raw 等回覆會 timeout)。協議落點規則補進 MINING_SCHEMA §8。
 - **炸彈 footprint live 坐實**:3x3+十字±2,且 `+2` 炸到前沿下方未捲進的格、一砲可捲多層 —— 鎬做不到,
   這是炸彈獨門價值。決策見 `mining_adapter.prop_step_for_pit`,修法 commit a4c763dc。
+
+## Worktree/subagent 開發流程坑（2026-07-04 dashboard 總後台）
+
+- **EnterWorktree 預設從 origin/main 分支 = 過時基底**。本 repo 不 push，origin 落後本地 main
+  數百 commit；EnterWorktree 建出的 worktree 缺最新 spec/plan。**建完先 `git log -1` 核對，
+  不對就 `git reset --hard main`** 再開工。
+- **Subagent 會迷路寫到主樹**：impl-task7 在主 repo root 誤改 CLAUDE.md 後才發現（幸好
+  `git checkout --` 還原的檔案主樹本來就乾淨）。dispatch prompt 光寫「Work from: <worktree>」
+  不夠，**收工審查時要順手 `git status` 主樹**確認沒被污染。
+- **`git commit --no-verify` 不可用**：即使純文件 commit 也不跳 hook（使用者全域規則）。犯過一次。
+- **共用 lib 的 `.badge{display:inline-block}` 會蓋掉 UA 的 `[hidden]{display:none}`**：
+  任何 lib 元件想支援 `hidden` 屬性，components.css 要有 `.<cls>[hidden]{display:none!important}`。
+  同型 bug 之後看到「設了 hidden 還是顯示」先查這個。
+- **UI 審查 subagent 的假設要 live 驗證**：ui-review 一開始判「deferred app.js 下 window.UI
+  未定義」是 defect，live 實測推翻（var/window 別名 + await 順序沒問題）。靜態推論的 JS 時序
+  結論一律要跑過再定案。

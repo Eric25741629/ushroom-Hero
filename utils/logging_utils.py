@@ -382,6 +382,47 @@ def get_or_create_ws_farm_logger(device_id: str) -> logging.Logger:
         return logger_obj
 
 
+_ws_ad_reward_logger_cache: dict = {}
+
+
+def get_or_create_ws_ad_reward_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS ad-reward logger → ws_ad_reward.log.
+
+    Mirrors get_or_create_ws_farm_logger: per-device file handler, rotation,
+    purge of old rotated copies, propagate=False (so 看廣告獎勵領取細節 — 各 AdType
+    的 claimed/skipped、total_claimed — land in a device-scoped retention file for
+    live verification of 挖礦鎬子/鑽頭/炸彈 廣告 是否真的領到).
+    """
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_ad_reward_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_ad_reward_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Name with the ORIGINAL device_id (not safe_id) so BotStateLogHandler can
+        # recover the exact bot_state ip key and bridge WS-ad-reward lines to dashboard.
+        logger_name = f"ws_ad_reward_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_ad_reward.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_ad_reward_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
 _ws_lamp_logger_cache: dict = {}
 
 

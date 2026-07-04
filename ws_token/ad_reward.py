@@ -42,6 +42,24 @@ from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_logger(device_id: Optional[str]) -> logging.Logger:
+    """Pick the log destination: per-device ws_ad_reward.log when ``device_id`` is
+    given, else the module logger (console-only, backward-compatible default).
+
+    Live runs pass the device so each AdType 的 claimed/skipped/total_claimed 落到
+    device-scoped ``logs/<device>/ws_ad_reward.log`` (mirrors ws_farm.log), which is
+    how 挖礦鎬子/鑽頭/炸彈 廣告 是否真的領到 gets verified. Callers/tests that omit
+    it keep the module logger, so only the destination changes.
+    """
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_ad_reward_logger
+            return get_or_create_ws_ad_reward_logger(device_id)
+        except Exception:
+            return logger
+    return logger
+
 # --- cmd ids (ad module 22 / 0x16); c2s and s2c share the same id ------------
 CMD_AD_REWARD = 0x1602   # 5634  ad_reward_c2s {config_id, ext, is_free}
 CMD_AD_INFO = 0x1601     # 5633  ad_info_c2s {} -> repeated per-config counts
@@ -181,7 +199,8 @@ def claim_ad(client: WSGameClient, config_id: int, *,
              is_free: int = IS_FREE,
              counts: Optional[dict[int, dict]] = None,
              now: Optional[float] = None,
-             timeout: Optional[float] = None) -> dict:
+             timeout: Optional[float] = None,
+             device_id: Optional[str] = None) -> dict:
     """Claim a single ad reward UP TO its daily cap, respecting cooldown.
 
     Reads today's ``count`` / ``next_ts`` (from ``counts`` if supplied, else a
@@ -236,14 +255,16 @@ def claim_ad(client: WSGameClient, config_id: int, *,
             stopped = f"cooldown until {next_ts}"
             break
 
-    logger.info("ws_token ad_reward[%s] config=%s -> claimed=%s (%s)",
-                name, config_id, claimed, stopped or "done")
+    _resolve_logger(device_id).info(
+        "ws_token ad_reward[%s] config=%s -> claimed=%s (%s)",
+        name, config_id, claimed, stopped or "done")
     return {"name": name, "claimed": claimed, "stopped": stopped}
 
 
 def claim_ads(client: WSGameClient,
               config_ids: Iterable[int] = DEFAULT_CONFIG_IDS,
-              *, timeout: Optional[float] = None) -> dict:
+              *, timeout: Optional[float] = None,
+              device_id: Optional[str] = None) -> dict:
     """Claim every config_id's ad reward off ONE ad_info read.
 
     Reads today's counts once (degrading to ``{}`` = all zero if the read fails,
@@ -251,12 +272,13 @@ def claim_ads(client: WSGameClient,
     self-corrects from each claim's reply). Returns
     ``{"results": {name: claim_ad_result}, "total_claimed": int}``.
     """
+    log = _resolve_logger(device_id)
     ids = list(config_ids)
     now = time.time()
     try:
         counts = read_ad_counts(client, timeout=timeout)
     except Exception as exc:  # noqa: BLE001 — degrade to zero counts, never abort
-        logger.warning(
+        log.warning(
             "ws_token ad_reward: ad_info 讀取失敗 (%s); 視為全 0，改靠 server 0x0201 "
             "界限（已滿/冷卻會被擋下，claim_ad 自停）", exc)
         counts = {}
@@ -264,10 +286,11 @@ def claim_ads(client: WSGameClient,
     results: dict[str, dict] = {}
     total = 0
     for cid in ids:
-        res = claim_ad(client, cid, counts=counts, now=now, timeout=timeout)
+        res = claim_ad(client, cid, counts=counts, now=now, timeout=timeout,
+                       device_id=device_id)
         results[res.get("name", str(cid))] = res
         total += int(res.get("claimed", 0) or 0)
 
-    logger.info("ws_token ad_reward: claim_ads ids=%s total_claimed=%s",
-                ids, total)
+    log.info("ws_token ad_reward: claim_ads ids=%s total_claimed=%s",
+             ids, total)
     return {"results": results, "total_claimed": total}

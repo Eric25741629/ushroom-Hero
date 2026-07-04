@@ -65,7 +65,7 @@ def test_build_ad_reward_body_honours_is_free_arg():
 # --- constants --------------------------------------------------------------
 
 def test_default_config_ids_and_times_and_names():
-    assert DEFAULT_CONFIG_IDS == [12, 14, 15]
+    assert DEFAULT_CONFIG_IDS == [1, 2, 3, 12, 14, 15]
     assert TIMES[12] == 3 and TIMES[14] == 5 and TIMES[15] == 2
     assert AD_NAMES[12] and AD_NAMES[14] and AD_NAMES[15]
 
@@ -325,6 +325,47 @@ def test_ad_rewards_in_task_order_after_idle_before_turntable():
     order = list(runner.TASK_ORDER)
     assert order.index("idle_reward") < order.index("ad_rewards")
     assert order.index("ad_rewards") < order.index("turntable")
+
+
+def test_run_ad_rewards_threads_device_into_claim_ads(monkeypatch):
+    """device 必須傳給 claim_ads(device_id=)，否則領取細節落不到 per-device log。"""
+    from ws_token import runner
+
+    seen = {}
+
+    def fake_claim_ads(client, config_ids, **k):
+        seen["device_id"] = k.get("device_id")
+        return {"results": {}, "total_claimed": 0}
+
+    monkeypatch.setattr(runner.ad_reward, "claim_ads", fake_claim_ads)
+    runner._run_ad_rewards(object(), config_ids=(1, 2, 3), enabled=True,
+                           device="emulator-5554")
+    assert seen["device_id"] == "emulator-5554"
+
+
+# --- per-device logger routing ----------------------------------------------
+
+def test_resolve_logger_falls_back_to_module_logger_without_device():
+    import ws_token.ad_reward as ar
+
+    assert ar._resolve_logger(None) is ar.logger
+    assert ar._resolve_logger("") is ar.logger
+
+
+def test_resolve_logger_uses_per_device_factory_when_device_given(monkeypatch):
+    import ws_token.ad_reward as ar
+    import utils.logging_utils as lu
+
+    sentinel = object()
+    seen = {}
+
+    def fake_factory(device_id):
+        seen["device_id"] = device_id
+        return sentinel
+
+    monkeypatch.setattr(lu, "get_or_create_ws_ad_reward_logger", fake_factory)
+    assert ar._resolve_logger("emulator-5560") is sentinel
+    assert seen["device_id"] == "emulator-5560"
 
 
 # --- helpers ----------------------------------------------------------------
