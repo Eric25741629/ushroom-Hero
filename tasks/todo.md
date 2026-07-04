@@ -743,3 +743,17 @@ tools_optimize 頁的手動面板（讀取當日進度 / 一鍵領取）冗餘�
 
 **注意**: bot_config.json 有 2 台裝置 `ad_rewards.enabled=false`（其餘皆 true）。
 面板移除後這 2 台沒有手動領取入口，要領就到 dashboard 開啟該裝置的看廣告獎勵開關。
+
+## Plan: 科技園研究加速廣告接入純 WS — 2026-07-04（待 live 驗證）
+
+**協議事實（已從 client 原始碼確認）**:
+- 科技園「跳過30分鐘」= AdType **5 = AD_SCIENCE_1**（非建築加速 17），每日 4 次。
+- 走統一廣告通道 `ad.ad_reward_c2s` 0x1602，`onAdClick` → `tryWatchAd(AD_SCIENCE_1)`。
+- 效果 = 當前研究倒數 -30 分鐘；client 端按鈕邏輯綁 `getScienceTreeByType(1).doing`。
+
+**待辦（今日 4 次已用完，明天 live 驗證後再接線）**:
+- [ ] Probe A：有研究進行中時 `ad_reward(5, is_free=1)` → 確認 0x1602 成功 + 研究 etime -1800s。
+- [ ] Probe B：無研究進行中時 claim → 看 server 是 reject（error code?）還是白燒次數。
+- [ ] 依 Probe B 決定：無條件加進 `DEFAULT_CONFIG_IDS`，或 claim 前先讀科技狀態（rogue science doing/etime）再領。
+- [ ] 接線：`ws_token/ad_reward.py` `TIMES` 加 `5: 4`、`AD_NAMES` 加「科技研究加速廣告」+ 測試。
+- [ ] 注意：價值取決於研究隊列是否常態有東西在跑；若常閒置，考慮只在 doing!=0 時領。
