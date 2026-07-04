@@ -42,6 +42,7 @@ LIVE-CALIBRATION (7fe98fc6 / 小寶 H5/CDP):
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from ws_token import mine_terrain  # deterministic undug-terrain lookup (no learning)
@@ -410,87 +411,171 @@ def pit_directed_next(mine_board: Any, exclude: Any = None) -> Optional[int]:
     return best_bid
 
 
-def _bomb_blast_cells(depth: int, col: int) -> set:
+@lru_cache(maxsize=8192)
+def _bomb_blast_cells(depth: int, col: int) -> frozenset:
     """Absolute (depth, col) cells a bomb at (depth,col) clears: 3x3 + cross±2.
 
     Mirrors miner.core.mechanics.get_bomb_affected_cells but in ABSOLUTE board
     coords (no 7-row clamp), so the blast that reaches BELOW the viewport bottom is
     represented — that below-frontier reach is the bomb's unique value (a pickaxe
     can only hit the frontier). Columns clamp to 0..5; depth is unbounded.
+
+    Memoised (pure function of depth,col) and returns a frozenset: the combo DFS
+    rebuilds blasts for a growing placement set at every node, so caching the
+    footprint keeps the search's worst case well under a millisecond. All callers
+    only read the result (``& pits`` / ``frozenset(...)``), so sharing is safe.
     """
     cells = {(depth + dd, col + dc) for dd in (-1, 0, 1) for dc in (-1, 0, 1)}
     cells |= {(depth + 2, col), (depth - 2, col), (depth, col + 2), (depth, col - 2)}
-    return {(d, c) for d, c in cells if 0 <= c < GRID_COLS}
+    return frozenset((d, c) for d, c in cells if 0 <= c < GRID_COLS)
 
 
-def prop_step_for_pit(board: Any, inventory: Optional[Dict[str, int]], *,
-                      allow_bomb: bool, allow_drill: bool,
-                      min_pits: int = 2) -> Optional[Dict[str, Any]]:
-    """A bomb/drill step ONLY when one prop collects >= ``min_pits`` uncollected pits
-    in a single use — the unambiguous "一個道具 > 2.5-3 個鎬子" case (each pit would
-    else need its own descent-and-dig). Pure; returns None otherwise.
+def _drill_clear_cells(depth: int, col: int, pits: set) -> set:
+    """Absolute (depth, col) pit cells a drill placed at (depth,col) clears.
 
-    Deliberately conservative (props are precious, pickaxes regenerate): we do NOT
-    spend a prop to clear plain terrain — for pure descent a prop saves no pickaxes
-    (each scroll only needs the one bottom cell dug; cleared extras scroll away). The
-    win is collecting MULTIPLE ore at once.
-
-    Placement: props go on an AIR cell — 空地 or 挖完的礦洞 (a count==0 dug block) —
-    NOT a solid frontier cell (live-verified: a bomb on a solid active cell is
-    rejected; on a count==0 cell it consumes and clears its blast).
-    - bomb: an air cell whose 3x3 + cross±2 blast (which reaches BELOW the viewport —
-      a pickaxe can't) covers >= min_pits pits.
-    - drill: an air cell whose column (placement depth downward) holds >= min_pits pits.
-
-    Returns the planner-style ``use`` step (type/item/block_id). The block_id is the
-    count==0 placement cell, so the caller must NOT gate it through the solid-cell
-    ``_is_diggable`` check.
+    The drill clears its own column from the placement depth downward — the same
+    counting semantics as the legacy selector (``pc == col and pd >= depth``).
+    Unbounded downward, so it captures below-viewport pits a pickaxe can't reach.
+    Only pit cells are returned (no need to enumerate the whole column).
     """
-    inv = inventory or {}
+    return {(pd, pc) for (pd, pc) in pits if pc == col and pd >= depth}
+
+
+def _pits_and_air(board: Any) -> tuple[set, frozenset]:
+    """(uncollected-pit cells, air placement cells) in absolute (depth, col)."""
     blocks = getattr(board, "blocks", None) or []
     pits = {(int(b.y), int(b.x) - 1) for b in blocks
             if int(getattr(b, "count", 0) or 0) > 0
             and (int(getattr(b, "config_id", 0) or 0) == TERRAIN_PIT
                  or int(getattr(b, "is_reward", 0) or 0))}
-    if len(pits) < min_pits:
-        return None
     # placement cells: props go on AIR — 空地 or 挖完的礦洞 (count==0 dug block),
     # NOT a solid frontier cell (live-verified 5554 2026-07-01: bomb on a solid active
     # cell is rejected/no-consume; on a count==0 cell it consumes + clears the blast).
-    air_cells = [(int(b.y), int(b.x) - 1) for b in blocks
-                 if int(getattr(b, "count", 0) or 0) == 0]
-    if not air_cells:
+    air = frozenset((int(b.y), int(b.x) - 1) for b in blocks
+                    if int(getattr(b, "count", 0) or 0) == 0)
+    return pits, air
+
+
+def _prop_candidates(remaining: set, air_set: frozenset, bomb_left: int,
+                     drill_left: int, min_pits: int, top_k: int) -> list:
+    """Admissible next props over ``air_set`` against the ``remaining`` pits.
+
+    Each candidate MUST clear >= min_pits pits BY ITSELF (a low-yield prop is never
+    folded into a combo, however high the joint total). Returned tuples carry the
+    cleared pit set and the cells this prop frees into air (a bomb frees its whole
+    blast footprint, a drill frees the pit cells it clears) so chaining can place a
+    later prop on freshly opened ground. Sorted deterministically: self-hit desc,
+    then bomb before drill, then shallower placement, then lower column; capped at
+    ``top_k`` so the DFS stays bounded.
+    """
+    cands: list = []
+    for (ad, ac) in air_set:
+        if bomb_left > 0:
+            blast = _bomb_blast_cells(ad, ac)
+            cleared = blast & remaining
+            if len(cleared) >= min_pits:
+                cands.append((len(cleared), 0, ad, ac, "bomb",
+                              frozenset(cleared), frozenset(blast)))
+        if drill_left > 0:
+            cleared = _drill_clear_cells(ad, ac, remaining)
+            if len(cleared) >= min_pits:
+                fc = frozenset(cleared)
+                cands.append((len(cleared), 1, ad, ac, "drill", fc, fc))
+    cands.sort(key=lambda t: (-t[0], t[1], t[2], t[3]))
+    return cands[:top_k]
+
+
+def _search_prop_combo(pits: set, air: frozenset, bomb_inv: int, drill_inv: int,
+                       min_pits: int, max_props: int, top_k: int) -> Optional[list]:
+    """Bounded DFS for the prop sequence maximising joint pit coverage.
+
+    Objective (lexicographic, all "smaller is better"): most pits hit, then fewer
+    props, then fewer DRILLS (drill stock is the scarce asset; pickaxes regenerate,
+    bombs are plentiful), then a deterministic placement tiebreak. Depth <=
+    max_props and top_k branching keep the leaf count tiny (<= top_k**max_props).
+    Returns the winning ``[(item, depth, col), ...]`` or None.
+    """
+    best: Dict[str, Any] = {"key": None, "seq": None}
+
+    def _dfs(remaining: set, air_set: frozenset, bomb_left: int, drill_left: int,
+             seq: list, hits: int, drills: int) -> None:
+        if seq:
+            placements = tuple((d, c) for (_it, d, c) in seq)
+            key = (-hits, len(seq), drills, placements)
+            if best["key"] is None or key < best["key"]:
+                best["key"], best["seq"] = key, list(seq)
+        if len(seq) >= max_props or not remaining:
+            return
+        for (hit, _is_drill, ad, ac, item, cleared, freed) in _prop_candidates(
+                remaining, air_set, bomb_left, drill_left, min_pits, top_k):
+            seq.append((item, ad, ac))
+            _dfs(remaining - cleared, air_set | freed,
+                 bomb_left - (item == "bomb"), drill_left - (item == "drill"),
+                 seq, hits + hit, drills + (item == "drill"))
+            seq.pop()
+
+    _dfs(pits, air, bomb_inv, drill_inv, [], 0, 0)
+    return best["seq"]
+
+
+def prop_combo_for_pits(board: Any, inventory: Optional[Dict[str, int]], *,
+                        allow_bomb: bool, allow_drill: bool, min_pits: int = 2,
+                        max_props: int = 3, top_k: int = 6
+                        ) -> Optional[List[Dict[str, Any]]]:
+    """Plan up to ``max_props`` bomb/drill steps that jointly collect the most pits.
+
+    Same admission rules as the legacy single-shot selector — pits are count>0
+    401/is_reward cells, placement is only on a count==0 AIR cell (空地/挖完礦洞),
+    every prop must clear >= ``min_pits`` pits BY ITSELF (props are precious,
+    pickaxes regenerate; we never spend a prop to clear plain terrain). The upgrade:
+    instead of one greedy shot with an unconditional bomb-before-drill bias, a
+    bounded DFS compares whole prop SEQUENCES by joint coverage, so drill is chosen
+    over bomb whenever it collects more, and a bomb that frees air can be chained
+    into a drill that reaches a column no bomb could. Placement/blast footprints are
+    absolute (reach below the viewport). Pure — no I/O, no planner import.
+
+    Returns the sequence as planner-style ``use`` steps
+    (type/item/block_id/row/col/step_cost); the block_id is the count==0 placement
+    cell, so callers must NOT gate it through the solid-cell ``_is_diggable`` check.
+    None when no admissible combo exists.
+    """
+    inv = inventory or {}
+    pits, air = _pits_and_air(board)
+    if len(pits) < min_pits or not air:
+        return None
+    bomb_inv = int(inv.get("bomb", 0) or 0) if allow_bomb else 0
+    drill_inv = int(inv.get("drill", 0) or 0) if allow_drill else 0
+    if bomb_inv <= 0 and drill_inv <= 0:
+        return None
+
+    seq = _search_prop_combo(pits, air, bomb_inv, drill_inv,
+                             min_pits, max_props, top_k)
+    if not seq:
         return None
     top = viewport_top_depth(int(getattr(board, "baseline", 0) or 0))
+    return [{"type": "use", "item": item, "block_id": ad * 100 + ac + 1,
+             "row": ad - top, "col": ac, "step_cost": 2.99}
+            for (item, ad, ac) in seq]
 
-    def _bid(depth: int, col: int) -> int:
-        return depth * 100 + col + 1
 
-    # bomb: an air cell whose 3x3+cross±2 blast (reaches below the viewport) covers
-    # >= min_pits pits. Footprint live-verified to match _bomb_blast_cells.
-    if allow_bomb and int(inv.get("bomb", 0) or 0) > 0:
-        best = None
-        for (ad, ac) in air_cells:
-            hit = len(_bomb_blast_cells(ad, ac) & pits)
-            if hit >= min_pits and (best is None or hit > best[0]):
-                best = (hit, ad, ac)
-        if best is not None:
-            _, ad, ac = best
-            return {"type": "use", "item": "bomb", "block_id": _bid(ad, ac),
-                    "row": ad - top, "col": ac, "step_cost": 2.99}
+def prop_step_for_pit(board: Any, inventory: Optional[Dict[str, int]], *,
+                      allow_bomb: bool, allow_drill: bool,
+                      min_pits: int = 2) -> Optional[Dict[str, Any]]:
+    """First step of the multi-step prop combo (``prop_combo_for_pits``), or None.
 
-    # drill: an air cell whose column (downward) holds >= min_pits pits.
-    if allow_drill and int(inv.get("drill", 0) or 0) > 0:
-        best = None
-        for (ad, ac) in air_cells:
-            hit = sum(1 for (pd, pc) in pits if pc == ac and pd >= ad)
-            if hit >= min_pits and (best is None or hit > best[0]):
-                best = (hit, ad, ac)
-        if best is not None:
-            _, ad, ac = best
-            return {"type": "use", "item": "drill", "block_id": _bid(ad, ac),
-                    "row": ad - top, "col": ac, "step_cost": 2.99}
-    return None
+    Signature and return shape are unchanged: a single planner-style ``use`` step
+    when a prop collects >= ``min_pits`` uncollected pits, else None. Internally it
+    now delegates to ``prop_combo_for_pits`` and returns the combo's first step, so
+    the executed prop is the opening move of the coverage-maximising sequence and
+    the supervised loop's per-step re-plan naturally continues the combo.
+
+    The old bomb-before-drill bias is FIXED: props are compared by JOINT coverage,
+    so a drill that collects more pits is now chosen over a bomb (regression:
+    tests/test_ws_prop_combo.py::test_drill_beats_bomb_when_it_collects_more).
+    """
+    combo = prop_combo_for_pits(board, inventory, allow_bomb=allow_bomb,
+                                allow_drill=allow_drill, min_pits=min_pits)
+    return combo[0] if combo else None
 
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
