@@ -409,99 +409,6 @@ def _parse_inventory_entry(sub: bytes) -> Dict[str, Any]:
     return entry
 
 
-# ── lamp drops (0x0504) parser ──────────────────────────────────────────────
-
-
-def parse_lamp_drops(body: bytes) -> Dict[str, Any]:
-    """Decode `0x0504` rx — a batch of lamp-open results.
-
-    Schema (empirical, verified 2026-05-11 against live 5554 session):
-        f1 varint            ← round_kind (2/3)
-        f2 varint            ← flag (0/1)
-        f3 bytes REPEATED    ← one entry PER LAMP OPENED
-            sf1 varint           ← drop_uid (sequentially decreasing)
-            sf2 varint           ← template_id (drop pool variant)
-            sf3 varint           ← lamp position (200, 199, 198... per cycle)
-            sf4 varint           ← 0 (placeholder)
-            sf5 varint           ← 0 (placeholder)
-            sf6 bytes REPEATED   ← pool composition: {f1=item_id, f2=weight}
-            sf7 bytes REPEATED   ← ACTUAL DROPS gained: {f1=item_id, f2=count}
-            sf8 varint           ← 0
-            sf9 varint           ← bonus / exp (e.g. 172545)
-
-    The `f3.6` entries describe the pool the lamp drew from (large weights
-    like 14000 / 62615) — useful for understanding rarity but NOT
-    rewards. The actual gained items are exclusively in `f3.7`.
-
-    Returns:
-        {
-          'round_kind': int,
-          'flag': int,
-          'lamps': List[{
-              'drop_uid': int,
-              'template_id': int,
-              'position': int,
-              'pool_weights': Dict[item_id, weight],
-              'rewards': Dict[item_id, count],   # ← what user actually got
-              'bonus': int | None,
-          }],
-          'total_rewards': Dict[item_id, count],  # aggregated across all lamps
-        }
-    """
-    out: Dict[str, Any] = {
-        "round_kind": None, "flag": None, "lamps": [],
-        "total_rewards": {},
-    }
-    if not body:
-        return out
-    for fnum, wire, val in _walk_pb(body):
-        if fnum == 1 and wire == 0:
-            out["round_kind"] = val
-        elif fnum == 2 and wire == 0:
-            out["flag"] = val
-        elif fnum == 3 and wire == 2:
-            lamp = _parse_lamp_entry(val)
-            out["lamps"].append(lamp)
-            for iid, n in lamp["rewards"].items():
-                out["total_rewards"][iid] = out["total_rewards"].get(iid, 0) + n
-    return out
-
-
-def _parse_lamp_entry(sub: bytes) -> Dict[str, Any]:
-    out: Dict[str, Any] = {
-        "drop_uid": None, "template_id": None, "position": None,
-        "pool_weights": {}, "rewards": {}, "bonus": None,
-    }
-    for sf, sw, sv in _walk_pb(sub):
-        if sf == 1 and sw == 0:
-            out["drop_uid"] = sv
-        elif sf == 2 and sw == 0:
-            out["template_id"] = sv
-        elif sf == 3 and sw == 0:
-            out["position"] = sv
-        elif sf == 6 and sw == 2:
-            iid, n = _parse_item_pair(sv)
-            if iid is not None:
-                out["pool_weights"][iid] = n
-        elif sf == 7 and sw == 2:
-            iid, n = _parse_item_pair(sv)
-            if iid is not None:
-                out["rewards"][iid] = out["rewards"].get(iid, 0) + n
-        elif sf == 9 and sw == 0:
-            out["bonus"] = sv
-    return out
-
-
-def _parse_item_pair(sub: bytes) -> tuple[Optional[int], Optional[int]]:
-    iid, n = None, None
-    for sf, sw, sv in _walk_pb(sub):
-        if sf == 1 and sw == 0:
-            iid = sv
-        elif sf == 2 and sw == 0:
-            n = sv
-    return iid, n
-
-
 # ── request body builders ────────────────────────────────────────────────────
 
 
@@ -582,10 +489,6 @@ async ([cmd, bodyArr, timeoutSec, netWaitMs]) => {
 # Snapshot of `window.netManager._cnet` plus the underlying WebSocket. All
 # fields are best-effort — game JS internals may differ; missing fields
 # come back undefined (→ None on the Python side). Cheap (no RPC).
-#
-# The first call also installs a one-time hook on `_cnet._socket.onclose`
-# that records close code + reason into `window.__bot_ws_close` for the
-# is_login_conflict() probe.
 _GAME_STATE_JS = r"""
 () => {
   const out = {
@@ -596,7 +499,6 @@ _GAME_STATE_JS = r"""
     has_scene: false,
     scene_name: null,
     url: location.href,
-    close_event: null,        // {ts, code, reason, was_clean} from onclose hook
   };
   try {
     if (window.netManager) {
@@ -608,27 +510,9 @@ _GAME_STATE_JS = r"""
         const ws = sock._socket;
         if (ws && typeof ws.readyState !== 'undefined') {
           out.ws_ready_state = ws.readyState;
-          // Install once: capture close events into a window-level slot
-          // so a later poll can read code+reason even after WS is gone.
-          if (ws && !ws.__bot_close_hooked) {
-            ws.__bot_close_hooked = true;
-            const origClose = ws.onclose;
-            ws.onclose = function (ev) {
-              try {
-                window.__bot_ws_close = {
-                  ts: Date.now(),
-                  code: ev && ev.code,
-                  reason: ev && ev.reason,
-                  was_clean: ev && ev.wasClean,
-                };
-              } catch (_) {}
-              if (typeof origClose === 'function') return origClose.call(this, ev);
-            };
-          }
         }
       }
     }
-    if (window.__bot_ws_close) out.close_event = window.__bot_ws_close;
     if (window.cc?.director?.getScene) {
       const sc = cc.director.getScene();
       if (sc) {
@@ -640,18 +524,6 @@ _GAME_STATE_JS = r"""
   return out;
 }
 """
-
-
-# Scene names the game uses for login/server-select/disconnect screens —
-# expand as new ones are observed. Detection logic falls back to a
-# substring match so different builds with prefixed names still match.
-_LOGIN_SCENE_HINTS = (
-    "Login",
-    "ServerSelect",
-    "Server",
-    "Reconnect",
-    "Disconnect",
-)
 
 
 # ── public API ───────────────────────────────────────────────────────────────
@@ -708,71 +580,6 @@ class WebGameAPI:
         if not st.get("has_scene"):
             return False
         return True
-
-    def is_login_conflict(self) -> bool:
-        """True when the page shows symptoms of 異地登入 (kicked by another login).
-
-        Heuristic — any of these:
-          - WS was closed with abnormal/server-initiated code (not 1000/1001)
-          - WS readyState is 3 (CLOSED) AND has_cnet still true (game saw kick)
-          - Scene name contains a Login/ServerSelect-style hint while we expect game
-
-        False on any error. Designed for "should I bail out and sleep?" — a
-        false negative just means we keep retrying RPC until timeout, which
-        is safe; a false positive would skip a usable session.
-        """
-        try:
-            st = self.game_state()
-        except Exception:
-            return False
-        if not isinstance(st, dict):
-            return False
-
-        ce = st.get("close_event") or {}
-        code = ce.get("code")
-        if code is not None:
-            try:
-                code = int(code)
-            except (TypeError, ValueError):
-                code = None
-        # 1000 = normal, 1001 = going-away (page reload). Anything else after
-        # we successfully connected is treated as kick-likely.
-        if code is not None and code not in (1000, 1001):
-            return True
-
-        # WS now CLOSED but cnet object still exists → game hasn't re-init'd
-        # because something forcibly disconnected us.
-        if st.get("has_cnet") and st.get("ws_ready_state") == 3:
-            return True
-
-        scene = (st.get("scene_name") or "")
-        if scene:
-            for hint in _LOGIN_SCENE_HINTS:
-                if hint.lower() in scene.lower():
-                    return True
-
-        return False
-
-    def kick_reason(self) -> Optional[str]:
-        """Return a short string describing the kick if `is_login_conflict()`,
-        else None. Pulls (code, reason) from the WS close hook for logging.
-        """
-        try:
-            st = self.game_state()
-        except Exception:
-            return None
-        if not isinstance(st, dict):
-            return None
-        ce = st.get("close_event") or {}
-        if ce:
-            return f"ws_close code={ce.get('code')} reason={ce.get('reason')!r}"
-        if st.get("has_cnet") and st.get("ws_ready_state") == 3:
-            return "ws_closed (no close_event captured)"
-        scene = st.get("scene_name") or ""
-        for hint in _LOGIN_SCENE_HINTS:
-            if hint.lower() in scene.lower():
-                return f"scene={scene}"
-        return None
 
     def wait_until_in_game(
         self,

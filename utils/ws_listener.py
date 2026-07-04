@@ -428,7 +428,14 @@ class WSFrameTracker:
             frames = drain_ws_frames(page, since_ms=self._last_drain_ms, max_n=max_n)
         except Exception:
             return []
-        self._last_drain_ms = cur
+        # Advance the high-water mark from what was actually returned, not from a
+        # timestamp snapshotted before the query: a frame arriving between `cur`
+        # and the drain would have ts > cur and be re-returned on the next drain.
+        # Using max returned ts guarantees no returned frame re-qualifies.
+        if frames:
+            self._last_drain_ms = max(f["ts"] for f in frames)
+        else:
+            self._last_drain_ms = cur
         return frames
 
     def reset(self) -> None:

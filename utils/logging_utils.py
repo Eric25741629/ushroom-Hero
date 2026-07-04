@@ -169,11 +169,20 @@ def _build_formatter() -> logging.Formatter:
 # (no thread-local lookup needed) and it matches bot_state's ip key exactly.
 #   setup_logger_for_device       -> "logger_<id>"
 #   setup_miner_logger            -> "miner_<id>"
-#   get_or_create_ws_mining_logger-> "ws_mining_<id>"   (WS 純掛機挖礦)
-#   get_or_create_ws_farm_logger  -> "ws_farm_<id>"     (WS 純掛機農場)
+#   get_or_create_ws_mining_logger   -> "ws_mining_<id>"    (WS 純掛機挖礦)
+#   get_or_create_ws_farm_logger     -> "ws_farm_<id>"      (WS 純掛機農場)
+#   get_or_create_ws_ad_reward_logger-> "ws_ad_reward_<id>" (WS 看廣告獎勵)
+#   get_or_create_ws_lamp_logger     -> "ws_lamp_<id>"      (WS 開神燈)
 # Order: longest/most-specific WS prefixes first so e.g. "ws_mining_" is not
 # accidentally shadowed (none currently overlap, but keep the invariant explicit).
-_DEVICE_LOGGER_NAME_PREFIXES = ("ws_mining_", "ws_farm_", "logger_", "miner_")
+_DEVICE_LOGGER_NAME_PREFIXES = (
+    "ws_ad_reward_",
+    "ws_mining_",
+    "ws_farm_",
+    "ws_lamp_",
+    "logger_",
+    "miner_",
+)
 
 
 def _device_id_from_logger_name(name: str):

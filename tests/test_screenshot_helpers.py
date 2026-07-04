@@ -150,3 +150,27 @@ def test_log_main_page_mismatch_falls_back_to_error_screenshot(fake_recorder, fa
     assert len(fake_recorder.calls) == 2
     # Fallback call is the "error screenshot" path — task is forced to ""
     assert fake_recorder.calls[1]["task"] == ""
+
+
+def test_log_main_page_mismatch_survives_capture_exception(fake_recorder, fake_bot_state):
+    """SmartScreenshotRecorder.capture raises RuntimeError on imwrite failure;
+    log_main_page_mismatch must swallow it and fall through to the error-shot
+    fallback instead of propagating (regression)."""
+    # First capture (main-page path) raises; the fallback capture (task="") wins.
+    calls: list[dict] = []
+
+    def _capture(**kwargs):
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise RuntimeError("imwrite failed")
+        return "/screens/after_error.png"
+
+    fake_recorder.capture = _capture  # type: ignore[assignment]
+
+    result = screenshot_helpers.log_main_page_mismatch(
+        device_obj=SimpleNamespace(), ip="emu-3", stage="X",
+        task="boom_task", reason="imwrite_boom",
+    )
+    assert result == "/screens/after_error.png"
+    assert len(calls) == 2
+    assert calls[1]["task"] == ""  # fallback path
