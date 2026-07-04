@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from ws_token import codec
@@ -30,7 +31,13 @@ logger = logging.getLogger(__name__)
 CMD_CAR_PARK_INFO = 12801
 CMD_SHOP_INFO = 6913
 CMD_SHOP_BUY = 6914
-CMD_SKIN_UP = 12817
+CMD_SKIN_UP = 12817        # s2c reply cmd; the c2s goes via the json envelope
+CMD_JSON_PROTO = 14337     # json_proto.json_proto_c2s {1:proto_id, 2:msg-json}.
+                           # The real client sends skin_up with useJson=true
+                           # (netManager.send(name, msg, true)); a raw-protobuf
+                           # 12817 c2s is handled erratically by the server
+                           # (live 2026-07-05: executed+replied / executed
+                           # silently / silently ignored).
 CMD_ERROR = 0x0201  # 513
 CMD_ROLE_INFO = 0x0301  # 769 — role.role_info; empty c2s body -> fresh role
                         # snapshot (server replies 769 AND re-pushes 769).
@@ -70,6 +77,26 @@ def _load_catalog() -> dict[tuple[int, int], dict]:
 
 
 # --- helpers ---------------------------------------------------------------
+
+def _is_on_sale(open_time, now=None) -> bool:
+    """True iff ``now`` falls inside a configMall ``open_time`` window.
+
+    ``open_time`` = ``[[[Y,M,D],[h,m,s]], [[Y,M,D],[h,m,s]]]`` (start, end) or
+    falsy for evergreen items. Seasonal frags outside their window are rejected
+    by the server with 0x0201 code=283 (live 2026-07-05, shop 1739).
+    """
+    if not open_time:
+        return True
+    try:
+        import datetime
+        (sd, st), (ed, et) = open_time
+        start = datetime.datetime(*sd, *st)
+        end = datetime.datetime(*ed, *et)
+        now = now or datetime.datetime.now()
+        return start <= now <= end
+    except Exception:  # noqa: BLE001 — malformed window: assume on sale
+        return True
+
 
 def _name_of(catalog: dict, deco_id: int) -> str:
     for lv in (1, 0):
@@ -241,6 +268,11 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
             limit_remaining = (cap - bought) if sh else 0
             price = sh["price"] if sh else 0
             shop_id = sh["shop_id"] if sh else None
+            # Seasonal frag outside its open_time window: the server rejects
+            # the buy (0x0201 code=283), so zero the quota — planner skips it.
+            off_shelf = bool(sh) and not _is_on_sale(sh.get("open_time"))
+            if off_shelf:
+                limit_remaining = 0
 
             steps = _build_steps(catalog, skin_id, skin_lev)
             decos.append({
@@ -254,6 +286,7 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
                 "frag_goods": fg,
                 "bought": bought,
                 "cap": cap,
+                "off_shelf": off_shelf,
             })
 
         decos.sort(key=lambda d: d["id"])
@@ -271,6 +304,39 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
         return None, f"{type(exc).__name__}: {exc}"
 
 
+# Reply frames for 6914/12817 are a fast path only: live (2026-07-05, 7fe98fc6)
+# skin_up replies can go missing even when the action landed. Wait this long
+# for the reply, then fall back to ground-truth re-reads (6913 buy counts /
+# 12801 levels) instead of trusting the frame.
+_REPLY_WAIT_S = 8.0
+# The server silently DROPS a skin_up arriving too soon after the previous one
+# (live: ~1s gaps dropped, 10s gaps ok). After an unconfirmed upgrade, wait
+# this long, re-verify (a late landing must not be re-sent), then retry once.
+_COOLDOWN_WAIT_S = 6.0
+
+
+def _error_code(body: bytes):
+    """Decode error_info_s2c {error_code#1}; falls back to '?' if unparsable."""
+    try:
+        code = codec.walk_dict(body).get(1)
+        return int(code) if isinstance(code, int) else "?"
+    except Exception:  # noqa: BLE001
+        return "?"
+
+
+def _read_levels(client: WSGameClient, role_id: int,
+                 timeout: float) -> dict[int, int]:
+    body = client.call(CMD_CAR_PARK_INFO,
+                       _build_car_park_info_body(role_id),
+                       timeout=timeout)
+    return dict(_parse_skin_list(body))
+
+
+def _read_buy_counts(client: WSGameClient, timeout: float) -> dict[int, int]:
+    body = client.call(CMD_SHOP_INFO, _build_shop_info_body(), timeout=timeout)
+    return _parse_shop_buy_info(body)
+
+
 def exec_buy_and_upgrade(
     client: WSGameClient,
     shop_id: int,
@@ -283,69 +349,101 @@ def exec_buy_and_upgrade(
     """Buy frags + upgrade one star via pure WS. Returns (result, error).
 
     result: {ok, bought, name, before_level, after_level, err?}
+    Mutations are ground-truth verified by re-reads: a lost reply frame is not
+    treated as failure, and a real 0x0201 reject surfaces its decoded code.
     """
     try:
+        from ws_token.client import WSTimeoutError
+
         role_id = client._creds.role_id
         catalog = _load_catalog()
         name = _name_of(catalog, skin_id)
+        reply_wait = min(_REPLY_WAIT_S, timeout)
 
-        # Read current level
-        car_body = client.call(CMD_CAR_PARK_INFO,
-                               _build_car_park_info_body(role_id),
-                               timeout=timeout)
-        skins = dict(_parse_skin_list(car_body))
-        before_level = skins.get(skin_id, 0)
+        before_level = _read_levels(client, role_id, timeout).get(skin_id, 0)
 
-        # Buy frags
+        # Buy frags (reply = fast path; timeout -> verify via 6913 count delta)
         bought = False
         if frags > 0:
+            pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
             buy_body = (codec.pb_uint(1, 11)
                         + codec.pb_uint(2, shop_id)
                         + codec.pb_uint(3, frags))
-            cmd, reply = client.call_for(
-                CMD_SHOP_BUY, buy_body,
-                expect_cmds=(CMD_SHOP_BUY, CMD_ERROR),
-                timeout=timeout)
-            if cmd == CMD_SHOP_BUY:
-                bought = True
-            else:
-                return {"ok": False, "bought": False, "name": name,
-                        "before_level": before_level,
-                        "err": f"buy_rejected_{cmd}"}, None
+            try:
+                cmd, reply = client.call_for(
+                    CMD_SHOP_BUY, buy_body,
+                    expect_cmds=(CMD_SHOP_BUY, CMD_ERROR),
+                    timeout=reply_wait)
+                if cmd == CMD_SHOP_BUY:
+                    bought = True
+                else:
+                    return {"ok": False, "bought": False, "name": name,
+                            "before_level": before_level,
+                            "err": f"buy_rejected_code_{_error_code(reply)}"}, None
+            except WSTimeoutError:
+                post_count = _read_buy_counts(client, timeout).get(shop_id, 0)
+                if post_count >= pre_count + frags:
+                    bought = True  # reply frame lost but the buy landed
+                else:
+                    return {"ok": False, "bought": False, "name": name,
+                            "before_level": before_level,
+                            "err": "buy_unconfirmed_no_reply"}, None
         else:
             bought = True
 
-        # Upgrade
-        if do_upgrade:
-            up_body = codec.pb_uint(1, 0) + codec.pb_uint(2, skin_id)
-            cmd, reply = client.call_for(
-                CMD_SKIN_UP, up_body,
-                expect_cmds=(CMD_SKIN_UP, CMD_ERROR),
-                timeout=timeout)
-            if cmd != CMD_SKIN_UP:
-                return {"ok": False, "bought": bought, "name": name,
-                        "before_level": before_level,
-                        "after_level": before_level,
-                        "err": f"upgrade_rejected_{cmd}"}, None
-
-            # Verify new level
-            car_body2 = client.call(CMD_CAR_PARK_INFO,
-                                    _build_car_park_info_body(role_id),
-                                    timeout=timeout)
-            skins2 = dict(_parse_skin_list(car_body2))
-            after_level = skins2.get(skin_id, before_level)
-            if after_level <= before_level:
-                return {"ok": False, "bought": bought, "name": name,
-                        "before_level": before_level,
-                        "after_level": after_level,
-                        "err": "upgrade_no_levelup"}, None
+        if not do_upgrade:
             return {"ok": True, "bought": bought, "name": name,
                     "before_level": before_level,
-                    "after_level": after_level}, None
+                    "after_level": before_level}, None
 
+        def _send_upgrade():
+            """-> ('rejected', code) | ('replied', None) | ('silent', None)."""
+            up_msg = json.dumps({"type": 0, "skin_id": int(skin_id)},
+                                separators=(",", ":"))
+            up_body = codec.pb_uint(1, CMD_SKIN_UP) + codec.pb_str(2, up_msg)
+            try:
+                cmd, reply = client.call_for(
+                    CMD_JSON_PROTO, up_body,
+                    expect_cmds=(CMD_SKIN_UP, CMD_ERROR),
+                    timeout=reply_wait)
+                if cmd != CMD_SKIN_UP:
+                    return "rejected", _error_code(reply)
+                return "replied", None
+            except WSTimeoutError:
+                return "silent", None
+
+        def _rejected(code):
+            return {"ok": False, "bought": bought, "name": name,
+                    "before_level": before_level,
+                    "after_level": before_level,
+                    "err": f"upgrade_rejected_code_{code}"}, None
+
+        outcome, code = _send_upgrade()
+        if outcome == "rejected":
+            return _rejected(code)
+        after_level = _read_levels(client, role_id, timeout).get(
+            skin_id, before_level)
+        if after_level <= before_level and outcome == "silent":
+            # Cooldown drop or lost/late reply: wait, re-verify (a late landing
+            # must NOT be re-sent), then retry once.
+            time.sleep(_COOLDOWN_WAIT_S)
+            after_level = _read_levels(client, role_id, timeout).get(
+                skin_id, before_level)
+            if after_level <= before_level:
+                outcome, code = _send_upgrade()
+                if outcome == "rejected":
+                    return _rejected(code)
+                after_level = _read_levels(client, role_id, timeout).get(
+                    skin_id, before_level)
+
+        if after_level <= before_level:
+            return {"ok": False, "bought": bought, "name": name,
+                    "before_level": before_level,
+                    "after_level": after_level,
+                    "err": "upgrade_no_levelup"}, None
         return {"ok": True, "bought": bought, "name": name,
                 "before_level": before_level,
-                "after_level": before_level}, None
+                "after_level": after_level}, None
 
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
