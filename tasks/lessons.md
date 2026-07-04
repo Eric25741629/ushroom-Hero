@@ -440,3 +440,11 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
 - **UI 審查 subagent 的假設要 live 驗證**：ui-review 一開始判「deferred app.js 下 window.UI
   未定義」是 defect，live 實測推翻（var/window 別名 + await 順序沒問題）。靜態推論的 JS 時序
   結論一律要跑過再定案。
+
+## 2026-07-05 內建 Grep/rg 對非 ASCII repo 路徑會靜默掃 0 檔
+
+- **情境**：8 個 log/code 審查 subagents 中有 3 個獨立踩到：對 `C:\nas同步_project\菇勇者全自動掛機\logs\**\*.log`
+  用內建 Grep tool 或 `rg` glob，回 0 matches 但無錯誤 —— 看起來像「沒問題」，實際是路徑含中文導致掃到 0 個檔。
+  另 logs/ 被 gitignore 也會讓部分工具默默跳過。
+- **Rule**：在本 repo 掃 log/檔案，(1) 先用一個「必定有 match」的 pattern 驗證工具真的有讀到檔；
+  (2) 失敗就改逐檔明確路徑或 Bash POSIX grep；(3) dispatch subagent 的 prompt 要預先警告這個坑。

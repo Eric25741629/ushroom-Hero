@@ -804,3 +804,66 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - ADB 後端（H5 驗證後另開）。
 - 打輸重試、戰力不足自動停整台（本輪用「跳過該 NPC」已足）。
 
+---
+
+## 全面體檢報告 — 2026-07-05（8 Opus agents：4 log + 4 code audit，待使用者逐條裁決）
+
+> 只分析未修改。log 涵蓋 07-02~07-05 全部裝置；code audit 涵蓋 miner/ws_token、game_actions/farm_v2/opengold_v2/task_sandbox、utils/核心入口、control_panel/runtime_services。
+> 所有 dead-code 皆經 repo-wide grep 驗證（含 tools/tests/templates/static）。
+
+### 挖礦結論：健康
+- WS 挖礦：5 裝置全部正常以 `pickaxe_empty` 收尾；hold_floor 僅 2 次且 1 輪自復原；鎬/鑽/炸彈逐場對帳一致，無 desync、無 rate-limit、無空 plan 卡死。
+- ADB 挖礦（5558）：零例外零崩潰；session 均正常收尾。僅低嚴重度兩項（見 M9/M10）。
+- 記憶中「bomb OCR 讀 0」bug 確認只在 web_h5 路徑（web-002 有實錘），ADB 路徑讀值正常。
+
+### A. Runtime 維運（非改碼即可處理）
+- [ ] **A1 [HIGH] emulator-5556 執行緒卡死**：07-04 21:05 `app_start reused game url loaded during restart`（device_wrapper.py:986 重啟路徑）後靜默 6h+，game-init 未觸發，無 watchdog 救援。→ 先查活體/重啟；考慮加 per-thread stall watchdog。
+- [ ] **A2 [HIGH] emulator-5558 缺 WS 憑證**：每輪 `no captured creds` 退回全 Playwright，連鎖萬神試煉失敗+10 輪「不在主頁面」。→ 跑 `python tools/adb_token_login.py --device emulator-5558`。
+- [ ] **A3 [INFO] 賞金之路生產未驗證**：合併後因雙週 gating 尚未執行過，建議首個開放週末盯 log。
+- [ ] **A4 [INFO] online_monitor FORCE blind-connect 6 次**：guard 正確（全部排除 human 帳號 5558），但 snapshot stale >300s 頻率偏高，偵測覆蓋可調。非急。
+
+### B. 真 bug（行為錯誤，建議修）
+- [ ] **B1 [HIGH] new_main_v2.py:386 病句**：`== "滑動解除節電模式'"` 字串尾多一個 `'`，比對永遠 false → 節電滑動解鎖畫面時 `unlock_screen()` 永不執行。修：刪多餘引號。
+- [ ] **B2 [MED] ws_token/lamp.py:344（另 472/523/578/583）**：WS 神燈 EQUIP 後 `wear`（cmd=1282）31/31 次 no-response timeout；`sell`（cmd=1285）同。裝可能根本沒穿上，或伺服器沉默成功導致誤報+`equipped=N` 統計失真。修：穿後補讀裝備狀態驗證，或把 no-reply 視為成功。
+- [ ] **B3 [MED] utils/logging_utils.py:176**：`_DEVICE_LOGGER_NAME_PREFIXES` 漏 `ws_ad_reward_`/`ws_lamp_` → 這兩類 log 靜默不橋接到 dashboard ring buffer。修：補進 tuple。
+- [ ] **B4 [MED] utils/model_sync.py:71-92**：chunked copy 無 `copied == remote_size` 驗證即 atomic rename → NAS 不穩時可能把截斷模型提升為 local 並載入。修：rename 前驗 size/hash，不符 fallback remote_path。
+- [ ] **B5 [MED] utils/pause_guard.py:116**：註解說「快照失敗(空)→視為 diverged abort」，但兩次快照都失敗時 `"" == ""` 不會 abort → 在未知頁面狀態下續點。修：`if before != after or not before or not after: raise`。
+- [ ] **B6 [MED] game_actions/daily_tasks.py:50**：每日加速「無法進入家園頁面」失敗後不回主頁 → 同輪後續 4+ 任務連環「不在主頁面」、pipeline 強制中止（5554×2、5556×1 實錄）。修：失敗路徑先導航回主頁再 return。
+- [ ] **B7 [MED] game_actions/weekly_trials.py:134/198**：萬神試煉結算開不出「結束本局」→ 中止後停在非主頁，連鎖污染後續任務（5558 rotated log 23 次）。修：結算失敗強制回主頁。
+- [ ] **B8 [MED] control_panel/routes_status.py:449**：`_device_role_id` 用 `lru_cache` 無失效機制 → runtime 改 config 後 `account_online` 徽章持續顯示舊 role_id。修：移除 cache 或 config 寫入時 clear。
+- [ ] **B9 [LOW] miner/planning/item_planner.py:15**：`TOOL_DEBUG=True` 留在 v1 熱路徑（每輪 planning 多發 print 直上 stdout，繞過 per-device logger）。修：預設 False。
+- [ ] **B10 [LOW] control_panel/routes_status.py:53-58**：OCR `server_mode: "auto"` 與 `"main"` 分支逐字相同，「auto」零效果。修：合併分支或實作真正的 auto 排序。
+- [ ] **B11 [LOW] utils/screenshot_helpers.py:38**：`log_main_page_mismatch` 呼叫 `capture` 未包 try/except（imwrite 失敗會 raise 出防禦性 helper；同檔 `save_error_screenshot` 有包，不一致）。
+- [ ] **B12 [LOW] utils/ws_listener.py:424-431**：drain 高水位在查詢前取樣 → 視窗內 frame 可能跨兩次 drain 重複回傳（telemetry 重複，不致損毀）。
+
+### M. 挖礦低優先改進（log 實證，非急）
+- [ ] **M9 [LOW] miner v4 no_pit 有時回空步**：盤面仍有可達 dirt 卻連 3 空 plan 提前中止（5558×2）。與「v4 應持續吐進度挖步」設計不符。查 miner/v4 no_pit 分支。
+- [ ] **M10 [LOW] 鏟子漂移 +3/+4 反覆 WARN（68 次，66 正）**：executor 未把「挖到 pit 反獎鏟子」計回內部 counter，OCR 校驗每次上修。功能無害，telemetry 不準。mining_service.py:549-569。
+- [ ] **M11 [INFO] ws_mining log 每步印 `hold_floor=False`**：干擾關鍵字告警；監控應改盯 summary 的 `hold_floor_rounds=[1-9]`。
+
+### D. 死碼（全部 grep 驗證零呼叫；確認後可刪）
+- [ ] **D1** device_wrapper.py:251-357 `PlaywrightContextAdapter`/`PlaywrightContextConfig`/`DEFAULT_PLAYWRIGHT_CONTEXT_OPTIONS`（~100 行廢棄抽象層，從未實例化）
+- [ ] **D2** game_initialization.py `check_on_line` + `_check_on_line_via_protocol` + `_check_on_line_via_ocr_legacy`（舊 5558 線上檢查，已被 online_check_service 取代；new_main_v2.py:35 / wake_up_handler.py:9 的 import 也是死的；test mocks 過期）
+- [ ] **D3** game_initialization.py:437 `check_on_line_protocol_only` + `CHECK_TARGET_NOT_FRIEND`（從未接線）
+- [ ] **D4** new_main_v2.py:600 `temporary_reset_cycles`（一次性手動工具留在入口）；new_main_v2.py:8 重複 `import os`
+- [ ] **D5** img_tools.py:224 `save_stage_debug_image`（且 imwrite 被註解掉，宣稱有存實際沒存）；:41/:50 `set/get_ocr_server_mode`；:429/438 `find_and_click` 死目錄建立
+- [ ] **D6** utils/carpark_auto.py:1001 `park_one_normal`、:880 `recall_n_cross`、:759 `recall_one_cross`
+- [ ] **D7** utils/wake_up_handler.py:261 `_is_5554_busy_by_state`、:179/:183 `get_lock_status`/`set_lock_status`、:256 無效 `global _wakeup_lock`
+- [ ] **D8** utils/web_game_api.py:415/470/495 `parse_lamp_drops` 三件組（equipment_cache 已另行正確實作）；:712/756 `is_login_conflict`/`kick_reason`
+- [ ] **D9** game_actions/periodic_tasks.py:13 `should_execute_sea`（live 走 json_manager 版）
+- [ ] **D10** game_actions/daily_tasks.py:127 `claim_daily_free_pack`（實際用的是 daily_gift_task 的同名異函式）
+- [ ] **D11** farm_v2/operations/weekly_card.py 舊流程 `run_weekly_card`/`buy_shop_items`/`collect_weekly_card`/`do_fertilize`/`cancel_work`（保留 `check_if_parttime`）；plant.py `plant_one`/`plant_cycle`（保留 `check_slot_color`）；states.py 廢棄 state-machine + manager.py:14 未用 import
+- [ ] **D12** opengold_v2/config.sync-conflict-20260411-*.py（Syncthing 衝突孤兒檔，直接刪）
+- [ ] **D13** miner/planning/planner.py:257 `plan_greedy_with_rewards`、:47 `is_void`；mining_service.py:722 `demo_plan_print` + 其唯一依賴 `plan_min_cost_to_floor7`
+- [ ] **D14** control_panel/routes_worker.py:43-46 `global_resp` 死賦值；routes_status.py:182 `/api/device_data/<ip>` 無前端呼叫；shared/command_queue.py:112 本地 `recover` 分支不可達
+
+### S. 文案/註解過期（低優先，順手修）
+- [ ] **S1（重要）** ws_token/mining_adapter.py:1-9 docstring 說 v5/plan_v4，實際 :514 呼叫 **v1 `plan_smart`** → **CLAUDE.md「WS 挖礦走 v4」與 memory 已過時，需一併更正**（log 中 "A* Planning" 訊息即為 v1 實證）。
+- [ ] **S2** miner/v4/planner.py:1 說 5-step 實際 MAX_DEPTH=3；:266 說 drill cost 1.5 實際 2.5
+- [ ] **S3** game_actions/dungeon_scheduler.py:6 docstring 週二~五，實際 gate 到週六（task_due 正確）
+- [ ] **S4** task_sandbox/tasks/lamp.py:38 references 仍列廢棄 V1 `Open_gold_paddle_ocr.py`
+
+### P. 待使用者決策
+- [ ] **P1** labeler/trainer/`/api/ocr_config` 等全域操作端點只擋登入、無 `require_admin`——非管理員可觸發訓練/改全域 OCR 設定。要不要收緊？
+- [ ] **P2** D 區死碼是否整批刪除（建議一個 chore branch 一次清）？
+
