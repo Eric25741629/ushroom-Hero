@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 import bot_state
 import config_manager
 from runtime_services.wake_override_service import apply_manual_wake_override
+from runtime_services.wake_parity import parse_hour_parity, parse_minute_offset
 
 
 # Explicit per-device overrides (seconds). Empty by default: every device's
@@ -37,29 +38,22 @@ PROCESS_START_TS: float = time.time()
 def _parity_rank(value) -> int:
     """Order key for hour-parity: even -> 0, odd -> 1, unset/other -> 2.
 
-    ``bool`` is rejected (treated as unset) so True/False don't pose as 1/0.
+    Reuses the canonical :func:`runtime_services.wake_parity.parse_hour_parity`
+    (shared with sleep_service) and maps its "unset" (``None``) to 2 so unset
+    devices sort last.
     """
-    if isinstance(value, bool):
-        return 2
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v == "even":
-            return 0
-        if v == "odd":
-            return 1
-        return 2
-    if isinstance(value, int) and value in (0, 1):
-        return value
-    return 2
+    parity = parse_hour_parity(value)
+    return 2 if parity is None else parity
 
 
 def _offset_rank(value) -> int:
-    """Order key for minute offset: a non-negative int, else 0."""
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int) and value >= 0:
-        return value
-    return 0
+    """Order key for minute offset: a non-negative int, else 0.
+
+    Reuses :func:`runtime_services.wake_parity.parse_minute_offset` and maps
+    its "unset" (``None``) to 0 so unset devices sort first.
+    """
+    offset = parse_minute_offset(value)
+    return 0 if offset is None else offset
 
 
 def compute_stagger_order(devices: Dict[str, dict]) -> List[str]:
@@ -137,13 +131,6 @@ def _handle_startup_sleep(ip: str, device_logger) -> None:
                 wake_ts = next_wake_ts
                 remaining_startup_sleep = max(0, int(wake_ts - time.time()))
                 if remaining_startup_sleep <= 0:
-                    break
-            if bot_state.is_online_check_checker(ip):
-                if (
-                    bot_state.has_pending_online_check_request(ip)
-                    or bot_state.is_online_check_priority_active(ip)
-                ):
-                    device_logger.info(f"[{ip}] 收到 requester 上線檢查請求，提前結束啟動休眠")
                     break
             if bot_state.has_pending_web_launch_request(ip):
                 device_logger.info(f"[{ip}] 收到中控啟動請求，提前結束啟動休眠")

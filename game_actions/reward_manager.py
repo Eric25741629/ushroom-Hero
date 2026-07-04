@@ -21,7 +21,7 @@ def reward(d, easyocr_reader=None):
     result = img_tools.wait_for_any_text(d, ["領取", "放置獎勵"], timeout=2, click_if_found=False)
     
     if result:
-        logger.info(f"大腦偵測到獎勵介面: {result}")
+        logger.info(f"偵測到獎勵介面: {result}")
         # 原本的硬座標顏色採樣點
         if abs(np.sum(img[328, 135])-np.sum([206, 237, 247])) > 12:
             if not os.path.exists("reward_get"):

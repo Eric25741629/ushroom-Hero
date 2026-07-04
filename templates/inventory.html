@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>倉庫檢視 · 守護靈 / 神器附魔</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
+{% include '_assets_head.html' %}
+<style>
+  /* :root token block removed (Phase 3 C6/C13/C14): every var (--bg/--panel/--panel2/
+     --line/--text/--muted/--accent/--accent2/--warn/--danger/--q3..--q8) is aliased in
+     tokens.css to an AA-correct value, so the page now routes through the accessible tokens.
+     Status TEXT (lockbadge/note/lvl/eqbadge/err/conn) is additionally pinned to the
+     --status-*-text tokens below so colored labels clear 4.5:1. */
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  header h1, .modal h2 { font-family:"Sora","Noto Sans TC","Microsoft JhengHei",sans-serif; }
+  html.embedded header .home { display:none; }
+  header { padding:14px 20px; background:linear-gradient(180deg,#ffffff,#faf6ee);
+           border-bottom:1px solid var(--line); display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0; letter-spacing:.5px; }
+  header .home { color:var(--muted); text-decoration:none; font-size:13px; }
+  header .home:hover { color:var(--accent); }
+  .wrap { padding:18px 20px 60px; max-width:1500px; margin:0 auto; }
+  .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  select, input[type=text], input[type=number] {
+    background:var(--panel2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:7px 10px; font-size:13px; }
+  input[type=number] { width:84px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px;
+           padding:8px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+  button:hover { filter:brightness(1.08); }
+  button.ghost { background:var(--panel2); color:var(--text); border:1px solid var(--line); }
+  button.warn { background:var(--warn); color:#1a1300; }
+  .tabs { display:flex; gap:6px; margin-bottom:16px; }
+  .tabs button { background:var(--panel2); color:var(--muted); border:1px solid var(--line);
+                 border-radius:10px 10px 0 0; padding:10px 18px; }
+  .tabs button.on { background:var(--panel); color:var(--text); border-bottom-color:var(--panel); }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:0 12px 12px 12px; padding:16px; }
+  .meta { color:var(--muted); font-size:12.5px; margin:6px 0 12px; }
+  .hist { display:flex; gap:6px; flex-wrap:wrap; margin:8px 0 14px; }
+  .chip { font-size:12px; padding:3px 9px; border-radius:999px; background:var(--panel2);
+          border:1px solid var(--line); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); gap:10px; }
+  .card { background:var(--panel2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; }
+  .card.locked { border-color:var(--warn); }
+  .card .top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+  .card .nm { font-weight:600; }
+  .card .sub { color:var(--muted); font-size:12px; }
+  .lvl { color:var(--status-ok-text); font-weight:700; }  /* C6: mint TEXT -> AA deep mint */
+  /* C6: amber TEXT -> AA deep amber; bright amber kept on the border (non-text UI) */
+  .lockbadge { color:var(--status-warn-text); font-size:11px; border:1px solid var(--warn-rim);
+               border-radius:6px; padding:0 5px; }
+  .affixes { margin-top:8px; display:flex; flex-direction:column; gap:3px; }
+  .arow { display:flex; gap:6px; align-items:center; font-size:12.5px; }
+  .apos { color:var(--muted); width:42px; flex:none; }
+  .atag { background:#faf6ee; border:1px solid var(--line); border-radius:6px;
+          padding:1px 7px; font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; }
+  th,td { padding:6px 8px; border-bottom:1px solid var(--line); text-align:left; white-space:nowrap; }
+  th { color:var(--muted); font-weight:600; position:sticky; top:0; background:var(--panel); cursor:pointer; }
+  td.attrs { white-space:normal; }
+  tr.sell { background:rgba(226,107,134,.12); }
+  /* visually-hidden but SR-readable (table <caption>) */
+  .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+             overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+  .qbadge { display:inline-block; min-width:20px; text-align:center; border-radius:6px;
+            padding:0 6px; font-weight:700; color:#0b1020; }
+  .note { color:var(--status-warn-text); font-size:12.5px; margin-top:10px; }  /* C6: AA deep amber */
+  .err { color:var(--status-danger-text); }  /* C6: rose TEXT -> AA deep rose */
+  .tablewrap { max-height:70vh; overflow:auto; border:1px solid var(--line); border-radius:8px; }
+  .spin { color:var(--muted); }
+  label.inline { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:12.5px; }
+  /* C6: coral TEXT -> AA deep coral; bright coral kept on the rim (non-text UI) */
+  .eqbadge { color:var(--status-accent-text); font-size:11px; border:1px solid var(--coral-rim);
+             border-radius:6px; padding:0 5px; }
+  .conn { font-size:12.5px; padding:3px 10px; border-radius:999px; border:1px solid var(--line);
+          background:var(--panel2); color:var(--muted); }
+  /* C6: conn status TEXT -> AA deep tokens; bright hues kept as the border rim */
+  .conn.on { color:var(--status-ok-text); border-color:var(--mint-rim); }
+  .conn.off { color:var(--status-danger-text); border-color:var(--rose-rim,#f0bcc8); }
+  .modal-bg { position:fixed; inset:0; background:rgba(43,38,32,.45); display:none;
+              align-items:center; justify-content:center; z-index:50; }
+  .modal-bg.show { display:flex; }
+  .modal { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+           padding:24px 28px; max-width:380px; text-align:center; box-shadow:0 18px 60px rgba(70,52,28,.22); }
+  .modal h2 { margin:0 0 10px; font-size:17px; }
+  .modal p { color:var(--muted); margin:0 0 18px; }
+  .modal .row { display:flex; gap:10px; justify-content:center; }
+  .modal .cd { color:var(--status-warn-text); font-weight:700; }  /* C6: AA deep amber countdown */
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要內容</a>
+<header>
+  <h1>📦 倉庫檢視</h1>
+  <a class="home" href="/">← 回主控台</a>
+  <div class="controls" style="margin:0" role="group" aria-label="裝置連線">
+    <label class="inline">裝置
+      <select id="dev" onchange="onDevChange()"></select>
+    </label>
+    <span id="connState" class="conn off">未連線</span>
+    <button id="connBtn" class="ghost" onclick="toggleConn()">連線</button>
+    <span id="status" class="spin"></span>
+  </div>
+</header>
+
+<main id="main" class="wrap" tabindex="-1">
+  <div class="tabs" role="tablist" aria-label="倉庫分類">
+    <button id="tabSpirit" class="on" role="tab" aria-selected="true" aria-controls="secSpirit" onclick="showTab('spirit')">🛡 守護靈詞條</button>
+    <button id="tabGem" role="tab" aria-selected="false" aria-controls="secGem" onclick="showTab('gem')">💎 神器附魔石</button>
+  </div>
+
+  <!-- 守護靈 -->
+  <section id="secSpirit" class="panel" role="tabpanel" aria-labelledby="tabSpirit">
+    <div class="controls">
+      <button id="loadSpiritBtn" onclick="loadSpirit()">讀取守護靈</button>
+      <input type="text" id="spAffix" placeholder="詞條過濾（如 crit / hp / counter）" oninput="renderSpirit()">
+      <label class="inline">最低等級 <input type="number" id="spMinLv" value="0" min="0" oninput="renderSpirit()"></label>
+      <label class="inline">鎖
+        <select id="spLock" onchange="renderSpirit()">
+          <option value="all">全部</option><option value="1">已鎖</option><option value="0">未鎖</option>
+        </select>
+      </label>
+      <label class="inline">排序
+        <select id="spSort" onchange="renderSpirit()">
+          <option value="level">等級↓</option><option value="config">編號</option>
+        </select>
+      </label>
+    </div>
+    <div id="spMeta" class="meta"></div>
+    <div id="spGrid" class="grid"></div>
+  </section>
+
+  <!-- 神器附魔石 -->
+  <section id="secGem" class="panel" role="tabpanel" aria-labelledby="tabGem" style="display:none">
+    <div class="controls">
+      <button id="loadGemBtn" onclick="loadGem()">讀取神器附魔石</button>
+      <span class="meta" style="margin:0">聯合搜索：</span>
+      <input type="text" id="gAttr" placeholder="屬性過濾（如 att / hp / resist）" oninput="renderGem()">
+      <label class="inline">品質≤ <input type="number" id="gMaxQ" value="8" min="1" max="20" oninput="renderGem()"></label>
+      <label class="inline">套裝 <input type="number" id="gSuit" placeholder="全部" oninput="renderGem()"></label>
+      <label class="inline"><input type="checkbox" id="gUnlockOnly" onchange="renderGem()"> 只看未鎖</label>
+      <label class="inline"><input type="checkbox" id="gHasRand" onchange="renderGem()"> 有隨機詞條</label>
+    </div>
+    <div id="gMeta" class="meta"></div>
+    <div id="gHist" class="hist"></div>
+    <div class="controls toolbar--stack">
+      <label class="inline">標記最低品質的前 <input type="number" id="gSellN" value="50" min="0" oninput="renderGem()"> 顆（賣最低候選）</label>
+      <button class="ghost" onclick="selectSellCandidates()">勾選候選</button>
+      <label class="inline">等級&lt; <input type="number" id="gLowLv" value="7" min="1" max="99"></label>
+      <button class="ghost" onclick="selectLowLevel()">勾選低等級</button>
+      <button id="gDecomposeBtn" class="warn" onclick="doDecompose()">分解勾選 (<span id="gSelCount">0</span>)</button>
+      <span class="meta" style="margin:0">（已裝備/鎖定不會被勾選）</span>
+    </div>
+    <div class="tablewrap table-scroll data-table--sticky-first">
+      <table class="data-table">
+        <caption class="sr-only">神器附魔石清單，可依品質、套裝、位置、等級排序，勾選後分解</caption>
+        <thead><tr>
+          <th scope="col"><input type="checkbox" id="gAll" onclick="toggleAll(this)" aria-label="全選/取消全選"></th>
+          <th scope="col" class="sortable" role="button" tabindex="0" data-sort-key="quality" aria-sort="ascending" onclick="gemSort('quality')">品質</th>
+          <th scope="col" class="sortable" role="button" tabindex="0" data-sort-key="suit" aria-sort="none" onclick="gemSort('suit')">套裝</th>
+          <th scope="col" class="sortable" role="button" tabindex="0" data-sort-key="pos" aria-sort="none" onclick="gemSort('pos')">位置</th>
+          <th scope="col" class="sortable" role="button" tabindex="0" data-sort-key="lv" aria-sort="none" onclick="gemSort('lv')">等級</th>
+          <th scope="col">裝備</th><th scope="col">主屬</th><th scope="col">隨機詞條</th><th scope="col">鎖</th><th scope="col">id</th>
+        </tr></thead>
+        <tbody id="gBody"></tbody>
+      </table>
+    </div>
+    <div id="gActionMsg" class="note"></div>
+  </section>
+</main>
+
+<div id="idleModal" class="modal-bg" aria-labelledby="idleModalTitle">
+  <div class="modal">
+    <h2 id="idleModalTitle">閒置提醒</h2>
+    <p>您已閒置一段時間，<span class="cd" id="idleCd">60</span> 秒後將自動斷線。</p>
+    <div class="row">
+      <button onclick="stayConnected()">繼續使用</button>
+      <button class="ghost" onclick="idleLogoutNow()">立即斷線</button>
+    </div>
+  </div>
+</div>
+
+<div id="kickModal" class="modal-bg" aria-labelledby="kickModalTitle">
+  <div class="modal">
+    <h2 id="kickModalTitle">連線已斷線</h2>
+    <p>偵測到異地登入（同帳號在他處登入），此連線已被伺服器中斷。</p>
+    <div class="row">
+      <button onclick="reconnectFromKick()">重新連線</button>
+      <button class="ghost" onclick="hideModal('kickModal')">知道了</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const QCOLORS = {3:'var(--q3)',4:'var(--q4)',5:'var(--q5)',6:'var(--q6)',7:'var(--q7)',8:'var(--q8)'};
+let SPIRITS = [], GEMS = [], gemSortKey = 'quality', gemSortDir = 1;
+let connState = 'off';                 // 'on' | 'connecting' | 'off' — gates 讀取 buttons (C10)
+const $ = id => document.getElementById(id);
+function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
+
+/* shared-lib helpers (app.js). app.js loads DEFERRED, so window.UI is NOT ready when this
+   inline script's top-level runs — resolve it lazily at call time via ui(). */
+function ui(){ return window.UI || {}; }
+function uiToast(m,t){ const u=ui(); if(u.toast) u.toast(m,t); }
+
+/* loading / empty / error states for a data container (C10).
+   markup uses the shared .skeleton / .empty-state / .error-state classes. */
+function showSkeleton(el, isTable){
+  if(!el) return;
+  const block = '<div class="skeleton skeleton--block" style="margin:6px 0"></div>';
+  if(isTable){ el.innerHTML = `<tr><td colspan="10" style="padding:0;border:0">${block.repeat(3)}</td></tr>`; }
+  else { el.innerHTML = block.repeat(3); }
+}
+function showEmpty(el, title, hint, isTable){
+  if(!el) return;
+  const body = `<div class="empty-state"><div class="es-icon" aria-hidden="true">📭</div>
+      <div class="es-title">${title||'沒有資料'}</div>${hint?`<div class="es-hint">${hint}</div>`:''}</div>`;
+  el.innerHTML = isTable ? `<tr><td colspan="10" style="padding:0;border:0">${body}</td></tr>` : body;
+}
+function showError(el, hint, retryFn, isTable){
+  if(!el) return;
+  const btnId = 'retry_'+Math.random().toString(36).slice(2);
+  const body = `<div class="error-state"><div class="es-icon" aria-hidden="true">⚠️</div>
+      <div class="es-title">讀取失敗</div>${hint?`<div class="es-hint">${hint}</div>`:''}
+      <div class="es-actions"><button id="${btnId}" class="ghost" type="button">重試</button></div></div>`;
+  el.innerHTML = isTable ? `<tr><td colspan="10" style="padding:0;border:0">${body}</td></tr>` : body;
+  const b = $(btnId); if(b && typeof retryFn==='function') b.addEventListener('click', retryFn);
+}
+
+/* enable/disable the 讀取 buttons + show idle prompt depending on connState (C10/§5(3c)). */
+function syncConnGating(){
+  const on = connState === 'on';
+  ['loadSpiritBtn','loadGemBtn'].forEach(id=>{ const b=$(id); if(b) b.disabled = !on; });
+  if(!on){
+    showEmpty($('spGrid'), '尚未連線此裝置', '點上方「連線」後按「讀取守護靈」');
+    showEmpty($('gBody'), '尚未連線此裝置', '點上方「連線」後按「讀取神器附魔石」', true);
+  }
+}
+
+async function loadDevices(){
+  try {
+    const r = await fetch('/api/status'); const j = await r.json();
+    const bots = (j.bots)||{}; const sel = $('dev'); sel.innerHTML='';
+    Object.keys(bots).forEach(ip => {
+      const b = bots[ip];
+      if (b.backend !== 'web_h5') return;
+      const o = document.createElement('option');
+      o.value = ip; o.textContent = `${b.name||ip} (${ip})`;
+      sel.appendChild(o);
+    });
+    if ([...sel.options].some(o=>o.value==='emulator-5554')) sel.value='emulator-5554';
+  } catch(e){ setStatus('裝置清單讀取失敗', true); }
+}
+
+function dev(){ return $('dev').value; }
+
+async function loadSpirit(){
+  if (connState!=='on'){ syncConnGating(); return; }
+  setStatus('讀取守護靈中…');
+  showSkeleton($('spGrid'));
+  try {
+    const r = await fetch(`/api/spirit_list/${encodeURIComponent(dev())}`);
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus('守護靈讀取失敗', true); showError($('spGrid'), '請確認連線狀態後重試', loadSpirit); return; }
+    const d = j.data||{};
+    if (d.error){ setStatus('解析失敗', true); showError($('spGrid'), '資料解析失敗，請重試', loadSpirit); return; }
+    SPIRITS = d.spirits||[];
+    setStatus(`守護靈 ${SPIRITS.length} 隻（reshape ${d.reshape_times} 次）`);
+    renderSpirit();
+  } catch(e){ setStatus('守護靈讀取錯誤', true); showError($('spGrid'), '連線異常，請重試', loadSpirit); }
+}
+
+function renderSpirit(){
+  const q = ($('spAffix').value||'').trim().toLowerCase();
+  const minLv = parseInt($('spMinLv').value||'0',10);
+  const lock = $('spLock').value;
+  let list = SPIRITS.filter(s => {
+    if (s.level < minLv) return false;
+    if (lock!=='all' && String(s.lock)!==lock) return false;
+    if (q){
+      const hit = (s.positions||[]).some(p => (p.affixes||[]).some(a => (a.name||'').toLowerCase().includes(q)));
+      if (!hit) return false;
+    }
+    return true;
+  });
+  list.sort((a,b)=> $('spSort').value==='config' ? a.config_id-b.config_id : (b.level-a.level||a.config_id-b.config_id));
+  $('spMeta').textContent = `顯示 ${list.length} / ${SPIRITS.length} 隻`;
+  const g = $('spGrid'); g.innerHTML='';
+  if (!list.length){
+    showEmpty(g, SPIRITS.length ? '沒有符合條件的守護靈' : '尚無守護靈資料',
+              SPIRITS.length ? '試著放寬上方的過濾條件' : '按「讀取守護靈」載入');
+    return;
+  }
+  list.forEach(s => {
+    const card = document.createElement('div');
+    card.className = 'card' + (s.lock?' locked':'');
+    let aff = (s.positions||[]).map(p => {
+      const chips = (p.affixes||[]).map(a=>`<span class="atag" title="${a.attr_id}">${a.name}=${a.value}</span>`).join(' ');
+      return `<div class="arow"><span class="apos">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
+    }).join('');
+    card.innerHTML = `<div class="top"><span class="nm">${s.name}</span>
+        <span>${s.lock?'<span class=lockbadge>鎖</span> ':''}<span class="lvl">Lv${s.level}</span></span></div>
+      <div class="sub">#${s.config_id} · id ${s.id}</div>
+      <div class="affixes">${aff}</div>`;
+    g.appendChild(card);
+  });
+}
+
+async function loadGem(){
+  if (connState!=='on'){ syncConnGating(); return; }
+  setStatus('讀取神器附魔石中…');
+  showSkeleton($('gBody'), true);
+  try {
+    const r = await fetch(`/api/artifact_gem_list/${encodeURIComponent(dev())}`);
+    const j = await r.json();
+    if (j.status!=='ok'){ setStatus('神器附魔讀取失敗', true); showError($('gBody'), '請確認連線狀態後重試', loadGem, true); return; }
+    const d = j.data||{};
+    if (d.error){ setStatus('解析失敗', true); showError($('gBody'), '資料解析失敗，請重試', loadGem, true); return; }
+    GEMS = (d.gems||[]).map(g=>({...g, _sel:false}));
+    setStatus(`神器附魔石 ${GEMS.length} 顆`);
+    renderGem();
+  } catch(e){ setStatus('神器附魔讀取錯誤', true); showError($('gBody'), '連線異常，請重試', loadGem, true); }
+}
+
+function gemFiltered(){
+  const q = ($('gAttr').value||'').trim().toLowerCase();
+  const maxQ = parseInt($('gMaxQ').value||'99',10);
+  const suit = $('gSuit').value!=='' ? parseInt($('gSuit').value,10) : null;
+  const unlockOnly = $('gUnlockOnly').checked;
+  const hasRand = $('gHasRand').checked;
+  let list = GEMS.filter(g => {
+    if (g.quality>maxQ) return false;
+    if (suit!==null && g.suit!==suit) return false;
+    if (unlockOnly && g.is_lock) return false;
+    if (hasRand && !(g.rand_attr&&g.rand_attr.length)) return false;
+    if (q){
+      const all = [...(g.base_attr||[]),...(g.rand_attr||[])];
+      if (!all.some(a=>(a.name||'').toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
+  list.sort((a,b)=>{ const k=gemSortKey; return (a[k]-b[k])*gemSortDir; });
+  return list;
+}
+
+function attrStr(arr){ return (arr||[]).map(a=>`${a.name}=${a.value}`).join(', ') || '—'; }
+
+function renderGem(){
+  const list = gemFiltered();
+  // histogram over ALL gems
+  const hist={}; GEMS.forEach(g=>hist[g.quality]=(hist[g.quality]||0)+1);
+  $('gHist').innerHTML = Object.keys(hist).sort((a,b)=>a-b).map(q=>
+    `<span class="chip"><span class="qbadge" style="background:${QCOLORS[q]||'#888'}">${q}</span> ×${hist[q]}</span>`).join('');
+  $('gMeta').textContent = `顯示 ${list.length} / ${GEMS.length} 顆（已勾選 ${GEMS.filter(g=>g._sel).length}）`;
+  const body=$('gBody'); body.innerHTML='';
+  if (!list.length){
+    showEmpty(body, GEMS.length ? '沒有符合條件的附魔石' : '尚無附魔石資料',
+              GEMS.length ? '試著放寬上方的過濾條件' : '按「讀取神器附魔石」載入', true);
+    $('gSelCount').textContent = GEMS.filter(g=>g._sel).length;
+    return;
+  }
+  const sellSet = new Set(); // visual hint: lowest-quality first N among filtered
+  list.forEach(g=>{
+    const tr=document.createElement('tr');
+    const prot = g.is_lock || g.is_equipped;
+    tr.innerHTML = `<td><input type="checkbox" ${g._sel?'checked':''} ${prot?'disabled':''} onchange="toggleSel('${g.id}',this.checked)"></td>
+      <td><span class="qbadge" style="background:${QCOLORS[g.quality]||'#888'}" title="${g.quality_name||g.quality}">${g.quality}</span> ${g.quality_name||''}</td>
+      <td>${g.suit_name||g.suit}</td><td>${g.pos}</td><td>${g.lv}</td>
+      <td>${g.is_equipped?'<span class=eqbadge>裝備</span>':''}</td>
+      <td class="attrs">${attrStr(g.base_attr)}</td>
+      <td class="attrs">${attrStr(g.rand_attr)}</td>
+      <td>${g.is_lock?'<span class=lockbadge>鎖</span>':''}</td>
+      <td class="sub">${g.id}</td>`;
+    if (g._sel) tr.classList.add('sell');
+    body.appendChild(tr);
+  });
+  $('gSelCount').textContent = GEMS.filter(g=>g._sel).length;
+}
+
+// 可賣 = 未鎖 + 未裝備（與後端 select_safe 防呆一致）
+function sellable(g){ return !g.is_lock && !g.is_equipped; }
+function toggleSel(id, on){ const g=GEMS.find(x=>x.id===id); if(g && sellable(g)) g._sel=on; renderGem(); }
+function toggleAll(cb){ gemFiltered().forEach(g=>{ if(sellable(g)) g._sel=cb.checked; }); renderGem(); }
+function gemSort(k){ if(gemSortKey===k) gemSortDir*=-1; else {gemSortKey=k; gemSortDir=1;} syncSortAria(); renderGem(); }
+/* reflect the active sort key/direction on the sortable <th aria-sort> (C8/§5(3d)). */
+function syncSortAria(){
+  document.querySelectorAll('th.sortable[data-sort-key]').forEach(th=>{
+    th.setAttribute('aria-sort',
+      th.getAttribute('data-sort-key')===gemSortKey ? (gemSortDir===1?'ascending':'descending') : 'none');
+  });
+}
+
+function selectSellCandidates(){
+  const n = parseInt($('gSellN').value||'0',10);
+  // lowest quality, then lowest level, skip locked/equipped
+  const cand = GEMS.filter(sellable).slice().sort((a,b)=> a.quality-b.quality || a.lv-b.lv).slice(0,n);
+  const set = new Set(cand.map(g=>g.id));
+  GEMS.forEach(g=> g._sel = set.has(g.id));
+  renderGem();
+}
+
+function selectLowLevel(){
+  // 勾選所有「等級<門檻」的未鎖未裝備石（使用者「等級7以下隨便賣」）
+  const lv = parseInt($('gLowLv').value||'7',10);
+  GEMS.forEach(g=> g._sel = sellable(g) && g.lv < lv);
+  renderGem();
+}
+
+async function doDecompose(){
+  const sel = GEMS.filter(g=>g._sel);
+  const ids = sel.map(g=>g.id);
+  if (!ids.length){ $('gActionMsg').textContent='未勾選任何寶石。'; return; }
+  // quality breakdown for the confirm body (C3 — show concrete count + quality)
+  const qh={}; sel.forEach(g=>{ qh[g.quality]=(qh[g.quality]||0)+1; });
+  const qStr = Object.keys(qh).sort((a,b)=>a-b)
+    .map(q=>`品質${q}×${qh[q]}`).join('、');
+  const body = `將分解（賣出）${ids.length} 顆神器附魔石（${qStr}）。此動作無法復原。`;
+  // styled danger confirm (replaces native confirm); fall back to confirm() if lib absent
+  const u = ui();
+  const ok = u.confirmDialog
+    ? await u.confirmDialog({ title:'確定分解神器附魔石？', body, danger:true, okLabel:'分解' })
+    : confirm(body);
+  if (!ok) return;
+  const btn = $('gDecomposeBtn');
+  if (u.setLoading && btn) u.setLoading(btn, true); else if (btn) btn.disabled = true;
+  $('gActionMsg').textContent='送出分解請求…';
+  try {
+    const r = await fetch(`/api/artifact_gem_action/${encodeURIComponent(dev())}`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({action:'split', ids})
+    });
+    const j = await r.json();
+    if (j.status==='ok'){
+      const blk = j.blocked && Object.keys(j.blocked).length ? `，防呆擋下 ${Object.keys(j.blocked).length} 顆` : '';
+      $('gActionMsg').textContent = `已分解 ${j.decomposed_count} 顆${blk}。重新讀取倉庫…`;
+      uiToast(`已分解 ${j.decomposed_count} 顆${blk}`, 'ok');
+      await loadGem();
+    } else {
+      $('gActionMsg').textContent = `分解失敗（${r.status}）：${j.message||'請重試'}`;
+      uiToast('分解失敗，請重試', 'err');
+    }
+  } catch(e){ $('gActionMsg').textContent='分解時發生連線錯誤，請重試。'; uiToast('分解時發生連線錯誤', 'err'); }
+  finally { if (u.setLoading && btn) u.setLoading(btn, false); else if (btn) btn.disabled = false; }
+}
+
+function showTab(t){
+  const spirit = t==='spirit';
+  $('secSpirit').style.display = spirit?'block':'none';
+  $('secGem').style.display = spirit?'none':'block';
+  $('tabSpirit').classList.toggle('on', spirit);
+  $('tabGem').classList.toggle('on', !spirit);
+  $('tabSpirit').setAttribute('aria-selected', spirit?'true':'false');
+  $('tabGem').setAttribute('aria-selected', spirit?'false':'true');
+}
+
+/* ===== 純 WS session：連線 / 心跳保活 / 閒置登出 / 異地登入告知 ===== */
+// 閒置門檻預設 30 分；?idle=<秒> 可調短方便測試。心跳每 30 秒。
+const IDLE_SEC = parseInt(new URLSearchParams(location.search).get('idle')) || 1800;
+const KEEPALIVE_MS = 30000;
+let connectedDev = null, keepaliveTimer = null, idleTimer = null, idleCdTimer = null;
+
+function setConn(state){
+  connState = state;                   // gate 讀取 buttons + empty prompts (C10)
+  const c=$('connState'), b=$('connBtn');
+  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; b.textContent='斷線'; }
+  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; b.textContent='連線'; }
+  else { c.textContent='未連線'; c.className='conn off'; b.textContent='連線'; }
+  syncConnGating();
+}
+/* idle/kick modals route through the shared modal manager so Esc + focus-trap +
+   focus-restore work; they use the 'show' class (C1). Bare openModal/closeModal are
+   safe to call — they are non-colliding lib globals (the page only owns showModal/hideModal). */
+function showModal(id){ const u=ui(); if(u.openModal) u.openModal(id,{cls:'show'}); else $(id).classList.add('show'); }
+function hideModal(id){ const u=ui(); if(u.closeModal) u.closeModal(id,{cls:'show'}); else $(id).classList.remove('show'); }
+
+async function connectSession(){
+  const d=dev(); if(!d){ setConn('off'); return false; }
+  setConn('connecting');
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect`,{method:'POST'});
+    const j=await r.json();
+    if(j.status==='ok'){ connectedDev=d; setConn('on'); startKeepalive(); resetIdle(); setStatus('已連線（純 WS，免開瀏覽器）'); return true; }
+    // C20 info-leak fix: NEVER surface j.message — it can contain the server auth_state
+    // path + a `python tools/...` command. Show a friendly hint; log raw to console only
+    // (the server already records the real reason via logger.warning).
+    if (j.message) console.warn('ws_session connect failed:', j.message);
+    setConn('off'); setStatus('尚未連線此裝置，點「連線」開始', true);
+    showEmpty($('spGrid'), '尚未連線此裝置', '點上方「連線」開始');
+    showEmpty($('gBody'), '尚未連線此裝置', '點上方「連線」開始', true);
+    return false;
+  }catch(e){ console.warn('ws_session connect error:', e); setConn('off'); setStatus('連線時發生錯誤，請重試', true); return false; }
+}
+async function disconnectSession(){
+  stopKeepalive(); clearIdle();
+  const d=connectedDev||dev(); connectedDev=null; setConn('off');
+  try{ await fetch(`/api/ws_session/${encodeURIComponent(d)}/disconnect`,{method:'POST'}); }catch(e){}
+}
+function toggleConn(){ if(connectedDev) disconnectSession(); else connectSession(); }
+async function onDevChange(){
+  if(connectedDev && connectedDev!==dev()) await disconnectSession();
+  await connectSession();
+}
+
+// 心跳保活：順帶讀回 kicked（異地登入）/ alive
+function startKeepalive(){ stopKeepalive(); keepaliveTimer=setInterval(pingOnce, KEEPALIVE_MS); }
+function stopKeepalive(){ if(keepaliveTimer){ clearInterval(keepaliveTimer); keepaliveTimer=null; } }
+async function pingOnce(){
+  const d=connectedDev; if(!d) return;
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/ping`,{method:'POST'});
+    const j=await r.json();
+    if(j.kicked){ onKicked(); }
+    else if(!j.alive){ stopKeepalive(); connectedDev=null; setConn('off'); }
+  }catch(e){}
+}
+function onKicked(){
+  stopKeepalive(); clearIdle(); connectedDev=null; setConn('off');
+  // Esc on the kick modal = safe default 「知道了」 (just dismiss).
+  const km=$('kickModal'); if(km) km._uiConfirmCancel=()=>{};
+  showModal('kickModal');
+}
+function reconnectFromKick(){ hideModal('kickModal'); connectSession(); }
+
+// 閒置 IDLE_SEC -> 60 秒倒數 -> 自動斷線
+function resetIdle(){ clearIdle(); if(!connectedDev) return; idleTimer=setTimeout(beginIdleCountdown, IDLE_SEC*1000); }
+function clearIdle(){ if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} if(idleCdTimer){clearInterval(idleCdTimer);idleCdTimer=null;} }
+function beginIdleCountdown(){
+  let left=60; $('idleCd').textContent=left;
+  // C1: Esc on the idle modal = safe default 「繼續使用」 (keep connection, don't surprise-disconnect).
+  // The manager closes the overlay; _uiConfirmCancel then re-arms the idle timer.
+  const im=$('idleModal'); if(im) im._uiConfirmCancel=()=>{ clearIdle(); if(connectedDev) resetIdle(); else connectSession(); };
+  showModal('idleModal');
+  idleCdTimer=setInterval(()=>{ left--; $('idleCd').textContent=left;
+    if(left<=0){ clearInterval(idleCdTimer); idleCdTimer=null; idleLogoutNow(); } }, 1000);
+}
+function stayConnected(){ hideModal('idleModal'); clearIdle(); if(connectedDev){ resetIdle(); } else { connectSession(); } }
+function idleLogoutNow(){ hideModal('idleModal'); disconnectSession(); setStatus('已因閒置自動斷線'); }
+
+// 使用者活動重置閒置計時（倒數中不重置，需明確「繼續使用」）；節流 5 秒
+let _lastAct=0;
+function onActivity(){ if(idleCdTimer) return; const now=Date.now(); if(now-_lastAct>5000){ _lastAct=now; if(connectedDev) resetIdle(); } }
+['mousemove','keydown','click','scroll'].forEach(ev=>window.addEventListener(ev,onActivity,{passive:true}));
+// 關窗即時釋放連線（恢復 bot loop）；sweeper 為 90s 後的安全網
+window.addEventListener('beforeunload',()=>{ if(connectedDev) navigator.sendBeacon(`/api/ws_session/${encodeURIComponent(connectedDev)}/disconnect`); });
+
+// make sortable headers keyboard-operable (Enter/Space) + reflect initial aria-sort (C8/§5(3d))
+function wireSortableHeaders(){
+  const u = ui();
+  document.querySelectorAll('th.sortable[data-sort-key]').forEach(th=>{
+    const k = th.getAttribute('data-sort-key');
+    if (u.keyboardable) u.keyboardable(th, ()=>gemSort(k));
+    else th.addEventListener('keydown', e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); gemSort(k); } });
+  });
+  syncSortAria();
+}
+
+(async function init(){
+  wireSortableHeaders();
+  syncConnGating();                    // disable 讀取 buttons + show idle prompt until connected
+  await loadDevices();
+  await connectSession();
+})();
+</script>
+</body>
+</html>

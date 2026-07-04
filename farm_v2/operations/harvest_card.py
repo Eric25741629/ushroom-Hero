@@ -703,6 +703,11 @@ def _ensure_fields_empty(d: "uiauto.Device") -> None:
 # Top-level orchestrator
 # ---------------------------------------------------------------------------
 
+# remove-after-ws-farm-verify(2026-06-19): H5 視覺豐收卡流程由 ws_token.farm.run_harvest_card_cycle
+# (停打工→施肥→收成→買卡 shop_type11/id1604→種特級種子103→恢復打工,純 WS) 取代。
+# 移除前置:5556/5558/5560/7fe98fc6 都接上 ws_token.farm.harvest_card_cycle{enabled:true} 並 live 驗證。
+# 必留:ADB 後備(adb-fc65396d 無 WS farm 設定,_*_adb 分支 + check_if_parttime 仍需保留),
+# 以及 weekly_card.check_if_parttime(harvest_card.py:31 仍 import 使用,勿連帶刪 weekly_card)。
 def run_harvest_card(
     d: "uiauto.Device",
     device_ip: Optional[str] = None,

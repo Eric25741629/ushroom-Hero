@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>菇勇者 中控 · Bento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* ============================================================
+   菇勇者 中控 — Bento 模組 (Bento Grid) direction
+   Single-file, self-contained, fake-but-alive data.
+   Aesthetic: warm "tatami" canvas, lacquered rounded tiles of
+   varied footprints, soft layered shadows, multi-hue harmony,
+   friendly iconography, tidy micro-interactions.
+   ============================================================ */
+
+:root{
+  /* ---- canvas & surfaces ---- */
+  --tatami: #f4efe6;          /* warm paper canvas */
+  --tatami-2: #efe8db;
+  --rail: #fffdf8;
+  --tile: #ffffff;
+  --tile-sunk: #faf6ee;
+  --ink: #2b2620;             /* near-black warm ink */
+  --ink-soft: #6f6657;
+  --ink-faint: #a59a87;
+  --line: #ece3d3;
+  --line-strong: #ddd2bd;
+
+  /* ---- harmonious multi-hue tile tints ---- */
+  --mint:   #d8f0e2;  --mint-ink:#1c7a55;  --mint-rim:#3fb389;
+  --sky:    #d9ebf8;  --sky-ink: #1f6aa3;  --sky-rim: #4aa0dd;
+  --peach:  #fbe3d4;  --peach-ink:#b05a2a; --peach-rim:#e8895a;
+  --lav:    #e7e1f7;  --lav-ink: #6244ad;  --lav-rim: #9a7ee0;
+  --amber:  #fbecc7;  --amber-ink:#9a6c12; --amber-rim:#e0a939;
+  --rose:   #f8dde2;  --rose-ink:#b23a55;  --rose-rim:#e26b86;
+  --slate:  #e4e6ea;  --slate-ink:#5a6270; --slate-rim:#9aa3b2;
+
+  /* ---- status semantics ---- */
+  --ok:     #3fb389;
+  --warn:   #e0a939;
+  --off:    #b6ab96;
+  --degr:   #4aa0dd;
+  --danger: #e26b86;
+
+  /* ---- depth / motion ---- */
+  --r-lg: 28px; --r-md: 20px; --r-sm: 14px; --r-xs: 10px;
+  --sh-1: 0 1px 2px rgba(60,48,28,.05), 0 2px 6px rgba(60,48,28,.04);
+  --sh-2: 0 2px 4px rgba(60,48,28,.06), 0 10px 26px rgba(60,48,28,.07);
+  --sh-3: 0 6px 14px rgba(60,48,28,.10), 0 22px 50px rgba(60,48,28,.12);
+  --sh-press: inset 0 2px 5px rgba(60,48,28,.10);
+  --ease: cubic-bezier(.16,1,.3,1);
+  --ease-bounce: cubic-bezier(.34,1.56,.64,1);
+
+  --rail-w: 232px;
+  --rail-w-collapsed: 76px;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:"Manrope",system-ui,sans-serif;
+  background:
+    radial-gradient(120% 90% at 100% 0%, #faf6ee 0%, transparent 55%),
+    radial-gradient(90% 70% at 0% 100%, #f1eadd 0%, transparent 50%),
+    var(--tatami);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+  letter-spacing:.005em;
+}
+/* faint paper grain */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.035'/%3E%3C/svg%3E");
+}
+
+h1,h2,h3,h4{font-family:"Sora",sans-serif;margin:0;letter-spacing:-.01em;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+a{color:inherit;text-decoration:none;}
+input,select,textarea{font-family:inherit;}
+
+/* ============================ LAYOUT SHELL ============================ */
+.shell{display:flex;min-height:100vh;position:relative;z-index:1;}
+
+/* ---------------- Side Navigation Rail ---------------- */
+.rail{
+  width:var(--rail-w);
+  flex:0 0 var(--rail-w);
+  background:var(--rail);
+  border-right:1px solid var(--line);
+  padding:20px 16px;
+  display:flex;flex-direction:column;gap:8px;
+  position:sticky;top:0;height:100vh;
+  transition:width .42s var(--ease),flex-basis .42s var(--ease);
+  z-index:40;
+}
+.shell.collapsed .rail{width:var(--rail-w-collapsed);flex-basis:var(--rail-w-collapsed);}
+.rail-head{display:flex;align-items:center;gap:12px;padding:6px 8px 16px;}
+.brand-badge{
+  width:44px;height:44px;flex:0 0 44px;border-radius:15px;
+  display:grid;place-items:center;font-size:24px;
+  background:linear-gradient(150deg,var(--amber),var(--peach));
+  box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,255,255,.6);
+  transform:rotate(-4deg);transition:transform .4s var(--ease-bounce);
+}
+.rail:hover .brand-badge{transform:rotate(4deg) scale(1.04);}
+.brand-name{font-family:"Sora";font-weight:800;font-size:16px;line-height:1.1;white-space:nowrap;}
+.brand-name small{display:block;font-family:"Manrope";font-weight:500;font-size:11px;color:var(--ink-faint);letter-spacing:.06em;}
+.shell.collapsed .brand-name{opacity:0;width:0;overflow:hidden;}
+
+.toggle-btn{
+  margin-left:auto;width:32px;height:32px;border-radius:10px;
+  display:grid;place-items:center;color:var(--ink-soft);
+  transition:background .2s,transform .25s var(--ease);
+}
+.toggle-btn:hover{background:var(--tile-sunk);transform:scale(1.08);}
+.toggle-btn:active{transform:scale(.92);}
+.shell.collapsed .toggle-btn{margin:0 auto;}
+
+.nav-group{display:flex;flex-direction:column;gap:4px;margin-top:6px;}
+.nav-label{font-size:10.5px;font-weight:700;letter-spacing:.14em;color:var(--ink-faint);
+  text-transform:uppercase;padding:14px 10px 6px;white-space:nowrap;}
+.shell.collapsed .nav-label{opacity:0;height:0;padding:8px 0;overflow:hidden;}
+
+.nav-btn{
+  display:flex;align-items:center;gap:13px;
+  padding:11px 12px;border-radius:14px;color:var(--ink-soft);
+  font-weight:600;font-size:14.5px;width:100%;text-align:left;
+  position:relative;transition:background .22s var(--ease),color .22s,transform .2s var(--ease);
+  white-space:nowrap;
+}
+.nav-btn .ico{font-size:19px;flex:0 0 24px;text-align:center;transition:transform .3s var(--ease-bounce);}
+.nav-btn:hover{background:var(--tile-sunk);color:var(--ink);transform:translateX(2px);}
+.nav-btn:hover .ico{transform:scale(1.18) rotate(-6deg);}
+.nav-btn:focus-visible{outline:2px solid var(--sky-rim);outline-offset:2px;}
+.nav-btn.active{background:linear-gradient(120deg,var(--mint),#e6f6ec);color:var(--mint-ink);box-shadow:var(--sh-1);}
+.nav-btn.active::before{
+  content:"";position:absolute;left:-16px;top:50%;transform:translateY(-50%);
+  width:5px;height:60%;border-radius:0 6px 6px 0;background:var(--mint-rim);
+}
+.shell.collapsed .nav-btn span.lbl{opacity:0;width:0;overflow:hidden;}
+.shell.collapsed .nav-btn{justify-content:center;gap:0;}
+.nav-ext{margin-top:auto;}
+.nav-btn.ext .ico{font-size:18px;}
+
+/* ============================ MAIN COLUMN ============================ */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;}
+
+/* ---------------- Top Bar ---------------- */
+.topbar{
+  position:sticky;top:0;z-index:30;
+  backdrop-filter:saturate(1.4) blur(14px);
+  background:linear-gradient(180deg,rgba(244,239,230,.92),rgba(244,239,230,.7));
+  border-bottom:1px solid var(--line);
+  padding:16px 26px;
+  display:flex;align-items:center;gap:18px;flex-wrap:wrap;
+}
+.topbar h1{font-size:20px;font-weight:800;display:flex;align-items:center;gap:10px;}
+.topbar h1 .h-emoji{font-size:24px;}
+.topbar h1 small{font-weight:500;font-size:12px;color:var(--ink-faint);font-family:"Manrope";letter-spacing:.04em;}
+
+.ocr-chip{
+  display:inline-flex;align-items:center;gap:9px;
+  padding:7px 14px 7px 11px;border-radius:999px;
+  background:var(--tile);box-shadow:var(--sh-1);border:1px solid var(--line);
+  font-size:12.5px;font-weight:600;
+}
+.ocr-chip .dot{width:9px;height:9px;border-radius:50%;background:var(--off);position:relative;}
+.ocr-chip.ok .dot{background:var(--ok);box-shadow:0 0 0 0 rgba(63,179,137,.5);animation:pulse 2.4s var(--ease) infinite;}
+.ocr-chip.error .dot{background:var(--danger);}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(63,179,137,.45)}70%{box-shadow:0 0 0 8px rgba(63,179,137,0)}100%{box-shadow:0 0 0 0 rgba(63,179,137,0)}}
+.ocr-chip .rt{color:var(--ink-faint);font-weight:500;font-size:11.5px;}
+
+.prog-card{
+  display:flex;align-items:center;gap:12px;padding:9px 15px;border-radius:16px;
+  background:linear-gradient(135deg,var(--lav),#efeaf9);
+  box-shadow:var(--sh-1);cursor:pointer;border:1px solid transparent;
+  transition:transform .26s var(--ease),box-shadow .26s,border-color .2s;
+}
+.prog-card:hover{transform:translateY(-2px);box-shadow:var(--sh-2);border-color:#d8cdf0;}
+.prog-card:focus-visible{outline:2px solid var(--lav-rim);outline-offset:2px;}
+.prog-card:active{transform:translateY(0) scale(.99);}
+.prog-card .pc-ico{font-size:20px;}
+.prog-card .pc-txt b{font-family:"Sora";font-weight:700;font-size:13px;color:var(--lav-ink);display:block;}
+.prog-card .pc-txt span{font-size:11px;color:var(--ink-faint);font-family:"JetBrains Mono";}
+
+.tb-spacer{flex:1;}
+.tb-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;}
+
+/* ---- Button system ---- */
+.btn{
+  --bg:var(--tile);--fg:var(--ink);--rim:var(--line-strong);
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 15px;border-radius:13px;font-weight:700;font-size:13px;
+  background:var(--bg);color:var(--fg);border:1.5px solid var(--rim);
+  box-shadow:var(--sh-1);
+  transition:transform .2s var(--ease),box-shadow .22s var(--ease),background .2s,border-color .2s,filter .2s;
+  position:relative;white-space:nowrap;
+}
+.btn .bi{font-size:15px;line-height:1;}
+.btn:hover{transform:translateY(-2px);box-shadow:var(--sh-2);filter:brightness(1.02);}
+.btn:active{transform:translateY(0) scale(.97);box-shadow:var(--sh-press);}
+.btn:focus-visible{outline:2px solid var(--sky-rim);outline-offset:2px;}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important;box-shadow:var(--sh-1)!important;filter:none;}
+
+.btn.solid{--bg:linear-gradient(135deg,var(--ink),#413a2f);--fg:#fdf9f1;--rim:transparent;}
+.btn.solid:hover{filter:brightness(1.12);}
+.btn.mint{--bg:linear-gradient(135deg,var(--mint),#e9f7ee);--fg:var(--mint-ink);--rim:#bfe7d1;}
+.btn.amber{--bg:linear-gradient(135deg,var(--amber),#fcf1d2);--fg:var(--amber-ink);--rim:#ecd9a3;}
+.btn.peach{--bg:linear-gradient(135deg,var(--peach),#fceee3);--fg:var(--peach-ink);--rim:#f0cdb4;}
+.btn.sky{--bg:linear-gradient(135deg,var(--sky),#e9f3fb);--fg:var(--sky-ink);--rim:#bcdcf2;}
+.btn.rose{--bg:linear-gradient(135deg,var(--rose),#fbe7eb);--fg:var(--rose-ink);--rim:#f1c9d2;}
+.btn.lav{--bg:linear-gradient(135deg,var(--lav),#efeaf9);--fg:var(--lav-ink);--rim:#d6caf0;}
+.btn.ghost{--bg:transparent;--rim:var(--line-strong);box-shadow:none;}
+.btn.ghost:hover{--bg:var(--tile-sunk);}
+.btn.sm{padding:7px 12px;font-size:12px;border-radius:11px;}
+.btn.icon{padding:9px;width:38px;justify-content:center;}
+
+/* pending spinner state (web/control button locks) */
+.btn.pending{pointer-events:none;color:transparent!important;}
+.btn.pending .bi,.btn.pending .lbl{visibility:hidden;}
+.btn.pending::after{
+  content:"";position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;
+  border:2.4px solid rgba(120,108,86,.25);border-top-color:var(--ink-soft);
+  animation:spin .7s linear infinite,btnPulse 1.4s var(--ease) infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes btnPulse{0%,100%{box-shadow:0 0 0 0 rgba(120,108,86,0)}50%{box-shadow:0 0 0 5px rgba(120,108,86,.08)}}
+
+/* ============================ PAGES ============================ */
+.page{display:none;padding:26px;}
+.page.active{display:block;animation:pageIn .5s var(--ease);}
+@keyframes pageIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+/* ---- Summary bento strip ---- */
+.summary{
+  display:grid;gap:16px;margin-bottom:20px;
+  grid-template-columns:1.4fr 1fr 1fr 1fr;
+}
+.s-tile{
+  border-radius:var(--r-md);padding:18px 20px;position:relative;overflow:hidden;
+  box-shadow:var(--sh-2);border:1px solid rgba(255,255,255,.7);
+  transition:transform .3s var(--ease),box-shadow .3s;
+}
+.s-tile:hover{transform:translateY(-3px);box-shadow:var(--sh-3);}
+.s-tile .s-ico{font-size:26px;}
+.s-tile .s-num{font-family:"Sora";font-weight:800;font-size:34px;line-height:1;margin-top:8px;letter-spacing:-.02em;}
+.s-tile .s-lbl{font-size:12px;font-weight:600;color:var(--ink-soft);margin-top:5px;}
+.s-tile .s-deco{position:absolute;right:-18px;bottom:-22px;font-size:88px;opacity:.1;transform:rotate(-12deg);pointer-events:none;}
+.s-tile.hero{background:linear-gradient(135deg,#fff7e6,#fdeccc);grid-row:span 1;}
+.s-tile.hero .s-num{font-size:42px;}
+.s-tile.t-mint{background:linear-gradient(140deg,var(--mint),#e9f7ee);}
+.s-tile.t-mint .s-num{color:var(--mint-ink);}
+.s-tile.t-sky{background:linear-gradient(140deg,var(--sky),#e9f3fb);}
+.s-tile.t-sky .s-num{color:var(--sky-ink);}
+.s-tile.t-rose{background:linear-gradient(140deg,var(--rose),#fbe7eb);}
+.s-tile.t-rose .s-num{color:var(--rose-ink);}
+/* mini sparkline in hero */
+.spark{display:flex;align-items:flex-end;gap:4px;height:34px;margin-top:12px;}
+.spark i{flex:1;border-radius:4px 4px 2px 2px;background:linear-gradient(180deg,var(--amber-rim),var(--peach-rim));opacity:.85;
+  transition:transform .3s var(--ease);transform-origin:bottom;}
+.s-tile.hero:hover .spark i{transform:scaleY(1.12);}
+
+/* ============================ BENTO DEVICE GRID ============================ */
+.bento{
+  display:grid;gap:18px;
+  grid-template-columns:repeat(12,1fr);
+  grid-auto-rows:minmax(10px,auto);
+}
+/* varied footprints — the heart of the direction */
+.dev{grid-column:span 4;}
+.dev.wide{grid-column:span 6;}
+.dev.tall{grid-column:span 4;}
+.dev.feat{grid-column:span 6;}
+
+.tile{
+  background:var(--tile);border-radius:var(--r-lg);
+  box-shadow:var(--sh-2);border:1px solid var(--line);
+  position:relative;overflow:hidden;
+  display:flex;flex-direction:column;
+  transition:transform .34s var(--ease),box-shadow .34s var(--ease),border-color .3s;
+}
+.tile:hover{transform:translateY(-4px);box-shadow:var(--sh-3);}
+/* lacquer status rim — left edge color band */
+.tile::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:6px;
+  background:var(--rim,var(--slate-rim));border-radius:var(--r-lg) 0 0 var(--r-lg);
+  transition:width .3s var(--ease);
+}
+.tile:hover::before{width:9px;}
+/* hue wash behind header */
+.tile .wash{position:absolute;inset:0 0 auto 0;height:120px;background:var(--wash,transparent);
+  opacity:.55;pointer-events:none;mask:linear-gradient(180deg,#000,transparent);}
+
+.tile[data-status="ONLINE"]{--rim:var(--ok);--wash:linear-gradient(135deg,var(--mint),transparent);}
+.tile[data-status="PAUSED"]{--rim:var(--warn);--wash:linear-gradient(135deg,var(--amber),transparent);}
+.tile[data-status="DEGRADED"]{--rim:var(--degr);--wash:linear-gradient(135deg,var(--sky),transparent);}
+.tile[data-status="OFFLINE"]{--rim:var(--off);--wash:linear-gradient(135deg,var(--slate),transparent);filter:saturate(.55);}
+.tile[data-status="DISABLED"]{--rim:var(--off);--wash:none;filter:saturate(.4) opacity(.92);}
+
+.tile .body{padding:18px 20px 20px;display:flex;flex-direction:column;gap:14px;flex:1;position:relative;z-index:1;}
+
+/* tile header */
+.t-head{display:flex;align-items:flex-start;gap:12px;}
+.t-avatar{
+  width:46px;height:46px;flex:0 0 46px;border-radius:15px;display:grid;place-items:center;font-size:24px;
+  background:var(--tile-sunk);box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,255,255,.7);
+  transition:transform .35s var(--ease-bounce);
+}
+.tile:hover .t-avatar{transform:rotate(-7deg) scale(1.05);}
+.t-id{flex:1;min-width:0;}
+.t-name{font-family:"Sora";font-weight:700;font-size:16.5px;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.t-ip{font-family:"JetBrains Mono";font-size:11.5px;color:var(--ink-faint);margin-top:2px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.backend-tag{font-family:"Manrope";font-weight:700;font-size:10px;letter-spacing:.04em;padding:2px 7px;border-radius:7px;
+  background:var(--slate);color:var(--slate-ink);}
+.backend-tag.ws{background:var(--sky);color:var(--sky-ink);}
+.backend-tag.h5{background:var(--lav);color:var(--lav-ink);}
+
+.status-pill{
+  display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;
+  font-size:11.5px;font-weight:700;letter-spacing:.02em;white-space:nowrap;
+  background:var(--tile-sunk);color:var(--ink-soft);box-shadow:var(--sh-1);
+}
+.status-pill .sd{width:8px;height:8px;border-radius:50%;background:var(--rim);}
+.status-pill.live{background:#e7f7ee;color:var(--mint-ink);}
+.status-pill.live .sd{background:var(--ok);animation:pulse 2.2s infinite;}
+.status-pill.paused{background:#fdf2d8;color:var(--amber-ink);}
+.status-pill.degr{background:#e7f1fb;color:var(--sky-ink);}
+.status-pill.off{background:var(--slate);color:var(--slate-ink);}
+
+.gear{
+  margin-left:auto;width:34px;height:34px;flex:0 0 34px;border-radius:11px;display:grid;place-items:center;
+  font-size:16px;color:var(--ink-soft);background:var(--tile-sunk);
+  transition:transform .35s var(--ease),background .2s,color .2s;
+}
+.gear:hover{transform:rotate(90deg);background:var(--ink);color:#fff;}
+.gear:active{transform:rotate(90deg) scale(.9);}
+.gear:focus-visible{outline:2px solid var(--sky-rim);outline-offset:2px;}
+
+/* compartment info — like bento sub-boxes */
+.compartments{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+.dev.wide .compartments,.dev.feat .compartments{grid-template-columns:repeat(4,1fr);}
+.cmp{
+  background:var(--tile-sunk);border-radius:var(--r-sm);padding:10px 12px;
+  border:1px solid var(--line);min-width:0;
+}
+.cmp .k{font-size:10px;font-weight:700;letter-spacing:.07em;color:var(--ink-faint);text-transform:uppercase;display:flex;align-items:center;gap:5px;}
+.cmp .v{font-family:"Sora";font-weight:600;font-size:14px;margin-top:4px;color:var(--ink);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.cmp .v.mono{font-family:"JetBrains Mono";font-weight:500;font-size:13px;}
+.cmp.span2{grid-column:span 2;}
+.dev.wide .cmp.span2,.dev.feat .cmp.span2{grid-column:span 2;}
+
+/* wake countdown — dial ring */
+.wake{
+  display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,#fffaf0,#fdf3df);
+  border:1px solid #f0e3c5;border-radius:var(--r-md);padding:12px 15px;
+}
+.dial{position:relative;width:54px;height:54px;flex:0 0 54px;}
+.dial svg{transform:rotate(-90deg);}
+.dial .ring-bg{fill:none;stroke:#efe1bf;stroke-width:6;}
+.dial .ring-fg{fill:none;stroke:var(--amber-rim);stroke-width:6;stroke-linecap:round;
+  transition:stroke-dashoffset 1s linear;}
+.dial .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:20px;}
+.wake-txt b{font-family:"Sora";font-weight:700;font-size:18px;color:var(--amber-ink);display:block;line-height:1;}
+.wake-txt b .u{font-size:11px;color:var(--ink-faint);font-weight:600;margin-left:2px;}
+.wake-txt span{font-size:11px;color:var(--ink-soft);font-weight:600;}
+.wake.waking{background:linear-gradient(135deg,#e7f7ee,#dbf2e6);border-color:#bfe7d1;}
+.wake.waking .wake-txt b{color:var(--mint-ink);}
+.wake.sleeping{background:linear-gradient(135deg,#eef0f4,#e6e9ef);border-color:#d6dbe3;}
+.wake.sleeping .wake-txt b{color:var(--slate-ink);}
+
+/* daily progress compartment chips */
+.daily{display:flex;flex-direction:column;gap:8px;}
+.daily-head{display:flex;align-items:center;justify-content:space-between;}
+.daily-head .dh-t{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink-faint);text-transform:uppercase;}
+.daily-head .dh-c{font-family:"JetBrains Mono";font-size:11px;font-weight:600;color:var(--mint-ink);}
+.badges{display:flex;flex-wrap:wrap;gap:6px;}
+.badge{
+  display:inline-flex;align-items:center;gap:5px;padding:5px 10px;border-radius:10px;
+  font-size:11.5px;font-weight:600;background:var(--tile-sunk);color:var(--ink-faint);
+  border:1px solid var(--line);transition:transform .2s var(--ease);
+}
+.badge:hover{transform:translateY(-1px);}
+.badge.done{background:#e7f7ee;color:var(--mint-ink);border-color:#bfe7d1;}
+.badge.done .bd{filter:none;}
+.badge .bd{font-size:13px;}
+
+/* log box */
+.logbox{
+  background:#221f19;color:#d8cdb6;border-radius:var(--r-sm);padding:11px 13px;
+  font-family:"JetBrains Mono";font-size:11px;line-height:1.55;height:78px;overflow:hidden;
+  position:relative;box-shadow:var(--sh-press);
+}
+.logbox::before{content:"● ● ●";position:absolute;top:7px;right:11px;font-size:7px;color:#5b5341;letter-spacing:3px;}
+.logbox .ln{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.85;}
+.logbox .ln:last-child{opacity:1;color:#f0e6cf;}
+.logbox .ts{color:#7d7359;}
+
+/* carpark row (collapsible) */
+.carpark{border:1px dashed #e3c9ad;background:#fdf4e7;border-radius:var(--r-sm);overflow:hidden;}
+.carpark-head{display:flex;align-items:center;gap:9px;padding:10px 13px;cursor:pointer;
+  font-size:12.5px;font-weight:700;color:var(--peach-ink);transition:background .2s;}
+.carpark-head:hover{background:#fcebd7;}
+.carpark-head .cp-ico{font-size:15px;}
+.carpark-head .chev{margin-left:auto;transition:transform .3s var(--ease);font-size:11px;}
+.carpark.open .chev{transform:rotate(180deg);}
+.carpark-body{max-height:0;overflow:hidden;transition:max-height .4s var(--ease);}
+.carpark.open .carpark-body{max-height:260px;}
+.carpark-body .inner{padding:0 13px 12px;display:flex;flex-direction:column;gap:7px;}
+.car{display:flex;align-items:center;gap:9px;font-size:11.5px;background:#fff;border-radius:9px;padding:7px 10px;border:1px solid #f0ddc4;}
+.car .cm{font-size:15px;}
+.car .cn{font-weight:700;flex:1;}
+.car .crem{font-family:"JetBrains Mono";font-weight:600;color:var(--peach-ink);}
+.car-bar{height:5px;border-radius:3px;background:#f0ddc4;overflow:hidden;flex:0 0 64px;}
+.car-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--peach-rim),var(--amber-rim));}
+
+/* action bar */
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:auto;padding-top:4px;}
+
+/* feature tile (wide hero device) gets a viz panel */
+.viz-panel{background:var(--tile-sunk);border-radius:var(--r-md);padding:14px 16px;border:1px solid var(--line);}
+.viz-title{font-size:11px;font-weight:700;letter-spacing:.07em;color:var(--ink-faint);text-transform:uppercase;margin-bottom:10px;}
+.bars{display:flex;align-items:flex-end;gap:8px;height:70px;}
+.bars .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;}
+.bars .bar i{width:100%;border-radius:6px 6px 3px 3px;background:linear-gradient(180deg,var(--sky-rim),#9fcdf0);
+  transition:transform .4s var(--ease);transform-origin:bottom;}
+.viz-panel:hover .bars .bar i{transform:scaleY(1.08);}
+.bars .bar small{font-size:9.5px;color:var(--ink-faint);font-weight:600;}
+
+/* ============================ MODALS ============================ */
+.overlay{
+  position:fixed;inset:0;z-index:1200;display:none;
+  background:rgba(43,38,32,.42);backdrop-filter:blur(4px);
+  align-items:center;justify-content:center;padding:24px;
+}
+.overlay.show{display:flex;animation:fade .25s var(--ease);}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal{
+  background:var(--tatami);border-radius:26px;width:min(620px,100%);max-height:88vh;overflow:auto;
+  box-shadow:var(--sh-3);border:1px solid var(--line);
+  animation:modalIn .4s var(--ease-bounce);
+}
+.modal.lg{width:min(860px,100%);}
+@keyframes modalIn{from{opacity:0;transform:translateY(24px) scale(.97)}to{opacity:1;transform:none}}
+.modal-head{
+  position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;
+  padding:20px 24px;background:linear-gradient(180deg,var(--tatami),rgba(244,239,230,.85));
+  border-bottom:1px solid var(--line);
+}
+.modal-head .mh-ico{width:42px;height:42px;border-radius:14px;display:grid;place-items:center;font-size:21px;
+  background:linear-gradient(140deg,var(--mint),#e9f7ee);box-shadow:var(--sh-1);}
+.modal-head h3{font-size:18px;font-weight:800;}
+.modal-head p{font-size:12px;color:var(--ink-faint);margin-top:2px;}
+.modal-head .x{margin-left:auto;width:36px;height:36px;border-radius:11px;display:grid;place-items:center;
+  font-size:18px;color:var(--ink-soft);background:var(--tile);box-shadow:var(--sh-1);transition:transform .25s var(--ease),background .2s;}
+.modal-head .x:hover{transform:rotate(90deg);background:var(--danger);color:#fff;}
+.modal-body{padding:22px 24px;display:flex;flex-direction:column;gap:18px;}
+.modal-foot{position:sticky;bottom:0;display:flex;gap:10px;justify-content:flex-end;
+  padding:16px 24px;background:linear-gradient(0deg,var(--tatami),rgba(244,239,230,.85));border-top:1px solid var(--line);}
+
+/* form fields */
+.field{display:flex;flex-direction:column;gap:6px;}
+.field label{font-size:12px;font-weight:700;color:var(--ink-soft);letter-spacing:.02em;}
+.field input[type=text],.field input[type=number],.field input[type=url],.field select,.field textarea{
+  background:var(--tile);border:1.5px solid var(--line-strong);border-radius:12px;
+  padding:10px 13px;font-size:13.5px;color:var(--ink);transition:border-color .2s,box-shadow .2s;
+}
+.field input:focus,.field select:focus,.field textarea:focus{
+  outline:none;border-color:var(--sky-rim);box-shadow:0 0 0 3px rgba(74,160,221,.16);}
+.field textarea{resize:vertical;line-height:1.5;}
+.field .hint{font-size:11px;color:var(--ink-faint);}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.fieldset{background:var(--tile);border:1px solid var(--line);border-radius:18px;padding:16px;display:flex;flex-direction:column;gap:14px;}
+.fieldset > .fs-title{font-family:"Sora";font-weight:700;font-size:13px;color:var(--ink);display:flex;align-items:center;gap:8px;}
+.fs-title .fs-ico{font-size:16px;}
+
+/* toggle switch */
+.toggles{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.sw{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:13px;background:var(--tile-sunk);
+  border:1px solid var(--line);cursor:pointer;transition:background .2s,border-color .2s;}
+.sw:hover{background:#f5efe3;}
+.sw .track{width:40px;height:23px;border-radius:999px;background:#d9cfbc;position:relative;flex:0 0 40px;transition:background .25s;}
+.sw .track::after{content:"";position:absolute;top:2px;left:2px;width:19px;height:19px;border-radius:50%;background:#fff;
+  box-shadow:var(--sh-1);transition:transform .28s var(--ease-bounce);}
+.sw input{display:none;}
+.sw input:checked + .track{background:var(--mint-rim);}
+.sw input:checked + .track::after{transform:translateX(17px);}
+.sw .sw-lbl{font-size:12.5px;font-weight:600;}
+.sw .sw-ico{font-size:15px;}
+
+details.adv{background:var(--tile);border:1px solid var(--line);border-radius:14px;padding:0;overflow:hidden;}
+details.adv > summary{padding:13px 16px;font-weight:700;font-size:13px;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;color:var(--ink-soft);}
+details.adv > summary::-webkit-details-marker{display:none;}
+details.adv > summary::before{content:"▸";transition:transform .25s var(--ease);}
+details.adv[open] > summary::before{transform:rotate(90deg);}
+details.adv .adv-body{padding:0 16px 16px;display:flex;flex-direction:column;gap:14px;}
+
+.status-box{background:#221f19;color:#d8cdb6;border-radius:12px;padding:12px 14px;font-family:"JetBrains Mono";
+  font-size:12px;line-height:1.6;min-height:64px;}
+.status-box .ok{color:var(--ok);} .status-box .err{color:var(--danger);}
+
+/* ---- live view ---- */
+.lv-overlay{z-index:1300;}
+.lv-modal{background:#1a1712;border-radius:24px;width:min(420px,100%);overflow:hidden;box-shadow:var(--sh-3);}
+.lv-head{display:flex;align-items:center;gap:12px;padding:15px 18px;border-bottom:1px solid #322c22;color:#f0e6cf;}
+.lv-head .lvi{font-size:18px;}
+.lv-head h3{font-size:15px;font-weight:700;}
+.lv-head .lv-st{font-size:11px;color:#a89c80;font-family:"JetBrains Mono";}
+.lv-head .lv-x{margin-left:auto;width:32px;height:32px;border-radius:10px;display:grid;place-items:center;
+  background:#2a251d;color:#d8cdb6;font-size:16px;transition:background .2s;}
+.lv-head .lv-x:hover{background:var(--danger);color:#fff;}
+.lv-canvas{width:100%;aspect-ratio:540/960;background:repeating-linear-gradient(45deg,#231f18,#231f18 12px,#262119 12px,#262119 24px);
+  display:grid;place-items:center;color:#5b5341;font-family:"JetBrains Mono";font-size:12px;}
+.lv-foot{display:flex;gap:8px;padding:13px 18px;border-top:1px solid #322c22;}
+
+/* ============================ INVENTORY PAGE ============================ */
+.inv-tabs{display:inline-flex;gap:6px;background:var(--tile);padding:5px;border-radius:14px;box-shadow:var(--sh-1);border:1px solid var(--line);}
+.inv-tab{padding:8px 18px;border-radius:10px;font-weight:700;font-size:13px;color:var(--ink-soft);transition:all .25s var(--ease);}
+.inv-tab.on{background:linear-gradient(135deg,var(--lav),#efeaf9);color:var(--lav-ink);box-shadow:var(--sh-1);}
+.inv-tab:hover:not(.on){background:var(--tile-sunk);}
+.inv-controls{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:18px 0;}
+.inv-controls .field{min-width:120px;}
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+.sp-card{background:var(--tile);border-radius:var(--r-md);padding:15px;box-shadow:var(--sh-1);border:1px solid var(--line);
+  transition:transform .3s var(--ease),box-shadow .3s;position:relative;overflow:hidden;}
+.sp-card:hover{transform:translateY(-3px);box-shadow:var(--sh-2);}
+.sp-card::before{content:"";position:absolute;inset:0 0 auto 0;height:4px;background:var(--q-rim,var(--slate-rim));}
+.sp-card.q-high{--q-rim:var(--lav-rim);} .sp-card.q-mid{--q-rim:var(--sky-rim);} .sp-card.q-low{--q-rim:var(--slate-rim);}
+.sp-head{display:flex;align-items:center;gap:10px;}
+.sp-emoji{font-size:24px;}
+.sp-name{font-family:"Sora";font-weight:700;font-size:14px;}
+.sp-lv{font-size:11px;color:var(--ink-faint);font-family:"JetBrains Mono";}
+.sp-affix{display:flex;flex-wrap:wrap;gap:5px;margin-top:11px;}
+.aff{font-size:10.5px;padding:3px 8px;border-radius:8px;background:var(--tile-sunk);color:var(--ink-soft);border:1px solid var(--line);font-weight:600;}
+.aff.lock{background:var(--rose);color:var(--rose-ink);border-color:#f1c9d2;}
+.ghist{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 16px;}
+.gchip{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:11px;background:var(--tile);box-shadow:var(--sh-1);border:1px solid var(--line);font-size:12px;font-weight:600;}
+.gchip b{font-family:"JetBrains Mono";}
+.gtable{width:100%;border-collapse:separate;border-spacing:0;background:var(--tile);border-radius:var(--r-md);overflow:hidden;box-shadow:var(--sh-1);border:1px solid var(--line);}
+.gtable th{background:var(--tile-sunk);font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--ink-soft);text-align:left;padding:11px 14px;cursor:pointer;user-select:none;white-space:nowrap;}
+.gtable th:hover{color:var(--ink);}
+.gtable td{padding:11px 14px;font-size:12.5px;border-top:1px solid var(--line);}
+.gtable tr:hover td{background:var(--tile-sunk);}
+.qtag{display:inline-block;padding:2px 9px;border-radius:8px;font-size:11px;font-weight:700;}
+.qtag.q1{background:var(--slate);color:var(--slate-ink);} .qtag.q2{background:var(--mint);color:var(--mint-ink);}
+.qtag.q3{background:var(--sky);color:var(--sky-ink);} .qtag.q4{background:var(--lav);color:var(--lav-ink);}
+
+/* labeler page */
+.lab-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+.panel{background:var(--tile);border-radius:var(--r-lg);padding:20px;box-shadow:var(--sh-2);border:1px solid var(--line);}
+.panel h3{font-size:16px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:16px;}
+.panel h3 .pi{font-size:20px;}
+.metric-row{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0;}
+.metric{flex:1;min-width:80px;background:var(--tile-sunk);border-radius:13px;padding:11px 13px;border:1px solid var(--line);}
+.metric .m-n{font-family:"Sora";font-weight:800;font-size:22px;}
+.metric .m-l{font-size:10.5px;color:var(--ink-faint);font-weight:700;letter-spacing:.05em;text-transform:uppercase;margin-top:2px;}
+
+/* readme iframe placeholder */
+.readme-frame{width:100%;height:70vh;background:var(--tile);border-radius:var(--r-lg);box-shadow:var(--sh-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-faint);font-size:14px;}
+
+/* ============================ RESPONSIVE ============================ */
+@media(max-width:1200px){
+  .summary{grid-template-columns:1fr 1fr;}
+  .dev,.dev.wide,.dev.tall,.dev.feat{grid-column:span 6;}
+}
+@media(max-width:900px){
+  .lab-grid{grid-template-columns:1fr;}
+  .dev.wide .compartments,.dev.feat .compartments{grid-template-columns:1fr 1fr;}
+}
+@media(max-width:768px){
+  .rail{position:fixed;left:0;top:0;transform:translateX(-100%);transition:transform .4s var(--ease);box-shadow:var(--sh-3);}
+  .shell.nav-open .rail{transform:translateX(0);}
+  .shell.collapsed .rail{width:var(--rail-w);flex-basis:var(--rail-w);}
+  .mobile-fab{display:grid;}
+  .summary{grid-template-columns:1fr;}
+  .bento{grid-template-columns:1fr;}
+  .dev,.dev.wide,.dev.tall,.dev.feat{grid-column:span 1;}
+  .grid2,.grid3{grid-template-columns:1fr;}
+  .toggles{grid-template-columns:1fr;}
+  .topbar h1 small{display:none;}
+}
+.mobile-fab{display:none;position:fixed;left:16px;bottom:16px;z-index:60;width:52px;height:52px;border-radius:18px;
+  place-items:center;font-size:22px;background:var(--ink);color:#fff;box-shadow:var(--sh-3);}
+@media(max-width:390px){
+  .page{padding:16px;}
+  .topbar{padding:12px 16px;}
+}
+@media(prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important;}}
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <!-- ==================== SIDE RAIL ==================== -->
+  <nav class="rail" aria-label="主導覽">
+    <div class="rail-head">
+      <div class="brand-badge">🍄</div>
+      <div class="brand-name">菇勇者<small>BENTO 中控</small></div>
+      <button class="toggle-btn" onclick="toggleSidebar()" aria-label="收合側欄" title="收合/展開">☰</button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">面板</div>
+      <button class="nav-btn active" data-page="dashboard" onclick="switchPage('dashboard',this)">
+        <span class="ico">🏠</span><span class="lbl">總覽</span>
+      </button>
+      <button class="nav-btn" data-page="labeler" onclick="switchPage('labeler',this)">
+        <span class="ico">🏷️</span><span class="lbl">自動標註</span>
+      </button>
+      <button class="nav-btn" data-page="inventory" onclick="switchPage('inventory',this)">
+        <span class="ico">📦</span><span class="lbl">倉庫檢視</span>
+      </button>
+      <button class="nav-btn" data-page="readme" onclick="switchPage('readme',this)">
+        <span class="ico">📢</span><span class="lbl">更新公告</span>
+      </button>
+    </div>
+
+    <div class="nav-group nav-ext">
+      <div class="nav-label">外部</div>
+      <a class="nav-btn ext" href="/fly-pet"><span class="ico">🥁</span><span class="lbl">飛寵圖鑑</span></a>
+    </div>
+  </nav>
+
+  <!-- ==================== MAIN ==================== -->
+  <div class="main">
+
+    <!-- ===== TOP BAR ===== -->
+    <header class="topbar">
+      <h1><span class="h-emoji">🍱</span>中控總覽 <small>菇勇者全自動掛機</small></h1>
+
+      <div class="ocr-chip ok" id="ocr-status" title="OCR 服務狀態">
+        <span class="dot"></span> OCR 服務正常 <span class="rt" id="ocr-runtime">srv-tokyo-02</span>
+      </div>
+
+      <div class="prog-card" tabindex="0" role="button" aria-label="程式資訊" onclick="openModal('m-proginfo')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('m-proginfo')}">
+        <span class="pc-ico">📘</span>
+        <span class="pc-txt"><b>v3.9.2</b><span>2026-06-14 05:41</span></span>
+      </div>
+
+      <div class="tb-spacer"></div>
+
+      <div class="tb-actions">
+        <button class="btn ghost icon" onclick="openModal('m-bug')" title="回報問題" aria-label="回報問題"><span class="bi">🐞</span></button>
+        <button class="btn ghost icon" onclick="openModal('m-ocr')" title="OCR 設定" aria-label="OCR 設定"><span class="bi">⚙️</span></button>
+        <button class="btn ghost sm" onclick="toast('已送出 ADB 重啟')"><span class="bi">🔌</span><span class="lbl">重啟 ADB</span></button>
+        <button class="btn amber sm" onclick="toast('全部暫停中…')"><span class="bi">⏸</span><span class="lbl">全部暫停</span></button>
+        <button class="btn mint sm" onclick="toast('全部恢復中…')"><span class="bi">▶</span><span class="lbl">全部恢復</span></button>
+        <button class="btn sky sm" onclick="toast('全部跳過睡眠')"><span class="bi">⏭</span><span class="lbl">跳過睡眠</span></button>
+        <button class="btn solid sm" onclick="openModal('m-register')"><span class="bi">＋</span><span class="lbl">新增帳號</span></button>
+      </div>
+    </header>
+
+    <!-- ===== DASHBOARD PAGE ===== -->
+    <main class="page active" id="page-dashboard">
+
+      <!-- summary bento strip -->
+      <section class="summary" aria-label="總覽統計">
+        <div class="s-tile hero">
+          <div class="s-ico">🍄</div>
+          <div class="s-num">6 / 8</div>
+          <div class="s-lbl">裝置在線 · 平均擷圖 312 ms</div>
+          <div class="spark" aria-hidden="true">
+            <i style="height:42%"></i><i style="height:64%"></i><i style="height:51%"></i><i style="height:78%"></i>
+            <i style="height:60%"></i><i style="height:88%"></i><i style="height:72%"></i><i style="height:95%"></i>
+            <i style="height:80%"></i><i style="height:66%"></i><i style="height:90%"></i><i style="height:74%"></i>
+          </div>
+          <div class="s-deco">📈</div>
+        </div>
+        <div class="s-tile t-mint">
+          <div class="s-ico">⛏️</div><div class="s-num">5</div><div class="s-lbl">挖礦進行中</div>
+          <div class="s-deco">⛏️</div>
+        </div>
+        <div class="s-tile t-sky">
+          <div class="s-ico">🪔</div><div class="s-num">147</div><div class="s-lbl">今日神燈次數</div>
+          <div class="s-deco">🪔</div>
+        </div>
+        <div class="s-tile t-rose">
+          <div class="s-ico">⚠️</div><div class="s-num">1</div><div class="s-lbl">需要注意</div>
+          <div class="s-deco">⚠️</div>
+        </div>
+      </section>
+
+      <!-- bento device grid -->
+      <section class="bento" id="bento" aria-label="裝置卡片"></section>
+    </main>
+
+    <!-- ===== LABELER PAGE ===== -->
+    <main class="page" id="page-labeler">
+      <div class="lab-grid">
+        <div class="panel">
+          <h3><span class="pi">🏷️</span>自動標註</h3>
+          <div class="field"><label>LLM 端點</label><input type="text" value="http://srv-tokyo-02:8088/v1" /></div>
+          <div class="grid2" style="margin-top:14px">
+            <div class="field"><label>模型名稱</label><input type="text" value="qwen2.5-vl-7b" /></div>
+            <div class="field"><label>每日時間</label><input type="text" value="04:30" /></div>
+          </div>
+          <div class="metric-row">
+            <div class="metric"><div class="m-n" style="color:var(--mint-ink)">812</div><div class="m-l">已保留</div></div>
+            <div class="metric"><div class="m-n" style="color:var(--peach-ink)">96</div><div class="m-l">已刪除</div></div>
+            <div class="metric"><div class="m-n" style="color:var(--danger)">3</div><div class="m-l">錯誤</div></div>
+          </div>
+          <div class="status-box"><span class="ok">● 執行中</span> 進度 908 / 1024 · current: board_0613_4471.png</div>
+          <div class="actions" style="margin-top:14px">
+            <button class="btn mint sm">💾 儲存</button>
+            <button class="btn sky sm">🔍 檢查連線</button>
+            <button class="btn sm">▶ 跑一次</button>
+            <button class="btn amber sm">⏸ 暫停</button>
+            <button class="btn rose sm">⏹ 終止</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h3><span class="pi">🧠</span>模型訓練</h3>
+          <div class="grid2">
+            <div class="field"><label>Epochs</label><input type="number" value="40" /></div>
+            <div class="field"><label class="sw-lbl">訓練後移除來源</label>
+              <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-lbl">啟用</span></label>
+            </div>
+          </div>
+          <div class="status-box" style="margin-top:14px">idle · 上次完成 2026-06-13 04:58 · val_acc 0.981</div>
+          <div class="actions" style="margin-top:14px"><button class="btn solid sm">🚀 開始訓練</button></div>
+          <div class="logbox" style="height:120px;margin-top:16px">
+            <div class="ln"><span class="ts">04:58:02</span> epoch 38/40 loss 0.041 acc 0.978</div>
+            <div class="ln"><span class="ts">04:58:31</span> epoch 39/40 loss 0.038 acc 0.980</div>
+            <div class="ln"><span class="ts">04:59:01</span> epoch 40/40 loss 0.036 acc 0.981</div>
+            <div class="ln"><span class="ts">04:59:04</span> saved miner/models/cnn_0613.pt ✔</div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ===== INVENTORY PAGE ===== -->
+    <main class="page" id="page-inventory">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:6px">
+        <h2 style="font-size:22px;font-weight:800;display:flex;gap:10px;align-items:center">📦 倉庫檢視</h2>
+        <div class="inv-tabs">
+          <button class="inv-tab on" onclick="invTab('spirit',this)">🛡️ 守護靈</button>
+          <button class="inv-tab" onclick="invTab('gem',this)">💎 神器附魔</button>
+        </div>
+        <div class="field" style="min-width:180px"><label>裝置</label>
+          <select><option>emulator-5554</option><option>emulator-5556</option><option>adb-fc65396d (手機fc)</option></select>
+        </div>
+        <span class="status-pill live" style="margin-left:auto"><span class="sd"></span>已載入 36 筆</span>
+      </div>
+
+      <!-- spirit -->
+      <section id="inv-spirit">
+        <div class="inv-controls">
+          <div class="field"><label>詞條過濾</label><input type="text" placeholder="例如：攻擊"></div>
+          <div class="field"><label>最低等級</label><input type="number" value="0"></div>
+          <div class="field"><label>鎖定</label><select><option>全部</option><option>已鎖</option><option>未鎖</option></select></div>
+          <div class="field"><label>排序</label><select><option>等級降冪</option><option>config_id</option></select></div>
+          <button class="btn sky sm">🔄 載入守護靈</button>
+        </div>
+        <div class="sp-grid">
+          <div class="sp-card q-high"><div class="sp-head"><span class="sp-emoji">🐉</span><div><div class="sp-name">赤焰龍靈</div><div class="sp-lv">Lv.42 · id 100214</div></div></div>
+            <div class="sp-affix"><span class="aff lock">🔒 攻擊 +18%</span><span class="aff">暴擊 +9%</span><span class="aff">穿透 +120</span></div></div>
+          <div class="sp-card q-mid"><div class="sp-head"><span class="sp-emoji">🦊</span><div><div class="sp-name">疾風狐靈</div><div class="sp-lv">Lv.37 · id 100207</div></div></div>
+            <div class="sp-affix"><span class="aff">速度 +14%</span><span class="aff">閃避 +7%</span></div></div>
+          <div class="sp-card q-high"><div class="sp-head"><span class="sp-emoji">🦅</span><div><div class="sp-name">蒼穹鷹靈</div><div class="sp-lv">Lv.45 · id 100221</div></div></div>
+            <div class="sp-affix"><span class="aff lock">🔒 暴傷 +33%</span><span class="aff">攻擊 +12%</span><span class="aff">命中 +88</span></div></div>
+          <div class="sp-card q-low"><div class="sp-head"><span class="sp-emoji">🐢</span><div><div class="sp-name">磐石龜靈</div><div class="sp-lv">Lv.21 · id 100118</div></div></div>
+            <div class="sp-affix"><span class="aff">防禦 +9%</span><span class="aff">生命 +6%</span></div></div>
+          <div class="sp-card q-mid"><div class="sp-head"><span class="sp-emoji">🦌</span><div><div class="sp-name">靈韻鹿靈</div><div class="sp-lv">Lv.33 · id 100195</div></div></div>
+            <div class="sp-affix"><span class="aff">治療 +15%</span><span class="aff">能量 +11%</span></div></div>
+          <div class="sp-card q-high"><div class="sp-head"><span class="sp-emoji">🐯</span><div><div class="sp-name">霸王虎靈</div><div class="sp-lv">Lv.48 · id 100233</div></div></div>
+            <div class="sp-affix"><span class="aff lock">🔒 攻擊 +21%</span><span class="aff">暴擊 +13%</span><span class="aff">破甲 +160</span></div></div>
+        </div>
+      </section>
+
+      <!-- gem -->
+      <section id="inv-gem" style="display:none">
+        <div class="inv-controls">
+          <div class="field"><label>屬性過濾</label><input type="text" placeholder="例如：暴擊"></div>
+          <div class="field"><label>品質 ≤</label><input type="number" value="4"></div>
+          <div class="field"><label>套裝</label><input type="number" placeholder="套裝編號"></div>
+          <button class="btn sky sm">🔄 載入附魔石</button>
+          <div class="tb-spacer"></div>
+          <div class="field" style="min-width:90px"><label>賣最低 N 顆</label><input type="number" value="6"></div>
+          <button class="btn amber sm">🎯 標記候選</button>
+          <button class="btn rose sm">♻️ 分解選取</button>
+        </div>
+        <div class="ghist">
+          <span class="gchip"><span class="qtag q1">普通</span><b>14</b></span>
+          <span class="gchip"><span class="qtag q2">優良</span><b>11</b></span>
+          <span class="gchip"><span class="qtag q3">稀有</span><b>7</b></span>
+          <span class="gchip"><span class="qtag q4">史詩</span><b>4</b></span>
+        </div>
+        <table class="gtable">
+          <thead><tr><th>品質 ↕</th><th>套裝</th><th>位置</th><th>等級</th><th>主屬性</th><th>隨機屬性</th><th>鎖</th><th>ID</th></tr></thead>
+          <tbody>
+            <tr><td><span class="qtag q4">史詩</span></td><td>狂戰</td><td>2</td><td>40</td><td>攻擊 +220</td><td>暴擊 +6%</td><td>🔒</td><td>772103</td></tr>
+            <tr><td><span class="qtag q3">稀有</span></td><td>守護</td><td>4</td><td>35</td><td>防禦 +180</td><td>生命 +5%</td><td>—</td><td>771840</td></tr>
+            <tr><td><span class="qtag q2">優良</span></td><td>疾行</td><td>1</td><td>28</td><td>速度 +90</td><td>—</td><td>—</td><td>770512</td></tr>
+            <tr><td><span class="qtag q1">普通</span></td><td>—</td><td>6</td><td>12</td><td>生命 +60</td><td>—</td><td>—</td><td>768330</td></tr>
+            <tr><td><span class="qtag q3">稀有</span></td><td>狂戰</td><td>3</td><td>33</td><td>暴傷 +24%</td><td>穿透 +44</td><td>🔒</td><td>771995</td></tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+
+    <!-- ===== README PAGE ===== -->
+    <main class="page" id="page-readme">
+      <div class="readme-frame">📢 更新公告 iframe — /updates/（首次切換時延遲載入）</div>
+    </main>
+
+  </div>
+</div>
+
+<button class="mobile-fab" onclick="document.getElementById('shell').classList.toggle('nav-open')" aria-label="開啟導覽">☰</button>
+
+<!-- ==================== TOAST ==================== -->
+<div id="toast" style="position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120%);
+  background:var(--ink);color:#fdf9f1;padding:12px 22px;border-radius:14px;box-shadow:var(--sh-3);
+  font-weight:600;font-size:13.5px;z-index:1500;transition:transform .4s var(--ease);"></div>
+
+<!-- ==================== MODALS ==================== -->
+
+<!-- device config -->
+<div class="overlay" id="m-config" onclick="bgClose(event,'m-config')">
+  <div class="modal lg">
+    <div class="modal-head">
+      <div class="mh-ico">⚙️</div>
+      <div><h3 id="cfg-title">裝置設定</h3><p>調整後端、運行間隔與功能開關</p></div>
+      <button class="x" onclick="closeModal('m-config')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="field"><label>顯示名稱</label><input type="text" value="主力一號"></div>
+        <div class="field"><label>後端方案</label>
+          <select id="cfg-backend" onchange="toggleWebGroup()">
+            <option value="adb">adb</option><option value="adb+ws">adb + ws</option>
+            <option value="h5">h5</option><option value="h5+ws">h5 + ws</option><option value="ws_token">ws_token</option>
+          </select></div>
+      </div>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🎛️</span>功能開關</div>
+        <div class="toggles">
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🍄</span><span class="sw-lbl">主開關（掛機）</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🌾</span><span class="sw-lbl">農場任務</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">⛏️</span><span class="sw-lbl">挖礦 AI</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">🥊</span><span class="sw-lbl">武道會</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🔥</span><span class="sw-lbl">地獄之門</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">📱</span><span class="sw-lbl">真機模式</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🪔</span><span class="sw-lbl">WS 開神燈</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">⚡</span><span class="sw-lbl">WS 挖礦</span></label>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">⏱️</span>運行間隔</div>
+        <div class="grid3">
+          <div class="field"><label>線上檢查 (分)</label><input type="number" value="30"></div>
+          <div class="field"><label>神燈間隔 (時)</label><input type="number" value="2"></div>
+          <div class="field"><label>神燈時長 (秒)</label><input type="number" value="180"></div>
+          <div class="field"><label>挖礦時長 (分)</label><input type="number" value="12"></div>
+          <div class="field"><label>睡眠最短 (時)</label><input type="number" step="0.5" value="1.0"></div>
+          <div class="field"><label>睡眠最長 (時)</label><input type="number" step="0.5" value="3.0"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="field"><label>挖礦 Planner</label>
+          <select><option>v5（預設）</option><option>v4</option><option>v3</option><option>v1</option></select></div>
+        <div class="field"><label>神燈保留門檻 %</label><input type="number" value="35"></div>
+      </div>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🅿️</span>跨服泊車</div>
+        <div class="grid2">
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">🚗</span><span class="sw-lbl">啟用跨服泊車</span></label>
+          <div class="field"><label>方案層級</label><select><option>泊銀</option></select></div>
+        </div>
+      </div>
+
+      <details class="adv">
+        <summary>🔧 進階 Web 設定</summary>
+        <div class="adv-body">
+          <div class="grid2">
+            <div class="field"><label>Canvas 選擇器</label><input type="text" value="#GameCanvas"></div>
+            <div class="field"><label>瀏覽器通道</label><input type="text" value="chrome"></div>
+            <div class="field"><label>Profile 目錄</label><input type="text" value="playwright_profile1"></div>
+            <div class="field"><label>State 檔</label><input type="text" value="auth_state/5554.json"></div>
+            <div class="field"><label>視窗寬</label><input type="number" value="540"></div>
+            <div class="field"><label>視窗高</label><input type="number" value="960"></div>
+          </div>
+          <div class="toggles">
+            <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-lbl">Headless</span></label>
+            <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-lbl">清除 Cookies</span></label>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="modal-foot">
+      <button class="btn sky sm" onclick="toast('開啟登入頁…')">🌐 Web 登入</button>
+      <button class="btn ghost sm" onclick="toast('已備份 cookies')">💾 備份 Cookies</button>
+      <div class="tb-spacer"></div>
+      <button class="btn ghost" onclick="closeModal('m-config')">取消</button>
+      <button class="btn solid" onclick="closeModal('m-config');toast('設定已儲存 ✔')">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR config -->
+<div class="overlay" id="m-ocr" onclick="bgClose(event,'m-ocr')">
+  <div class="modal">
+    <div class="modal-head"><div class="mh-ico" style="background:linear-gradient(140deg,var(--sky),#e9f3fb)">🔍</div>
+      <div><h3>OCR 設定</h3><p>伺服器與重試策略</p></div><button class="x" onclick="closeModal('m-ocr')">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>模式</label><select><option>自動</option><option>主要</option><option>備用</option></select></div>
+      <div class="field"><label>伺服器清單（一行一個）</label>
+        <textarea rows="3">http://srv-tokyo-02:8080
+http://srv-osaka-01:8080</textarea></div>
+      <div class="grid3">
+        <div class="field"><label>HTTP 逾時 (秒)</label><input type="number" value="20"></div>
+        <div class="field"><label>解碼重試</label><input type="number" value="3"></div>
+        <div class="field"><label>空結果重試</label><input type="number" value="2"></div>
+        <div class="field"><label>重試延遲 (秒)</label><input type="number" step="0.1" value="0.6"></div>
+      </div>
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🗺️</span>預設辨識區域</div>
+        <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-lbl">啟用區域裁切</span></label>
+        <div class="grid2">
+          <div class="field"><label>X 最小</label><input type="number" value="0"></div>
+          <div class="field"><label>X 最大</label><input type="number" value="540"></div>
+          <div class="field"><label>Y 最小</label><input type="number" value="0"></div>
+          <div class="field"><label>Y 最大</label><input type="number" value="960"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal('m-ocr')">取消</button>
+      <button class="btn solid" onclick="closeModal('m-ocr');toast('OCR 設定已儲存')">儲存</button></div>
+  </div>
+</div>
+
+<!-- program info -->
+<div class="overlay" id="m-proginfo" onclick="bgClose(event,'m-proginfo')">
+  <div class="modal">
+    <div class="modal-head"><div class="mh-ico" style="background:linear-gradient(140deg,var(--lav),#efeaf9)">📘</div>
+      <div><h3>程式資訊</h3><p>版本與修正紀錄</p></div><button class="x" onclick="closeModal('m-proginfo')">✕</button></div>
+    <div class="modal-body">
+      <div class="grid2">
+        <div class="cmp"><div class="k">版本</div><div class="v mono">v3.9.2</div></div>
+        <div class="cmp"><div class="k">Git 時間</div><div class="v mono">2026-06-14 05:41</div></div>
+      </div>
+      <div class="fieldset" style="background:#e7f7ee;border-color:#bfe7d1">
+        <div class="fs-title" style="color:var(--mint-ink)"><span class="fs-ico">✅</span>本次修正</div>
+        <ul style="margin:0;padding-left:18px;font-size:13px;color:var(--ink-soft);line-height:1.7">
+          <li>修正 WS-fallback 離線誤判</li>
+          <li>carpark 配額持久化修復</li>
+          <li>v5 priors 污染問題排除</li>
+          <li>儀表板 Web H5 設定隱藏固定登入網址</li>
+        </ul>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn solid" onclick="closeModal('m-proginfo')">關閉</button></div>
+  </div>
+</div>
+
+<!-- bug feedback -->
+<div class="overlay" id="m-bug" onclick="bgClose(event,'m-bug')">
+  <div class="modal">
+    <div class="modal-head"><div class="mh-ico" style="background:linear-gradient(140deg,var(--rose),#fbe7eb)">🐞</div>
+      <div><h3>回報問題</h3><p>協助我們改善自動化</p></div><button class="x" onclick="closeModal('m-bug')">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>標題</label><input type="text" placeholder="簡述問題"></div>
+      <div class="field"><label>詳細描述</label><textarea rows="8" placeholder="重現步驟 / 預期結果 / 實際結果"></textarea></div>
+      <div class="field"><label>回報者（選填）</label><input type="text" placeholder="暱稱"></div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal('m-bug')">取消</button>
+      <button class="btn solid" onclick="closeModal('m-bug');toast('感謝回報 🙏')">送出</button></div>
+  </div>
+</div>
+
+<!-- register -->
+<div class="overlay" id="m-register" onclick="bgClose(event,'m-register')">
+  <div class="modal">
+    <div class="modal-head"><div class="mh-ico" style="background:linear-gradient(140deg,var(--amber),#fcf1d2)">＋</div>
+      <div><h3>新增帳號</h3><p>註冊裝置並啟動 Web 登入流程</p></div><button class="x" onclick="closeModal('m-register')">✕</button></div>
+    <div class="modal-body">
+      <div class="field"><label>裝置 ID</label><input type="text" placeholder="英數 / 底線 / 連字號"></div>
+      <div class="field"><label>Web URL（選填）</label><input type="url" placeholder="留空使用預設"></div>
+      <div class="status-box">等待註冊…</div>
+    </div>
+    <div class="modal-foot"><button class="btn ghost" onclick="closeModal('m-register')">取消</button>
+      <button class="btn solid" onclick="toast('註冊中，輪詢登入狀態…')">註冊並登入</button></div>
+  </div>
+</div>
+
+<!-- live view -->
+<div class="overlay lv-overlay" id="m-liveview" onclick="bgClose(event,'m-liveview')">
+  <div class="lv-modal">
+    <div class="lv-head"><span class="lvi">📺</span>
+      <div><h3 id="lv-label">主力一號</h3><span class="lv-st">直播中 · 24 fps</span></div>
+      <button class="lv-x" onclick="closeModal('m-liveview')">✕</button></div>
+    <div class="lv-canvas">540 × 960 即時畫面</div>
+    <div class="lv-foot">
+      <button class="btn rose sm" style="flex:1" onclick="toast('關閉瀏覽器')">🛑 關閉瀏覽器</button>
+      <button class="btn ghost sm" style="flex:1" onclick="closeModal('m-liveview')">關閉直播</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ========================================================
+   FAKE-BUT-ALIVE DATA — 8 devices, varied states
+   ======================================================== */
+const DEVICES = [
+  { ip:"emulator-5554", name:"主力一號", emoji:"🍄", status:"ONLINE", foot:"feat",
+    backend:"adb+ws", btag:"ws", planner:"v5", task:"挖礦 / Oracle", step:"執行挖礦計畫", stepLeft:184,
+    wakeMode:"awake", wakeMin:0, wakeSec:0, pct:1, sst:"298", real:false, live:true, carpark:true,
+    done:["地獄之門","農場","寶箱","家族","商店","挖礦"], pending:["武道會","航海","神燈"],
+    logs:["挖礦完成 第 4 板 深度 +37","WS 神燈 開啟 #1442 → 史詩裝","正在規劃下一板 (v5 priors)"] },
+
+  { ip:"emulator-5556", name:"二號礦工", emoji:"⛏️", status:"ONLINE", foot:"wide",
+    backend:"adb", btag:"", planner:"v5", task:"農場任務", step:"豐收卡結算", stepLeft:42,
+    wakeMode:"awake", wakeMin:0, wakeSec:0, pct:1, sst:"331", real:false, live:true, carpark:false,
+    done:["地獄之門","農場","挖礦"], pending:["寶箱","家族","商店","萬神試煉"],
+    logs:["農場 打工收成 +1240","挖礦 v5 規劃 26ms","等待神燈冷卻 …"] },
+
+  { ip:"emulator-5558", name:"夜班三號", emoji:"🌙", status:"PAUSED", foot:"dev",
+    backend:"h5+ws", btag:"h5", planner:"v4", task:"（已暫停）", step:"使用者手動暫停", stepLeft:0,
+    wakeMode:"sleep", wakeMin:0, wakeSec:0, pct:0, sst:"--", real:false, live:false, carpark:false,
+    done:["地獄之門","農場"], pending:["寶箱","家族","商店","挖礦","神燈"],
+    logs:["收到暫停指令","已釋放瀏覽器","保留 session"] },
+
+  { ip:"adb-fc65396d", name:"手機 fc", emoji:"📱", status:"DEGRADED", foot:"dev",
+    backend:"ws_token", btag:"ws", planner:"v5", task:"WS 任務（離線後援）", step:"WS 神燈批次", stepLeft:0,
+    wakeMode:"awake", wakeMin:0, wakeSec:0, pct:1, sst:"--", real:true, live:false, carpark:false,
+    done:["守護靈","加工坊","伴侶","神燈"], pending:["挖礦","農場"],
+    logs:["ADB 掉線 > 偵測中","WS 後援啟動 ✔","2 小時收益已領取"] },
+
+  { ip:"emulator-5560", name:"四號倉管", emoji:"📦", status:"ONLINE", foot:"dev",
+    backend:"adb+ws", btag:"ws", planner:"v5", task:"開神燈", step:"比對裝備中", stepLeft:96,
+    wakeMode:"awake", wakeMin:0, wakeSec:0, pct:1, sst:"305", real:false, live:true, carpark:false,
+    done:["地獄之門","農場","寶箱","挖礦","神燈"], pending:["家族","商店"],
+    logs:["神燈 #1438 → 優良 (賣)","神燈 #1439 → 稀有 (留)","保留門檻 35% 維持"] },
+
+  { ip:"emulator-5562", name:"五號排程", emoji:"🗓️", status:"ONLINE", foot:"tall",
+    backend:"h5", btag:"h5", planner:"v3", task:"萬神試煉", step:"關卡 3 / 5", stepLeft:0,
+    wakeMode:"awake", wakeMin:0, wakeSec:0, pct:1, sst:"402", real:false, live:true, carpark:false,
+    done:["地獄之門","農場","寶箱","家族","萬神試煉"], pending:["商店","挖礦","神燈","轉盤"],
+    logs:["萬神試煉 關卡 3 通過","掉落 史詩附魔石 x1","結算 粉鑽 +50"] },
+
+  { ip:"emulator-5564", name:"睡眠六號", emoji:"😴", status:"ONLINE", foot:"dev",
+    backend:"adb", btag:"", planner:"v5", task:"睡眠中", step:"等待下次喚醒", stepLeft:0,
+    wakeMode:"sleep", wakeMin:47, wakeSec:12, pct:0.62, sst:"288", real:false, live:false, carpark:false,
+    done:["地獄之門","農場","寶箱","家族","商店","挖礦","神燈"], pending:["轉盤"],
+    logs:["今日任務全數完成 ✔","進入睡眠 1.0–3.0h","下次喚醒 對齊 :05"] },
+
+  { ip:"emulator-5566", name:"離線七號", emoji:"🔌", status:"OFFLINE", foot:"dev",
+    backend:"adb", btag:"", planner:"v4", task:"—", step:"連線中斷 > 1h", stepLeft:0,
+    wakeMode:"sleep", wakeMin:0, wakeSec:0, pct:0, sst:"--", real:false, live:false, carpark:false,
+    done:[], pending:["地獄之門","農場","寶箱","家族","商店","挖礦","神燈"],
+    logs:["ADB device not found","最後上線 03:12","標記為離線"] },
+];
+
+const ALL_TASKS_ICON = {
+  "地獄之門":"🔥","農場":"🌾","寶箱":"🎁","家族":"👪","商店":"🛒","挖礦":"⛏️",
+  "武道會":"🥊","航海":"⛵","萬神試煉":"🏛️","神燈":"🪔","轉盤":"🎡",
+  "守護靈":"🛡️","加工坊":"🏭","伴侶":"💞"
+};
+const STATUS_MAP = {
+  ONLINE:{cls:"live", txt:"運行中"}, PAUSED:{cls:"paused", txt:"已暫停"},
+  DEGRADED:{cls:"degr", txt:"WS 後援"}, OFFLINE:{cls:"off", txt:"離線"}, DISABLED:{cls:"off", txt:"已停用"}
+};
+
+function badgeHtml(name, done){
+  return `<span class="badge ${done?'done':''}"><span class="bd">${done?'✅':ALL_TASKS_ICON[name]||'⏳'}</span>${name}</span>`;
+}
+function dialHtml(d){
+  const r=22, c=2*Math.PI*r, off=c*(1-d.pct);
+  let emoji = d.wakeMode==="awake" ? "🟢" : (d.wakeMode==="sleep" && d.status==="ONLINE" ? "😴" : "💤");
+  let wrapCls = d.wakeMode==="awake" ? "waking" : (d.status==="ONLINE"?"sleeping":"");
+  let inner;
+  if(d.wakeMode==="awake"){ inner = `<b>運行</b><span>持續任務中</span>`; }
+  else if(d.status==="OFFLINE"){ inner = `<b>—</b><span>裝置離線</span>`; }
+  else { inner = `<b>${d.wakeMin}<span class="u">分</span> ${String(d.wakeSec).padStart(2,'0')}<span class="u">秒</span></b><span>下次喚醒</span>`; }
+  return `<div class="wake ${wrapCls}">
+    <div class="dial"><svg width="54" height="54" viewBox="0 0 54 54">
+      <circle class="ring-bg" cx="27" cy="27" r="${r}"></circle>
+      <circle class="ring-fg" cx="27" cy="27" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${off}"></circle>
+    </svg><span class="emoji">${emoji}</span></div>
+    <div class="wake-txt">${inner}</div></div>`;
+}
+function stepHtml(d){
+  let extra = d.stepLeft>0 ? `<span style="color:var(--peach-ink);font-weight:700"> · 剩 ${Math.floor(d.stepLeft/60)}m ${d.stepLeft%60}s</span>` : "";
+  return `${d.step}${extra}`;
+}
+function actionsHtml(d){
+  let a=[];
+  if(d.status==="PAUSED"){
+    a.push(`<button class="btn mint sm" onclick="ctrlBtn(this)"><span class="bi">▶</span><span class="lbl">恢復</span></button>`);
+  } else if(d.status==="DISABLED"){
+    a.push(`<button class="btn mint sm" onclick="ctrlBtn(this)"><span class="bi">✔</span><span class="lbl">啟用</span></button>`);
+  } else {
+    a.push(`<button class="btn amber sm" onclick="ctrlBtn(this)"><span class="bi">⏸</span><span class="lbl">暫停</span></button>`);
+  }
+  if(d.status!=="OFFLINE" && d.status!=="DISABLED"){
+    a.push(`<button class="btn sky sm" onclick="ctrlBtn(this)"><span class="bi">⏭</span><span class="lbl">跳過睡眠</span></button>`);
+    a.push(`<button class="btn sm" onclick="ctrlBtn(this)"><span class="bi">💤</span><span class="lbl">強制睡眠</span></button>`);
+  }
+  if(d.live){
+    a.push(`<button class="btn lav sm" onclick="openLive('${d.name}')"><span class="bi">📺</span><span class="lbl">直播</span></button>`);
+  }
+  if(d.backend.indexOf("h5")>=0){
+    a.push(`<button class="btn peach sm" onclick="webBtn(this)"><span class="bi">🌐</span><span class="lbl">開瀏覽器</span></button>`);
+  }
+  if(d.real){
+    a.push(`<button class="btn rose sm" onclick="ctrlBtn(this)"><span class="bi">🔆</span><span class="lbl">恢復螢幕</span></button>`);
+  }
+  return a.join("");
+}
+function carparkHtml(d){
+  if(!d.carpark) return "";
+  return `<div class="carpark" onclick="toggleCarpark(this,event)">
+    <div class="carpark-head"><span class="cp-ico">🅿️</span>跨服泊銀 3 / 4 · 最快 5.2h 後可換
+      <span class="chev">▾</span></div>
+    <div class="carpark-body"><div class="inner">
+      ${[["🏎️","赤焰跑車","2.1h",78],["🚙","越野霸主","5.2h",42],["🛻","重載貨卡","6.8h",24]].map(c=>
+        `<div class="car"><span class="cm">${c[0]}</span><span class="cn">${c[1]}</span>
+          <div class="car-bar"><i style="width:${c[3]}%"></i></div><span class="crem">${c[2]}</span></div>`).join("")}
+    </div></div></div>`;
+}
+
+function renderDevices(){
+  const grid=document.getElementById("bento");
+  const featCmp = (d, wide) => {
+    const planners = {v5:"var(--mint)",v4:"var(--sky)",v3:"var(--lav)",v1:"var(--slate)"};
+    let base = `
+      <div class="cmp span2"><div class="k">📋 目前任務</div><div class="v">${d.task}</div></div>
+      <div class="cmp span2"><div class="k">🔧 目前步驟</div><div class="v">${stepHtml(d)}</div></div>`;
+    if(wide){
+      base += `
+      <div class="cmp"><div class="k">🧩 後端</div><div class="v">${d.backend}</div></div>
+      <div class="cmp"><div class="k">⛏️ Planner</div><div class="v">${d.planner}</div></div>
+      <div class="cmp"><div class="k">📸 擷圖</div><div class="v mono">${d.sst} ms</div></div>
+      <div class="cmp"><div class="k">⏰ 更新</div><div class="v mono">剛剛</div></div>`;
+    }
+    return base;
+  };
+
+  grid.innerHTML = DEVICES.map(d=>{
+    const sm=STATUS_MAP[d.status];
+    const wide = d.foot==="wide"||d.foot==="feat";
+    const doneCount=d.done.length, total=d.done.length+d.pending.length;
+    let vizPanel = d.foot==="feat" ? `
+      <div class="viz-panel">
+        <div class="viz-title">📊 近 6 板挖礦深度 (rows)</div>
+        <div class="bars">
+          ${[24,31,28,37,33,41].map((h,i)=>`<div class="bar"><i style="height:${h/45*60}px"></i><small>+${h}</small></div>`).join("")}
+        </div>
+      </div>` : "";
+
+    return `<article class="dev ${d.foot}">
+      <div class="tile" data-status="${d.status}" data-ip="${d.ip}">
+        <div class="wash"></div>
+        <div class="body">
+          <div class="t-head">
+            <div class="t-avatar">${d.emoji}</div>
+            <div class="t-id">
+              <div class="t-name">${d.name}</div>
+              <div class="t-ip">${d.ip}
+                <span class="backend-tag ${d.btag}">${d.backend}</span></div>
+            </div>
+            <span class="status-pill ${sm.cls}"><span class="sd"></span>${sm.txt}</span>
+            <button class="gear" onclick="openModal('m-config');setCfgTitle('${d.name}')" aria-label="設定" title="設定">⚙</button>
+          </div>
+
+          ${dialHtml(d)}
+
+          <div class="compartments">${featCmp(d,wide)}</div>
+
+          ${vizPanel}
+          ${carparkHtml(d)}
+
+          <div class="daily">
+            <div class="daily-head"><span class="dh-t">📅 今日任務</span><span class="dh-c">${doneCount} / ${total}</span></div>
+            <div class="badges">
+              ${d.done.map(n=>badgeHtml(n,true)).join("")}
+              ${d.pending.map(n=>badgeHtml(n,false)).join("")}
+            </div>
+          </div>
+
+          <div class="logbox">
+            ${d.logs.map((l,i)=>`<div class="ln"><span class="ts">${["05:38:11","05:39:02","05:40:51"][i]||"05:40:5"+i}</span> ${l}</div>`).join("")}
+          </div>
+
+          <div class="actions">${actionsHtml(d)}</div>
+        </div>
+      </div>
+    </article>`;
+  }).join("");
+}
+renderDevices();
+
+/* live countdown for sleeping device dials */
+setInterval(()=>{
+  DEVICES.forEach(d=>{
+    if(d.wakeMode==="sleep" && d.status==="ONLINE"){
+      let t=d.wakeMin*60+d.wakeSec; t=Math.max(0,t-1);
+      d.wakeMin=Math.floor(t/60); d.wakeSec=t%60;
+    }
+  });
+  // light re-render only the countdown text would be heavier; full re-render kept cheap with 8 cards
+  // throttle: only re-render every 5s to keep it visibly alive without churn
+}, 1000);
+setInterval(renderDevices, 5000);
+
+/* ========================================================
+   UI behaviour
+   ======================================================== */
+function toggleSidebar(){ document.getElementById("shell").classList.toggle("collapsed"); }
+function switchPage(name, el){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-"+name).classList.add("active");
+  document.querySelectorAll(".nav-btn[data-page]").forEach(b=>b.classList.remove("active"));
+  if(el) el.classList.add("active");
+  document.getElementById("shell").classList.remove("nav-open");
+}
+function invTab(which, el){
+  document.querySelectorAll(".inv-tab").forEach(t=>t.classList.remove("on"));
+  el.classList.add("on");
+  document.getElementById("inv-spirit").style.display = which==="spirit"?"":"none";
+  document.getElementById("inv-gem").style.display = which==="gem"?"":"none";
+}
+
+function openModal(id){ document.getElementById(id).classList.add("show"); }
+function closeModal(id){ document.getElementById(id).classList.remove("show"); }
+function bgClose(e,id){ if(e.target===e.currentTarget) closeModal(id); }
+function setCfgTitle(n){ document.getElementById("cfg-title").textContent = n+" · 設定"; }
+function toggleWebGroup(){ /* show/hide web group based on backend (visual stub) */ }
+function openLive(n){ document.getElementById("lv-label").textContent=n; openModal("m-liveview"); }
+function toggleCarpark(el,e){ e.stopPropagation(); el.classList.toggle("open"); }
+
+/* optimistic button lock + spinner (mirrors real 2-3s lock) */
+function ctrlBtn(btn){
+  if(btn.classList.contains("pending")) return;
+  btn.classList.add("pending");
+  setTimeout(()=>btn.classList.remove("pending"), 2000);
+}
+function webBtn(btn){
+  if(btn.classList.contains("pending")) return;
+  btn.classList.add("pending");
+  setTimeout(()=>{
+    btn.classList.remove("pending");
+    const lbl=btn.querySelector(".lbl"), bi=btn.querySelector(".bi");
+    if(lbl.textContent.indexOf("開")>=0){ lbl.textContent="關瀏覽器"; bi.textContent="✕"; }
+    else { lbl.textContent="開瀏覽器"; bi.textContent="🌐"; }
+  }, 3000);
+}
+
+/* toast */
+let toastTimer;
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg;
+  t.style.transform="translateX(-50%) translateY(0)";
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ t.style.transform="translateX(-50%) translateY(120%)"; }, 2400);
+}
+
+/* esc closes top modal */
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){ document.querySelectorAll(".overlay.show").forEach(o=>o.classList.remove("show")); }
+});
+</script>
+</body>
+</html>

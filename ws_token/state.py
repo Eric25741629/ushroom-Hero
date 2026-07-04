@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,18 @@ def load_state(device: str, *, state_dir: Path = STATE_DIR) -> dict:
 
 
 def save_state(device: str, data: dict, *, state_dir: Path = STATE_DIR) -> None:
-    """Write ``ws_state/<device>.json`` (creates the dir on first use)."""
+    """Write ``ws_state/<device>.json`` atomically (creates the dir on first use).
+
+    Writes to a sibling ``.tmp`` then ``os.replace`` so a crash / kill / SMB
+    hiccup mid-write cannot leave a truncated file. A torn write here is not
+    cosmetic: ``load_state`` treats a corrupt file as ``{}``, which would
+    silently reset every daily/weekly gate stored in this ledger (re-firing
+    once-per-day spend tasks like couple gifts and statue fruit).
+    """
     d = Path(state_dir)
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{device}.json").write_text(
+    path = d / f"{device}.json"
+    tmp = Path(f"{path}.tmp")
+    tmp.write_text(
         json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(tmp, path)

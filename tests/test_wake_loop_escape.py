@@ -39,6 +39,7 @@ for name in (
         m = types.ModuleType(name)
         if name == "adb_operations":
             m.connect_u2_with_retries = lambda *a, **k: None
+            m.ensure_on_launcher = lambda *a, **k: True
             m.get_battery_level = lambda *a, **k: 100
         if name == "device":
             m.close_notification = lambda *a, **k: None

@@ -141,9 +141,10 @@ def farm(
     from json_manager import create_time_manager
     import config_manager
 
+    dev_cfg = config_manager.get_device_config(device_ip)
     # Config gate 1: 農場停用 → 連切頁都不做。farm() 是所有呼叫端的單一入口
     # (daily_pipeline / quick_farm)，在這裡擋掉比在 pipeline 擋更穩。
-    if not config_manager.get_device_config(device_ip).get("enable_farm", True):
+    if not dev_cfg.get("enable_farm", True):
         logger.info(f"[farm_v2] enable_farm=false，跳過農場 - {device_ip}")
         return 0.0
 
@@ -177,7 +178,10 @@ def farm(
     # at most once per day, the harvest card at most once per week.
     seed_record = time_manager.get_time_record("farm_seed_purchase")
     should_buy_seed = not seed_record or seed_record.get("is_next_day", True)
-    should_run_card = not time_manager.is_same_week("farm_harvest_card")
+    # 每台豐收卡開關：本週次數用完的帳號(手機/小寶)關掉,避免每次 8h 進場都白跑
+    # 一輪買卡(達上限會失敗、不記錄、下次又重試)。關掉只停豐收卡,農場其餘照跑。
+    harvest_card_enabled = dev_cfg.get("enable_harvest_card", True)
+    should_run_card = harvest_card_enabled and not time_manager.is_same_week("farm_harvest_card")
 
     # Restock seeds regardless of work state — 打工 consumes them but won't buy
     # them, so the old `and not is_working` guard meant seeds were never bought
@@ -189,15 +193,24 @@ def farm(
 
     # 看廣告補初級種子（免廣告卡=直接發、8 點後、每日上限 2 次、看過不再看）。
     # 打工會自動把補到的種子種掉，所以這裡只領+關窗，不手動種。
+    # remove-after-ws-farm-verify(2026-06-19): 由 ws_token ad_reward(15) 取代,WS 驗證後刪此呼叫。
     claim_ad_seeds(d, device_ip, time_manager)
 
     # Weekly harvest card flow (replaces old Mon/Wed/Fri weekly_card)
+    # remove-after-ws-farm-verify(2026-06-19): 由 ws_token.farm.run_harvest_card_cycle 取代,
+    # WS 驗證後刪此整段 should_run_card 區塊(H5 設備);ADB 設備若無 WS farm 設定則保留。
+    # 每台一行追蹤 log:方便跨裝置 grep 豐收卡每週決策(執行/已執行略過/停用略過)。
     if should_run_card:
-        logger.info("執行每週豐收卡流程")
+        logger.info(f"[harvest_card] 本週尚未執行 → 執行每週豐收卡流程 - {device_ip}")
         if run_harvest_card(d, device_ip=device_ip, cnn_model=cnn_model):
             time_manager.record_time("farm_harvest_card")
+            logger.info(f"[harvest_card] 本週豐收卡完成,已記錄 - {device_ip}")
         else:
-            logger.warning("豐收卡流程失敗，下次醒來重試")
+            logger.warning(f"[harvest_card] 豐收卡流程失敗,下次醒來重試 - {device_ip}")
+    elif not harvest_card_enabled:
+        logger.info(f"[harvest_card] enable_harvest_card=false,本週豐收卡略過 - {device_ip}")
+    else:
+        logger.info(f"[harvest_card] 本週已執行豐收卡,略過 - {device_ip}")
 
     start = time.time()
     while time.time() - start < 25:

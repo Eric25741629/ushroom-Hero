@@ -86,26 +86,36 @@ def fake_bot_state(monkeypatch, dungeon_mod):
 def fake_battle(monkeypatch, dungeon_mod):
     calls: list[dict] = []
 
-    def _fight_test(d):
-        calls.append({"fn": "fight_test", "d": d})
+    def _fight_test(d, rounds=8):
+        calls.append({"fn": "fight_test", "d": d, "rounds": rounds})
+        return True  # 模擬跑滿 rounds 局 → 排程會寫本週記錄
 
     def _biweekly(d, ip, *, logger_obj, should_stop):
         calls.append({"fn": "biweekly", "ip": ip})
 
     monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", _fight_test)
     monkeypatch.setattr(dungeon_mod.new_battle, "run_biweekly_bounty_road_single", _biweekly)
+    # 隔離 config 檔 I/O：固定每週局數
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 8)
     return calls
 
 
 @pytest.fixture
 def fake_records(monkeypatch, dungeon_mod):
-    """Control return_time() output per record name."""
+    """Control return_time() output per record name.
+
+    due 判斷已收斂到 task_due.is_due（讀 json_manager.return_time），故 patch
+    json_manager.return_time 而非 dungeon_mod（後者已不再直接讀記錄）。
+    time_recording 仍由 scheduler 於跑滿後呼叫 → 續 patch dungeon_mod。
+    """
+    import json_manager
+
     state: dict[str, dict | None] = {}
 
-    def _return(ip, name):
+    def _return(ip, name=""):
         return state.get(name)
 
-    monkeypatch.setattr(dungeon_mod, "return_time", _return)
+    monkeypatch.setattr(json_manager, "return_time", _return)
     recorded: list[dict] = []
     monkeypatch.setattr(dungeon_mod, "time_recording", lambda ip, name: recorded.append({"ip": ip, "name": name}))
     state["_recorded"] = recorded  # stash for easy test access
@@ -152,11 +162,37 @@ def test_weekly_runs_on_tuesday_with_no_record(
 ):
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=True, current_time=_tuesday_10am(),
+        enable_wanshen=True, current_time=_tuesday_10am(),
     )
     assert any(c["fn"] == "fight_test" for c in fake_battle)
     assert fake_records["_recorded"] == [{"ip": "emu-1", "name": "萬神試煉"}]
     assert fake_mismatch == []
+
+
+def test_weekly_not_recorded_when_fight_fails(
+    monkeypatch, dungeon_mod, fake_bot_state, fake_records, fake_mismatch,
+):
+    # fight_test 回 False(未跑滿局數) → 不寫本週記錄，下次可重試(防失敗也鎖一週)
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 8)
+    monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", lambda d, rounds=8: False)
+    dungeon_mod._run_weekly_dungeon(
+        SimpleNamespace(), "emu-1", "主頁面",
+        enable_wanshen=True, current_time=_tuesday_10am(),
+    )
+    assert fake_records["_recorded"] == []
+
+
+def test_weekly_passes_configured_rounds_to_fight_test(
+    monkeypatch, dungeon_mod, fake_bot_state, fake_battle, fake_records, fake_mismatch,
+):
+    # _run_weekly_dungeon 讀 config wanshen_rounds 並傳給 fight_test
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda ip: 5)
+    dungeon_mod._run_weekly_dungeon(
+        SimpleNamespace(), "emu-1", "主頁面",
+        enable_wanshen=True, current_time=_tuesday_10am(),
+    )
+    fights = [c for c in fake_battle if c["fn"] == "fight_test"]
+    assert fights and fights[0]["rounds"] == 5
 
 
 def test_weekly_skipped_when_dungeon_manager_disabled(
@@ -164,7 +200,7 @@ def test_weekly_skipped_when_dungeon_manager_disabled(
 ):
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=False, current_time=_tuesday_10am(),
+        enable_wanshen=False, current_time=_tuesday_10am(),
     )
     assert fake_battle == []
     assert fake_records["_recorded"] == []
@@ -175,7 +211,7 @@ def test_weekly_skipped_on_sunday(
 ):
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=True, current_time=_sunday_10am(),
+        enable_wanshen=True, current_time=_sunday_10am(),
     )
     assert fake_battle == []
 
@@ -186,7 +222,7 @@ def test_weekly_skipped_on_monday_morning(
     # Monday 10 AM — must be tm_hour > 12, so this should NOT run
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=True, current_time=_monday_10am(),
+        enable_wanshen=True, current_time=_monday_10am(),
     )
     assert fake_battle == []
 
@@ -196,7 +232,7 @@ def test_weekly_runs_on_monday_afternoon(
 ):
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=True, current_time=_monday_2pm(),
+        enable_wanshen=True, current_time=_monday_2pm(),
     )
     assert any(c["fn"] == "fight_test" for c in fake_battle)
 
@@ -207,7 +243,7 @@ def test_weekly_skipped_when_record_is_not_next_week(
     fake_records["萬神試煉"] = {"is_next_week": False}
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "主頁面",
-        enable_dungeon_manager=True, current_time=_tuesday_10am(),
+        enable_wanshen=True, current_time=_tuesday_10am(),
     )
     assert fake_battle == []
 
@@ -217,7 +253,7 @@ def test_weekly_logs_mismatch_when_off_main_page(
 ):
     dungeon_mod._run_weekly_dungeon(
         SimpleNamespace(), "emu-1", "載入中",
-        enable_dungeon_manager=True, current_time=_tuesday_10am(),
+        enable_wanshen=True, current_time=_tuesday_10am(),
     )
     assert fake_battle == []
     assert len(fake_mismatch) == 1
@@ -233,7 +269,7 @@ def test_biweekly_only_runs_for_5556(
 ):
     dungeon_mod._run_biweekly_dungeon(
         SimpleNamespace(), "emulator-5554", "主頁面",
-        enable_dungeon_manager=True, now_local=_saturday_8pm(),
+        enable_biweekly=True, now_local=_saturday_8pm(),
     )
     assert fake_battle == []
 
@@ -243,7 +279,7 @@ def test_biweekly_runs_on_saturday_20xx_with_no_record(
 ):
     dungeon_mod._run_biweekly_dungeon(
         SimpleNamespace(), "emulator-5556", "主頁面",
-        enable_dungeon_manager=True, now_local=_saturday_8pm(),
+        enable_biweekly=True, now_local=_saturday_8pm(),
     )
     assert any(c["fn"] == "biweekly" for c in fake_battle)
     assert fake_records["_recorded"] == [{"ip": "emulator-5556", "name": "雙週副本"}]
@@ -255,7 +291,7 @@ def test_biweekly_skipped_when_not_next_biweek(
     fake_records["雙週副本"] = {"is_next_biweek": False}
     dungeon_mod._run_biweekly_dungeon(
         SimpleNamespace(), "emulator-5556", "主頁面",
-        enable_dungeon_manager=True, now_local=_saturday_8pm(),
+        enable_biweekly=True, now_local=_saturday_8pm(),
     )
     assert fake_battle == []
 
@@ -265,7 +301,7 @@ def test_biweekly_logs_mismatch_when_off_main_page(
 ):
     dungeon_mod._run_biweekly_dungeon(
         SimpleNamespace(), "emulator-5556", "載入中",
-        enable_dungeon_manager=True, now_local=_saturday_8pm(),
+        enable_biweekly=True, now_local=_saturday_8pm(),
     )
     assert fake_battle == []
     assert len(fake_mismatch) == 1
@@ -279,6 +315,6 @@ def test_biweekly_skipped_outside_20xx_window(
     t = time.strptime("2026-04-25 19:59:00", "%Y-%m-%d %H:%M:%S")
     dungeon_mod._run_biweekly_dungeon(
         SimpleNamespace(), "emulator-5556", "主頁面",
-        enable_dungeon_manager=True, now_local=t,
+        enable_biweekly=True, now_local=t,
     )
     assert fake_battle == []

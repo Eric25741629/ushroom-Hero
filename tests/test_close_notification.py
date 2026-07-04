@@ -12,6 +12,13 @@ The fix gates these Android-only routines on backend_kind == "web_h5".
 """
 
 import logging
+import sys
+import types
+
+if "uiautomator2" not in sys.modules:
+    u2_stub = types.ModuleType("uiautomator2")
+    u2_stub.Device = object
+    sys.modules["uiautomator2"] = u2_stub
 
 from device import close_notification, open_notification
 
@@ -67,6 +74,28 @@ class _FakeAdbDevice:
         return _NoopQuery()
 
 
+class _RecordingAdbDevice(_FakeAdbDevice):
+    def __init__(self):
+        super().__init__()
+        self.events = []
+
+    def open_quick_settings(self):
+        self.events.append("open_quick_settings")
+        super().open_quick_settings()
+
+    def click(self, *args, **kwargs):
+        self.events.append("click")
+        return None
+
+    def press(self, key):
+        self.events.append(f"press:{key}")
+        return None
+
+    def __call__(self, *args, **kwargs):
+        self.events.append("selector")
+        return _NoopQuery()
+
+
 def test_close_notification_skips_web_h5_backend(caplog):
     dev = _FakeWebDevice()
     with caplog.at_level(logging.ERROR):
@@ -89,3 +118,13 @@ def test_close_notification_still_runs_for_adb_backend():
     close_notification(dev)
     # ADB devices must still enter the routine (regression guard).
     assert dev.open_quick_settings_calls == 1
+
+
+def test_close_notification_closes_shade_before_messenger_scan():
+    dev = _RecordingAdbDevice()
+    close_notification(dev)
+
+    click_idx = dev.events.index("click")
+    home_idx = dev.events.index("press:home")
+    selector_idx = dev.events.index("selector")
+    assert click_idx < home_idx < selector_idx

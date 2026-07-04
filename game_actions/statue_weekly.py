@@ -519,8 +519,23 @@ def _adb_return_to_main(d: Any, ip: str, *, success: bool) -> None:
 def run_statue_weekly_if_due(d: Any, ip: str, cfg: Optional[dict] = None) -> None:
     """Top-level guard: enabled? Friday? not yet today? then run.
 
+    Checks ws_state first: if the WS runner already spent fruits today (written
+    by ws_token/runner.py _run_statue), skip the UI flow entirely. Falls back to
+    the Cocos/ADB path when ws_state is unavailable or the record is absent.
+
     Picks the web_h5 vs adb flow based on cfg.backend.
     """
+    # Fast-exit: WS runner already handled this Friday — skip the UI flow.
+    try:
+        from ws_token import state as _ws_state_mod
+        _today_str = datetime.datetime.now(_TZ).strftime("%Y-%m-%d")
+        _st = _ws_state_mod.load_state(ip)
+        if (_st.get("statue") or {}).get("last_date") == _today_str:
+            logger.info("[%s] 菇菇雕像每週: WS runner 已完成，跳過 UI 流程", ip)
+            return
+    except Exception:
+        pass
+
     if cfg is None:
         import config_manager
         cfg = config_manager.get_device_config(ip) or {}

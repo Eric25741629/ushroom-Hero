@@ -44,6 +44,12 @@ CMD_USE_GOODS = 0x0C03        # home_mine_use_goods: dig one block / use a prop
 CMD_GET_REWARD = 0x0C04       # home_mine_get_reward: collect a finished block reward
 CMD_AUTO_USE_GOODS = 0x0C19   # home_mine_auto_use_goods: server-side auto dig
 CMD_INVENTORY_PUSH = 0x0402   # item/currency delta push (rx-only)
+CMD_INVENTORY_QUERY = 0x0401  # full inventory snapshot (request/response; empty
+                              # body -> repeated {item_id#1, uid#2, count#3}).
+                              # 0x0402 only carries DELTAS, so unchanged items
+                              # (workshop materials, idle pickaxe) never appear;
+                              # query 0x0401 once at login to seed the full set.
+                              # 5554 live-verified 2026-06-20.
 
 # goods_id (= prop_id), MINING_SCHEMA §2 5554-verified for 0x0c03 dig.
 # live-confirm: home_mine_use_goods.goods_id == prop_id 4001/4002/4003 is the
@@ -229,6 +235,35 @@ class InventoryTracker:
     def has_item(self, item_id: int) -> bool:
         """Whether this tracker has seen an authoritative count for ``item_id``."""
         return int(item_id) in self.counts
+
+    def seed_from_query(self, client, *, timeout: Optional[float] = None) -> int:
+        """Seed ``counts`` from the FULL inventory snapshot (0x0401 req/resp).
+
+        ``on_push`` only sees 0x0402 DELTAS (consume/gain), so an item that does
+        not change this session never appears — workshop materials stay invisible
+        and mining has to guess the pickaxe count. 0x0401 returns the whole
+        inventory (flat repeated ``{item_id#1, uid#2, count#3}``); query it once
+        right after login to seed every count.  Overwrites with the authoritative
+        snapshot value; subsequent 0x0402 deltas keep updating from there.
+
+        Returns the number of items seeded. Best-effort by contract — callers
+        wrap in try/except so a snapshot failure never breaks the login flow.
+        """
+        cmd, reply = client.call_for(
+            CMD_INVENTORY_QUERY, b"",
+            expect_cmds=(CMD_INVENTORY_QUERY,), timeout=timeout)
+        if cmd != CMD_INVENTORY_QUERY or not reply:
+            return 0
+        n = 0
+        for fnum, val in codec.walk(reply):
+            if fnum == 1 and isinstance(val, (bytes, bytearray)):
+                d = codec.walk_dict(bytes(val))
+                item_id = d.get(1)
+                count = d.get(3)
+                if isinstance(item_id, int) and isinstance(count, int):
+                    self.counts[item_id] = count
+                    n += 1
+        return n
 
     def as_props(self) -> dict:
         """{'pickaxe', 'drill', 'bomb'} snapshot for the planner adapter."""

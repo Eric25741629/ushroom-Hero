@@ -81,6 +81,24 @@ def test_update_device_config_coerces_enabled_to_bool(temp_config):
     assert stored is False  # real bool, not int 0
 
 
+def test_update_device_config_persists_skip_browser_when_all_done(temp_config):
+    """Phase D2: dashboard 存檔 → key 落地且強制轉真 bool（前端傳 1/0 也要變 True/False）。"""
+    config_manager.update_device_config(
+        "web-004", {"backend": "web_h5", "skip_browser_when_all_done": 1}
+    )
+    raw = json.loads(temp_config.read_text(encoding="utf-8"))
+    stored = raw["devices"]["web-004"]["skip_browser_when_all_done"]
+    assert stored is True  # real bool, not int 1
+    # round-trip through the typed reader
+    assert config_manager.get_device_config("web-004").skip_browser_when_all_done is True
+
+
+def test_update_device_config_skip_browser_defaults_false_when_absent(temp_config):
+    """未傳該 key 時沿用預設 False（新裝置 merge DEFAULT_DEVICE_CONFIG）。"""
+    config_manager.update_device_config("web-005", {"backend": "web_h5"})
+    assert config_manager.get_device_config("web-005").skip_browser_when_all_done is False
+
+
 # ── scanner filter: get_web_backend_devices ──────────────────────────────────
 
 class _NullLogger:

@@ -24,6 +24,7 @@ import types
 from types import SimpleNamespace
 
 import pytest
+from runtime_services.device_runtime_service import ForceSleepRequested
 
 
 # --- Heavy-dep stubs (copied from sibling test files) -------------------------
@@ -34,10 +35,21 @@ for _name in ("opencc", "paddleocr", "img_tools", "easyocr"):
             _m.OpenCC = lambda *a, **kw: types.SimpleNamespace(convert=lambda s: s)
         sys.modules[_name] = _m
 
+if "cv2" not in sys.modules:
+    sys.modules["cv2"] = types.ModuleType("cv2")
+
 if "uiautomator2" not in sys.modules:
     _u2 = types.ModuleType("uiautomator2")
     _u2.Device = object
     sys.modules["uiautomator2"] = _u2
+
+if "new_cnn" not in sys.modules:
+    sys.modules["new_cnn"] = types.ModuleType("new_cnn")
+if "new_cnn.cnn_model" not in sys.modules:
+    _cnn = types.ModuleType("new_cnn.cnn_model")
+    _cnn.predict_image = lambda *a, **kw: None
+    sys.modules["new_cnn.cnn_model"] = _cnn
+    sys.modules["new_cnn"].cnn_model = _cnn
 
 if "device" not in sys.modules:
     _dev = types.ModuleType("device")
@@ -93,6 +105,11 @@ if "rank_events" not in sys.modules:
     _re = types.ModuleType("rank_events")
     _re.park_spring = lambda *a, **kw: None
     sys.modules["rank_events"] = _re
+
+if "game_actions.miner_action" not in sys.modules:
+    _ma = types.ModuleType("game_actions.miner_action")
+    _ma.oracle = lambda *a, **kw: None
+    sys.modules["game_actions.miner_action"] = _ma
 
 # farm_v2 module (manager imported as farm_manager by daily_pipeline & new_main_v2).
 if "farm_v2" not in sys.modules:
@@ -288,6 +305,15 @@ def test_run_invokes_stage_guard_helpers_repeatedly(pipeline_mod, fake_all):
     assert len(fake_all["biweekly_dungeon"]) == 1
 
 
+def test_run_stops_immediately_on_force_sleep_checkpoint(pipeline_mod, monkeypatch):
+    """force_sleep should trip the shared checkpoint before any task starts."""
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    monkeypatch.setattr(pipeline_mod.bot_state, "check_force_sleep", lambda _ip: True)
+
+    with pytest.raises(ForceSleepRequested):
+        pipeline_mod.run(ctx)
+
+
 def test_run_triggers_emulator_5558_cleanup_branch(pipeline_mod, fake_all):
     """emulator-5558 must receive a switch_skill(d, '騙人用') cleanup call."""
     ctx = _build_ctx(pipeline_mod, "emulator-5558")
@@ -411,3 +437,26 @@ def test_ws_done_tasks_are_skipped_but_others_still_run(pipeline_mod, fake_all):
         f"Expected at least one of {non_skipped_candidates} to run, "
         f"but executed tasks were: {executed_tasks}"
     )
+
+
+def test_ws_done_mining_skips_oracle_task(pipeline_mod, fake_all):
+    """WS mining 完成後，daily pipeline 不應再啟動 UI 挖礦/Oracle。"""
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    ctx = pipeline_mod.DailyContext(
+        d=ctx.d,
+        ip=ctx.ip,
+        Cnn_model=ctx.Cnn_model,
+        clf=ctx.clf,
+        rl_recorder=ctx.rl_recorder,
+        current_time=ctx.current_time,
+        enable_dungeon_manager=ctx.enable_dungeon_manager,
+        wheel_manager=ctx.wheel_manager,
+        mission_manager=ctx.mission_manager,
+        family_manager=ctx.family_manager,
+        ws_done=frozenset({"挖礦/Oracle"}),
+    )
+
+    pipeline_mod.run(ctx)
+
+    executed_tasks = {call["task"] for call in fake_all["at_main_page"]}
+    assert "挖礦/Oracle" not in executed_tasks

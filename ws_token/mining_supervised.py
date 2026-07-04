@@ -11,9 +11,10 @@ import argparse
 import logging
 import math
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from ws_token import mining, mining_adapter
+from ws_token.abort import WSRunAborted
 from ws_token.client import WSGameClient
 from ws_token.creds import load_creds
 
@@ -76,12 +77,14 @@ def _format_grid(grid: list) -> str:
 
 
 def _log_board_trace(board: Any, inventory: Dict[str, int], *,
-                     phase: str, step_index: int) -> None:
+                     phase: str, step_index: int,
+                     log: Optional[logging.Logger] = None) -> None:
     """Log WS raw board projection so live runs can diagnose filtered layout."""
-    if not logger.isEnabledFor(logging.INFO):
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
     trace = mining_adapter.board_projection_trace(board)
-    logger.info(
+    _log.info(
         "ws_mining board phase=%s step=%s area=%s baseline=%s top_depth=%s "
         "actives=%s blocks=%s holes=%s inventory=%s area_info=%s grid=%s "
         "dropped_blocks=%s dropped_block_details=%s dropped_actives=%s "
@@ -105,25 +108,30 @@ def _log_board_trace(board: Any, inventory: Dict[str, int], *,
 
 
 def _log_plan_trace(plan_result: Dict[str, Any], inventory: Dict[str, int],
-                    *, step_index: int) -> None:
-    if not logger.isEnabledFor(logging.INFO):
+                    *, step_index: int,
+                    log: Optional[logging.Logger] = None) -> None:
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
     steps = list(plan_result.get("ws_steps", []))
-    logger.info(
-        "ws_mining plan step=%s inventory=%s message=%r steps=%s first_step=%s",
+    _log.info(
+        "ws_mining plan step=%s inventory=%s message=%r steps=%s hold_floor=%s first_step=%s",
         step_index,
         dict(inventory),
         plan_result.get("message"),
         len(steps),
+        plan_result.get("hold_floor"),
         steps[0] if steps else None,
     )
 
 
 def _log_execute_trace(item: Dict[str, Any], *, step_index: int,
-                       inventory: Dict[str, int]) -> None:
-    if not logger.isEnabledFor(logging.INFO):
+                       inventory: Dict[str, int],
+                       log: Optional[logging.Logger] = None) -> None:
+    _log = log or logger
+    if not _log.isEnabledFor(logging.INFO):
         return
-    logger.info(
+    _log.info(
         "ws_mining execute step=%s goods_id=%s block_id=%s confirmed=%s "
         "confirmation=%s refresh_attempts=%s inventory_after=%s error=%s",
         step_index,
@@ -296,6 +304,161 @@ def plan_current_board(
     }
 
 
+# Seed count when the login 0x0402 snapshot never delivered the pickaxe (axe)
+# count (it doesn't — the axe count is the goods count for gtid 4001, surfaced
+# live only via the 0x0402 consume push that follows each dig). A positive seed
+# lets the planner emit steps; the first consume push then supplies the real
+# remaining count. Verified live on adb-fc65396d 2026-06-16.
+_SEED_UNKNOWN_PICKAXE = 999
+
+
+def _is_diggable(actives: set, block_by_id: Dict[int, Any], block_id: int) -> bool:
+    """Whether the server will accept an axe dig on ``block_id`` right now.
+
+    A target is diggable iff it is on the server frontier (``actives``) AND it is
+    not an already-dug cell. Live-verified rules (CDP dig 2026-06-20, 小寶):
+      - active cell with NO block entry  -> undug dirt, diggable.
+      - block with count>0               -> undug / live cell (dirt/stone/pit),
+        diggable; digging returns a 0x0c03 reply, spends a pickaxe, and the cell
+        becomes a count==0 air block.
+      - block with count==0              -> ALREADY DUG (air). Digging is a
+        confirmed no-op (0x0c03 NO reply, board unchanged, no pickaxe), for BOTH
+        201 and 202. So it is NOT a valid dig target.
+
+    The earlier "stone (202) is diggable regardless of count" rule was wrong (it
+    rested on a mistaken "fresh stone reads count==0" note) and sent wasted no-op
+    digs at already-dug stone; a fresh 202 actually carries count>0.
+    """
+    if block_id not in actives:
+        return False
+    blk = block_by_id.get(block_id)
+    if blk is None:
+        return True
+    return int(getattr(blk, "count", 0) or 0) > 0
+
+
+def _select_dig_step(
+    board: Any,
+    plan_steps,
+    *,
+    hold_floor: bool = False,
+    grid=None,
+    exclude=None,
+    inventory: Optional[Dict[str, int]] = None,
+    allow_bomb: bool = False,
+    allow_drill: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """Pick the next server-valid step from the planner output.
+
+    The v5 planner orders moves by value but can propose unreachable (non-active)
+    or already-collected (count==0) pit blocks, which the server silently rejects
+    (board unchanged). So take the planner's highest-value step whose target is
+    actually diggable. If the planner proposed steps but NONE are diggable (e.g.
+    it keeps targeting already-dug pits), fall back to the deepest diggable
+    frontier cell to drive the board downward and reveal new pits. An empty plan
+    is respected (return None) — the planner sees nothing worth digging.
+
+    When ``hold_floor=True`` (visible pits exist), the fallback only considers
+    diggable cells whose axe-dig would NOT open floor-7. Pass ``grid`` (the raw
+    7×6 planner grid from the plan result) to enable per-candidate simulation;
+    without it the fallback skips non-pit cells entirely to stay conservative.
+    """
+    plan_steps = list(plan_steps or ())
+    excl = {int(x) for x in (exclude or ())}
+    actives = {int(a) for a in (getattr(board, "actives", None) or [])}
+    block_by_id = {int(b.block_id): b for b in (getattr(board, "blocks", None) or [])}
+
+    # Below-viewport ore steering. v1 plans on a 7-row grid and is BLIND to pits
+    # below the viewport (mining_adapter.map_pits row >= GRID_ROWS). When such ore
+    # exists, v1's floor7-opener drifts to an arbitrary column and the ore needs an
+    # extra horizontal traverse once it scrolls into reach. pit_directed_next runs a
+    # terrain-cost Dijkstra from EVERY uncollected pit (incl. below-viewport) back to
+    # the frontier, so it steers the shaft straight down the ore's column. Prefer it
+    # over v1's pit-blind step here. Skipped under hold_floor (protecting a row-0 pit
+    # must not trigger a scroll) — the existing hold_floor-safe pit_directed call
+    # below still runs in that case. 5554 CDP live 2026-07-01: pit @d120829 c1 was
+    # being bypassed for a c2 floor7-opener.
+    if not hold_floor:
+        below_pit = any(p["row"] >= mining_adapter.GRID_ROWS
+                        for p in mining_adapter.map_pits(board))
+        if below_pit:
+            # 道具優先(只在「1 道具 > ~3 鎬」時出手):鑽頭沿礦的 column 一次清開下挖井、
+            # 炸彈一砲收 ≥2 顆礦(且能炸到視窗下方)。道具珍貴、鎬會回,所以門檻設在省 ≥3 鎬;
+            # prop_step_for_pit 內部已套此門檻 + active 落點規則。其落點仍需 server-diggable。
+            prop = mining_adapter.prop_step_for_pit(
+                board, inventory, allow_bomb=allow_bomb, allow_drill=allow_drill)
+            # props target a count==0 AIR cell (空地/挖完礦洞), so DON'T run the
+            # solid-cell _is_diggable gate (it would reject every valid placement).
+            if prop is not None and int(prop["block_id"]) not in excl:
+                return prop
+            steer = mining_adapter.pit_directed_next(board, exclude=excl)
+            if steer is not None and _is_diggable(actives, block_by_id, int(steer)):
+                return {"type": "dig", "block_id": int(steer), "step_cost": 1.0}
+
+    for step in plan_steps:
+        bid = step.get("block_id")
+        if bid is not None and int(bid) not in excl and _is_diggable(actives, block_by_id, int(bid)):
+            return step
+    if not plan_steps:
+        return None
+
+    cands = [bid for bid in actives if bid not in excl and _is_diggable(actives, block_by_id, bid)]
+    if not cands:
+        return None
+
+    if hold_floor:
+        if grid is not None:
+            from miner.v3.board import floor7_open
+            from miner.v3.actions import apply_dig
+            baseline = int(getattr(board, "baseline", 0) or 0)
+            top_depth = mining_adapter.viewport_top_depth(baseline)
+            grid_cols = len(grid[0]) if grid else 0
+            safe_cands = []
+            for bid in cands:
+                depth, game_col = divmod(bid, 100)
+                row = depth - top_depth
+                col = game_col - 1
+                if not (0 <= row < len(grid)) or not (0 <= col < grid_cols):
+                    safe_cands.append(bid)
+                    continue
+                work = [gr[:] for gr in grid]
+                apply_dig(work, (row, col))
+                if not floor7_open(work):
+                    safe_cands.append(bid)
+            # safety valve: if EVERY candidate would scroll, allow original set
+            cands = safe_cands or cands
+        else:
+            # no grid available → only allow pits (never use deepest-frontier fallback)
+            pit_cands = [
+                bid for bid in cands
+                if block_by_id.get(bid) is not None
+                and (int(getattr(block_by_id[bid], "config_id", 0) or 0) == mining.TERRAIN_PIT
+                     or int(getattr(block_by_id[bid], "is_reward", 0) or 0))
+            ]
+            cands = pit_cands or cands
+
+    # Pit-directed steering: prefer the frontier cell that begins the cheapest
+    # dig-path to the nearest uncollected pit (incl. below-viewport map_pits),
+    # via terrain-cost Dijkstra. Keeps the shaft heading for the reward instead of
+    # "deepest frontier, lowest col" (the root of 繞著礦坑挖 + 礦堆到 r=0). Only used
+    # when its target is a server-valid, hold-floor-safe candidate; else fall
+    # through to the deepest-frontier _key below.
+    cand_set = set(cands)
+    target = mining_adapter.pit_directed_next(board, exclude=excl)
+    if target is not None and target in cand_set:
+        return {"type": "dig", "block_id": target, "step_cost": 1.0}
+
+    def _key(bid: int):
+        blk = block_by_id.get(bid)
+        depth, col = divmod(bid, 100)
+        is_pit = blk is not None and (
+            int(getattr(blk, "config_id", 0) or 0) == mining.TERRAIN_PIT
+            or int(getattr(blk, "is_reward", 0) or 0))
+        return (0 if is_pit else 1, -depth, col)  # pits first, then deepest frontier
+
+    return {"type": "dig", "block_id": sorted(cands, key=_key)[0], "step_cost": 1.0}
+
+
 def mine_until_pickaxe_empty(
     client: WSGameClient,
     tracker: mining.InventoryTracker,
@@ -305,23 +468,37 @@ def mine_until_pickaxe_empty(
     max_steps: int = 200,
     timeout: Optional[float] = None,
     max_depth: Optional[int] = None,
+    should_abort: Optional[Callable[[], bool]] = None,
+    device_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Re-plan and execute one confirmed step at a time until pickaxes reach 0.
+    """Re-plan and execute one confirmed dig at a time until pickaxes reach 0.
 
-    庫存必須先由 0x0402 snapshot/update 建立；如果沒有看過鎬子現量，直接
-    skip，避免把 ``max_num`` 或預設 0 誤當成真實庫存。
+    The pickaxe ("axe") count is NOT delivered by the 0x0402 login snapshot — it
+    is the goods count for gtid 4001, surfaced live only via the 0x0402 consume
+    push (9800001) that follows each dig (verified live 2026-06-16, fc). So rather
+    than skip when the count is unknown, we seed a positive count so the planner
+    emits steps, then adopt the authoritative remaining count from the first
+    consume push (``tracker``). Each dig targets a server-VALID frontier cell
+    (see ``_select_dig_step``); the planner can propose unreachable / already-
+    collected pits, which the server rejects, so the executed step is filtered to
+    a diggable target with a frontier fallback.
     """
-    if not tracker.has_item(mining.GOODS_PICKAXE):
-        return {
-            "skipped": "inventory snapshot missing",
-            "initial_inventory": tracker.as_props(),
-            "final_inventory": tracker.as_props(),
-            "plans": [],
-            "candidate_steps": [],
-            "executed": [],
-        }
+    # 設定裝置專屬 ws_mining log（若有提供 device_id）
+    _wlog: Optional[logging.Logger] = None
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_mining_logger
+            _wlog = get_or_create_ws_mining_logger(device_id)
+        except Exception:
+            pass
 
+    # Undug terrain is reconstructed deterministically inside mining_adapter via
+    # mine_terrain.terrain_at(depth, col, area_info) — no per-device learning,
+    # no cache, no CNN. The board's own area_info indexes configMine_template.
+    seen = tracker.has_item(mining.GOODS_PICKAXE)
     inventory = dict(tracker.as_props())
+    if not seen:
+        inventory["pickaxe"] = _SEED_UNKNOWN_PICKAXE
     initial_inventory = dict(inventory)
     plans: list[Dict[str, Any]] = []
     candidate_steps: list[Dict[str, Any]] = []
@@ -330,9 +507,13 @@ def mine_until_pickaxe_empty(
     stopped_reason = "max_steps"
 
     current_board = mining.read_board(client, timeout=timeout)
-    _log_board_trace(current_board, inventory, phase="initial", step_index=0)
+    _log_board_trace(current_board, inventory, phase="initial", step_index=0, log=_wlog)
     for _idx in range(limit):
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
+        # 續做時讀當前 board 接續，不會重複。
+        if should_abort is not None and should_abort():
+            raise WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
 
@@ -342,26 +523,51 @@ def mine_until_pickaxe_empty(
             max_depth=max_depth,
         )
         plans.append(plan_result)
-        _log_plan_trace(plan_result, inventory, step_index=_idx)
-        steps = list(plan_result.get("ws_steps", []))
-        if not steps:
-            stopped_reason = "no_steps"
-            break
+        _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog)
 
-        step = steps[0]
-        candidate_steps.append(step)
-        item = execute_plan_step(
-            client,
-            step,
-            allow_bomb=allow_bomb,
-            allow_drill=allow_drill,
-            timeout=timeout,
-            before_board=current_board,
-        )
-        executed.append(item)
-        if not item.get("confirmed"):
-            _log_execute_trace(item, step_index=_idx, inventory=inventory)
-            stopped_reason = "unconfirmed"
+        # 同一盤面內逐個候選嘗試：被伺服器拒挖（unconfirmed、版面不變）的目標只
+        # 加入本盤黑名單後改試下一個可達格，不再因「第一步失敗」就中止整輪挖礦。
+        # 這正是 hold_floor 盤面挑到被上方石頭擋住的深層 frontier 格 → 拒挖 →
+        # 之前 digs=1 就 break、整輪挖 0 的根因。候選有限，不會無限送 dig。
+        rejected: set = set()
+        item = None
+        tried_any = False
+        while True:
+            if should_abort is not None and should_abort():
+                raise WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
+            step = _select_dig_step(
+                current_board,
+                plan_result.get("ws_steps", []),
+                hold_floor=bool(plan_result.get("hold_floor")),
+                grid=plan_result.get("grid"),
+                exclude=rejected,
+                inventory=inventory,
+                allow_bomb=allow_bomb,
+                allow_drill=allow_drill,
+            )
+            if step is None:
+                break
+            candidate_steps.append(step)
+            tried_any = True
+            item = execute_plan_step(
+                client,
+                step,
+                allow_bomb=allow_bomb,
+                allow_drill=allow_drill,
+                timeout=timeout,
+                before_board=current_board,
+            )
+            executed.append(item)
+            if item.get("confirmed"):
+                break
+            _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
+            rejected.add(int(step["block_id"]))
+            item = None
+
+        if item is None:
+            # 本盤所有可挖候選都試過仍無 confirmed dig。完全沒挖步=no_steps，
+            # 有送過但都被拒=unconfirmed（兩者都讓 confirmed_digs==0 標 skipped）。
+            stopped_reason = "unconfirmed" if tried_any else "no_steps"
             break
 
         _decrement_inventory(
@@ -369,8 +575,13 @@ def mine_until_pickaxe_empty(
             int(item["goods_id"]),
             int(item.get("hits") or 1),
         )
-        _log_execute_trace(item, step_index=_idx, inventory=inventory)
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        # Adopt the authoritative remaining count the moment the first consume
+        # push lands (only relevant when we started from a seed).
+        if not seen and tracker.has_item(mining.GOODS_PICKAXE):
+            seen = True
+            inventory["pickaxe"] = tracker.pickaxe
+        _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
             break
 
@@ -380,12 +591,24 @@ def mine_until_pickaxe_empty(
             break
         current_board = next_board
         _log_board_trace(current_board, inventory, phase="after_execute",
-                         step_index=_idx)
+                         step_index=_idx, log=_wlog)
     else:
-        if int(inventory.get("pickaxe", 0)) <= 0:
+        if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
 
-    return {
+    _summary_log = _wlog or logger
+    _summary_log.info(
+        "ws_mining summary: stopped=%s digs=%s hold_floor_rounds=%s "
+        "pickaxe %s→%s drill %s→%s bomb %s→%s",
+        stopped_reason,
+        len(executed),
+        sum(1 for p in plans if p.get("hold_floor")),
+        initial_inventory.get("pickaxe"), inventory.get("pickaxe"),
+        initial_inventory.get("drill"), inventory.get("drill"),
+        initial_inventory.get("bomb"), inventory.get("bomb"),
+    )
+
+    result: Dict[str, Any] = {
         "initial_inventory": initial_inventory,
         "final_inventory": inventory,
         "plans": plans,
@@ -393,6 +616,15 @@ def mine_until_pickaxe_empty(
         "executed": executed,
         "stopped_reason": stopped_reason,
     }
+    # 實質沒挖到（0 個 confirmed dig 且卡在 no_steps/unconfirmed）→ 標 "skipped"
+    # sentinel，讓 ws_phase._substantive_done 不把「挖礦/Oracle」記為完成、保留 ADB
+    # 後備。判定用 confirmed_digs==0（非 executed==[]）：unconfirmed step 也會被 append
+    # 進 executed（confirmed 檢查之前），死結時長度為 1。pickaxe_empty（沒鏟可挖）
+    # 仍算完成（ADB 也挖不了），不標 skipped。
+    confirmed_digs = sum(1 for it in executed if it.get("confirmed"))
+    if confirmed_digs == 0 and stopped_reason in ("no_steps", "unconfirmed"):
+        result["skipped"] = f"no dig confirmed (stopped={stopped_reason})"
+    return result
 
 
 def _format_step(step: Dict[str, Any]) -> str:

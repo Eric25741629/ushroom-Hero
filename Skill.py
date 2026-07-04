@@ -20,7 +20,7 @@ def check_skill_and_parner(d: u2.Device):
     return False
 
 import os
-def get_skill_and_partner(d: u2.Device):
+def get_skill_and_partner(d: u2.Device, skip_weekend_draw: bool = False):
     print(check_skill_and_parner(d))
     if check_skill_and_parner(d):
         d.click(500, 900)
@@ -73,8 +73,7 @@ def get_skill_and_partner(d: u2.Device):
 
         d.click(500, 900)
         time.sleep(3)
-        # 如果是週末
-        if time.localtime().tm_wday == 5 or time.localtime().tm_wday == 6:
+        if not skip_weekend_draw and (time.localtime().tm_wday == 5 or time.localtime().tm_wday == 6):
             weekend_to_buy(d)
 
 def weekend_to_buy(d: u2.Device):

@@ -38,10 +38,12 @@ from ws_token.workshop import (  # noqa: E402
     CMD_UNLOCK_WORKSHOP,
     FOOD_CRISPY_COOKIE,
     FOOD_ELITE_PLATTER,
+    RECIPE_APPROACH,
     RECIPE_FOOD_IDS,
     TEAM_TO_WORKSHOP_ID,
     Workshop,
     WorkshopInfo,
+    assign_idle_workshops,
     build_cancel_body,
     build_choose_food_body,
     build_collect_body,
@@ -50,10 +52,9 @@ from ws_token.workshop import (  # noqa: E402
     collect,
     parse_dining_hall,
     parse_info,
+    producible_count,
     read_dining_hall,
     read_info,
-    rotate_team_recipes,
-    switch_recipe,
     team_cfg_id_to_workshop_id,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
@@ -128,18 +129,23 @@ def test_parse_info_reads_single_workshop():
     assert w.unlock_slot_num == 3
 
 
-def test_parse_info_worker_status_drives_is_running():
+def test_parse_info_selected_food_drives_is_running():
+    # is_running is driven by selected_food (pw_worker_info#7.f2), NOT worker_status:
+    # live 2026-06-19 worker_status reads ~602 whether idle or busy.
+    idle_pw = codec.pb_uint(1, 1) + codec.pb_uint(2, 0)       # selected_food=0 idle
+    busy_pw = codec.pb_uint(1, 1) + codec.pb_uint(2, 8005)    # producing 8005
     info = parse_info(_info_body(workers=[
-        _worker(101, 0),   # idle
-        _worker(202, 2),   # running
+        _worker(101, 602, pw_info=idle_pw),   # idle despite status 602
+        _worker(202, 602, pw_info=busy_pw),   # running (selected_food set)
     ]))
     assert info.workshops[0].is_running is False
     assert info.workshops[1].is_running is True
 
 
 def test_parse_info_multiple_workshops_in_order():
+    busy_pw = codec.pb_uint(1, 1) + codec.pb_uint(2, 8001)
     info = parse_info(_info_body(workers=[
-        _worker(1, 0), _worker(2, 1), _worker(3, 0),
+        _worker(1, 0), _worker(2, 602, pw_info=busy_pw), _worker(3, 0),
     ]))
     assert [w.team_cfg_id for w in info.workshops] == [1, 2, 3]
     assert [w.is_running for w in info.workshops] == [False, True, False]
@@ -151,9 +157,82 @@ def test_parse_info_exposes_auto_use_food_list():
 
 
 def test_parse_info_keeps_pw_worker_info_raw_bytes():
-    pw = codec.pb_uint(1, 9001) + codec.pb_uint(2, 7)  # opaque p_worker_pw_food_info
+    pw = codec.pb_uint(1, 9001) + codec.pb_uint(2, 8005)  # p_worker_pw_food_info
     info = parse_info(_info_body(workers=[_worker(101, 1, pw_info=pw)]))
     assert info.workshops[0].pw_worker_info == pw
+
+
+# --- selected_food: pw_worker_info#7.f2 (0=idle, else=running that food) ----
+
+def test_parse_info_reads_selected_food_from_pw_worker_info_f2():
+    # pw_worker_info#7 {f1, f2=selected_food}; f2>0 means this workshop is busy
+    # producing that food id (the real "is processing" signal — NOT worker_status).
+    pw = codec.pb_uint(1, 1) + codec.pb_uint(2, 8005)
+    info = parse_info(_info_body(workers=[_worker(6001, 602, pw_info=pw)]))
+    assert info.workshops[0].selected_food == 8005
+
+
+def test_parse_info_selected_food_zero_when_idle():
+    pw = codec.pb_uint(1, 2) + codec.pb_uint(2, 0)
+    info = parse_info(_info_body(workers=[_worker(6002, 602, pw_info=pw)]))
+    assert info.workshops[0].selected_food == 0
+
+
+def test_parse_info_selected_food_defaults_zero_without_pw_info():
+    info = parse_info(_info_body(workers=[_worker(6002, 0)]))
+    assert info.workshops[0].selected_food == 0
+
+
+def test_parse_info_real_18434_capture_5554():
+    # Real worker_pw_info_s2c bytes captured live on 5554 (2026-06-19): 6001 手動
+    # is busy producing 8005, 6002 小隊 is idle (selected_food=0) — the bug case.
+    hx = ("08c43e08c13e08c53e08c33e122f08f12e120208001800200128003a20080110c5"
+          "3e1800220508852f1000220508842f1000220508832f100028003000123308f22e"
+          "121b08e81610c6978480d8ae1410bbfe8480d8ae1410c6dc8480d8ae1418da0420"
+          "0128033a0a08021000180028013000")
+    info = parse_info(bytes.fromhex(hx))
+    by_team = {w.team_cfg_id: w for w in info.workshops}
+    assert by_team[6001].selected_food == 8005   # 手動加工 busy
+    assert by_team[6002].selected_food == 0       # 小隊加工 idle (the stuck case)
+    assert by_team[6002].worker_status == 602      # status is NOT the busy signal
+
+
+# --- producible_count: ⌊stock / per_unit⌋ across all approach materials ------
+
+def test_producible_count_exact_division():
+    # 8005 needs [(6019,2),(6020,2),(6021,2)]; stock 118/118/1138 -> min(59,59,569)=59
+    mats = {6019: 118, 6020: 118, 6021: 1138}
+    assert producible_count(mats, 8005) == 59
+
+
+def test_producible_count_floor_division():
+    # 8001 needs [(6017,2)]; stock 7 -> 7//2 = 3
+    assert producible_count({6017: 7}, 8001) == 3
+
+
+def test_producible_count_missing_material_is_zero():
+    # 6021 absent from the snapshot -> that material contributes 0 -> producible 0
+    assert producible_count({6019: 118, 6020: 118}, 8005) == 0
+
+
+def test_producible_count_insufficient_is_zero():
+    assert producible_count({6017: 1}, 8001) == 0   # needs 2 per unit
+
+
+def test_producible_count_empty_approach_is_zero():
+    # 8003 活力精華 has no approach materials -> not producible via this path
+    assert producible_count({6017: 999}, 8003) == 0
+
+
+def test_producible_count_unknown_food_is_zero():
+    assert producible_count({6017: 999}, 99999) == 0
+
+
+def test_recipe_approach_matches_live_config_food():
+    assert RECIPE_APPROACH[8001] == [(6017, 2)]
+    assert RECIPE_APPROACH[8002] == [(6017, 1), (6019, 2)]
+    assert RECIPE_APPROACH[8004] == [(6017, 1), (6019, 2), (6020, 2)]
+    assert RECIPE_APPROACH[8005] == [(6019, 2), (6020, 2), (6021, 2)]
 
 
 def test_parse_info_empty_is_empty():
@@ -230,27 +309,60 @@ def test_read_dining_hall_sends_empty_and_parses():
         c.close()
 
 
-# --- choose_food: success + 0x0201 rejection -------------------------------
+# --- choose_food: re-read 18434 confirms success (NOT an 18435 ack) ---------
+# Live truth: choose's success ack does NOT come back on cmd 18435 (waiting for
+# it times out); the only reliable signal is re-reading 18434's
+# pw_worker_info#7.f2 == food_id. So choose_food fires-and-rereads.
 
-def test_choose_food_success_reports_ok_and_sends_body():
-    c, fake = _client({CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")]})
+def _info_with_selected(team_cfg_id, food_id, *, status=602):
+    """worker_pw_info_s2c with one team workshop whose selected_food = food_id."""
+    pw = codec.pb_uint(1, 1) + codec.pb_uint(2, food_id)
+    return _info_body(workers=[_worker(team_cfg_id, status, pw_info=pw)])
+
+
+def test_choose_food_success_when_reread_shows_selected_food():
+    # After choose, the re-read 18434 shows workshop_id=2 (team 6002) now producing
+    # 8005 -> ok=True. choose_food sends the request, then reads info to confirm.
+    c, fake = _client({
+        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, _info_with_selected(6002, 8005))],
+    })
     try:
-        result = choose_food(c, food_k=501, food_v=3, workshop_id=2)
+        result = choose_food(c, food_k=8005, food_v=59, workshop_id=2)
         assert result["ok"] is True
-        assert result["error_code"] is None
+        assert result["food_id"] == 8005
+        assert result["count"] == 59
+        assert result["workshop_id"] == 2
         sent = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CHOOSE_FOOD]
-        assert sent[0] == build_choose_food_body(501, 3, 2)
+        assert sent[0] == build_choose_food_body(8005, 59, 2)
     finally:
         c.close()
 
 
-def test_choose_food_0x0201_rejection_is_failure_no_crash():
-    # 90 = 冷卻時間未到. The reply lands on the 0x0201 error channel, not 18435.
-    c, _ = _client({CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 90))]})
+def test_choose_food_failure_when_reread_still_idle():
+    # Server rejected (selected_food still 0 after the request) -> ok=False, no crash
+    # even though an 0x0201 may also have come back.
+    c, _ = _client({
+        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 3))],
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, _info_with_selected(6002, 0))],
+    })
     try:
-        result = choose_food(c, food_k=501, food_v=3, workshop_id=2)
+        result = choose_food(c, food_k=8005, food_v=59, workshop_id=2)
         assert result["ok"] is False
-        assert result["error_code"] == 90
+        assert result["food_id"] == 8005
+    finally:
+        c.close()
+
+
+def test_choose_food_count_below_one_does_not_send_request():
+    # count<1 must NEVER hit the server (0 triggers 0x0201 error_code=3 道具不足).
+    c, fake = _client({CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")]})
+    try:
+        result = choose_food(c, food_k=8005, food_v=0, workshop_id=2)
+        assert result["ok"] is False
+        assert result["reason"] == "no_count"
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
+        assert CMD_INFO not in fake.sent_cmds()   # not even a confirmation read
     finally:
         c.close()
 
@@ -324,60 +436,13 @@ def test_cmd_ids_match_module_72_formula():
     assert CMD_DINING_HALL == 72 * 256 + 9
 
 
-# --- switch_recipe: 取消 BEFORE 換 (in-game rule) ---------------------------
+# --- recipe ids (value-high first) -----------------------------------------
 
 def test_recipe_food_ids():
     assert FOOD_CRISPY_COOKIE == 8001          # 脆脆餅乾
     assert FOOD_ELITE_PLATTER == 8005          # 精英拼盤
-    assert RECIPE_FOOD_IDS == (8001, 8005)
-
-
-def test_switch_recipe_cancels_before_choosing():
-    # The in-game rule: you MUST 取消 (cancel_work) before changing the recipe.
-    # switch_recipe accepts team_cfg_id (e.g. 6002) from worker_pw_info, maps it to
-    # configWorkshop.id (2) internally, and sends that mapped id on the wire.
-    order: list[str] = []
-    c, fake = _client({
-        CMD_CANCEL_WORK: lambda _b: (order.append("cancel") or [s2c(CMD_CANCEL_WORK, b"")]),
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8005, 56))],
-        CMD_CHOOSE_FOOD: lambda _b: (order.append("choose") or [s2c(CMD_CHOOSE_FOOD, b"")]),
-    })
-    try:
-        # Pass team_cfg_id=6002 (as returned by worker_pw_info p_worker.team_cfg_id#1)
-        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_ELITE_PLATTER)
-        assert order == ["cancel", "choose"]       # cancel FIRST, then choose
-        assert out["food_id"] == 8005
-        assert out["count"] == 56                  # qty read from the dining hall
-        assert out["cancelled"]["ok"] is True
-        assert out["chosen"]["ok"] is True
-        # cancel body must carry workshop_id=2 (configWorkshop.id), NOT 6002
-        cancel_bodies = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CANCEL_WORK]
-        assert codec.walk_dict(cancel_bodies[0]) == {1: 2}
-        # choose body must carry food_list{k=8005, v=56}, workshop_id=2 (NOT 6002)
-        chose = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CHOOSE_FOOD][0]
-        d = codec.walk_dict(chose)
-        assert codec.walk_dict(bytes(d[1])) == {1: 8005, 2: 56}
-        assert d[2] == 2   # mapped configWorkshop.id, not team_cfg_id 6002
-    finally:
-        c.close()
-
-
-def test_switch_recipe_surfaces_cancel_rejection():
-    # If cancel is rejected (0x0201), switch_recipe still returns without crashing
-    # and surfaces ok=False on the cancelled sub-result.
-    c, _ = _client({
-        CMD_CANCEL_WORK: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 90))],
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 0))],
-        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
-    })
-    try:
-        # team_cfg_id=6002 -> workshop_id=2 on the wire
-        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_CRISPY_COOKIE)
-        assert out["cancelled"]["ok"] is False
-        assert out["cancelled"]["error_code"] == 90
-        assert out["food_id"] == 8001
-    finally:
-        c.close()
+    # value-high first: 8005 精英拼盤 preferred over 8001 脆脆餅乾 when both possible
+    assert RECIPE_FOOD_IDS == (8005, 8001)
 
 
 # --- configWorkshop mapping: team_cfg_id -> workshop_id --------------------
@@ -410,210 +475,166 @@ def test_workshop_dataclass_exposes_workshop_id_property():
     assert w6003.workshop_id == 3
 
 
-# --- rotate_team_recipes: 12h 輪換的 wire 邏輯（cadence 由 runner 管）---------
+# --- assign_idle_workshops: 閒置才補、絕不動 running 工坊 --------------------
+# The fixed strategy. read_info; for each team workshop {6002,6003} (NOT手動 6001):
+#   selected_food != 0 -> busy, skip untouched (never cancel a running workshop).
+#   selected_food == 0 -> idle, pick the first producible food from prefer_order
+#   (8005 then 8001) and choose it with that producible count.
 
-def _pw_worker(team_cfg_id, worker_status):
-    """p_worker {team_cfg_id#1, worker_status#3}."""
-    return codec.pb_uint(1, team_cfg_id) + codec.pb_uint(3, worker_status)
+def _pw_food_info(selected_food):
+    """p_worker_pw_food_info#7 {f1, f2=selected_food}."""
+    return codec.pb_uint(1, 1) + codec.pb_uint(2, selected_food)
 
 
 def _info_s2c_body(teams):
-    """worker_pw_info_s2c with one p_worker per team.
+    """worker_pw_info_s2c, one p_worker per team.
 
-    Each item is a bare team_cfg_id (worker_status=1, running) or a
-    (team_cfg_id, worker_status) tuple.
+    Each item is (team_cfg_id, selected_food); worker_status is always 602 (it is
+    NOT the busy signal — selected_food is). selected_food=0 means idle.
     """
     out = b""
-    for t in teams:
-        team_id, status = t if isinstance(t, tuple) else (t, 1)
-        out += codec.pb_msg(2, _pw_worker(team_id, status))
+    for team_id, selected_food in teams:
+        pw = _pw_food_info(selected_food)
+        out += codec.pb_msg(2, codec.pb_uint(1, team_id) + codec.pb_uint(3, 602)
+                            + codec.pb_msg(7, pw))
     return out
 
 
-def _dining_s2c_body(foods):
-    """dining_hall_s2c {food_list#1 repeated p_key_value{k,v}}."""
-    out = b""
-    for k, v in foods:
-        out += codec.pb_msg(1, codec.pb_uint(1, k) + codec.pb_uint(2, v))
-    return out
+def _assign_client(teams, *, reread=None):
+    """Fake client for assign_idle_workshops tests.
 
-
-def _rotate_client(teams, foods, *, cancel_responder=None):
-    """Fake client for rotate tests.
-
-    ``cancel_responder`` defaults to a normal ok reply; pass a raising one for
-    idle-workshop tests (server NEVER replies to cancel on an idle workshop, so
-    sending it at all is the bug).
+    ``teams`` = initial 18434 state (list of (team_cfg_id, selected_food)).
+    ``reread`` (optional) = the 18434 state choose_food's confirmation read sees;
+    defaults to the same as the initial read (so a chosen food only confirms when
+    the reread reflects it). Each CMD_INFO call advances through the reread list.
     """
-    if cancel_responder is None:
-        cancel_responder = lambda _b: [s2c(CMD_CANCEL_WORK, b"")]  # noqa: E731
+    info_bodies = [_info_s2c_body(teams)]
+    if reread is not None:
+        info_bodies += [_info_s2c_body(t) for t in reread]
+    seq = {"i": 0}
+
+    def _info(_b):
+        i = min(seq["i"], len(info_bodies) - 1)
+        seq["i"] += 1
+        return [s2c(CMD_INFO, info_bodies[i])]
+
     return _client({
-        CMD_INFO: lambda _b: [s2c(CMD_INFO, _info_s2c_body(teams))],
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _dining_s2c_body(foods))],
-        CMD_CANCEL_WORK: cancel_responder,
+        CMD_INFO: _info,
         CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
     })
 
 
 def _forbid_cancel(_body):
     raise AssertionError(
-        "cancel_work sent to an idle workshop — server never replies (live "
-        "2026-06-10 7fe98fc6), this would hang as WSTimeoutError in production")
+        "cancel_work must NOT be sent by assign_idle_workshops — it only assigns "
+        "to idle workshops and never disturbs a running one")
 
 
-def test_rotate_parity0_assigns_8001_then_8005():
-    c, fake = _rotate_client([6001, 6002, 6003], [(8001, 7), (8005, 4)])
+def test_assign_skips_running_workshop_untouched():
+    # 6002 busy producing 8005 -> assign must NOT touch it (no choose, no cancel).
+    c, fake = _assign_client([(6002, 8005)])
     try:
-        out = rotate_team_recipes(c, parity=0)
-        # 手動加工 6001 untouched; 6002 -> 8001, 6003 -> 8005
-        assert [s["food_id"] for s in out["switched"]] == [8001, 8005]
-        assert [s["team_cfg_id"] for s in out["switched"]] == [6002, 6003]
-        chosen = [codec.walk_dict(b) for _sid, cmd, b in fake.framed_sent()
-                  if cmd == CMD_CHOOSE_FOOD]
-        # choose_food bodies: food kv nested at #1, workshop wire id at #2
-        assert [d[2] for d in chosen] == [2, 3]  # configWorkshop.id, NOT team_cfg_id
-    finally:
-        c.close()
-
-
-def test_rotate_parity1_swaps_recipes():
-    c, _ = _rotate_client([6002, 6003], [(8001, 7), (8005, 4)])
-    try:
-        out = rotate_team_recipes(c, parity=1)
-        assert [s["food_id"] for s in out["switched"]] == [8005, 8001]
-    finally:
-        c.close()
-
-
-def test_rotate_no_team_workshops_is_noop():
-    c, fake = _rotate_client([6001], [(8001, 7)])
-    try:
-        out = rotate_team_recipes(c, parity=0)
-        assert out["switched"] == []
-        assert all(cmd != CMD_CHOOSE_FOOD for _s, cmd, _b in fake.framed_sent())
-    finally:
-        c.close()
-
-
-# --- idle workshops: cancel is state-gated silent (live 2026-06-10 7fe98fc6) -
-
-def test_rotate_idle_workshop_skips_cancel_but_still_chooses():
-    # Both team workshops idle (worker_status=0). Sending cancel_work to an idle
-    # workshop gets NO reply at all -> WSTimeoutError in production. The fake's
-    # cancel responder raises to prove cancel is never sent.
-    c, fake = _rotate_client([(6002, 0), (6003, 0)], [(8001, 7), (8005, 4)],
-                             cancel_responder=_forbid_cancel)
-    try:
-        out = rotate_team_recipes(c, parity=0)
-        assert [s["food_id"] for s in out["switched"]] == [8001, 8005]
-        sent = fake.sent_cmds()
-        assert CMD_CANCEL_WORK not in sent
-        assert sent.count(CMD_CHOOSE_FOOD) == 2
-        for s in out["switched"]:
-            assert s["cancelled"] == {
-                "ok": True, "error_code": None, "skipped": "not running"}
-    finally:
-        c.close()
-
-
-def test_rotate_running_workshop_still_cancels_first():
-    c, fake = _rotate_client([(6002, 1), (6003, 2)], [(8001, 7), (8005, 4)])
-    try:
-        out = rotate_team_recipes(c, parity=0)
-        assert [s["food_id"] for s in out["switched"]] == [8001, 8005]
-        cancels = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CANCEL_WORK]
-        assert [codec.walk_dict(b) for b in cancels] == [{1: 2}, {1: 3}]
-        for s in out["switched"]:
-            assert s["cancelled"]["ok"] is True
-            assert "skipped" not in s["cancelled"]
-    finally:
-        c.close()
-
-
-def test_rotate_mixed_idle_and_running():
-    # 6002 running -> cancel sent for workshop_id=2 only; 6003 idle -> no cancel.
-    c, fake = _rotate_client([(6002, 1), (6003, 0)], [(8001, 7), (8005, 4)])
-    try:
-        out = rotate_team_recipes(c, parity=0)
-        cancels = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_CANCEL_WORK]
-        assert [codec.walk_dict(b) for b in cancels] == [{1: 2}]
-        assert out["switched"][1]["cancelled"]["skipped"] == "not running"
-    finally:
-        c.close()
-
-
-def test_switch_recipe_cancel_first_false_skips_cancel():
-    c, fake = _client({
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 9))],
-        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
-        CMD_CANCEL_WORK: _forbid_cancel,
-    })
-    try:
-        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_CRISPY_COOKIE,
-                            cancel_first=False)
-        assert out["cancelled"] == {
-            "ok": True, "error_code": None, "skipped": "not running"}
-        assert out["food_id"] == 8001
-        assert out["count"] == 9
+        out = assign_idle_workshops(c, materials={6019: 999, 6020: 999, 6021: 999})
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
         assert CMD_CANCEL_WORK not in fake.sent_cmds()
+        assigned = [w for w in out["workshops"] if w.get("action") == "assigned"]
+        assert assigned == []
     finally:
         c.close()
 
 
-# --- best-effort: server is state-gated SILENT on cancel/choose --------------
-# live 2026-06-10 (7fe98fc6) twice: cancel got no reply (no 18438, no 0x0201)
-# even on a worker_status>0 workshop -> worker_status is not a reliable signal
-# (the real processing state may live in the unparsed pw_worker_info#7 blob).
-# switch_recipe must tolerate the timeout and keep going — choose proves itself.
-
-def _silent(_body):
-    """Responder that never replies — the server's state-gated silence."""
-    return []
-
-
-def test_switch_recipe_cancel_timeout_continues_to_choose():
-    c, fake = _client({
-        CMD_CANCEL_WORK: _silent,
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8005, 12))],
-        CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
-    })
+def test_assign_idle_workshop_chooses_producible_food():
+    # 6002 idle; materials make 8005 producible (59) -> choose 8005 ×59 on wire id 2.
+    mats = {6019: 118, 6020: 118, 6021: 1138}
+    c, fake = _assign_client([(6002, 0)], reread=[[(6002, 8005)]])
     try:
-        out = switch_recipe(c, team_cfg_id=6002, food_id=FOOD_ELITE_PLATTER,
-                            timeout=0.1)
-        assert out["cancelled"] == {"ok": False, "error_code": None, "timeout": True}
-        assert out["chosen"]["ok"] is True
-        assert out["count"] == 12
-        # cancel WAS attempted (best-effort) and choose still went out after it
-        assert fake.sent_cmds().count(CMD_CANCEL_WORK) == 1
+        out = assign_idle_workshops(c, materials=mats)
+        chosen = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                  if cmd == CMD_CHOOSE_FOOD]
+        assert len(chosen) == 1
+        assert codec.walk_dict(bytes(chosen[0][1])) == {1: 8005, 2: 59}
+        assert chosen[0][2] == 2   # configWorkshop.id for team 6002
+        assigned = [w for w in out["workshops"] if w.get("action") == "assigned"]
+        assert assigned[0]["food_id"] == 8005
+        assert assigned[0]["count"] == 59
+        assert assigned[0]["ok"] is True
+    finally:
+        c.close()
+
+
+def test_assign_prefers_value_high_food_first():
+    # Both 8005 and 8001 producible -> 8005 (value-high, first in prefer_order) wins.
+    mats = {6017: 999, 6019: 999, 6020: 999, 6021: 999}
+    c, fake = _assign_client([(6002, 0)], reread=[[(6002, 8005)]])
+    try:
+        out = assign_idle_workshops(c, materials=mats)
+        chosen = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                  if cmd == CMD_CHOOSE_FOOD]
+        assert codec.walk_dict(bytes(chosen[0][1]))[1] == 8005
+        assert out["workshops"][0]["food_id"] == 8005
+    finally:
+        c.close()
+
+
+def test_assign_falls_back_to_cheaper_food_when_high_not_producible():
+    # 8005 needs 6019/6020/6021 (absent) -> not producible; 8001 needs 6017 -> use it.
+    mats = {6017: 10}
+    c, fake = _assign_client([(6002, 0)], reread=[[(6002, 8001)]])
+    try:
+        out = assign_idle_workshops(c, materials=mats)
+        chosen = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                  if cmd == CMD_CHOOSE_FOOD]
+        assert codec.walk_dict(bytes(chosen[0][1])) == {1: 8001, 2: 5}  # 10//2
+        assert out["workshops"][0]["food_id"] == 8001
+    finally:
+        c.close()
+
+
+def test_assign_skips_idle_workshop_when_no_food_producible():
+    # idle but no materials for any recipe -> nothing sent, never a count=0 request.
+    c, fake = _assign_client([(6002, 0)])
+    try:
+        out = assign_idle_workshops(c, materials={})
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
+        skipped = [w for w in out["workshops"] if w.get("action") == "skipped"]
+        assert skipped and skipped[0]["reason"] == "no_producible_food"
+    finally:
+        c.close()
+
+
+def test_assign_ignores_manual_workshop_6001():
+    # 手動加工 6001 (even when idle) is never assigned by the team pass.
+    c, fake = _assign_client([(6001, 0)])
+    try:
+        out = assign_idle_workshops(c, materials={6017: 999})
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
+        assert all(w["team_cfg_id"] != 6001 or w["action"] == "ignored"
+                   for w in out["workshops"])
+    finally:
+        c.close()
+
+
+def test_assign_mixed_running_and_idle():
+    # 6002 busy (skip), 6003 idle (assign 8005). Only one choose, never a cancel.
+    mats = {6019: 999, 6020: 999, 6021: 999}
+    c, fake = _assign_client([(6002, 8005), (6003, 0)], reread=[
+        [(6002, 8005), (6003, 8005)]])
+    try:
+        assign_idle_workshops(c, materials=mats)
         assert fake.sent_cmds().count(CMD_CHOOSE_FOOD) == 1
+        assert CMD_CANCEL_WORK not in fake.sent_cmds()
+        chosen = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                  if cmd == CMD_CHOOSE_FOOD]
+        assert chosen[0][2] == 3   # only 6003 (wire id 3) got assigned
     finally:
         c.close()
 
 
-def test_switch_recipe_choose_timeout_is_surfaced_not_raised():
-    c, _ = _client({
-        CMD_CANCEL_WORK: lambda _b: [s2c(CMD_CANCEL_WORK, b"")],
-        CMD_DINING_HALL: lambda _b: [s2c(CMD_DINING_HALL, _kv_at(1, 8001, 3))],
-        CMD_CHOOSE_FOOD: _silent,
-    })
+def test_assign_no_team_workshops_is_noop():
+    c, fake = _assign_client([(6001, 0)])
     try:
-        out = switch_recipe(c, team_cfg_id=6003, food_id=FOOD_CRISPY_COOKIE,
-                            timeout=0.1)
-        assert out["cancelled"]["ok"] is True
-        assert out["chosen"] == {"ok": False, "error_code": None, "timeout": True}
-        assert out["workshop_id"] == 3
-    finally:
-        c.close()
-
-
-def test_rotate_survives_fully_silent_cancel():
-    # Both workshops running, cancel silent on BOTH -> rotate still completes a
-    # full summary (chosen ok=True since choose answered) instead of raising.
-    c, _ = _rotate_client([(6002, 1), (6003, 1)], [(8001, 7), (8005, 4)],
-                          cancel_responder=_silent)
-    try:
-        out = rotate_team_recipes(c, parity=0, timeout=0.1)
-        assert [s["cancelled"].get("timeout") for s in out["switched"]] == [True, True]
-        assert all(s["chosen"]["ok"] for s in out["switched"])
+        out = assign_idle_workshops(c, materials={6017: 999})
+        assert all(cmd != CMD_CHOOSE_FOOD for _s, cmd, _b in fake.framed_sent())
+        assert out["workshops"][0]["team_cfg_id"] == 6001
     finally:
         c.close()

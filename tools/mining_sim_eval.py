@@ -567,7 +567,7 @@ def main():
     parser.add_argument(
         "--planner",
         choices=["v1", "v3", "v4"],
-        default="v4",
+        default="v1",
         help="which planner to evaluate (v1=plan_smart)",
     )
     parser.add_argument(

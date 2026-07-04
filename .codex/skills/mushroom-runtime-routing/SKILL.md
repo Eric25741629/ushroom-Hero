@@ -32,6 +32,9 @@ Typical files:
 - Do not let command routing bypass the existing master/worker contract.
 - Preserve backward compatibility for existing `paused`, `skip_sleep`, `manual_release`, and `web_launch` behavior.
 - Keep UI state and backend state aligned; do not add a button without a matching runtime path.
+- For `web_close`, Playwright objects are thread-affine: blocking/sleep loops may
+  only peek the pending close flag to interrupt themselves. The owning device
+  thread must consume the flag and call `device.close()`.
 
 ## Validation
 

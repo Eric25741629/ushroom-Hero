@@ -98,8 +98,9 @@ _ERR_REASONS = {ERR_COOLDOWN: "冷卻時間未到", ERR_NOT_ENOUGH: "次數不�
 _DEFAULT_RING_TYPE = 1    # marry_ring_levup type — 1 assumed = 用真愛之石 (live-confirm)
 _DEFAULT_MAX_FORGES = 200
 _DEFAULT_SPACING = 0.2
-_GIFT_BATCH = 20          # 送禮批次單位（使用者 2026-06-10 指定）
-_GIFT_MAX_BATCHES = 20    # 護欄：最多 20 批（400 個）
+_GIFT_BATCH = 10          # 送禮批次單位（使用者 2026-06-12 改 10）
+_GIFT_MAX_BATCHES = 20    # 護欄：最多 20 批
+_GIFT_DOWNGRADE_LADDER = (5, 2, 1)  # code=3 物品不足時的降批次序列
 
 
 @dataclass(frozen=True)
@@ -301,21 +302,30 @@ def give_all_in_hand(
     spacing: float = _DEFAULT_SPACING,
     timeout: Optional[float] = None,
 ) -> dict:
-    """送光手上全部 ``flower_id``：以 ``batch``(=20) 為單位連送（使用者指定）。
+    """送光手上全部 ``flower_id``：以 ``batch``(=10) 為單位連送（使用者指定）。
 
-    Server 對超量 num 自動封頂到庫存（user live-confirmed 2026-06-10），所以每批
-    實送 min(batch, 在手)；庫存歸零後下一批回 0x0201 code 3 物品不足 —— 那是正常
-    結束訊號，不是錯誤。回傳 {batches_ok, stopped_reason}。
+    超量 num 不會被 server 封頂 —— 在手不足整批時直接回 0x0201 code 3 物品不足
+    （live 2026-06-12 fc65396d 觀察）。所以 code 3 時沿 ``_GIFT_DOWNGRADE_LADDER``
+    降批次重試把餘量送光；num=1 仍回 code 3 才是真正送完。其他錯誤碼立即停。
+    回傳 {batches_ok, stopped_reason}。
     """
     batches_ok = 0
     stopped_reason = "max_batches"
-    for _ in range(max_batches):
+    ladder = [n for n in _GIFT_DOWNGRADE_LADDER if n < batch]
+    num = batch
+    for _ in range(max_batches + len(ladder)):
         out = give_flower(client, friend_id=friend_id, flower_id=flower_id,
-                          num=batch, timeout=timeout)
+                          num=num, timeout=timeout)
         if not out["ok"]:
             stopped_reason = f"error_code={out['error_code']}"
+            if out["error_code"] == ERR_NOT_ENOUGH_ITEM and ladder:
+                num = ladder.pop(0)   # 物品不足 → 降批次把餘量送光
+                continue
             break
         batches_ok += 1
+        if batches_ok >= max_batches:
+            stopped_reason = "max_batches"
+            break
         if spacing:
             time.sleep(spacing)
     logger.info("ws_token couple: give_all_in_hand flower_id=%s batches_ok=%d %s",

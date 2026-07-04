@@ -545,14 +545,62 @@ function rollCell(depth, dirtP, rockP) {
   return 'unreachable_dirt';
 }
 
+// --- Real-game terrain templates -------------------------------------------
+// The game does NOT roll terrain per-cell. It tiles fixed 7x6 templates
+// (configMine_template) vertically, one template per 7-row band, chosen by
+// weighted-random over the config selection weights. (Pits are a SEPARATE
+// overlay, kept below — they are not part of the template.) value 100=air
+// 201=dirt 202=stone. Dumped from the live game: docs/protocol/mine_config_tables.json.
+// 7 active grids (wsum>0, total 75); ids 6-10 have weight 0 and never spawn.
+const MINE_TEMPLATES = [
+  {w:10, ids:[1001], g:[[100,100,100,100,100,100],[100,100,100,100,100,100],[100,100,100,100,100,100],[201,201,201,201,201,201],[201,201,201,202,202,201],[100,201,202,202,202,100],[201,201,202,201,202,100]]},
+  {w:10, ids:[1002], g:[[100,202,201,201,201,201],[201,202,201,201,202,201],[202,201,202,201,201,201],[201,201,201,201,201,201],[201,201,202,201,100,201],[201,202,201,202,201,100],[201,202,201,201,202,201]]},
+  {w:7, ids:[1,11,16], g:[[202,201,202,201,202,201],[100,201,201,201,202,202],[201,201,202,100,201,201],[100,201,201,100,201,100],[201,202,201,201,202,202],[201,100,201,100,201,201],[201,201,100,202,202,100]]},
+  {w:9, ids:[2,12,17], g:[[201,201,202,202,201,201],[100,201,201,201,201,201],[202,201,202,100,201,201],[202,201,201,201,202,201],[100,201,202,201,201,202],[201,201,201,201,100,201],[201,201,201,201,202,100]]},
+  {w:11, ids:[3,13,18], g:[[201,201,201,201,201,202],[201,201,202,201,201,100],[201,100,202,202,201,100],[201,202,201,201,100,201],[201,201,100,201,201,100],[202,202,201,201,201,202],[201,202,201,202,100,201]]},
+  {w:13, ids:[4,14,19], g:[[201,202,201,201,201,201],[201,201,201,202,201,202],[201,201,202,201,202,201],[201,202,202,100,201,202],[201,202,100,201,201,201],[201,202,201,201,201,201],[202,202,201,100,201,201]]},
+  {w:15, ids:[5,15,20], g:[[201,202,100,202,201,201],[202,100,100,201,202,202],[201,202,201,100,201,201],[201,202,201,201,202,201],[100,100,201,100,201,201],[201,201,202,100,201,201],[201,202,201,201,201,201]]},
+];
+const MINE_TEMPLATES_TOTAL_W = MINE_TEMPLATES.reduce((s, t) => s + t.w, 0);
+let bandTemplateCache = {}; // band index -> chosen template grid (reset per game)
+
+function pickTemplateForBand(band) {
+  if (bandTemplateCache[band]) return bandTemplateCache[band];
+  let x = Math.random() * MINE_TEMPLATES_TOTAL_W, pick = MINE_TEMPLATES[0].g;
+  for (const t of MINE_TEMPLATES) { x -= t.w; if (x < 0) { pick = t.g; break; } }
+  bandTemplateCache[band] = pick;
+  return pick;
+}
+
+function templateRow(depth) {
+  // depth -> (band, row-in-band); read terrain off that band's template.
+  const band = Math.floor(depth / ROWS);
+  const rr = depth - band * ROWS;
+  const tmpl = pickTemplateForBand(band);
+  const row = [];
+  for (let c = 0; c < COLS; c++) {
+    const v = tmpl[rr][c];
+    row.push(v === 202 ? 'unreachable_rock' : (v === 100 ? 'unreachable_empty' : 'unreachable_dirt'));
+  }
+  return row;
+}
+
 function extendMineTape(count) {
   const startRow = mineTape.length;
+  // Default to real templated terrain; set window.__USE_TEMPLATE_TERRAIN=false
+  // to fall back to the old per-cell density roller for A/B comparison.
+  const useTemplates = (window.__USE_TEMPLATE_TERRAIN !== false);
   for (let i = 0; i < count; i++) {
     const depth = startRow + i;
-    const dirtP = Math.max(0.30, 0.55 - depth * 0.02);
-    const rockP = Math.min(0.55, 0.25 + depth * 0.02);
-    const row = [];
-    for (let c = 0; c < COLS; c++) row.push(rollCell(depth, dirtP, rockP));
+    let row;
+    if (useTemplates) {
+      row = templateRow(depth);
+    } else {
+      const dirtP = Math.max(0.30, 0.55 - depth * 0.02);
+      const rockP = Math.min(0.55, 0.25 + depth * 0.02);
+      row = [];
+      for (let c = 0; c < COLS; c++) row.push(rollCell(depth, dirtP, rockP));
+    }
     mineTape.push(row);
   }
   placeClustersInTapeRange(startRow, mineTape.length);
@@ -625,21 +673,28 @@ function tryPlaceClusterTape(size, rRange, cRange, attempts) {
 }
 
 function placeClustersInTapeRange(rMin, rMax) {
-  // Reserve tape row 0 (player's starting row) — no clusters there. For all
-  // other rows, place biggest first so 2×2/1×1 fit around the 3×3.
+  // Reserve tape row 0 (player's starting row) — no clusters there.
+  // Calibrated to REAL logs (tools/track_pits_replay.py): spawn pit density
+  // ~3.6% of cells, cluster side PMF 1×1:66% / 2×2:17% / 3×3:17%. (The earlier
+  // count-based generator spawned ~33% density — ~9× too high.)
   const from = Math.max(rMin, 1);
   const span = Math.max(0, rMax - from);
-  const n3 = Math.max(1, Math.floor(span / 8));
-  for (let i = 0; i < n3; i++) {
-    tryPlaceClusterTape(3, [from, rMax - 3], [0, COLS - 3], 80);
-  }
-  const n2 = Math.max(2, Math.floor(span / 5));
-  for (let i = 0; i < n2; i++) {
-    tryPlaceClusterTape(2, [from, rMax - 2], [0, COLS - 2], 50);
-  }
-  const n1 = Math.max(2, Math.floor(span / 5));
-  for (let i = 0; i < n1; i++) {
-    tryPlaceClusterTape(1, [from, rMax - 1], [0, COLS - 1], 50);
+  if (span <= 0) return;
+  // Default 0.036 calibrated to real logs (track_pits_replay). Overridable via
+  // window.__PIT_DENSITY so eval harnesses can sweep density (e.g. the live game
+  // can run sparser — a 2026-06-18 re-measure on fresh logs read ~2.4%).
+  const PIT_DENSITY = (typeof window.__PIT_DENSITY === 'number') ? window.__PIT_DENSITY : 0.036;
+  const SIDE_PMF = [[1, 0.66], [2, 0.17], [3, 0.17]];
+  const target = Math.round(PIT_DENSITY * span * COLS);
+  let placed = 0, guard = 0;
+  const guardMax = target * 25 + 50;
+  while (placed < target && guard++ < guardMax) {
+    const x = Math.random();
+    let acc = 0, side = 1;
+    for (const [s, p] of SIDE_PMF) { acc += p; if (x < acc) { side = s; break; } }
+    if (tryPlaceClusterTape(side, [from, rMax - side], [0, COLS - side], 60)) {
+      placed += side * side;
+    }
   }
 }
 
@@ -669,6 +724,7 @@ function initBoard() {
   viewportRow = 0;
   pitClusters = [];
   cellToCluster = {};
+  bandTemplateCache = {};
   extendMineTape(TAPE_INITIAL);
   refreshBoardView();
   // Foothold: 2 reachable air cells on tape row 0 (row 0 is reserved from

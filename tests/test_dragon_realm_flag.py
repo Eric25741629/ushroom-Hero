@@ -1,8 +1,8 @@
 from dragon_realm import use_dragon_realm
 
 
-def test_flag_defaults_off_when_unset():
-    assert use_dragon_realm("emulator-5560", {}) is False
+def test_flag_defaults_on_when_unset():
+    assert use_dragon_realm("emulator-5560", {}) is True
 
 
 def test_global_flag_enables():

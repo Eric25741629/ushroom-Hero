@@ -14,6 +14,13 @@ from worker_webhook_api import apply_remote_commands, normalize_master_url, reso
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+# Per-device log ring buffer holds up to bot_state._MAX_DEVICE_LOGS (200) lines
+# now that the file logger forwards every line. The master dashboard only renders
+# the tail (cards: last 3; labeler/trainer panels: last 40/120), so shipping the
+# whole buffer every ~1.2s would bloat each worker->master report. Send only the
+# recent tail.
+_WORKER_LOG_TAIL = 60
+
 _worker_sync_thread_started = False
 
 
@@ -98,7 +105,7 @@ def _worker_sync_loop():
                     "step": st.get("step"),
                     "next_wake_at": st.get("next_wake_at"),
                     "paused": st.get("paused", False),
-                    "logs": st.get("logs", []),
+                    "logs": (st.get("logs") or [])[-_WORKER_LOG_TAIL:],
                     "avg_screenshot_ms": st.get("avg_screenshot_ms"),
                 }
             now = time.time()

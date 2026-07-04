@@ -10,10 +10,11 @@ timestamp, and ``id-1`` = configTurntable index. The prize content lives in the
 client config (configTurntable), NOT in the WS reply — so this layer only reports
 which slot was hit. Spinning is win-on-spin: there is no separate claim step.
 
-Only free / already-accumulated spins are consumed: ``spin_all_free`` reads the
-info ``num`` once and spins that many times. Topping up spins by watching an ad
-is an SDK/native flow that cannot be done over this pure-WS path, so it is not
-attempted.
+``spin_all_free`` reads the info ``num`` once and spins that many times. The
+wheel's 2 daily "watch ad" spins ARE claimable over pure WS: for a NO_ADS
+account ``ad_reward(config_id=13, is_free=1)`` grants one spin instantly (each
+claim bumps ``num`` by 1 — live-verified 5554 2026-06-21), no video. ``run_daily``
+banks those ad top-ups into the pool (cap 2/day, cooldown-gated) and then spins.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from ws_token import codec
+from ws_token import ad_reward, codec
 from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,11 @@ CMD_ERROR = 0x0201  # error.error_info_s2c {error_code#1}
 # and returns None on any 0x0201 / timeout instead of crashing.
 ERR_COOLDOWN = 90        # 冷卻時間未到
 ERR_EVENT_ENDED = 173    # 活動已結束
+
+# configAds AD_TURNTABLE: the wheel's "watch ad" spin. times=2/day, cd=300s. For
+# a NO_ADS account ad_reward(13, is_free=1) GRANTS a wheel spin (num += 1) with no
+# video — live-verified 5554 2026-06-21. Capped/cooldown-gated by ad_reward.TIMES.
+AD_TURNTABLE_CONFIG_ID = 13
 
 _DEFAULT_SPACING = 0.3
 _DEFAULT_MAX_SPINS = 50
@@ -124,6 +130,38 @@ def spin_all_free(
     logger.info("ws_token turntable: num=%d spun=%d declined=%s (max=%d)",
                 info.num, len(results), declined, max_spins)
     return {"spun": len(results), "results": results, "declined": declined}
+
+
+def run_daily(
+    client: WSGameClient,
+    *,
+    spacing: float = _DEFAULT_SPACING,
+    max_spins: int = _DEFAULT_MAX_SPINS,
+) -> dict:
+    """Bank today's ad-funded spins into the wheel pool, then spin everything.
+
+    The wheel's 2 daily "watch ad" spins are, for a NO_ADS account, a free
+    instant ``ad_reward(config_id=13, is_free=1)`` — each successful claim bumps
+    ``ad_wheel_info.num`` by 1 (a claim GRANTS a wheel spin, which 0x1604 then
+    consumes; live-verified 5554 2026-06-21). ``ad_reward.claim_ad`` caps the
+    claim at 2/day and skips on cooldown WITHOUT sending a packet (same「讀現值→
+    補到上限→冷卻就跳過」discipline as the diamond/seed ad rewards), so this is
+    safe to call every wake; the per-spin cooldown then limits the drain to
+    ~1/session and turns accumulate across wakes.
+
+    Returns ``spin_all_free``'s ``{spun, results, declined}`` plus ``ad_topup``
+    (the claim_ad result, or ``{"error": ...}`` if the ad-info read failed — a
+    flaky top-up never blocks the free spins).
+    """
+    try:
+        topup = ad_reward.claim_ad(client, AD_TURNTABLE_CONFIG_ID)
+    except Exception as exc:  # noqa: BLE001 — ad top-up is a bonus, never block spins
+        logger.warning("ws_token turntable: ad top-up (config %d) failed (%s); "
+                       "spinning free turns only", AD_TURNTABLE_CONFIG_ID, exc)
+        topup = {"error": str(exc)}
+    out = spin_all_free(client, spacing=spacing, max_spins=max_spins)
+    out["ad_topup"] = topup
+    return out
 
 
 def _as_int(v) -> int:

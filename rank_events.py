@@ -1,8 +1,8 @@
 """排行榜活動任務。
 
 目前實作：坐騎衝刺 (記錄名稱 `衝刺-發條`)。
-活動每 4 週一次,於活動週的週二~週四餵養「無限時發條」給坐騎衝排名,
-一個活動週只執行一次 (成功才記錄時間)。
+活動每 4 週一次,於活動週的週二~週三 (台灣時間週三 22:00 後結算) 餵養
+「無限時發條」給坐騎衝排名,一個活動週只執行一次 (成功才記錄時間)。
 
 跨後端：
   - web_h5 (Playwright/CDP)：座標點擊 + cocos `EditBox` 設定數量。
@@ -37,8 +37,10 @@ CONFIRM_OK = (371, 556)    # 確定 (MessageView/.../btnEnsure)
 CLOSE_BTN = (270, 896)     # 關閉坐騎頁 (btnClose)
 
 SPRINT_RECORD = "衝刺-發條"
-ALLOWED_WEEKDAYS = [1, 2, 3]   # 週二~週四
-DEFAULT_QUANTITY = 7000
+ALLOWED_WEEKDAYS = [1, 2]   # 週二~週三 (週三 22:00 台灣時間後活動結算)
+SPRINT_CLOSE_WEEKDAY = 2   # 週三
+SPRINT_CLOSE_HOUR = 22     # 22:00 台灣時間後不再執行
+DEFAULT_QUANTITY = 3200
 
 # web_h5: 設定 ItemUseView 數量框並觸發 commit 事件,讓遊戲更新內部數量。
 _SET_QTY_JS = r"""
@@ -72,30 +74,29 @@ _SET_QTY_JS = r"""
 """
 
 
-def park_spring(d, ip, now=None):
-    """坐騎衝刺 (衝刺-發條)。每 4 週活動週的週二~週四餵養無限時發條一次。"""
+def is_mount_sprint_open(now=None):
+    """坐騎衝刺是否在活動開放窗內：週二全天 + 週三 22:00(台灣)前。
+
+    只判斷「窗內」，不含 4 週週期判斷(那是 should_execute_cycle 的事)。
+    park_spring 與 dashboard 徽章共用此判定，避免活動結束後徽章繼續顯示。
+    """
     now = now or datetime.datetime.now(_TPE)
     weekday = now.weekday()  # 0=Mon ... 6=Sun
-
-    # 1. 僅限週二~週四
     if weekday not in ALLOWED_WEEKDAYS:
-        return
-    # 週四 22:00 後活動結算,不再執行
-    if weekday == 3 and now.hour >= 22:
-        logger.info(f"[{ip}] 週四 22:00 後已結算,跳過衝刺-發條。")
-        return
+        return False
+    if weekday == SPRINT_CLOSE_WEEKDAY and now.hour >= SPRINT_CLOSE_HOUR:
+        return False
+    return True
 
-    # 2. 本週是否已執行過
-    record = json_manager.return_time(ip, name=SPRINT_RECORD)
-    if record and not record.get("is_next_week", True):
-        logger.info(f"[{ip}] 本週已執行過衝刺-發條,不再重複。")
-        return
 
-    # 3. 是否為 4 週週期的執行週
-    should_run, _ = json_manager.should_execute_cycle(
-        ip, SPRINT_RECORD, cycle_weeks=4, allowed_weekdays=ALLOWED_WEEKDAYS
-    )
-    if not should_run:
+def park_spring(d, ip, now=None):
+    """坐騎衝刺 (衝刺-發條)。每 4 週活動週的週二~週三餵養無限時發條一次。"""
+    now = now or datetime.datetime.now(_TPE)
+
+    # 1~3. due 判斷（活動開放窗 + 本週未執行 + 4 週週期）改由 task_due registry 統一。
+    #      lazy import 破循環：task_due 反過來會 import 本模組取 is_mount_sprint_open。
+    from game_actions.task_due import is_due
+    if not is_due("坐騎衝刺", ip, now=now):
         return
 
     # 4. 設定 gating + 數量

@@ -1,5 +1,79 @@
 # Lessons learned
 
+## 2026-06-19 改公開函式時，「只動 N 個檔」的限制要對「被依賴的測試/CLI」例外處理
+
+- **情境**：team lead 指定 workshop 修復「只動 3 個檔，別碰其他檔」。但我移除了 `switch_recipe`/
+  `rotate_team_recipes` 並改 `_run_workshop` 簽名 → `tests/test_ws_token_runner.py` 有 5 處
+  (1 fixture + 4 cadence 測試) 直接 `monkeypatch.setattr(runner.workshop, "rotate_team_recipes")`，
+  monkeypatch 對不存在的 attr 會 raise → **整個 runner 測試檔在 import/setup 期就壞**。
+  另 `ws_token/workshop_smoke.py` 取 `choose_food` 回傳的 `result['error_code']`（新版不再回該 key）。
+- **Rule**：移除/改簽名公開符號前，先 `grep` 全 repo 找呼叫端（測試、smoke CLI、dashboard）。
+  - 被依賴的**測試**：為了讓成果可驗證（綠燈），更新它是必要的，**做**但在回報裡明確標出「超出指定檔案範圍、原因、改了什麼」。
+  - 非執行路徑的**debug CLI**（如 smoke）：若嚴格限制檔案，**不要默默改**，在回報裡點名該檔會 KeyError + 建議的一行修法，讓 owner 決定。
+- **驗證 regression 歸屬**：end-to-end 測試掛掉時，先 `git stash` 我的改動跑 baseline 確認是不是
+  我造成的。本次 `test_run_device_end_to_end_over_fake_transport` 的 rogue/statue timeout 在 baseline
+  就已存在（responder 沒 script 那兩個 cmd），與 workshop 無關 → 別認領別人的鍋。
+
+## 2026-06-15 遊戲抽卡分兩種：週末付費 35×3 vs 每日看廣告免費 (User 指正)
+
+- **問題**：User 說「五六日也有抽卡，改用 WS」，我直接把 `weekend_to_buy`（ADB 週末付費抽）錯誤對應到
+  `gacha_free`（0x1602 每日看廣告免費召喚），並把 `free_daily` 預設改成 `True`。
+- **兩者根本不同**：
+  - **週末付費 35×3**：`weekend_to_buy`，週六/日各 3×35 = 105 技能 + 105 同伴，消耗抽卡券（1012/1013），
+    WS 協議 `0x0902`，目的是**解周任務**；在 runner 裡是 `"gacha"` task key。
+  - **每日看廣告免費召喚**：`0x1602`，3 次/型/日（error 89 = server 上限），**不需廣告也能觸發**，
+    但遊戲本身已有自動化處理，**不歸 bot 管，不要碰 `free_daily`**；runner key 是 `"gacha_free"`。
+- **正確做法**：
+  - `WS_TO_PIPELINE_SKIPS["gacha"]` → `("抽技能夥伴",)`（付費抽做完→跳過 ADB `weekend_to_buy`）
+  - `_run_gacha` 加 `weekend_only` gate；config default `mode=fixed, count=35, batches=3`
+  - `free_daily` 永遠保持 `False`（不動每日廣告流程）
+- **Rule**：遇到「這個功能改用 WS」，先確認是哪條協議（付費 0x0902 / 免費 0x1602 / 其他），
+  不要從「時序相似」就猜對應。每個 WS cmd 都有獨立語義，映射前要驗證。
+
+## 2026-06-15 多個 Claude Code 實例並行加功能 → 每個 session 要開分支+專屬 worktree (User 指正)
+
+- **根因不是「subagent 不能用」。User 澄清:「我的意思並非指不能使用 subagents,歸根原因是因為使用者同時使用多個 Claude Code 在加入新功能。」** 真正問題:**User 會同時開好幾個 Claude Code 實例**,各自在同一個 working tree 上改 code,彼此 last-write-wins 互相覆蓋,所以「重複覆蓋」很明顯。
+- **Rule(我這個 session 的自我隔離)**:
+  - 只要這次工作會**修改程式碼/檔案**,預設先把自己關進**專屬分支 + 專屬 git worktree**(`superpowers:using-git-worktrees` 或 `git worktree add ../<slug> -b <branch>`),在隔離資料夾裡做完、commit,**最後才 merge 回 main**。不要直接在共用的主 working tree 上改,因為旁邊可能有別的 Claude Code 實例同時在改。
+  - 開工前先 `git status` 看清楚:工作區可能已有別的實例留下的未提交改動,**別 `git add -A`、別覆蓋不是我動的檔**(本 repo 常態 ~80 個 WIP + auth_state secrets,見 [[feedback_commit_after_milestone]])。
+  - subagent **照常使用**(研究/探索/平行分析);要點只是「寫檔的工作放進隔離 worktree」,不是少用子代理。
+  - 唯讀任務(grep/讀檔/報告)不需隔離。檔案層級的防覆蓋規則見 [[feedback_subagent_file_ownership]]。
+
+## 2026-06-15 挖礦 WS 診斷 session
+
+- **驗證一個系統的「狀態有沒有變」時,要用該系統「自己的比對邏輯」,不要自己另寫 proxy 比對。**
+  我測純 WS dig 是否生效時,自己只比了 board 的 `cells`(f5)+`events`(f6),得到「沒變 → R2 重現」
+  的**錯誤結論**;但 ws_token 真正用的是 `mining_supervised._board_signature`(含 f7 blocks 的
+  config_id/count)。單次 dig 只動 f7,不動 f5/f6,所以我的 proxy 比對天生看不到變化。改用系統
+  自己的 signature 後,3 步全 confirmed,系統其實正常。**Rule**:重現/驗證某模組行為時,直接 import
+  並呼叫它真正的判定函式(signature/confirm/compare),別憑直覺另寫一份簡化比對 — 簡化版會漏掉
+  該模組關心的欄位,給出假陰性。
+- **NAS 同步資料夾的檔案會在我讀取之間被背景改掉;關鍵事實要在動手前重讀、用 git diff/mtime 對時。**
+  我第一次 Read bot_config 看到 `mining.enabled=false`,稍後 git diff 卻顯示 working tree 是 true
+  — 中間檔案被 sync/使用者改過(00:18)。**Rule**:在 `nas同步_project` 下,config/log 這類會被
+  dashboard 或他機同步改動的檔,判讀前重讀一次;log「停在某時間」先懷疑是同步舊副本,用 mtime +
+  正在跑的 process 佐證,別當成 bot 已停。
+- **別從 benchmark 數字硬推因果結論,被使用者連抓兩次。** 同一串裡我從 sim 分數先後斷言「WS 看不到
+  buried pit → 做 fog」「v1 作弊」,兩次都沒先驗證真實資訊模型就講得很篤定。使用者連續質疑(「捲動
+  怎麼會給完整 3x3」「什麼看不到」「不會是 server 標未連通你就當看不到」)才逼我去 dump `0x0c01` 協議,
+  發現:cell feature 只有 id/col/depth/terrain/f5/f6,沒有被我丟掉的「未連通」旗標;礦洞 401 本來就被
+  當 pit;WS 看得少是 server 送的 feature 稀疏;而 ADB(CNN 讀螢幕)其實看得到 unreachable_pit。前提全錯,
+  整包 fog 改動 git revert(a8d48985)。**Rule**:(a) 對「某 planner/某後端看得到什麼」這種會翻轉結論的
+  因果宣稱,先用真實協議/log 驗證再講,不要從 sim 行為反推;(b) benchmark 盤面若跟真實輸入不吻合(sim
+  密集 cluster vs 真實稀疏),就**不能拿它的排名當結論** — 寧可說「sim 不可信、要看真實資料」也不要硬給
+  一個漂亮但沒驗證的排名;(c) 使用者重複追問同一點 = 我的解釋有洞,該停下去驗證,不是再補一套說法。
+
+## 2026-06-13 memory 查核/清理 session
+
+- **記憶內容一律用英文寫,從第一筆編輯就用英文,別先用中文起草再回頭翻。** 本專案 CLAUDE.md
+  「Working Style」早就訂「memory 一律用英文寫」,我做記憶查核時卻用中文寫修正 banner,User
+  當場糾正「這些記憶請用英文進行書寫 無須使用中文」。**Rule**:動 `~/.claude/.../memory/*.md`
+  的任何寫入(新建/修正/index)預設英文;遊戲內畫面字串(神燈/泊銀/守護靈…)與程式識別字保持原樣
+  逐字不翻,首次出現可加英文 gloss。既有規則該在第一筆就套用,不要等被提醒。
+- **大批記憶查核/翻譯用平行 subagent 做上下文隔離,主迴圈只留結論。** 48 個記憶檔的「對程式碼
+  查核 + 英文化 + 套修正」用 8 個 Opus subagent 一次過(每批 6 檔),保持主 context 乾淨。
+  **Rule**:>10 檔的查核/改寫任務,按子系統切批丟 subagent,讓它回 verdict + 改檔,主迴圈彙整。
+
 ## 2026-06-10 ws_token 接入 workflow 設計 session
 
 - **消耗品操作別用「大數讓 server 封頂」的取巧法,User 要的是可控批次。** 我提議送禮用
@@ -232,3 +306,145 @@ Otherwise: edit, test, commit, move to next item, repeat.
 The legacy call site used `farm_manager.farm(d, ip, Cnn_model)`. Two options to wire farm_v2 in: (a) add `farm = run_farm` alias, or (b) rename `run_farm → farm`. Option (b) won — keeps a single public name, no shim to remove later, no docstring drift. The internal-only `quick_farm` reference inside `manager.py` was the only other call site.
 
 **Rule**: When wiring a "v2" module into legacy call sites, prefer renaming the new symbol to match the legacy name over adding an alias shim, unless the new name is documented elsewhere.
+
+### Default to pure-WS (ws_token backend), not cocos-UI/CDP, for game-driving features (2026-06-15 user correction: "我明明要求你支援純ws")
+Built a "最佳升級車位裝飾" dashboard tool driving the game via cocos-UI clicks through the dashboard's local CDP (`_cdp_evaluate`). When picking the execution mechanism I asked about scope + objective but **silently chose CDP-UI myself**. The user wanted the project-standard **pure-WS ws_token backend** (like `ws_token/mail.py` / `relic.py` / `tycoon.py`: token-direct, headless, no browser, reaches worker devices). See [[feedback_ws_first_recon_strategy]].
+
+Two traps:
+1. **Don't default to UI-clicking when a pure-WS path exists.** This repo has a whole `ws_token/` backend; game mutations should go through WS cmds (`netManager.send` / codec), not cocos `emit('click')`, unless the action is client-validated (battle/board) per the recon-strategy memory.
+2. **"Pure WS" (send cmd vs click UI) ≠ "works beyond local".** The 倉庫 page is already pure-WS yet still local-only because it injects via local CDP (`127.0.0.1:debug_port`). To reach remote/worker devices you need the ws_token backend (token-direct) + a dashboard→command-queue trigger, not just swapping clicks for `netManager.send`.
+
+**Rule**: For any feature that mutates game state, default the execution layer to pure-WS via the `ws_token` backend, and when the execution mechanism is a real choice, surface it in the upfront AskUserQuestion (CDP-UI vs pure-WS vs ws_token-backend) instead of deciding silently.
+
+### Don't infer behavior from a log MESSAGE; read the code path (2026-06-17, web_h5 7fe98fc6 thrash)
+While root-causing a 3-hour web_h5 startup thrash I asserted "normal hourly sleep closes the browser" because the wake log printed `web_h5 瀏覽器已關閉`. That message is actually `is_alive()==False` (a 200ms canvas probe that false-negatives on a throttled/backgrounded tab) — `new_main_v2.py:333-337`. Normal aligned sleep does NOT close the web browser: `wake_up_handler.py:411-415` skips app_stop for web_h5, and `run_sleep_cycle` never calls `stop_runtime_device_for_sleep` (only the `ForceSleepRequested` branch does). So the OLD Chrome lingers across sleep, holds the NAS-hosted `--user-data-dir`, and the next launch hits a profile-in-use hand-off (Windows `exitCode=0`, not exit 21) → degraded to a login-less fallback profile → permanent 未知.
+
+**Rule**: A log string describes intent, not proof. Before building a root-cause on "the bot does X here", open the exact function the message comes from and the surrounding control flow, and confirm X actually happens. Especially for close/teardown/sleep paths.
+
+### An independent agent on a CLEAN worktree catches your confirmation bias (2026-06-17)
+User asked for an unbiased second opinion. I ran `codex exec -s read-only` in a `git worktree add HEAD` checkout (no uncommitted fixes, no my todo writeup, no my tests) with only the raw symptom + log. Codex independently confirmed the press-self-heal and profile-fallback findings, but (a) surfaced the "sleep doesn't close browser" fact I had wrong, and (b) was stricter than me on the 頂號 claim: the log shows `異地登錄=0` and WS `kicked=False`, so a duplicate-login was a real systemic RISK but NOT proven for this incident — the proven cause was the login-less fallback profile. I had over-claimed "mutual WS 頂號".
+
+**Rule**: For high-stakes root-cause work, get an independent read from a clean checkout (worktree at HEAD + a neutral prompt that withholds your hypothesis). Then state confidence honestly: separate "proven by evidence" from "plausible mechanism / systemic risk". Don't confirm the user's framing if the evidence only supports a weaker claim.
+
+### Code-editing in the SHARED working dir gets clobbered by concurrent instances (2026-06-19)
+While doing the dashboard 進階設定 rework directly in the main working dir, a concurrent Claude instance switched HEAD (feat/overnight → fix/ws-farm-badges → back) to set up its own worktree. My uncommitted dashboard.html got reverted and my just-made Phase0 commit (5f518524) ended up stranded on `fix/ws-farm-badges` instead of my branch. Recovered by `git checkout 5f518524 -- <files>` to restore Phase0, re-applying Phase1, and re-committing on feat/overnight-2026-06-14 — but it cost a scare and left a duplicate commit on someone else's branch.
+
+**Rule**: The memory `feedback-isolate-session-worktree` is not optional — for ANY multi-step code-editing session in this repo, FIRST move into a dedicated `git worktree` on your own branch (the user runs several Claude instances against this shared NAS checkout at once). Commit early/often so work survives an external HEAD switch. If you find yourself editing tracked files in the shared main dir, stop and isolate first.
+
+### 純 WS 挖礦的盤面認知與「該用 CDP 不是 cold login」(2026-06-20)
+追挖礦浪費時走了一堆冤枉路，使用者多次糾正。教訓集中在「先讀使用者既有的東西、用對連線」：
+
+1. **別對 live 瀏覽器 session 的裝置做 cold `ws_token` login**：`load_creds`+`WSGameClient.connect()` 會觸發 login conflict，把使用者/bot 正在用的瀏覽器 session **強制登出**。要讀盤/挖礦一律走 **CDP + `WebGameAPI`**（`connect_over_cdp(web_debug_port)` → `call_raw(0x0c01)` / `dig_cell`），共享瀏覽器既有連線、不衝突。CDP 分頁是臨時的（bot 週期會開關），RPC 前先 `bring_to_front`（背景分頁 JS 被 throttle → call_raw timeout）。
+2. **0x0c01 block 的 count 是 DUG 狀態**：count==0=已挖空氣(挖=no-op)、count>0=未挖。`mining_adapter` 舊版 count-blind 把已挖格當實心 → 盤面誤判密集 → planner 亂挖（浪費根因）。別再信「新石頭 count=0」舊註記（已被 CDP dig 推翻）。
+3. **0x0c01 無法還原完整地形**：未挖且無 block feature 的格，土/岩 + unreachable 都不在 WS；要視覺判讀得用 `miner` CNN classifier（截圖→GRID_CFG 裁切→分類）。使用者一直在說「用我的 classifier / 我的 html」——**先讀使用者既有實作（classifier 的裁切、mining_sim.html 模型）再動手，別自己用 WS 重造一套還做錯**。
+4. **驗證要落地**：用 CNN classifier 視覺對照 + 實際挖一格看 0x0c03 回覆/版面變化，別只靠協議推論。使用者授權「自由實測、無須擔心使用道具」時，挖一格驗證比反覆猜更快更準。
+
+**Rule**: 動挖礦/web_h5 WS 之前——(a) 用 CDP 不用 cold login；(b) 認知模型先對照 CNN classifier 與一次實挖；(c) 先讀既有 code/model/protocol doc 再改。
+
+### 別把舊 recon 文件的斷言當地基，尤其手上有 live session 可驗 (2026-06-20)
+診斷萬神(rogue Beta)為何沒正確執行時，我直接引用 `docs/ROGUE_WANSHEN_BETA_AUTOMATION.md` 的記載「RogueView 按鈕 emit('click')/mouse.click 都無效，必須走 callbackInfos」當成根因機制（「進場後點不動」）。使用者當場糾正：**明明可以點**，該記載有誤，要我移除。當時我**正連著 5554 的 CDP**，完全可以自己驗 clickability，卻選擇照抄文件。
+
+修正後的真正根因：fight_test 用 OCR 子字串命中「萬神試煉Beta」**進得去**、點擊也**有效**，但它跑的是**舊版按鈕序列**(開始挑戰/結束本局/買秘寶閣)，對不上新 roguelike RogueView 流程(入場→btnEnsure→開戰→分支→結算) → 點到錯東西、沒真的清關。不是「點不動」。
+
+**Rule**: 引用任何 recon/研究文件的「實測結論」前，先看那結論能不能**用手上現有手段直接複驗**(有 CDP 就點一顆試)。能複驗就複驗，不能才標為「依文件、未複驗」。文件裡的「實測」可能過時或當初就錯；把它當地基會把錯誤傳播進新診斷。
+
+### rogue fight_test 停止條件：失敗過濾器 + 開始挑戰消失 + 15 分上限 (2026-06-21)
+萬神 rogue 戰鬥迴圈的停止判斷反覆了一輪才定案：我先用 `check_str_in_region('失敗')`；使用者一度指出「勝/敗結果窗長得很像，都只是『點擊…關閉』彈窗」，我就改成純靠「點掉後『開始挑戰』是否再現」當結構訊號；使用者最後拍板：**還是用『失敗』當過濾器**，並加**每輪不得超過 15 分鐘**。
+
+最終 `_battle_loop` 停止條件(任一)：① 偵測到『失敗』(主過濾器) ② 找不到『開始挑戰』(次數用盡/離開視圖，結構 fallback) ③ 單輪 > 15 分鐘(`_RUN_MAX_SECONDS`，`time.monotonic()` wall-clock) ④ `max_stages` 安全上限。
+
+**Rule**: 連續流程的停止判斷用**多重訊號疊加**(明確結果字 + 結構性「能不能繼續」 + wall-clock 時間上限)，別只押一個；長時間 live 迴圈一定要有時間上限避免卡死。最終以哪個為主**以使用者拍板為準**——別把使用者中途一句觀察當成最終設計就定案(這次太快據此改掉失敗偵測，又被回頭改)。
+
+---
+
+## 2026-06-22 — Live 遊戲操作:逐步必先問,別批次跑
+
+使用者要「一步一步來 / 我用瀏覽器看你的動作」做 live 帳號操作(豐收卡 WS 循環)時,我把 6 步(取消打工→施肥→收成→買卡→種→恢復打工)寫成一支腳本**一次跑完**,被糾正:「每一步都要先問我」。
+
+**Rule**: 對 live 帳號(會花錢/改動遊戲狀態)的逐步驗證,**一次只送一個 WS 動作就停**,把結果貼出來、等使用者在瀏覽器確認後,**再問**才做下一步。工具做成單一 atomic step(`--step stop_work|fertilize|harvest|buy|plant|start_work`),不要包成 run-all。使用者說「step by step」= 每步一個 gate,不是「自動跑完但中間 log 很多」。
+
+**附帶技術發現(CDP 接瀏覽器同 session 驅動遊戲 WS)**: shop 類 cmd(6913 shop_info)可用 raw `sock.sendMessage(numericCmd, bytes)` 注入並收到回應;但 home_farm(3077)與 worker(18177/18178)這種**有狀態模組**注入 raw frame 後**伺服器不回**(逾時)。3077 另有「每 session 只回一次」去重,瀏覽器載入莊園時已消耗。診斷用 sniff(送出後收集 N ms 內所有回傳 cmd)。
+
+## 2026-06-30 — UI 自動化:不可在迴圈盲點座標 + 未 live 驗證不算完成
+
+萬神 8-局重寫 merge 後,bot 首次真跑就「沒有正常退出」。根因:`_settle_run` 結算後用
+`for _ in range(N): if 找不到文字: d.click(固定座標)` **盲點 (270,875) 連點**,該座標與
+RogueView 主面板「開始」(y~847)重疊 → 誤開新局;且只要找到「結束本局」就 `return True`,
+**從不驗證真的回到目標頁**。下一局 `_advance_to_stage` step0 立刻見「開始挑戰」即鐵證。
+
+**Rule 1(盲點座標)**:UI 自動化的關閉/收尾,**只在偵測到該窗時才點對應座標**(用 OCR 字辨識
+當前在哪一頁),**絕不**在迴圈裡無條件 `d.click(固定座標)`。座標點擊前後都要有狀態 gate。
+**Rule 2(狀態驗證)**:每個導航步驟回傳「是否真的到達目標頁」(用目標頁專屬字驗證,如
+RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰」),驗不到就 fail-safe 回 False
+讓上層中止+回主頁,**寧可乾淨中止重試,也不要硬推**(避免卡死/誤開新局/假完成)。
+**Rule 3(live 驗證)**:OCR/座標型流程的單元測試只驗「編排邏輯」,**證明不了真實點擊行為**。
+不要在沒 live 跑過真帳號前說「完成」。我犯的:用「主動退出(非敗北)」recon 的座標序去寫
+「敗北後退出」,兩者狀態不同,沒實測就 merge。**動 runtime UI 流程 = merge 前必須 live 驗一輪**。
+
+**Live 才現形的兩個具體坑(2026-06-30 萬神 _settle_run,值得內化)**:
+- **OCR 子字串命中更長的說明文字**:`click_str_by_server("結束本局")` 命中了對話框中央的說明
+  「選擇暫時離開或結束本局」(269,433),不是按鈕(168,519)→ 點空白沒反應。**按鈕文字若是某段
+  說明的子字串,改用按鈕座標點**;OCR 子字串比對會挑到先出現/更長的那個。
+- **底部按鈕「透出」造成 home 假陽性**:報告彈窗蓋不到最底,主面板的「神樹祝福」透出,而報告頁
+  又沒有「開始挑戰」→「無開始挑戰 + 有神樹祝福」誤判成回主面板,沒關報告就回報成功。**判「乾淨
+  在某頁」要先排除所有覆蓋層專屬字(報告/獎勵/對話框),不能只靠某個會透出的底部字 + 缺某字**。
+- 驗法:rounds=2 端到端(不是 rounds=1)才測得到「上一局結算→下一局重進」的轉場回歸點。
+
+## 挖礦演算法 debug:看圖對 ≠ 軌跡對;驗證要逐步、用 CNN、每步存圖(2026-07-01 5554 CDP live)
+
+使用者報「挖礦軌跡很奇怪/演算法有問題」。我先修了「看圖」層(WS board_to_grid 把 AIR active 標 empty
+而非 dirt),CNN vs WS 分歧 5/42→0/42,就宣稱修好。**錯**:分歧 0 只證明「兩邊看到同一張圖」,
+**完全沒驗 planner 的決策軌跡**。真正的浪費在決策層,被使用者連續打臉才回去讀演算法。
+
+- **「感知對」不等於「決策對」**:CNN/WS 0 分歧只代表讀圖一致。軌跡怪要去讀 planner(smart_planner
+  + mining_adapter._project_board + mining_supervised._select_dig_step),不是停在 divergence。
+  **宣稱修好前,必須證明「選的那一步是效益最優」,不是只證明「看到的盤面正確」**。
+- **逐步驗、別信批次腳本一輪**:我跑 descent_audit --digs 6 信了它印的 `OPENS_FLOOR7(v1)`,但同一列
+  `scroll=False/→f7=False` 就打臉它。classifier 是「模擬預測」,**真效果要當場讀 baseline 有沒有真捲動**。
+  每個動作後當場檢查,不要批次跑完才看 summary。
+- **CNN 是「我的」檢查手段,不是丟給使用者批准**:有視覺就自己對拍判斷,別問「這樣可以嗎」。
+  使用者要的是自主 judge+act,不是把每步攤給他確認。
+- **每步都要截圖追蹤**:live 挖礦每一步存 raw + WS/CNN overlay(挖點圈註),否則「用了 CNN」卻沒存證=
+  沒有可追軌跡。用內部 CNN 算 divergence 但不存圖 = 違規。
+- 兩個真 bug(都在決策層,非感知層):(1) `_project_board` 底列缺格盲填 unreachable_empty(假空氣)→
+  v1 把「挖上一列曝光假空氣」當 cost-1 floor7 開口 → 挖整列不捲;改 terrain_at 實填。(2)
+  `_select_dig_step` 先回 v1 floor7-opener,v1 對 map_pits(視窗下方礦)全盲 → 蛇行繞礦;補
+  pit_directed_next 優先。修法見 commit cae3ddd3。
+
+## 挖礦道具:資源經濟學別猜、放置規則該問領域專家(2026-07-01 5554 道具感知)
+
+- **資源稀缺度搞反**:我看 bomb=936/drill=78/鎬=10 就假設「道具便宜、最省鎬該多用道具」。**錯**。
+  使用者更正:**鎬子隨時間再生(便宜),道具只累積不再生(珍貴)** —— 936 是長期堆積的假象。
+  正確目標不是最省鎬,是「**一個道具的單次價值 > ~3 鎬才出手**」(= 現有 cost_item 2.99)。
+  純下挖每層只挖 1 底格,道具清多餘格不省鎬 → 道具只值得拿來「一砲收 ≥2 礦」。**動成本模型前先問
+  清楚資源再生機制,別用庫存數量當稀缺度。**
+- **道具落點:該先讀協議/問會玩的人,不是 live 盲撞**。我連續三次把炸彈放 active 實心格 → 全被靜默
+  拒絕(不消耗、不變版),還一直重試 = rabbit hole。使用者一句「只能放空地或挖完的礦洞」就解了。
+  **規則:鎬子放 solid 前沿格(有 0x0c03 回覆);炸彈/鑽頭放 count==0 空氣格(空地/挖完礦洞)、
+  send-only 無回覆**(用 `dig_cell`/call_raw 等回覆會 timeout)。協議落點規則補進 MINING_SCHEMA §8。
+- **炸彈 footprint live 坐實**:3x3+十字±2,且 `+2` 炸到前沿下方未捲進的格、一砲可捲多層 —— 鎬做不到,
+  這是炸彈獨門價值。決策見 `mining_adapter.prop_step_for_pit`,修法 commit a4c763dc。
+
+## Worktree/subagent 開發流程坑（2026-07-04 dashboard 總後台）
+
+- **EnterWorktree 預設從 origin/main 分支 = 過時基底**。本 repo 不 push，origin 落後本地 main
+  數百 commit；EnterWorktree 建出的 worktree 缺最新 spec/plan。**建完先 `git log -1` 核對，
+  不對就 `git reset --hard main`** 再開工。
+- **Subagent 會迷路寫到主樹**：impl-task7 在主 repo root 誤改 CLAUDE.md 後才發現（幸好
+  `git checkout --` 還原的檔案主樹本來就乾淨）。dispatch prompt 光寫「Work from: <worktree>」
+  不夠，**收工審查時要順手 `git status` 主樹**確認沒被污染。
+- **`git commit --no-verify` 不可用**：即使純文件 commit 也不跳 hook（使用者全域規則）。犯過一次。
+- **共用 lib 的 `.badge{display:inline-block}` 會蓋掉 UA 的 `[hidden]{display:none}`**：
+  任何 lib 元件想支援 `hidden` 屬性，components.css 要有 `.<cls>[hidden]{display:none!important}`。
+  同型 bug 之後看到「設了 hidden 還是顯示」先查這個。
+- **UI 審查 subagent 的假設要 live 驗證**：ui-review 一開始判「deferred app.js 下 window.UI
+  未定義」是 defect，live 實測推翻（var/window 別名 + await 順序沒問題）。靜態推論的 JS 時序
+  結論一律要跑過再定案。
+
+## 2026-07-05 內建 Grep/rg 對非 ASCII repo 路徑會靜默掃 0 檔
+
+- **情境**：8 個 log/code 審查 subagents 中有 3 個獨立踩到：對 `C:\nas同步_project\菇勇者全自動掛機\logs\**\*.log`
+  用內建 Grep tool 或 `rg` glob，回 0 matches 但無錯誤 —— 看起來像「沒問題」，實際是路徑含中文導致掃到 0 個檔。
+  另 logs/ 被 gitignore 也會讓部分工具默默跳過。
+- **Rule**：在本 repo 掃 log/檔案，(1) 先用一個「必定有 match」的 pattern 驗證工具真的有讀到檔；
+  (2) 失敗就改逐檔明確路徑或 Bash POSIX grep；(3) dispatch subagent 的 prompt 要預先警告這個坑。

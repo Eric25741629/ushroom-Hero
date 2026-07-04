@@ -450,6 +450,24 @@ def execute_plan_steps(
                     if not success:
                         print(f"    ⚠️ 挖掘驗證失敗 ({r},{c})，停止執行剩餘步驟")
                         cell_events.append(cell_event)
+                        # The dig did not empty the target. If the WHOLE board is
+                        # also unchanged, this action is futile on this board —
+                        # surface it as NoBoardChangeError so the mining loop
+                        # blacklists it and re-plans, instead of returning silent
+                        # "progress" that lets the same plan repeat forever
+                        # (regression: 7fe98fc6 row-0 unreachable-pit spin).
+                        board_now, _ = clf.classify_board(
+                            d.screenshot(format="opencv"), save_samples=False
+                        )
+                        if board_now == step_board_before:
+                            acc.terminated_reason = "no_board_change"
+                            raise NoBoardChangeError(
+                                step=step,
+                                reason=f"dig at ({r},{c}) verify failed, board unchanged",
+                                board_before=step_board_before,
+                                board_after=[row[:] for row in board_now],
+                                partial_result=acc,
+                            )
                         if rl_recorder:
                             rl_recorder.record_transition(
                                 {
@@ -460,7 +478,7 @@ def execute_plan_steps(
                                     "gain_expected": step.get("gain"),
                                     "cell_events": cell_events,
                                     "board_before": step_board_before,
-                                    "board_after": None,
+                                    "board_after": [row[:] for row in board_now],
                                     "terminated": "verify_fail",
                                 }
                             )

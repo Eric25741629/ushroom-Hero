@@ -28,8 +28,14 @@ def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
     路由不讀它。）
     """
     duration = lamp_dur + random.randint(-10, 10)
+    # 保留量對齊 WS 開燈設定:WS 路徑失敗 fallback 到 H5 時,仍尊重「留 N 顆」政策。
+    ws_cfg = config_manager.get_device_config(ip).get("ws_token") or {}
+    try:
+        min_keep = int(ws_cfg.get("lamp_min_keep", 0) or 0)
+    except (TypeError, ValueError):
+        min_keep = 0
     svc = _LampServiceV2(d, device_ip=ip)
-    svc.run(times=duration, is_compare=is_compare)
+    svc.run(times=duration, is_compare=is_compare, min_keep=min_keep)
 
 
 def _run_phone_ocr_lamp(d, ip: str, stage: str) -> None:

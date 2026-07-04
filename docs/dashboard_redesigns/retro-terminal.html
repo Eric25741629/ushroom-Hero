@@ -1,0 +1,1391 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MUSHROOM//OPS — 中控終端機</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400;1,500&family=VT323&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   MUSHROOM//OPS  —  Retro-Futuristic CRT Control Terminal
+   Direction: 復古終端機  (phosphor green / amber / cyan on near-black)
+   ============================================================ */
+
+:root{
+  /* ---- phosphor palette ---- */
+  --void:        #04070a;
+  --void-2:      #070c10;
+  --panel:       #0a1014;
+  --panel-2:     #0c151a;
+  --panel-hi:    #10201f;
+  --grid-line:   rgba(57, 255, 176, 0.045);
+  --hair:        rgba(86, 255, 196, 0.16);
+  --hair-soft:   rgba(86, 255, 196, 0.09);
+
+  --p-green:     #39ffb0;   /* primary phosphor */
+  --p-green-dim: #1fae78;
+  --p-green-deep:#0f6648;
+  --p-amber:     #ffb454;   /* warning / sleep */
+  --p-amber-dim: #c8852f;
+  --p-cyan:      #5ad9ff;   /* info / degraded */
+  --p-cyan-dim:  #2c8db0;
+  --p-magenta:   #ff5db1;   /* alerts / destructive */
+  --p-violet:    #b58bff;   /* accents */
+  --p-red:       #ff5a52;
+
+  --ink:         #cfeede;   /* readable body text */
+  --ink-dim:     #6f9a8c;
+  --ink-faint:   #466a5e;
+  --ink-ghost:   #2b443c;
+
+  --glow-green:  0 0 4px rgba(57,255,176,.55), 0 0 12px rgba(57,255,176,.18);
+  --glow-amber:  0 0 4px rgba(255,180,84,.55), 0 0 12px rgba(255,180,84,.18);
+  --glow-cyan:   0 0 4px rgba(90,217,255,.55), 0 0 12px rgba(90,217,255,.18);
+  --glow-mag:    0 0 4px rgba(255,93,177,.55), 0 0 12px rgba(255,93,177,.18);
+
+  --mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --crt:  'VT323', 'JetBrains Mono', monospace;
+
+  --rail-w: 232px;
+  --rail-collapsed: 68px;
+
+  --ease: cubic-bezier(.2,.8,.2,1);
+  --ease-snap: cubic-bezier(.16,1,.3,1);
+}
+
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; height:100%; }
+
+body{
+  font-family: var(--mono);
+  background:
+    radial-gradient(120% 90% at 80% -10%, rgba(57,255,176,.06), transparent 60%),
+    radial-gradient(90% 70% at 10% 110%, rgba(90,217,255,.05), transparent 55%),
+    var(--void);
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;
+  position: relative;
+  letter-spacing: .01em;
+}
+
+/* ---- CRT scanline + grain + vignette overlays ---- */
+body::before{
+  content:""; position:fixed; inset:0; z-index:9000; pointer-events:none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0,0,0,0) 0px,
+    rgba(0,0,0,0) 2px,
+    rgba(0,0,0,.16) 3px,
+    rgba(0,0,0,0) 4px
+  );
+  mix-blend-mode: multiply;
+  opacity:.55;
+}
+body::after{
+  content:""; position:fixed; inset:0; z-index:9001; pointer-events:none;
+  background:
+    radial-gradient(130% 110% at 50% 50%, transparent 58%, rgba(0,0,0,.55) 100%);
+  box-shadow: inset 0 0 220px rgba(0,0,0,.7);
+}
+/* animated grain + faint rolling scan bloom */
+.crt-fx{ position:fixed; inset:0; z-index:8999; pointer-events:none; }
+.crt-fx .grain{
+  position:absolute; inset:-120%;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  opacity:.045; animation: grainShift .6s steps(3) infinite;
+}
+.crt-fx .roll{
+  position:absolute; left:0; right:0; height:140px;
+  background: linear-gradient(to bottom, transparent, rgba(57,255,176,.05), transparent);
+  animation: rollScan 7.5s linear infinite; will-change: transform;
+}
+@keyframes grainShift{
+  0%{ transform:translate(0,0) } 33%{ transform:translate(-4%,2%) } 66%{ transform:translate(3%,-3%) } 100%{ transform:translate(0,0) }
+}
+@keyframes rollScan{
+  0%{ transform: translateY(-160px) } 100%{ transform: translateY(120vh) }
+}
+
+@media (prefers-reduced-motion: reduce){
+  *{ animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; }
+  .crt-fx{ display:none; }
+}
+
+::selection{ background: rgba(57,255,176,.28); color:#eafff5; }
+
+/* ---- scrollbars ---- */
+*::-webkit-scrollbar{ width:9px; height:9px; }
+*::-webkit-scrollbar-track{ background: var(--void-2); }
+*::-webkit-scrollbar-thumb{
+  background: linear-gradient(var(--p-green-deep), var(--p-green-dim));
+  border:2px solid var(--void-2);
+}
+*::-webkit-scrollbar-thumb:hover{ background: var(--p-green-dim); }
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+.app{
+  display:grid;
+  grid-template-columns: var(--rail-collapsed) 1fr;
+  min-height:100vh;
+  transition: grid-template-columns .32s var(--ease-snap);
+}
+.app.rail-open{ grid-template-columns: var(--rail-w) 1fr; }
+
+/* ============================================================
+   SIDE NAV RAIL
+   ============================================================ */
+.rail{
+  position:sticky; top:0; height:100vh; z-index:200;
+  background:
+    linear-gradient(180deg, var(--panel-2), var(--void-2));
+  border-right:1px solid var(--hair);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  box-shadow: 18px 0 40px -28px rgba(0,0,0,.9);
+}
+.rail::before{
+  content:""; position:absolute; inset:0; pointer-events:none;
+  background: linear-gradient(90deg, transparent, transparent 96%, rgba(57,255,176,.05));
+}
+.rail-head{
+  display:flex; align-items:center; gap:12px;
+  padding:16px 14px; min-height:64px;
+  border-bottom:1px solid var(--hair-soft);
+}
+.rail-toggle{
+  flex:0 0 auto; width:40px; height:40px;
+  display:grid; place-items:center;
+  background: var(--panel-hi);
+  border:1px solid var(--hair);
+  color: var(--p-green);
+  cursor:pointer; font-size:16px;
+  transition: all .18s var(--ease);
+  box-shadow: inset 0 0 0 1px rgba(0,0,0,.4);
+}
+.rail-toggle:hover{ color:#eafff5; box-shadow: var(--glow-green), inset 0 0 0 1px rgba(57,255,176,.4); border-color: var(--p-green-dim); }
+.rail-toggle:active{ transform: translateY(1px) scale(.96); }
+.rail-toggle:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+
+.rail-brand{ overflow:hidden; white-space:nowrap; }
+.rail-brand .b1{ color:var(--p-green); font-weight:800; letter-spacing:.04em; text-shadow:var(--glow-green); font-size:13px; }
+.rail-brand .b2{ color:var(--ink-dim); font-size:10px; letter-spacing:.32em; }
+
+.rail-nav{ padding:14px 10px; display:flex; flex-direction:column; gap:4px; }
+.nav-section{ color:var(--ink-ghost); font-size:9px; letter-spacing:.34em; padding:14px 10px 6px; white-space:nowrap; overflow:hidden; }
+
+.nav-item{
+  display:flex; align-items:center; gap:14px;
+  padding:10px 12px; cursor:pointer;
+  color: var(--ink-dim); text-decoration:none;
+  border:1px solid transparent;
+  position:relative; white-space:nowrap; overflow:hidden;
+  transition: color .16s var(--ease), background .16s var(--ease), border-color .16s var(--ease);
+  font-size:12.5px;
+}
+.nav-item .ico{ flex:0 0 22px; text-align:center; font-size:15px; filter:grayscale(.3); transition:filter .16s, transform .16s; }
+.nav-item .lbl{ overflow:hidden; }
+.nav-item .lbl small{ display:block; color:var(--ink-ghost); font-size:9px; letter-spacing:.18em; }
+.nav-item::before{
+  content:""; position:absolute; left:0; top:18%; bottom:18%; width:2px;
+  background: var(--p-green); transform: scaleY(0); transform-origin:center;
+  transition: transform .2s var(--ease-snap); box-shadow: var(--glow-green);
+}
+.nav-item:hover{ color: var(--ink); background: rgba(57,255,176,.05); border-color: var(--hair-soft); }
+.nav-item:hover .ico{ filter:none; transform: translateX(2px); }
+.nav-item:hover::before{ transform: scaleY(1); }
+.nav-item.active{ color:#eafff5; background: linear-gradient(90deg, rgba(57,255,176,.12), transparent); border-color: var(--hair); }
+.nav-item.active::before{ transform: scaleY(1); }
+.nav-item.active .ico{ filter:none; text-shadow: var(--glow-green); }
+.nav-item:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:-2px; }
+.nav-item .ext{ margin-left:auto; color:var(--ink-ghost); font-size:10px; }
+
+.rail-foot{ margin-top:auto; padding:12px; border-top:1px solid var(--hair-soft); }
+.uptime{
+  font-family:var(--crt); font-size:18px; color:var(--p-green-dim);
+  letter-spacing:.06em; white-space:nowrap; overflow:hidden;
+}
+.uptime .lab{ color:var(--ink-ghost); font-size:9px; font-family:var(--mono); letter-spacing:.28em; display:block; margin-bottom:2px; }
+
+/* collapsed-state hiding */
+.app:not(.rail-open) .rail-brand,
+.app:not(.rail-open) .nav-item .lbl,
+.app:not(.rail-open) .nav-item .ext,
+.app:not(.rail-open) .nav-section,
+.app:not(.rail-open) .uptime .num{ opacity:0; width:0; }
+.app:not(.rail-open) .nav-item{ justify-content:center; }
+
+/* ============================================================
+   MAIN
+   ============================================================ */
+.main{ min-width:0; display:flex; flex-direction:column; }
+
+/* ---- TOP BAR ---- */
+.topbar{
+  position:sticky; top:0; z-index:150;
+  background: linear-gradient(180deg, rgba(8,13,16,.97), rgba(8,13,16,.86));
+  backdrop-filter: blur(6px);
+  border-bottom:1px solid var(--hair);
+  padding:0 20px;
+}
+.topbar-rail{
+  display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  min-height:64px; padding:10px 0;
+}
+.tb-title{ display:flex; align-items:baseline; gap:10px; margin-right:auto; }
+.tb-prompt{ color:var(--p-green); font-weight:800; text-shadow:var(--glow-green); font-size:15px; }
+.tb-prompt .blink{ animation: caret 1.05s steps(1) infinite; }
+.tb-title h1{ font-size:14px; margin:0; font-weight:500; color:var(--ink); letter-spacing:.02em; }
+.tb-title h1 .dim{ color:var(--ink-faint); }
+
+@keyframes caret{ 0%,49%{opacity:1} 50%,100%{opacity:0} }
+
+/* OCR status pill */
+.ocr-pill{
+  display:flex; align-items:center; gap:9px;
+  padding:7px 13px; border:1px solid var(--hair);
+  background: var(--panel); font-size:11px;
+  cursor:default;
+}
+.ocr-pill .dot{ width:8px; height:8px; border-radius:50%; flex:0 0 auto; }
+.ocr-pill.ok .dot{ background:var(--p-green); box-shadow:var(--glow-green); animation: pulseDot 2s infinite; }
+.ocr-pill.error .dot{ background:var(--p-red); box-shadow:var(--glow-mag); }
+.ocr-pill .txt{ color:var(--ink); }
+.ocr-pill.ok .txt{ color:var(--p-green); }
+.ocr-pill.error .txt{ color:var(--p-red); }
+.ocr-pill .rt{ color:var(--ink-faint); font-size:10px; border-left:1px solid var(--hair-soft); padding-left:9px; }
+@keyframes pulseDot{ 0%,100%{ box-shadow: var(--glow-green) } 50%{ box-shadow: 0 0 2px rgba(57,255,176,.4) } }
+
+/* program info chip */
+.prog-chip{
+  display:flex; align-items:center; gap:10px;
+  padding:7px 13px; border:1px solid var(--hair); background:var(--panel);
+  cursor:pointer; font-size:11px; color:var(--ink-dim);
+  transition: all .16s var(--ease);
+}
+.prog-chip:hover{ border-color:var(--p-violet); color:var(--ink); box-shadow: 0 0 8px rgba(181,139,255,.2); }
+.prog-chip:focus-visible{ outline:2px solid var(--p-violet); outline-offset:2px; }
+.prog-chip .v{ color:var(--p-violet); font-weight:700; }
+.prog-chip .badge-new{ background:var(--p-magenta); color:#0a0008; font-size:8px; padding:1px 5px; font-weight:800; letter-spacing:.1em; box-shadow:var(--glow-mag); }
+
+/* ---- TOP BAR command strip ---- */
+.cmd-strip{
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:10px 0 14px; border-top:1px solid var(--hair-soft);
+}
+.cmd-strip .group-label{ color:var(--ink-ghost); font-size:9px; letter-spacing:.28em; margin-right:4px; }
+.cmd-strip .spacer{ flex:1; }
+
+/* ============================================================
+   BUTTON SYSTEM  (terminal command buttons)
+   ============================================================ */
+.btn{
+  --bc: var(--p-green);
+  --bg: rgba(57,255,176,.06);
+  font-family: var(--mono); font-size:11.5px; font-weight:500;
+  color: var(--bc);
+  background: var(--bg);
+  border:1px solid color-mix(in srgb, var(--bc) 38%, transparent);
+  padding:8px 13px; cursor:pointer;
+  display:inline-flex; align-items:center; gap:7px;
+  letter-spacing:.02em; position:relative; overflow:hidden;
+  transition: transform .12s var(--ease), background .16s var(--ease),
+              border-color .16s var(--ease), color .16s var(--ease), box-shadow .16s var(--ease);
+}
+.btn .sigil{ opacity:.7; font-weight:700; }
+.btn::after{
+  content:""; position:absolute; inset:0;
+  background: linear-gradient(120deg, transparent 30%, color-mix(in srgb, var(--bc) 30%, transparent) 50%, transparent 70%);
+  transform: translateX(-120%); transition: transform .5s var(--ease); pointer-events:none;
+}
+.btn:hover{
+  color:#eafff5; background: color-mix(in srgb, var(--bc) 16%, transparent);
+  border-color: var(--bc);
+  box-shadow: 0 0 0 1px color-mix(in srgb,var(--bc) 30%,transparent), 0 0 14px color-mix(in srgb,var(--bc) 22%,transparent);
+}
+.btn:hover::after{ transform: translateX(120%); }
+.btn:hover .sigil{ opacity:1; }
+.btn:active{ transform: translateY(1px) scale(.985); }
+.btn:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+.btn:disabled{ opacity:.4; cursor:not-allowed; filter:grayscale(.5); }
+.btn:disabled:hover{ box-shadow:none; color:var(--bc); background:var(--bg); border-color: color-mix(in srgb, var(--bc) 38%, transparent); }
+.btn:disabled:hover::after{ transform:translateX(-120%); }
+
+.btn.amber{ --bc: var(--p-amber); }
+.btn.cyan{ --bc: var(--p-cyan); }
+.btn.mag{ --bc: var(--p-magenta); }
+.btn.violet{ --bc: var(--p-violet); }
+.btn.ghost{ --bc: var(--ink-dim); --bg: transparent; }
+.btn.ghost:hover{ color:var(--ink); }
+.btn.solid{ background: var(--p-green); color:#04120c; border-color:var(--p-green); font-weight:700; box-shadow:var(--glow-green); }
+.btn.solid:hover{ background:#5dffc1; color:#04120c; }
+.btn.sm{ padding:5px 9px; font-size:10.5px; }
+.btn.block{ width:100%; justify-content:center; }
+
+/* pending / spinner state */
+.btn.pending{ pointer-events:none; color: transparent !important; }
+.btn.pending .sigil, .btn.pending span{ visibility:hidden; }
+.btn.pending::before{
+  content:""; position:absolute; left:50%; top:50%; width:13px; height:13px;
+  margin:-6.5px 0 0 -6.5px; border-radius:50%;
+  border:2px solid color-mix(in srgb, var(--bc) 30%, transparent);
+  border-top-color: var(--bc);
+  animation: spin .7s linear infinite;
+}
+@keyframes spin{ to{ transform: rotate(360deg) } }
+
+/* ---- PAGE container ---- */
+.page{ display:none; padding:22px 22px 60px; }
+.page.active{ display:block; animation: pageIn .35s var(--ease); }
+@keyframes pageIn{ from{ opacity:0; transform: translateY(8px) } to{ opacity:1; transform:none } }
+
+/* ---- section header / ascii divider ---- */
+.sec-head{ display:flex; align-items:baseline; gap:12px; margin:8px 2px 16px; }
+.sec-head h2{ margin:0; font-size:13px; font-weight:700; color:var(--p-green); letter-spacing:.06em; text-shadow:var(--glow-green); }
+.sec-head .meta{ color:var(--ink-faint); font-size:10.5px; }
+.sec-head .rule{ flex:1; height:1px; background: repeating-linear-gradient(90deg, var(--hair) 0 6px, transparent 6px 12px); align-self:center; }
+
+/* fleet summary chips */
+.fleet-stats{ display:flex; gap:10px; flex-wrap:wrap; margin-bottom:18px; }
+.stat{
+  flex:1 1 140px; min-width:120px;
+  border:1px solid var(--hair); background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  padding:12px 14px; position:relative; overflow:hidden;
+}
+.stat::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background: var(--p-green); box-shadow:var(--glow-green); }
+.stat.amber::before{ background:var(--p-amber); box-shadow:var(--glow-amber); }
+.stat.cyan::before{ background:var(--p-cyan); box-shadow:var(--glow-cyan); }
+.stat.dim::before{ background:var(--ink-ghost); box-shadow:none; }
+.stat .k{ color:var(--ink-faint); font-size:9.5px; letter-spacing:.22em; }
+.stat .v{ font-family:var(--crt); font-size:34px; line-height:1; color:var(--ink); margin-top:5px; letter-spacing:.02em; }
+.stat .v small{ font-family:var(--mono); font-size:11px; color:var(--ink-dim); letter-spacing:0; }
+.stat.online .v{ color:var(--p-green); text-shadow:var(--glow-green); }
+.stat.amber .v{ color:var(--p-amber); text-shadow:var(--glow-amber); }
+
+/* mini sparkline strip in summary */
+.spark{ display:flex; align-items:flex-end; gap:2px; height:22px; margin-top:8px; }
+.spark i{ flex:1; background: var(--p-green-deep); transition: height .4s var(--ease); }
+.spark i.hi{ background:var(--p-green); box-shadow:0 0 6px rgba(57,255,176,.5); }
+
+/* ============================================================
+   DEVICE GRID  (editorial / bento-ish, not uniform)
+   ============================================================ */
+.fleet{
+  display:grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap:16px;
+}
+
+.unit{
+  --accent: var(--p-green);
+  --accent-glow: var(--glow-green);
+  position:relative;
+  background:
+    linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--hair);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  transition: transform .2s var(--ease), box-shadow .2s var(--ease), border-color .2s var(--ease);
+}
+.unit::before{ /* top accent bar */
+  content:""; position:absolute; left:0; right:0; top:0; height:2px;
+  background: linear-gradient(90deg, var(--accent), transparent 70%);
+  box-shadow: var(--accent-glow);
+}
+.unit::after{ /* faint inner grid texture */
+  content:""; position:absolute; inset:0; pointer-events:none; opacity:.5;
+  background:
+    linear-gradient(var(--grid-line) 1px, transparent 1px) 0 0/100% 22px,
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px) 0 0/22px 100%;
+  mask: linear-gradient(180deg, rgba(0,0,0,.25), transparent 40%);
+}
+.unit:hover{ transform: translateY(-3px); border-color: color-mix(in srgb,var(--accent) 45%,transparent); box-shadow: 0 16px 40px -22px rgba(0,0,0,.9), 0 0 0 1px color-mix(in srgb,var(--accent) 20%,transparent); }
+
+.unit.online{ --accent: var(--p-green);   --accent-glow: var(--glow-green); }
+.unit.paused{ --accent: var(--p-amber);   --accent-glow: var(--glow-amber); }
+.unit.degraded{ --accent: var(--p-cyan);  --accent-glow: var(--glow-cyan); }
+.unit.offline{ --accent: var(--ink-ghost); --accent-glow: none; }
+.unit.disabled{ --accent: var(--ink-ghost); --accent-glow: none; }
+.unit.offline, .unit.disabled{ filter: grayscale(.55) brightness(.82); }
+.unit.offline:hover, .unit.disabled:hover{ filter: grayscale(.3) brightness(.9); }
+
+/* unit header */
+.u-head{ padding:13px 14px 10px; display:flex; align-items:flex-start; gap:10px; position:relative; z-index:1; }
+.led{ flex:0 0 auto; width:11px; height:11px; border-radius:50%; margin-top:4px; position:relative;
+  background: var(--accent); box-shadow: var(--accent-glow); }
+.unit.online .led::after{ content:""; position:absolute; inset:-4px; border-radius:50%; border:1px solid var(--accent); opacity:.5; animation: ledRing 2.4s var(--ease) infinite; }
+@keyframes ledRing{ 0%{ transform:scale(.6); opacity:.6 } 100%{ transform:scale(1.9); opacity:0 } }
+.unit.paused .led{ animation: blinkLed 1.1s steps(1) infinite; }
+@keyframes blinkLed{ 0%,60%{opacity:1} 61%,100%{opacity:.25} }
+
+.u-id{ min-width:0; flex:1; }
+.u-id .name{ font-weight:700; font-size:13.5px; color:var(--ink); display:flex; align-items:center; gap:7px; }
+.u-id .ip{ color:var(--ink-faint); font-size:10.5px; margin-top:1px; }
+.u-id .ip .tag{ color:var(--p-cyan); border:1px solid var(--hair-soft); padding:0 5px; margin-left:5px; font-size:9px; letter-spacing:.06em; }
+
+.u-status{
+  font-size:10px; letter-spacing:.14em; padding:4px 9px;
+  color:var(--accent); border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);
+  background: color-mix(in srgb,var(--accent) 8%,transparent);
+  white-space:nowrap; font-weight:700;
+}
+.u-gear{
+  flex:0 0 auto; width:28px; height:28px; display:grid; place-items:center;
+  background:transparent; border:1px solid var(--hair-soft); color:var(--ink-dim);
+  cursor:pointer; transition: all .16s var(--ease);
+}
+.u-gear:hover{ color:var(--accent); border-color:var(--accent); transform: rotate(40deg); }
+.u-gear:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+
+/* info read-out grid */
+.u-body{ padding:4px 14px 12px; position:relative; z-index:1; }
+.readout{ display:grid; grid-template-columns:repeat(2,1fr); gap:1px; background:var(--hair-soft); border:1px solid var(--hair-soft); }
+.readout .cell{ background:var(--panel); padding:8px 10px; }
+.readout .cell.wide{ grid-column:1 / -1; }
+.readout .k{ color:var(--ink-faint); font-size:9px; letter-spacing:.18em; }
+.readout .vline{ color:var(--ink); font-size:12px; margin-top:2px; display:flex; align-items:center; gap:6px; }
+.readout .vline.accent{ color:var(--accent); }
+.readout .vline .crt-num{ font-family:var(--crt); font-size:18px; letter-spacing:.04em; }
+.readout .vline .unit-s{ color:var(--ink-faint); font-size:10px; }
+.cur{ display:inline-block; width:7px; height:13px; background:var(--accent); vertical-align:-2px; animation: caret 1s steps(1) infinite; box-shadow:var(--accent-glow); }
+
+/* carpark expandable row */
+.carpark{ margin-top:10px; border:1px solid var(--hair-soft); }
+.carpark-head{ display:flex; align-items:center; gap:8px; padding:8px 10px; cursor:pointer; background: rgba(90,217,255,.04); transition: background .16s; }
+.carpark-head:hover{ background: rgba(90,217,255,.09); }
+.carpark-head:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:-2px; }
+.carpark-head .ck{ color:var(--p-cyan); font-size:10px; letter-spacing:.16em; }
+.carpark-head .cv{ margin-left:auto; color:var(--ink); font-family:var(--crt); font-size:16px; }
+.carpark-head .chev{ color:var(--ink-faint); transition: transform .24s var(--ease); }
+.carpark.open .carpark-head .chev{ transform: rotate(90deg); }
+.carpark-detail{ display:none; padding:0 10px; }
+.carpark.open .carpark-detail{ display:block; padding:8px 10px 10px; animation: pageIn .25s var(--ease); }
+.car-row{ display:grid; grid-template-columns: auto 1fr auto; gap:8px; align-items:center; padding:5px 0; border-bottom:1px dashed var(--hair-soft); font-size:11px; }
+.car-row:last-child{ border-bottom:none; }
+.car-row .slot{ color:var(--p-cyan); }
+.car-bar{ height:5px; background:var(--void-2); position:relative; overflow:hidden; }
+.car-bar i{ position:absolute; inset:0; transform-origin:left; background: linear-gradient(90deg, var(--p-cyan-dim), var(--p-cyan)); box-shadow:0 0 6px rgba(90,217,255,.4); }
+.car-row .rem{ color:var(--ink-dim); white-space:nowrap; }
+
+/* daily progress badges */
+.progress{ margin-top:11px; }
+.progress .plab{ color:var(--ink-faint); font-size:9px; letter-spacing:.2em; margin-bottom:6px; }
+.badges{ display:flex; flex-wrap:wrap; gap:5px; }
+.tb{
+  font-size:10px; padding:3px 7px; border:1px solid var(--hair-soft); color:var(--ink-dim);
+  display:flex; align-items:center; gap:4px; transition: all .16s var(--ease);
+}
+.tb .mk{ font-size:9px; color:var(--ink-ghost); }
+.tb.done{ color:var(--p-green); border-color: color-mix(in srgb,var(--p-green) 35%,transparent); background: rgba(57,255,176,.06); }
+.tb.done .mk{ color:var(--p-green); }
+.tb:hover{ border-color:var(--ink-dim); }
+
+/* log box */
+.logbox{
+  margin-top:11px; background: var(--void-2); border:1px solid var(--hair-soft);
+  padding:8px 10px; height:80px; overflow-y:auto; font-size:10.5px; line-height:1.55;
+  color:var(--ink-dim); position:relative;
+}
+.logbox .ln{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.logbox .ln .t{ color:var(--ink-ghost); }
+.logbox .ln .lv-i{ color:var(--p-cyan); }
+.logbox .ln .lv-w{ color:var(--p-amber); }
+.logbox .ln .lv-e{ color:var(--p-red); }
+.logbox .ln.fresh{ color:var(--ink); }
+
+/* action bar */
+.u-actions{ padding:11px 14px 14px; display:flex; flex-wrap:wrap; gap:7px; border-top:1px solid var(--hair-soft); position:relative; z-index:1; }
+
+/* ============================================================
+   MODALS
+   ============================================================ */
+.overlay{
+  position:fixed; inset:0; z-index:1200; display:none;
+  background: rgba(2,5,7,.72); backdrop-filter: blur(4px);
+  padding:30px; overflow-y:auto;
+}
+.overlay.open{ display:flex; align-items:flex-start; justify-content:center; animation: fadeIn .2s var(--ease); }
+@keyframes fadeIn{ from{opacity:0} to{opacity:1} }
+.overlay.live{ z-index:1300; padding:0; }
+
+.modal{
+  width:100%; max-width:640px; margin:auto;
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--hair); position:relative;
+  box-shadow: 0 40px 100px -30px rgba(0,0,0,.95), 0 0 0 1px rgba(57,255,176,.05);
+  animation: modalIn .28s var(--ease-snap);
+}
+@keyframes modalIn{ from{ opacity:0; transform: translateY(14px) scale(.985) } to{ opacity:1; transform:none } }
+.modal::before{ content:""; position:absolute; left:0; right:0; top:0; height:2px; background:linear-gradient(90deg,var(--p-green),var(--p-cyan)); box-shadow:var(--glow-green); }
+.modal.wide{ max-width:860px; }
+
+.m-head{ display:flex; align-items:center; gap:10px; padding:15px 18px; border-bottom:1px solid var(--hair-soft); }
+.m-head .dots{ display:flex; gap:6px; }
+.m-head .dots i{ width:9px; height:9px; border-radius:50%; }
+.m-head .dots i:nth-child(1){ background:var(--p-red); }
+.m-head .dots i:nth-child(2){ background:var(--p-amber); }
+.m-head .dots i:nth-child(3){ background:var(--p-green); }
+.m-head h3{ margin:0; font-size:12.5px; color:var(--ink); font-weight:700; letter-spacing:.04em; }
+.m-head h3 .pfx{ color:var(--p-green); }
+.m-close{ margin-left:auto; background:transparent; border:1px solid var(--hair-soft); color:var(--ink-dim); width:28px; height:28px; cursor:pointer; transition: all .16s; }
+.m-close:hover{ color:var(--p-red); border-color:var(--p-red); }
+.m-close:focus-visible{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+.m-body{ padding:18px; max-height:70vh; overflow-y:auto; }
+.m-foot{ padding:14px 18px; border-top:1px solid var(--hair-soft); display:flex; justify-content:flex-end; gap:8px; }
+
+/* form controls */
+.field{ margin-bottom:14px; }
+.field > label{ display:block; color:var(--ink-faint); font-size:10px; letter-spacing:.16em; margin-bottom:6px; }
+.field > label .opt{ color:var(--ink-ghost); }
+.grid2{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+.grid3{ display:grid; grid-template-columns:repeat(3,1fr); gap:14px; }
+
+input[type=text], input[type=number], input[type=url], select, textarea{
+  width:100%; font-family:var(--mono); font-size:12px;
+  background: var(--void-2); color:var(--ink);
+  border:1px solid var(--hair); padding:8px 11px;
+  transition: border-color .16s var(--ease), box-shadow .16s var(--ease);
+}
+input::placeholder, textarea::placeholder{ color:var(--ink-ghost); }
+input:focus, select:focus, textarea:focus{
+  outline:none; border-color: var(--p-green);
+  box-shadow: 0 0 0 1px rgba(57,255,176,.25), 0 0 12px rgba(57,255,176,.12);
+}
+textarea{ resize:vertical; min-height:64px; line-height:1.6; }
+select{ appearance:none; cursor:pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--p-green) 50%), linear-gradient(135deg, var(--p-green) 50%, transparent 50%);
+  background-position: right 13px center, right 8px center; background-size:5px 5px, 5px 5px; background-repeat:no-repeat; padding-right:28px; }
+
+/* checkbox -> terminal toggle */
+.chk{ display:flex; align-items:center; gap:10px; cursor:pointer; padding:7px 0; user-select:none; }
+.chk input{ position:absolute; opacity:0; pointer-events:none; }
+.chk .box{ width:18px; height:18px; border:1px solid var(--hair); background:var(--void-2); display:grid; place-items:center; flex:0 0 auto; transition: all .16s var(--ease); font-size:0; }
+.chk input:checked + .box{ background: var(--p-green); border-color:var(--p-green); box-shadow:var(--glow-green); }
+.chk input:checked + .box::after{ content:"\2713"; color:#04120c; font-size:12px; font-weight:800; }
+.chk input:focus-visible + .box{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+.chk .ctxt{ color:var(--ink); font-size:12px; }
+.chk:hover .box{ border-color:var(--p-green-dim); }
+
+/* toggle-group features */
+.feat-grid{ display:grid; grid-template-columns:repeat(2,1fr); gap:7px; }
+.feat{
+  display:flex; align-items:center; gap:9px; padding:9px 11px;
+  border:1px solid var(--hair-soft); background:var(--void-2); cursor:pointer; transition: all .16s var(--ease);
+}
+.feat:hover{ border-color:var(--hair); }
+.feat input{ position:absolute; opacity:0; }
+.feat .led-s{ width:8px; height:8px; border-radius:50%; background:var(--ink-ghost); flex:0 0 auto; transition: all .16s; }
+.feat input:checked ~ .led-s{ background:var(--p-green); box-shadow:var(--glow-green); }
+.feat .fl{ color:var(--ink-dim); font-size:11.5px; }
+.feat input:checked ~ .fl{ color:var(--ink); }
+.feat input:focus-visible ~ .led-s{ outline:2px solid var(--p-cyan); outline-offset:2px; }
+
+details.adv{ border:1px solid var(--hair-soft); margin-bottom:14px; }
+details.adv > summary{ list-style:none; cursor:pointer; padding:9px 12px; color:var(--p-cyan); font-size:11px; letter-spacing:.1em; display:flex; align-items:center; gap:7px; }
+details.adv > summary::-webkit-details-marker{ display:none; }
+details.adv > summary::before{ content:"[+]"; color:var(--p-cyan-dim); }
+details.adv[open] > summary::before{ content:"[-]"; }
+details.adv[open] > summary{ border-bottom:1px solid var(--hair-soft); }
+details.adv .adv-body{ padding:14px; }
+
+.subhead{ color:var(--p-amber); font-size:10px; letter-spacing:.2em; margin:18px 0 10px; padding-bottom:6px; border-bottom:1px dashed var(--hair-soft); }
+.subhead:first-child{ margin-top:0; }
+
+.statusbox{ background:var(--void-2); border:1px solid var(--hair-soft); padding:11px 13px; font-size:11px; color:var(--ink-dim); line-height:1.7; min-height:54px; }
+.statusbox .ok{ color:var(--p-green); }
+.statusbox .warn{ color:var(--p-amber); }
+
+/* program info specifics */
+.pinfo-row{ display:flex; gap:10px; padding:9px 0; border-bottom:1px dashed var(--hair-soft); font-size:12px; }
+.pinfo-row .k{ color:var(--ink-faint); width:120px; flex:0 0 auto; letter-spacing:.1em; font-size:10px; padding-top:2px; }
+.pinfo-row .vv{ color:var(--ink); }
+.fix-note{ background: rgba(57,255,176,.06); border-left:3px solid var(--p-green); padding:10px 13px; margin-top:14px; color:var(--p-green); font-size:11.5px; line-height:1.7; box-shadow:inset 0 0 0 1px var(--hair-soft); }
+
+/* live view modal */
+.live-modal{ width:100%; max-width:none; max-height:100vh; height:100vh; display:flex; flex-direction:column; background:var(--void); border:none; margin:0; }
+.live-modal::before{ display:none; }
+.lv-head{ display:flex; align-items:center; gap:12px; padding:13px 18px; border-bottom:1px solid var(--hair); }
+.lv-head .lvname{ color:var(--p-green); font-weight:700; text-shadow:var(--glow-green); }
+.lv-head .lvstat{ color:var(--p-cyan); font-size:11px; display:flex; align-items:center; gap:7px; }
+.lv-head .lvstat .dot{ width:7px; height:7px; border-radius:50%; background:var(--p-cyan); box-shadow:var(--glow-cyan); animation:pulseDot 1.4s infinite; }
+.lv-canvas-wrap{ flex:1; display:grid; place-items:center; padding:18px; overflow:hidden; }
+.lv-canvas{
+  background:#000; border:1px solid var(--hair);
+  width:auto; height:100%; max-height:78vh; aspect-ratio:540/960;
+  box-shadow: 0 0 60px rgba(57,255,176,.1), inset 0 0 80px rgba(0,0,0,.6);
+  position:relative;
+}
+.lv-canvas::before{ content:"540 x 960  ::  SCREENCAST"; position:absolute; inset:0; display:grid; place-items:center; color:var(--ink-ghost); font-size:11px; letter-spacing:.2em; }
+.lv-canvas::after{ content:""; position:absolute; inset:0; background: repeating-linear-gradient(to bottom, transparent 0 2px, rgba(0,0,0,.25) 3px 4px); pointer-events:none; }
+
+/* labeler / readme / inventory layouts */
+.panel{
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border:1px solid var(--hair); padding:18px; position:relative; margin-bottom:16px;
+}
+.panel::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:2px; background:var(--p-cyan); box-shadow:var(--glow-cyan); }
+.panel h3{ margin:0 0 14px; font-size:12px; color:var(--p-cyan); letter-spacing:.08em; }
+.cols2{ display:grid; grid-template-columns:1fr 1fr; gap:16px; align-items:start; }
+
+.tlog{ background:var(--void-2); border:1px solid var(--hair-soft); padding:10px 12px; font-size:10.5px; line-height:1.6; color:var(--ink-dim); overflow-y:auto; }
+
+.readme-frame{ width:100%; height:72vh; background:var(--void-2); border:1px solid var(--hair); display:grid; place-items:center; color:var(--ink-ghost); letter-spacing:.2em; }
+
+/* inventory */
+.inv-tabs{ display:flex; gap:0; margin-bottom:16px; border-bottom:1px solid var(--hair); }
+.inv-tab{ padding:10px 18px; cursor:pointer; color:var(--ink-dim); border:1px solid transparent; border-bottom:none; background:transparent; font-family:var(--mono); font-size:12px; transition: all .16s; position:relative; top:1px; }
+.inv-tab.on{ color:var(--p-green); border-color:var(--hair); background:var(--panel); }
+.inv-tab.on::after{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--p-green); box-shadow:var(--glow-green); }
+.inv-tab:hover{ color:var(--ink); }
+.sp-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:11px; margin-top:14px; }
+.sp-card{ border:1px solid var(--hair-soft); background:var(--panel); padding:11px 12px; transition: all .16s var(--ease); }
+.sp-card:hover{ border-color:var(--p-green-dim); transform: translateY(-2px); }
+.sp-card .spn{ color:var(--ink); font-size:12.5px; font-weight:700; display:flex; align-items:center; gap:6px; }
+.sp-card .spn .lk{ color:var(--p-amber); }
+.sp-card .spmeta{ color:var(--ink-faint); font-size:10px; margin-top:2px; }
+.sp-card .lvl{ font-family:var(--crt); font-size:20px; color:var(--p-green); margin:5px 0 3px; }
+.sp-card .aff{ display:flex; flex-wrap:wrap; gap:4px; margin-top:6px; }
+.sp-card .aff span{ font-size:9px; color:var(--ink-dim); border:1px solid var(--hair-soft); padding:1px 5px; }
+.hist{ display:flex; gap:5px; flex-wrap:wrap; margin:12px 0; }
+.hist .chip{ font-size:10px; padding:3px 8px; border:1px solid var(--hair-soft); color:var(--ink-dim); }
+.hist .chip b{ color:var(--p-green); font-family:var(--crt); font-size:14px; }
+table.gem{ width:100%; border-collapse:collapse; font-size:11px; margin-top:12px; }
+table.gem th{ text-align:left; color:var(--ink-faint); font-size:9px; letter-spacing:.14em; padding:7px 9px; border-bottom:1px solid var(--hair); cursor:pointer; white-space:nowrap; }
+table.gem th:hover{ color:var(--p-green); }
+table.gem td{ padding:7px 9px; border-bottom:1px solid var(--hair-soft); color:var(--ink); }
+table.gem tr:hover td{ background: rgba(57,255,176,.04); }
+.q-badge{ font-family:var(--crt); font-size:15px; padding:0 6px; }
+.q1{ color:var(--ink-dim); } .q2{ color:var(--p-green); } .q3{ color:var(--p-cyan); } .q4{ color:var(--p-violet); } .q5{ color:var(--p-amber); text-shadow:var(--glow-amber); }
+
+.filter-bar{ display:flex; flex-wrap:wrap; gap:10px; align-items:flex-end; }
+.filter-bar .field{ margin:0; flex:1 1 130px; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 1100px){
+  .cols2{ grid-template-columns:1fr; }
+}
+@media (max-width: 860px){
+  .fleet{ grid-template-columns:1fr; }
+  .grid3{ grid-template-columns:1fr; }
+}
+@media (max-width: 760px){
+  .app, .app.rail-open{ grid-template-columns: var(--rail-collapsed) 1fr; }
+  .app.rail-open .rail{ position:fixed; width:var(--rail-w); box-shadow: 24px 0 60px rgba(0,0,0,.9); }
+  .app.rail-open .rail-brand, .app.rail-open .nav-item .lbl, .app.rail-open .nav-item .ext,
+  .app.rail-open .nav-section, .app.rail-open .uptime .num{ opacity:1; width:auto; }
+  .app.rail-open .nav-item{ justify-content:flex-start; }
+  .topbar{ padding:0 14px; }
+  .tb-title h1 .dim{ display:none; }
+}
+@media (max-width: 480px){
+  .feat-grid{ grid-template-columns:1fr; }
+  .grid2{ grid-template-columns:1fr; }
+  .readout{ grid-template-columns:1fr; }
+  .stat{ flex-basis:46%; }
+}
+</style>
+</head>
+<body>
+<div class="crt-fx" aria-hidden="true"><div class="grain"></div><div class="roll"></div></div>
+
+<div class="app rail-open" id="app">
+
+  <!-- ============ SIDE NAV RAIL ============ -->
+  <aside class="rail" aria-label="主導覽">
+    <div class="rail-head">
+      <button class="rail-toggle" id="railToggle" aria-label="展開或收合側欄" title="toggle rail">&#9776;</button>
+      <div class="rail-brand">
+        <div class="b1">MUSHROOM//OPS</div>
+        <div class="b2">CONTROL TERMINAL</div>
+      </div>
+    </div>
+    <nav class="rail-nav">
+      <div class="nav-section">// PAGES</div>
+      <a class="nav-item active" data-page="dashboard" tabindex="0">
+        <span class="ico">&#9608;</span><span class="lbl">DASHBOARD<small>裝置矩陣</small></span>
+      </a>
+      <a class="nav-item" data-page="labeler" tabindex="0">
+        <span class="ico">&#9636;</span><span class="lbl">LABELER<small>自動標註</small></span>
+      </a>
+      <a class="nav-item" data-page="readme" tabindex="0">
+        <span class="ico">&#9678;</span><span class="lbl">README<small>更新公告</small></span>
+      </a>
+      <div class="nav-section">// COMPANION</div>
+      <a class="nav-item" data-page="inventory" tabindex="0">
+        <span class="ico">&#9707;</span><span class="lbl">INVENTORY<small>守護靈 / 神器</small></span><span class="ext">&#8599;</span>
+      </a>
+      <a class="nav-item" href="#flypet" tabindex="0">
+        <span class="ico">&#9834;</span><span class="lbl">FLY-PET<small>飛寵圖鑑</small></span><span class="ext">&#8599;</span>
+      </a>
+    </nav>
+    <div class="rail-foot">
+      <div class="uptime"><span class="lab num">SYS UPTIME</span><span id="uptime">07:42:19</span></div>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-rail">
+        <div class="tb-title">
+          <span class="tb-prompt">root@ops<span class="blink">_</span></span>
+          <h1>中控 · 菇勇者全自動掛機 <span class="dim">// fleet monitor</span></h1>
+        </div>
+
+        <div class="ocr-pill ok" id="ocr-status" role="status">
+          <span class="dot"></span>
+          <span class="txt">OCR 服務正常</span>
+          <span class="rt" id="ocr-runtime">srv: ocr-02.lan</span>
+        </div>
+
+        <div class="prog-chip" id="progChip" tabindex="0" role="button" aria-label="檢視程式資訊">
+          <span>BUILD</span><span class="v">v3.14.6</span>
+          <span class="badge-new">NEW</span>
+        </div>
+      </div>
+
+      <div class="cmd-strip">
+        <span class="group-label">// FLEET CMD</span>
+        <button class="btn ghost" id="btnRefresh"><span class="sigil">$</span><span>restart-adb</span></button>
+        <button class="btn amber" id="btnPauseAll"><span class="sigil">||</span><span>全部暫停</span></button>
+        <button class="btn" id="btnResumeAll"><span class="sigil">&#9658;</span><span>全部恢復</span></button>
+        <button class="btn cyan" id="btnSkipAll"><span class="sigil">&#8635;</span><span>全部跳過睡眠</span></button>
+        <span class="spacer"></span>
+        <button class="btn ghost" id="btnBug"><span class="sigil">!</span><span>回報問題</span></button>
+        <button class="btn ghost" id="btnOcr"><span class="sigil">&#9881;</span><span>OCR 設定</span></button>
+        <button class="btn solid" id="btnAdd"><span class="sigil">+</span><span>新增帳號</span></button>
+      </div>
+    </header>
+
+    <!-- ============ DASHBOARD PAGE ============ -->
+    <section class="page active" id="page-dashboard">
+
+      <div class="fleet-stats" id="fleetStats"></div>
+
+      <div class="sec-head">
+        <h2>&#9608; DEVICE_MATRIX</h2>
+        <span class="meta" id="fleetMeta">// scanning adb bus...</span>
+        <span class="rule"></span>
+      </div>
+
+      <div class="fleet" id="fleet"></div>
+    </section>
+
+    <!-- ============ LABELER PAGE ============ -->
+    <section class="page" id="page-labeler">
+      <div class="sec-head"><h2>&#9636; AUTO_LABELER</h2><span class="meta">// vision pipeline + model trainer</span><span class="rule"></span></div>
+      <div class="cols2">
+        <div class="panel">
+          <h3>// PIPELINE CONFIG</h3>
+          <div class="field"><label>LLM ENDPOINT</label><input type="url" value="http://label-llm.lan:8001/v1"></div>
+          <div class="grid2">
+            <div class="field"><label>MODEL</label><input type="text" value="qwen2.5-vl-7b"></div>
+            <div class="field"><label>DAILY TIME</label><input type="text" value="04:30"></div>
+          </div>
+          <div class="field"><label>SOURCE DIR</label><input type="text" value="captures/unlabeled/"></div>
+          <div class="field"><label>OUTPUT DIR</label><input type="text" value="datasets/blocks/"></div>
+          <div class="cmd-strip" style="border:none;padding:0;gap:7px;">
+            <button class="btn sm solid"><span class="sigil">&gt;</span><span>SAVE</span></button>
+            <button class="btn sm cyan"><span class="sigil">~</span><span>CHECK CONN</span></button>
+            <button class="btn sm"><span class="sigil">&#9658;</span><span>RUN ONCE</span></button>
+            <button class="btn sm amber"><span class="sigil">||</span><span>PAUSE</span></button>
+            <button class="btn sm mag"><span class="sigil">&#10005;</span><span>KILL</span></button>
+          </div>
+          <div class="statusbox" style="margin-top:14px;">
+            CONN: <span class="ok">ESTABLISHED</span> // latency 142ms<br>
+            STATE: <span class="ok">RUNNING</span> &nbsp; done <b style="color:var(--p-green)">318</b>/452 &nbsp; kept 296 &nbsp; del 22 &nbsp; err 0<br>
+            CURRENT: classifying frame_00318.png
+          </div>
+        </div>
+        <div class="panel">
+          <h3>// LIVE LOG</h3>
+          <div class="tlog" style="height:180px;">
+            <div><span style="color:var(--ink-ghost)">04:31:02</span> <span style="color:var(--p-cyan)">INFO</span> batch 32 dispatched</div>
+            <div><span style="color:var(--ink-ghost)">04:31:05</span> <span style="color:var(--p-cyan)">INFO</span> frame_00316 -&gt; class=ore_3x3 conf=0.97 KEEP</div>
+            <div><span style="color:var(--ink-ghost)">04:31:06</span> <span style="color:var(--p-cyan)">INFO</span> frame_00317 -&gt; class=air conf=0.91 KEEP</div>
+            <div><span style="color:var(--ink-ghost)">04:31:08</span> <span style="color:var(--p-amber)">WARN</span> frame_00318 low-conf 0.58, requeue</div>
+            <div><span style="color:var(--ink-ghost)">04:31:09</span> <span style="color:var(--p-cyan)">INFO</span> autosave checkpoint written</div>
+          </div>
+          <h3 style="margin-top:18px;">// MODEL TRAINER</h3>
+          <div class="grid2">
+            <div class="field"><label>EPOCHS</label><input type="number" value="40"></div>
+            <div class="field"><label class="opt">&nbsp;</label><label class="chk"><input type="checkbox" checked><span class="box"></span><span class="ctxt">訓練後移除原始檔</span></label></div>
+          </div>
+          <button class="btn cyan"><span class="sigil">&#9658;</span><span>START TRAINING</span></button>
+          <div class="statusbox" style="margin-top:14px;">STATE: <span class="warn">IDLE</span> // last run acc=0.962 (epoch 40)</div>
+          <div class="tlog" style="height:120px;margin-top:12px;">
+            <div><span style="color:var(--ink-ghost)">--:--</span> awaiting trainer dispatch...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ README PAGE ============ -->
+    <section class="page" id="page-readme">
+      <div class="sec-head"><h2>&#9678; README // UPDATES</h2><span class="meta">// /updates/</span><span class="rule"></span></div>
+      <div class="readme-frame">[ IFRAME :: /updates/ ]</div>
+    </section>
+
+    <!-- ============ INVENTORY PAGE ============ -->
+    <section class="page" id="page-inventory">
+      <div class="sec-head"><h2>&#9707; INVENTORY // 倉庫檢視</h2><span class="meta">// 守護靈 + 神器附魔</span><span class="rule"></span></div>
+      <div class="filter-bar" style="margin-bottom:18px;">
+        <div class="field" style="flex:0 0 220px;"><label>DEVICE</label>
+          <select><option>emulator-5554 (晨星)</option><option>emulator-5556 (夜梟)</option><option>adb-fc65396d (手機fc)</option></select>
+        </div>
+        <div class="statusbox" style="flex:1;min-height:0;padding:8px 13px;">STATUS: <span class="ok">READY</span> // 已載入 84 守護靈 / 213 神器</div>
+      </div>
+
+      <div class="inv-tabs">
+        <button class="inv-tab on" id="tabSpirit">守護靈 SPIRIT</button>
+        <button class="inv-tab" id="tabGem">神器 GEM</button>
+      </div>
+
+      <div id="secSpirit">
+        <div class="filter-bar">
+          <button class="btn sm solid"><span class="sigil">&gt;</span><span>LOAD</span></button>
+          <div class="field"><label>AFFIX</label><input type="text" placeholder="攻擊 / 暴擊..."></div>
+          <div class="field"><label>MIN LV</label><input type="number" value="0"></div>
+          <div class="field"><label>LOCK</label><select><option>全部</option><option>已鎖</option><option>未鎖</option></select></div>
+          <div class="field"><label>SORT</label><select><option>等級 ↓</option><option>config_id</option></select></div>
+        </div>
+        <div class="sp-grid" id="spGrid"></div>
+      </div>
+
+      <div id="secGem" style="display:none;">
+        <div class="hist" id="gHist"></div>
+        <div class="filter-bar" style="margin-bottom:6px;">
+          <button class="btn sm solid"><span class="sigil">&gt;</span><span>LOAD</span></button>
+          <div class="field"><label>ATTR</label><input type="text" placeholder="生命 / 防禦..."></div>
+          <div class="field"><label>QUAL ≤</label><input type="number" value="5"></div>
+          <div class="field"><label>SUIT</label><input type="number" placeholder="套裝編號"></div>
+          <div class="field" style="flex:0 0 auto;"><label class="chk"><input type="checkbox"><span class="box"></span><span class="ctxt">僅未鎖</span></label></div>
+          <div class="field" style="flex:0 0 auto;"><label class="chk"><input type="checkbox"><span class="box"></span><span class="ctxt">有隨機詞條</span></label></div>
+        </div>
+        <div class="filter-bar" style="margin-bottom:6px;">
+          <div class="field" style="flex:0 0 160px;"><label>分解最低 N 顆</label><input type="number" value="10"></div>
+          <button class="btn sm cyan"><span class="sigil">&#9633;</span><span>選取候選</span></button>
+          <button class="btn sm mag"><span class="sigil">&#9889;</span><span>分解</span></button>
+          <div class="statusbox" style="flex:1;min-height:0;padding:8px 12px;">已選 0 顆 // 預估回收 0 粉塵</div>
+        </div>
+        <table class="gem">
+          <thead><tr>
+            <th>&#9633;</th><th>QUAL</th><th>SUIT</th><th>POS</th><th>LV</th><th>BASE ATTR</th><th>RAND ATTR</th><th>LOCK</th><th>ID</th>
+          </tr></thead>
+          <tbody id="gBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============================================================
+     MODALS
+     ============================================================ -->
+
+<!-- DEVICE CONFIG -->
+<div class="overlay" id="mConfig" data-close>
+  <div class="modal">
+    <div class="m-head"><div class="dots"><i></i><i></i><i></i></div>
+      <h3><span class="pfx">cfg@</span><span id="cfgIp">emulator-5554</span> :: edit</h3>
+      <button class="m-close" data-close-x aria-label="關閉">&#10005;</button>
+    </div>
+    <div class="m-body">
+      <div class="subhead">// IDENTITY</div>
+      <div class="grid2">
+        <div class="field"><label>DEVICE NAME</label><input type="text" value="晨星"></div>
+        <div class="field"><label>&nbsp;</label><label class="chk"><input type="checkbox" checked><span class="box"></span><span class="ctxt">啟用自動掛機</span></label></div>
+      </div>
+      <div class="field"><label>BACKEND / 方案</label>
+        <select id="cfgBackend"><option>adb</option><option selected>adb+ws</option><option>h5</option><option>h5+ws</option><option>ws_token</option></select>
+      </div>
+
+      <div class="subhead">// CROSS-PARK 泊車</div>
+      <div class="grid2">
+        <div class="field"><label class="chk"><input type="checkbox" checked><span class="box"></span><span class="ctxt">啟用跨服泊車</span></label></div>
+        <div class="field"><label>TIER</label><select><option>泊銀 silver</option></select></div>
+      </div>
+
+      <details class="adv"><summary>WEB BACKEND OPTIONS (web_h5)</summary>
+        <div class="adv-body">
+          <div class="field"><label>WEB URL</label><input type="url" placeholder="https://..."></div>
+          <div class="grid2">
+            <div class="field"><label>VIEWPORT W</label><input type="number" value="540"></div>
+            <div class="field"><label>VIEWPORT H</label><input type="number" value="960"></div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label class="chk"><input type="checkbox" checked><span class="box"></span><span class="ctxt">Headless</span></label></div>
+            <div class="field"><label class="chk"><input type="checkbox"><span class="box"></span><span class="ctxt">清除 cookies</span></label></div>
+          </div>
+          <div class="field"><label>CANVAS SELECTOR</label><input type="text" value="#GameCanvas"></div>
+          <div class="grid2">
+            <div class="field"><label>CHANNEL</label><input type="text" value="chrome"></div>
+            <div class="field"><label>STOP MODE</label><select><option>graceful</option><option>kill</option></select></div>
+          </div>
+        </div>
+      </details>
+
+      <div class="subhead">// RUNTIME INTERVALS</div>
+      <div class="grid3">
+        <div class="field"><label>ONLINE CHK (h)</label><input type="number" value="1"></div>
+        <div class="field"><label>LAMP CHK (h)</label><input type="number" value="2"></div>
+        <div class="field"><label>LAMP DUR (s)</label><input type="number" value="180"></div>
+        <div class="field"><label>MINING (min)</label><input type="number" value="8"></div>
+        <div class="field"><label>SLEEP MIN (h)</label><input type="number" step="0.5" value="1"></div>
+        <div class="field"><label>SLEEP MAX (h)</label><input type="number" step="0.5" value="3"></div>
+      </div>
+
+      <div class="subhead">// MINING PLANNER</div>
+      <div class="field"><label>PLANNER VERSION</label>
+        <select><option>v1 :: A* (省鏟)</option><option>v3 :: cluster-aware</option><option>v4 :: DFS+B&amp;B</option><option selected>v5 :: priors (預設)</option></select>
+      </div>
+
+      <div class="subhead">// FEATURE TOGGLES</div>
+      <div class="feat-grid">
+        <label class="feat"><input type="checkbox" checked><span class="led-s"></span><span class="fl">農場 FARM</span></label>
+        <label class="feat"><input type="checkbox" checked><span class="led-s"></span><span class="fl">武道會 ARENA</span></label>
+        <label class="feat"><input type="checkbox" checked><span class="led-s"></span><span class="fl">挖礦 MINING</span></label>
+        <label class="feat"><input type="checkbox"><span class="led-s"></span><span class="fl">地獄之門 DUNGEON</span></label>
+        <label class="feat"><input type="checkbox" checked><span class="led-s"></span><span class="fl">WS 開神燈</span></label>
+        <label class="feat"><input type="checkbox"><span class="led-s"></span><span class="fl">WS 挖礦</span></label>
+        <label class="feat"><input type="checkbox"><span class="led-s"></span><span class="fl">真機模式 PHONE</span></label>
+        <label class="feat"><input type="checkbox" checked><span class="led-s"></span><span class="fl">離線 fallback</span></label>
+      </div>
+
+      <div class="subhead">// WS LAMP THRESHOLDS</div>
+      <div class="grid2">
+        <div class="field"><label>賣出百分比 %</label><input type="number" value="35"></div>
+        <div class="field"><label>最低保留數</label><input type="number" value="6"></div>
+      </div>
+
+      <div class="cmd-strip" style="border:none;padding:8px 0 0;">
+        <button class="btn sm cyan"><span class="sigil">&#9678;</span><span>WEB LOGIN</span></button>
+        <button class="btn sm ghost"><span class="sigil">&#8681;</span><span>BACKUP COOKIES</span></button>
+      </div>
+    </div>
+    <div class="m-foot">
+      <button class="btn ghost" data-close-x><span>CANCEL</span></button>
+      <button class="btn solid"><span class="sigil">&gt;</span><span>SAVE CONFIG</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR CONFIG -->
+<div class="overlay" id="mOcr" data-close>
+  <div class="modal">
+    <div class="m-head"><div class="dots"><i></i><i></i><i></i></div><h3><span class="pfx">ocr@</span>global :: config</h3><button class="m-close" data-close-x>&#10005;</button></div>
+    <div class="m-body">
+      <div class="field"><label>SERVER MODE</label><select><option>主機 Main</option><option>備援 Backup</option><option selected>自動 Auto</option></select></div>
+      <div class="field"><label>OCR SERVERS (one per line)</label><textarea rows="3">http://ocr-01.lan:8866
+http://ocr-02.lan:8866
+http://ocr-03.lan:8866</textarea></div>
+      <div class="grid3">
+        <div class="field"><label>TIMEOUT (s)</label><input type="number" value="20"></div>
+        <div class="field"><label>IMG RETRIES</label><input type="number" value="3"></div>
+        <div class="field"><label>EMPTY RETRIES</label><input type="number" value="2"></div>
+      </div>
+      <div class="field"><label>RETRY DELAY (s)</label><input type="number" step="0.1" value="0.6"></div>
+      <div class="subhead">// DEFAULT REGION</div>
+      <div class="field"><label class="chk"><input type="checkbox" checked><span class="box"></span><span class="ctxt">啟用預設辨識區域</span></label></div>
+      <div class="grid2">
+        <div class="field"><label>X MIN</label><input type="number" value="0"></div>
+        <div class="field"><label>X MAX</label><input type="number" value="540"></div>
+        <div class="field"><label>Y MIN</label><input type="number" value="0"></div>
+        <div class="field"><label>Y MAX</label><input type="number" value="960"></div>
+      </div>
+    </div>
+    <div class="m-foot"><button class="btn ghost" data-close-x>CANCEL</button><button class="btn solid"><span class="sigil">&gt;</span><span>SAVE</span></button></div>
+  </div>
+</div>
+
+<!-- PROGRAM INFO -->
+<div class="overlay" id="mProg" data-close>
+  <div class="modal">
+    <div class="m-head"><div class="dots"><i></i><i></i><i></i></div><h3><span class="pfx">sys@</span>build :: info</h3><button class="m-close" data-close-x>&#10005;</button></div>
+    <div class="m-body">
+      <div class="pinfo-row"><span class="k">VERSION</span><span class="vv" style="color:var(--p-violet);font-weight:700;">v3.14.6</span></div>
+      <div class="pinfo-row"><span class="k">GIT TIME</span><span class="vv">2026-06-14 05:41 +0800 &nbsp;<span style="color:var(--ink-faint)">(bbe5c1c7)</span></span></div>
+      <div class="pinfo-row"><span class="k">PLANNER</span><span class="vv">mining v5 priors // depth_tracker active</span></div>
+      <div class="pinfo-row"><span class="k">BACKEND</span><span class="vv">adb / web_h5 / ws_token</span></div>
+      <div class="fix-note">
+        &#9656; FIX: WS-fallback 離線誤判修正<br>
+        &#9656; FIX: carpark 配額持久化 round-trip<br>
+        &#9656; FIX: v5 priors 污染清除 (empty-plan 0.96%)<br>
+        &#9656; FEAT: Web H5 設定隱藏固定登入網址 + 進階摺疊
+      </div>
+    </div>
+    <div class="m-foot"><button class="btn solid" data-close-x>CLOSE</button></div>
+  </div>
+</div>
+
+<!-- BUG FEEDBACK -->
+<div class="overlay" id="mBug" data-close>
+  <div class="modal">
+    <div class="m-head"><div class="dots"><i></i><i></i><i></i></div><h3><span class="pfx">bug@</span>report :: new</h3><button class="m-close" data-close-x>&#10005;</button></div>
+    <div class="m-body">
+      <div class="field"><label>TITLE</label><input type="text" placeholder="簡述問題..."></div>
+      <div class="field"><label>DESCRIPTION // 步驟 · 預期 · 實際</label><textarea rows="8" placeholder="1. 操作步驟&#10;2. 預期結果&#10;3. 實際結果"></textarea></div>
+      <div class="field"><label>REPORTER <span class="opt">(選填)</span></label><input type="text" placeholder="你的名字"></div>
+    </div>
+    <div class="m-foot"><button class="btn ghost" data-close-x>CANCEL</button><button class="btn solid"><span class="sigil">&#10148;</span><span>SUBMIT</span></button></div>
+  </div>
+</div>
+
+<!-- REGISTER -->
+<div class="overlay" id="mReg" data-close>
+  <div class="modal">
+    <div class="m-head"><div class="dots"><i></i><i></i><i></i></div><h3><span class="pfx">acct@</span>register :: new device</h3><button class="m-close" data-close-x>&#10005;</button></div>
+    <div class="m-body">
+      <div class="field"><label>DEVICE ID</label><input type="text" placeholder="emulator-5562 / adb-xxxx"></div>
+      <div class="field"><label>WEB URL <span class="opt">(留空用預設)</span></label><input type="url" placeholder="https://..."></div>
+      <div class="statusbox">STATUS: <span style="color:var(--ink-faint)">idle // 等待註冊...</span></div>
+    </div>
+    <div class="m-foot"><button class="btn ghost" data-close-x>CANCEL</button><button class="btn solid"><span class="sigil">+</span><span>REGISTER &amp; LOGIN</span></button></div>
+  </div>
+</div>
+
+<!-- LIVE VIEW -->
+<div class="overlay live" id="mLive" data-close>
+  <div class="modal live-modal">
+    <div class="lv-head">
+      <span class="lvname" id="lvName">emulator-5554 // 晨星</span>
+      <span class="lvstat"><span class="dot"></span><span id="lvStat">直播中 :: 12 fps</span></span>
+      <button class="btn sm amber" style="margin-left:auto;"><span class="sigil">&#9632;</span><span>關閉瀏覽器</span></button>
+      <button class="m-close" data-close-x aria-label="關閉直播">&#10005;</button>
+    </div>
+    <div class="lv-canvas-wrap"><div class="lv-canvas"></div></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   FAKE FLEET DATA  (6 devices, varied states)
+   ============================================================ */
+const NOW = Date.now();
+const m = (n)=> NOW + n*60000;
+
+const DEVICES = [
+  { ip:'emulator-5554', name:'晨星', state:'online', status:'ONLINE',
+    task:'挖礦 / Oracle', step:'執行 v5 規劃', stepDeadline: m(2.4),
+    nextWake:null, waking:true, backend:'adb+ws', planner:'v5', sst:412, phone:false, liveView:true,
+    carpark:{ enabled:true, current:9, target:12, worst:6.4, next:'09:59',
+      cars:[ {slot:'P03', rem:2.1, frac:.74}, {slot:'P07', rem:6.4, frac:.20}, {slot:'P11', rem:3.8, frac:.52} ] },
+    logs:[ ['05:41:02','i','board 0x0c01 decoded rows=7'],['05:41:03','i','plan v5 depth=18 cost=14.2'],['05:41:04','','dig (4,2) -> ore_3x3'] ],
+    progress:{ '地獄之門':true,'農場':true,'寶箱':true,'家族':true,'商店':false,'挖礦':true,'武道會':false,'神燈':true,'轉盤':false } },
+
+  { ip:'emulator-5556', name:'夜梟', state:'paused', status:'PAUSED 已暫停',
+    task:'萬神試煉', step:'手動暫停中', stepDeadline:null,
+    nextWake:null, waking:false, backend:'adb', planner:'v4', sst:388, phone:false, liveView:true,
+    carpark:{ enabled:false },
+    logs:[ ['05:39:51','w','manual pause by operator'],['05:39:51','i','sleeping task loop'],['05:38:12','i','weekly trial reward x3'] ],
+    progress:{ '地獄之門':true,'農場':true,'寶箱':true,'家族':false,'商店':true,'挖礦':true,'武道會':true,'神燈':false,'轉盤':true } },
+
+  { ip:'adb-fc65396d', name:'手機fc', state:'degraded', status:'DEGRADED ws-fallback',
+    task:'神燈 (WS)', step:'token 刷新中', stepDeadline: m(0.8),
+    nextWake:null, waking:true, backend:'ws_token', planner:'v5', sst:'--', phone:true, liveView:false,
+    carpark:{ enabled:false },
+    logs:[ ['05:40:30','w','adb screencap timeout, ws-only'],['05:40:31','i','idle 2h reward claimed'],['05:40:33','i','lamp count=8 keep>=6'] ],
+    progress:{ '地獄之門':false,'農場':true,'寶箱':true,'家族':true,'商店':false,'挖礦':false,'武道會':false,'神燈':true,'轉盤':true } },
+
+  { ip:'emulator-5558', name:'流火', state:'online', status:'ONLINE',
+    task:'農場任務', step:'打工收成 7001', stepDeadline:null,
+    nextWake: m(46), waking:false, backend:'h5+ws', planner:'v5', sst:521, phone:false, liveView:true,
+    carpark:{ enabled:true, current:12, target:12, worst:1.2, next:'17:59',
+      cars:[ {slot:'P01', rem:0.4, frac:.95}, {slot:'P02', rem:1.2, frac:.85}, {slot:'P05', rem:0.9, frac:.90} ] },
+    logs:[ ['05:41:10','i','plant+harvest cycle x4'],['05:41:11','i','harvest card applied'],['05:41:12','i','farm idle 8h gate ok'] ],
+    progress:{ '地獄之門':true,'農場':true,'寶箱':true,'家族':true,'商店':true,'挖礦':true,'武道會':true,'神燈':true,'轉盤':true } },
+
+  { ip:'emulator-5560', name:'寒霜', state:'online', status:'ONLINE',
+    task:'菇菇武道會', step:'競猜下注 shop14', stepDeadline: m(5.7),
+    nextWake: m(12), waking:false, backend:'adb+ws', planner:'v3', sst:455, phone:false, liveView:true,
+    carpark:{ enabled:false },
+    logs:[ ['05:40:58','i','arena round 3/5 win'],['05:40:59','i','guess coin buy x20'],['05:41:00','i','kungfu store entered'] ],
+    progress:{ '地獄之門':true,'農場':true,'寶箱':false,'家族':true,'商店':true,'挖礦':true,'武道會':true,'神燈':false,'轉盤':true } },
+
+  { ip:'emulator-5562', name:'墜星', state:'offline', status:'OFFLINE',
+    task:'--', step:'連線中斷 > 1h', stepDeadline:null,
+    nextWake:null, waking:false, backend:'adb', planner:'v5', sst:'--', phone:false, liveView:false,
+    carpark:{ enabled:false },
+    logs:[ ['04:12:44','e','adb device not found'],['04:12:44','w','marked OFFLINE'],['04:11:30','i','last heartbeat'] ],
+    progress:{} },
+
+  { ip:'emulator-5564', name:'灰燼', state:'disabled', status:'DISABLED 已停用',
+    task:'--', step:'裝置已停用', stepDeadline:null,
+    nextWake:null, waking:false, backend:'h5', planner:'v5', sst:'--', phone:false, liveView:false,
+    carpark:{ enabled:false },
+    logs:[ ['昨日 22:10','i','auto-mining disabled'],['昨日 22:10','i','awaiting manual login'],['昨日 22:09','i','profile loaded'] ],
+    progress:{} },
+
+  { ip:'adb-9a2b71ce', name:'青鋒', state:'online', status:'ONLINE',
+    task:'開神燈', step:'比對裝備 / 賣出', stepDeadline: m(1.5),
+    nextWake: m(58), waking:false, backend:'adb', planner:'v5', sst:402, phone:true, liveView:true,
+    carpark:{ enabled:false },
+    logs:[ ['05:41:15','i','lamp open batch 12'],['05:41:16','i','equip uid=88213 compare'],['05:41:17','i','sold 7, kept 5'] ],
+    progress:{ '地獄之門':true,'農場':true,'寶箱':true,'家族':true,'商店':true,'挖礦':true,'武道會':false,'神燈':true,'轉盤':false } },
+];
+
+const STATUS_TXT = { online:'ONLINE', paused:'PAUSED', degraded:'DEGRADED', offline:'OFFLINE', disabled:'DISABLED' };
+
+/* ---------- render fleet stats ---------- */
+function renderStats(){
+  const online = DEVICES.filter(d=>d.state==='online').length;
+  const paused = DEVICES.filter(d=>d.state==='paused').length;
+  const issues = DEVICES.filter(d=>d.state==='offline'||d.state==='degraded').length;
+  const total = DEVICES.length;
+  const spark = Array.from({length:14},(_,i)=> (Math.sin(i*0.7)+1.4)*30 );
+  const sparkHtml = spark.map((h,i)=>`<i class="${i>9?'hi':''}" style="height:${Math.round(h)}%"></i>`).join('');
+  document.getElementById('fleetStats').innerHTML = `
+    <div class="stat online"><div class="k">ONLINE 在線</div><div class="v">${online}<small>/ ${total}</small></div>
+      <div class="spark">${sparkHtml}</div></div>
+    <div class="stat amber"><div class="k">PAUSED 暫停</div><div class="v">${paused}</div></div>
+    <div class="stat cyan"><div class="k">AVG SST 截圖</div><div class="v">438<small>ms</small></div></div>
+    <div class="stat ${issues?'amber':'dim'}"><div class="k">ALERTS 異常</div><div class="v">${issues}</div></div>
+    <div class="stat dim"><div class="k">PLANNER 規劃</div><div class="v" style="font-size:24px;color:var(--p-violet)">v5<small>+priors</small></div></div>`;
+  document.getElementById('fleetMeta').textContent = `// ${total} units bound · ${online} active · last scan ${fmtClock(NOW)}`;
+}
+
+/* ---------- helpers ---------- */
+function fmtClock(ts){ const d=new Date(ts); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`; }
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+/* ---------- render one unit ---------- */
+function unitHtml(d){
+  const liveBtn = d.liveView ? `<button class="btn sm cyan" data-act="live" data-ip="${d.ip}"><span class="sigil">&#9673;</span><span>直播</span></button>` : '';
+  const recoverBtn = d.phone ? `<button class="btn sm amber" data-act="recover" data-ip="${d.ip}"><span class="sigil">&#8635;</span><span>恢復畫面</span></button>` : '';
+
+  // action set varies by state
+  let actions = '';
+  if(d.state==='disabled'){
+    actions = `<button class="btn sm solid" data-act="enable" data-ip="${d.ip}"><span class="sigil">&#9658;</span><span>啟用裝置</span></button>
+      <button class="btn sm" data-act="websetup" data-ip="${d.ip}"><span class="sigil">&#9678;</span><span>開瀏覽器設定</span></button>`;
+  } else if(d.state==='offline'){
+    actions = `<button class="btn sm ghost" data-act="enable" data-ip="${d.ip}"><span class="sigil">~</span><span>重試連線</span></button>`;
+  } else if(d.state==='paused'){
+    actions = `<button class="btn sm" data-act="resume" data-ip="${d.ip}"><span class="sigil">&#9658;</span><span>恢復</span></button>
+      <button class="btn sm cyan" data-act="skip" data-ip="${d.ip}"><span class="sigil">&#8635;</span><span>跳過睡眠</span></button>
+      ${liveBtn}${recoverBtn}`;
+  } else {
+    actions = `<button class="btn sm amber" data-act="pause" data-ip="${d.ip}"><span class="sigil">||</span><span>暫停</span></button>
+      <button class="btn sm cyan" data-act="skip" data-ip="${d.ip}"><span class="sigil">&#8635;</span><span>跳過睡眠</span></button>
+      <button class="btn sm ghost" data-act="force" data-ip="${d.ip}"><span class="sigil">&#9214;</span><span>強制睡眠</span></button>
+      ${d.backend.startsWith('h5')?`<button class="btn sm violet" data-act="web" data-ip="${d.ip}"><span class="sigil">&#9678;</span><span>開瀏覽器</span></button>`:''}
+      ${liveBtn}${recoverBtn}`;
+  }
+
+  // step with countdown
+  let stepHtml = `<span class="cur"></span>${esc(d.step)}`;
+  if(d.stepDeadline){ const left=Math.max(0,Math.round((d.stepDeadline-NOW)/1000)); stepHtml += ` <span class="unit-s">剩 ${Math.floor(left/60)}m ${left%60}s</span>`; }
+
+  // next wake
+  let wakeHtml;
+  if(d.waking){ wakeHtml = `<span class="crt-num">喚醒中</span><span class="cur"></span>`; }
+  else if(d.nextWake){ const left=Math.max(0,Math.round((d.nextWake-NOW)/1000)); wakeHtml = `<span class="crt-num">${String(Math.floor(left/60)).padStart(2,'0')}<span class="unit-s">分</span> ${String(left%60).padStart(2,'0')}<span class="unit-s">秒</span></span>`; }
+  else { wakeHtml = `<span class="crt-num" style="color:var(--ink-faint)">--</span>`; }
+
+  // carpark
+  let carparkHtml = '';
+  if(d.carpark && d.carpark.enabled){
+    const cp = d.carpark;
+    const carsHtml = cp.cars.map(c=>`
+      <div class="car-row"><span class="slot">${c.slot}</span>
+        <div class="car-bar"><i style="transform:scaleX(${c.frac})"></i></div>
+        <span class="rem">剩 ${c.rem.toFixed(1)}h</span></div>`).join('');
+    carparkHtml = `
+      <div class="carpark" data-carpark>
+        <div class="carpark-head" tabindex="0" role="button" aria-expanded="false">
+          <span class="chev">&#9656;</span><span class="ck">CROSS-PARK 泊銀</span>
+          <span class="cv">${cp.current}/${cp.target} <span class="unit-s" style="color:var(--ink-faint)">· 最快 ${cp.worst}h · 下次 ${cp.next}</span></span>
+        </div>
+        <div class="carpark-detail">${carsHtml}</div>
+      </div>`;
+  }
+
+  // progress badges
+  let progHtml = '';
+  const keys = Object.keys(d.progress);
+  if(keys.length){
+    const badges = keys.map(k=>`<span class="tb ${d.progress[k]?'done':''}"><span class="mk">${d.progress[k]?'[x]':'[ ]'}</span>${esc(k)}</span>`).join('');
+    progHtml = `<div class="progress"><div class="plab">// DAILY PROGRESS</div><div class="badges">${badges}</div></div>`;
+  }
+
+  // logs
+  const logHtml = d.logs.map((l,idx)=>{
+    const lvc = l[1]?`lv-${l[1]}`:'';
+    const lvtxt = l[1]==='i'?'INFO':l[1]==='w'?'WARN':l[1]==='e'?'ERR ':'EXEC';
+    return `<div class="ln ${idx===0?'fresh':''}"><span class="t">${l[0]}</span> <span class="${lvc}">${lvtxt}</span> ${esc(l[2])}</div>`;
+  }).join('');
+
+  return `
+  <article class="unit ${d.state}" id="card-${d.ip}" data-ip="${d.ip}">
+    <div class="u-head">
+      <span class="led"></span>
+      <div class="u-id">
+        <div class="name">${esc(d.name)}</div>
+        <div class="ip">${d.ip}<span class="tag">${d.backend}</span></div>
+      </div>
+      <span class="u-status">${esc(d.status)}</span>
+      <button class="u-gear" data-act="settings" data-ip="${d.ip}" aria-label="設定" title="config">&#9881;</button>
+    </div>
+    <div class="u-body">
+      <div class="readout">
+        <div class="cell wide"><div class="k">CURRENT TASK</div><div class="vline accent">${esc(d.task)}</div></div>
+        <div class="cell wide"><div class="k">STEP // 動作</div><div class="vline">${stepHtml}</div></div>
+        <div class="cell"><div class="k">NEXT WAKE</div><div class="vline accent">${wakeHtml}</div></div>
+        <div class="cell"><div class="k">AVG SST</div><div class="vline"><span class="crt-num">${d.sst}</span><span class="unit-s">${d.sst==='--'?'':'ms'}</span></div></div>
+        <div class="cell"><div class="k">PLANNER</div><div class="vline"><span style="color:var(--p-violet)">${d.planner}</span></div></div>
+        <div class="cell"><div class="k">UPDATED</div><div class="vline"><span class="unit-s">${fmtClock(NOW)}</span></div></div>
+      </div>
+      ${carparkHtml}
+      ${progHtml}
+      <div class="logbox">${logHtml}</div>
+    </div>
+    <div class="u-actions">${actions}</div>
+  </article>`;
+}
+
+function renderFleet(){
+  document.getElementById('fleet').innerHTML = DEVICES.map(unitHtml).join('');
+}
+
+/* ---------- inventory fake data ---------- */
+function renderInventory(){
+  const spirits = [
+    {n:'熾炎守護',lv:42,lock:true,id:'30142',aff:['攻擊+18%','暴擊+9%','穿透+12']},
+    {n:'霜息守護',lv:38,lock:false,id:'30207',aff:['防禦+22%','格擋+7%']},
+    {n:'雷鳴守護',lv:51,lock:true,id:'30311',aff:['攻速+14%','暴傷+25%','吸血+6%']},
+    {n:'幽影守護',lv:29,lock:false,id:'30188',aff:['閃避+11%','移速+8%']},
+    {n:'聖光守護',lv:47,lock:false,id:'30420',aff:['治療+19%','生命+15%','護盾+10%']},
+    {n:'毒牙守護',lv:33,lock:false,id:'30255',aff:['毒傷+21%','破甲+9%']},
+  ];
+  document.getElementById('spGrid').innerHTML = spirits.map(s=>`
+    <div class="sp-card">
+      <div class="spn">${s.n}${s.lock?'<span class="lk">&#128274;</span>':''}</div>
+      <div class="spmeta">cfg ${s.id}</div>
+      <div class="lvl">Lv.${s.lv}</div>
+      <div class="aff">${s.aff.map(a=>`<span>${a}</span>`).join('')}</div>
+    </div>`).join('');
+
+  document.getElementById('gHist').innerHTML = [['Q1',38],['Q2',62],['Q3',47],['Q4',19],['Q5',6]]
+    .map(([q,n])=>`<span class="chip">${q} <b>${n}</b></span>`).join('') + `<span class="chip" style="border-color:var(--hair)">TOTAL <b style="color:var(--p-amber)">172</b></span>`;
+
+  const gems = [
+    [5,'套裝07','頭',60,'生命 +480','暴擊 +6.2%',true,'A4F1'],
+    [4,'套裝03','胸',58,'防禦 +312','格擋 +4.1%',false,'B2C8'],
+    [3,'套裝07','手',55,'攻擊 +201','-',false,'C901'],
+    [2,'套裝11','腿',49,'生命 +180','-',false,'D710'],
+    [5,'套裝03','靴',62,'攻速 +5.5%','吸血 +3.0%',true,'E5A2'],
+    [1,'套裝07','戒',41,'防禦 +90','-',false,'F003'],
+  ];
+  document.getElementById('gBody').innerHTML = gems.map(g=>`
+    <tr><td><label class="chk" style="padding:0"><input type="checkbox"><span class="box"></span></label></td>
+      <td><span class="q-badge q${g[0]}">Q${g[0]}</span></td>
+      <td>${g[1]}</td><td>${g[2]}</td><td style="font-family:var(--crt);font-size:14px;color:var(--p-green)">${g[3]}</td>
+      <td>${g[4]}</td><td style="color:${g[5]==='-'?'var(--ink-ghost)':'var(--p-cyan)'}">${g[5]}</td>
+      <td>${g[6]?'<span style="color:var(--p-amber)">&#128274;</span>':'<span style="color:var(--ink-ghost)">--</span>'}</td>
+      <td style="color:var(--ink-faint)">${g[7]}</td></tr>`).join('');
+}
+
+/* ============================================================
+   INTERACTION WIRING
+   ============================================================ */
+// rail toggle
+document.getElementById('railToggle').addEventListener('click',()=> document.getElementById('app').classList.toggle('rail-open'));
+
+// page nav
+document.querySelectorAll('.nav-item[data-page]').forEach(el=>{
+  el.addEventListener('click',()=> switchPage(el.dataset.page));
+  el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); switchPage(el.dataset.page);} });
+});
+function switchPage(p){
+  document.querySelectorAll('.nav-item[data-page]').forEach(n=> n.classList.toggle('active', n.dataset.page===p));
+  document.querySelectorAll('.page').forEach(pg=> pg.classList.toggle('active', pg.id==='page-'+p));
+  if(window.innerWidth<=760) document.getElementById('app').classList.remove('rail-open');
+}
+
+// inventory tabs
+document.getElementById('tabSpirit').addEventListener('click',()=>{ tabSwap(true); });
+document.getElementById('tabGem').addEventListener('click',()=>{ tabSwap(false); });
+function tabSwap(spirit){
+  document.getElementById('tabSpirit').classList.toggle('on',spirit);
+  document.getElementById('tabGem').classList.toggle('on',!spirit);
+  document.getElementById('secSpirit').style.display = spirit?'block':'none';
+  document.getElementById('secGem').style.display = spirit?'none':'block';
+}
+
+// modal open/close generic
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+function closeModal(el){ el.classList.remove('open'); }
+document.querySelectorAll('.overlay[data-close]').forEach(ov=>{
+  ov.addEventListener('click',e=>{ if(e.target===ov) closeModal(ov); });
+  ov.querySelectorAll('[data-close-x]').forEach(b=> b.addEventListener('click',()=> closeModal(ov)));
+});
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') document.querySelectorAll('.overlay.open').forEach(closeModal); });
+
+// top bar buttons
+const lockBtn = (btn,ms)=>{ btn.classList.add('pending'); setTimeout(()=>btn.classList.remove('pending'),ms); };
+document.getElementById('btnRefresh').addEventListener('click',e=>lockBtn(e.currentTarget,1500));
+document.getElementById('btnPauseAll').addEventListener('click',e=>lockBtn(e.currentTarget,1200));
+document.getElementById('btnResumeAll').addEventListener('click',e=>lockBtn(e.currentTarget,1200));
+document.getElementById('btnSkipAll').addEventListener('click',e=>lockBtn(e.currentTarget,1200));
+document.getElementById('btnOcr').addEventListener('click',()=>openModal('mOcr'));
+document.getElementById('btnBug').addEventListener('click',()=>openModal('mBug'));
+document.getElementById('btnAdd').addEventListener('click',()=>openModal('mReg'));
+const progChip = document.getElementById('progChip');
+progChip.addEventListener('click',()=>openModal('mProg'));
+progChip.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); openModal('mProg'); } });
+
+// fleet delegated actions
+document.getElementById('fleet').addEventListener('click',e=>{
+  // carpark toggle
+  const cph = e.target.closest('.carpark-head');
+  if(cph){ const cp=cph.closest('.carpark'); const open=cp.classList.toggle('open'); cph.setAttribute('aria-expanded',open); return; }
+  const btn = e.target.closest('[data-act]');
+  if(!btn) return;
+  const act = btn.dataset.act, ip = btn.dataset.ip;
+  if(act==='settings'){ document.getElementById('cfgIp').textContent=ip; openModal('mConfig'); return; }
+  if(act==='live'){ const d=DEVICES.find(x=>x.ip===ip); document.getElementById('lvName').textContent=`${ip} // ${d?d.name:''}`; openModal('mLive'); return; }
+  // pause/resume/skip/force/etc -> simulate async lock w/ spinner
+  if(['pause','resume','force','enable','websetup','recover','skip'].includes(act)){
+    const ms = (act==='web'||act==='websetup')?3000:2000;
+    lockBtn(btn,ms);
+  }
+});
+// carpark keyboard
+document.getElementById('fleet').addEventListener('keydown',e=>{
+  const cph = e.target.closest('.carpark-head');
+  if(cph && (e.key==='Enter'||e.key===' ')){ e.preventDefault(); const cp=cph.closest('.carpark'); const open=cp.classList.toggle('open'); cph.setAttribute('aria-expanded',open); }
+});
+
+// backend select toggles web group visibility (demo)
+document.getElementById('cfgBackend').addEventListener('change',e=>{
+  const isWeb = e.target.value.startsWith('h5');
+  const det = document.querySelector('#mConfig details.adv');
+  if(isWeb){ det.open=true; det.style.borderColor='var(--p-violet)'; } else { det.style.borderColor=''; }
+});
+
+/* ---------- live uptime + step countdown ticker ---------- */
+const upStart = Date.now() - 27739*1000;
+setInterval(()=>{
+  const s = Math.floor((Date.now()-upStart)/1000);
+  document.getElementById('uptime').textContent =
+    `${String(Math.floor(s/3600)).padStart(2,'0')}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+},1000);
+
+/* ---------- boot ---------- */
+renderStats();
+renderFleet();
+renderInventory();
+// collapse rail by default on small screens so it doesn't cover content
+if(window.innerWidth<=760) document.getElementById('app').classList.remove('rail-open');
+</script>
+</body>
+</html>

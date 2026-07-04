@@ -42,6 +42,7 @@ from ws_token.mining import (  # noqa: E402
 from ws_token.mining_adapter import (  # noqa: E402
     board_to_grid,
     grid_pos_to_block_id,
+    map_pits,
     plan as plan_ws_mining,
 )
 
@@ -220,6 +221,69 @@ def test_inventory_tracker_ignores_unrelated_event_type():
     assert tracker.counts == {}
 
 
+# --- seed_from_query: full snapshot via 0x0401 request/response --------------
+
+def _inv_query_reply(*entries):
+    """0x0401 reply: repeated top-level entry#1 {item_id#1, uid#2, count#3}.
+
+    Unlike 0x0402 (delta push wrapped in {evt_type#1, items#2}), the full
+    snapshot is a flat repeated list — count lives in f3 (live-confirmed on
+    5554: 6017=522, 6019=78, 6020=78, 6021=1078, 4001=7).
+    """
+    out = b""
+    for item_id, count in entries:
+        sub = (codec.pb_uint(1, item_id) + codec.pb_uint(2, 89_000_000_000)
+               + codec.pb_uint(3, count))
+        out += codec.pb_msg(1, sub)
+    return out
+
+
+class _QueryClient:
+    def __init__(self, reply, reply_cmd=0x0401):
+        self._reply = reply
+        self._reply_cmd = reply_cmd
+        self.calls = []
+
+    def call_for(self, cmd, body, expect_cmds=(), timeout=None):
+        self.calls.append((cmd, body, tuple(expect_cmds)))
+        return self._reply_cmd, self._reply
+
+
+def test_seed_from_query_populates_full_inventory():
+    tracker = InventoryTracker()
+    client = _QueryClient(_inv_query_reply((4001, 7), (6017, 522), (6021, 1078)))
+    n = tracker.seed_from_query(client)
+    assert n == 3
+    assert tracker.counts == {4001: 7, 6017: 522, 6021: 1078}
+    assert tracker.pickaxe == 7
+    assert tracker.has_item(6017) is True       # workshop material now visible
+    # asked the server for the full-snapshot cmd with an empty body
+    assert client.calls[0][0] == mining.CMD_INVENTORY_QUERY
+    assert client.calls[0][1] == b""
+
+
+def test_seed_from_query_empty_reply_is_noop():
+    tracker = InventoryTracker()
+    assert tracker.seed_from_query(_QueryClient(b"")) == 0
+    assert tracker.counts == {}
+
+
+def test_seed_from_query_wrong_reply_cmd_is_noop():
+    tracker = InventoryTracker()
+    client = _QueryClient(_inv_query_reply((4001, 7)), reply_cmd=0x0201)
+    assert tracker.seed_from_query(client) == 0
+    assert tracker.counts == {}
+
+
+def test_seed_from_query_does_not_clobber_then_delta_updates():
+    """Snapshot seeds the baseline; a later 0x0402 consume delta still applies."""
+    tracker = InventoryTracker()
+    tracker.seed_from_query(_QueryClient(_inv_query_reply((4001, 7))))
+    assert tracker.pickaxe == 7
+    tracker.on_push(0x0402, _inv_push(9800001, (4001, 6)))  # dug one
+    assert tracker.pickaxe == 6
+
+
 def test_inventory_tracker_ignores_unrelated_cmd():
     tracker = InventoryTracker()
     tracker.on_push(0x0504, _inv_push(9800001, (4001, 5)))  # lamp drop push, not inventory
@@ -266,6 +330,19 @@ def test_board_to_grid_rock_terrain_label():
     assert grid[0][0] == "rock"
 
 
+def test_board_to_grid_count_drives_air_vs_solid():
+    # p_mine_block.f5 ("count") 語意 LIVE 坐實 (CDP dig 2026-06-20, 小寶, 201 與 202 皆同):
+    #   count==0 = 已挖空氣（挖它=no-op：0x0c03 無回覆、版面不變、不耗鏟）→ 投影成 empty。
+    #   count>0  = 未挖實心（201=土, 202=岩, 401=礦）。
+    # 舊版不看 count、把已挖空氣的 202 也標 rock → 盤面誤判為密集。
+    air = MineBlock(block_id=16238301, x=1, y=162383, config_id=202, count=0, is_reward=0)
+    assert board_to_grid(_board(162388, [air]))[0][0] == "empty", "count==0 stone = 已挖空氣"
+    for count in (1, 2):
+        rock = MineBlock(block_id=16238301, x=1, y=162383, config_id=202,
+                         count=count, is_reward=0)
+        assert board_to_grid(_board(162388, [rock]))[0][0] == "rock", f"未挖石頭 count={count}"
+
+
 def test_board_to_grid_pit_terrain_label():
     # config_id 401 = 礦洞 -> reachable_pit (planner reward target)
     blk = MineBlock(block_id=16238303, x=3, y=162383, config_id=401, count=1, is_reward=1)
@@ -294,12 +371,13 @@ def test_board_to_grid_block_outside_viewport_ignored():
 
 def test_board_to_grid_actives_without_features_are_unknown_solid():
     # live 0x0c01: actives lists valid dig targets; blocks only carries known
-    # terrain features. Missing feature must not become empty or the planner
-    # thinks row 6 is already open and emits no progress step.
+    # terrain features. An active cell with NO block feature = 未挖泥土 (undug dirt)
+    # per CDP dig 2026-06-20 + MINING_SCHEMA L204. It must be SOLID (not empty), or
+    # the planner thinks row 6 is already open and emits no progress step.
     baseline = 162390
     active_block_id = grid_pos_to_block_id(baseline, row=6, col=3)
     grid = board_to_grid(_board(baseline, [], actives=[active_block_id]))
-    assert grid[6][3] == "rock"
+    assert grid[6][3] == "dirt"
 
 
 def test_plan_uses_active_cells_to_make_ws_progress_step():
@@ -319,3 +397,79 @@ def test_grid_pos_to_block_id_round_trips_depth_col():
     # block_id = depth*100 + col, depth = baseline - 5 + row, col = x (1-indexed).
     assert grid_pos_to_block_id(baseline=162388, row=0, col=2) == 16238303
     assert grid_pos_to_block_id(baseline=162388, row=6, col=3) == 16238904
+
+
+def test_plan_hold_floor_ignores_collected_row0_pit():
+    """已採集 (count==0) 的 row-0 礦坑不該觸發 hold_floor。
+
+    fc 死結根因：_block_label 把所有 config 401 標 reachable_pit（不看 count），
+    舊版 hold_floor = count_remaining_pits(grid[0:1])>0 → 已收掉的 row-0 坑仍卡住
+    hold_floor=True → 只能挑不開 floor-7 的格 → server 拒絕 → 永遠 unconfirmed。
+    修法用原始 blocks 的 count>0 判定，count==0 不算。
+    """
+    baseline = 162390
+    top = baseline - 5  # row 0 depth
+    # row-0 一個已採集礦坑 (count==0)；row-6 放一個 active 讓 floor-7 關閉
+    # （active 觸發 _project_board 的 unreachable_empty 填充，等同真實 fc 盤面）。
+    collected_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                              config_id=401, count=0, is_reward=0)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    board = _board(baseline, [collected_pit], actives=[floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is False, result.get("hold_floor")
+
+
+def test_plan_hold_floor_holds_for_uncollected_reachable_row0_pit():
+    """未採集 (count>0) 且「在 actives 上（可挖）」的 row-0 礦坑仍要 hold_floor。"""
+    baseline = 162390
+    top = baseline - 5
+    live_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                         config_id=401, count=1, is_reward=1)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    # 礦坑本身在 actives（伺服器接受挖）才值得守住不捲動。
+    board = _board(baseline, [live_pit], actives=[live_pit.block_id, floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is True, result.get("hold_floor")
+
+
+def test_map_pits_includes_below_and_above_viewport_lookahead():
+    # 伺服器送的「地圖」比 7 列視窗高（實測 baseline-3..+17）。map_pits 要撈出視窗
+    # 下方(upcoming)/上方(passed)的未採集礦坑，count==0(已採)排除。舊版 board_to_grid
+    # 把這些當 outside_viewport 丟掉 → planner 看不到即將到來的礦。
+    baseline = 162390
+    top = baseline - 5
+    blocks = [
+        MineBlock(block_id=(top + 17) * 100 + 5, x=5, y=top + 17, config_id=401, count=1, is_reward=1),  # 下方
+        MineBlock(block_id=(top + 2) * 100 + 3,  x=3, y=top + 2,  config_id=401, count=1, is_reward=1),  # 視窗內
+        MineBlock(block_id=(top - 2) * 100 + 4,  x=4, y=top - 2,  config_id=401, count=1, is_reward=1),  # 上方
+        MineBlock(block_id=(top + 5) * 100 + 1,  x=1, y=top + 5,  config_id=401, count=0, is_reward=1),  # 已採→排除
+    ]
+    pits = map_pits(_board(baseline, blocks))
+    assert [p["row"] for p in pits] == [-2, 2, 17]          # sorted by row; count0 dropped
+    upcoming = [p for p in pits if p["row"] > 6]
+    assert upcoming and upcoming[0]["col"] == 4              # the row-17 pit at col 5(1-idx)->4(0-idx)
+
+
+def test_plan_hold_floor_releases_unreachable_row0_pit():
+    """未採集但「不在 actives（已被挖過頭、無法再挖）」的 row-0 礦坑不該 hold_floor。
+
+    真實死結（7fe98fc6 2026-06-20）：礦坑被挖出的空洞越過後卡在視窗頂列，count>0
+    但不在 actives（伺服器不接受挖）。舊版仍 hold_floor=True → 拒絕捲動 → 監督迴圈
+    只能挑不開 floor-7 的深層 frontier 格狂挖，26 步燒掉 ~26 把鎬子，礦坑始終收不到、
+    最後照樣捲走。守一個挖不到的坑只是純浪費，應放行捲動。
+    """
+    baseline = 162390
+    top = baseline - 5
+    stranded_pit = MineBlock(block_id=top * 100 + 1, x=1, y=top,
+                             config_id=401, count=1, is_reward=1)
+    floor_active = grid_pos_to_block_id(baseline, row=6, col=3)
+    # 礦坑 block_id 刻意不放進 actives → 不可挖。
+    board = _board(baseline, [stranded_pit], actives=[floor_active])
+
+    result = plan_ws_mining(board, {"pickaxe": 5, "drill": 0, "bomb": 0})
+
+    assert result["hold_floor"] is False, result.get("hold_floor")
