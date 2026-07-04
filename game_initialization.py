@@ -26,11 +26,36 @@ from device_wrapper import (
     create_web_device_if_enabled,
     get_same_thread_web_device,
 )
+from runtime_services.device_runtime_service import (
+    ForceSleepRequested,
+    WakeLoopInterrupted,
+)
 
 
 class StartupLoginConflictError(Exception):
     """啟動流程中偵測到異地登錄。"""
     pass
+
+
+def _honor_startup_controls(ip: str) -> None:
+    """啟動迴圈中honor儀表板控制，讓使用者能中斷「啟動」階段。
+
+    鏡像 utils.wake_up_handler._honor_dashboard_controls：
+    - 暫停：check_pause() 阻塞直到恢復（迴圈凍結，bot 不再碰手機）。
+    - 強制休眠：raise ForceSleepRequested，由主迴圈停止任務並進入對齊休眠。
+    - 待處理的手動開網頁：raise WakeLoopInterrupted，由主迴圈回頂端處理（不休眠）。
+
+    沒有這個檢查時，啟動迴圈會無視這些訊號、持續強制重開遊戲。
+    """
+    bot_state.check_pause(ip)
+    if bot_state.check_force_sleep(ip):
+        raise ForceSleepRequested(
+            f"[{ip}] force sleep requested during game startup"
+        )
+    if bot_state.has_pending_web_launch_request(ip):
+        raise WakeLoopInterrupted(
+            f"[{ip}] web-launch request received during game startup"
+        )
 
 
 def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: logging.Logger = None) -> bool:
@@ -160,12 +185,30 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
     wait_timeout = 60
     unknown_detection_delay = 30
     startup_restart_count = 0
+    max_startup_restarts = 5
     last_stage = "未知"
     main_confirm_count = 0
     required_main_confirm = 2
 
     while True:
         try:
+            # 每輪先honor儀表板控制：暫停凍結、強制休眠/開網頁unwind到主迴圈，
+            # 取代過去「偵測不到主頁面就強制重開」的無法中斷迴圈。
+            _honor_startup_controls(ip)
+
+            # 全域重啟上限：每次重啟都會把 wait_time 重置，wait_timeout 因此永不觸發，
+            # 頁面一直關閉/未知時（如同帳號異地登入頂號）會無限重啟（live log 實測 105 次）。
+            # 達上限即放棄本輪啟動，return False 讓主迴圈套 30 分鐘避讓休眠（並關閉瀏覽器）。
+            if startup_restart_count >= max_startup_restarts:
+                logger.warning(
+                    f"[{ip}] 啟動重啟次數達上限 ({startup_restart_count}/{max_startup_restarts})，"
+                    f"放棄本次啟動避讓休眠 | last_stage={last_stage}"
+                )
+                try:
+                    d.app_stop("com.mxdzz.tw.and")
+                except Exception as stop_err:
+                    logger.warning(f"[{ip}] 達重啟上限後停止遊戲失敗: {stop_err}")
+                return False
             # Startup loop only decides startup-specific things; popup cleanup is delegated to the shared resolver.
             current_stage = resolve_stage_until_stable(
                 d,
@@ -238,7 +281,12 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 return False
 
         except Exception as e:
-            if isinstance(e, StartupLoginConflictError):
+            # 控制訊號例外（強制休眠 / 開網頁 / 異地登錄）不可被當成「啟動失敗」
+            # 吞掉去重開遊戲——必須往上拋，交給主迴圈處理（休眠 / 回頂端）。
+            if isinstance(
+                e,
+                (StartupLoginConflictError, ForceSleepRequested, WakeLoopInterrupted),
+            ):
                 raise
             logger.error(f"[{ip}] handle_game_startup_pages 執行失敗: {e}", exc_info=True)
             try:

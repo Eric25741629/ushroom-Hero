@@ -1,0 +1,23 @@
+{# ---------------------------------------------------------------------------
+   _assets_head.html — shared <head> assets for the control-panel design system.
+
+   Include this near the END of each template's <head>, BEFORE that template's
+   own inline <style> so the inline rules still win during the Phase 2/3
+   migration (the lib loads ALONGSIDE the legacy inline CSS/JS).
+
+   Loads, in order: Google Fonts (Sora + Manrope), tokens.css, components.css,
+   then a deferred app.js. The ?v={{ frontend_version }} query busts the cache
+   per deploy; control_panel_app serves /static/ with a 1-year immutable
+   Cache-Control so unchanged assets are reused.
+
+   `frontend_version` may be absent on some renders (e.g. the login page) — the
+   `default('')` filter keeps the link valid (?v=) instead of erroring.
+--------------------------------------------------------------------------- #}
+{%- set _fv = frontend_version | default('') -%}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🍄</text></svg>">
+<link rel="stylesheet" href="/static/lib/tokens.css?v={{ _fv }}">
+<link rel="stylesheet" href="/static/lib/components.css?v={{ _fv }}">
+<script defer src="/static/lib/app.js?v={{ _fv }}"></script>

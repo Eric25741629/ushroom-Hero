@@ -1,0 +1,279 @@
+/* ============================================================
+   tokens.css — SINGLE SOURCE OF DESIGN TOKENS
+   ------------------------------------------------------------
+   菇勇者 control-panel design system (Phase 2).
+
+   PURPOSE
+   • One :root of design tokens shared by every page + every
+     iframe document (/fly-pet, /inventory, /tools-optimize,
+     /updates). Link this lib per-page (each iframe is its own
+     document, so each must include it via _assets_head.html).
+   • Canonical washi / "Warm Swiss" palette extracted verbatim
+     from templates/dashboard.html:42-102 (the most complete
+     source: colors + shadow scale + type + radius).
+   • WCAG-AA accessible TEXT tokens (status / faint / chip) so
+     meaningful text clears 4.5:1 (normal) / 3:1 (large) against
+     its real background. Bright base hues remain for fills /
+     dots / borders only.
+   • BACK-COMPAT ALIASES: existing templates keep their own inline
+     <style>/<script> until Phase 3. This lib loads ALONGSIDE
+     them, so every OLD variable name from the 6 templates' :root
+     blocks is re-declared here (aliased to the canonical token)
+     so inline CSS + inline JS keep resolving. Notably the
+     dashboard wake-countdown JS reads --warn-color / --safe-color;
+     fly_pet/inventory/tools read --accent/--panel/--muted/etc.
+
+   BREAKPOINTS
+   • CSS @media CANNOT read CSS custom properties. This lib picks
+     ONE breakpoint set and every stylesheet uses these LITERALS:
+         480px  (sm — phones / stacked)
+         768px  (md — side-rail collapses to top bar; cards 1-col)
+         1024px (lg — wide / desktop)
+     The --bp-* tokens below are documentation/JS-readable only —
+     do NOT use them inside @media (they will not work there).
+
+   CONTRAST NOTES
+   • Backgrounds used for ratio checks: paper #f4efe6, surface
+     #ffffff, surface-2 #faf6ee. paper is darker than white, so a
+     token must clear AA against paper (the worst case), not just
+     white. Ratios annotated next to each text token below.
+   ============================================================ */
+
+:root {
+  /* ====================================================
+     1. CANONICAL WASHI PALETTE (from dashboard.html:42-102)
+     ==================================================== */
+
+  /* ---- canvas & lacquered surfaces ---- */
+  --color-paper: #f4efe6;        /* warm paper canvas (was --tatami / --bg) */
+  --color-paper-2: #efe8db;      /* deeper paper (was --tatami-2) */
+  --color-surface: #ffffff;      /* lacquer tile face (was --tile / --panel) */
+  --color-surface-2: #faf6ee;    /* sunken compartment (was --tile-sunk) */
+  --color-surface-3: #fbf7ee;    /* paper-soft (was --paper-soft / --surface3) */
+
+  /* ---- ink (text) ---- */
+  --color-ink: #2b2620;          /* near-black warm ink — 13.09:1 on paper */
+  --color-ink-soft: #6f6657;     /* warm grey — 4.94:1 on paper / 5.65:1 on white */
+
+  /* ---- dominant accent (persimmon / vermillion) ---- */
+  --color-accent: #e0653a;       /* DOMINANT — fills/large-bold only (3.44:1 white) */
+  --color-accent-strong: #c14f2a;/* pressed/hover accent (decorative fill) */
+  --color-accent-deep: #a8421f;  /* deepest accent — white-text-on-fill AA (.btn--primary) */
+  --color-accent-wash: #fbe6dc;  /* accent tint fill (was --coral-wash) */
+  --color-accent-rim: #ec8a64;   /* accent border/rim (was --coral-rim) */
+
+  /* ---- hairlines ---- */
+  --color-line: #ece3d3;         /* warm hairline — decorative dividers only */
+  --color-line-strong: #ddd2bd;  /* stronger decorative hairline */
+
+  /* ---- base status HUES (fills / dots / borders — NOT body text) ---- */
+  --ok: #3fb389;                 /* online / ok (was --mint / --accent2 / --good) */
+  --ok-wash: #ddf0e8;            /* (was --mint-wash) */
+  --ok-rim: #6fc6a6;             /* (was --mint-rim) */
+  --warn: #e0a939;               /* paused / warn (was --amber) */
+  --warn-wash: #f7eccf;          /* (was --amber-wash) */
+  --warn-rim: #e0b75a;           /* (was --amber-rim) */
+  --danger: #e26b86;             /* danger / force (was --rose) */
+  --danger-wash: #f8dee4;        /* (was --rose-wash) */
+  --danger-rim: #ec8aa0;         /* danger border/rim (was --rose-rim) */
+  --danger-fill: #d32f2f;        /* deeper red for white-on-fill ~5:1 (C6) */
+  --info: #4aa0dd;               /* degraded / info (was --sky / --blue) */
+  --info-wash: #dceefb;          /* (was --sky-wash) */
+  --neutral: #b6ab96;            /* offline / disabled warm grey (was --slate) */
+  --neutral-ink: #8a8273;        /* (was --slate-ink) */
+  --neutral-wash: #e9e3d8;       /* (was --slate-wash) */
+
+  /* ====================================================
+     2. WCAG-AA ACCESSIBLE TEXT TOKENS
+        (each annotated with measured ratio; worst case = paper)
+     ==================================================== */
+
+  /* status text — for colored STATUS LABELS on paper/surface/wash */
+  --status-ok-text: #176b4e;     /* darkened from #1d7a59 → ~5.9:1 white · ~5.1:1 paper · ~5.0:1 ok-wash (AA incl. ok-wash, was 4.45) */
+  --status-warn-text: #8a6210;   /* 4.78:1 paper · 5.48:1 white · 4.66:1 warn-wash (AA) */
+  --status-danger-text: #b8455f; /* 4.52:1 paper · 5.18:1 white (AA normal text) */
+  --status-accent-text: #b54a23; /* 4.62:1 paper · 5.29:1 white (AA; see ADJUSTED note) */
+
+  /* status FILLS — solid backgrounds for WHITE text (toast / count badge); >=4.5:1 vs white */
+  --status-ok-fill: #1d7a59;     /* white text 5.28:1 (AA) — used by .toast--ok */
+  --status-danger-fill: #d32f2f; /* white text 4.98:1 (AA) — used by .toast--err */
+
+  /* chip text — dark, legible on ANY pale quality tint (>=12.5:1 everywhere) */
+  --chip-text: #2b2620;          /* 14.13:1 amber-tint · 12.96:1 blue-tint · 12.57:1 purple-tint */
+
+  /* faint text — meaningful low-emphasis labels (NOT just placeholders) */
+  --text-faint: #766b59;         /* 4.56:1 paper · 5.23:1 white · 4.57:1 surface-2 (AA; ADJUSTED) */
+  /* decorative-only faint (placeholders / disabled glyphs) — 2.42:1, DO NOT use for meaningful text */
+  --text-decorative: #a59a87;
+
+  /* meaningful UI borders (inputs / controls / table separators) — >=3:1 vs white */
+  --line-accessible: #9a8f7b;    /* 3.19:1 vs white (AA non-text UI minimum) */
+
+  /* ====================================================
+     3. FOCUS / SCRIM / SHADOWS
+        (focus ring verified >=3:1 vs BOTH paper and surface)
+     ==================================================== */
+  --focus-ring: #b5471f;         /* 4.72:1 paper · 5.40:1 white (>=3:1 both, on-brand coral) */
+  --scrim: rgba(43, 38, 32, .55);/* modal/sheet backdrop (warm ink) */
+
+  /* warm-brown layered lacquer shadows (from dashboard --sh-1/2/3) */
+  --shadow-1: 0 1px 2px rgba(70, 52, 28, .05), 0 2px 6px rgba(70, 52, 28, .045);
+  --shadow-2: 0 2px 4px rgba(70, 52, 28, .06), 0 12px 28px rgba(70, 52, 28, .08);
+  --shadow-3: 0 8px 18px rgba(70, 52, 28, .12), 0 26px 56px rgba(70, 52, 28, .14);
+  --shadow-press: inset 0 2px 5px rgba(70, 52, 28, .10);
+
+  /* ====================================================
+     4. SHAPE · MOTION · TYPE
+     ==================================================== */
+  /* radius (from dashboard --r-*) */
+  --radius-lg: 20px;
+  --radius-md: 14px;
+  --radius-sm: 11px;
+  --radius-xs: 8px;
+
+  /* easing (from dashboard --ease / --ease-bounce) */
+  --ease: cubic-bezier(.16, 1, .3, 1);
+  --ease-bounce: cubic-bezier(.34, 1.56, .64, 1);
+
+  /* font families (from dashboard --display / --body / --mono) */
+  --font-display: "Sora", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-body: "Manrope", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: "Space Mono", "Consolas", ui-monospace, monospace;
+
+  /* rem/clamp fluid type scale (replaces fixed 10.5/11/12/13px).
+     13px floor (0.8125rem) for the smallest label per C12 low-vision floor.
+     clamp() fluid bands reference the 480/768/1024 breakpoints conceptually. */
+  --text-xs: 0.8125rem;                              /* 13px floor (smallest meaningful label) */
+  --text-sm: clamp(0.8125rem, 0.79rem + 0.16vw, 0.875rem);  /* ~13 -> 14px */
+  --text-base: clamp(0.9375rem, 0.9rem + 0.2vw, 1rem);      /* ~15 -> 16px */
+  --text-md: clamp(1rem, 0.96rem + 0.18vw, 1.0625rem);      /* ~16 -> 17px (forms / es-title / sheet-title) */
+  --text-lg: clamp(1.0625rem, 1rem + 0.32vw, 1.25rem);      /* ~17 -> 20px */
+  --text-xl: clamp(1.375rem, 1.2rem + 0.7vw, 1.75rem);      /* ~22 -> 28px */
+  --text-hero: clamp(2rem, 1.4rem + 2.6vw, 3.25rem);        /* ~32 -> 52px */
+
+  /* ---- breakpoint tokens (DOC / JS-READABLE ONLY — NOT usable in @media) ----
+     Authoritative literals for every @media in this lib: 480 / 768 / 1024. */
+  --bp-sm: 480px;
+  --bp-md: 768px;
+  --bp-lg: 1024px;
+
+  /* ============================================================
+     5. BACK-COMPAT ALIASES
+        Old variable names from the 6 templates' :root blocks,
+        re-pointed at the canonical tokens so existing inline
+        CSS + inline JS keep resolving while they coexist with
+        the lib (Phase 3 removes the inline blocks).
+        New component classes use the NEW names above, so there
+        is no collision.
+     ============================================================ */
+
+  /* ---- dashboard.html (warm-swiss inline :root) ---- */
+  --tatami: var(--color-paper);
+  --tatami-2: var(--color-paper-2);
+  --tile: var(--color-surface);
+  --tile-sunk: var(--color-surface-2);
+  --paper-soft: var(--color-surface-3);
+  --ink: var(--color-ink);
+  --ink-soft: var(--color-ink-soft);
+  /* C13: darken faint GLOBALLY — old --ink-faint now resolves to the AA faint value */
+  --ink-faint: var(--text-faint);
+  --line: var(--color-line);          /* kept (decorative); meaningful borders use --line-accessible */
+  --line-strong: var(--color-line-strong);
+  --coral: var(--color-accent);
+  --coral-deep: var(--color-accent-strong);
+  --coral-wash: var(--color-accent-wash);
+  --coral-rim: var(--color-accent-rim);
+  --mint: var(--ok);
+  --mint-deep: var(--status-ok-text);
+  --mint-wash: var(--ok-wash);
+  --mint-rim: var(--ok-rim);
+  --amber: var(--warn);
+  --amber-deep: var(--status-warn-text);
+  --amber-wash: var(--warn-wash);
+  --amber-rim: var(--warn-rim);
+  --sky: var(--info);
+  --sky-deep: #2c6f9e;
+  --sky-wash: var(--info-wash);
+  --slate: var(--neutral);
+  --slate-ink: var(--neutral-ink);
+  --slate-wash: var(--neutral-wash);
+  --rose: var(--danger);
+  --rose-deep: var(--status-danger-text);
+  --rose-wash: var(--danger-wash);
+  --rose-rim: var(--danger-rim);
+  /* dashboard LOAD-BEARING legacy (JS reads these) */
+  --bg-color: var(--color-paper);
+  --card-bg: var(--color-surface);
+  --text-primary: var(--color-ink);
+  --text-secondary: var(--color-ink-soft);
+  --accent-color: var(--color-accent);
+  --safe-color: var(--status-ok-text);   /* countdown JS reads this — now AA mint */
+  --warn-color: var(--status-warn-text);  /* countdown JS reads this — now AA amber */
+  --danger-color: var(--danger);
+  --modal-bg: var(--color-paper);
+  /* dashboard radius/shadow/ease/type aliases */
+  --r-lg: var(--radius-lg);
+  --r-md: var(--radius-md);
+  --r-sm: var(--radius-sm);
+  --r-xs: var(--radius-xs);
+  --sh-1: var(--shadow-1);
+  --sh-2: var(--shadow-2);
+  --sh-3: var(--shadow-3);
+  --sh-press: var(--shadow-press);
+  --display: var(--font-display);
+  --body: var(--font-body);
+  --mono: var(--font-mono);
+
+  /* ---- fly_pet.html (gallery :root, line 13-42) ---- */
+  --bg: var(--color-paper);
+  --surface: var(--color-surface);
+  --surface2: var(--color-surface-2);
+  --surface3: var(--color-surface-3);
+  --surface4: #f0e9da;
+  --border: var(--color-line);
+  --border2: var(--color-line-strong);
+  --text: var(--color-ink);
+  --text2: var(--color-ink-soft);
+  --muted: var(--color-ink-soft);     /* C13: meaningful muted -> ink-soft (5.65:1) not pale */
+  --accent: var(--color-accent);
+  --accent-h: var(--color-accent-strong);
+  --accent-soft: rgba(224, 101, 58, 0.12);
+  /* --danger already aliased above */
+  --danger-h: var(--status-danger-text);
+  /* --warn already aliased above */
+  --blue: var(--info);
+  /* equipment-class hues (chip FILLS/dots; chip TEXT must use --chip-text) */
+  --eq1: #64b5f6; --eq2: #ffd54f; --eq3: #42a5f5; --eq4: #ef5350;
+  --eq5: #7e57c2; --eq6: #e040fb; --eq7: #26a69a;
+  --pq0: #999; --pq1: #64b5f6; --pq2: #ce93d8; --pq3: #ffd54f;
+
+  /* ---- fly_pet.html (second :root, line 272-286, --fg-* + *qc-* scales) ---- */
+  --fg-accent: var(--color-accent);
+  --fg-accent-2: var(--color-accent-strong);
+  --fg-amber: var(--status-warn-text);  /* C6: star/lock amber as TEXT -> AA deep amber */
+  --fg-panel: var(--color-surface);
+  --fg-panel-2: var(--color-surface-2);
+  --fg-bg-2: var(--color-surface-3);
+  --fg-line: var(--color-line);
+  --fg-line-soft: #f0e9da;
+  --fg-txt: var(--color-ink);
+  --fg-txt-dim: var(--color-ink-soft);
+  --fg-txt-faint: var(--text-faint);     /* C13: faint -> AA value */
+  --fg-radius: var(--radius-md);
+  --pqc-0: #9aa6b2; --pqc-1: #64b5f6; --pqc-2: #ce93d8; --pqc-3: #ffd54f;
+  --eqc-1: #64b5f6; --eqc-2: #ffd54f; --eqc-3: #ffe08a; --eqc-4: #ef5350;
+  --eqc-5: #b9a4ff; --eqc-6: #f0abfc; --eqc-7: #5eead4;
+
+  /* ---- inventory.html (:root, line 13-16) ---- */
+  --panel: var(--color-surface);
+  --panel2: var(--color-surface-2);
+  --accent2: var(--ok);                  /* inventory used --accent2 as mint/ok */
+  /* quality hues (chip fills) */
+  --q3: #9aa6c0; --q4: #5ec8ff; --q5: #7c5bff;
+  --q6: #c061ff; --q7: #ff8f3c; --q8: #ffd23c;
+
+  /* ---- tools_optimize.html (:root, line 13-14) ---- */
+  --good: var(--ok);                     /* tools used --good as mint/ok */
+
+  /* (readme_viewer.html uses a dark-navy theme via plain hex, no :root vars to alias) */
+}

@@ -1,7 +1,7 @@
 # 菇勇者全自動掛機 — 主導覽 (INDEX)
 
 > 多裝置 H5 遊戲自動化 bot 的程式碼地圖：一頁找到 hooks、可復用工具、子系統、文件與分析筆記。雙後端 `adb` (uiautomator2) / `web_h5` (Playwright)，一裝置一 thread。
-> 更新日期：**2026-05-31**
+> 更新日期：**2026-05-31**（部分 drift 已於 2026-06-21 修正；最新後端架構審計見 [BACKEND_ARCH_AUDIT_2026-06-21.md](BACKEND_ARCH_AUDIT_2026-06-21.md)）
 
 ---
 
@@ -17,7 +17,7 @@
 |---|---|
 | 改任務流程（順序 / 新增每日任務 / 主頁守衛） | `game_actions/daily_pipeline.py`（單一任務排序真相）+ `game_actions/stage_guard.py`（`_run_at_main_page` / `get_stage_with_check`） |
 | 改辨識 / OCR | `img_tools.py`（核心 OCR 管線 + 多 server fallback + circuit breaker）；本地推理權重 `OCR_model/`；訓練/廠商源 `OCR/`（離線）；分析見 [../OPTIMIZE_ocr_system.md](../OPTIMIZE_ocr_system.md) |
-| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v4**（`miner/v4/`），可切 v1/v3（**v2 已移除 2026-06-05**）；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py`；分析+礦物出現率校正 [protocol 外的 `../docs/MINING_ALGORITHM_ANALYSIS.md`](MINING_ALGORITHM_ANALYSIS.md) |
+| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v1**（A* whole-board，`miner/planning/`），可切 v3/v4（v2 已移除 2026-06-05、v5 已移除 2026-06-18；WS 挖礦路徑走 v4）；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py`；分析+礦物出現率校正 [protocol 外的 `../docs/MINING_ALGORITHM_ANALYSIS.md`](MINING_ALGORITHM_ANALYSIS.md) |
 | 改神燈（開裝備） | `opengold_v2/`（`lamp_service.py` 的 `LampService` 為唯一 live 實作）；排程 `game_actions/lamp_scheduler.py`；V1 `Open_gold_paddle_ocr.py` 已廢棄 |
 | 改農場（打工） | `farm_v2/`（狀態機 `states.py` + `manager.py` + `operations/`）；H5 變體 `farm_v2/web_farm.py` |
 | 改航海（Sea） | web_h5 走 `sea_v2/`（flag `use_sea_v2` 預設 OFF）；adb 走 `Sea.py`；路由在 `game_actions/daily_pipeline.py` 的 `_sea_dispatch` |
@@ -109,7 +109,8 @@
 | 推播 mini-app | `push_project/` | 獨立 Flask web-push + PWA；中控啟動時 lazy 拉起 | **runtime（獨立）**（⚠️ `server/.env` VAPID 私鑰 + subscriptions.json secret 面） |
 | 執行期服務 | `runtime_services/` | lazy-start 服務 + 主迴圈構件（見下節） | **runtime** |
 | 戰鬥任務 | `battle/`（`new_battle.py` 為 compat shim） | 每日/每週/雙週副本（hell_door/cloud/biweekly/weekly_trials/store/manager） | **runtime** |
-| 中控/協調 | `control_panel_app.py`(2577L) / `worker_webhook_api.py` / `runtime_services/worker_sync_service.py` | master 儀表板 + worker 回報/命令 | **runtime**（control_panel 遠超 800L，blueprint 拆分候選） |
+| 中控/協調 | `control_panel_app.py`(149L façade) + `control_panel/`（blueprint:`routes_*` + `shared/`）/ `worker_webhook_api.py` / `runtime_services/worker_sync_service.py` | master 儀表板 + worker 回報/命令 | **runtime**（blueprint 拆分已完成 2026-06-11） |
+| 儀表板登入/總後台 | `control_panel/shared/auth.py`（before_request 守門 + 豁免清單 + 可見性 helper）+ `routes_auth.py`（/login /apply /logout）+ `routes_admin.py`（/admin + /api/admin/*）+ `utils/dashboard_settings.py`（gitignored `dashboard_settings.json`） | 全站登入制 + 帳號審核 + 裝置可見性 + host_role 覆寫（重啟生效） | **runtime**（飛寵登入已整併至 /login） |
 
 ### orchestration / runtime_services 細部
 
@@ -228,7 +229,7 @@
 - **協議文件**（`docs/protocol/`）：見第 6 節「協議反推」表，為所有 WS/protobuf 反推與 cocos 節點對照的真相來源。
 
 ### ⚠️ 已知 CLAUDE.md 過時點（依本次審計）
-- **挖礦**（2026-06-05 更新）：`miner/mining_service.py` 預設 `mining_planner_version='v4'`，可切 **v1/v3**（v2 已移除：真實 board 18.8% 破 0.3s、max 1841ms）。CLAUDE.md 挖礦段落已同步修正。完整分析與礦物出現率校正見 `docs/MINING_ALGORITHM_ANALYSIS.md`。
+- **挖礦**（2026-06-21 更新）：`miner/mining_service.py` 預設 `mining_planner_version='v1'`（A* whole-board；v5 已移除 2026-06-18、v2 已移除 2026-06-05），可切 **v3/v4**；WS 挖礦路徑(`ws_token/mining_adapter`)走 v4。CLAUDE.md(line 84) 已正確。完整分析與礦物出現率校正見 `docs/MINING_ALGORITHM_ANALYSIS.md`。
 - **神燈**：entry-points 仍列 V1 `Open_gold_paddle_ocr.py`，但 `lamp_scheduler.py` 一律路由 `opengold_v2.LampService`（「一律走 V2」）；舊的 `use_opengold_v2` 切換旗標已於 2026-06-07 從 config schema / 儀表板移除（router 本來就不讀）。
 - **潛在 bug**：`game_state/detector.new_stage_check` 用 `if [ ...list... ]:`（非空 list 恆 True），疑似應為 `all()`/`any()`，值得查證。
 

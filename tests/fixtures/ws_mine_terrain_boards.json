@@ -1,0 +1,37 @@
+{
+  "_doc": "Real WS mine boards captured live via CDP (5558 + 5554, 2026-06-29). `rows` is the frontend BlockRoot base terrain (woodItem=201 dirt, stoneItem=202 stone) keyed by viewport row (0=top). `area_info` is the parsed 0x0c01 field-6 (area_id -> template_id). `pits` are absolute [depth,col] reward cells (terrain under a pit is overlaid by WS, so excluded from the deterministic-terrain assertion). Used to verify ws_token.mine_terrain.terrain_at reproduces the frontend exactly.",
+  "boards": [
+    {
+      "device": "emulator-5558",
+      "baseline": 312907,
+      "top": 312902,
+      "area_info": {"44700": 19, "44701": 13, "44702": 14},
+      "rows": {
+        "0": {"0": 201, "3": 201, "4": 201},
+        "1": {"0": 201, "2": 202, "3": 202, "4": 201},
+        "2": {"0": 201, "3": 201, "5": 201},
+        "3": {"0": 201, "1": 201, "4": 201, "5": 201},
+        "4": {"0": 202, "1": 202, "2": 201, "5": 202},
+        "5": {"0": 201, "1": 202, "2": 201, "3": 202},
+        "6": {"0": 201, "1": 202, "2": 201, "3": 201, "4": 201, "5": 201}
+      },
+      "pits": [[312905, 5]]
+    },
+    {
+      "device": "emulator-5554",
+      "baseline": 120577,
+      "top": 120572,
+      "area_info": {"17227": 15, "17226": 12, "17225": 13},
+      "rows": {
+        "0": {"2": 201, "1": 202, "3": 201, "5": 201},
+        "1": {"3": 201, "4": 201},
+        "2": {"1": 202, "2": 201, "3": 201, "4": 201, "5": 202},
+        "3": {"1": 202, "2": 201, "3": 202, "5": 201},
+        "4": {"1": 201, "2": 202, "3": 202, "4": 201, "5": 201},
+        "5": {"1": 201, "2": 201, "3": 201, "4": 201, "5": 201},
+        "6": {"1": 201, "0": 201, "2": 202, "4": 201, "5": 201}
+      },
+      "pits": [[120579, 1], [120578, 1], [120579, 0], [120578, 0], [120572, 2], [120588, 3], [120589, 3], [120588, 4], [120589, 4]]
+    }
+  ]
+}

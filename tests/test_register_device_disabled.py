@@ -55,6 +55,10 @@ def test_register_device_creates_disabled(tmp_path, monkeypatch):
     monkeypatch.setattr(cpa, "_run_web_login_worker", lambda ip, payload: None)
 
     client = cpa.app.test_client()
+    # 全站登入牆（before_request）：/api/devices/register 不豁免，需已登入。
+    with client.session_transaction() as sess:
+        sess["dash_user"] = "boss"
+        sess["dash_admin"] = True
     resp = client.post(
         "/api/devices/register",
         json={"device_id": "web-new", "web_url": "https://example.com/"},

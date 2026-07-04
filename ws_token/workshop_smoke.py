@@ -71,7 +71,8 @@ def main() -> int:
             result = workshop.choose_food(
                 client, food_k=food_k, food_v=food_v, workshop_id=workshop_id)
             print(f"[workshop] choose_food ok={result['ok']} "
-                  f"error_code={result['error_code']}", flush=True)
+                  f"reason={result.get('reason')} "
+                  f"(confirmed by 18434 re-read)", flush=True)
 
         if args.cancel is not None:
             result = workshop.cancel_work(client, args.cancel)

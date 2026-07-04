@@ -21,15 +21,20 @@ mutate replies on the 0x0201 error channel — never on the action's own cmd.
                  pw_worker_info#7:p_worker_pw_food_info }   (#7 is the workshop state)
   p_key_value  { k#1 int64, v#2 int64 }
 
-processing cycle (read once, reuse — see read_info docstring):
-  read_info -> see each workshop's worker_status (>0 = running) + auto_use_food_list
-  read_dining_hall -> available foods [(food_id, count), ...]
-  choose_food(food_id, count, workshop_id) -> assign food, start processing
-  (later) crops_transfer -> move finished output materials out
-  cancel_work(workshop_id) -> stop a running workshop early
+processing cycle (idempotent "閒置才補" — assign_idle_workshops is the entry):
+  read_info -> each workshop's selected_food (pw_worker_info#7.f2): 0=idle, else
+               the food it is producing. This (NOT worker_status, which reads ~602
+               whether idle or busy — live 2026-06-19) is the real busy signal.
+  producible_count(materials, food) -> 可做量 from the 原料庫存 via configFood.approach.
+  choose_food(food_id, count, workshop_id) -> assign food; success confirmed by
+               re-reading 18434 (selected_food == food_id), NOT by an 18435 ack.
+  assign_idle_workshops -> for each idle 小隊加工, choose the highest-value
+               producible food. NEVER cancels a running workshop (it自然 turns idle
+               when its materials run out).
+  (later) crops_transfer / cancel_work remain available for manual / explicit use.
 
-p_worker_pw_food_info (#7) is NOT in the exported schema, so it is kept as raw
-bytes for now (live-confirm its sub-fields before parsing them).
+p_worker_pw_food_info (#7): only f2 (=selected_food) is decoded; the rest stays
+raw bytes (live-confirm 進度/剩餘量 sub-fields before parsing them).
 """
 from __future__ import annotations
 
@@ -38,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ws_token import codec
-from ws_token.client import WSGameClient, WSTimeoutError
+from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
@@ -83,14 +88,39 @@ def team_cfg_id_to_workshop_id(team_cfg_id: int) -> int:
 
 
 # 小隊加工 recipes (food ids resolved from configFood on live client, 2026-06-09).
-# configFood (NOT configGoods): 8001 脆脆餅乾 approach=[[6017,2]],
-#   8003 活力精華 approach=[], 8005 精英拼盤 approach=[[6019,2],[6020,2],[6021,2]].
-# choose_food requires approach materials in inventory; 手動加工 (workshop_id=1)
-# rejects team choose_food entirely (live-confirmed on 5554: code=2 param invalid).
-# The user runs these two recipes on 小隊加工 (workshop_id 2/3):
+# 手動加工 (workshop_id=1) rejects team choose_food entirely (live-confirmed on
+# 5554: code=2 param invalid). The user runs these recipes on 小隊加工
+# (workshop_id 2/3); 8005 精英拼盤 is the higher-value food so it is preferred
+# first when both are producible.
 FOOD_CRISPY_COOKIE = 8001   # 脆脆餅乾
 FOOD_ELITE_PLATTER = 8005   # 精英拼盤 (菁英拼盤)
-RECIPE_FOOD_IDS = (FOOD_CRISPY_COOKIE, FOOD_ELITE_PLATTER)
+RECIPE_FOOD_IDS = (FOOD_ELITE_PLATTER, FOOD_CRISPY_COOKIE)  # value-high first
+
+# configFood.approach — 每生產一單位食物消耗的原料 (item_id, per_unit), live
+# CDP-exported on 5554 (2026-06-19, authoritative). choose_food requires these
+# materials in inventory; producible_count(materials, food_id) = how many units
+# the current 原料庫存 can make. 8003 活力精華 has no approach (無料) so it is not
+# producible via the material path and is intentionally absent from the recipes.
+RECIPE_APPROACH: dict[int, list[tuple[int, int]]] = {
+    8001: [(6017, 2)],
+    8002: [(6017, 1), (6019, 2)],
+    8004: [(6017, 1), (6019, 2), (6020, 2)],
+    8005: [(6019, 2), (6020, 2), (6021, 2)],
+}
+
+
+def producible_count(materials: dict[int, int], food_id: int) -> int:
+    """可做量: how many units of ``food_id`` the 原料庫存 can produce.
+
+    = ``min(⌊materials[m] / per_unit⌋)`` over every (m, per_unit) in the food's
+    configFood.approach. A missing material counts as 0 (the food becomes
+    unproducible). Foods with no approach (e.g. 8003) or unknown foods return 0
+    — there is no material-derived production amount for them.
+    """
+    approach = RECIPE_APPROACH.get(food_id)
+    if not approach:
+        return 0
+    return min(materials.get(mat, 0) // per for mat, per in approach)
 
 
 # --- dataclasses ------------------------------------------------------------
@@ -99,21 +129,28 @@ RECIPE_FOOD_IDS = (FOOD_CRISPY_COOKIE, FOOD_ELITE_PLATTER)
 class Workshop:
     """One加工坊 derived from a p_worker entry in food_info#2.
 
-    Only the fields populatable from the exported schema are kept; the workshop
-    detail blob pw_worker_info#7 (type p_worker_pw_food_info, NOT in the schema)
-    is preserved as raw bytes for later live-confirmed parsing.
+    ``selected_food`` (= pw_worker_info#7.f2, live-confirmed on 5554 2026-06-19)
+    is the ONLY reliable "is this workshop busy" signal: 0 = idle, otherwise the
+    food id currently in production. ``worker_status`` (601/602) is NOT a busy
+    signal — it reads ~602 whether idle or producing. The raw pw_worker_info#7
+    bytes are still preserved for fields not yet decoded (進度/剩餘量).
     """
 
     team_cfg_id: int          # p_worker.team_cfg_id#1
-    worker_status: int        # p_worker.worker_status#3 (>0 = running)
+    worker_status: int        # p_worker.worker_status#3 (NOT a busy signal)
     auto_feed: int = 0        # p_worker.auto_feed#4
     unlock_slot_num: int = 0  # p_worker.unlock_slot_num#5
-    pw_worker_info: bytes = b""  # p_worker.pw_worker_info#7 (opaque; live-confirm)
+    selected_food: int = 0    # pw_worker_info#7.f2 (0=idle, else food in production)
+    pw_worker_info: bytes = b""  # p_worker.pw_worker_info#7 (raw; only f2 decoded)
 
     @property
     def is_running(self) -> bool:
-        """True iff the workshop is currently processing (worker_status > 0)."""
-        return self.worker_status > 0
+        """True iff the workshop is currently producing a food (selected_food != 0).
+
+        Driven by selected_food (pw_worker_info#7.f2), NOT worker_status — the
+        latter is ~602 even when idle (live 2026-06-19).
+        """
+        return self.selected_food != 0
 
     @property
     def workshop_id(self) -> int:
@@ -176,12 +213,16 @@ def build_collect_body(material_id: int, num: int) -> bytes:
 def _parse_worker(entry: bytes) -> Workshop:
     d = codec.walk_dict(entry)
     pw = d.get(7)
+    pw_bytes = bytes(pw) if isinstance(pw, (bytes, bytearray)) else b""
+    # pw_worker_info#7.f2 = selected_food (0=idle); the rest stays raw.
+    selected_food = _as_int(codec.walk_dict(pw_bytes).get(2)) if pw_bytes else 0
     return Workshop(
         team_cfg_id=_as_int(d.get(1)),
         worker_status=_as_int(d.get(3)),
         auto_feed=_as_int(d.get(4)),
         unlock_slot_num=_as_int(d.get(5)),
-        pw_worker_info=bytes(pw) if isinstance(pw, (bytes, bytearray)) else b"",
+        selected_food=selected_food,
+        pw_worker_info=pw_bytes,
     )
 
 
@@ -260,15 +301,34 @@ def choose_food(
     workshop_id: int,
     timeout: Optional[float] = None,
 ) -> dict:
-    """指派食物開工: choose_food {food_list{k,v}, workshop_id}.
+    """指派食物開工: choose_food {food_list{k,v}, workshop_id}, 再 re-read 確認.
 
-    food_k = food id, food_v = count/amount (from read_dining_hall). Returns
-    {ok, error_code, ...}; a rejection (e.g. 90 冷卻時間未到) is ok=False, no crash.
+    food_k = food id, food_v = 要生產的單位數 (1 ≤ v ≤ 可做量; the server does NOT
+    clamp — sending 0 or an over-count is rejected with 0x0201 error_code=3 道具不足).
+
+    Success is NOT acked on cmd 18435 (waiting for it times out — live-confirmed
+    2026-06-19); the only reliable signal is re-reading worker_pw_info (18434) and
+    checking that this workshop's ``selected_food`` now equals ``food_k``. So this
+    fires the request with ``client.send`` (no same-cmd wait) and confirms by
+    re-read. ``food_v < 1`` returns ``{ok: False, reason: "no_count"}`` WITHOUT
+    sending anything. Returns ``{ok, food_id, count, workshop_id, reason?}``.
     """
+    if food_v < 1:
+        logger.info("ws_token workshop: choose_food food=%s workshop_id=%s count<1 "
+                    "— skip (would trigger 0x0201 error_code=3)", food_k, workshop_id)
+        return {"ok": False, "food_id": food_k, "count": food_v,
+                "workshop_id": workshop_id, "reason": "no_count"}
     logger.info("ws_token workshop: choose_food food=%s:%s workshop_id=%s",
                 food_k, food_v, workshop_id)
-    return _mutate(client, CMD_CHOOSE_FOOD,
-                   build_choose_food_body(food_k, food_v, workshop_id), timeout=timeout)
+    client.send(CMD_CHOOSE_FOOD, build_choose_food_body(food_k, food_v, workshop_id))
+    info = read_info(client, timeout=timeout)
+    ok = any(w.workshop_id == workshop_id and w.selected_food == food_k
+             for w in info.workshops if w.team_cfg_id in TEAM_TO_WORKSHOP_ID)
+    if not ok:
+        logger.warning("ws_token workshop: choose_food food=%s workshop_id=%s "
+                       "not confirmed by re-read (server rejected / state-gated)",
+                       food_k, workshop_id)
+    return {"ok": ok, "food_id": food_k, "count": food_v, "workshop_id": workshop_id}
 
 
 def cancel_work(
@@ -300,115 +360,79 @@ def collect(
                    build_collect_body(material_id, num), timeout=timeout)
 
 
-def switch_recipe(
+# 小隊加工 team_cfg_ids (手動加工 6001 excluded — it rejects team choose_food).
+TEAM_WORKSHOP_CFG_IDS = (6002, 6003)
+
+
+def assign_idle_workshops(
     client: WSGameClient,
+    materials: dict[int, int],
     *,
-    team_cfg_id: int,
-    food_id: int,
-    cancel_first: bool = True,
+    prefer_order: tuple[int, ...] = RECIPE_FOOD_IDS,
     timeout: Optional[float] = None,
 ) -> dict:
-    """切換小隊加工配方: 取消 (cancel) the workshop FIRST, then start the new food.
+    """閒置才補配方：只對閒置 (selected_food==0) 的小隊加工指派食物,絕不動 running 工坊.
 
-    ``team_cfg_id`` is p_worker.team_cfg_id#1 as returned by worker_pw_info (18434)
-    — e.g. 6002 for 小隊加工.  It is translated to configWorkshop.id internally via
-    TEAM_TO_WORKSHOP_ID before sending on the wire (wire field = 2, not 6002).
+    Idempotent — safe to call every wake. For each 小隊加工 (team_cfg_id in
+    TEAM_WORKSHOP_CFG_IDS; 手動加工 6001 ignored):
+      - selected_food != 0 (正在做東西) -> skip, leave it running untouched. We
+        NEVER cancel a producing workshop (cancelling a 跑到原料歸零 workshop mid-run
+        is the old bug); it自然 turns idle when its materials run out.
+      - selected_food == 0 (閒置) -> pick the first food in ``prefer_order``
+        (default RECIPE_FOOD_IDS = 8005 value-high first) with
+        ``producible_count(materials, food) >= 1`` and choose_food that many units.
 
-    In-game rule: you MUST press 取消 before changing the recipe of a running
-    小隊加工; only then can you 確定 the new one.  The quantity is read from the
-    dining hall (make as many as available — the workshop runs until materials hit
-    zero).  ``food_id`` must be one of RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤).
-
-    ``cancel_first``: sending cancel_work to an IDLE (worker_status=0) workshop
-    gets NO reply at all — state-gated silence (live-confirmed 2026-06-10 on
-    7fe98fc6, same pattern as guild_treasure dormancy).  Callers should pass
-    ``cancel_first=w.is_running`` (from read_info) to skip the pointless attempt;
-    a skipped cancel reports ``{"ok": True, "error_code": None,
-    "skipped": "not running"}``.
-
-    BEST-EFFORT (live 2026-06-10, twice on 7fe98fc6): the server is state-gated
-    silent on cancel AND choose whenever the account state does not match — it
-    happened even on a worker_status>0 workshop, so worker_status is NOT a
-    reliable "is processing" signal (the real state may live in the unparsed
-    pw_worker_info#7 blob — needs live recon).  Both steps therefore catch
-    :class:`WSTimeoutError` and surface ``{"ok": False, "error_code": None,
-    "timeout": True}`` instead of raising; after a cancel timeout the choose
-    still runs (choose proves by itself whether the switch is possible).
-
-    Note: 手動加工 (team_cfg_id=6001, workshop_id=1) rejects team choose_food with
-    code=2 (param invalid) — do NOT call switch_recipe for it.
-
-    Returns {cancelled, chosen, food_id, count, workshop_id}.  Rejections (0x0201)
-    are surfaced in sub-dicts (ok=False) rather than crashing.
-    """
-    wire_id = team_cfg_id_to_workshop_id(team_cfg_id)
-    if cancel_first:
-        try:
-            cancelled = cancel_work(client, wire_id, timeout=timeout)
-        except WSTimeoutError:
-            logger.warning(
-                "ws_token workshop: cancel_work workshop_id=%s no response "
-                "(state-gated silence) — continuing to choose", wire_id)
-            cancelled = {"ok": False, "error_code": None, "timeout": True}
-    else:
-        cancelled = {"ok": True, "error_code": None, "skipped": "not running"}
-    foods = dict(read_dining_hall(client, timeout=timeout))
-    count = foods.get(food_id, 0)
-    try:
-        chosen = choose_food(client, food_k=food_id, food_v=count,
-                             workshop_id=wire_id, timeout=timeout)
-    except WSTimeoutError:
-        logger.warning(
-            "ws_token workshop: choose_food food=%s workshop_id=%s no response "
-            "(state-gated silence)", food_id, wire_id)
-        chosen = {"ok": False, "error_code": None, "timeout": True}
-    logger.info(
-        "ws_token workshop: switch_recipe team_cfg_id=%s workshop_id=%s "
-        "food_id=%s count=%s cancelled_ok=%s chosen_ok=%s",
-        team_cfg_id, wire_id, food_id, count,
-        cancelled.get("ok"), chosen.get("ok"),
-    )
-    return {
-        "cancelled": cancelled,
-        "chosen": chosen,
-        "food_id": food_id,
-        "count": count,
-        "workshop_id": wire_id,
-    }
-
-
-def rotate_team_recipes(
-    client: WSGameClient, *, parity: int, timeout: Optional[float] = None,
-) -> dict:
-    """12h 配方輪換（使用者 2026-06-10 指定：兩類別 12hr 切一次）。
-
-    把 RECIPE_FOOD_IDS (8001 脆脆餅乾 / 8005 精英拼盤) 輪流指派給每個小隊加工
-    （team_cfg_id 6002/6003；手動加工 6001 一律不動）：parity 偶數 = 依序
-    [8001, 8005, ...]，奇數 = 反序。每個 workshop 走已驗的 switch_recipe
-    （cancel → dining_hall → choose，count = 餐廳現有全量）。idle 工坊
-    （worker_status=0）送 cancel 伺服器不回包 → 用 cancel_first=w.is_running
-    跳過 cancel（live 2026-06-10 7fe98fc6 證實）。整段 best-effort：cancel/choose
-    對帳號狀態不符時伺服器靜默不回（含 worker_status>0 的工坊也發生過）→
-    switch_recipe 內吞 WSTimeoutError 回 timeout 標記，不往外拋；呼叫端
-    （runner）以「至少一個 chosen ok」判定本輪是否有效。
-
-    CADENCE 不在這裡：呼叫端（runner）用 ws_token.state 記 last_rotate_ts/parity，
-    12h 未到就不呼叫本函式。Returns {parity, switched: [...]}。
+    ``materials`` = the live 原料庫存 (e.g. inventory_tracker.counts from the login
+    0x0402 snapshot). choose_food re-reads 18434 to confirm; a count<1 food is
+    never sent (no 0x0201 error_code=3). Returns ``{"workshops": [ {team_cfg_id,
+    workshop_id?, action, food_id?, count?, ok?, reason?}, ... ]}`` (one entry per
+    workshop, action in {assigned, skipped, ignored}).
     """
     info = read_info(client, timeout=timeout)
-    teams = [w for w in info.workshops
-             if w.team_cfg_id in TEAM_TO_WORKSHOP_ID and w.team_cfg_id != 6001]
-    order = RECIPE_FOOD_IDS if parity % 2 == 0 else tuple(reversed(RECIPE_FOOD_IDS))
-    switched: list[dict] = []
-    for i, w in enumerate(teams):
-        food_id = order[i % len(order)]
-        result = switch_recipe(client, team_cfg_id=w.team_cfg_id,
-                               food_id=food_id, cancel_first=w.is_running,
-                               timeout=timeout)
-        switched.append({"team_cfg_id": w.team_cfg_id, **result})
-    logger.info("ws_token workshop: rotate_team_recipes parity=%d switched=%d",
-                parity % 2, len(switched))
-    return {"parity": parity % 2, "switched": switched}
+    results: list[dict] = []
+    for w in info.workshops:
+        if w.team_cfg_id not in TEAM_WORKSHOP_CFG_IDS:
+            results.append({"team_cfg_id": w.team_cfg_id, "action": "ignored",
+                            "reason": "manual_or_unknown_workshop"})
+            continue
+        if w.selected_food != 0:
+            results.append({"team_cfg_id": w.team_cfg_id,
+                            "workshop_id": w.workshop_id, "action": "skipped",
+                            "reason": "running", "food_id": w.selected_food})
+            continue
+        food_id, count = _pick_producible(materials, prefer_order)
+        if food_id is None:
+            logger.info("ws_token workshop: team_cfg_id=%s idle but no producible "
+                        "food (原料不足) — leaving idle", w.team_cfg_id)
+            results.append({"team_cfg_id": w.team_cfg_id,
+                            "workshop_id": w.workshop_id, "action": "skipped",
+                            "reason": "no_producible_food"})
+            continue
+        chosen = choose_food(client, food_k=food_id, food_v=count,
+                             workshop_id=w.workshop_id, timeout=timeout)
+        results.append({"team_cfg_id": w.team_cfg_id,
+                        "workshop_id": w.workshop_id, "action": "assigned",
+                        "food_id": food_id, "count": count,
+                        "ok": chosen.get("ok")})
+    assigned = sum(1 for r in results if r["action"] == "assigned")
+    logger.info("ws_token workshop: assign_idle_workshops assigned=%d of %d "
+                "team workshops", assigned,
+                sum(1 for r in results if r["action"] != "ignored"))
+    return {"workshops": results}
+
+
+def _pick_producible(
+    materials: dict[int, int], prefer_order: tuple[int, ...]
+) -> tuple[Optional[int], int]:
+    """First (food_id, count) in ``prefer_order`` with producible_count >= 1.
+
+    Returns ``(None, 0)`` when no preferred food can be produced from ``materials``.
+    """
+    for food_id in prefer_order:
+        count = producible_count(materials, food_id)
+        if count >= 1:
+            return food_id, count
+    return None, 0
 
 
 # --- helpers ----------------------------------------------------------------

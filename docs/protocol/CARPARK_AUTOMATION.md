@@ -101,6 +101,48 @@ ParkingMainView
 
 **Important**: send 一定要透過 `netManager.send("name", obj)`，不要 raw `sock.sendMessage(cmd_id, bytes)` — protobuf wrapper 加 metadata。raw bytes server 回 0x0201 error_code=2 (confirmed)。
 
+## 純 WS 跨界停車 (LIVE-verified 小寶 2026-06-11, `ws_token/carpark.py`)
+
+純 WS 已完整閉環停車成功 (cmd 0x322f=12847 SUCCESS)。關鍵協議事實:
+
+- **取可停 lot 列表 = `car_park_search`(12808) `{type:4}`** (NEW 跨服流程, client `reqParkSearch(crossSpaceList=4,"")`)，回 `null_space:[p_car_park_null]`。**不是** `cross_car_park_preview`(12830) — 那是舊流程，NEW 帳號 (`checkNewCrossOpen()==true`) preview 回空。
+- `p_car_park_null {park_type#1, master_id#2, null_num#3, ceng#7}`；`null_num`=空格數，`>0` 才可停。`master_id` 形如 `1001001065`，`ceng == master_id % 1000`。
+- **lot 容量 10、pos 是 1-based (1..10)**。`car_park_info`(12801, type=3, master_id, ceng) 回的 `space_list` **只列已占用格** (空格不出現)；空 pos = `{1..10}` 減占用集 (live: lot 1001001045 占 {1,2,3,4,6,8,10} → null_num=3 = 缺 5,7,9)。
+- 停車 = `cross_car_park_new_parking_start`(12847) `{park_id#1=master_id, pos#2, mount_id#3}`；舊流程 12832 `{id#1, mount_id#2, pos#3}` 欄位順序相反。
+- 閘門: `checkNewCrossOpen()` 需帳齡 ≥ `park_cross_creat_limit`(8天)；非開放時段 search 回空列表 → no-op，不會炸。
+- 開關: `ws_token.runner --carpark-auto` 或 device config `ws_token_carpark_auto`；smoke `python -m ws_token.carpark_smoke --device 7fe98fc6 --search` (dry) / `--auto-park` (真停)。只停不收。
+
+## 純 WS 日/夜窗口跨界停車 plan（手機fc，2026-06-13）
+
+`ws_token/carpark_plan.py` + `runner._run_carpark` plan 路徑（config
+`ws_token.carpark_plan`，dashboard 方案 adb+ws / 離線 WS fallback 都會走到）：
+
+- 配額：day（08:00-20:00）cross=1、night cross=0；窗口內持續補停（state 記
+  `ws_state/<device>.json` → `carpark_plan.{day,night}.{date,cross}`，0 台停入
+  不寫 state 下次喚醒重試；跨午夜窗口邏輯日=窗口起始日）。
+- **泊銀=跨界的 pool（id=3）**，同一套協議。search(12808 type=4) 一次回**全部
+  檔次**的 lot（LIVE 2026-06-13 小寶：68 筆，ceng 1..68 連續，master_id
+  `1001001NNN`，ceng==master_id%1000）。泊銀 lot = **ceng 5..34 = 鉑銀1..30**
+  （configCross_parking_lot dump 2026-05-20）。`null_space` 欄位：5=skin_plus
+  6=ext 8=reward_buff（皆 p_key_value）。
+- 選 lot：`auto_select_and_park_many` 限定泊銀 ceng 範圍，優先
+  `silver_levels`（預設 [9,10] → ceng 13/14），滿了退其他泊銀 lot（ceng 升冪）。
+- 本服（search type=2，master_id=1467，ceng 1..5）/好友（type=1，回 role 列表）
+  車位**不自動化**——遊戲內建（使用者 2026-06-13 指示）。type=3/5 search 不回應。
+- **跨界窗口 = 台灣 10:00-22:00**（夜間只有本服可停）→ 預設 day window
+  ["10:00","22:00"] cross=1、night cross=0。一人只能停 1 台跨界。
+- **抱團 = 同服**（使用者 2026-06-13 三次指示）：登入回包 `role_login_s2c`
+  欄位 #3 = **server_id**（LIVE 小寶=1467，正好等於本服車位 master_id）。
+  排序 =（鉑銀9/10 優先群, 同服占用數降冪, null_num 升冪, ceng）；同服判定
+  掃占用格 `info_list#6`/`ext#8` kv 值 == server_id（`count_same_server`；
+  attr 欄位 id **待開窗採樣驗證** → `tools/carpark_cluster_probe.py`，kv 全
+  無匹配時自動退回占用數排序，安全降級）。預讀候選 lot 上限 8（搶位要快）；
+  runner TASK_ORDER 把 carpark 移到登入後第一個任務。
+- **收益領取（純 WS）**：倉庫清單 `car_park_bag_rewards` **12845**(0x322d)、
+  一鍵領 `car_park_collect_all_bag_rewards` **12846**(0x322e)，c2s 皆空 body；
+  沒東西可領時 12846 回 0x0201 error_code=**173**（LIVE 小寶 2026-06-13）。
+  plan 路徑每輪喚醒先領收益再停車（與窗口無關）。12844 無回應、12843 回 173。
+
 ## Stale-label trap
 
 Cocos UIList 重用 cell node 顯示不同 data。**Label.string 不會自動清空**。

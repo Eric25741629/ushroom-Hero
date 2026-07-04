@@ -31,6 +31,9 @@ def main() -> int:
                     help="actually claim the ONLINE accrual (claim_reward{1})")
     ap.add_argument("--claim-offline", action="store_true",
                     help="actually claim the OFFLINE reward (claim_reward{2})")
+    ap.add_argument("--claim-quick", action="store_true",
+                    help="claim the 2h quick income (ad_reward 0x1602, "
+                         "30min冷卻/一天3次)")
     args = ap.parse_args()
 
     # Capture the offline reward the server pushes right after login.
@@ -79,9 +82,15 @@ def main() -> int:
                 print(f"[idle] OFFLINE claim{{2}} (direct) -> "
                       f"success={res.success} cmd=0x{res.response_cmd:04x}", flush=True)
 
-        if not (args.claim_online or args.claim_offline):
-            print("[idle] (dry run) pass --claim-online / --claim-offline to redeem.",
-                  flush=True)
+        if args.claim_quick:
+            res = idle_reward.claim_quick_2h(client)
+            print(f"[idle] QUICK-2H ad_reward{{config_id:4}} -> "
+                  f"success={res.success} error_code={res.error_code} "
+                  f"ad={res.ad}", flush=True)
+
+        if not (args.claim_online or args.claim_offline or args.claim_quick):
+            print("[idle] (dry run) pass --claim-online / --claim-offline / "
+                  "--claim-quick to redeem.", flush=True)
         return 0
     finally:
         client.close()

@@ -92,9 +92,46 @@ f1 varint = cell_id
 f2 varint = col (= cell_id % 100)
 f3 varint = depth (= cell_id // 100)
 f4 varint = terrain enum（user-confirmed, 見下表）
-f5 varint = ?（語意未驗證）
+f5 varint = count → **DUG 狀態**（CDP dig 2026-06-20 坐實，見 §6.1）
 f6 varint = ?（觀測 = 0）
 ```
+
+### 6.1 `f5` = count = DUG 狀態（LIVE CDP dig 2026-06-20，小寶，201/202 皆同）
+
+> **這條推翻了 2026-06-15 的「count 語意未驗證 / 新石頭 f5=0」舊註記。**
+
+| count | 意義 | 實測 |
+|---:|---|---|
+| **0** | **已挖（空氣）** | 對 count==0 的格送 0x0c03：**無回覆、版面不變、不耗鏟**（no-op）。`config_id` 此時只是「原本是什麼地形」的歷史值。 |
+| **>0** | **未挖 / live** | 送 0x0c03：有回覆、耗 1 鏟、該格變成 count==0（空氣）、可能捲動 baseline 並 reveal 下方新格。201=土 202=岩 401=活礦。 |
+
+實測：挖 `202/count1` → 回 `{area, baseline+1(捲), 新 reveal block, ...}`、格變 `202/count0`；挖 `201/count0` → 無回覆、不變。
+
+**盤面地形還原規則（ws_token/mining_adapter.board_to_grid）：**
+- block count==0 → `empty`（空氣；舊版誤標 solid → 整盤看起來「密集」、planner 亂挖浪費）
+- block count>0 → 地形（201 dirt / 202 rock / 401 reachable_pit）
+- 在 `actives` 但**無 block feature** → `dirt`（未挖泥土；MINING_SCHEMA §7 + dig 實測）
+- 非 active 且無 block feature → `empty`
+
+**WS 本質限制**：0x0c01 **不送**「未挖格」的逐格地形——只有 count>0 的少數格帶 config。所以「無 block」的未挖格其 **土/岩 無法從 0x0c01 區分**，且 unreachable 的未挖實心格（被空洞越過）0x0c01 也看不到（會誤判成空）。
+
+### 6.2 地形真正來源 = 前端 client config `configMine_template`（CDP 讀 2026-06-20）
+
+前端能畫出每格地形，是因為**盤面由 client 端 config table 生成**，不是 WS 逐格下發：
+
+| 前端全域 | 內容 |
+|---|---|
+| `window.configMine_grid.datas` | cell-type → 屬性/獎勵：`100`=空(air)、`201`=土、`202`=岩、`401`=礦洞；`101/102/103/108`=含礦泥土(item 1007 礦物 50/100/250)；`301-308`=特殊獎勵格(礦物/粉鑽2/鑽頭4002/炸彈4003/紅包卡1012-1013) |
+| `window.configMine_template.datas` | `_data=[id, [42 個 cell-type 的 7×6 陣列], weight]`，加權隨機選模板生成盤面(如 1001/1002 weight 10、11-19 weight 1-9)。模板上排多為 100(空)、下排 201/202 |
+| `window.configMine_hole_type.datas` | 礦洞形狀：`_data=[id, ?, [[dr,dc,401]...](3x3/2x2/1x1), weight, …獎勵 item list, …]` |
+
+**結論**：盤面是前端用 `configMine_template` 加權隨機生成（同 `tools/mining_sim.html` 的 cluster 邏輯），WS 0x0c01 只追蹤「已挖狀態(count) + 可挖前沿(actives) + 礦洞實例」。要讓**純 WS** 路徑拿到完整未挖地形，需其一：(a) web_h5 裝置經 **CDP 讀前端 runtime 生成的盤面**(cocos model)；(b) port 模板生成邏輯(需 server 端的模板/seed 選擇依據，尚未坐實在哪個 WS 欄位)；(c) `miner` CNN classifier 視覺判讀(截圖→GRID_CFG 裁切 x0=6,y0=227,x1=535,y1=852→7×6)。**但 count==0=空氣 的核心修正(§6.1)已先解掉「已挖格誤判實心→盤面假性密集→亂挖浪費」這個主因。**
+
+### 6.3 WS 送的是「地圖」(比 7 列視窗高)，舊版只抓了一半（CDP 2026-06-20）
+
+0x0c01 的 `actives`/`blocks` **不只 7 列視窗**——實測 blocks 橫跨 **baseline-3 .. +17**(視窗上方已捲過列 + 下方尚未捲到列)，其中**含視窗下方即將到來的待發現礦坑**(如 row +17 col 4 的 401 count1)。但 `board_to_grid` 把盤面裁成 rows 0-6、其餘記成 `dropped_blocks` 丟掉 → planner 對即將到來的礦完全盲、只能盲目下挖。
+- 未採集礦坑(401 count>0)即使在視窗下方好幾列，0x0c01 也有送 → **重要礦資訊在「地圖」裡，不在被裁掉的視窗外才取不到，而是我們主動丟了**。
+- 新增 `mining_adapter.map_pits(board)` 撈全地圖未採集礦坑(附相對視窗 row：>6=下方upcoming / <0=已捲過)，`plan()` 新增 `map_pits`，供 planner look-ahead 朝 upcoming 礦下挖(純 WS、免 CNN)。planner 實際使用為下一步。
 
 ### f4 terrain enum（user-confirmed）
 
@@ -134,6 +171,16 @@ f2 varint = cell_id   (從 0x0c01 f5 list 拿)
 
 4001、4002、4003 都走同一個 `home_mine_use_goods`。自動化預設只允許鎬子；
 炸彈與鑽頭必須由設定明確開啟，避免未授權消耗。
+
+### 落點規則（5554 CDP live 2026-07-01 實測，重要）
+- **鎬子 (4001)**：放在 **solid 前沿格**（`actives` 內、未清除）。送出後伺服器**有 0x0c03 回覆**。
+- **炸彈 (4003) / 鑽頭 (4002)**：必須放在 **AIR 空氣格 = 空地或挖完的礦洞（`blocks` 中 count==0 的格）**，
+  **不是** solid 前沿格。放在 solid 格會被**靜默拒絕**（不消耗、版面不變、無回覆）。道具是
+  **send-only**（無 0x0c03 回覆），用 `mining.send_dig`（`client.send`）送，不要用等回覆的 call/RPC。
+- **炸彈 footprint**：以落點為中心 **3x3 + 十字往四方各延 2 格**（= `miner.core.mechanics.get_bomb_affected_cells`）。
+  範圍**會跨過視窗底炸到尚未捲進的下方格**（實測中心 (d,c) 清掉 (d+2,c) 等 below-frontier 格），
+  一砲可捲動**多層**（實測放 count==0 格清 6 格、捲 2 層）。鎬子做不到這個下方覆蓋，這是炸彈的獨門價值。
+- WS 純挖礦的道具感知：`mining_adapter.prop_step_for_pit`（只在「一道具一次收 ≥2 礦」時出手）。
 
 ### rx body
 ```
@@ -177,24 +224,34 @@ result = api.dig_cell(cell_id=11003903, prop_id=PROP_BOMB)
 ```
 
 ### Inventory tracking
-**現量唯一可信來源是 `0x0402` push**。0x0c01 query 的 f1 是上限不是 current。
+鎬子（axe）現量 = goods cache 的 gtid `4001` 數量（客端 `getGoodsCountByGoodsGtid(4001)`，
+UI 顯示 `現量/maxAxeNum` = 例 `350/118`）。`0x0c01` query 的 `max_num`(f1) 只是 cap
+（= maxAxeNum），**不是** current。鎬子會隨時間自動回復（recover）。
+
+> **更正（2026-06-16 fc 實測）**：登入時 **不會可靠地** 推送 `9800004` 道具 snapshot
+> （多次純連線只收到 `5004` 或完全沒有 `0x0402`）。鎬子現量只在 **每次挖掘後的 `0x0402`
+> 消耗推送 `9800001`**（`items=[(4001, 剩餘量)]`）才會出現。先前「登入 snapshot 帶 4001」
+> 的結論是用合成 consume push 驗的，對真實登入流程是 **錯的**。
 
 ```python
 class InventoryTracker:
     """訂閱 0x0402 push 維護 in-memory item count。"""
-    def __init__(self):
-        self.counts = {}
-
     def on_0x0402(self, body):
         parsed = parse_inventory_push(body)
-        if parsed.get("evt_type") in (9800004, 9800001, 9800009, 1001006):
+        if parsed.get("evt_type") in (9800004, 9800001, 9800009):
             for item in parsed.get("items", []):
                 self.counts[item["item_id"]] = item["new_count"]
 ```
 
-WS runner 只在 `InventoryTracker` 已看過 `4001` 現量時才會挖礦；若本輪快速重連
-沒有收到 `9800004` snapshot，會回傳 `{"skipped": "inventory snapshot missing"}`，
-不會用 `0x0c01.max_num` 或預設值猜測鎬子數量。
+因此 WS runner **不再** 因「沒看過 4001 現量」而 skip：`mine_until_pickaxe_empty` 先
+seed 一個正數讓 planner 出步、挖第一鏟，再用第一個 `9800001` 消耗推送的真實剩餘量續挖到 0
+（`ws_token/mining_supervised.py`）。
+
+**挖掘有效目標**：server 只接受 `home_mine_info.actives`（= 可挖前沿 block_id）內、且
+**未被清除** 的格子。一個 active 格可挖 iff（無 block entry＝未挖泥土）或（block.count>0＝
+活的礦洞/半挖）或（config 202 石頭，石頭新鮮時 count 也是 0）。已收集的礦洞（cfg 401
+count 0）仍留在 actives，但再挖是 no-op。v4 planner 會提議非 active／已收集的礦洞，需由
+`_select_dig_step` 過濾＋前沿 fallback（2026-06-16 fc 實測）。
 
 ---
 
@@ -206,7 +263,8 @@ WS runner 只在 `InventoryTracker` 已看過 `4001` 現量時才會挖礦；若
 | f4=201 = 泥土 | H5/CDP board adapter 對齊 |
 | f4=202 = 石頭 | H5/CDP board adapter 對齊 |
 | f4=401 = 礦洞 | user 指出右側礦洞 → 對應 cell 11003906 |
-| f1 = pickaxe_cap | f1=114，玩家當前 112 → 是 cap 不是 current |
-| evt=9800004 = 道具 snapshot | read-only WS probe: 4001 現量 35 |
+| f1 = pickaxe_cap (=maxAxeNum) | f1=114，玩家當前 112 → 是 cap 不是 current；fc f1=118 玩家 350 |
+| 鎬子現量 = goods gtid 4001 | 客端 `getGoodsCountByGoodsGtid(4001)` UI `350/118`；登入**不**保證推 9800004，現量靠 9800001 消耗推送 |
+| evt=9800001 = 挖掘消耗推送 | fc 實測每挖 1 鏟推 `(4001, 剩餘)`：350→349→…→0 |
 | item_id 1007 = 礦物 | push 5412819, on-screen 5412.3K |
 | evt=9800009 = 道具獲得 | 挖礦得礦物觸發此 evt |

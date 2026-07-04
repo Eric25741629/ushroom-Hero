@@ -74,7 +74,6 @@ from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
     initialize_runtime_device,
-    process_online_check_requests,
     shutdown_web_devices,
 )
 from game_actions.stage_guard import (
@@ -85,11 +84,17 @@ from runtime_services.sleep_service import (
     StartupBypassError,
     _maybe_resume_sleep,
     run_sleep_cycle,
+    should_stop_runtime_device_for_sleep,
     stop_runtime_device_for_sleep,
 )
 from runtime_services.startup_sleep import _handle_startup_sleep
+from runtime_services.ws_fallback_service import (
+    run_ws_fallback_wait_round,
+    should_ws_fallback,
+)
 from game_actions import daily_pipeline
 from game_actions.ws_phase import run_ws_phase
+from game_actions.browser_skip import should_skip_browser
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
@@ -134,6 +139,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             config_manager.get_device_config(ip).get("enable_dungeon", True),
         )
     )
+    # Granular 每日任務開關。向後相容 fallback（舊 config 只有 enable_dungeon /
+    # enable_dungeon_manager 時的 legacy 推導）在 config_manager._get_raw_device_config
+    # 的 merge 點完成——這裡讀到的值已是推導後結果，直接取用即可。
+    # enable_dungeon_manager 本身保留原樣，繼續餵給 sleep/ws-fallback 路徑。
+    cfg = config_manager.get_device_config(ip)
+    enable_hellgate = bool(cfg.get("enable_hellgate", True))
+    enable_wanshen = bool(cfg.get("enable_wanshen", True))
+    enable_cloud_battle = bool(cfg.get("enable_cloud_battle", True))
+    enable_biweekly = bool(cfg.get("enable_biweekly", True))
+    enable_arena = bool(cfg.get("enable_arena", True))
+    enable_mining = bool(cfg.get("enable_mining", True))
     d_orig = None
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
@@ -152,7 +168,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         def _run_initial_ws_phase_before_web_start():
             nonlocal pre_runtime_ws_done
             if pre_runtime_ws_done is None:
-                pre_runtime_ws_done = _run_ws_phase_for_wake(ip, device_logger)
+                result = _run_ws_phase_for_wake(ip, device_logger)
+                # 若這輪 WS 被「開啟瀏覽器」中斷，別快取半套結果：留 None，讓主迴圈
+                # 重跑 WS 階段（讀 ledger 續做未完成），而非沿用部分 skip-set。
+                if not bot_state.has_pending_web_launch_request(ip):
+                    pre_runtime_ws_done = result
 
         while True:
             try:
@@ -192,6 +212,21 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     return
                 handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
                 device_logger.error(f"[{ip}] connect init failed: {e}")
+                # offline_fallback ADB 裝置：手機不在 ADB 上時不放棄、不判離線，
+                # 改跑一輪純 WS（idle reward/lamp/mining）+ 對齊休眠，下一輪 continue
+                # 重試連線。手機回線 → init 成功 → break 進正常主迴圈，行為與今日相同。
+                # 旗標關閉時（預設）走原 set_offline + return，零行為差異。
+                if should_ws_fallback(ip, backend_kind):
+                    device_logger.warning(
+                        f"[{ip}] 手機 ADB 不可達，啟用離線純 WS 備援，跑一輪 WS 後等待回線重試"
+                    )
+                    run_ws_fallback_wait_round(
+                        ip,
+                        device_logger,
+                        run_ws_phase_fn=_run_ws_phase_for_wake,
+                        enable_dungeon_manager=enable_dungeon_manager,
+                    )
+                    continue
                 bot_state.set_offline(ip, reason=f"init failed: {e}")
                 return
         
@@ -239,16 +274,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     if callable(close_fn):
                         try:
                             close_fn()
+                            bot_state.set_web_browser_open(ip, False)
                             logger.info(f"[{ip}] 收到關閉瀏覽器請求，已關閉無頭瀏覽器（裝置續跑，下次喚醒自動重開）")
                         except Exception as close_err:
                             logger.warning(f"[{ip}] 關閉瀏覽器失敗: {close_err}")
                     continue
                 if handle_pending_web_launch(ip, d, backend_kind, logger):
                     continue
-                process_online_check_requests(ip, Cnn_model, logger, check_on_line)
                 resume_sleep_until_ts, resume_sleep_reason, _skip = _maybe_resume_sleep(
                     ip, Cnn_model, resume_sleep_until_ts, resume_sleep_reason, logger
                 )
+                
                 if _skip:
                     continue
 
@@ -259,6 +295,54 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     pre_runtime_ws_done = None
                 else:
                     ws_done = _run_ws_phase_for_wake(ip, device_logger)
+
+                # WS 階段可能因「開啟瀏覽器」請求被中斷（已記錄進度到 ledger）：
+                # 立即回頂端讓 handle_pending_web_launch 開瀏覽器，使用者用完重新上線
+                # 後下一輪 WS 階段會讀 ledger 續做未完成（ws_done 此時作廢丟棄）。
+                # 僅 web_h5：adb 沒有瀏覽器可開，handle_pending_web_launch 不消費請求，
+                # 無條件 continue 會變成緊迴圈。
+                if backend_kind == "web_h5" and \
+                        bot_state.has_pending_web_launch_request(ip):
+                    device_logger.info(
+                        f"[{ip}] WS 階段偵測到開啟瀏覽器請求，回頂端處理開瀏覽器")
+                    continue
+
+                # --- Phase D1：今日客戶端任務全做完 → 跳過喚醒瀏覽器，直接對齊休眠 ---
+                # opt-in（skip_browser_when_all_done 預設 False；預設行為零變化）。
+                # 只在 web_h5 + ws_token.enabled + 本輪 WS 登入成功 + 無任何 client 任務
+                # due 時成立；任一不確定/讀 config 失敗 → should_skip_browser 回 False（照
+                # 開瀏覽器，fail-safe，絕不誤跳過漏做任務）。開瀏覽器請求最高優先：有
+                # pending 時不 skip（前面已 continue 去開，這裡再保險一次）。
+                if (not bot_state.has_pending_web_launch_request(ip)
+                        and should_skip_browser(
+                            ip, ws_login_ok=bot_state.get_ws_login_ok(ip))):
+                    device_logger.info(
+                        f"[{ip}] 今日客戶端任務已全部完成，跳過喚醒瀏覽器，直接對齊休眠")
+                    bot_state.update_state(
+                        ip, task="純WS掛機",
+                        step="今日客戶端任務已完成，跳過喚醒瀏覽器")
+                    # 沿用既有結尾休眠機制：瀏覽器此時通常未開（喚醒被跳過），若仍開著
+                    # 則用既有停止邏輯關閉（相容 web_stop_mode=close_browser；本來就沒開
+                    # 則 should_stop_runtime_device_for_sleep 為真時 stop 也是安全 no-op）。
+                    sleep_device_config = config_manager.get_device_config(ip)
+                    if should_stop_runtime_device_for_sleep(
+                            sleep_device_config, backend_kind):
+                        stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
+                        bot_state.set_web_browser_open(ip, False)
+                    release_wakeup_lock(ip)
+                    wake_ts, interrupted, wake_up_time = run_sleep_cycle(
+                        ip,
+                        logger,
+                        sleep_policy="aligned_window",
+                        sleep_reason="今日客戶端任務已完成(純WS掛機)",
+                        enable_dungeon_manager=enable_dungeon_manager,
+                    )
+                    if (interrupted
+                            and bot_state.has_pending_web_launch_request(ip)
+                            and time.time() < wake_ts):
+                        resume_sleep_until_ts = wake_ts
+                        resume_sleep_reason = "手動操作結束後返回休眠"
+                    continue
 
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
@@ -274,13 +358,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 if not isinstance(d, MonitoredDevice):
                     d = MonitoredDevice(d, ip)
                 skip_online_check_once = False
-                if bot_state.is_online_check_checker(ip):
-                    has_req = bot_state.has_pending_online_check_request(ip)
-                    has_priority = bot_state.is_online_check_priority_active(ip)
-                    if has_req or has_priority:
-                        logger.info(f"[{ip}] 喚醒流程後偵測到互檢請求，立即返回處理 requester 上線檢查")
-                        time.sleep(0.2)
-                        continue
 
                 start = time.time()
 
@@ -292,7 +369,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 skip_wakeup_screenshot = False
                 if backend_kind == "web_h5":
                     alive_fn = getattr(d, "is_alive", None)
-                    if callable(alive_fn) and not alive_fn():
+                    browser_alive = bool(alive_fn()) if callable(alive_fn) else False
+                    # Publish authoritative browser-open truth for the dashboard
+                    # toggle (is_alive is thread-affine → must be read here).
+                    bot_state.set_web_browser_open(ip, browser_alive)
+                    if not browser_alive:
                         skip_wakeup_screenshot = True
                         logger.info(f"[{ip}] web_h5 瀏覽器已關閉，跳過喚醒截圖，直接啟動")
 
@@ -328,14 +409,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         
                         time.sleep(1)
                         try:
-                            if d.xpath_click('//*[@text="菇勇者傳說"]'):
-                                logger.info(f"[{ip}] 找到遊戲圖示,點擊啟動")
-                                time.sleep(2 + random.random())
-                                set_screen_for_game(ip, logger=logger)
-                            else:
-                                raise Exception("未找到遊戲圖示")
+                            launched_by_icon = start_game_by_icon(d, ip, logger=device_logger)
+                            if not launched_by_icon and not check_in_game(d):
+                                raise Exception("圖示/預設 app_start 未進入遊戲")
+                            set_screen_for_game(ip, logger=logger)
                         except Exception as e:
-                            logger.exception(f"[{ip}] launch_clone fallback failed, trying clone launch. error={e}")
+                            logger.exception(f"[{ip}] 共用桌面啟動失敗，改用 clone launch. error={e}")
                             output = launch_clone("com.mxdzz.tw.and", 2,device_serial=ip)
                             set_screen_for_game(ip, logger=logger)
                         time.sleep(1)
@@ -384,6 +463,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     rl_recorder=rl_recorder,
                     current_time=time.localtime(),
                     enable_dungeon_manager=enable_dungeon_manager,
+                    enable_hellgate=enable_hellgate,
+                    enable_arena=enable_arena,
+                    enable_mining=enable_mining,
+                    enable_wanshen=enable_wanshen,
+                    enable_cloud_battle=enable_cloud_battle,
+                    enable_biweekly=enable_biweekly,
                     wheel_manager=wheel_manager,
                     mission_manager=mission_manager,
                     family_manager=family_manager,
@@ -429,6 +514,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     f"[{ip}] 啟動流程中斷: {e} | policy={sleep_policy}, "
                     f"forced_sleep_sec=1800"
                 )
+                # 關閉瀏覽器/應用：啟動避讓時若保留壞掉的 Chrome（被頂號/頁面已關），
+                # 下次喚醒會 reuse 同一個壞掉的 session。關掉它，喚醒時開全新的。
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
             except StartupLoginConflictError as e:
                 forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC
@@ -438,6 +526,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     f"[{ip}] 啟動階段異地登錄中斷本次執行: {e} | policy={sleep_policy}, "
                     f"forced_sleep_sec={LOGIN_CONFLICT_SLEEP_SEC}"
                 )
+                # 異地登入冷卻期間關閉瀏覽器，下次喚醒重新開啟乾淨 session。
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 
             except LoginConflictError as e:
                 forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC
@@ -465,6 +555,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         logger.error(f"[{ip}] 重連失敗: {e2}")
                 open_notification(d)
                 d.screen_off()
+            sleep_device_config = config_manager.get_device_config(ip)
+            if (not force_sleep_now) and should_stop_runtime_device_for_sleep(sleep_device_config, backend_kind):
+                stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
+                if backend_kind == "web_h5":
+                    bot_state.set_web_browser_open(ip, False)
             release_wakeup_lock(ip)
             wake_ts, interrupted, wake_up_time = run_sleep_cycle(
                 ip,
@@ -478,13 +573,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             if interrupted and bot_state.has_pending_web_launch_request(ip) and time.time() < wake_ts:
                 resume_sleep_until_ts = wake_ts
                 resume_sleep_reason = "手動操作結束後返回休眠"
-            if interrupted and bot_state.is_online_check_checker(ip) and time.time() < wake_ts:
-                if (
-                    bot_state.has_pending_online_check_request(ip)
-                    or bot_state.is_online_check_priority_active(ip)
-                ):
-                    resume_sleep_until_ts = wake_ts
-                    resume_sleep_reason = "互檢完成後返回休眠"
     except Exception as e:
         if backend_kind != "web_h5" and is_emulator_serial(ip) and is_recoverable_connect_error(str(e)):
             handle_connect_failure(ip, e, device_logger, _running_threads, logger, refresh_adb_server)
@@ -541,6 +629,11 @@ def temporary_reset_cycles():
 
 if __name__ == "__main__":
     import config_manager
+    # 讓外部 auto-reload wrapper 用 CTRL_BREAK 請求乾淨重啟，重用 Ctrl+C 的 shutdown 路徑。
+    # ponytail: dev 便利用途；正常執行不受影響。
+    import signal as _signal
+    if hasattr(_signal, "SIGBREAK"):
+        _signal.signal(_signal.SIGBREAK, _signal.default_int_handler)
     rotate_existing_logs_once()
     ensure_push_server_started(base_dir=os.path.dirname(os.path.abspath(__file__)))
     import control_panel_app
@@ -549,6 +642,15 @@ if __name__ == "__main__":
     if config_manager.get_global_config().get("mode", "master") == "master":
         server_thread = threading.Thread(target=control_panel_app.run_server, args=(5002,), daemon=True)
         server_thread.start()
+        # 跨裝置上線互檢：純 WS 背景服務（master-only），用空閒 checker 的 creds 查線，
+        # 裝置永遠不為互檢被叫醒（解 web_h5 每 30s 冷啟重登的重啟迴圈）。
+        from runtime_services.online_check_service import ensure_online_check_service_started
+        ensure_online_check_service_started()
+        try:
+            from ws_token.online_monitor import ensure_started as _start_monitor
+            _start_monitor()
+        except Exception:
+            logger.debug("online_monitor start failed", exc_info=True)
     else:
         logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
         ensure_worker_webhook_started()

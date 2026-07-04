@@ -591,8 +591,14 @@ class TestShouldExecuteSeaWindow:
         self.fn = should_execute_sea_with_cooldown
 
     def _at(self, hour):
+        # 日期錨在 is_sea_week 的航海週上(而非硬編 2026-05-29 碰巧落在航海週)，
+        # 這樣改 _SEA_ANCHOR_MONDAY/_SEA_CYCLE_DAYS 時「should is True」案例不會
+        # 因日期意外變成非航海週而假性失敗；precondition assert 讓真因一眼可見。
+        from json_manager.scheduling import _SEA_ANCHOR_MONDAY, is_sea_week
         tpe = datetime.timezone(datetime.timedelta(hours=8))
-        return datetime.datetime(2026, 5, 29, hour, 30, tzinfo=tpe)
+        d = _SEA_ANCHOR_MONDAY + datetime.timedelta(days=2)  # 航海週的週三
+        assert is_sea_week(d), "test date must be a sea-week — anchor changed?"
+        return datetime.datetime(d.year, d.month, d.day, hour, 30, tzinfo=tpe)
 
     def test_before_window_blocked(self):
         # 02:30 凌晨 → blocked regardless of cycle/cooldown

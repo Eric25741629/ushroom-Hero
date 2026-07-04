@@ -21,10 +21,15 @@ from __future__ import annotations
 import argparse
 import glob
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from miner.depth_tracker import best_scroll as _best_scroll  # noqa: E402
 
 # symbol -> coarse terrain class
 NORM = {
@@ -75,28 +80,13 @@ def best_scroll(prev, cur, max_s=6):
 
     Compares only solid (non-air) structure on the overlap. Returns
     (s, ratio). A dug cell (now air) is ignored, not counted as mismatch.
+
+    Delegates to the shared :func:`miner.depth_tracker.best_scroll` so the
+    offline reconstruction and the live DepthTracker stay in lock-step. The
+    only difference here is the normalizer: this tool parses single symbol
+    chars (``NORM`` table) rather than DEFAULT_CLASSES label strings.
     """
-    best = (0, -1.0)
-    for s in range(0, max_s + 1):
-        comparable = 0
-        matches = 0
-        for i in range(0, 7 - s):
-            for j in range(6):
-                a = NORM[prev[s + i][j]]
-                b = NORM[cur[i][j]]
-                if a == "air":
-                    continue  # prev already open here -> no structural signal
-                if b == "air":
-                    # cur dug/opened this cell: compatible, weak signal
-                    continue
-                comparable += 1
-                if a == b:
-                    matches += 1
-        ratio = (matches / comparable) if comparable >= 6 else -1.0
-        # Prefer higher ratio; tie -> smaller scroll (scroll is usually 0/1).
-        if ratio > best[1] + 1e-9:
-            best = (s, ratio)
-    return best
+    return _best_scroll(prev, cur, normalize=NORM.__getitem__, max_s=max_s)
 
 
 def components(pit_set):

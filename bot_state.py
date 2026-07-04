@@ -54,6 +54,11 @@ def consume_signal(ip: str, sig: Signal) -> bool:
 _states: Dict[str, Dict[str, Any]] = {}
 _locks: Dict[str, threading.Lock] = {} # 每個 IP 一個鎖，避免讀寫衝突
 
+# 本輪（本次喚醒）WS 階段登入結果。run_ws_phase 在每輪嘗試開頭先重置 False、
+# 僅在確認登入成功時設 True → 讀到的永遠是「最近一次（即本輪）」WS 登入結果，
+# 不會殘留上一輪舊值。供 Phase D1 skip-browser 決策使用。
+_ws_login_ok: Dict[str, bool] = {}
+
 # 控制信號 (暫停/恢復)
 _pause_events: Dict[str, threading.Event] = {}
 
@@ -69,6 +74,15 @@ _refresh_needed = False
 # Rolling window of screenshot durations (ms) per device — last 50 samples
 _SCREENSHOT_WINDOW = 50
 _screenshot_windows: Dict[str, deque] = {}
+
+# Per-device dashboard log ring buffer cap. The frontend pulls bot_state.logs
+# via /api/status and renders the tail (card log-box: last 3; labeler/trainer
+# panels: last 40/120), so the buffer must hold enough history to feed those
+# views. The per-device file logger forwards every line here through
+# logging_utils.BotStateLogHandler -> append_log(), which is what actually keeps
+# the dashboard log-box populated (update_state(log=...) is only called from ~10
+# rare error/sleep/scan sites and would otherwise leave the box near-empty).
+_MAX_DEVICE_LOGS = 200
 
 # Devices whose automation thread runs in THIS process (local). Remote worker
 # devices are keyed "worker_id:ip" and are aggregated via report_status — they
@@ -264,10 +278,10 @@ def update_state(
             state["step_deadline"] = float(step_deadline)
 
         if log is not None:
-            # 只保留最近 10 筆 logs
+            state.setdefault("logs", [])
             state["logs"].append(f"{time.strftime('%H:%M:%S')} - {log}")
-            if len(state["logs"]) > 10:
-                state["logs"].pop(0)
+            if len(state["logs"]) > _MAX_DEVICE_LOGS:
+                del state["logs"][:-_MAX_DEVICE_LOGS]
 
         if next_wake_at is not None:
             state["next_wake_at"] = float(next_wake_at)
@@ -351,6 +365,42 @@ def update_remote_metrics(ip: str, logs=None, avg_screenshot_ms=None) -> None:
             st["logs"] = logs
         if avg_screenshot_ms is not None:
             st["avg_screenshot_ms"] = avg_screenshot_ms
+
+
+def append_log(ip: str, line: str) -> None:
+    """Append one already-formatted log line to a device's dashboard ring buffer.
+
+    Fast path for the per-device file logger bridge
+    (logging_utils.BotStateLogHandler): every `logger.info(...)` a device thread
+    emits lands here so the dashboard log-box mirrors the real execution log,
+    instead of staying near-empty (the box was previously fed only by the ~10
+    rare `update_state(log=...)` call sites).
+
+    Unlike `update_state(log=...)`, this does NOT touch `last_update` — a log line
+    is not a heartbeat, and treating it as one would interfere with the
+    offline/heartbeat-age detection that watches `last_update`. It also never
+    auto-creates a device that has not been initialised, so stray library logging
+    before `init_device` cannot spawn phantom dashboard cards.
+    """
+    if not ip or line is None:
+        return
+    text = str(line).strip()
+    if not text:
+        return
+    # NOTE: at high log volume this contends the per-device lock with state
+    # updates (update_state holds the same lock). The critical section is a tiny
+    # list append + trim, so the hold time is negligible and the contention is
+    # acceptable in practice. If a hot device ever shows lock pressure here, batch
+    # lines and flush periodically rather than locking per line. Left as-is for now.
+    lock = get_device_lock(ip)
+    with lock:
+        st = _states.get(ip)
+        if st is None:
+            return
+        logs = st.setdefault("logs", [])
+        logs.append(text)
+        if len(logs) > _MAX_DEVICE_LOGS:
+            del logs[:-_MAX_DEVICE_LOGS]
 
 
 def get_all_states() -> Dict[str, Dict[str, Any]]:
@@ -524,7 +574,8 @@ def request_force_sleep(ip: str, reason: str = "強制休眠"):
             req["last_message"] = reason
         if ip in _states:
             st = _states[ip]
-            st["task"] = "強制休眠"
+            # 立即把 UI 切到睡眠語意，避免長流程還沒收尾時面板繼續顯示舊任務。
+            st["task"] = "休眠中"
             st["step"] = reason
             st.pop("next_wake_at", None)
             st["last_update"] = time.time()
@@ -552,6 +603,32 @@ def request_web_close(ip: str) -> None:
 def check_web_close(ip: str) -> bool:
     """Atomically check and consume the close-browser flag for `ip`."""
     return consume_signal(ip, Signal.WEB_CLOSE)
+
+
+def has_pending_web_close_request(ip: str) -> bool:
+    """Return True when a close-browser request is pending without consuming it."""
+    with _global_lock:
+        s = _signals.get(ip)
+        return bool(s and Signal.WEB_CLOSE in s)
+
+
+def set_web_browser_open(ip: str, is_open: bool) -> None:
+    """Publish whether this device's web_h5 browser is currently open.
+
+    The authoritative reading is `device.is_alive()`, which is thread-affine
+    (only meaningful on the owning device thread), so the truth must be published
+    from the device thread into per-device state. The dashboard reads it back via
+    /api/status to reconcile the 開啟/關閉網頁 button with reality — an external /
+    manual browser close then flips the button back to 開啟網頁 on the next poll
+    instead of staying stuck on 關閉網頁.
+
+    No-op if the device has no state row yet (it gets one on its next
+    `update_state`); never conjures a row into existence.
+    """
+    with get_device_lock(ip):
+        state = _states.get(ip)
+        if state is not None:
+            state["web_browser_open"] = bool(is_open)
 
 
 def clear_skip_sleep(ip: str):
@@ -660,6 +737,25 @@ def has_pending_web_launch_request(ip: str) -> bool:
         return bool(req and req.get("status") == "pending")
 
 
+def set_ws_login_ok(ip: str, ok: bool) -> None:
+    """Record THIS wake cycle's WS-phase login result for `ip`.
+
+    ``run_ws_phase`` calls ``set_ws_login_ok(ip, False)`` at the start of every
+    *attempted* WS phase and ``set_ws_login_ok(ip, True)`` only once login is
+    confirmed. Because the WS phase runs every wake cycle before the browser is
+    opened, a subsequent read always reflects the current cycle — never a stale
+    prior-cycle value (any failure/early-return leaves it False).
+    """
+    with _global_lock:
+        _ws_login_ok[ip] = bool(ok)
+
+
+def get_ws_login_ok(ip: str) -> bool:
+    """Return the latest WS-phase login result for `ip` (False if never set)."""
+    with _global_lock:
+        return bool(_ws_login_ok.get(ip, False))
+
+
 def complete_web_launch_request(ip: str, ok: bool, message: str = "", error: str = "") -> None:
     """Mark web-launch request as completed."""
     with _global_lock:
@@ -682,24 +778,6 @@ def get_web_launch_status(ip: str) -> Dict[str, Any]:
             "last_message": req.get("last_message", ""),
             "last_error": req.get("last_error", ""),
         }
-
-
-def _signal_all_checkers_locked() -> None:
-    """Wake every configured checker so the freest one can claim the request.
-
-    Must be called while holding _global_lock. Raising SKIP_SLEEP on each
-    checker lets each one break its long sleep and poll the mailbox; the first
-    to claim wins (pop is atomic under the lock), the rest find nothing pending.
-    """
-    try:
-        import config_manager  # lazy: avoid import cycle
-        checkers = config_manager.get_online_check_checkers()
-    except Exception:
-        checkers = ["emulator-5554"]
-    wake_ts = time.time()
-    for checker in checkers:
-        _signals.setdefault(checker, set()).add(Signal.SKIP_SLEEP)
-        _wake_overrides[checker] = wake_ts
 
 
 def submit_online_check_request(
@@ -738,7 +816,6 @@ def submit_online_check_request(
                 and existing.get("status") in ("pending", "processing")
             ):
                 existing["updated_at"] = now
-                _signal_all_checkers_locked()
                 return existing_id
 
         req_id = str(uuid.uuid4())
@@ -757,10 +834,9 @@ def submit_online_check_request(
         }
         _online_check_requests[req_id] = payload
         _online_check_pending.append(req_id)
-        # Hint every configured checker to break its long sleep and poll ASAP.
-        _signal_all_checkers_locked()
-        # Also request an immediate device rescan so a cold-start-delayed checker
-        # thread can be started right away instead of waiting for the next 30s loop.
+        # No wake signalling: the master-only online_check_service serves this
+        # over pure WS from an idle checker — devices never wake for online-check.
+        # Keep the immediate device rescan nudge (cheap, no SKIP_SLEEP).
         _set_refresh_needed_locked()  # already holding _global_lock
     return req_id
 

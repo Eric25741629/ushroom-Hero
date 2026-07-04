@@ -28,15 +28,20 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ws_token import codec
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
 
 CMD_REWARD_INFO = 3333    # main_chapter.main_chapter_reward_info_c2s/_s2c
 CMD_CLAIM_REWARD = 3334   # main_chapter.main_chapter_claim_reward_c2s/_s2c
+CMD_AD_REWARD = 0x1602    # 5634 ad.ad_reward_c2s/_s2c (主頁掛機彈窗左鈕「2小時收益」)
+CMD_ERROR = 0x0201        # error.error_info_s2c {error_code#1}
 
 TYPE_ONLINE = 1           # 在線掛機 (pulled via reward_info_c2s)
 TYPE_OFFLINE = 2          # 離線 (pushed by server after login)
+TYPE_QUICK_2H = 3         # 快速2小時收益 (granted via ad_reward; s2c push type=3)
+
+AD_QUICK_2H_CONFIG_ID = 4  # ad_reward_c2s.config_id for the 2h quick income
 
 
 @dataclass(frozen=True)
@@ -155,6 +160,54 @@ def claim_offline(client: WSGameClient, *,
     """
     logger.info("ws_token idle_reward: offline claim (direct, no push)")
     return claim(client, TYPE_OFFLINE, timeout=timeout)
+
+
+@dataclass(frozen=True)
+class QuickClaimResult:
+    """Result of a quick-2h (ad_reward) claim."""
+
+    success: bool
+    error_code: Optional[int]      # 0x0201 error_code when declined, else None
+    ad: dict = field(compare=False, default_factory=dict)  # new_ad p_ad walk
+
+
+def build_ad_reward_body(config_id: int = AD_QUICK_2H_CONFIG_ID) -> bytes:
+    """ad_reward_c2s {config_id#1, is_free#3:1}.
+
+    Live-verified (小寶 2026-06-11): the H5 build sends is_free=1 and the server
+    grants the 2h income directly — no ad SDK roundtrip exists over WS.
+    """
+    return codec.pb_uint(1, config_id) + codec.pb_uint(3, 1)
+
+
+def claim_quick_2h(client: WSGameClient, *,
+                   timeout: Optional[float] = None) -> QuickClaimResult:
+    """Claim the「2小時收益」quick income (ad module, config_id=4).
+
+    Server-side gates: 30min cooldown between claims and 3 claims per day. A
+    gated claim comes back as 0x0201 {error_code} — returned as a graceful
+    failure (the hourly wake cadence retries naturally), never raised.
+    On success the server pushes reward_info_s2c{type:3,time:7200,...} plus the
+    resource updates; no follow-up claim c2s is needed.
+    """
+    try:
+        cmd, body = client.call_for(
+            CMD_AD_REWARD, build_ad_reward_body(),
+            expect_cmds=(CMD_AD_REWARD, CMD_ERROR), timeout=timeout)
+    except WSTimeoutError:
+        logger.warning("ws_token idle_reward: quick-2h got no 0x1602/0x0201 reply")
+        return QuickClaimResult(success=False, error_code=None)
+    if cmd == CMD_ERROR:
+        code = _as_int(codec.walk_dict(body).get(1))
+        logger.info("ws_token idle_reward: quick-2h declined 0x0201 code=%s "
+                    "(冷卻30min或一天3次已滿)", code)
+        return QuickClaimResult(success=False, error_code=code)
+    ad = {}
+    for fn, v in codec.walk(body):
+        if fn == 1 and isinstance(v, (bytes, bytearray)):
+            ad = codec.walk_dict(bytes(v))
+    logger.info("ws_token idle_reward: quick-2h claimed; new_ad=%s", ad)
+    return QuickClaimResult(success=True, error_code=None, ad=ad)
 
 
 def _as_int(v) -> int:

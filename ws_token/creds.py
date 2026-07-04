@@ -15,6 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 AUTH_DIR = ROOT / "auth_state"
 
+# adb_token_login.py 內部 scrape 上限 120s + App 冷啟 ~30s；wake loop 直接呼叫
+# refresh_creds，外層必須有 timeout 護欄，否則 adb/websocket 卡死會吊死裝置 thread。
+_REFRESH_TIMEOUT_SEC = 300
+
 # JSON keys that must be present (others have safe defaults).
 _REQUIRED = ("uid", "uname", "plat", "loginGameId", "roleId", "pKey", "loginTicket")
 
@@ -96,6 +100,27 @@ def load_creds(device: str, *, auth_dir: Path = AUTH_DIR) -> Creds:
     return Creds.from_dict(data["creds"])
 
 
+def load_role_id(device: str, *, auth_dir: Path = AUTH_DIR) -> "int | None":
+    """Read just the roleId from a capture file, tolerating a partial capture.
+
+    The online monitor / start-gate only needs the roleId to map a device to an
+    account; it does not need a loginable :class:`Creds`. A web_h5 device seeded
+    by :func:`utils.ws_ticket_refresh.refresh_from_device` has no ``uname``/``plat``
+    (unreadable from the page), so :func:`load_creds` would reject it — this
+    lenient reader returns the roleId anyway. Returns ``None`` when the file is
+    missing/unreadable or carries no roleId.
+    """
+    path = _capture_path(device, auth_dir)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        rid = int((data.get("creds") or {}).get("roleId") or 0)
+    except (OSError, ValueError, TypeError):
+        return None
+    return rid or None
+
+
 def refresh_creds(
     device: str,
     *,
@@ -112,5 +137,5 @@ def refresh_creds(
            "--device", device]
     if user is not None:
         cmd += ["--user", str(user)]
-    subprocess.run(cmd, check=True, cwd=str(ROOT))
+    subprocess.run(cmd, check=True, cwd=str(ROOT), timeout=_REFRESH_TIMEOUT_SEC)
     return load_creds(device, auth_dir=auth_dir)

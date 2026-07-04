@@ -1,0 +1,1442 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>中控 / 菇勇者全自動掛機 — Bento Ledger 便當帳本</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- Cross-pollinated: Sora (from Bento) · Space Mono (from Swiss) · Manrope + Archivo Narrow (body/micro) · Noto Sans TC fallback -->
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=Archivo+Narrow:wght@500;600;700&family=Space+Mono:wght@400;700&family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   便當帳本 / BENTO LEDGER — the literal 50/50 midpoint of
+   #2 Swiss/International × #5 Bento 模組.
+   Bento's COMPOSITION (varied soft tiles, dial ring, emoji
+   avatars, layered shadows) carries Swiss's INTERIOR DISCIPLINE
+   (hairline ledger rows, 2/4px status spine, a HUGE tabular-mono
+   countdown, mono index tags, tracked uppercase micro-labels).
+   Palette disciplined to: tatami canvas + white tiles + neutrals
+   + ONE persimmon accent + two muted state tints.
+   ============================================================ */
+:root{
+  /* ---- canvas & surfaces (warm bento tatami) ---- */
+  --tatami:#F3EEE3;
+  --tatami-2:#ECE5D6;
+  --rail:#FBF8F1;
+  --tile:#FFFFFF;
+  --tile-sunk:#F6F1E7;
+  --ink:#211E16;            /* warm near-black ink */
+  --ink-2:#433E32;
+  --ink-3:#766E5C;
+  --ink-4:#A89E89;
+  --line:#E7DECC;           /* soft bento hairline */
+  --line-strong:#D6CBB3;
+  --rule-ink:#211E16;       /* swiss full-strength hairline (used sparingly) */
+
+  /* ---- the ONE confident accent ---- */
+  --accent:#CF5A2C;         /* persimmon 柿 */
+  --accent-soft:#F6E0D2;
+  --accent-ink:#FBF8F1;
+
+  /* ---- at most TWO muted state tints + neutrals ---- */
+  --alive:#1E7A63;          /* muted teal/green = "alive" */
+  --alive-soft:#DCEDE6;
+  --paused:#B5860F;         /* muted amber/ochre */
+  --paused-soft:#F4E8CC;
+  --degr:#3E6E8C;           /* muted slate-blue */
+  --degr-soft:#DDE7ED;
+  --offline:#9E947F;        /* warm grey */
+  --offline-soft:#E7E1D4;
+
+  /* ---- type (cross-pollinated) ---- */
+  --display:"Sora","Noto Sans TC",sans-serif;
+  --body:"Manrope","Noto Sans TC",sans-serif;
+  --narrow:"Archivo Narrow","Noto Sans TC",sans-serif;
+  --mono:"Space Mono","Noto Sans TC",monospace;
+
+  /* ---- depth / radii / motion (bento, but flatter & calmer) ---- */
+  --r-lg:20px; --r-md:16px; --r-sm:12px; --r-xs:9px;
+  --sh-1:0 1px 2px rgba(58,46,26,.05), 0 1px 4px rgba(58,46,26,.04);
+  --sh-2:0 2px 5px rgba(58,46,26,.06), 0 8px 22px rgba(58,46,26,.06);
+  --sh-3:0 6px 16px rgba(58,46,26,.09), 0 20px 44px rgba(58,46,26,.11);
+  --sh-press:inset 0 2px 5px rgba(58,46,26,.10);
+
+  --rail-w:228px;
+  --rail-w-collapsed:72px;
+
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:22px; --s6:30px; --s7:44px; --s8:64px;
+  --dur:.34s;
+  --ease:cubic-bezier(.16,1,.3,1);
+  --ease-bounce:cubic-bezier(.34,1.4,.64,1);
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:var(--body);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  font-feature-settings:"tnum" 1,"lnum" 1;
+  letter-spacing:.004em;
+  min-height:100vh;
+  overflow-x:hidden;
+  background:
+    radial-gradient(120% 90% at 100% 0%, #FAF5EB 0%, transparent 52%),
+    radial-gradient(90% 70% at 0% 100%, #EDE6D7 0%, transparent 48%),
+    var(--tatami);
+}
+/* faint paper grain — warm bento atmosphere (desaturated) */
+body::before{
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.04'/%3E%3C/svg%3E");
+}
+h1,h2,h3,h4{font-family:var(--display);margin:0;letter-spacing:-.015em;}
+a{color:inherit;text-decoration:none;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+input,select,textarea{font-family:inherit;}
+::selection{background:var(--accent);color:var(--accent-ink);}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+
+/* numbers everywhere are tabular mono (Swiss numbers-as-hero) */
+.num{font-family:var(--mono);font-feature-settings:"tnum" 1;}
+/* tracked uppercase micro-label (Swiss caption) */
+.label{
+  font-family:var(--narrow);font-size:10px;font-weight:700;
+  letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);line-height:1;
+}
+/* mono index tag (Swiss numeral-as-tag) */
+.idxtag{font-family:var(--mono);font-weight:700;font-size:11px;color:var(--ink-4);}
+
+/* ============================================================
+   APP SHELL — bento sticky rail + flowing canvas
+   ============================================================ */
+.shell{display:flex;min-height:100vh;position:relative;z-index:1;}
+
+/* ---------------- side nav rail ---------------- */
+.rail{
+  width:var(--rail-w);flex:0 0 var(--rail-w);
+  background:var(--rail);border-right:1px solid var(--line);
+  padding:18px 14px;display:flex;flex-direction:column;gap:6px;
+  position:sticky;top:0;height:100vh;z-index:40;
+  transition:width var(--dur) var(--ease),flex-basis var(--dur) var(--ease);
+}
+.shell.collapsed .rail{width:var(--rail-w-collapsed);flex-basis:var(--rail-w-collapsed);}
+.rail-head{display:flex;align-items:center;gap:11px;padding:6px 6px 14px;}
+.brand-badge{
+  width:42px;height:42px;flex:0 0 42px;border-radius:13px;
+  display:grid;place-items:center;font-size:22px;
+  background:linear-gradient(150deg,var(--accent-soft),#FBEFE6);
+  box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,255,255,.7);
+  transform:rotate(-4deg);transition:transform .4s var(--ease-bounce);
+}
+.rail:hover .brand-badge{transform:rotate(3deg) scale(1.04);}
+.brand-name{font-family:var(--display);font-weight:800;font-size:15px;line-height:1.1;white-space:nowrap;overflow:hidden;}
+.brand-name small{display:block;font-family:var(--narrow);font-weight:600;font-size:10px;color:var(--ink-4);letter-spacing:.14em;text-transform:uppercase;margin-top:2px;}
+.shell.collapsed .brand-name{opacity:0;width:0;}
+.toggle-btn{
+  margin-left:auto;width:32px;height:32px;border-radius:10px;
+  display:grid;place-items:center;color:var(--ink-3);
+  transition:background .2s,transform .25s var(--ease);
+}
+.toggle-btn:hover{background:var(--tile-sunk);transform:scale(1.08);}
+.toggle-btn:active{transform:scale(.92);}
+.shell.collapsed .toggle-btn{margin:0 auto;}
+
+.nav-group{display:flex;flex-direction:column;gap:3px;margin-top:4px;}
+.nav-label{font-family:var(--narrow);font-size:10px;font-weight:700;letter-spacing:.16em;color:var(--ink-4);
+  text-transform:uppercase;padding:13px 10px 5px;white-space:nowrap;}
+.shell.collapsed .nav-label{opacity:0;height:0;padding:6px 0;overflow:hidden;}
+.nav-item{
+  display:flex;align-items:center;gap:12px;padding:10px 11px;border-radius:13px;color:var(--ink-3);
+  font-weight:600;font-size:14px;width:100%;text-align:left;position:relative;white-space:nowrap;
+  transition:background .22s var(--ease),color .22s,transform .2s var(--ease);
+}
+.nav-item .ico{font-size:18px;flex:0 0 24px;text-align:center;transition:transform .3s var(--ease-bounce);}
+.nav-item .idx{margin-left:auto;font-family:var(--mono);font-size:10px;color:var(--ink-4);opacity:.7;}
+.shell.collapsed .nav-item .idx{opacity:0;}
+.nav-item:hover{background:var(--tile-sunk);color:var(--ink);transform:translateX(2px);}
+.nav-item:hover .ico{transform:scale(1.15) rotate(-5deg);}
+.nav-item.active{background:linear-gradient(120deg,var(--accent-soft),#FBEEE4);color:var(--accent);box-shadow:var(--sh-1);}
+.nav-item.active::before{
+  content:"";position:absolute;left:-14px;top:50%;transform:translateY(-50%);
+  width:4px;height:58%;border-radius:0 5px 5px 0;background:var(--accent);
+}
+.shell.collapsed .nav-item .txt{opacity:0;width:0;overflow:hidden;}
+.shell.collapsed .nav-item{justify-content:center;gap:0;}
+.nav-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:var(--s3);}
+.nav-foot .label{padding:0 10px var(--s2);}
+.shell.collapsed .nav-foot .label{opacity:0;}
+
+/* ---------------- main column ---------------- */
+.main{flex:1;min-width:0;display:flex;flex-direction:column;}
+
+.page{display:none;padding:var(--s6);}
+.page.active{display:block;animation:pageIn .5s var(--ease);}
+@keyframes pageIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+
+/* ============================================================
+   TOP BAR — bento glass bar w/ swiss tracked title + index numeral
+   ============================================================ */
+.topbar{
+  position:sticky;top:0;z-index:30;
+  backdrop-filter:saturate(1.3) blur(12px);
+  background:linear-gradient(180deg,rgba(243,238,227,.94),rgba(243,238,227,.72));
+  border-bottom:1px solid var(--line);
+  padding:14px var(--s6);
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+}
+.tb-title{display:flex;align-items:baseline;gap:11px;min-width:0;}
+.tb-title .mark{font-size:22px;line-height:1;}
+.tb-title h1{font-size:19px;font-weight:800;display:flex;align-items:baseline;gap:8px;}
+.tb-title h1 .accent{color:var(--accent);}
+.tb-title .kick{font-family:var(--narrow);font-weight:600;font-size:11px;color:var(--ink-4);letter-spacing:.12em;text-transform:uppercase;}
+.tb-date{font-family:var(--mono);font-size:11px;color:var(--ink-4);}
+
+.ocr-chip{
+  display:inline-flex;align-items:center;gap:8px;
+  padding:7px 13px 7px 11px;border-radius:999px;
+  background:var(--tile);box-shadow:var(--sh-1);border:1px solid var(--line);
+  font-family:var(--narrow);font-weight:700;font-size:11.5px;letter-spacing:.06em;
+}
+.ocr-chip .dot{width:8px;height:8px;border-radius:50%;background:var(--offline);}
+.ocr-chip.ok .dot{background:var(--alive);box-shadow:0 0 0 0 rgba(30,122,99,.5);animation:pulse 2.4s var(--ease) infinite;}
+.ocr-chip.error{border-color:var(--accent);color:var(--accent);}
+.ocr-chip.error .dot{background:var(--accent);}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(30,122,99,.42)}70%{box-shadow:0 0 0 7px rgba(30,122,99,0)}100%{box-shadow:0 0 0 0 rgba(30,122,99,0)}}
+.ocr-chip .rt{color:var(--ink-4);font-family:var(--mono);font-weight:400;font-size:10.5px;letter-spacing:0;}
+
+.prog-card{
+  display:flex;align-items:center;gap:11px;padding:8px 14px;border-radius:14px;
+  background:linear-gradient(135deg,var(--tile),var(--tile-sunk));
+  box-shadow:var(--sh-1);cursor:pointer;border:1px solid var(--line);
+  transition:transform .26s var(--ease),box-shadow .26s,border-color .2s;
+}
+.prog-card:hover{transform:translateY(-2px);box-shadow:var(--sh-2);border-color:var(--line-strong);}
+.prog-card:active{transform:translateY(0) scale(.99);}
+.prog-card .pc-ico{font-size:18px;}
+.prog-card .v{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--accent);display:block;line-height:1.1;}
+.prog-card .git{font-family:var(--mono);font-size:10px;color:var(--ink-4);}
+
+.tb-spacer{flex:1;}
+.tb-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+
+/* ---- bento-soft buttons, swiss tracked caps, single persimmon accent ---- */
+.btn{
+  --bg:var(--tile);--fg:var(--ink);--rim:var(--line-strong);
+  display:inline-flex;align-items:center;gap:7px;
+  padding:9px 14px;border-radius:12px;
+  font-family:var(--narrow);font-weight:700;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;
+  background:var(--bg);color:var(--fg);border:1.5px solid var(--rim);box-shadow:var(--sh-1);
+  transition:transform .2s var(--ease),box-shadow .22s var(--ease),background .2s,border-color .2s,filter .2s;
+  position:relative;white-space:nowrap;
+}
+.btn .bi{font-size:14px;line-height:1;}
+.btn .gn{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--ink-4);}
+.btn:hover{transform:translateY(-2px);box-shadow:var(--sh-2);}
+.btn:active{transform:translateY(0) scale(.97);box-shadow:var(--sh-press);}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none!important;box-shadow:var(--sh-1)!important;}
+.btn.solid{--bg:linear-gradient(135deg,var(--accent),#DC6A3C);--fg:var(--accent-ink);--rim:transparent;}
+.btn.solid .gn{color:rgba(251,248,241,.7);}
+.btn.solid:hover{filter:brightness(1.06);}
+.btn.alive{--bg:linear-gradient(135deg,var(--alive-soft),#E8F2EC);--fg:var(--alive);--rim:#BFE0D3;}
+.btn.amber{--bg:linear-gradient(135deg,var(--paused-soft),#F8EFD6);--fg:var(--paused);--rim:#E6D4A4;}
+.btn.degr{--bg:linear-gradient(135deg,var(--degr-soft),#E8EFF4);--fg:var(--degr);--rim:#C2D3DD;}
+.btn.ghost{--bg:transparent;--rim:var(--line-strong);box-shadow:none;}
+.btn.ghost:hover{--bg:var(--tile-sunk);}
+.btn.sm{padding:8px 11px;font-size:10.5px;border-radius:11px;}
+.btn.icon{padding:9px;width:38px;justify-content:center;}
+/* pending spinner (optimistic lock) */
+.btn.pending,.btn.btn-pending{pointer-events:none;color:transparent!important;}
+.btn.pending .bi,.btn.pending .lbl,.btn.pending .gn,
+.btn.btn-pending .bi,.btn.btn-pending .lbl,.btn.btn-pending .gn{visibility:hidden;}
+.btn.pending::after,.btn.btn-pending::after{
+  content:"";position:absolute;inset:0;margin:auto;width:15px;height:15px;border-radius:50%;
+  border:2.2px solid rgba(118,110,92,.25);border-top-color:var(--accent);
+  animation:spin .7s linear infinite,btnPulse 1.4s var(--ease) infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes btnPulse{0%,100%{box-shadow:0 0 0 0 rgba(207,90,44,0)}50%{box-shadow:0 0 0 5px rgba(207,90,44,.08)}}
+
+/* ============================================================
+   FLEET SUMMARY — bento strip, swiss-ruled interior
+   ============================================================ */
+.summary{
+  display:grid;gap:var(--s4);margin-bottom:var(--s5);
+  grid-template-columns:1.5fr 1fr 1fr 1fr;
+}
+.s-tile{
+  border-radius:var(--r-md);padding:16px 18px;position:relative;overflow:hidden;
+  background:var(--tile);box-shadow:var(--sh-2);border:1px solid var(--line);
+  transition:transform .3s var(--ease),box-shadow .3s;
+}
+.s-tile:hover{transform:translateY(-3px);box-shadow:var(--sh-3);}
+/* swiss spine on each summary tile */
+.s-tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--ink-4);border-radius:var(--r-md) 0 0 var(--r-md);}
+.s-tile.hero::before{background:var(--accent);width:4px;}
+.s-tile.t-alive::before{background:var(--alive);}
+.s-tile.t-degr::before{background:var(--degr);}
+.s-tile.t-warn::before{background:var(--paused);}
+.s-tile .s-ico{font-size:20px;}
+.s-tile .s-num{font-family:var(--mono);font-weight:700;font-size:30px;line-height:1;margin-top:6px;letter-spacing:-.02em;}
+.s-tile .s-num .slash{color:var(--ink-4);}
+.s-tile.hero .s-num{font-size:40px;color:var(--accent);}
+.s-tile.t-alive .s-num{color:var(--alive);}
+.s-tile.t-degr .s-num{color:var(--degr);}
+.s-tile.t-warn .s-num{color:var(--paused);}
+.s-tile .s-lbl{font-family:var(--narrow);font-weight:600;font-size:11px;color:var(--ink-3);margin-top:5px;letter-spacing:.06em;text-transform:uppercase;}
+.s-tile .s-deco{position:absolute;right:-14px;bottom:-18px;font-size:76px;opacity:.06;transform:rotate(-12deg);pointer-events:none;}
+/* hero mini-sparkline (bento data-viz, persimmon harmony) */
+.spark{display:flex;align-items:flex-end;gap:3px;height:28px;margin-top:10px;}
+.spark i{flex:1;border-radius:3px 3px 1px 1px;background:linear-gradient(180deg,var(--accent),#E89472);opacity:.8;
+  transition:transform .3s var(--ease);transform-origin:bottom;}
+.s-tile.hero:hover .spark i{transform:scaleY(1.1);}
+
+/* ============================================================
+   BENTO DEVICE MOSAIC — varied footprints, ledger interiors
+   ============================================================ */
+.bento{
+  display:grid;gap:var(--s4);
+  grid-template-columns:repeat(12,1fr);
+  grid-auto-rows:minmax(10px,auto);
+}
+/* varied footprints — the heart of bento composition */
+.dev{grid-column:span 4;}        /* normal tile */
+.dev.wide{grid-column:span 6;}   /* wide tile */
+.dev.tall{grid-column:span 4;}   /* tall tile */
+.dev.feat{grid-column:span 6;}   /* feature hero tile (incl. viz panel) */
+
+.tile{
+  background:var(--tile);border-radius:var(--r-lg);
+  box-shadow:var(--sh-2);border:1px solid var(--line);
+  position:relative;overflow:hidden;display:flex;flex-direction:column;height:100%;
+  transition:transform .32s var(--ease),box-shadow .32s var(--ease),border-color .3s;
+}
+.tile:hover{transform:translateY(-4px);box-shadow:var(--sh-3);}
+/* merged spine: bento's lacquer rim + swiss's 2/4px status spine */
+.tile::before{
+  content:"";position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:var(--alive);border-radius:var(--r-lg) 0 0 var(--r-lg);
+  transition:width .3s var(--ease),background .3s;
+}
+.tile:hover::before{width:6px;}
+/* faint hue wash behind the header (very restrained) */
+.tile .wash{position:absolute;inset:0 0 auto 0;height:96px;opacity:.5;pointer-events:none;
+  mask:linear-gradient(180deg,#000,transparent);background:linear-gradient(135deg,var(--alive-soft),transparent);}
+.tile[data-status="ONLINE"]::before{background:var(--alive);}
+.tile[data-status="ONLINE"] .wash{background:linear-gradient(135deg,var(--alive-soft),transparent);}
+.tile[data-status="PAUSED"]::before{background:var(--paused);}
+.tile[data-status="PAUSED"] .wash{background:linear-gradient(135deg,var(--paused-soft),transparent);}
+.tile[data-status="DEGRADED"]::before{background:var(--degr);}
+.tile[data-status="DEGRADED"] .wash{background:linear-gradient(135deg,var(--degr-soft),transparent);}
+.tile[data-status="OFFLINE"]::before,.tile[data-status="DISABLED"]::before{background:var(--offline);}
+.tile[data-status="OFFLINE"] .wash,.tile[data-status="DISABLED"] .wash{background:linear-gradient(135deg,var(--offline-soft),transparent);}
+.tile[data-status="OFFLINE"],.tile[data-status="DISABLED"]{filter:saturate(.5) opacity(.82);}
+
+.tile .body{padding:16px 18px 18px;display:flex;flex-direction:column;gap:13px;flex:1;position:relative;z-index:1;}
+
+/* tile head: emoji avatar (bento) + index numeral + name + status pill + gear */
+.t-head{display:flex;align-items:flex-start;gap:11px;}
+.t-avatar{
+  width:44px;height:44px;flex:0 0 44px;border-radius:13px;display:grid;place-items:center;font-size:23px;
+  background:var(--tile-sunk);box-shadow:var(--sh-1),inset 0 1px 0 rgba(255,255,255,.7);
+  transition:transform .35s var(--ease-bounce);position:relative;
+}
+.t-avatar .av-idx{position:absolute;top:-6px;left:-6px;width:18px;height:18px;border-radius:6px;
+  background:var(--ink);color:var(--tatami);font-family:var(--mono);font-weight:700;font-size:9px;
+  display:grid;place-items:center;box-shadow:var(--sh-1);}
+.tile:hover .t-avatar{transform:rotate(-6deg) scale(1.05);}
+.t-id{flex:1;min-width:0;}
+.t-name{font-family:var(--display);font-weight:700;font-size:16px;line-height:1.15;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.t-ip{font-family:var(--mono);font-size:11px;color:var(--ink-4);margin-top:3px;letter-spacing:.01em;}
+.t-top-right{display:flex;flex-direction:column;align-items:flex-end;gap:7px;}
+.status-pill{
+  display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;
+  font-family:var(--narrow);font-weight:700;font-size:10px;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;
+  background:var(--tile-sunk);color:var(--ink-3);box-shadow:var(--sh-1);
+}
+.status-pill .sd{width:7px;height:7px;border-radius:50%;background:var(--ink-4);}
+.status-pill.ONLINE{background:var(--alive-soft);color:var(--alive);}
+.status-pill.ONLINE .sd{background:var(--alive);animation:pulse 2.2s infinite;}
+.status-pill.PAUSED{background:var(--paused-soft);color:var(--paused);}
+.status-pill.PAUSED .sd{background:var(--paused);}
+.status-pill.DEGRADED{background:var(--degr-soft);color:var(--degr);}
+.status-pill.DEGRADED .sd{background:var(--degr);}
+.status-pill.OFFLINE,.status-pill.DISABLED{background:var(--offline-soft);color:var(--offline);}
+.gear{
+  width:32px;height:32px;flex:0 0 32px;border-radius:10px;display:grid;place-items:center;
+  font-size:15px;color:var(--ink-3);background:var(--tile-sunk);
+  transition:transform .35s var(--ease-bounce),background .2s,color .2s;
+}
+.gear:hover{transform:rotate(90deg);background:var(--ink);color:#fff;}
+.gear:active{transform:rotate(90deg) scale(.9);}
+
+/* ---- the BIG countdown: bento dial ring + swiss mono numeral-as-hero ---- */
+.wake{
+  display:flex;align-items:center;gap:14px;
+  background:linear-gradient(135deg,#FBF6EC,#F7EFDF);
+  border:1px solid #EFE2C7;border-radius:var(--r-md);padding:12px 15px;
+}
+.dial{position:relative;width:54px;height:54px;flex:0 0 54px;}
+.dial svg{transform:rotate(-90deg);}
+.dial .ring-bg{fill:none;stroke:#EBDDBE;stroke-width:5;}
+.dial .ring-fg{fill:none;stroke:var(--accent);stroke-width:5;stroke-linecap:round;transition:stroke-dashoffset 1s linear;}
+.dial .emoji{position:absolute;inset:0;display:grid;place-items:center;font-size:19px;}
+.wake-main{min-width:0;flex:1;}
+.wake-main .label{margin-bottom:6px;}
+/* HUGE tabular-mono countdown number — numbers as hero */
+.cd-figure{font-family:var(--mono);font-weight:700;font-size:34px;line-height:.82;letter-spacing:-.03em;color:var(--ink);}
+.cd-figure .u{font-family:var(--narrow);font-size:13px;font-weight:700;color:var(--ink-3);margin:0 5px 0 2px;letter-spacing:.04em;}
+.cd-figure.waking{color:var(--alive);font-size:21px;}
+.cd-figure.dim{color:var(--ink-4);font-size:22px;}
+.wake.waking{background:linear-gradient(135deg,var(--alive-soft),#E8F2EC);border-color:#BFE0D3;}
+.wake.waking .ring-fg{stroke:var(--alive);}
+.wake-snap{margin-left:auto;text-align:right;display:flex;flex-direction:column;gap:4px;align-items:flex-end;}
+.wake-snap .sst{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--ink-2);}
+
+/* ---- ledger rows: swiss hairline label/value rows inside the soft tile ---- */
+.ledger{display:flex;flex-direction:column;}
+.lrow{
+  display:grid;grid-template-columns:74px 1fr;gap:var(--s3);align-items:baseline;
+  padding:7px 0;border-bottom:1px solid var(--line);
+}
+.lrow:last-child{border-bottom:none;}
+.lrow .label{padding-top:1px;}
+.lrow .val{font-family:var(--narrow);font-weight:600;font-size:13px;color:var(--ink);line-height:1.3;}
+.lrow .val .mono{font-family:var(--mono);font-weight:500;font-size:12px;}
+.lrow .val .tag-inline{
+  display:inline-block;font-family:var(--mono);font-weight:700;font-size:9.5px;
+  border:1px solid var(--line-strong);border-radius:6px;padding:1px 6px;margin-left:6px;letter-spacing:.04em;color:var(--ink-3);
+}
+.lrow .val .tag-inline.ws{border-color:var(--accent);color:var(--accent);}
+.step-clock{font-family:var(--mono);font-size:11px;color:var(--accent);font-weight:700;}
+
+/* ---- feature viz panel: mining-depth bars (bento data-viz, swiss-ruled) ---- */
+.viz-panel{background:var(--tile-sunk);border-radius:var(--r-md);padding:13px 15px;border:1px solid var(--line);}
+.viz-title{font-family:var(--narrow);font-weight:700;font-size:10px;letter-spacing:.14em;color:var(--ink-3);text-transform:uppercase;margin-bottom:10px;display:flex;justify-content:space-between;}
+.viz-title .vn{font-family:var(--mono);color:var(--accent);}
+.bars{display:flex;align-items:flex-end;gap:7px;height:64px;}
+.bars .bar{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;}
+.bars .bar i{width:100%;border-radius:5px 5px 2px 2px;background:linear-gradient(180deg,var(--accent),#E79B79);opacity:.85;
+  transition:transform .4s var(--ease);transform-origin:bottom;}
+.viz-panel:hover .bars .bar i{transform:scaleY(1.08);}
+.bars .bar small{font-family:var(--mono);font-size:9px;color:var(--ink-4);}
+
+/* ---- carpark expander (bento dashed compartment, swiss ledger bars) ---- */
+.carpark-row{border:1px dashed var(--accent);background:var(--accent-soft);border-radius:var(--r-sm);overflow:hidden;}
+.carpark-toggle{
+  display:flex;width:100%;align-items:center;gap:8px;padding:9px 13px;cursor:pointer;
+  font-family:var(--narrow);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);
+  transition:background .2s;
+}
+.carpark-toggle:hover{background:#F2D7C4;}
+.carpark-toggle .chev{margin-left:auto;font-family:var(--mono);transition:transform .3s var(--ease);}
+.carpark-row.open .carpark-toggle .chev{transform:rotate(90deg);}
+.carpark-body{max-height:0;overflow:hidden;transition:max-height .4s var(--ease);}
+.carpark-row.open .carpark-body{max-height:320px;}
+.carpark-body .inner{padding:0 13px 12px;}
+.cp-summary{display:flex;gap:var(--s5);padding:4px 0 10px;}
+.cp-fig{display:flex;flex-direction:column;gap:3px;}
+.cp-fig .n{font-family:var(--mono);font-weight:700;font-size:17px;color:var(--ink);}
+.cp-fig .n .slash{color:var(--ink-4);}
+.cp-car{
+  display:grid;grid-template-columns:auto 1fr auto;gap:var(--s3);align-items:center;
+  padding:6px 10px;margin-top:6px;background:#fff;border:1px solid #EFD9C6;border-radius:var(--r-xs);
+  font-family:var(--mono);font-size:11px;
+}
+.cp-car .pos{color:var(--ink-3);font-weight:700;}
+.cp-bar{height:5px;border-radius:3px;background:#F0DDC9;overflow:hidden;}
+.cp-bar i{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,var(--accent),#E89472);}
+.cp-car.warn .cp-bar i{background:var(--paused);}
+.cp-rem{font-weight:700;color:var(--accent);}
+
+/* ---- daily progress badges (8 tasks) ---- */
+.daily{display:flex;flex-direction:column;gap:8px;}
+.daily-head{display:flex;align-items:center;justify-content:space-between;}
+.daily-head .label{color:var(--ink-3);}
+.daily-head .dh-c{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--alive);}
+.badges{display:flex;flex-wrap:wrap;gap:5px;}
+.badge{
+  display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border-radius:9px;
+  font-family:var(--narrow);font-weight:600;font-size:10.5px;letter-spacing:.02em;
+  background:var(--tile-sunk);color:var(--ink-4);border:1px solid var(--line);transition:transform .2s var(--ease);
+}
+.badge:hover{transform:translateY(-1px);}
+.badge .mk{font-family:var(--mono);font-size:9px;}
+.badge.done{background:var(--alive-soft);color:var(--alive);border-color:#BFE0D3;}
+.badge.done .mk{color:var(--alive);}
+
+/* ---- log box (bento dark compartment, mono) ---- */
+.logbox{
+  background:#211E16;color:#D6CBAE;border-radius:var(--r-sm);padding:10px 12px;
+  font-family:var(--mono);font-size:10.5px;line-height:1.55;height:74px;overflow:hidden;
+  position:relative;box-shadow:var(--sh-press);
+}
+.logbox::after{content:"● ● ●";position:absolute;top:7px;right:11px;font-size:6px;color:#5A5240;letter-spacing:3px;}
+.logbox .ln{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.82;}
+.logbox .ln:last-child{opacity:1;color:#EFE3C7;}
+.logbox .ln .t{color:#857B60;}
+
+/* ---- per-device action bar ---- */
+.actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:auto;padding-top:2px;}
+.actions .btn{flex:0 1 auto;}
+
+/* ============================================================
+   MODALS — bento rounded sheet, swiss ruled body
+   ============================================================ */
+.overlay{
+  position:fixed;inset:0;z-index:1200;display:none;
+  background:rgba(33,30,22,.46);backdrop-filter:blur(4px);
+  align-items:flex-start;justify-content:center;padding:var(--s7) var(--s4);overflow-y:auto;
+}
+.overlay.show{display:flex;animation:ovIn .25s var(--ease);}
+@keyframes ovIn{from{opacity:0;}to{opacity:1;}}
+.sheet{
+  width:100%;max-width:620px;background:var(--tatami);border-radius:22px;
+  box-shadow:var(--sh-3);border:1px solid var(--line);overflow:hidden;
+  animation:sheetIn .38s var(--ease-bounce);
+}
+.sheet.lg{max-width:760px;}
+@keyframes sheetIn{from{opacity:0;transform:translateY(18px) scale(.98);}to{opacity:1;transform:none;}}
+.sheet-head{
+  position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:12px;
+  padding:18px 22px;background:linear-gradient(180deg,var(--tatami),rgba(243,238,227,.86));
+  border-bottom:1px solid var(--line);
+}
+.sheet-head .mh-ico{width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:20px;
+  background:linear-gradient(140deg,var(--accent-soft),#FBEFE6);box-shadow:var(--sh-1);}
+.sheet-head .sec-no{font-family:var(--mono);font-size:10px;color:var(--accent);letter-spacing:.1em;}
+.sheet-head h3{font-family:var(--display);font-weight:800;font-size:19px;margin-top:2px;}
+.sheet-head .sub{font-family:var(--narrow);font-size:11.5px;color:var(--ink-4);margin-top:2px;letter-spacing:.04em;}
+.sheet-head .x-close{margin-left:auto;width:36px;height:36px;border-radius:11px;display:grid;place-items:center;
+  font-size:17px;color:var(--ink-3);background:var(--tile);box-shadow:var(--sh-1);transition:transform .25s var(--ease),background .2s;}
+.sheet-head .x-close:hover{transform:rotate(90deg);background:var(--accent);color:#fff;}
+.sheet-body{padding:20px 22px;display:flex;flex-direction:column;gap:16px;max-height:64vh;overflow-y:auto;}
+.sheet-foot{position:sticky;bottom:0;display:flex;gap:9px;justify-content:flex-end;align-items:center;
+  padding:14px 22px;background:linear-gradient(0deg,var(--tatami),rgba(243,238,227,.86));border-top:1px solid var(--line);}
+.foot-spacer{flex:1;}
+
+/* form fields */
+.field{display:flex;flex-direction:column;gap:6px;}
+.field>.label,.field label{font-family:var(--narrow);font-weight:700;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);}
+input[type=text],input[type=url],input[type=number],select,textarea{
+  width:100%;background:var(--tile);border:1.5px solid var(--line-strong);border-radius:11px;
+  padding:9px 12px;font-family:var(--mono);font-size:13px;color:var(--ink);
+  transition:border-color .2s,box-shadow .2s;
+}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(207,90,44,.14);}
+textarea{resize:vertical;line-height:1.5;}
+select{appearance:none;cursor:pointer;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='10'><path d='M0 2 L5 8 L10 2' stroke='%23766E5C' fill='none' stroke-width='1.5'/></svg>");background-repeat:no-repeat;background-position:right 12px center;padding-right:30px;}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;}
+.fieldset{background:var(--tile);border:1px solid var(--line);border-radius:15px;padding:15px;display:flex;flex-direction:column;gap:13px;}
+.fs-title{font-family:var(--display);font-weight:700;font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:8px;}
+.fs-title .fs-ico{font-size:15px;}
+.fs-title .sec-idx{font-family:var(--mono);font-size:10px;color:var(--accent);margin-left:auto;}
+
+/* bento toggle switch */
+.toggles{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.sw{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:12px;background:var(--tile-sunk);
+  border:1px solid var(--line);cursor:pointer;transition:background .2s,border-color .2s;}
+.sw:hover{background:#F1EAdc;}
+.sw .track{width:38px;height:22px;border-radius:999px;background:#D8CDB6;position:relative;flex:0 0 38px;transition:background .25s;}
+.sw .track::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:#fff;
+  box-shadow:var(--sh-1);transition:transform .28s var(--ease-bounce);}
+.sw input{display:none;}
+.sw input:checked+.track{background:var(--accent);}
+.sw input:checked+.track::after{transform:translateX(16px);}
+.sw .sw-ico{font-size:14px;}
+.sw .sw-lbl{font-family:var(--narrow);font-weight:600;font-size:12px;}
+.chk{display:flex;align-items:center;gap:10px;padding:9px 0;cursor:pointer;}
+.chk input{display:none;}
+.chk .box{width:20px;height:20px;border-radius:7px;border:1.5px solid var(--line-strong);background:var(--tile);display:flex;align-items:center;justify-content:center;flex:0 0 20px;transition:all .2s;}
+.chk input:checked+.box{background:var(--accent);border-color:var(--accent);}
+.chk input:checked+.box::after{content:"✓";color:#fff;font-size:12px;font-weight:700;}
+.chk .ctxt{font-family:var(--narrow);font-weight:600;font-size:12.5px;}
+
+details.adv{background:var(--tile);border:1px solid var(--line);border-radius:13px;overflow:hidden;}
+details.adv>summary{padding:12px 15px;font-family:var(--narrow);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;color:var(--ink-3);}
+details.adv>summary::-webkit-details-marker{display:none;}
+details.adv>summary::before{content:"▸";color:var(--accent);transition:transform .25s var(--ease);}
+details.adv[open]>summary::before{transform:rotate(90deg);}
+details.adv .adv-body{padding:0 15px 15px;display:flex;flex-direction:column;gap:13px;}
+
+.divider-label{display:flex;align-items:center;gap:var(--s3);margin:var(--s2) 0 0;}
+.divider-label .label{color:var(--accent);}
+.divider-label .ln{flex:1;height:1px;background:var(--line-strong);}
+
+.fix-list{margin:0;padding-left:18px;font-family:var(--body);font-size:12.5px;color:var(--ink-2);line-height:1.7;}
+.status-box{background:#211E16;color:#D6CBAE;border-radius:11px;padding:12px 14px;font-family:var(--mono);font-size:11.5px;line-height:1.6;min-height:70px;}
+.status-box .ok{color:#5FD0AE;} .status-box .err{color:#F09A78;}
+
+/* ---- live view ---- */
+.lv-overlay{position:fixed;inset:0;z-index:1300;display:none;flex-direction:column;background:rgba(20,18,12,.93);}
+.lv-overlay.show{display:flex;}
+.lv-head{display:flex;align-items:center;gap:14px;padding:14px 22px;border-bottom:1px solid rgba(243,238,227,.18);color:var(--tatami);}
+.lv-head .lvi{font-size:18px;}
+.lv-head .lv-label{font-family:var(--display);font-weight:700;font-size:16px;}
+.lv-head .lv-status{font-family:var(--mono);font-size:11px;color:#5FD0AE;}
+.lv-head .lv-tools{margin-left:auto;display:flex;gap:8px;}
+.lv-stage{flex:1;display:flex;align-items:center;justify-content:center;padding:var(--s5);}
+.lv-canvas-wrap{border-radius:14px;overflow:hidden;border:1px solid rgba(243,238,227,.3);background:#000;box-shadow:var(--sh-3);}
+#lvCanvas{display:block;max-height:78vh;width:auto;}
+
+/* ============================================================
+   INVENTORY PAGE
+   ============================================================ */
+.inv-bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:var(--s4);}
+.inv-bar h2{font-family:var(--display);font-weight:800;font-size:22px;display:flex;align-items:center;gap:9px;}
+.inv-bar h2 .sec-idx{font-family:var(--mono);font-size:13px;color:var(--accent);}
+.tabs{display:inline-flex;gap:5px;background:var(--tile);padding:5px;border-radius:13px;box-shadow:var(--sh-1);border:1px solid var(--line);}
+.tab{padding:8px 16px;border-radius:10px;font-family:var(--narrow);font-weight:700;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);transition:all .25s var(--ease);}
+.tab .ti{font-family:var(--mono);font-size:10px;color:var(--ink-4);margin-right:5px;}
+.tab.on{background:linear-gradient(135deg,var(--accent-soft),#FBEEE4);color:var(--accent);box-shadow:var(--sh-1);}
+.tab:hover:not(.on){background:var(--tile-sunk);}
+.inv-toolbar{display:flex;flex-wrap:wrap;gap:11px;align-items:flex-end;margin-bottom:var(--s5);}
+.inv-toolbar .field{min-width:118px;}
+.inv-toolbar .field input,.inv-toolbar .field select{width:auto;min-width:110px;}
+.inv-secondary{display:none;}
+.inv-secondary.on{display:block;}
+
+.sp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px;}
+.sp-card{background:var(--tile);border-radius:var(--r-md);padding:15px;box-shadow:var(--sh-1);border:1px solid var(--line);
+  position:relative;overflow:hidden;transition:transform .3s var(--ease),box-shadow .3s;}
+.sp-card:hover{transform:translateY(-3px);box-shadow:var(--sh-2);}
+.sp-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--accent);border-radius:var(--r-md) 0 0 var(--r-md);}
+.sp-top{display:flex;justify-content:space-between;align-items:baseline;}
+.sp-name{font-family:var(--display);font-weight:700;font-size:15px;}
+.sp-lv{font-family:var(--mono);font-weight:700;font-size:12px;color:var(--accent);}
+.sp-id{font-family:var(--mono);font-size:10px;color:var(--ink-4);margin-top:3px;}
+.sp-aff{margin-top:11px;display:flex;flex-direction:column;gap:0;}
+.sp-aff .af{display:flex;justify-content:space-between;font-family:var(--narrow);font-weight:600;font-size:11.5px;border-bottom:1px solid var(--line);padding:4px 0;}
+.sp-aff .af:last-child{border-bottom:none;}
+.sp-aff .af .afv{font-family:var(--mono);font-weight:700;color:var(--ink-2);}
+
+.hist{display:flex;flex-wrap:wrap;gap:9px;margin-bottom:var(--s5);}
+.hist .q{display:inline-flex;flex-direction:column;align-items:center;gap:2px;padding:9px 16px;border-radius:12px;
+  background:var(--tile);box-shadow:var(--sh-1);border:1px solid var(--line);min-width:58px;}
+.hist .q .qn{font-family:var(--mono);font-weight:700;font-size:17px;}
+.hist .q .ql{font-family:var(--narrow);font-size:9px;color:var(--ink-3);letter-spacing:.1em;text-transform:uppercase;}
+.gem-tablewrap{background:var(--tile);border-radius:var(--r-md);overflow:auto;box-shadow:var(--sh-1);border:1px solid var(--line);}
+table.gem{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12px;}
+table.gem th{font-family:var(--narrow);font-weight:700;font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  text-align:left;padding:11px 14px;background:var(--tile-sunk);color:var(--ink-3);cursor:pointer;white-space:nowrap;}
+table.gem th:hover{color:var(--accent);}
+table.gem td{padding:10px 14px;border-top:1px solid var(--line);}
+table.gem tr:hover td{background:var(--tile-sunk);}
+table.gem .qcell{font-weight:700;color:var(--accent);}
+
+/* labeler / readme */
+.panel{background:var(--tile);border-radius:var(--r-lg);box-shadow:var(--sh-2);border:1px solid var(--line);margin-bottom:var(--s5);overflow:hidden;}
+.panel-head{display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--line);}
+.panel-head h3{font-family:var(--display);font-weight:800;font-size:16px;display:flex;align-items:center;gap:9px;}
+.panel-head .sec-no{font-family:var(--mono);font-size:10px;color:var(--accent);}
+.panel-body{padding:20px;}
+.metric-row{display:flex;gap:11px;flex-wrap:wrap;margin:16px 0;}
+.metric{flex:1;min-width:80px;background:var(--tile-sunk);border-radius:12px;padding:11px 13px;border:1px solid var(--line);position:relative;}
+.metric::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ink-4);border-radius:12px 0 0 12px;}
+.metric.m-accent::before{background:var(--accent);}
+.metric.m-alive::before{background:var(--alive);}
+.metric .m-n{font-family:var(--mono);font-weight:700;font-size:22px;}
+.metric .m-l{font-family:var(--narrow);font-size:10px;color:var(--ink-3);font-weight:700;letter-spacing:.06em;text-transform:uppercase;margin-top:2px;}
+.readme-frame{width:100%;height:70vh;background:var(--tile);border-radius:var(--r-lg);box-shadow:var(--sh-2);border:1px solid var(--line);display:grid;place-items:center;color:var(--ink-4);font-family:var(--mono);font-size:13px;}
+
+/* mobile fab */
+.mobile-fab{display:none;position:fixed;left:16px;bottom:16px;z-index:60;width:50px;height:50px;border-radius:16px;
+  place-items:center;font-size:21px;background:var(--ink);color:#fff;box-shadow:var(--sh-3);}
+
+/* ============================================================
+   RESPONSIVE — 1440 / 768 / 390
+   ============================================================ */
+@media(max-width:1200px){
+  .summary{grid-template-columns:1fr 1fr;}
+  .dev,.dev.wide,.dev.tall,.dev.feat{grid-column:span 6;}
+}
+@media(max-width:900px){
+  .dev,.dev.wide,.dev.tall,.dev.feat{grid-column:span 6;}
+}
+@media(max-width:768px){
+  .rail{position:fixed;left:0;top:0;transform:translateX(-100%);transition:transform .4s var(--ease);box-shadow:var(--sh-3);}
+  .shell.nav-open .rail{transform:translateX(0);}
+  .shell.collapsed .rail{width:var(--rail-w);flex-basis:var(--rail-w);}
+  .mobile-fab{display:grid;}
+  .summary{grid-template-columns:1fr;}
+  .bento{grid-template-columns:1fr;}
+  .dev,.dev.wide,.dev.tall,.dev.feat{grid-column:span 1;}
+  .grid2,.grid3{grid-template-columns:1fr;}
+  .toggles{grid-template-columns:1fr;}
+  .tb-title .kick,.tb-date{display:none;}
+}
+@media(max-width:390px){
+  .page{padding:16px;}
+  .topbar{padding:12px 16px;}
+  .cd-figure{font-size:28px;}
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important;}
+}
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+
+  <!-- ==================== SIDE RAIL ==================== -->
+  <nav class="rail" id="rail" aria-label="主導覽">
+    <div class="rail-head">
+      <div class="brand-badge">🍄</div>
+      <div class="brand-name">菇勇者<small>便當帳本 中控</small></div>
+      <button class="toggle-btn" onclick="toggleSidebar()" aria-label="收合側欄" title="收合 / 展開">☰</button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">面板 / Panels</div>
+      <button class="nav-item active" onclick="switchPage('dashboard',this)"><span class="ico">🍱</span><span class="txt">儀表板 Dashboard</span><span class="idx">01</span></button>
+      <button class="nav-item" onclick="switchPage('labeler',this)"><span class="ico">🏷️</span><span class="txt">標註 Labeler</span><span class="idx">02</span></button>
+      <button class="nav-item" onclick="switchPage('inventory',this)"><span class="ico">📦</span><span class="txt">倉庫 Inventory</span><span class="idx">03</span></button>
+      <button class="nav-item" onclick="switchPage('readme',this)"><span class="ico">📢</span><span class="txt">公告 Readme</span><span class="idx">04</span></button>
+    </div>
+
+    <div class="nav-group">
+      <div class="nav-label">外部 / External</div>
+      <a class="nav-item" href="/fly-pet"><span class="ico">🦋</span><span class="txt">飛寵 Fly-Pet</span><span class="idx">05</span></a>
+    </div>
+
+    <div class="nav-foot">
+      <div class="label">Build 4.6.0 · Bento Ledger</div>
+      <button class="nav-item" onclick="openProgramInfoModal()"><span class="ico">📘</span><span class="txt">系統資訊</span></button>
+    </div>
+  </nav>
+
+  <!-- ==================== MAIN ==================== -->
+  <div class="main">
+
+    <!-- ===== TOP BAR ===== -->
+    <header class="topbar">
+      <div class="tb-title">
+        <span class="mark">🍱</span>
+        <h1>菇勇者<span class="accent">全自動掛機</span></h1>
+        <span class="kick">中央控制台</span>
+        <span class="tb-date">2026·06·14</span>
+      </div>
+
+      <div class="ocr-chip ok" id="ocr-status" title="OCR 服務狀態">
+        <span class="dot"></span><span>OCR 服務正常</span><span class="rt" id="ocr-runtime">192.168.1.40:8866 · 41ms</span>
+      </div>
+
+      <div class="prog-card" tabindex="0" role="button" aria-label="程式資訊" onclick="openProgramInfoModal()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openProgramInfoModal();}">
+        <span class="pc-ico">📘</span>
+        <span><span class="v">v4.6.0</span><span class="git">2026-06-14 02:11</span></span>
+      </div>
+
+      <div class="tb-spacer"></div>
+
+      <div class="tb-actions">
+        <button class="btn ghost icon" onclick="openBugFeedbackModal()" title="回報問題" aria-label="回報問題"><span class="bi">🐞</span></button>
+        <button class="btn ghost icon" onclick="openOcrSettings()" title="OCR 設定" aria-label="OCR 設定"><span class="bi">⚙️</span></button>
+        <button class="btn ghost sm" onclick="toast('已送出 ADB 重啟')"><span class="bi">🔌</span><span class="lbl">重啟 ADB</span></button>
+        <button class="btn amber sm" onclick="toast('全部暫停')"><span class="bi">⏸</span><span class="lbl">全部暫停</span></button>
+        <button class="btn alive sm" onclick="toast('全部恢復')"><span class="bi">▶</span><span class="lbl">全部恢復</span></button>
+        <button class="btn degr sm" onclick="toast('全部跳過睡眠')"><span class="bi">⏭</span><span class="lbl">跳過睡眠</span></button>
+        <button class="btn solid sm" onclick="openRegisterModal()"><span class="gn">＋</span><span class="lbl">新增帳號</span></button>
+      </div>
+    </header>
+
+    <!-- ===== DASHBOARD PAGE ===== -->
+    <section class="page active" id="page-dashboard">
+
+      <!-- fleet summary stats row -->
+      <section class="summary" aria-label="總覽統計">
+        <div class="s-tile hero">
+          <div class="s-ico">🍄</div>
+          <div class="s-num num">05<span class="slash">/</span>08</div>
+          <div class="s-lbl">裝置在線 · 平均擷圖 37ms</div>
+          <div class="spark" aria-hidden="true">
+            <i style="height:42%"></i><i style="height:64%"></i><i style="height:51%"></i><i style="height:78%"></i>
+            <i style="height:60%"></i><i style="height:88%"></i><i style="height:72%"></i><i style="height:95%"></i>
+            <i style="height:80%"></i><i style="height:66%"></i><i style="height:90%"></i><i style="height:74%"></i>
+          </div>
+          <div class="s-deco">📈</div>
+        </div>
+        <div class="s-tile t-warn"><div class="s-ico">⏸</div><div class="s-num num">01</div><div class="s-lbl">已暫停 Paused</div><div class="s-deco">⏸</div></div>
+        <div class="s-tile t-degr"><div class="s-ico">🛰️</div><div class="s-num num">01</div><div class="s-lbl">WS 後援 / 離線</div><div class="s-deco">🛰️</div></div>
+        <div class="s-tile t-alive"><div class="s-ico">🪔</div><div class="s-num num">147</div><div class="s-lbl">今日神燈次數</div><div class="s-deco">🪔</div></div>
+      </section>
+
+      <!-- bento device mosaic -->
+      <section class="bento" id="deviceGrid" aria-label="裝置卡片"></section>
+    </section>
+
+    <!-- ===== INVENTORY PAGE ===== -->
+    <section class="page" id="page-inventory">
+      <div class="inv-bar">
+        <h2><span class="sec-idx">03 /</span>倉庫檢視</h2>
+        <div class="tabs">
+          <button class="tab on" id="tabSpirit" onclick="invTab('spirit',this)"><span class="ti">A</span>守護靈 Spirit</button>
+          <button class="tab" id="tabGem" onclick="invTab('gem',this)"><span class="ti">B</span>附魔寶石 Gem</button>
+        </div>
+        <div class="field" style="min-width:170px"><span class="label">裝置</span>
+          <select id="invDev"><option>emulator-5554</option><option>emulator-5560</option><option>adb-fc65396d</option></select>
+        </div>
+        <span class="status-pill ONLINE" style="margin-left:auto"><span class="sd"></span>已載入 36 筆</span>
+      </div>
+
+      <!-- spirit -->
+      <div id="secSpirit" class="inv-secondary on">
+        <div class="inv-toolbar">
+          <div class="field"><span class="label">詞條</span><input type="text" placeholder="輸入詞條名"></div>
+          <div class="field"><span class="label">最低等級</span><input type="number" value="0" style="width:90px"></div>
+          <div class="field"><span class="label">鎖定</span><select><option>全部</option><option>已鎖定</option><option>未鎖定</option></select></div>
+          <div class="field"><span class="label">排序</span><select><option>等級 ↓</option><option>config_id</option></select></div>
+          <button class="btn solid sm" onclick="toast('已載入 24 個守護靈')"><span class="bi">↓</span><span class="lbl">載入</span></button>
+        </div>
+        <div class="sp-grid" id="spGrid"></div>
+      </div>
+
+      <!-- gem -->
+      <div id="secGem" class="inv-secondary">
+        <div class="inv-toolbar">
+          <div class="field"><span class="label">屬性</span><input type="text" placeholder="屬性名"></div>
+          <div class="field"><span class="label">品質 ≤</span><input type="number" value="7" style="width:80px"></div>
+          <div class="field"><span class="label">套裝</span><input type="number" placeholder="suit" style="width:80px"></div>
+          <label class="chk"><input type="checkbox"><span class="box"></span><span class="ctxt">僅未鎖</span></label>
+          <label class="chk"><input type="checkbox"><span class="box"></span><span class="ctxt">含隨機詞條</span></label>
+          <div class="field"><span class="label">標記最低 N</span><input type="number" value="5" style="width:80px"></div>
+          <button class="btn amber sm" onclick="toast('已標記 5 顆最低品質')"><span class="bi">×</span><span class="lbl">選候選</span></button>
+          <button class="btn solid sm" onclick="toast('已分解 5 顆寶石')"><span class="bi">⚒</span><span class="lbl">分解</span></button>
+        </div>
+        <div class="hist" id="gHist"></div>
+        <div class="gem-tablewrap">
+          <table class="gem">
+            <thead><tr>
+              <th onclick="toast('排序 quality')">品質</th><th onclick="toast('排序 suit')">套裝</th>
+              <th onclick="toast('排序 pos')">位置</th><th onclick="toast('排序 lv')">等級</th>
+              <th>主屬</th><th>隨機詞條</th><th>鎖</th><th>ID</th>
+            </tr></thead>
+            <tbody id="gBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== LABELER PAGE ===== -->
+    <section class="page" id="page-labeler">
+      <div class="panel">
+        <div class="panel-head"><h3><span>🏷️</span>設定 Configuration</h3><span class="sec-no">02 · A</span></div>
+        <div class="panel-body">
+          <div class="grid2">
+            <div class="field"><span class="label">LLM Endpoint</span><input type="url" value="http://192.168.1.50:11434"></div>
+            <div class="field"><span class="label">Model</span><input type="text" value="qwen2-vl:7b"></div>
+          </div>
+          <div class="grid2" style="margin-top:14px">
+            <div class="field"><span class="label">每日時間</span><input type="text" value="03:30"></div>
+            <div class="field"><span class="label">輸出目錄</span><input type="text" value="miner/labeled/"></div>
+          </div>
+          <div class="actions" style="margin-top:16px">
+            <button class="btn solid sm" onclick="toast('已儲存')"><span class="bi">✓</span><span class="lbl">儲存</span></button>
+            <button class="btn degr sm" onclick="toast('連線正常')"><span class="bi">◎</span><span class="lbl">測試連線</span></button>
+            <button class="btn sm" onclick="toast('執行一次')"><span class="bi">▶</span><span class="lbl">跑一次</span></button>
+            <button class="btn amber sm" onclick="toast('已暫停')"><span class="bi">‖</span><span class="lbl">暫停</span></button>
+            <button class="btn sm" onclick="toast('已終止')"><span class="bi">■</span><span class="lbl">終止</span></button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3><span>📊</span>狀態 Status</h3><span class="sec-no">02 · B</span></div>
+        <div class="panel-body">
+          <div class="metric-row">
+            <div class="metric m-accent"><div class="m-n">847<span style="color:var(--ink-4)">/1200</span></div><div class="m-l">Done / Total</div></div>
+            <div class="metric m-alive"><div class="m-n">812</div><div class="m-l">已保留 Kept</div></div>
+            <div class="metric"><div class="m-n">35</div><div class="m-l">已刪除 Deleted</div></div>
+            <div class="metric m-accent"><div class="m-n">02</div><div class="m-l">Errors</div></div>
+          </div>
+          <div class="status-box">
+            <div>[03:30:12] <span class="ok">RUN</span> labeler started · source=miner/raw/</div>
+            <div>[03:31:48] classified 0432.png → mine_v · conf 0.94</div>
+            <div>[03:32:05] <span class="err">WARN</span> 0455.png low conf 0.41 · skipped</div>
+            <div>[03:34:22] batch 100/1200 · kept 96 deleted 4</div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3><span>🧠</span>訓練 Trainer</h3><span class="sec-no">02 · C</span></div>
+        <div class="panel-body">
+          <div class="grid2">
+            <div class="field"><span class="label">Epochs</span><input type="number" value="30" style="width:120px"></div>
+            <label class="sw" style="align-self:end"><input type="checkbox"><span class="track"></span><span class="sw-lbl">訓練後移除來源</span></label>
+          </div>
+          <div class="actions" style="margin-top:16px"><button class="btn solid sm" onclick="toast('開始訓練')"><span class="bi">⚙</span><span class="lbl">開始訓練</span></button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== README PAGE ===== -->
+    <section class="page" id="page-readme">
+      <div class="inv-bar"><h2><span class="sec-idx">04 /</span>公告 Updates</h2></div>
+      <div class="readme-frame" id="readmeFrame">📢 更新公告 iframe · /updates/ · 首次切換時延遲載入</div>
+    </section>
+
+  </div>
+</div>
+
+<button class="mobile-fab" onclick="document.getElementById('shell').classList.toggle('nav-open')" aria-label="開啟導覽">☰</button>
+
+<!-- ==================== MODALS ==================== -->
+<!-- DEVICE CONFIG -->
+<div class="overlay" id="configModal" onclick="if(event.target===this)closeModal()">
+  <div class="sheet lg">
+    <div class="sheet-head">
+      <div class="mh-ico">⚙️</div>
+      <div><span class="sec-no">CONFIG · DEVICE</span><h3 id="cfgTitle">emulator-5554</h3><div class="sub">每裝置設定 — 後端 / 排程 / 功能開關</div></div>
+      <button class="x-close" onclick="closeModal()" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="grid2">
+        <div class="field"><span class="label">顯示名稱</span><input type="text" id="editName" value="主控 5554"></div>
+        <div class="field"><span class="label">後端 Backend</span>
+          <select id="editBackend" onchange="toggleBackendInputs()">
+            <option value="adb">adb</option><option value="adb+ws">adb + ws</option>
+            <option value="h5">h5</option><option value="h5+ws">h5 + ws</option><option value="ws_token">ws_token</option>
+          </select>
+        </div>
+      </div>
+      <label class="chk"><input type="checkbox" id="chkEnabled" checked><span class="box"></span><span class="ctxt">啟用自動掛機</span></label>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🅿️</span>泊車 / Carpark<span class="sec-idx">A</span></div>
+        <div class="grid2">
+          <label class="sw"><input type="checkbox" id="chkCarparkEnabled"><span class="track"></span><span class="sw-ico">🚗</span><span class="sw-lbl">啟用跨服泊車</span></label>
+          <div class="field"><span class="label">等級</span><select id="editCarparkTier"><option>泊銀 Silver</option></select></div>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">⏱️</span>執行間隔 / Runtime<span class="sec-idx">B</span></div>
+        <div class="grid3">
+          <div class="field"><span class="label">線上檢查</span><input type="number" value="6"></div>
+          <div class="field"><span class="label">神燈間隔 h</span><input type="number" value="2"></div>
+          <div class="field"><span class="label">神燈時長 s</span><input type="number" value="120"></div>
+          <div class="field"><span class="label">挖礦時長 m</span><input type="number" value="8"></div>
+          <div class="field"><span class="label">睡眠最短 h</span><input type="number" step="0.5" id="editSleepMinHours" value="1"></div>
+          <div class="field"><span class="label">睡眠最長 h</span><input type="number" step="0.5" id="editSleepMaxHours" value="3"></div>
+        </div>
+        <div class="grid2">
+          <div class="field"><span class="label">挖礦 Planner</span>
+            <select id="editMiningPlanner"><option>v5 （預設）</option><option>v4</option><option>v3</option><option>v1</option></select></div>
+          <div></div>
+        </div>
+      </div>
+
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🎛️</span>功能開關 / Features<span class="sec-idx">C</span></div>
+        <div class="toggles">
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🌾</span><span class="sw-lbl">農場 Farm</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🥊</span><span class="sw-lbl">武道會 Arena</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">⛏️</span><span class="sw-lbl">挖礦 Mining</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">🪔</span><span class="sw-lbl">WS 開神燈</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">⚡</span><span class="sw-lbl">WS 挖礦</span></label>
+          <label class="sw"><input type="checkbox" checked><span class="track"></span><span class="sw-ico">🔥</span><span class="sw-lbl">地獄之門 Dungeon</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">📱</span><span class="sw-lbl">真機模式</span></label>
+          <label class="sw"><input type="checkbox"><span class="track"></span><span class="sw-ico">🛰️</span><span class="sw-lbl">WS 離線備援</span></label>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="field"><span class="label">WS 神燈 閾值 %</span><input type="number" id="inpWsLampPercent" value="80"></div>
+        <div class="field"><span class="label">WS 神燈 最少保留</span><input type="number" id="inpWsLampMinKeep" value="3"></div>
+      </div>
+
+      <details class="adv">
+        <summary>🔧 進階 Web 設定</summary>
+        <div class="adv-body">
+          <div class="grid2">
+            <div class="field"><span class="label">Canvas Selector</span><input type="text" value="#GameCanvas"></div>
+            <div class="field"><span class="label">瀏覽器通道</span><input type="text" value="chrome"></div>
+            <div class="field"><span class="label">Viewport W</span><input type="number" id="editWebViewportWidth" value="540"></div>
+            <div class="field"><span class="label">Viewport H</span><input type="number" id="editWebViewportHeight" value="960"></div>
+          </div>
+          <div class="toggles">
+            <label class="sw"><input type="checkbox" id="chkWebHeadless" checked><span class="track"></span><span class="sw-lbl">Headless</span></label>
+            <label class="sw"><input type="checkbox" id="chkWebClearCookies"><span class="track"></span><span class="sw-lbl">清除 Cookies</span></label>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn degr sm" onclick="toast('開啟登入')"><span class="bi">↗</span><span class="lbl">Web 登入</span></button>
+      <button class="btn ghost sm" onclick="toast('已備份')"><span class="bi">⎙</span><span class="lbl">備份 Cookies</span></button>
+      <div class="foot-spacer"></div>
+      <button class="btn ghost sm" onclick="closeModal()"><span class="lbl">取消</span></button>
+      <button class="btn solid sm" onclick="closeModal();toast('已儲存設定')"><span class="bi">✓</span><span class="lbl">儲存</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR CONFIG -->
+<div class="overlay" id="ocrModal" onclick="if(event.target===this)closeOcrModal()">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div class="mh-ico" style="background:linear-gradient(140deg,var(--degr-soft),#E8EFF4)">🔍</div>
+      <div><span class="sec-no">CONFIG · OCR</span><h3>OCR 設定</h3><div class="sub">伺服器與重試策略</div></div>
+      <button class="x-close" onclick="closeOcrModal()" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="field"><span class="label">模式 Mode</span><select><option>Auto</option><option>Main</option><option>Backup</option></select></div>
+      <div class="field"><span class="label">伺服器 Servers (一行一個)</span><textarea rows="3">http://192.168.1.40:8866
+http://192.168.1.41:8866</textarea></div>
+      <div class="grid3">
+        <div class="field"><span class="label">逾時 s</span><input type="number" value="20"></div>
+        <div class="field"><span class="label">解碼重試</span><input type="number" value="3"></div>
+        <div class="field"><span class="label">空結果重試</span><input type="number" value="2"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><span class="label">重試延遲 s</span><input type="number" step="0.1" value="0.6"></div>
+        <label class="sw" style="align-self:end"><input type="checkbox"><span class="track"></span><span class="sw-lbl">啟用預設區域</span></label>
+      </div>
+      <div class="fieldset">
+        <div class="fs-title"><span class="fs-ico">🗺️</span>區域邊界 / Region Bounds</div>
+        <div class="grid2">
+          <div class="field"><span class="label">X min</span><input type="number" value="0"></div>
+          <div class="field"><span class="label">X max</span><input type="number" value="540"></div>
+          <div class="field"><span class="label">Y min</span><input type="number" value="0"></div>
+          <div class="field"><span class="label">Y max</span><input type="number" value="960"></div>
+        </div>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn ghost sm" onclick="closeOcrModal()"><span class="lbl">取消</span></button>
+      <button class="btn solid sm" onclick="closeOcrModal();toast('OCR 設定已儲存')"><span class="bi">✓</span><span class="lbl">儲存</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- PROGRAM INFO -->
+<div class="overlay" id="programInfoModal" onclick="if(event.target===this)closeProgramInfoModal(event)">
+  <div class="sheet" style="max-width:520px">
+    <div class="sheet-head">
+      <div class="mh-ico" style="background:linear-gradient(140deg,var(--accent-soft),#FBEFE6)">📘</div>
+      <div><span class="sec-no">SYSTEM · INFO</span><h3>程式資訊</h3><div class="sub">版本與修正紀錄</div></div>
+      <button class="x-close" onclick="closeProgramInfoModal()" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="ledger">
+        <div class="lrow"><span class="label">Version</span><span class="val"><span class="mono">v4.6.0</span></span></div>
+        <div class="lrow"><span class="label">Git Time</span><span class="val"><span class="mono">2026-06-14 02:11</span></span></div>
+        <div class="lrow"><span class="label">Frontend</span><span class="val"><span class="mono">bento-ledger · 1.0.0</span></span></div>
+      </div>
+      <div class="fieldset" style="background:var(--alive-soft);border-color:#BFE0D3">
+        <div class="fs-title" style="color:var(--alive)"><span class="fs-ico">✅</span>本次修正</div>
+        <ul class="fix-list">
+          <li>修正 WS-fallback 離線誤判</li>
+          <li>carpark 配額持久化修復</li>
+          <li>v5 priors 污染問題排除</li>
+          <li>dashboard 模組化 + ADB token 撈取</li>
+        </ul>
+      </div>
+    </div>
+    <div class="sheet-foot"><button class="btn solid sm" onclick="closeProgramInfoModal()"><span class="lbl">關閉</span></button></div>
+  </div>
+</div>
+
+<!-- BUG FEEDBACK -->
+<div class="overlay" id="bugModal" onclick="if(event.target===this)closeBugFeedbackModal(event)">
+  <div class="sheet">
+    <div class="sheet-head">
+      <div class="mh-ico" style="background:linear-gradient(140deg,var(--paused-soft),#F8EFD6)">🐞</div>
+      <div><span class="sec-no">FEEDBACK · BUG</span><h3>問題回報</h3><div class="sub">協助我們改善自動化</div></div>
+      <button class="x-close" onclick="closeBugFeedbackModal()" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="field"><span class="label">標題</span><input type="text" placeholder="簡述問題"></div>
+      <div class="field"><span class="label">詳細描述 (步驟 / 預期 / 實際)</span><textarea rows="8"></textarea></div>
+      <div class="field"><span class="label">回報人 (選填)</span><input type="text"></div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn ghost sm" onclick="closeBugFeedbackModal()"><span class="lbl">取消</span></button>
+      <button class="btn solid sm" onclick="closeBugFeedbackModal();toast('已送出回報')"><span class="bi">↗</span><span class="lbl">送出</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- REGISTER -->
+<div class="overlay" id="registerModal" onclick="if(event.target===this)closeRegisterModal()">
+  <div class="sheet" style="max-width:520px">
+    <div class="sheet-head">
+      <div class="mh-ico" style="background:linear-gradient(140deg,var(--accent-soft),#FBEFE6)">＋</div>
+      <div><span class="sec-no">FLEET · ADD</span><h3>新增帳號</h3><div class="sub">註冊裝置並啟動登入流程</div></div>
+      <button class="x-close" onclick="closeRegisterModal()" aria-label="關閉">✕</button>
+    </div>
+    <div class="sheet-body">
+      <div class="field"><span class="label">裝置 ID (英數 / _ / -)</span><input type="text" placeholder="emulator-5562"></div>
+      <div class="field"><span class="label">Web URL (選填)</span><input type="url" placeholder="使用預設"></div>
+      <div class="divider-label"><span class="label">狀態 / Status</span><span class="ln"></span></div>
+      <div class="status-box" id="regStatusBox">等待提交…</div>
+    </div>
+    <div class="sheet-foot">
+      <button class="btn ghost sm" onclick="closeRegisterModal()"><span class="lbl">取消</span></button>
+      <button class="btn solid sm" onclick="document.getElementById('regStatusBox').innerHTML='<span class=ok>POLL</span> 註冊成功 · 等待登入畫面…'"><span class="gn">＋</span><span class="lbl">提交</span></button>
+    </div>
+  </div>
+</div>
+
+<!-- LIVE VIEW -->
+<div class="lv-overlay" id="liveViewModal">
+  <div class="lv-head">
+    <span class="lvi">📺</span>
+    <span class="lv-label" id="lvDeviceLabel">emulator-5554</span>
+    <span class="lv-status" id="lvStatus">直播中 · LIVE</span>
+    <div class="lv-tools">
+      <button class="btn amber sm" onclick="toast('已關閉瀏覽器')"><span class="bi">⊗</span><span class="lbl">關閉瀏覽器</span></button>
+      <button class="btn ghost sm" onclick="closeLiveView()"><span class="bi">✕</span><span class="lbl">關閉</span></button>
+    </div>
+  </div>
+  <div class="lv-stage">
+    <div class="lv-canvas-wrap"><canvas id="lvCanvas" width="540" height="960"></canvas></div>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(130%);
+  background:var(--ink);color:var(--tatami);font-family:var(--narrow);font-weight:700;font-size:12px;
+  letter-spacing:.08em;text-transform:uppercase;padding:13px 22px;border-radius:13px;border-left:3px solid var(--accent);
+  box-shadow:var(--sh-3);z-index:2000;transition:transform .4s var(--ease);"></div>
+
+<script>
+/* ===================== FAKE FLEET DATA (verbatim from swiss-grid.html) ===================== */
+var DEVICES=[
+ {ip:"emulator-5554",name:"主控 5554",status:"ONLINE",task:"挖礦 / Oracle",step:"執行第 3 步 規劃",stepClock:"剩 1m 12s",wake:{m:14,s:38},backend:"adb+ws",planner:"v5",sst:34,realPhone:false,
+  logs:["[02:11:04] miner v5 plan ok ms=22","[02:11:06] dig (3,4) pickaxe","[02:11:08] scroll row6 cleared"],
+  progress:[["地獄之門",1],["農場",1],["寶箱",1],["家族",1],["商店",1],["挖礦",0],["武道會",0],["神燈",1]],
+  carpark:{cur:4,tgt:6,worst:2.4,next:"09:59",cars:[{pos:"P1",rem:0.4,t:8},{pos:"P2",rem:2.4,t:6},{pos:"P3",rem:5.1,t:3},{pos:"P4",rem:7.8,t:1}]}},
+
+ {ip:"emulator-5560",name:"副控 5560",status:"ONLINE",task:"農場任務 / Farm",step:"收割中",stepClock:"",wake:{m:42,s:5},backend:"adb",planner:"v5",sst:29,realPhone:false,
+  logs:["[02:09:51] farm harvest x12","[02:10:02] plant 豐收卡","[02:10:30] farm done gate 8h"],
+  progress:[["地獄之門",1],["農場",1],["寶箱",1],["家族",0],["商店",1],["挖礦",1],["武道會",1],["神燈",0]]},
+
+ {ip:"emulator-5556",name:"賞金 5556",status:"ONLINE",task:"萬神試煉 / Weekly",step:"Boss 第 2 波",stepClock:"剩 0m 48s",wake:{m:3,s:22},backend:"adb+ws",planner:"v4",sst:41,realPhone:false,
+  logs:["[02:08:12] weekly trial enter","[02:08:40] auto-combat wave1 clear","[02:09:00] wave2 dps ramp"],
+  progress:[["地獄之門",1],["農場",1],["寶箱",0],["家族",1],["商店",0],["挖礦",1],["武道會",1],["神燈",1]]},
+
+ {ip:"adb-fc65396d",name:"手機 FC",status:"DEGRADED",task:"WS 離線備援",step:"WS token refresh",stepClock:"剩 0m 19s",wake:{m:8,s:55},backend:"ws_token",planner:"v5",sst:0,realPhone:true,
+  logs:["[02:07:30] ws_token bootstrap ok","[02:07:44] degraded: adb lost, ws active","[02:07:58] idle 2h reward claim"],
+  progress:[["地獄之門",1],["農場",0],["寶箱",1],["家族",1],["商店",1],["挖礦",0],["武道會",0],["神燈",1]]},
+
+ {ip:"emulator-5558",name:"漫遊 5558",status:"ONLINE",task:"航海任務 / Sea",step:"季節獎勵領取",stepClock:"",wake:{m:71,s:0},backend:"h5+ws",planner:"v5",sst:52,realPhone:false,
+  logs:["[02:05:10] sea season reward","[02:05:40] h5 viewport 540x960","[02:06:00] ws ticket refreshed"],
+  progress:[["地獄之門",1],["農場",1],["寶箱",1],["家族",1],["商店",1],["挖礦",1],["武道會",0],["神燈",1]]},
+
+ {ip:"emulator-5562",name:"測試 5562",status:"PAUSED",task:"— 暫停 —",step:"使用者手動暫停",stepClock:"",wake:null,backend:"h5",planner:"v3",sst:48,realPhone:false,
+  logs:["[01:58:00] paused by operator","[01:58:01] holding for manual","[01:58:02] live-view available"],
+  progress:[["地獄之門",1],["農場",1],["寶箱",0],["家族",0],["商店",0],["挖礦",0],["武道會",0],["神燈",0]]},
+
+ {ip:"192.168.1.77",name:"遠端 R77",status:"OFFLINE",task:"連線中斷 > 1h",step:"—",stepClock:"",wake:null,backend:"adb",planner:"v5",sst:0,realPhone:false,
+  logs:["[00:42:11] heartbeat lost","[00:42:11] mark OFFLINE","[—] awaiting reconnect"],
+  progress:[["地獄之門",0],["農場",0],["寶箱",0],["家族",0],["商店",0],["挖礦",0],["武道會",0],["神燈",0]]},
+
+ {ip:"emulator-5564",name:"備援 5564",status:"DISABLED",task:"— 已停用 —",step:"等待啟用 / 需登入",stepClock:"",wake:null,backend:"h5",planner:"v5",sst:0,realPhone:false,
+  logs:["[—] device disabled","[—] open web for setup","[—] no auth state"],
+  progress:[["地獄之門",0],["農場",0],["寶箱",0],["家族",0],["商店",0],["挖礦",0],["武道會",0],["神燈",0]]}
+];
+
+/* per-device emoji avatar (fusion add) */
+var AVATAR={"emulator-5554":"🍄","emulator-5560":"📦","emulator-5556":"🏛️","adb-fc65396d":"📱","emulator-5558":"⛵","emulator-5562":"🌙","192.168.1.77":"🔌","emulator-5564":"😴"};
+
+/* varied bento footprints (fusion composition): device 0 = feature hero (viz),
+   device 4 = wide, device 5 = tall, rest = normal */
+var FOOTPRINT={0:"feat",4:"wide",5:"tall"};
+/* near-6-board mining depth viz for the feature tile */
+var DEPTH_BARS=[24,31,28,37,33,41];
+
+var BACKEND_LABEL={"adb":"adb","adb+ws":"adb + ws","h5":"h5","h5+ws":"h5 + ws","ws_token":"ws_token"};
+var STATUS_TXT={ONLINE:"運行中",PAUSED:"已暫停",DEGRADED:"WS 後援",OFFLINE:"離線",DISABLED:"已停用"};
+
+/* ===================== RENDER CARDS ===================== */
+function pad(n){return String(n).padStart(2,"0");}
+
+function dialFor(d){
+  var r=24, c=2*Math.PI*r;
+  // pct of the dial: smaller remaining wake -> more filled. cap to a 90-min visual window.
+  var pct, emoji, waking="", fig;
+  if(d.wake){
+    var tot=d.wake.m*60+d.wake.s;
+    pct=Math.max(.04,Math.min(1, 1-(tot/(90*60))));
+    emoji="😴";
+    fig='<span class="cd-figure num">'+pad(d.wake.m)+'<span class="u">分</span>'+pad(d.wake.s)+'<span class="u">秒</span></span>';
+  }else if(d.status==="OFFLINE"||d.status==="DISABLED"){
+    pct=0; emoji=(d.status==="OFFLINE")?"🔌":"💤";
+    fig='<span class="cd-figure num dim">——:——</span>';
+  }else{
+    pct=1; emoji="🟢"; waking=" waking";
+    fig='<span class="cd-figure num waking">喚醒中…</span>';
+  }
+  var off=c*(1-pct);
+  return '<div class="wake'+waking+'">'+
+    '<div class="dial"><svg width="54" height="54" viewBox="0 0 54 54">'+
+      '<circle class="ring-bg" cx="27" cy="27" r="'+r+'"></circle>'+
+      '<circle class="ring-fg" cx="27" cy="27" r="'+r+'" stroke-dasharray="'+c+'" stroke-dashoffset="'+off+'"></circle>'+
+    '</svg><span class="emoji">'+emoji+'</span></div>'+
+    '<div class="wake-main"><div class="label">下次喚醒 / Next Wake</div>'+fig+'</div>'+
+    '<div class="wake-snap"><span class="label">Snap</span><span class="sst num">'+(d.sst?d.sst+'ms':'--')+'</span></div>'+
+  '</div>';
+}
+
+function renderCards(){
+  var html="";
+  DEVICES.forEach(function(d,i){
+    var idx=pad(i+1);
+    var foot=FOOTPRINT[i]||"dev";
+    var wide=(foot==="feat"||foot==="wide");
+    var avatar=AVATAR[d.ip]||"🍄";
+
+    var wsTag=(d.backend.indexOf("ws")>=0)?'<span class="tag-inline ws">WS</span>':'';
+
+    /* daily progress badges (8 tasks) */
+    var progBadges=d.progress.map(function(p){
+      return '<span class="badge'+(p[1]?' done':'')+'"><span class="mk">'+(p[1]?'✓':'·')+'</span>'+p[0]+'</span>';
+    }).join("");
+    var doneCount=d.progress.filter(function(p){return p[1];}).length;
+
+    var logs=d.logs.map(function(l){
+      var m=l.match(/^(\[[^\]]*\])\s*(.*)$/);
+      return m?'<div class="ln"><span class="t">'+m[1]+'</span> '+m[2]+'</div>':'<div class="ln">'+l+'</div>';
+    }).join("");
+
+    var stepHtml=d.step+(d.stepClock?' <span class="step-clock">'+d.stepClock+'</span>':'');
+
+    /* swiss ledger rows inside the bento tile */
+    var ledger=
+      '<div class="ledger">'+
+        '<div class="lrow"><span class="label">Task</span><span class="val">'+d.task+'</span></div>'+
+        '<div class="lrow"><span class="label">Step</span><span class="val">'+stepHtml+'</span></div>'+
+        '<div class="lrow"><span class="label">Backend</span><span class="val"><span class="mono">'+BACKEND_LABEL[d.backend]+'</span>'+wsTag+'</span></div>'+
+        '<div class="lrow"><span class="label">Planner</span><span class="val"><span class="mono">'+d.planner+'</span></span></div>'+
+      '</div>';
+
+    /* feature tile gets a mining-depth viz panel */
+    var viz="";
+    if(foot==="feat"){
+      var maxB=Math.max.apply(null,DEPTH_BARS);
+      var bars=DEPTH_BARS.map(function(h){
+        return '<div class="bar"><i style="height:'+Math.round(h/maxB*58)+'px"></i><small>+'+h+'</small></div>';
+      }).join("");
+      viz='<div class="viz-panel"><div class="viz-title"><span>近 6 板挖礦深度 (rows)</span><span class="vn">v5</span></div><div class="bars">'+bars+'</div></div>';
+    }
+
+    /* carpark expander (carpark device only) */
+    var carpark="";
+    if(d.carpark){
+      var c=d.carpark;
+      var cars=c.cars.map(function(car){
+        var pct=Math.max(2,100-Math.round(car.rem/8*100));
+        return '<div class="cp-car'+(car.rem<1?' warn':'')+'"><span class="pos">'+car.pos+'</span>'+
+               '<span class="cp-bar"><i style="width:'+pct+'%"></i></span>'+
+               '<span class="cp-rem">'+car.rem.toFixed(1)+'h</span></div>';
+      }).join("");
+      carpark='<div class="carpark-row" id="cp-'+d.ip+'">'+
+        '<button class="carpark-toggle" onclick="toggleCarpark(\''+d.ip+'\')"><span>泊車狀態 / Carpark</span><span class="chev">›</span></button>'+
+        '<div class="carpark-body"><div class="inner">'+
+          '<div class="cp-summary">'+
+            '<div class="cp-fig"><span class="label">已泊 / 目標</span><span class="n">'+pad(c.cur)+'<span class="slash">/</span>'+pad(c.tgt)+'</span></div>'+
+            '<div class="cp-fig"><span class="label">最快剩餘</span><span class="n">'+c.worst.toFixed(1)+'h</span></div>'+
+            '<div class="cp-fig"><span class="label">下次排程</span><span class="n">'+c.next+'</span></div>'+
+          '</div>'+cars+
+        '</div></div></div>';
+    }
+
+    /* action set varies by state, with optimistic pending lock (pend) */
+    var actions="";
+    if(d.status==="PAUSED"){
+      actions='<button class="btn alive sm" onclick="pend(this,\'恢復\')"><span class="bi">▶</span><span class="lbl">恢復</span></button>'+
+              '<button class="btn sm" onclick="openLiveView(\''+d.ip+'\')"><span class="bi">📺</span><span class="lbl">直播</span></button>'+
+              '<button class="btn degr sm" onclick="toast(\'跳過睡眠\')"><span class="bi">⏭</span><span class="lbl">跳睡</span></button>';
+    }else if(d.status==="OFFLINE"){
+      actions='<button class="btn sm" onclick="toast(\'嘗試重連\')"><span class="bi">↻</span><span class="lbl">重連</span></button>'+
+              '<button class="btn ghost sm" onclick="openSettings(\''+d.ip+'\')"><span class="bi">⚙</span><span class="lbl">設定</span></button>';
+    }else if(d.status==="DISABLED"){
+      actions='<button class="btn alive sm" onclick="pend(this,\'啟用\')"><span class="bi">✔</span><span class="lbl">啟用</span></button>'+
+              '<button class="btn ghost sm" onclick="toast(\'開啟登入\')"><span class="bi">↗</span><span class="lbl">開啟登入</span></button>';
+    }else{ /* ONLINE / DEGRADED */
+      actions='<button class="btn amber sm" onclick="pend(this,\'暫停\')"><span class="bi">⏸</span><span class="lbl">暫停</span></button>'+
+              '<button class="btn degr sm" onclick="toast(\'跳過睡眠\')"><span class="bi">⏭</span><span class="lbl">跳睡</span></button>'+
+              '<button class="btn sm" onclick="pend(this,\'強制睡眠\')"><span class="bi">💤</span><span class="lbl">強睡</span></button>'+
+              '<button class="btn sm" onclick="openLiveView(\''+d.ip+'\')"><span class="bi">📺</span><span class="lbl">直播</span></button>';
+      if(d.realPhone) actions+='<button class="btn alive sm" onclick="toast(\'恢復螢幕\')"><span class="bi">🔆</span><span class="lbl">恢復螢幕</span></button>';
+      if(d.backend.indexOf("h5")>=0) actions+='<button class="btn solid sm" onclick="pend(this,\'開瀏覽器\')"><span class="bi">🌐</span><span class="lbl">開瀏覽器</span></button>';
+    }
+
+    html+=
+    '<article class="dev '+foot+'">'+
+      '<div class="tile '+d.status+'" data-status="'+d.status+'" id="card-'+d.ip+'" data-ip="'+d.ip+'">'+
+        '<div class="wash"></div>'+
+        '<div class="body">'+
+          '<div class="t-head">'+
+            '<div class="t-avatar">'+avatar+'<span class="av-idx">'+idx+'</span></div>'+
+            '<div class="t-id"><div class="t-name">'+d.name+'</div><div class="t-ip">'+d.ip+'</div></div>'+
+            '<div class="t-top-right">'+
+              '<span class="status-pill '+d.status+'"><span class="sd"></span>'+STATUS_TXT[d.status]+'</span>'+
+              '<button class="gear" onclick="openSettings(\''+d.ip+'\')" aria-label="設定">⚙</button>'+
+            '</div>'+
+          '</div>'+
+
+          dialFor(d)+
+
+          ledger+
+          viz+
+          carpark+
+
+          '<div class="daily">'+
+            '<div class="daily-head"><span class="label">今日任務 / Daily</span><span class="dh-c num">'+doneCount+'/8</span></div>'+
+            '<div class="badges">'+progBadges+'</div>'+
+          '</div>'+
+
+          '<div class="logbox">'+logs+'</div>'+
+
+          '<div class="actions">'+actions+'</div>'+
+        '</div>'+
+      '</div>'+
+    '</article>';
+  });
+  document.getElementById("deviceGrid").innerHTML=html;
+}
+
+/* ===================== INVENTORY DATA (reuse swiss-grid spirit/gem data) ===================== */
+function renderInventory(){
+  var spirits=[
+    {n:"赤焰守護",lv:60,id:"30041",aff:[["攻擊力","+482"],["暴擊率","+12%"],["技能急速","+8%"]]},
+    {n:"冰霜之靈",lv:55,id:"30022",aff:[["生命值","+1320"],["格擋","+15%"]]},
+    {n:"風行使者",lv:48,id:"30013",aff:[["移速","+9%"],["閃避","+11%"],["回復","+6%"]]},
+    {n:"大地之心",lv:42,id:"30007",aff:[["防禦力","+388"],["減傷","+7%"]]},
+    {n:"雷霆裁決",lv:38,id:"30058",aff:[["暴擊傷害","+24%"],["攻速","+10%"]]},
+    {n:"暗影潛行",lv:33,id:"30061",aff:[["穿透","+88"],["命中","+5%"]]}
+  ];
+  document.getElementById("spGrid").innerHTML=spirits.map(function(s){
+    var aff=s.aff.map(function(a){return '<div class="af"><span>'+a[0]+'</span><span class="afv">'+a[1]+'</span></div>';}).join("");
+    return '<div class="sp-card"><div class="sp-top"><span class="sp-name">'+s.n+'</span><span class="sp-lv num">Lv'+s.lv+'</span></div>'+
+           '<div class="sp-id num">config · '+s.id+'</div><div class="sp-aff">'+aff+'</div></div>';
+  }).join("");
+
+  var hist=[["7",2],["6",5],["5",11],["4",18],["3",26],["2",9],["1",4]];
+  document.getElementById("gHist").innerHTML=hist.map(function(h){
+    return '<div class="q"><span class="qn num">'+pad(h[1])+'</span><span class="ql">Q'+h[0]+'</span></div>';
+  }).join("");
+
+  var gems=[
+    ["7","12","頭盔","60","攻擊 +220","暴擊 +8%","🔒","g8841"],
+    ["6","12","胸甲","58","生命 +890","格擋 +6%","—","g8842"],
+    ["5","08","護腿","52","防禦 +180","減傷 +4%","—","g8843"],
+    ["4","08","靴子","47","移速 +5%","—","—","g8844"],
+    ["3","03","項鍊","40","暴傷 +9%","命中 +3%","—","g8845"],
+    ["2","03","戒指","33","穿透 +44","—","—","g8846"],
+    ["1","01","手套","28","攻速 +3%","—","—","g8847"]
+  ];
+  document.getElementById("gBody").innerHTML=gems.map(function(g){
+    return '<tr><td class="qcell">Q'+g[0]+'</td><td>'+g[1]+'</td><td>'+g[2]+'</td><td>'+g[3]+'</td><td>'+g[4]+'</td><td>'+g[5]+'</td><td>'+g[6]+'</td><td>'+g[7]+'</td></tr>';
+  }).join("");
+}
+
+/* ===================== INTERACTIONS ===================== */
+function toggleSidebar(){document.getElementById("shell").classList.toggle("collapsed");}
+function switchPage(p,el){
+  document.querySelectorAll(".page").forEach(function(x){x.classList.remove("active");});
+  document.getElementById("page-"+p).classList.add("active");
+  document.querySelectorAll(".nav-item").forEach(function(x){x.classList.remove("active");});
+  if(el)el.classList.add("active");
+  document.getElementById("shell").classList.remove("nav-open");
+  if(p==="inventory")renderInventory();
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+function invTab(t,el){
+  document.querySelectorAll(".tab").forEach(function(x){x.classList.remove("on");});
+  el.classList.add("on");
+  document.getElementById("secSpirit").classList.toggle("on",t==="spirit");
+  document.getElementById("secGem").classList.toggle("on",t==="gem");
+}
+function toggleCarpark(ip){document.getElementById("cp-"+ip).classList.toggle("open");}
+
+function openSettings(ip){
+  var d=DEVICES.find(function(x){return x.ip===ip;});
+  if(d){document.getElementById("cfgTitle").textContent=d.name+" · "+d.ip;document.getElementById("editName").value=d.name;}
+  show("configModal");
+}
+function closeModal(){hide("configModal");}
+function toggleBackendInputs(){/* preserved hook */}
+function openOcrSettings(){show("ocrModal");} function closeOcrModal(){hide("ocrModal");}
+function openProgramInfoModal(){show("programInfoModal");}
+function closeProgramInfoModal(e){if(e&&e.target!==e.currentTarget&&e.type==="click")return;hide("programInfoModal");}
+function openBugFeedbackModal(){show("bugModal");}
+function closeBugFeedbackModal(e){if(e&&e.target!==e.currentTarget&&e.type==="click")return;hide("bugModal");}
+function openRegisterModal(){show("registerModal");}
+function closeRegisterModal(){hide("registerModal");}
+
+function show(id){document.getElementById(id).classList.add("show");}
+function hide(id){document.getElementById(id).classList.remove("show");}
+
+/* live view */
+function openLiveView(ip){
+  var d=DEVICES.find(function(x){return x.ip===ip;});
+  document.getElementById("lvDeviceLabel").textContent=(d?d.name+" · ":"")+ip;
+  document.getElementById("liveViewModal").classList.add("show");
+  paintLiveStub();
+}
+function closeLiveView(){document.getElementById("liveViewModal").classList.remove("show");}
+function paintLiveStub(){
+  var c=document.getElementById("lvCanvas"),x=c.getContext("2d");
+  x.fillStyle="#14120C";x.fillRect(0,0,540,960);
+  x.strokeStyle="#CF5A2C";x.lineWidth=2;x.strokeRect(20,20,500,920);
+  x.fillStyle="#F3EEE3";x.font="700 22px 'Space Mono',monospace";x.textAlign="center";
+  x.fillText("LIVE VIEW · 540×960",270,470);
+  x.fillStyle="#A89E89";x.font="12px 'Space Mono',monospace";
+  x.fillText("WebSocket screencast · drop-oldest queue",270,500);
+}
+
+/* per-device button pending state (2s optimistic lock + spinner) */
+function pend(btn,label){
+  if(btn.classList.contains("btn-pending"))return;
+  btn.classList.add("btn-pending");
+  toast(label+"…");
+  setTimeout(function(){btn.classList.remove("btn-pending");toast(label+" 完成");},2000);
+}
+
+/* toast */
+var toastTimer;
+function toast(msg){
+  var t=document.getElementById("toast");t.textContent=msg;
+  t.style.transform="translateX(-50%) translateY(0)";
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){t.style.transform="translateX(-50%) translateY(130%)";},1900);
+}
+
+/* live countdown tick — numbers-as-hero kept moving; advances dial offset too */
+function tick(){
+  DEVICES.forEach(function(d){
+    if(!d.wake)return;
+    if(d.wake.s>0)d.wake.s--; else if(d.wake.m>0){d.wake.m--;d.wake.s=59;}
+    var card=document.getElementById("card-"+d.ip);
+    if(!card)return;
+    var fig=card.querySelector(".cd-figure");
+    if(fig&&!fig.classList.contains("waking")&&!fig.classList.contains("dim"))
+      fig.innerHTML=pad(d.wake.m)+'<span class="u">分</span>'+pad(d.wake.s)+'<span class="u">秒</span>';
+    var ring=card.querySelector(".ring-fg");
+    if(ring){
+      var r=24,c=2*Math.PI*r,tot=d.wake.m*60+d.wake.s;
+      var pct=Math.max(.04,Math.min(1,1-(tot/(90*60))));
+      ring.setAttribute("stroke-dashoffset",c*(1-pct));
+    }
+  });
+}
+
+/* escape closes any overlay / live view (staggered reveal handled by CSS) */
+document.addEventListener("keydown",function(e){
+  if(e.key==="Escape"){
+    document.querySelectorAll(".overlay.show").forEach(function(o){o.classList.remove("show");});
+    closeLiveView();
+  }
+});
+
+/* init */
+renderCards();
+setInterval(tick,1000);
+</script>
+</body>
+</html>

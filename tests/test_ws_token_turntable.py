@@ -16,8 +16,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ws_token import codec  # noqa: E402
+from ws_token.ad_reward import CMD_AD_INFO, CMD_AD_REWARD  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.turntable import (  # noqa: E402
+    AD_TURNTABLE_CONFIG_ID,
     CMD_ERROR,
     CMD_INFO,
     CMD_SPIN,
@@ -25,6 +27,7 @@ from ws_token.turntable import (  # noqa: E402
     parse_info,
     parse_spin,
     read_info,
+    run_daily,
     spin_all_free,
     spin_once,
 )
@@ -186,6 +189,66 @@ def test_spin_all_free_stops_at_max_spins():
         assert out["results"] == [3, 3, 3, 3, 3]
         spins = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_SPIN]
         assert len(spins) == 5
+    finally:
+        c.close()
+
+
+# --- run_daily: claim today's ad-funded spins (config 13) then spin ----------
+# Live-verified (5554, 2026-06-21): ad_reward(13, is_free=1) bumps ad_wheel_info
+# .num by 1 (claim GRANTS a spin), then 0x1604 consumes it. So run_daily banks
+# the daily ad top-ups into the wheel pool, then drains via spin_all_free.
+
+_FUTURE = 9_999_999_999  # next_ts far in the future = cooldown engaged
+
+
+def _ad_entry(config_id, count, next_ts=0):
+    """ad_info_s2c ad_list#1 = {config_id#1, count#2, _#3, next_ts#4}."""
+    return codec.pb_msg(1, codec.pb_uint(1, config_id)
+                        + codec.pb_uint(2, count) + codec.pb_uint(4, next_ts))
+
+
+def _ad_reward_reply(config_id, count, next_ts):
+    """on_ad_reward_s2c {new_ad#1: {config_id#1, count#2, _#3, next_ts#4}}."""
+    inner = (codec.pb_uint(1, config_id) + codec.pb_uint(2, count)
+             + codec.pb_uint(4, next_ts))
+    return codec.pb_msg(1, inner)
+
+
+def test_run_daily_claims_one_ad_spin_then_spins_the_pool():
+    # ad[13] count=0 -> claim 1 (server returns count=1 + future next_ts so the
+    # 2nd is cooldown-skipped this session), which banks +1 into the wheel; then
+    # spin_all_free spins the available turn.
+    c, fake = _client({
+        CMD_AD_INFO: lambda _b: [s2c(CMD_AD_INFO, _ad_entry(AD_TURNTABLE_CONFIG_ID, 0))],
+        CMD_AD_REWARD: lambda _b: [s2c(CMD_AD_REWARD,
+                                       _ad_reward_reply(AD_TURNTABLE_CONFIG_ID, 1, _FUTURE))],
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 1))],
+        CMD_SPIN: lambda _b: [s2c(CMD_SPIN, codec.pb_uint(1, 4))],
+    })
+    try:
+        out = run_daily(c, spacing=0)
+        assert out["ad_topup"]["claimed"] == 1
+        assert out["spun"] == 1
+        assert out["results"] == [4]
+        rewards = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_AD_REWARD]
+        assert len(rewards) == 1   # claimed exactly once (cooldown gates the 2nd)
+    finally:
+        c.close()
+
+
+def test_run_daily_skips_ad_claim_when_capped_but_still_spins():
+    # ad[13] count=2 == cap -> NO 0x1602 sent; free spins still drained.
+    c, fake = _client({
+        CMD_AD_INFO: lambda _b: [s2c(CMD_AD_INFO, _ad_entry(AD_TURNTABLE_CONFIG_ID, 2))],
+        CMD_INFO: lambda _b: [s2c(CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 2))],
+        CMD_SPIN: lambda _b: [s2c(CMD_SPIN, codec.pb_uint(1, 3))],
+    })
+    try:
+        out = run_daily(c, spacing=0)
+        assert "maxed" in out["ad_topup"].get("skipped", "")
+        assert out["spun"] == 2
+        rewards = [cmd for _sid, cmd, _b in fake.framed_sent() if cmd == CMD_AD_REWARD]
+        assert rewards == []   # never sent a claim past the cap
     finally:
         c.close()
 

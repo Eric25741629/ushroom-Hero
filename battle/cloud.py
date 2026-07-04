@@ -213,33 +213,14 @@ def run_saturday_help_single(d, ip: str) -> None:
 
 
 def run_weekly_cloud_fighting_single(d, ip: str) -> None:
-    """單一 IP 版本：每週日執行一次 cloud_fighting。"""
-    today = datetime.date.today()
-    if today.weekday() != 6:
-        print("今天不是週日，跳過 weekly cloud_fighting 任務")
+    """單一 IP 版本：每週一凌晨 3 點後執行一次 cloud_fighting。裝置未上線時 bot 喚醒循環會持續重試。"""
+    # due 判斷（週一凌晨3點後 + 本週未執行）改由 task_due registry 統一。
+    from game_actions.task_due import is_due
+    if not is_due("雲端戰鬥", ip):
+        print(f"{ip} weekly cloud_fighting 未到執行時間或本週已執行，跳過")
         return
 
-    try:
-        rec = return_time(ip, name="cloud_fighting_weekly")
-    except Exception:
-        rec = None
-
-    already_this_week = False
-    if rec and isinstance(rec, dict) and rec.get("timestamp"):
-        try:
-            last_ts = float(rec.get("timestamp"))
-            last_week = datetime.datetime.fromtimestamp(last_ts).isocalendar()[1]
-            curr_week = today.isocalendar()[1]
-            if last_week == curr_week:
-                already_this_week = True
-        except Exception:
-            already_this_week = False
-
-    if already_this_week:
-        print(f"{ip} 本週已執行過 cloud_fighting，跳過")
-        return
-
-    print(f"準備在本週週日對 {ip} 執行 cloud_fighting 並記錄本週執行")
+    print(f"準備在本週週一對 {ip} 執行 cloud_fighting 並記錄本週執行")
     try:
         cloud_fighting(d, ip)
         time_recording(ip, name="cloud_fighting_weekly")

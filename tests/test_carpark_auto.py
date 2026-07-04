@@ -384,3 +384,84 @@ def test_silver_tier_full_verdicts():
     assert carpark_auto.silver_tier_full((300, 300)) is True
     assert carpark_auto.silver_tier_full((299, 300)) is False
     assert carpark_auto.silver_tier_full(None) is None
+
+
+# ──────────────────────────────────────────────────────────────────────
+# park_one_silver — re-enter-detail-list recovery branches (cx-4)
+# These pin the two previously-untested recovery paths (full-lot and
+# no-cluster) so extracting _reenter_silver_detail_list stays behaviour-identical.
+# ──────────────────────────────────────────────────────────────────────
+
+
+class _LotSnap:
+    def __init__(self, empty_count, has_cluster_bonus, occupied_count=8, total=8):
+        self.empty_count = empty_count
+        self.has_cluster_bonus = has_cluster_bonus
+        self.occupied_count = occupied_count
+        self.total = total
+
+
+def _setup_silver(monkeypatch, *, snapshot, pool_tier=None):
+    """Wire park_one_silver's helpers; return a dict of call counters.
+
+    pool_tier: optional fn(call_no:int)->bool to vary _click_pool_tier per call
+    (call_no is 1-based); None means always True.
+    """
+    calls = {"main": 0, "space": 0, "tier": 0, "lots": []}
+
+    def _main(_p):
+        calls["main"] += 1
+        return True
+
+    def _space(_p):
+        calls["space"] += 1
+        return True
+
+    def _tier(_p, _id):
+        calls["tier"] += 1
+        return True if pool_tier is None else pool_tier(calls["tier"])
+
+    def _lot(_p, idx):
+        calls["lots"].append(idx)
+        return True
+
+    monkeypatch.setattr(carpark_auto, "_ensure_parking_main_open", _main)
+    monkeypatch.setattr(carpark_auto, "_open_space_view_and_cross_tab", _space)
+    monkeypatch.setattr(carpark_auto, "_silver_tier_has_empty", lambda _p, **k: True)
+    monkeypatch.setattr(carpark_auto, "_click_pool_tier", _tier)
+    monkeypatch.setattr(carpark_auto, "_click_silver_lot_by_idx", _lot)
+    monkeypatch.setattr(carpark_auto, "get_current_lot_snapshot", lambda _p: snapshot)
+    monkeypatch.setattr(carpark_auto.time, "sleep", lambda _s: None)
+    return calls
+
+
+def test_park_one_silver_full_lots_reenter_each_time_then_none(monkeypatch):
+    """Every lot full (empty_count==0) → re-enter detail list per lot, give up None."""
+    calls = _setup_silver(monkeypatch, snapshot=_LotSnap(0, False))
+    result = carpark_auto.park_one_silver(object(), prefer_back=True, cluster=False)
+    assert result is None
+    assert calls["lots"] == [29, 28, 27, 26, 25, 24, 23, 22]   # MAX_TRY=8
+    assert calls["tier"] == 1 + 8   # initial click + one re-enter per full lot
+    assert calls["main"] == 1 + 8
+
+
+def test_park_one_silver_reenter_failure_returns_none_immediately(monkeypatch):
+    """Re-enter failure (pool-tier re-click False) aborts with None, no further lots."""
+    calls = _setup_silver(
+        monkeypatch, snapshot=_LotSnap(0, False),
+        pool_tier=lambda n: n == 1,   # True on initial click, False on first re-enter
+    )
+    result = carpark_auto.park_one_silver(object(), prefer_back=True, cluster=False)
+    assert result is None
+    assert calls["lots"] == [29]   # bailed during recovery after the first full lot
+    assert calls["tier"] == 2      # initial + one failed re-enter
+
+
+def test_park_one_silver_no_cluster_reenters_pass0_then_parks_pass1(monkeypatch):
+    """empties-but-no-cluster → re-enter through pass 0; pass 1 (no filter) parks."""
+    calls = _setup_silver(monkeypatch, snapshot=_LotSnap(empty_count=2, has_cluster_bonus=False))
+    monkeypatch.setattr(carpark_auto, "_click_empty_spot_in_current_lot", lambda _p: 0)
+    monkeypatch.setattr(carpark_auto, "_pick_zero_minute_car_and_park", lambda _p: "車A")
+    result = carpark_auto.park_one_silver(object(), prefer_back=True, cluster=True)
+    assert result == "車A"
+    assert calls["tier"] == 1 + 8   # initial + 8 pass-0 re-enters; pass-1 parks first lot

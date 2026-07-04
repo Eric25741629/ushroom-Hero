@@ -36,6 +36,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, List, Optional
 
+from utils.protobuf_walk import read_varint as _pb_read_varint
+from utils.protobuf_walk import walk_fields_lenient as _pb_walk_fields_lenient
+
 logger = logging.getLogger(__name__)
 
 
@@ -531,62 +534,24 @@ def has_claimable_redpack(page: Any) -> bool:
 # ───────────────────────────────────────────────────────────────────
 
 
-def _read_varint(buf: bytes, off: int) -> tuple[int, int]:
-    result = 0
-    shift = 0
-    while off < len(buf):
-        b = buf[off]
-        off += 1
-        result |= (b & 0x7F) << shift
-        if (b & 0x80) == 0:
-            return result, off
-        shift += 7
-        if shift >= 64:
-            raise ValueError("varint too long")
-    raise ValueError("varint truncated")
+_read_varint = _pb_read_varint
 
 
 def _walk_pb(buf: bytes) -> List[dict]:
-    """Walk a protobuf buffer, returning a flat list of {field, wire, ...}."""
+    """Walk a protobuf buffer, returning a flat list of {field, wire, ...}.
+
+    Thin wrapper over `protobuf_walk.walk_fields_lenient` (tolerant variant:
+    stops cleanly on truncation / unknown wire). Reshapes the shared
+    `(field, wire, value)` tuples into this module's historic dict form —
+    wire 2 (len-delim) payloads live under `"bytes"`, all others under
+    `"value"`.
+    """
     out: list[dict] = []
-    off = 0
-    while off < len(buf):
-        try:
-            tag, off = _read_varint(buf, off)
-        except ValueError as e:
-            logger.debug(f"[redpack] pb tag read failed at {off}: {e}")
-            break
-        field_num = tag >> 3
-        wire = tag & 0x7
-        try:
-            if wire == 0:  # varint
-                val, off = _read_varint(buf, off)
-                out.append({"field": field_num, "wire": 0, "value": val})
-            elif wire == 1:  # fixed64
-                if off + 8 > len(buf):
-                    break
-                out.append({"field": field_num, "wire": 1,
-                            "value": int.from_bytes(buf[off:off+8], "little")})
-                off += 8
-            elif wire == 2:  # len-delim
-                length, off = _read_varint(buf, off)
-                if off + length > len(buf):
-                    break
-                inner = buf[off:off+length]
-                off += length
-                out.append({"field": field_num, "wire": 2, "bytes": inner})
-            elif wire == 5:  # fixed32
-                if off + 4 > len(buf):
-                    break
-                out.append({"field": field_num, "wire": 5,
-                            "value": int.from_bytes(buf[off:off+4], "little")})
-                off += 4
-            else:
-                logger.debug(f"[redpack] unknown wire {wire} at {off}")
-                break
-        except ValueError as e:
-            logger.debug(f"[redpack] pb walk error at {off}: {e}")
-            break
+    for field_num, wire, value in _pb_walk_fields_lenient(buf):
+        if wire == 2:
+            out.append({"field": field_num, "wire": 2, "bytes": value})
+        else:
+            out.append({"field": field_num, "wire": wire, "value": value})
     return out
 
 

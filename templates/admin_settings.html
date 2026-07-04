@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系統設定 - 菇勇者中控</title>
+  {% include '_assets_head.html' %}
+  <style>
+    * { box-sizing: border-box; }
+    .sr-only {
+      position: absolute;
+      width: 1px; height: 1px;
+      padding: 0; margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+    body {
+      font-family: "Manrope", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: var(--color-paper);
+      color: var(--color-ink);
+      margin: 0;
+      padding: 0 0 48px;
+    }
+    .admin-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--color-line);
+      background: var(--color-surface);
+    }
+    .admin-topbar h1 {
+      font-family: "Sora", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      font-size: 1.25em;
+      font-weight: 700;
+      margin: 0;
+    }
+    .back-link {
+      color: var(--color-ink-soft);
+      font-size: 0.9em;
+      text-decoration: none;
+    }
+    .back-link:hover { color: var(--color-ink); }
+    .admin-wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 24px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .section-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 14px;
+    }
+    .section-head h2 {
+      font-family: "Sora", "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      font-size: 1.05em;
+      font-weight: 700;
+      margin: 0;
+    }
+    .muted { color: var(--color-ink-soft); font-size: 0.88em; }
+    .device-checks {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      margin: 6px 0;
+    }
+    .device-checks label {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 0.9em;
+      white-space: nowrap;
+    }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+    .field-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 16px;
+      align-items: flex-end;
+    }
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .field label { font-size: 0.82em; color: var(--color-ink-soft); }
+    .field input, .field select {
+      padding: 8px 10px;
+      background: var(--color-surface-2);
+      border: 1px solid var(--color-line-strong);
+      border-radius: 6px;
+      color: var(--color-ink);
+      font-size: 0.92em;
+      outline: none;
+    }
+    .field input:focus, .field select:focus {
+      border-color: var(--color-accent);
+      box-shadow: 0 0 0 2px rgba(224,101,58,0.16);
+    }
+    .restart-note {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: var(--color-accent-wash);
+      border: 1px solid var(--color-accent-rim);
+      border-radius: 6px;
+      color: var(--color-accent-deep);
+      font-weight: 600;
+      font-size: 0.9em;
+    }
+    .restart-note[hidden] { display: none; }
+    .effective-line { margin: 4px 0; font-size: 0.92em; }
+    .effective-line b { font-weight: 700; }
+    .empty-hint { color: var(--color-ink-soft); font-size: 0.9em; padding: 8px 0; }
+    .pending-row {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--color-line);
+    }
+    .pending-row:last-child { border-bottom: none; }
+    .pending-name { font-weight: 700; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要內容</a>
+  <div class="admin-topbar">
+    <h1>系統設定</h1>
+    <a href="/" class="back-link">返回中控面板</a>
+  </div>
+
+  <main id="main" class="admin-wrap">
+
+    <!-- 1. 待審核申請 -->
+    <section id="pendingSection" class="card" hidden>
+      <div class="section-head">
+        <h2>待審核申請</h2>
+        <span id="pendingBadge" class="badge badge--count"></span>
+      </div>
+      <div id="pendingList"></div>
+    </section>
+
+    <!-- 2. 帳號管理 -->
+    <section class="card">
+      <div class="section-head">
+        <h2>帳號管理</h2>
+      </div>
+      <div class="toolbar" style="margin-bottom:14px;">
+        <button class="btn btn--primary" type="button" onclick="openCreate()">新增帳號</button>
+      </div>
+      <div class="table-scroll">
+        <table class="data-table">
+          <caption class="sr-only">帳號管理</caption>
+          <thead>
+            <tr>
+              <th scope="col">帳號</th>
+              <th scope="col">角色</th>
+              <th scope="col">狀態</th>
+              <th scope="col">可見裝置</th>
+              <th scope="col">操作</th>
+            </tr>
+          </thead>
+          <tbody id="accountsBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- 3. 主機角色 -->
+    <section class="card">
+      <div class="section-head">
+        <h2>主機角色</h2>
+      </div>
+      <div id="hostRoleInfo" class="muted">載入中…</div>
+      <div class="field-row" style="margin-top:14px;">
+        <div class="field">
+          <label for="hostMode">模式覆寫</label>
+          <select id="hostMode">
+            <option value="">（清除覆寫，沿用設定檔）</option>
+            <option value="master">master</option>
+            <option value="worker">worker</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1; min-width:220px;">
+          <label for="hostMasterUrl">master_url</label>
+          <input type="text" id="hostMasterUrl" placeholder="http://10.0.0.1:5002">
+        </div>
+        <button class="btn btn--primary" type="button" onclick="saveHostRole()">儲存</button>
+      </div>
+      <div id="restartNote" class="restart-note" hidden>已儲存。重啟 new_main_v2.py 後生效。</div>
+    </section>
+
+  </main>
+
+  <!-- 新增帳號 modal -->
+  <div id="createModal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="createTitle">
+    <div class="modal">
+      <div class="modal-header" id="createTitle">新增帳號</div>
+      <div style="padding:20px 24px;">
+        <div class="field" style="margin-bottom:12px;">
+          <label for="newUsername">帳號</label>
+          <input type="text" id="newUsername" autocomplete="off">
+        </div>
+        <div class="field" style="margin-bottom:12px;">
+          <label for="newPassword">密碼</label>
+          <input type="password" id="newPassword" autocomplete="new-password">
+        </div>
+        <label style="display:flex; align-items:center; gap:6px; margin-bottom:12px; font-size:0.9em;">
+          <input type="checkbox" id="newIsAdmin"> 設為管理員
+        </label>
+        <div class="field">
+          <label>可見裝置</label>
+          <div id="createDevices" class="device-checks"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn--ghost" type="button" onclick="closeCreate()">取消</button>
+        <button class="btn btn--primary" type="button" onclick="submitCreate()">建立</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    var UI = window.UI;
+    var _devices = [];      // 正規化後的裝置 id 清單
+    var _accounts = [];
+
+    function esc(s) { return UI.esc(String(s == null ? '' : s)); }
+
+    // --- 裝置清單（來自 /api/status bots keys，正規化 split(':')[-1] 去重排序）---
+    async function loadDevices() {
+      try {
+        var r = await fetch('/api/status');
+        var j = await r.json();
+        var seen = {};
+        Object.keys(j.bots || {}).forEach(function (k) {
+          var id = k.split(':').pop();
+          seen[id] = true;
+        });
+        _devices = Object.keys(seen).sort();
+      } catch (e) {
+        _devices = [];
+      }
+    }
+
+    function deviceChecks(containerId, selected) {
+      var sel = {};
+      (selected || []).forEach(function (d) { sel[d] = true; });
+      var html = _devices.map(function (d) {
+        return '<label><input type="checkbox" value="' + esc(d) + '"' +
+               (sel[d] ? ' checked' : '') + '> ' + esc(d) + '</label>';
+      }).join('');
+      var el = document.getElementById(containerId);
+      el.innerHTML = html || '<span class="muted">尚無裝置</span>';
+    }
+
+    function readChecks(containerId) {
+      var boxes = document.getElementById(containerId).querySelectorAll('input[type=checkbox]');
+      return Array.prototype.filter.call(boxes, function (b) { return b.checked; })
+        .map(function (b) { return b.value; });
+    }
+
+    // --- 帳號清單 + 待審核 ---
+    async function loadAccounts() {
+      var data = await UI.apiGet('/api/admin/accounts');
+      _accounts = data.accounts || [];
+      renderPending();
+      renderAccounts();
+    }
+
+    function renderPending() {
+      var pending = _accounts.filter(function (a) { return a.status === 'pending'; });
+      var section = document.getElementById('pendingSection');
+      var badge = document.getElementById('pendingBadge');
+      if (pending.length === 0) {
+        section.hidden = true;
+        return;
+      }
+      section.hidden = false;
+      badge.textContent = pending.length;
+      var list = document.getElementById('pendingList');
+      list.innerHTML = '';
+      pending.forEach(function (a, idx) {
+        var cid = 'pendChk_' + idx;
+        var row = document.createElement('div');
+        row.className = 'pending-row';
+        row.innerHTML =
+          '<div class="pending-name">' + esc(a.username) + '</div>' +
+          '<div class="muted">核准時指派可見裝置：</div>' +
+          '<div id="' + cid + '" class="device-checks"></div>' +
+          '<div class="row-actions">' +
+          '<button class="btn btn--primary" type="button">核准</button>' +
+          '<button class="btn btn--danger" type="button">拒絕</button>' +
+          '</div>';
+        list.appendChild(row);
+        deviceChecks(cid, a.visible_devices);
+        var btns = row.querySelectorAll('button');
+        btns[0].addEventListener('click', function () { approve(a.username, cid); });
+        btns[1].addEventListener('click', function () { reject(a.username); });
+      });
+    }
+
+    function renderAccounts() {
+      var body = document.getElementById('accountsBody');
+      body.innerHTML = '';
+      _accounts.forEach(function (a) {
+        var tr = document.createElement('tr');
+        var role = a.is_admin ? '管理員' : '一般';
+        var status = a.status === 'pending' ? '待審核' : '啟用';
+        var devCount = (a.visible_devices || []).length;
+        var devText = a.is_admin ? '全部' : devCount;
+        tr.innerHTML =
+          '<td>' + esc(a.username) + '</td>' +
+          '<td>' + role + '</td>' +
+          '<td>' + status + '</td>' +
+          '<td>' + devText + '</td>' +
+          '<td class="wrap"><div class="row-actions"></div></td>';
+        var actions = tr.querySelector('.row-actions');
+        if (a.status !== 'pending') {
+          addBtn(actions, '改密碼', 'btn--ghost', function () { changePassword(a.username); });
+          if (!a.is_admin) {
+            addBtn(actions, '編輯可見裝置', 'btn--ghost', function () { editDevices(a.username, a.visible_devices); });
+          }
+          addBtn(actions, a.is_admin ? '撤銷管理員' : '設為管理員', 'btn--ghost', function () {
+            toggleAdmin(a.username, !a.is_admin);
+          });
+        }
+        addBtn(actions, '刪除', 'btn--danger', function () { removeAccount(a.username); });
+        body.appendChild(tr);
+      });
+    }
+
+    function addBtn(parent, label, cls, handler) {
+      var b = document.createElement('button');
+      b.className = 'btn ' + cls;
+      b.type = 'button';
+      b.textContent = label;
+      b.addEventListener('click', handler);
+      parent.appendChild(b);
+    }
+
+    async function guard(fn) {
+      try { await fn(); }
+      catch (e) { UI.toast(e.message || '操作失敗', 'err'); }
+    }
+
+    // --- 審核 ---
+    function approve(username, cid) {
+      guard(async function () {
+        await UI.apiPost('/api/admin/accounts/' + encodeURIComponent(username) + '/approve',
+          { visible_devices: readChecks(cid) });
+        UI.toast('已核准 ' + username, 'ok');
+        await loadAccounts();
+      });
+    }
+    function reject(username) {
+      guard(async function () {
+        var ok = await UI.confirmDialog({ title: '拒絕申請', body: '確定拒絕並刪除「' + username + '」的申請？', danger: true });
+        if (!ok) return;
+        await UI.apiPost('/api/admin/accounts/' + encodeURIComponent(username) + '/reject', {});
+        UI.toast('已拒絕 ' + username, 'ok');
+        await loadAccounts();
+      });
+    }
+
+    // --- 帳號操作 ---
+    function changePassword(username) {
+      var pw = window.prompt('輸入「' + username + '」的新密碼（至少 6 碼）');
+      if (pw == null) return;
+      guard(async function () {
+        await UI.apiPost('/api/admin/accounts/' + encodeURIComponent(username) + '/password', { password: pw });
+        UI.toast('已更新密碼', 'ok');
+      });
+    }
+    function toggleAdmin(username, makeAdmin) {
+      guard(async function () {
+        await UI.apiPost('/api/admin/accounts/' + encodeURIComponent(username) + '/admin', { is_admin: makeAdmin });
+        UI.toast('已更新角色', 'ok');
+        await loadAccounts();
+      });
+    }
+    function removeAccount(username) {
+      guard(async function () {
+        var ok = await UI.confirmDialog({ title: '刪除帳號', body: '確定刪除帳號「' + username + '」？', danger: true });
+        if (!ok) return;
+        var r = await fetch('/api/admin/accounts/' + encodeURIComponent(username), { method: 'DELETE' });
+        var d = await r.json();
+        if (!r.ok || d.status !== 'ok') throw new Error(d.message || '刪除失敗');
+        UI.toast('已刪除 ' + username, 'ok');
+        await loadAccounts();
+      });
+    }
+
+    // --- 編輯可見裝置（用 modal 重用 createModal 的裝置區塊不方便，改 inline prompt-less modal）---
+    var _editUser = null;
+    function editDevices(username, current) {
+      _editUser = username;
+      openCreate(true);
+      document.getElementById('createTitle').textContent = '編輯可見裝置 - ' + username;
+      document.getElementById('newUsername').closest('.field').style.display = 'none';
+      document.getElementById('newPassword').closest('.field').style.display = 'none';
+      document.getElementById('newIsAdmin').closest('label').style.display = 'none';
+      deviceChecks('createDevices', current);
+    }
+
+    // --- 新增帳號 modal ---
+    function openCreate(isEdit) {
+      if (!isEdit) {
+        _editUser = null;
+        document.getElementById('createTitle').textContent = '新增帳號';
+        document.getElementById('newUsername').closest('.field').style.display = '';
+        document.getElementById('newPassword').closest('.field').style.display = '';
+        document.getElementById('newIsAdmin').closest('label').style.display = '';
+        document.getElementById('newUsername').value = '';
+        document.getElementById('newPassword').value = '';
+        document.getElementById('newIsAdmin').checked = false;
+        deviceChecks('createDevices', []);
+      }
+      UI.openModal('createModal');
+    }
+    function closeCreate() { UI.closeModal('createModal'); }
+
+    function submitCreate() {
+      guard(async function () {
+        var devices = readChecks('createDevices');
+        if (_editUser) {
+          await UI.apiPost('/api/admin/accounts/' + encodeURIComponent(_editUser) + '/visible_devices',
+            { visible_devices: devices });
+          UI.toast('已更新可見裝置', 'ok');
+        } else {
+          await UI.apiPost('/api/admin/accounts', {
+            username: document.getElementById('newUsername').value.trim(),
+            password: document.getElementById('newPassword').value,
+            is_admin: document.getElementById('newIsAdmin').checked,
+            visible_devices: devices,
+          });
+          UI.toast('已新增帳號', 'ok');
+        }
+        closeCreate();
+        await loadAccounts();
+      });
+    }
+
+    // --- 主機角色 ---
+    async function loadHostRole() {
+      var d = await UI.apiGet('/api/admin/host_role');
+      var eff = d.effective || {};
+      var srcMap = { override: '總後台覆寫', host_settings: '主機專屬設定', 'default': '全域預設' };
+      document.getElementById('hostRoleInfo').innerHTML =
+        '<div class="effective-line">主機名稱：<b>' + esc(d.hostname) + '</b></div>' +
+        '<div class="effective-line">目前模式：<b>' + esc(eff.mode) + '</b>' +
+        '　master_url：<b>' + esc(eff.master_url) + '</b></div>' +
+        '<div class="effective-line muted">來源：' + esc(srcMap[eff.source] || eff.source) + '</div>';
+      var ov = d.override || {};
+      document.getElementById('hostMode').value = ov.mode || '';
+      document.getElementById('hostMasterUrl').value = ov.master_url || '';
+    }
+
+    function saveHostRole() {
+      guard(async function () {
+        var d = await UI.apiPost('/api/admin/host_role', {
+          mode: document.getElementById('hostMode').value,
+          master_url: document.getElementById('hostMasterUrl').value.trim(),
+        });
+        var note = document.getElementById('restartNote');
+        if (d.note) note.textContent = '已儲存。' + d.note;
+        note.hidden = false;
+        UI.toast('已儲存主機角色', 'ok');
+        await loadHostRole();
+      });
+    }
+
+    // --- 啟動 ---
+    (async function init() {
+      await loadDevices();
+      await guard(loadAccounts);
+      await guard(loadHostRole);
+    })();
+  </script>
+</body>
+</html>

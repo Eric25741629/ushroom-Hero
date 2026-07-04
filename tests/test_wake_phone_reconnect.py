@@ -31,6 +31,7 @@ for name in ("adb_operations", "device", "game_initialization", "config_manager"
         m = types.ModuleType(name)
         if name == "adb_operations":
             m.connect_u2_with_retries = lambda *a, **k: None
+            m.ensure_on_launcher = lambda *a, **k: True
             m.get_battery_level = lambda *a, **k: 100
             # superset：後續收集的 control_panel_app / worker_webhook_api
             # 也會 import 這些，缺了會交叉汙染其他測試檔。
@@ -39,6 +40,9 @@ for name in ("adb_operations", "device", "game_initialization", "config_manager"
             m.set_screen_for_game = lambda *a, **k: None
         if name == "device":
             m.close_notification = lambda *a, **k: None
+            # superset：test_device_scan_absence / device_scan_service 會
+            # `from device import get_adb_devices`，缺了會在同跑時炸 collection。
+            m.get_adb_devices = lambda *a, **k: []
         if name == "game_initialization":
             m.check_on_line = lambda *a, **k: False
         if name == "config_manager":

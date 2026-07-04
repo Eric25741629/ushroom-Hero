@@ -111,18 +111,38 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("redpack", "grab_claimable"))
                                         or {"attempted": 0, "claimed": 0, "results": []}))
 
+    # mail (每日領郵件附件; gated on mail_claim, OFF by default). Patch the runner's
+    # _run_mail step directly so we don't need ws_state / mail_scheduler internals.
+    monkeypatch.setattr(runner, "_run_mail",
+                        lambda c, **k: (calls.append(("mail", "claim_all"))
+                                        or {"claimed_run": True, "success": True,
+                                            "claimed_count": 0}))
+
     # idle_reward (free; always runs). claim_* return a result with .success or None.
     monkeypatch.setattr(runner.idle_reward, "claim_online",
                         lambda c, **k: (calls.append(("idle_reward", "claim_online")) or _ClaimOK()))
     monkeypatch.setattr(runner.idle_reward, "claim_offline_from_push",
                         lambda c, b, **k: (calls.append(("idle_reward", "claim_offline")) or _ClaimOK()))
+    monkeypatch.setattr(runner.idle_reward, "claim_quick_2h",
+                        lambda c, **k: (calls.append(("idle_reward", "claim_quick_2h")) or _ClaimOK()))
 
-    # turntable (free; always runs)
+    # turntable (free; always runs). run_daily = claim_ad(13) ad top-up + spin;
+    # stub the ad top-up so the test doesn't hit a real ad_info round-trip.
+    monkeypatch.setattr(runner.ad_reward, "claim_ad",
+                        lambda c, cid, **k: {"name": "轉盤廣告次數", "claimed": 0,
+                                             "skipped": "stub"})
     monkeypatch.setattr(runner.turntable, "spin_all_free",
                         lambda c, **k: (calls.append(("turntable", "spin_all_free"))
                                         or {"spun": 0, "results": []}))
 
-    # farm (harvest free + always; plant/work gated on farm_config).
+    # farm (harvest free; plant/work/buy gated on farm_config).
+    # _run_farm first reads 打工 status (worker module 73, reliable) to decide
+    # whether manual home-module harvest is needed; default to NOT running so the
+    # manual harvest/plant path runs (matches the pre-refactor behaviour).
+    monkeypatch.setattr(runner.farm, "read_work_status",
+                        lambda c, rid, **k: (calls.append(("farm", "read_work_status"))
+                                             or {"running": False, "worker_status": 0,
+                                                 "team_cfg_id": 7001, "found": True}))
     # read_farm is read ONCE in _run_farm and the snapshot reused (server answers
     # home_farm_info once per session), so stub it too.
     monkeypatch.setattr(runner.farm, "read_farm",
@@ -137,10 +157,22 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.farm, "start_work",
                         lambda c, tid, **k: (calls.append(("farm", "start_work"))
                                              or {"running": True, "worker_status": 1, "raw": {}}))
+    monkeypatch.setattr(runner.farm, "buy_farm_shop",
+                        lambda c, bl, **k: (calls.append(("farm", "buy_farm_shop"))
+                                            or [{"shop_id": 407, "bought": 0, "ok": True}]))
+    monkeypatch.setattr(runner.farm, "run_harvest_card_cycle",
+                        lambda c, rid, **k: (
+                            calls.append(("harvest_card", "run_harvest_card_cycle"))
+                            or {"ok": True, "cards_bought": k.get("num_cards", 0)}
+                        ))
 
     # dungeon (掃蕩 only; gated on dungeon_sweeps)
     monkeypatch.setattr(runner.dungeon, "run_sweep",
                         lambda c, **k: (calls.append(("dungeon", "run_sweep")) or _SweepOK()))
+
+    # rogue (萬神試煉 本周積分獎勵一鍵領取; free; always runs)
+    monkeypatch.setattr(runner.rogue, "claim_week_reward",
+                        lambda c, **k: (calls.append(("rogue", "claim_week_reward")) or _RogueOK()))
 
     # carpark (只停不收; gated on carpark_target)
     monkeypatch.setattr(runner.carpark, "auto_park_cross",
@@ -161,10 +193,10 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("spirit", "draw_all_free"))
                                         or {"pools_drawn": 0, "rewards": {}, "results": []}))
 
-    # workshop (12h rotation; cadence state sandboxed in-memory below)
-    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
-                        lambda c, **k: (calls.append(("workshop", "rotate_team_recipes"))
-                                        or {"parity": k.get("parity", 0), "switched": []}))
+    # workshop (閒置才補配方; idempotent, no cadence state)
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, **k: (calls.append(("workshop", "assign_idle_workshops"))
+                                        or {"workshops": []}))
     _mem_state: dict = {}
     monkeypatch.setattr(runner.ws_state, "load_state",
                         lambda device, **k: dict(_mem_state))
@@ -230,6 +262,14 @@ class _SweepOK:
     error_code = 0
 
 
+class _RogueOK:
+    """rogue.claim_week_reward result with the fields _run_rogue reads."""
+    success = True
+    claimed: tuple = ()
+    rewards: dict = {}
+    error_code = None
+
+
 # --- RunReport shape --------------------------------------------------------
 
 def test_run_report_is_frozen_dataclass():
@@ -261,6 +301,11 @@ def test_run_device_runs_tasks_in_fixed_order(patched):
     assert "dungeon" not in task_order   # no dungeon_sweeps -> skipped
     assert "carpark" not in task_order   # no carpark_target -> skipped
     assert "lamp" not in task_order
+    assert "mail" not in task_order      # mail_claim OFF by default -> skipped
+    # rogue (萬神試煉 本周積分獎勵) is Friday-gated, so it may or may not invoke
+    # claim_week_reward depending on the real weekday — but the STEP always runs
+    # and records a summary on the report.
+    assert "rogue" in rep.tasks
     assert rep.login_ok is True
 
 
@@ -271,10 +316,17 @@ def test_run_device_main_tasks_collects_then_claims(patched):
 
     mt = [a for t, a in calls if t == "main_tasks"]
     assert mt[0] == "collect_state"
-    assert set(mt[1:]) == {
-        "claim_daily_tasks", "claim_marry_tasks", "claim_daily_box",
-        "claim_weekly_box", "claim_achievement"
+    # 領完每日任務後重新快照，活躍度寶箱才看得到剛變可領的盒子。
+    assert mt.index("claim_daily_box") > _last_index(mt, "collect_state")
+    assert mt.count("collect_state") == 2
+    assert set(mt) == {
+        "collect_state", "claim_daily_tasks", "claim_marry_tasks",
+        "claim_daily_box", "claim_weekly_box", "claim_achievement"
     }
+
+
+def _last_index(seq, val):
+    return len(seq) - 1 - seq[::-1].index(val)
 
 
 # --- spend gate -------------------------------------------------------------
@@ -307,6 +359,28 @@ def test_spend_true_adds_cost_actions(patched):
     assert ("guild", "donate_until_capped") in actions
     assert ("steward", "run_shopping") in actions
     assert ("steward", "run_dungeon_sweep") in actions
+
+
+# --- mail gate (opt-in via mail_claim; runs after redpack) ------------------
+
+def test_mail_skipped_without_flag(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False)  # mail_claim defaults to False
+
+    assert "mail" not in [t for t, _a in calls]
+
+
+def test_mail_runs_after_redpack_when_enabled(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False, mail_claim=True)
+
+    task_order = [t for t, _a in calls]
+    assert "mail" in task_order
+    # mail step sits between redpack and idle_reward (TASK_ORDER).
+    assert task_order.index("redpack") < task_order.index("mail")
+    assert task_order.index("mail") < task_order.index("idle_reward")
 
 
 def test_spend_true_skips_sweep_without_chapter_list(patched):
@@ -404,6 +478,151 @@ def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
     assert captured.get("batch_delay") == runner._LAMP_BATCH_DELAY_SEC
 
 
+def test_lamp_percent_min_keep_passed_with_initial_count_and_progress(
+        patched, monkeypatch):
+    """run_device(open_lamp=True, lamp_percent, lamp_min_keep) must forward the
+    two knobs + the login-snapshot initial_count + a callable on_progress into
+    lamp.open_lamp, and the lamp-count tee in _push must populate the holder."""
+    from ws_token import lamp
+
+    captured: dict = {}
+
+    def spy_open(c, **k):
+        captured.update(k)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": k.get("dry_run", True),
+                "target": 0, "initial_count": k.get("initial_count"),
+                "remaining": None}
+
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(
+                            open_lamp=spy_open,
+                            extract_lamp_count=lamp.extract_lamp_count))
+
+    _calls, spy_holder = patched
+
+    # A 0x0402 frame carrying item 1001 (神燈) with current qty 123. Mirrors the
+    # consume push shape: f2 sub { f1=item_id, f3=current_count }.
+    sub = codec.pb_uint(1, lamp.ITEM_LAMP) + codec.pb_uint(3, 123)
+    frame_1001 = codec.pb_msg(2, sub)
+
+    events: list[tuple[str, str, str]] = []
+
+    rep = run_device(
+        "dev", spend=False, open_lamp=True,
+        lamp_percent=1.0, lamp_min_keep=500000, lamp_daily_min=60,
+        progress=lambda name, status, detail="": events.append(
+            (name, status, detail)))
+
+    # The runner mounted a composite push handler before connect; feed the
+    # login-time 0x0402 snapshot through it to prove the tee captured the count.
+    push = spy_holder["push_handler"]
+    assert push is not None
+    push(0x0402, frame_1001)
+
+    # NOTE: in this fixture the count is fed AFTER run_device returns (the spy
+    # client does not emit pushes), so assert the holder mechanism directly via a
+    # second, count-first scenario below; here assert the knobs + callable wiring.
+    assert captured.get("lamp_percent") == 1.0
+    assert captured.get("lamp_min_keep") == 500000
+    assert captured.get("lamp_daily_min") == 60
+    assert callable(captured.get("on_progress"))
+    assert "initial_count" in captured
+
+    # _lamp_progress routes through the progress callback as ("lamp","progress",..)
+    captured["on_progress"](123, 456)
+    assert ("lamp", "progress", "123/456") in events
+
+
+def test_lamp_count_tee_populates_initial_count(monkeypatch):
+    """When a 0x0402 snapshot with item 1001 lands BEFORE the lamp task runs, the
+    runner passes that count as initial_count into open_lamp."""
+    from ws_token import codec as _codec
+    from ws_token import lamp
+
+    captured: dict = {}
+
+    def spy_open(c, **k):
+        captured.update(k)
+        return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "dry_run": False, "target": 0,
+                "initial_count": k.get("initial_count"), "remaining": None}
+
+    sub = _codec.pb_uint(1, lamp.ITEM_LAMP) + _codec.pb_uint(3, 777)
+    frame_1001 = _codec.pb_msg(2, sub)
+
+    class _PushAtLoginClient:
+        """Emits the 0x0402 lamp snapshot into the mounted push_handler on connect,
+        exactly like the login-time inventory snapshot does in production."""
+
+        def __init__(self, push_handler=None, **_kw):
+            self._push = push_handler
+
+        def connect(self):
+            if self._push:
+                self._push(0x0402, frame_1001)
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client",
+                        lambda creds, **k: _PushAtLoginClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(
+                            open_lamp=spy_open,
+                            extract_lamp_count=lamp.extract_lamp_count))
+
+    run_device("dev", spend=False, open_lamp=True,
+               lamp_percent=2.0, lamp_min_keep=10)
+
+    assert captured.get("initial_count") == 777
+    assert captured.get("lamp_percent") == 2.0
+    assert captured.get("lamp_min_keep") == 10
+
+
+def test_lamp_count_tee_not_loaded_when_open_lamp_false(monkeypatch):
+    """Non-lamp devices must NOT import lamp: _load_lamp is never called and a
+    0x0402 push is a harmless no-op (no lamp parse)."""
+    load_calls: list[int] = []
+    real_load = runner._load_lamp
+
+    def counting_load():
+        load_calls.append(1)
+        return real_load()
+
+    monkeypatch.setattr(runner, "_load_lamp", counting_load)
+
+    class _NoLampClient:
+        def __init__(self, push_handler=None, **_kw):
+            self._push = push_handler
+
+        def connect(self):
+            # Even if a 0x0402 frame arrives, the non-lamp path must ignore it.
+            if self._push:
+                self._push(0x0402, b"\x12\x04\x08\xe9\x07\x18\x05")
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client",
+                        lambda creds, **k: _NoLampClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+
+    rep = run_device("dev", spend=False, open_lamp=False)
+
+    assert rep.login_ok is True
+    assert load_calls == []  # lamp never imported for a non-lamp device
+
+
 def test_lamp_failure_does_not_abort_report(patched, monkeypatch):
     calls, _ = patched
 
@@ -461,6 +680,221 @@ def test_mining_runs_when_config_enabled(patched, monkeypatch):
     assert "mining" in rep.tasks
 
 
+# --- relic (opt-in via relic_upgrade; SPENDS 遺物碎片) -----------------------
+
+def test_relic_skipped_when_relic_upgrade_false(patched):
+    """Default relic_upgrade=False must self-skip (no relics read, no spend)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert "relic" in rep.tasks                       # step always runs ...
+    assert rep.tasks["relic"]["skipped"]              # ... but self-skips
+    # even spend=True alone must not enable relic upgrades (independent flag)
+    rep2 = run_device("dev", spend=True, sweep_list=[(1, 5, 10)])
+    assert rep2.tasks["relic"]["skipped"]
+
+
+def test_relic_runs_calls_plan_and_upgrade_bounded(patched, monkeypatch):
+    """relic_upgrade=True reads relics, plans the balanced upgrade, and executes
+    each planned uid via upgrade_relic — bounded by relic_max_steps."""
+    from ws_token import relic
+
+    seen: dict = {}
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        # two equipped relics (location>0) at different levels + one unequipped
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),
+                    relic.Relic(uid=2, cfg_id=4002, quality=2, location=2, level=12))
+
+    def fake_plan(relics, fragments, *, cost_at, max_steps=None, **k):
+        seen["relics"] = list(relics)
+        seen["fragments"] = fragments
+        seen["max_steps"] = max_steps
+        # honour the cap the runner passes through
+        return [1, 1, 2][:(max_steps if max_steps is not None else 3)]
+
+    upgraded: list[int] = []
+
+    def fake_upgrade(client, uid, **k):
+        upgraded.append(uid)
+        return types.SimpleNamespace(success=True, relic=None, response_cmd=relic.CMD_RELIC_UP,
+                                     error_code=None)
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades", fake_plan)
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True, relic_max_steps=2)
+
+    assert seen["relics"] == [(1, 10), (2, 12)]   # equipped only, (uid, level)
+    assert seen["max_steps"] == 2                  # cap forwarded
+    assert upgraded == [1, 1]                       # exactly the (bounded) plan
+    assert rep.tasks["relic"]["upgraded"] == 2
+    assert rep.tasks["relic"]["steps"] == [1, 1]
+
+
+def test_relic_stops_on_0x0201(patched, monkeypatch):
+    """A server rejection (0x0201) on a relic_up step stops the loop safely."""
+    from ws_token import relic
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),)
+
+    calls_made: list[int] = []
+
+    def fake_upgrade(client, uid, **k):
+        calls_made.append(uid)
+        # first step ok, second rejected (out of fragments / cap)
+        ok = len(calls_made) == 1
+        return types.SimpleNamespace(
+            success=ok, relic=None, response_cmd=(relic.CMD_RELIC_UP if ok else relic.CMD_ERROR),
+            error_code=(None if ok else 25))
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades",
+                        lambda *a, **k: [1, 1, 1])
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True, relic_max_steps=10)
+
+    assert calls_made == [1, 1]                          # stopped after the rejection
+    assert rep.tasks["relic"]["upgraded"] == 1
+    assert rep.tasks["relic"]["stopped_reason"] == "error_code=25"
+
+
+def test_relic_stops_at_fragment_floor(patched, monkeypatch):
+    """When the live 遺物碎片 count (from the inventory tracker) drops below the
+    configured floor, the relic loop stops before the next upgrade."""
+    from ws_token import codec, relic
+    from ws_token.mining import (
+        CMD_INVENTORY_PUSH, INV_EVT_CONSUME, INV_EVT_SNAPSHOT,
+    )
+
+    class _Info:
+        success = True
+        response_cmd = relic.CMD_RELIC_INFO
+        error_code = None
+        equipped = (relic.Relic(uid=1, cfg_id=4001, quality=2, location=1, level=10),)
+
+    # The runner threads its inventory_tracker into _run_relic. Seed the fragment
+    # count to 100 at login, then have each upgrade push a 0x0402 dropping it to 40
+    # (below the floor of 50) so the loop stops after one upgrade.
+    upgraded: list[int] = []
+
+    def _frag_push(count, evt_type):
+        # one item sub {id=100022, count} under a recognised inventory evt type
+        sub = codec.pb_uint(1, relic.RELIC_FRAGMENT_ITEM) + codec.pb_uint(3, count)
+        return codec.pb_uint(1, evt_type) + codec.pb_msg(2, sub)
+
+    def fake_upgrade(client, uid, **k):
+        upgraded.append(uid)
+        # simulate the server's post-upgrade 0x0402 consume push lowering the count
+        client._push_handler(CMD_INVENTORY_PUSH, _frag_push(40, INV_EVT_CONSUME))
+        return types.SimpleNamespace(success=True, relic=None,
+                                     response_cmd=relic.CMD_RELIC_UP, error_code=None)
+
+    monkeypatch.setattr(runner.relic, "read_relics", lambda c, **k: _Info())
+    monkeypatch.setattr(runner.relic, "plan_balanced_upgrades",
+                        lambda *a, **k: [1, 1, 1, 1])
+    monkeypatch.setattr(runner.relic, "upgrade_relic", fake_upgrade)
+
+    # Build a client whose push_handler is the runner's composite handler; the
+    # login snapshot seeds 100 fragments before the relic task runs.
+    class _FragClient:
+        def __init__(self, push_handler=None, **_kw):
+            self._push_handler = push_handler
+
+        def connect(self):
+            if self._push_handler:
+                self._push_handler(CMD_INVENTORY_PUSH,
+                                   _frag_push(100, INV_EVT_SNAPSHOT))
+            return {"code": 0, "role_id": 1, "serv_time": 99}
+
+        def is_kicked(self):
+            return False
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(runner, "_make_client", lambda creds, **k: _FragClient(**k))
+    monkeypatch.setattr(runner, "load_creds", lambda device, **k: CREDS)
+
+    rep = run_device("dev", spend=False, relic_upgrade=True,
+                     relic_max_steps=10, relic_fragment_floor=50)
+
+    assert upgraded == [1]                                   # stopped at the floor
+    assert rep.tasks["relic"]["upgraded"] == 1
+    assert rep.tasks["relic"]["stopped_reason"] == "fragments<50"
+
+
+def test_relic_task_order_after_steward_before_kungfu():
+    order = list(runner.TASK_ORDER)
+    assert order.index("steward") < order.index("relic") < order.index("kungfu_store")
+
+
+# --- tycoon (傳奇大亨 大富翁 auto-dice; opt-in via tycoon) --------------------
+
+def test_tycoon_skipped_when_disabled(patched):
+    """Default tycoon=False must self-skip (no auto_play, no rolls)."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert "tycoon" in rep.tasks
+    assert rep.tasks["tycoon"]["skipped"]
+
+
+def test_tycoon_runs_calls_auto_play_with_max_rolls(patched, monkeypatch):
+    """tycoon=True calls tycoon.auto_play with the configured max_rolls."""
+    seen: dict = {}
+
+    def fake_auto_play(client, *, max_rolls, **k):
+        seen["max_rolls"] = max_rolls
+        return {"rolls": 3, "total_rewards": {1401: 60}, "last_pos": 7,
+                "last_circle": 0, "stopped_reason": "error_code=25"}
+
+    monkeypatch.setattr(runner.tycoon, "auto_play", fake_auto_play)
+
+    rep = run_device("dev", spend=False, tycoon=True, tycoon_max_rolls=12)
+
+    assert seen["max_rolls"] == 12
+    assert rep.tasks["tycoon"]["rolls"] == 3
+    # a closed/exhausted activity stops on 0x0201 — surfaced as stopped_reason
+    assert rep.tasks["tycoon"]["stopped_reason"] == "error_code=25"
+
+
+def test_tycoon_closed_activity_is_safe_noop(patched, monkeypatch):
+    """When the activity is closed the first roll returns 0x0201 and auto_play
+    stops with rolls=0 — a safe no-op that records a summary, not an error."""
+    def fake_auto_play(client, *, max_rolls, **k):
+        return {"rolls": 0, "total_rewards": {}, "last_pos": 0,
+                "last_circle": 0, "stopped_reason": "error_code=173"}
+
+    monkeypatch.setattr(runner.tycoon, "auto_play", fake_auto_play)
+
+    rep = run_device("dev", spend=False, tycoon=True)
+
+    assert "tycoon" not in rep.errors
+    assert rep.tasks["tycoon"]["rolls"] == 0
+
+
+def test_tycoon_task_order_after_turntable():
+    order = list(runner.TASK_ORDER)
+    assert order.index("turntable") < order.index("tycoon")
+
+
+def test_harvest_card_task_order_after_farm_before_dungeon():
+    order = list(runner.TASK_ORDER)
+    assert order.index("farm") < order.index("harvest_card") < order.index("dungeon")
+
+
 # --- new free tasks: idle_reward / turntable / farm-harvest -----------------
 
 def test_new_free_tasks_run_on_spend_false(patched):
@@ -502,6 +936,75 @@ def test_farm_plant_and_work_run_with_config(patched):
     assert ("farm", "start_work") in actions
 
 
+def test_farm_does_not_run_harvest_card_cycle_inside_farm(patched):
+    """豐收卡是獨立 tag，farm 子流程不得再內嵌執行，避免同輪重複買/用卡。"""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {"enabled": True}})
+
+    assert ("harvest_card", "run_harvest_card_cycle") in {(t, a) for t, a in calls}
+    assert "harvest_card" in rep.tasks
+    assert "harvest_card_cycle" not in rep.tasks["farm"]
+
+
+def test_farm_reads_work_status_first(patched):
+    """_run_farm probes 打工 status (worker module 73, reliable) before touching
+    the flaky home module — recorded on the summary."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("farm", "read_work_status") in {(t, a) for t, a in calls}
+    assert rep.tasks["farm"]["work_status"]["running"] is False
+
+
+def test_farm_skips_manual_harvest_when_worker_running(patched, monkeypatch):
+    """打工 running -> 管家 auto-harvests; skip the flaky/racy manual home-module
+    read + harvest entirely (avoids the cmd=3081 no-reply timeout)."""
+    calls, _ = patched
+
+    monkeypatch.setattr(runner.farm, "read_work_status",
+                        lambda c, rid, **k: (calls.append(("farm", "read_work_status"))
+                                             or {"running": True, "worker_status": 1,
+                                                 "team_cfg_id": 7001, "found": True}))
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"seed_id": 102, "buy": [{"shop_id": 407, "target": 4}]})
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "read_farm") not in actions      # home module not touched
+    assert ("farm", "harvest_ready") not in actions
+    assert ("farm", "plant_empty") not in actions    # 管家 auto-plants too
+    assert "farm" not in rep.errors
+    assert "skipped" in rep.tasks["farm"]["harvest"]
+    # buy (shop module, reliable) still runs independent of 打工 status
+    assert ("farm", "buy_farm_shop") in actions
+
+
+def test_farm_read_timeout_still_runs_buy(patched, monkeypatch):
+    """home_farm_info (3077) timing out must NOT fail the whole farm task — the
+    reliable 莊園購買 (shop module) still runs. Regression: read_farm raised and
+    the buy was silently lost on ~50% of wakes (5554 live, 2026-06-14)."""
+    calls, _ = patched
+
+    def boom(c, rid, **k):
+        calls.append(("farm", "read_farm"))
+        raise WSTimeoutError("no response for cmd=3077 (expected one of (3077,))")
+
+    monkeypatch.setattr(runner.farm, "read_farm", boom)
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"buy": [{"shop_id": 407, "target": 4}]})
+
+    actions = {(t, a) for t, a in calls}
+    assert ("farm", "read_farm") in actions          # attempted ...
+    assert ("farm", "harvest_ready") not in actions   # ... but the read failed
+    assert "farm" not in rep.errors                   # task did NOT abort
+    assert "skipped" in rep.tasks["farm"]["harvest"]  # harvest degraded gracefully
+    assert ("farm", "buy_farm_shop") in actions       # the buy was NOT lost
+
+
 def test_dungeon_sweep_skipped_without_config(patched):
     """No dungeon_sweeps -> dungeon task is skipped (run_sweep never called)."""
     calls, _ = patched
@@ -510,6 +1013,74 @@ def test_dungeon_sweep_skipped_without_config(patched):
 
     assert ("dungeon", "run_sweep") not in {(t, a) for t, a in calls}
     assert rep.tasks["dungeon"]["skipped"]
+
+
+def test_harvest_card_skipped_without_config(patched):
+    """No harvest_card_cycle config -> harvest_card task is present but skipped."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False)
+
+    assert ("harvest_card", "run_harvest_card_cycle") not in {(t, a) for t, a in calls}
+    assert rep.tasks["harvest_card"]["skipped"]
+
+
+def test_harvest_card_runs_three_cards_with_config(patched):
+    """harvest_card_cycle.enabled -> independent tag runs the existing 3-card cycle."""
+    calls, _ = patched
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {"enabled": True}})
+
+    assert ("harvest_card", "run_harvest_card_cycle") in {(t, a) for t, a in calls}
+    assert rep.tasks["harvest_card"]["cards_bought"] == 3
+
+
+def test_harvest_card_custom_num_cards_passed(patched, monkeypatch):
+    """num_cards remains configurable while defaulting to weekly 3 cards."""
+    seen = {}
+
+    def fake_cycle(c, rid, **k):
+        seen.update(k)
+        return {"ok": True, "cards_bought": k.get("num_cards")}
+
+    monkeypatch.setattr(runner.farm, "run_harvest_card_cycle", fake_cycle)
+
+    rep = run_device("dev", spend=False,
+                     farm_config={"harvest_card_cycle": {
+                         "enabled": True, "num_cards": 2, "fertilizer_id": 222
+                     }})
+
+    assert rep.tasks["harvest_card"]["cards_bought"] == 2
+    assert seen["num_cards"] == 2
+    assert seen["fertilizer_id"] == 222
+
+
+def test_harvest_card_weekly_gate_records_success(monkeypatch, tmp_path):
+    """同一 ISO week 只跑一次；成功才寫 gate，避免每次喚醒都用豐收卡。"""
+    from datetime import datetime
+    from ws_token import runner
+
+    calls = []
+    monkeypatch.setattr(
+        runner.farm, "run_harvest_card_cycle",
+        lambda c, rid, **k: calls.append(k) or {"ok": True, "cards_bought": 3},
+    )
+    cfg = {"harvest_card_cycle": {"enabled": True}}
+    now = datetime(2026, 6, 22, 9, 0, 0)
+
+    first = runner._run_harvest_card(
+        object(), role_id=1, farm_config=cfg, inventory_tracker=None,
+        device="dev", state_dir=tmp_path, now=now,
+    )
+    second = runner._run_harvest_card(
+        object(), role_id=1, farm_config=cfg, inventory_tracker=None,
+        device="dev", state_dir=tmp_path, now=now.replace(hour=15),
+    )
+
+    assert first["cards_bought"] == 3
+    assert second["skipped"] == "already done 2026-W26"
+    assert len(calls) == 1
 
 
 def test_dungeon_sweep_runs_with_config(patched):
@@ -810,8 +1381,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     """Drive the REAL task orchestrators against a scripted responder to prove
     the wiring (cmd ids, body building, push collection) is sound end-to-end."""
     from ws_token import (
-        couple, farm, idle_reward, league_solo, main_tasks, redpack, spirit,
-        steward, turntable, workshop,
+        ad_reward, couple, farm, idle_reward, league_solo, main_tasks, redpack,
+        spirit, steward, turntable, workshop,
     )
 
     # main_tasks reads are PUSH-based; emit the login-time frames on login.
@@ -839,9 +1410,15 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         # idle_reward: ONLINE read -> type=1, nothing claimable (no claim sent)
         idle_reward.CMD_REWARD_INFO: lambda b: [
             s2c(idle_reward.CMD_REWARD_INFO, codec.pb_uint(1, idle_reward.TYPE_ONLINE))],
-        # turntable: info -> num=0 (no free spins)
+        # turntable ad top-up: ad_info -> config 13 already maxed (2/2) so
+        # claim_ad skips WITHOUT sending 0x1602; then info -> num=0 (no spins)
+        ad_reward.CMD_AD_INFO: lambda b: [
+            s2c(ad_reward.CMD_AD_INFO,
+                codec.pb_msg(1, codec.pb_uint(1, 13) + codec.pb_uint(2, 2)))],
         turntable.CMD_INFO: lambda b: [
             s2c(turntable.CMD_INFO, codec.pb_uint(1, 0) + codec.pb_uint(2, 0))],
+        # farm: 打工偵測 -> empty team_list (worker NOT running -> manual path)
+        farm.CMD_GET_OTHER_WORKER: lambda b: [s2c(farm.CMD_GET_OTHER_WORKER, b"")],
         # farm: home_farm_info -> empty (no lands -> 0 harvested)
         farm.CMD_INFO: lambda b: [s2c(farm.CMD_INFO, b"")],
         # guild: empty help list, no treasure round
@@ -854,7 +1431,7 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         steward.CMD_INFO: lambda b: [s2c(steward.CMD_INFO, b"")],
         # spirit: empty pool list -> no free draws
         spirit.CMD_DRAW_INFO: lambda b: [s2c(spirit.CMD_DRAW_INFO, b"")],
-        # workshop: empty info -> no team workshops to rotate
+        # workshop: empty info -> no team workshops to assign
         workshop.CMD_INFO: lambda b: [s2c(workshop.CMD_INFO, b"")],
         # couple: empty favor list + lover_id=0 -> no partner, skipped
         couple.CMD_FAVOR_INFO: lambda b: [s2c(couple.CMD_FAVOR_INFO, b"")],
@@ -908,12 +1485,14 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["carpark"]["skipped"]
     # spirit / workshop / couple ran end-to-end over the real code
     assert rep.tasks["spirit"]["pools_drawn"] == 0
-    # workshop: empty info -> no team workshops -> no successful switch ->
-    # best-effort rule: rotated=False and NO state written (retry next run)
-    assert rep.tasks["workshop"]["rotated"] is False
+    # workshop: empty info -> no team workshops to assign -> empty result
+    assert rep.tasks["workshop"]["workshops"] == []
     assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
+    # 競猜商店 is opt-in (kungfu_guess defaults False) so it must NOT have run —
+    # this also proves the gated task never sends a stray shop_buy on a free pass.
+    assert "kungfu_store" not in rep.tasks
 
 
 # --- spirit / workshop / couple wiring ---------------------------------------
@@ -924,7 +1503,161 @@ def test_task_order_has_home_features_before_lamp():
     assert order.index("spirit") > order.index("carpark")
     assert order.index("mining") > order.index("couple")
     assert order.index("mining") < order.index("lamp")
-    assert order[-5:] == ["spirit", "workshop", "couple", "mining", "lamp"]
+    # 守護靈→秘寶→工坊→伴侶 home-feature tail sits before mining/lamp; 秘寶(尋寶)
+    # runs right after 守護靈(spirit). (robust relative order — tolerates the
+    # dragon_realm/sea_season tasks that sit between couple and mining.)
+    assert order.index("spirit") < order.index("secret_jewel") < order.index("workshop")
+    assert order.index("workshop") < order.index("couple") < order.index("mining")
+    assert order[-1] == "lamp"
+    # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
+    assert order.index("dungeon") < order.index("rogue") < order.index("guild")
+    # 競猜商店 (粉鑽 買競猜幣) sits with the shopping/cost group: after steward,
+    # before the spirit/workshop/couple/mining/lamp tail.
+    assert order.index("steward") < order.index("kungfu_store") < order.index("spirit")
+
+
+class _FakeKungfuClient:
+    """Scripts shop_buy success for the 競猜商店 wiring test."""
+
+    def __init__(self, accept_all=True):
+        self.accept_all = accept_all
+        self.calls: list = []
+
+    def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        from ws_token import kungfu_store as ks
+        self.calls.append((cmd, bytes(body)))
+        if self.accept_all:
+            return ks.CMD_SHOP_BUY, b""
+        return ks.CMD_ERR, b""
+
+
+def test_run_kungfu_store_helper_buys_to_cap():
+    from ws_token import runner
+    client = _FakeKungfuClient(accept_all=True)
+    summary = runner._run_kungfu_store(client)
+    # all four tiers to cap: 100 + 200 + 300*2 + 500*3 = 2400 競猜幣
+    assert summary["coins"] == 2400
+    assert summary["diamonds_spent"] == 12600
+    assert summary["bought"] == {15001: 1, 15002: 1, 15003: 2, 15004: 3}
+
+
+def test_run_kungfu_store_helper_noop_when_event_closed():
+    from ws_token import runner
+    client = _FakeKungfuClient(accept_all=False)
+    summary = runner._run_kungfu_store(client)
+    assert summary["coins"] == 0
+    assert summary["bought"] == {}
+    # one probe per tier then stop -> exactly 4 calls, never over-tries
+    assert len(client.calls) == 4
+
+
+# --- rogue (萬神試煉 本周積分獎勵) Friday gate --------------------------------
+
+class _FakeRogueClient:
+    """Minimal client: records call_for and returns a scripted (cmd, body)."""
+
+    def __init__(self, reply):
+        self._reply = reply
+        self.calls: list = []
+
+    def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        self.calls.append((cmd, bytes(body)))
+        return self._reply
+
+
+def _a_friday():
+    from datetime import datetime, timedelta
+    d = datetime(2026, 6, 1, 9, 0, 0)
+    while d.weekday() != 4:  # 4 = Friday
+        d += timedelta(days=1)
+    return d
+
+
+def _reward_reply():
+    from ws_token import rogue
+    body = b"".join(codec.pb_uint(1, i) for i in (1, 2, 3))
+    body += codec.pb_msg(2, codec.pb_uint(1, 1501) + codec.pb_uint(2, 200))
+    return (rogue.CMD_WEEK_REWARD, body)
+
+
+def test_run_rogue_claims_once_on_friday(tmp_path):
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=_a_friday())
+    assert out["claimed_run"] is True
+    assert out["success"] is True
+    assert out["claimed"] == [1, 2, 3]
+    assert out["rewards"] == {1501: 200}
+    # the request is cmd 19482 with an EMPTY body
+    assert client.calls == [(runner.rogue.CMD_WEEK_REWARD, b"")]
+
+
+def test_run_rogue_skips_when_not_friday(tmp_path):
+    from datetime import timedelta
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    saturday = _a_friday() + timedelta(days=1)
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=saturday)
+    assert out["claimed_run"] is False
+    assert "not Friday" in out["reason"]
+    assert client.calls == []  # nothing sent on a non-Friday
+
+
+def test_run_rogue_same_friday_claims_only_once(tmp_path):
+    from ws_token import runner
+    client = _FakeRogueClient(_reward_reply())
+    friday = _a_friday()
+    first = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    second = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert first["claimed_run"] is True
+    assert second["claimed_run"] is False
+    assert "already claimed" in second["reason"]
+    assert len(client.calls) == 1  # persisted last_date gates the 2nd hourly wake
+
+
+def test_run_rogue_failure_not_persisted_so_retries(tmp_path):
+    from ws_token import rogue, runner
+    client = _FakeRogueClient((rogue.CMD_ERROR, codec.pb_uint(1, 173)))
+    friday = _a_friday()
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert out["claimed_run"] is True
+    assert out["success"] is False
+    assert out["error_code"] == 173
+    # no last_date written on failure -> the next Friday wake retries (sends again).
+    runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert len(client.calls) == 2
+
+
+def test_run_rogue_dormant_timeout_is_benign(tmp_path):
+    """A dormant 萬神試煉 週積分 event never answers 19482 — and sends NO 0x0201
+    error frame either — so the call times out (WSTimeoutError). _run_rogue must
+    treat that as a benign skip (returns a dict, NOT re-raised) so _safe records it
+    under tasks not errors, must probe with the SHORT timeout (not the 15s default),
+    and must NOT persist last_date so a later Friday wake (event opened) re-probes.
+    Mirrors guild treasure's dormant-event handling.
+    """
+    from ws_token import runner
+    from ws_token.client import WSTimeoutError
+
+    class _TimeoutRogueClient:
+        def __init__(self):
+            self.calls: list = []
+
+        def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+            self.calls.append((cmd, bytes(body), timeout))
+            raise WSTimeoutError(
+                "no response for cmd=19482 (expected one of (19482, 513))")
+
+    client = _TimeoutRogueClient()
+    friday = _a_friday()
+    out = runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert out["claimed_run"] is False
+    assert "dormant" in out["reason"]
+    # short probe timeout used (fail fast), not the 15s default call_timeout
+    assert client.calls[0][2] == runner._ROGUE_PROBE_S
+    # not persisted -> a later Friday wake re-probes (sends again, no permanent skip)
+    runner._run_rogue(client, device="dev", state_dir=tmp_path, now=friday)
+    assert len(client.calls) == 2
 
 
 def test_run_couple_no_partner_skips(monkeypatch):
@@ -935,7 +1668,9 @@ def test_run_couple_no_partner_skips(monkeypatch):
     assert out["skipped"] == "no partner"
 
 
-def test_run_couple_gifts_milk_tea_then_flower(monkeypatch):
+def test_run_couple_gifts_milk_tea_then_flower(monkeypatch, tmp_path):
+    from datetime import datetime
+
     from ws_token import couple, runner
 
     sent = []
@@ -946,13 +1681,87 @@ def test_run_couple_gifts_milk_tea_then_flower(monkeypatch):
         runner.couple, "give_all_in_hand",
         lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
         or {"batches_ok": 1, "stopped_reason": "error_code=3"})
-    out = runner._run_couple(object(), gifts=True, forge_ring=False)
+    out = runner._run_couple(object(), gifts=True, forge_ring=False,
+                             device="dev", state_dir=tmp_path,
+                             now=datetime(2026, 6, 14, 9, 0, 0))
     assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER)]
     assert out["ring"] is None
+    assert out.get("gifts_skipped") is None
 
 
-def test_run_couple_forge_ring_gated(monkeypatch):
+def test_run_couple_gifts_once_per_calendar_day(monkeypatch, tmp_path):
+    # 使用者 2026-06-14: 花跟奶茶 一天只送一次。同一天第二次喚醒不再送。
+    from datetime import datetime
+
     from ws_token import couple, runner
+
+    sent = []
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
+        or {"batches_ok": 1, "stopped_reason": "error_code=3"})
+    day = datetime(2026, 6, 14, 9, 0, 0)
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path, now=day)
+    second = runner._run_couple(object(), gifts=True, forge_ring=False,
+                                device="dev", state_dir=tmp_path,
+                                now=day.replace(hour=15))
+    # only the FIRST wake sent the two gifts; the 2nd same-day wake skipped them
+    assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER)]
+    assert "already gifted 2026-06-14" in second["gifts_skipped"]
+
+
+def test_run_couple_gifts_resend_next_calendar_day(monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from ws_token import couple, runner
+
+    sent = []
+    monkeypatch.setattr(
+        runner.couple, "read_favor_info",
+        lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
+    monkeypatch.setattr(
+        runner.couple, "give_all_in_hand",
+        lambda c, *, friend_id, flower_id: sent.append((friend_id, flower_id))
+        or {"batches_ok": 1, "stopped_reason": "error_code=3"})
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path,
+                       now=datetime(2026, 6, 14, 9, 0, 0))
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path,
+                       now=datetime(2026, 6, 15, 9, 0, 0))
+    # two gifts each day -> 4 sends across two calendar days
+    assert sent == [(111, couple.MILK_TEA), (111, couple.FLOWER),
+                    (111, couple.MILK_TEA), (111, couple.FLOWER)]
+
+
+def test_run_couple_no_partner_does_not_write_gate(monkeypatch, tmp_path):
+    # No partner -> skip BEFORE the gate; nothing persisted (so a partner that
+    # appears later the same day still gets that day's gift).
+    from datetime import datetime
+
+    from ws_token import runner
+    from ws_token import state as ws_state
+
+    monkeypatch.setattr(runner.couple, "read_favor_info", lambda c: [])
+    monkeypatch.setattr(runner.couple, "read_partner", lambda c: 0)
+    out = runner._run_couple(object(), gifts=True, forge_ring=False,
+                             device="dev", state_dir=tmp_path,
+                             now=datetime(2026, 6, 14, 9, 0, 0))
+    assert out["skipped"] == "no partner"
+    assert ws_state.load_state("dev", state_dir=tmp_path).get("couple") is None
+
+
+def test_run_couple_forge_ring_independent_of_gift_gate(monkeypatch, tmp_path):
+    # forge_ring (戒指錘鍊) is NOT day-gated: even when the gifts are gate-skipped
+    # for today, an opted-in forge still runs.
+    from datetime import datetime
+
+    from ws_token import couple, runner
+
     monkeypatch.setattr(
         runner.couple, "read_favor_info",
         lambda c: [couple.Partner(role_id=111, name="P", favor_lv=5, favor=1)])
@@ -962,99 +1771,78 @@ def test_run_couple_forge_ring_gated(monkeypatch):
     called = []
     monkeypatch.setattr(runner.couple, "forge_ring_until_empty",
                         lambda c: called.append(1) or {"forges": 2})
-    runner._run_couple(object(), gifts=True, forge_ring=False)
+    day = datetime(2026, 6, 14, 9, 0, 0)
+    runner._run_couple(object(), gifts=True, forge_ring=False,
+                       device="dev", state_dir=tmp_path, now=day)
     assert called == []
-    runner._run_couple(object(), gifts=True, forge_ring=True)
+    # same day: gifts gate-skipped, but forge_ring still runs when opted in
+    out = runner._run_couple(object(), gifts=True, forge_ring=True,
+                             device="dev", state_dir=tmp_path, now=day)
     assert called == [1]
+    assert "already gifted" in out["gifts_skipped"]
 
 
-def _switched_entry(team, food, *, chosen_ok=True, timeout=False):
-    """One rotate_team_recipes switched[] entry as workshop.switch_recipe shapes it."""
-    chosen = ({"ok": True, "error_code": None} if chosen_ok else
-              {"ok": False, "error_code": None, "timeout": timeout})
-    return {"team_cfg_id": team, "food_id": food, "count": 1,
-            "workshop_id": team - 6000,
-            "cancelled": {"ok": True, "error_code": None}, "chosen": chosen}
+class _FakeTracker:
+    """Minimal InventoryTracker stand-in exposing only ``counts``."""
+
+    def __init__(self, counts):
+        self.counts = dict(counts)
 
 
-def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
+def test_run_workshop_passes_tracker_counts_as_materials(monkeypatch):
+    # _run_workshop threads inventory_tracker.counts into assign_idle_workshops
+    # (the 0x0402 原料庫存 snapshot) — no parity/cadence/state involved.
     from ws_token import runner
-    rotated = []
+    seen = {}
     monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: rotated.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001 if parity % 2 == 0 else 8005)]})
-    # first run: no state -> rotates with parity 0
-    out1 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert rotated == [0] and out1["rotated"] is True
-    # 1 hour later: gated
-    out2 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert rotated == [0] and out2["rotated"] is False
-    # 12h+ later: rotates with parity 1
-    out3 = runner._run_workshop(object(), device="devA", state_dir=tmp_path,
-                                now=1_000_000.0 + 12 * 3600 + 1)
-    assert rotated == [0, 1] and out3["rotated"] is True
+        runner.workshop, "assign_idle_workshops",
+        lambda c, *, materials: seen.update(materials)
+        or {"workshops": [{"team_cfg_id": 6002, "action": "assigned",
+                           "food_id": 8005, "count": 59, "ok": True}]})
+    tracker = _FakeTracker({6017: 7, 6019: 118, 6020: 118, 6021: 1138})
+    out = runner._run_workshop(object(), tracker, device="devA")
+    assert seen == {6017: 7, 6019: 118, 6020: 118, 6021: 1138}
+    assert out["workshops"][0]["food_id"] == 8005
+    assert "missing_materials" not in out
 
 
-def test_run_workshop_all_switches_failed_does_not_write_state(monkeypatch, tmp_path):
-    # Server was state-gated silent on every switch (live 2026-06-10 7fe98fc6):
-    # rotate returns only chosen ok=False entries -> NOT a valid rotation ->
-    # no state write, so the next run retries instead of waiting 12h.
+def test_run_workshop_is_idempotent_no_cadence(monkeypatch):
+    # Repeated calls always invoke assign_idle_workshops (idempotent — it only
+    # touches idle workshops, so re-running is harmless). No 12h gate.
     from ws_token import runner
     calls = []
-    monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: calls.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
-                         _switched_entry(6003, 8005, chosen_ok=False, timeout=True)]})
-    out1 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert out1["rotated"] is False
-    assert out1["reason"] == "all switches failed/timeout"
-    assert len(out1["switched"]) == 2
-    # state NOT written -> a retry 1h later is NOT gated and rotates again
-    out2 = runner._run_workshop(object(), device="devB", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert calls == [0, 0]
-    assert out2["rotated"] is False  # still all-failed in this mock
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: calls.append(1) or {"workshops": []})
+    tracker = _FakeTracker({6017: 4})
+    runner._run_workshop(object(), tracker, device="devB")
+    runner._run_workshop(object(), tracker, device="devB")
+    runner._run_workshop(object(), tracker, device="devB")
+    assert calls == [1, 1, 1]  # ran every time, never gated
 
 
-def test_run_workshop_one_success_is_enough_to_write_state(monkeypatch, tmp_path):
+def test_run_workshop_warns_and_reports_missing_materials(monkeypatch):
+    # 防呆: a recipe material absent from the 0x0402 snapshot -> reported in
+    # missing_materials; that material is still passed as absent (producible=0
+    # downstream), never forged into a count.
     from ws_token import runner
-    calls = []
-    monkeypatch.setattr(
-        runner.workshop, "rotate_team_recipes",
-        lambda c, *, parity: calls.append(parity)
-        or {"parity": parity % 2,
-            "switched": [_switched_entry(6002, 8001, chosen_ok=False, timeout=True),
-                         _switched_entry(6003, 8005, chosen_ok=True)]})
-    out1 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
-                                now=1_000_000.0)
-    assert out1["rotated"] is True
-    # state written -> 1h later is gated
-    out2 = runner._run_workshop(object(), device="devC", state_dir=tmp_path,
-                                now=1_000_000.0 + 3600)
-    assert calls == [0]
-    assert out2["rotated"] is False and "ago" in out2["reason"]
+    seen = {}
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: seen.update(materials)
+                        or {"workshops": []})
+    # only 6017 present; 6019/6020/6021 (needed by 8005) are missing
+    tracker = _FakeTracker({6017: 10})
+    out = runner._run_workshop(object(), tracker, device="devC")
+    assert out["missing_materials"] == [6019, 6020, 6021]
+    assert seen == {6017: 10}  # missing keys NOT fabricated
 
 
-def test_run_workshop_empty_switched_does_not_write_state(monkeypatch, tmp_path):
-    # No team workshops in info -> switched=[] -> no success -> no state write.
+def test_run_workshop_no_missing_when_all_materials_present(monkeypatch):
     from ws_token import runner
-    calls = []
-    monkeypatch.setattr(runner.workshop, "rotate_team_recipes",
-                        lambda c, *, parity: calls.append(parity)
-                        or {"parity": parity % 2, "switched": []})
-    out = runner._run_workshop(object(), device="devD", state_dir=tmp_path,
-                               now=1_000_000.0)
-    assert out["rotated"] is False
-    runner._run_workshop(object(), device="devD", state_dir=tmp_path,
-                         now=1_000_000.0 + 60)
-    assert calls == [0, 0]  # not gated: it retried
+    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
+                        lambda c, *, materials: {"workshops": []})
+    tracker = _FakeTracker({6017: 1, 6019: 1, 6020: 1, 6021: 1})
+    out = runner._run_workshop(object(), tracker, device="devD")
+    assert "missing_materials" not in out
 
 
 def test_run_spirit_draws_free(monkeypatch):

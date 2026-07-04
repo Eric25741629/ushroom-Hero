@@ -127,4 +127,4 @@ def decide(state: DragonState, config, prefs: Prefs) -> Action:
     if et in (C.BUFF, C.CAVE):
         return Action.from_choice(C.CHOICE_ADVANCE)
 
-    return Action.wait()
+    return Action.from_choice(C.CHOICE_ADVANCE)

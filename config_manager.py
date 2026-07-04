@@ -36,6 +36,7 @@ DEFAULT_DEVICE_CONFIG = {
     "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
     "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
     "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
+    "ws_token_kungfu_guess": False,  # True => 菇菇武道會競猜商店用粉鑽把競猜幣 4 檔買到上限 (活動沒開時伺服器擋下=no-op)，預設 off
     "ws_token_mining": None,  # {"enabled": bool, "allow_bomb": bool, "allow_drill": bool, "max_steps": int}
     "web_url": "",
     "web_canvas_selector": "canvas",
@@ -53,37 +54,99 @@ DEFAULT_DEVICE_CONFIG = {
     "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
     "web_reload_after_goto": False,  # True=goto 成功後再 reload；預設關閉以加快 H5 載入
     "enable_farm": True,  # 啟用農場
+    "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
-    "enable_dungeon": True,  # 啟用副本(地獄/萬神)
+    "enable_dungeon": True,  # 啟用副本(地獄/萬神) — legacy 總開關，向後相容 fallback 用
+    "enable_hellgate": True,  # 啟用地獄之門 (granular 副本開關)
+    "enable_wanshen": True,  # 啟用萬神試煉 (granular 副本開關)
+    "enable_cloud_battle": True,  # 啟用雲端戰鬥 (granular 副本開關)
+    "enable_biweekly": True,  # 啟用雙週賞金副本 (granular 副本開關)
     "enable_shop_manager": True,  # 啟用購物管家
     "enable_dungeon_manager": True,  # 啟用副本管家
+    "enable_fannaoxiao": False,  # 煩惱消 (act_type 224 左右消除小遊戲)；H5 only、每日一次、預設 off
+    "enable_escort": False,  # 賞金之路 (Escort 押鏢) 自動打 NPC；H5 only、六日>=11點、預設 off
     "is_real_phone": False,  # 是否為實體機/特殊機型 (原本的 fc65396d 邏輯)
     "keep_screen_on": False,  # 是否保持螢幕開啟 (不鎖屏)
     "screenshot_debug": False,  # 是否開啟截圖除錯
     "online_check_interval_sec": 30,  # 偵測到上線後的避讓 retry 間隔 (秒)
+    # 代查線一律走純 WS 靜默路徑(一次性 WS 連線讀好友上線狀態),不需要瀏覽器。
+    # 全機隊都是 web_h5、睡覺時瀏覽器關閉,瀏覽器路徑(_run_checker_protocol_only)
+    # 會 page closed 失敗並冷啟重登;WS 路徑無此問題。預設 True。
+    "online_check_via_ws": True,
+    # 做完客戶端任務後純 WS 掛機（省資源）：僅 web_h5 + ws_token.enabled 生效（見
+    # game_actions/browser_skip.should_skip_browser）。opt-in，預設 False → 行為與現況相同。
+    "skip_browser_when_all_done": False,
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v4",  # v1 / v3 / v4 (v4 default — planner-eval 2026-06-05; v2 removed)
+    "mining_planner_version": "v1",  # v1 / v3 / v4 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
     "mining_save_samples": False,  # save low-confidence mining cell samples
+    "wanshen_rounds": 8,  # 萬神試煉每週開局(局)數;一局=爬到第一次失敗→結束本局→重進(可調 1-50)
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
         "enabled": False,       # 喚醒後先跑純 WS 任務，成功項由 Playwright 階段跳過
-        "spend": False,         # 家族捐獻/管家代購/掃蕩/續約 等花費類
-        "open_lamp": False,     # WS 開神燈（一批，取代 Playwright 開神燈）
+        "bootstrap_token": True, # ADB 裝置缺 capture/登入失敗時主動冷啟 App 撈 token
+        "offline_fallback": False, # 手機 ADB 不可達時改跑純 WS 等待迴圈（離線備援），預設 off
+        "fallback_host": "",    # 限定哪台主機跑離線備援（hostname，不分大小寫）；空 = 只有 master（防 NAS 同步雙主機注入互踢）
+        # 2026-06-12 使用者指示：enabled 開了就代表全要 → 子功能預設全開
+        "spend": True,          # 家族捐獻/管家代購/掃蕩/續約 等花費類
+        "open_lamp": True,      # WS 開神燈（一批，取代 Playwright 開神燈）
+        "lamp_percent": 0,      # WS 開神燈：依當前神燈總數的百分比決定本輪目標（0 = 不依百分比，開到沒燈）
+        "lamp_min_keep": 0,     # WS 開神燈：剩餘神燈硬地板（0 = 無下限）
+        "lamp_daily_min": 0,   # WS 開神燈：每日最少開啟數量（0 = 不限制；不受百分比規則約束，仍受 min_keep 地板）
         "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
         "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
-        "carpark_target": None, # 跨界停車 master_id（只停不收）
+        "carpark_target": None, # 跨界停車 master_id（只停不收；legacy 單停模式）
+        "carpark_auto": False,  # 跨界自動掃可停 lot（legacy 單停模式）
+        "carpark_plan": {       # 日/夜窗口跨界停車（限定泊銀、優先鉑銀9/10、抱團優先；窗口內持續補停）
+            "enabled": False,
+            "silver_levels": [9, 10],  # 優先鉑銀 lot 等級；滿了退其他泊銀 lot
+            # 跨界車位只開放台灣 10:00-22:00；夜窗 cross=0（本服車位遊戲內建自動化）
+            "day":   {"window": ["10:00", "22:00"], "cross": 1},
+            "night": {"window": ["22:00", "10:00"], "cross": 0},
+            # 搶位分層 + 10:00 每秒重試（2026-06-15）
+            "cluster_min": 3,            # 同服占用 >= 此值算抱團（高獎勵低編號區門檻）
+            "grab_window_seconds": 60,   # 開窗後持續搶位到 開窗+此秒（10:01）
+            "grab_poll_seconds": 1.0,    # 搶位每輪間隔（每秒重試）
+            "grab_attempts": 8,          # 搶位重試輪數安全上限
+            "allow_low_noncluster": True,  # 最後手段：停鉑銀1-8 非抱團空位（不空手）
+        },
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
         "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
-        "mining": {             # WS 挖礦 opt-in；成功後可跳過 Playwright 挖礦任務
+        "mail_claim": False,    # 每日自動領取全部郵件附件（一鍵領取，每日一次；預設關，加法功能）
+        "mail_gem_threshold": None,   # 神器附魔寶石 best-effort 滿門檻（僅 log，不擋領取；None=不查）
+        "mail_skill_threshold": None,  # 武魂 best-effort 滿門檻（僅 log，不擋領取；None=不查）
+        "relic_upgrade": False,  # 遺物 平均強化（消耗遺物碎片強化最低等級已裝備遺物）；預設關，加法功能
+        "relic_max_steps": 10,   # 遺物強化每輪步數上限
+        "relic_fragment_floor": 0,  # 遺物強化：剩餘遺物碎片低於此值即停（0=無下限）
+        "relic_sprint": {        # 遺物碎片衝刺（衝刺榜）；消耗遺物碎片衝至目標再領回合獎勵；預設關，加法功能
             "enabled": False,
-            "allow_bomb": False,
-            "allow_drill": False,
+            "target_spend": 900000,  # 衝刺目標（累計消耗遺物碎片；= 第 4 回合門檻）
+        },
+        "tycoon": False,         # 傳奇大亨（大富翁）自動擲骰；免費骰子純收益，活動沒開=no-op；預設關
+        "tycoon_max_rolls": 50,  # 傳奇大亨每輪擲骰次數上限
+        "xwar_idle": False,      # 跨服戰 放置獎勵 每 ≤4h 自動領取；只在 act_list 活動 Open 才送，沒開=no-op；預設關
+        "mining": {             # WS 挖礦；成功後可跳過 Playwright 挖礦任務
+            "enabled": True,
+            "allow_bomb": True,   # 預設開：炸彈一次清 3x3+十字，省鏟效率高 (2026-06-20)
+            "allow_drill": True,  # 預設開：鑽頭清整直行+底排
             "max_steps": 200,
+        },
+        "gacha": {              # WS 抽卡；預設關
+            "enabled": False,   # 付費抽（消耗抽卡券 1012/1013）
+            "types": [1, 2],    # 1=技能, 2=同伴
+            "mode": "fixed",    # drain=抽到券盡 | fixed=每批 count×batches
+            "count": 35,        # fixed 模式每批抽數 (15/35/999)；週末 35×3 = 105 抽
+            "batches": 3,       # fixed 模式批數
+            "weekend_only": False, # True=只在週六/日執行（解周任務用，同 ADB weekend_to_buy 行為）
+            "free_daily": False,  # 每日免費召喚 (0x1602)；遊戲本身已自動處理，不歸 bot 管
+        },
+        "ad_rewards": {         # 看廣告獎勵自動領取 (鑽石/種子)；is_free=1 純 WS 領；預設關
+            "enabled": False,   # True => 每輪喚醒讀當日次數後只補差額領取
+            "config_ids": [1, 2, 3, 12, 14, 15],  # 1=挖礦鎬子 2=挖礦鑽頭 3=挖礦炸彈 12=商城鑽石 14=浮動鑽石 15=農場種子 (AdType)
         },
     },
 }
@@ -116,6 +179,7 @@ class DeviceConfig:
     ws_token_spend: bool = False
     ws_token_sweep_list: list = field(default_factory=list)
     ws_token_open_lamp: bool = False
+    ws_token_kungfu_guess: bool = False
     ws_token_mining: Optional[dict] = None
 
     # Web H5 settings
@@ -137,24 +201,35 @@ class DeviceConfig:
 
     # Feature flags
     enable_farm: bool = True
+    enable_harvest_card: bool = True
     enable_arena: bool = True
     enable_mining: bool = True
     enable_dungeon: bool = True
+    enable_hellgate: bool = True
+    enable_wanshen: bool = True
+    enable_cloud_battle: bool = True
+    enable_biweekly: bool = True
     enable_shop_manager: bool = True
     enable_dungeon_manager: bool = True
+    enable_fannaoxiao: bool = False
+    enable_escort: bool = False
 
     # Device behaviour
     is_real_phone: bool = False
     keep_screen_on: bool = False
     screenshot_debug: bool = False
     online_check_interval_sec: int = 30
+    online_check_via_ws: bool = True
+    # 做完客戶端任務後純 WS 掛機（僅 web_h5 + ws_token.enabled 生效）；opt-in，預設 False。
+    skip_browser_when_all_done: bool = False
 
     # Task durations / intervals
     lamp_check_interval: int = 2
     lamp_duration_sec: int = 300
     mining_duration_min: int = 6
-    mining_planner_version: str = "v4"
+    mining_planner_version: str = "v1"
     mining_save_samples: bool = False
+    wanshen_rounds: int = 8
 
     # Sleep schedule
     sleep_min_hours: float = 1.0
@@ -218,8 +293,9 @@ DEFAULT_GLOBAL_CONFIG = {
     "worker_sync_timeout_sec": 10.0,
     "worker_sync_failure_backoff_sec": 6.0,
     # 跨裝置 online-check 的 checker 候選清單。任一在此清單、目前空閒、且好友
-    # 列表含 target 的帳號都可代為查線。預設只有 emulator-5554，與舊行為一致
-    # （5558 仍只被 5554 服務）。
+    # 列表含 target 的帳號都可代為查線。"*" 表示所有未設 online_check_target_pid
+    # 的裝置皆可做 checker（任一台暫停不影響其他台）。預設仍為 ["emulator-5554"]
+    # 以保留舊行為相容性。
     "online_check_checkers": ["emulator-5554"],
     "ocr": copy.deepcopy(DEFAULT_OCR_CONFIG),
     # 針對特定電腦名稱的設定 (解決 NAS 共用檔案問題)
@@ -368,14 +444,125 @@ def _sanitize_mining_config(v: Any) -> Optional[dict]:
         return None
     out = {
         "enabled": _to_bool(v.get("enabled"), False),
-        "allow_bomb": _to_bool(v.get("allow_bomb"), False),
-        "allow_drill": _to_bool(v.get("allow_drill"), False),
+        "allow_bomb": _to_bool(v.get("allow_bomb"), True),   # 預設開 (2026-06-20)
+        "allow_drill": _to_bool(v.get("allow_drill"), True),  # 預設開
         "max_steps": _clamp_int(v.get("max_steps"), 1, 500, 200),
     }
     if v.get("max_depth") is not None:
         out["max_depth"] = max(1, _to_int(v.get("max_depth"), 1))
     if v.get("timeout") is not None:
         out["timeout"] = max(0.1, _to_float(v.get("timeout"), 8.0))
+    return out
+
+
+def _sanitize_gacha_config(v: Any, default: dict) -> dict:
+    """Coerce WS gacha config; malformed input degrades to defaults (disabled).
+
+    types kept only as a list of 1/2 (技能/同伴); mode clamped to drain|fixed;
+    count to the server-known bundles 15/35/999; batches to 1..2000.
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    types = v.get("types")
+    if isinstance(types, (list, tuple)):
+        clean = [int(t) for t in types if t in (1, 2)]
+        out["types"] = clean or list(default["types"])
+    mode = v.get("mode")
+    out["mode"] = mode if mode in ("drain", "fixed") else default["mode"]
+    count = _to_int(v.get("count"), default["count"])
+    out["count"] = count if count in (15, 35, 999) else default["count"]
+    out["batches"] = _clamp_int(v.get("batches"), 1, 2000, default["batches"])
+    out["weekend_only"] = _to_bool(v.get("weekend_only"), default["weekend_only"])
+    out["free_daily"] = _to_bool(v.get("free_daily"), default["free_daily"])
+    return out
+
+
+def _sanitize_ad_rewards_config(v: Any, default: dict) -> dict:
+    """Coerce WS ad_rewards config; malformed input degrades to defaults (disabled).
+
+    enabled -> bool; config_ids -> list[int] (non-integers dropped). An empty /
+    invalid config_ids list falls back to the default ids so an enabled-but-broken
+    config still has something to claim.
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    ids = v.get("config_ids")
+    if isinstance(ids, (list, tuple)):
+        clean: list[int] = []
+        for x in ids:
+            if isinstance(x, bool):
+                continue
+            try:
+                clean.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        out["config_ids"] = clean or list(default["config_ids"])
+    return out
+
+
+def _sanitize_relic_sprint_config(v: Any, default: dict) -> dict:
+    """Coerce WS relic_sprint config; malformed input degrades to defaults (disabled).
+
+    enabled -> bool; target_spend -> a positive int (non-positive / invalid falls
+    back to the default 900000 so an enabled-but-broken config still has a sane
+    full-sprint target).
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    target = _to_int(v.get("target_spend"), default["target_spend"])
+    out["target_spend"] = target if target > 0 else default["target_spend"]
+    return out
+
+
+def _merge_carpark_plan(v: Any, default: dict) -> dict:
+    """Coerce ws_token.carpark_plan; malformed input degrades to defaults.
+
+    enabled -> bool; each window needs ["HH:MM", "HH:MM"] (else that window
+    falls back to the default); cross clamped to 0..10; silver_levels kept
+    only when a list of ints in 1..30 (鉑銀1..30).
+    """
+    out = copy.deepcopy(default)
+    if not isinstance(v, dict):
+        return out
+    out["enabled"] = _to_bool(v.get("enabled"), default["enabled"])
+    levels = v.get("silver_levels")
+    if isinstance(levels, (list, tuple)):
+        clean = [int(x) for x in levels
+                 if isinstance(x, (int, float)) and 1 <= int(x) <= 30]
+        if clean:
+            out["silver_levels"] = clean
+
+    def _hhmm_ok(s: Any) -> bool:
+        if not isinstance(s, str) or s.count(":") != 1:
+            return False
+        h, _, m = s.partition(":")
+        return (h.isdigit() and m.isdigit()
+                and 0 <= int(h) <= 23 and 0 <= int(m) <= 59)
+
+    for name in ("day", "night"):
+        w = v.get(name)
+        if not isinstance(w, dict):
+            continue
+        win = w.get("window")
+        if (isinstance(win, (list, tuple)) and len(win) == 2
+                and _hhmm_ok(win[0]) and _hhmm_ok(win[1])):
+            out[name]["window"] = [str(win[0]), str(win[1])]
+        out[name]["cross"] = _clamp_int(w.get("cross"), 0, 10,
+                                        default[name]["cross"])
+
+    # 搶位分層 + 每秒重試欄位：複用 carpark_plan getter 作為唯一清洗來源（壞值退預設）。
+    from ws_token import carpark_plan as _cp
+    out["cluster_min"] = _cp.cluster_min(v)
+    out["grab_window_seconds"] = _cp.grab_window_seconds(v)
+    out["grab_poll_seconds"] = _cp.grab_poll_seconds(v)
+    out["grab_attempts"] = _cp.grab_attempts(v)
+    out["allow_low_noncluster"] = _cp.allow_low_noncluster(v)
     return out
 
 
@@ -386,8 +573,45 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
         return default
     merged = copy.deepcopy(default)
     merged.update(v)
+    merged["bootstrap_token"] = _to_bool(
+        merged.get("bootstrap_token"),
+        default["bootstrap_token"],
+    )
+    merged["offline_fallback"] = _to_bool(
+        merged.get("offline_fallback"),
+        default["offline_fallback"],
+    )
     mining_cfg = _sanitize_mining_config(merged.get("mining"))
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
+    merged["gacha"] = _sanitize_gacha_config(merged.get("gacha"),
+                                             default["gacha"])
+    merged["ad_rewards"] = _sanitize_ad_rewards_config(merged.get("ad_rewards"),
+                                                       default["ad_rewards"])
+    # 開神燈百分比 / 最低保留：防呆轉型（壞值退回預設 0）。
+    merged["lamp_percent"] = max(
+        0.0, _to_float(merged.get("lamp_percent"), default["lamp_percent"]))
+    merged["lamp_min_keep"] = max(
+        0, _to_int(merged.get("lamp_min_keep"), default["lamp_min_keep"]))
+    merged["lamp_daily_min"] = max(
+        0, _to_int(merged.get("lamp_daily_min"), default["lamp_daily_min"]))
+    merged["carpark_auto"] = _to_bool(merged.get("carpark_auto"),
+                                      default["carpark_auto"])
+    merged["carpark_plan"] = _merge_carpark_plan(merged.get("carpark_plan"),
+                                                 default["carpark_plan"])
+    # 遺物強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：防呆轉型，壞值退回預設。
+    merged["relic_upgrade"] = _to_bool(merged.get("relic_upgrade"),
+                                       default["relic_upgrade"])
+    merged["relic_max_steps"] = max(
+        0, _to_int(merged.get("relic_max_steps"), default["relic_max_steps"]))
+    merged["relic_fragment_floor"] = max(
+        0, _to_int(merged.get("relic_fragment_floor"),
+                   default["relic_fragment_floor"]))
+    merged["relic_sprint"] = _sanitize_relic_sprint_config(
+        merged.get("relic_sprint"), default["relic_sprint"])
+    merged["tycoon"] = _to_bool(merged.get("tycoon"), default["tycoon"])
+    merged["xwar_idle"] = _to_bool(merged.get("xwar_idle"), default["xwar_idle"])
+    merged["tycoon_max_rolls"] = max(
+        0, _to_int(merged.get("tycoon_max_rolls"), default["tycoon_max_rolls"]))
     return merged
 
 
@@ -559,7 +783,55 @@ def get_global_config() -> Dict[str, Any]:
     if matched_key is not None:
         final_cfg.update(host_settings[matched_key])
 
+    # dashboard 總後台的主機角色覆寫優先於 host_settings（部分覆寫允許）。
+    # 設定檔壞掉或任何例外都不可擋主程式啟動——log warning 後沿用原邏輯。
+    try:
+        from utils import dashboard_settings as _ds
+        _role = _ds.get_host_role()
+        if _role:
+            for _k in ("mode", "master_url"):
+                if _role.get(_k):
+                    final_cfg[_k] = _role[_k]
+    except Exception as e:  # noqa: BLE001 — 設定檔問題不可擋主程式啟動
+        logging.warning("dashboard host_role override skipped: %s", e)
+
     return final_cfg
+
+
+def get_device_role_id(device: str) -> "int | None":
+    """The account roleId this device represents — single source of truth.
+
+    Resolution order (mirrors every online-check call site so they never drift):
+    1. explicit ``online_check_target_pid`` in device config — for creds-less
+       devices that share a human's account (e.g. emulator-5558);
+    2. the captured creds ``role_id`` — devices with their own WS login;
+    3. ``None`` when neither is available.
+
+    Used by the dashboard presence badge and every start-gate so they always
+    agree on which account a device maps to.
+    """
+    try:
+        pid = get_device_config(device).get("online_check_target_pid")
+    except Exception:
+        pid = None
+    if pid:
+        try:
+            return int(pid)
+        except (TypeError, ValueError):
+            pass
+    try:
+        from ws_token.creds import load_creds
+        return int(load_creds(device).role_id)
+    except Exception:
+        pass
+    # Lenient fallback: a web_h5 device seeded by ws_ticket_refresh has a capture
+    # with roleId but no uname/plat, so load_creds() rejects it. The monitor only
+    # needs the roleId — read it directly.
+    try:
+        from ws_token.creds import load_role_id
+        return load_role_id(device)
+    except Exception:
+        return None
 
 
 def get_online_check_checkers() -> "list[str]":
@@ -569,6 +841,11 @@ def get_online_check_checkers() -> "list[str]":
     Source of truth: global config `online_check_checkers`. Defaults to
     `["emulator-5554"]` (legacy behaviour) when missing or malformed. Entries
     are trimmed and de-duplicated while preserving order.
+
+    Special value ``"*"`` expands to every configured device that does NOT
+    have ``online_check_target_pid`` set (i.e. all non-requester devices).
+    This lets any idle device serve as a checker without maintaining a manual
+    list — if 5554 is paused, 5556/5560/… pick up the request automatically.
     """
     try:
         raw = get_global_config().get("online_check_checkers")
@@ -585,7 +862,39 @@ def get_online_check_checkers() -> "list[str]":
             checkers.append(ip)
     if not checkers:
         return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+
+    # Expand the wildcard "*" to all non-requester devices, excluding any device
+    # a human plays directly (`human_played`) — logging in as such an account
+    # would kick the human off (異地登入). See get_human_played_devices().
+    if "*" in checkers:
+        try:
+            devices = load_config().get("devices", {}) or {}
+            expanded = [
+                dev_ip for dev_ip, cfg in devices.items()
+                if isinstance(cfg, dict)
+                and not cfg.get("online_check_target_pid")
+                and not cfg.get("human_played")
+            ]
+            return expanded if expanded else list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+        except Exception:
+            return list(DEFAULT_GLOBAL_CONFIG["online_check_checkers"])
+
     return checkers
+
+
+def get_human_played_devices() -> "list[str]":
+    """Device serials whose account a human plays directly.
+
+    The bot must never auto-login as these (online-check checker, persistent
+    online-monitor): doing so triggers 異地登入 and kicks the human's session.
+    Marked per-device with `"human_played": true` in bot_config.
+    """
+    try:
+        devices = load_config().get("devices", {}) or {}
+    except Exception:
+        return []
+    return [dev for dev, cfg in devices.items()
+            if isinstance(cfg, dict) and cfg.get("human_played")]
 
 
 def get_ocr_config() -> Dict[str, Any]:
@@ -714,6 +1023,15 @@ def _get_raw_device_config(ip: str) -> Dict[str, Any]:
     merged_config.update(user_config)
     merged_config["ws_token"] = _merge_ws_token_phase_config(user_config.get("ws_token"))
 
+    # Granular 副本開關 migration：舊 config 沒有這些 key 時，從 legacy 開關推導。
+    # （放在 merge 點做，才不會被 DEFAULT 的 True 蓋掉 legacy False——單一真相。）
+    _dm = user_config.get("enable_dungeon_manager", user_config.get("enable_dungeon", True))
+    if "enable_hellgate" not in user_config:
+        merged_config["enable_hellgate"] = bool(user_config.get("enable_dungeon", True))
+    for _k in ("enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
+        if _k not in user_config:
+            merged_config[_k] = bool(_dm)
+
     return merged_config
 
 
@@ -753,9 +1071,13 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
 
         current["backend"] = _enum_str(current.get("backend", "adb"), {"adb", "web_h5", "ws_token"}, "adb")
         current["backend_display_id"] = str(current.get("backend_display_id", "")).strip()
-        current["use_ws_runner"] = _to_bool(
-            current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
-            DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+        current["use_ws_runner"] = (
+            True
+            if current["backend"] == "ws_token"
+            else _to_bool(
+                current.get("use_ws_runner", DEFAULT_DEVICE_CONFIG["use_ws_runner"]),
+                DEFAULT_DEVICE_CONFIG["use_ws_runner"],
+            )
         )
         current["ws_token_spend"] = _to_bool(
             current.get("ws_token_spend", DEFAULT_DEVICE_CONFIG["ws_token_spend"]),
@@ -765,6 +1087,11 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["ws_token_open_lamp"] = _to_bool(
             current.get("ws_token_open_lamp", DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"]),
             DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"],
+        )
+        current["ws_token_kungfu_guess"] = _to_bool(
+            current.get("ws_token_kungfu_guess",
+                        DEFAULT_DEVICE_CONFIG["ws_token_kungfu_guess"]),
+            DEFAULT_DEVICE_CONFIG["ws_token_kungfu_guess"],
         )
         current["ws_token_mining"] = _sanitize_mining_config(current.get("ws_token_mining"))
         current["ws_token"] = _merge_ws_token_phase_config(current.get("ws_token"))
@@ -833,6 +1160,9 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
             DEFAULT_DEVICE_CONFIG["mining_save_samples"],
         )
+        current["wanshen_rounds"] = _clamp_int(
+            current.get("wanshen_rounds"), 1, 50, DEFAULT_DEVICE_CONFIG["wanshen_rounds"]
+        )
         _sleep_min = _clamp_float(
             current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
         )
@@ -844,11 +1174,15 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         for k in [
             "enabled",
             "enable_farm",
+            "enable_harvest_card",
             "enable_arena",
             "enable_mining",
             "enable_dungeon",
             "enable_shop_manager",
             "enable_dungeon_manager",
+            "enable_fannaoxiao",
+            "enable_escort",
+            "skip_browser_when_all_done",
             "is_real_phone",
             "keep_screen_on",
             "screenshot_debug",
