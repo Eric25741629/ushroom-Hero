@@ -757,3 +757,50 @@ tools_optimize 頁的手動面板（讀取當日進度 / 一鍵領取）冗餘�
 - [ ] 依 Probe B 決定：無條件加進 `DEFAULT_CONFIG_IDS`，或 claim 前先讀科技狀態（rogue science doing/etime）再領。
 - [ ] 接線：`ws_token/ad_reward.py` `TIMES` 加 `5: 4`、`AD_NAMES` 加「科技研究加速廣告」+ 測試。
 - [ ] 注意：價值取決於研究隊列是否常態有東西在跑；若常閒置，考慮只在 doing!=0 時領。
+
+---
+
+## Plan: 賞金之路 (Escort) 自動打 NPC — H5 接入每日流程（2026-07-04，待使用者過目）
+
+### 目標
+web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛偽騎士 / 巫師娃娃 / 海灘奸商），
+清一輪即止。打輸的 NPC 跳過續打下一隻。整合進 `daily_pipeline` 尾段，dashboard 有開關。
+
+### 已 live 驗證的事實（5556 / CDP 9223，見 memory `reference_escort_bounty_road`）
+- 賞金之路內部名 = Escort；NPC 挑戰 = client 端 `護送戰鬥`（battleMain 確定性 + anti-cheat）→ **只能 H5，不可純 WS**。
+- 排程本質同**跨服戰**（雙周末、與跨服戰交錯、平常關閉）→ 開放偵測 live 判定、不硬編錨點。
+- UI 流程（全 `/UIRoot/NormalView/`）：
+  - 首頁 banner `MainView/top/systemTop/btnRoot/btnEscort`（賞金之路，活動關閉時不存在）。
+  - `EscortView/.../EscortMainView/EscortMainView/nodeBattle/escortBtn`：`mask.active===false` = 開放中。
+  - 地圖 `EscortTransportSceneView/ScrollView/view/content/player` → name==`monster` 子節點 = NPC。
+  - 點 monster → `EscortMonsterFightView`（`btnStart` label=挑戰）→ 點 btnStart → 戰鬥（`BattleView/BattleHubView`, AUTO, ~15-25s）→ `EscortResultView`（`nodeWin`/`nodeDefeat`）→ 點 `imgMask` 關閉回地圖。
+  - 打贏 NPC 節點變 `active:false`（留原地變灰）；打輸行為未直接觀測 → loop 用「每隻只嘗試一次」避免無限重打。
+
+### 設計（範本：gating 學跨服戰、driver 機制學 fannaoxiao）
+- 便宜閘門：live page 讀首頁 `btnEscort` banner active/存在 → 不存在即活動關閉，**不導航直接 skip**。
+- daily 冷卻（~20h，NPC 與次數每日 09:00 重置）；成功清一輪才記錄，失敗下輪重試。
+- loop 護欄：進地圖前收集所有 monster 節點 `uuid`；逐一嘗試（still active 才打），打完/打輸都標記 attempted → 一輪最多打每隻一次，絕不無限。
+
+### Global Constraints（本 repo）
+不加新套件；JSON 讀 `utf-8-sig`；pytest 必指定檔；只 stage 動到的檔（不 `git add -A`）；不 push、不加 footer；worktree 隔離。
+
+### Tasks
+1. **escort_driver.py**（新檔，`game_actions/`）：`enter_escort(page)`（banner 在→導航→確認 open，回 bool）+ `fight_npc_round(page, max_fights=8, ...)`（枚舉 active monster → per NPC: 開 fight view → btnStart → poll EscortResultView → 讀 win/lose → 點 imgMask 關 → 標 attempted），回 summary dict（fought/win/lose/skipped）。cocos JS 內嵌，emit('click')。
+2. **escort_scheduler.py**（新檔）：`run_escort_if_due(d, ip, driver=None)` 頂層守衛（flag? web_h5? due? live page?）→ pause_guard bind → enter+fight → 成功記錄。全包 try/except。照 fannaoxiao_scheduler 結構。
+3. **config_manager.py**：`DEFAULT_DEVICE_CONFIG` 加 `enable_escort: False` + dataclass field + set_device_config 轉型清單。
+4. **daily_pipeline.py**：import + 在 fannaoxiao 呼叫（~L427）附近加 `run_escort_if_due(d, ip)`。
+5. **templates/dashboard.html**：加 `chkEscort` checkbox（~L4321 讀 config.enable_escort / ~L4477 寫入 payload）+ 對應 label。
+6. **tests/test_escort_task.py**：閘邏輯測試（flag off / adb backend / 已跑過 / due+web_h5 跑一輪+記錄 / 無 page / 0 fights 不記錄），FakeDriver 注入，照 test_fannaoxiao_task.py。
+
+### Live 驗證（build 時，5556 web_h5）
+- [ ] 從首頁走完整 enter_escort（我先前是活動已開才進，需驗證首頁→地圖點擊序列）。
+- [ ] fight_npc_round 實跑一輪：多隻 NPC 連打、關閉、attempted 去重、summary 正確。
+- [ ] 關閉時活動 banner 不在 → enter_escort 正確回 False skip。
+
+### 不做（YAGNI）
+- 大盜來襲（bossBtn）— 之後另開。
+- 打真人 playerItem（耗 3/3 次數）。
+- refreshBtn 重刷、付費刷新。
+- ADB 後端（H5 驗證後另開）。
+- 打輸重試、戰力不足自動停整台（本輪用「跳過該 NPC」已足）。
+
