@@ -1,9 +1,12 @@
 """Regression tests for audit B6/B7: failure/abort paths must return to 主頁面.
 
-Both 每日加速 (daily_acceleration) and 萬神試煉 (fight_test) previously bailed
-out while the game sat on an unknown / non-home page, cascading subsequent
-tasks into 「不在主頁面」 aborts. These tests assert the shared reusable helper
-game_actions.navigation.navigate_to_main_page is invoked on those paths.
+B6: 每日加速 (daily_acceleration) — cannot enter 家園 → previously bare return
+    while off-home, cascading later tasks into 「不在主頁面」 aborts.
+B7: 萬神試煉Beta (battle/weekly_trials.fight_test) — entry / settlement
+    (_settle_run) failure paths previously relied only on the blind
+    _recover_to_home click sequence (23 off-home occurrences on 5558); the
+    abort path must additionally invoke the shared
+    game_actions.navigation.navigate_to_main_page helper.
 
 Heavy runtime deps (img_tools / new_cnn / uiautomator2) and the real
 navigation chain are stubbed so the tests stay fast and import-safe.
@@ -30,6 +33,7 @@ def _ensure_stub(name: str) -> types.ModuleType:
 
 _img = _ensure_stub("img_tools")
 _img.click_str_by_server = MagicMock(return_value=False)
+_img.check_str_in_region = MagicMock(return_value=False)
 
 _ncnn = _ensure_stub("new_cnn")
 _cnnmod = _ensure_stub("new_cnn.cnn_model")
@@ -54,12 +58,12 @@ def _reset_nav_mock():
     yield
 
 
-# --- Fix 1: daily_acceleration ----------------------------------------------
+# --- B6: daily_acceleration ---------------------------------------------------
 def test_daily_acceleration_returns_home_when_cannot_enter_homeplace(monkeypatch):
     from game_actions import daily_tasks
 
     # Force should_execute=True and never detect 'homeplace'.
-    monkeypatch.setattr(daily_tasks, "return_time", lambda *a, **k: None)
+    monkeypatch.setattr(daily_tasks, "is_due", lambda *a, **k: True)
     monkeypatch.setattr(daily_tasks.time, "sleep", lambda *a, **k: None)
 
     d = MagicMock()
@@ -70,13 +74,16 @@ def test_daily_acceleration_returns_home_when_cannot_enter_homeplace(monkeypatch
     assert daily_tasks.navigate_to_main_page.call_args.args[0] is d
 
 
-# --- Fix 2: 萬神試煉 fight_test ----------------------------------------------
+# --- B7: 萬神試煉Beta fight_test ------------------------------------------------
 @pytest.fixture(scope="module")
 def weekly_trials_mod():
     # Load battle/weekly_trials.py without triggering the heavy battle/__init__.
     battle_pkg = types.ModuleType("battle")
     battle_pkg.__path__ = []  # mark as package for relative imports
     sys.modules["battle"] = battle_pkg
+    helpers = types.ModuleType("battle._helpers")
+    helpers._recover_to_home = MagicMock(return_value=True)
+    sys.modules["battle._helpers"] = helpers
     store = types.ModuleType("battle.store")
     store.buy_god_everyweek = MagicMock()
     sys.modules["battle.store"] = store
@@ -91,12 +98,48 @@ def weekly_trials_mod():
 
 def test_fight_test_returns_home_when_trial_entry_missing(monkeypatch, weekly_trials_mod):
     wt = weekly_trials_mod
-    # OCR never finds 萬神試煉 -> abort path.
+    # OCR never finds 萬神試煉 in the dungeon list -> entry abort path.
     monkeypatch.setattr(wt.img_tools, "click_str_by_server", lambda *a, **k: False)
     monkeypatch.setattr(wt.time, "sleep", lambda *a, **k: None)
 
     d = MagicMock()
-    wt.fight_test(d)
+    result = wt.fight_test(d, rounds=2)
 
+    assert result is False
     _nav.navigate_to_main_page.assert_called_once()
     assert _nav.navigate_to_main_page.call_args.args[0] is d
+
+
+def test_fight_test_returns_home_when_settle_run_fails(monkeypatch, weekly_trials_mod):
+    """Audited path (:134 -> :198): 結算開不出『結束本局』 -> abort -> 強制回主頁."""
+    wt = weekly_trials_mod
+    # Entry succeeds; battle rounds run; settlement fails.
+    monkeypatch.setattr(wt.img_tools, "click_str_by_server", lambda *a, **k: True)
+    monkeypatch.setattr(wt.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(wt, "_advance_to_stage", lambda d: True)
+    monkeypatch.setattr(wt, "_battle_loop", lambda d: 3)
+    monkeypatch.setattr(wt, "_settle_run", lambda d: False)
+
+    d = MagicMock()
+    result = wt.fight_test(d, rounds=2)
+
+    assert result is False  # did not complete the 2 rounds
+    wt._recover_to_home.assert_called()  # existing best-effort still runs
+    _nav.navigate_to_main_page.assert_called_once()
+    assert _nav.navigate_to_main_page.call_args.args[0] is d
+
+
+def test_fight_test_success_path_does_not_force_navigation(monkeypatch, weekly_trials_mod):
+    """Full rounds completed -> only _recover_to_home; no forced navigation."""
+    wt = weekly_trials_mod
+    monkeypatch.setattr(wt.img_tools, "click_str_by_server", lambda *a, **k: True)
+    monkeypatch.setattr(wt.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(wt, "_advance_to_stage", lambda d: True)
+    monkeypatch.setattr(wt, "_battle_loop", lambda d: 3)
+    monkeypatch.setattr(wt, "_settle_run", lambda d: True)
+
+    d = MagicMock()
+    result = wt.fight_test(d, rounds=2)
+
+    assert result is True
+    _nav.navigate_to_main_page.assert_not_called()
