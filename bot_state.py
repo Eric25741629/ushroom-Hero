@@ -54,6 +54,11 @@ def consume_signal(ip: str, sig: Signal) -> bool:
 _states: Dict[str, Dict[str, Any]] = {}
 _locks: Dict[str, threading.Lock] = {} # 每個 IP 一個鎖，避免讀寫衝突
 
+# 本輪（本次喚醒）WS 階段登入結果。run_ws_phase 在每輪嘗試開頭先重置 False、
+# 僅在確認登入成功時設 True → 讀到的永遠是「最近一次（即本輪）」WS 登入結果，
+# 不會殘留上一輪舊值。供 Phase D1 skip-browser 決策使用。
+_ws_login_ok: Dict[str, bool] = {}
+
 # 控制信號 (暫停/恢復)
 _pause_events: Dict[str, threading.Event] = {}
 
@@ -730,6 +735,25 @@ def has_pending_web_launch_request(ip: str) -> bool:
     with _global_lock:
         req = _web_launch_requests.get(ip)
         return bool(req and req.get("status") == "pending")
+
+
+def set_ws_login_ok(ip: str, ok: bool) -> None:
+    """Record THIS wake cycle's WS-phase login result for `ip`.
+
+    ``run_ws_phase`` calls ``set_ws_login_ok(ip, False)`` at the start of every
+    *attempted* WS phase and ``set_ws_login_ok(ip, True)`` only once login is
+    confirmed. Because the WS phase runs every wake cycle before the browser is
+    opened, a subsequent read always reflects the current cycle — never a stale
+    prior-cycle value (any failure/early-return leaves it False).
+    """
+    with _global_lock:
+        _ws_login_ok[ip] = bool(ok)
+
+
+def get_ws_login_ok(ip: str) -> bool:
+    """Return the latest WS-phase login result for `ip` (False if never set)."""
+    with _global_lock:
+        return bool(_ws_login_ok.get(ip, False))
 
 
 def complete_web_launch_request(ip: str, ok: bool, message: str = "", error: str = "") -> None:

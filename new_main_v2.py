@@ -94,6 +94,7 @@ from runtime_services.ws_fallback_service import (
 )
 from game_actions import daily_pipeline
 from game_actions.ws_phase import run_ws_phase
+from game_actions.browser_skip import should_skip_browser
 
 
 atexit.register(lambda: shutdown_web_devices(logger))
@@ -304,6 +305,43 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         bot_state.has_pending_web_launch_request(ip):
                     device_logger.info(
                         f"[{ip}] WS 階段偵測到開啟瀏覽器請求，回頂端處理開瀏覽器")
+                    continue
+
+                # --- Phase D1：今日客戶端任務全做完 → 跳過喚醒瀏覽器，直接對齊休眠 ---
+                # opt-in（skip_browser_when_all_done 預設 False；預設行為零變化）。
+                # 只在 web_h5 + ws_token.enabled + 本輪 WS 登入成功 + 無任何 client 任務
+                # due 時成立；任一不確定/讀 config 失敗 → should_skip_browser 回 False（照
+                # 開瀏覽器，fail-safe，絕不誤跳過漏做任務）。開瀏覽器請求最高優先：有
+                # pending 時不 skip（前面已 continue 去開，這裡再保險一次）。
+                if (not bot_state.has_pending_web_launch_request(ip)
+                        and should_skip_browser(
+                            ip, ws_login_ok=bot_state.get_ws_login_ok(ip))):
+                    device_logger.info(
+                        f"[{ip}] 今日客戶端任務已全部完成，跳過喚醒瀏覽器，直接對齊休眠")
+                    bot_state.update_state(
+                        ip, task="純WS掛機",
+                        step="今日客戶端任務已完成，跳過喚醒瀏覽器")
+                    # 沿用既有結尾休眠機制：瀏覽器此時通常未開（喚醒被跳過），若仍開著
+                    # 則用既有停止邏輯關閉（相容 web_stop_mode=close_browser；本來就沒開
+                    # 則 should_stop_runtime_device_for_sleep 為真時 stop 也是安全 no-op）。
+                    sleep_device_config = config_manager.get_device_config(ip)
+                    if should_stop_runtime_device_for_sleep(
+                            sleep_device_config, backend_kind):
+                        stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
+                        bot_state.set_web_browser_open(ip, False)
+                    release_wakeup_lock(ip)
+                    wake_ts, interrupted, wake_up_time = run_sleep_cycle(
+                        ip,
+                        logger,
+                        sleep_policy="aligned_window",
+                        sleep_reason="今日客戶端任務已完成(純WS掛機)",
+                        enable_dungeon_manager=enable_dungeon_manager,
+                    )
+                    if (interrupted
+                            and bot_state.has_pending_web_launch_request(ip)
+                            and time.time() < wake_ts):
+                        resume_sleep_until_ts = wake_ts
+                        resume_sleep_reason = "手動操作結束後返回休眠"
                     continue
 
                 # --- 喚醒與解鎖手機 ---

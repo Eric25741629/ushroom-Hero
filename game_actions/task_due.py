@@ -248,3 +248,132 @@ def is_due(task: str, ip: str, now: Optional[datetime.datetime] = None) -> bool:
     except KeyError:
         raise KeyError(f"unknown task for due-check: {task!r}")
     return predicate(ip, _resolve_now(now))
+
+
+# --------------------------------------------------------------------------
+# any_client_due — Phase D1：本輪是否還有任何「需要開瀏覽器客戶端」的任務該做。
+#
+# 每個 task 的 enable gate 對照真實 pipeline/scheduler（1:1 mirror，勿自創）：
+#   task          | enable gate（file:line）
+#   --------------|-------------------------------------------------------------
+#   地獄之門       | cfg.enable_hellgate 預設 True（new_main_v2.py:146 → daily_pipeline.py:217）
+#   每日加速       | 無 flag，恆啟用（daily_pipeline.py:330-333）
+#   競技場挑戰     | cfg.enable_arena 預設 True（new_main_v2.py:150 → daily_pipeline.py:337）
+#   坐騎衝刺       | cfg.enable_mount_sprint 預設 True（rank_events.py:104）
+#   雲端戰鬥       | cfg.enable_cloud_battle 預設 True（new_main_v2.py:148 → daily_pipeline.py:446）
+#   菇菇武道會     | 無 flag，恆啟用（daily_pipeline.py:375-389）
+#   航海          | 無 flag，恆啟用（daily_pipeline.py:400-415）
+#   萬神試煉       | cfg.enable_wanshen 預設 True（new_main_v2.py:147 → dungeon_scheduler.py:58）
+#   雙週副本       | cfg.enable_biweekly 預設 True AND ip=="emulator-5556"（dungeon_scheduler.py:88）
+#   天梯每週獎勵   | backend=="web_h5"（ladder_reward_weekly.py:23-24，僅有 _page 時跑）
+#   菇菇雕像每週   | statue_weekly._is_enabled(cfg)（nested statue_weekly.enabled 預設 False）
+#   龍骸聖域       | dragon_realm.use_dragon_realm(ip, load_config()) 預設 True（per-device 覆寫 global）
+#   煩惱消        | fannaoxiao_scheduler._is_enabled(ip)（enable_fannaoxiao 預設 False AND backend==web_h5）
+#
+# **排除** 抽技能夥伴（遊戲自理，唯一靠截圖紅點）與車位（WS 自足，無 predicate）。
+# --------------------------------------------------------------------------
+def _en_always(ip: str, cfg: dict) -> bool:
+    return True
+
+
+def _en_hellgate(ip: str, cfg: dict) -> bool:
+    return bool(cfg.get("enable_hellgate", True))
+
+
+def _en_arena(ip: str, cfg: dict) -> bool:
+    return bool(cfg.get("enable_arena", True))
+
+
+def _en_mount_sprint(ip: str, cfg: dict) -> bool:
+    return bool(cfg.get("enable_mount_sprint", True))
+
+
+def _en_cloud_battle(ip: str, cfg: dict) -> bool:
+    return bool(cfg.get("enable_cloud_battle", True))
+
+
+def _en_wanshen(ip: str, cfg: dict) -> bool:
+    return bool(cfg.get("enable_wanshen", True))
+
+
+def _en_biweekly(ip: str, cfg: dict) -> bool:
+    # 裝置範圍限定：呼叫端只在 emulator-5556 呼叫（dungeon_scheduler.py:88）。
+    return bool(cfg.get("enable_biweekly", True)) and ip == "emulator-5556"
+
+
+def _en_ladder(ip: str, cfg: dict) -> bool:
+    # web_h5 only：ladder_reward_weekly.run_ladder_reward_if_due 僅在有 _page（web_h5）
+    # 時執行；record.enabled / 週二 / body / 本週未套用 皆已在 is_due 內判。
+    return str(cfg.get("backend", "adb")).strip().lower() == "web_h5"
+
+
+def _en_statue(ip: str, cfg: dict) -> bool:
+    # 1:1 委派 statue_weekly._is_enabled(cfg)（nested statue_weekly.enabled 預設 False）。
+    from game_actions import statue_weekly
+
+    return bool(statue_weekly._is_enabled(cfg))
+
+
+def _en_dragon(ip: str, cfg: dict) -> bool:
+    # 1:1 委派 dragon_realm.use_dragon_realm(ip, load_config())（讀 global/devices，
+    # 非 get_device_config；per-device dragon_realm_enabled 覆寫 global，預設 True）。
+    import config_manager
+    from dragon_realm import use_dragon_realm
+
+    return bool(use_dragon_realm(ip, config_manager.load_config()))
+
+
+def _en_fannaoxiao(ip: str, cfg: dict) -> bool:
+    # 1:1 委派 fannaoxiao_scheduler._is_enabled(ip)（enable_fannaoxiao 預設 False
+    # AND backend==web_h5；它自己讀 get_device_config(ip)）。
+    from game_actions import fannaoxiao_scheduler as fx
+
+    return bool(fx._is_enabled(ip))
+
+
+# task → enable predicate（審核對照表，順序即 any_client_due 的短路順序）。
+_CLIENT_ENABLE: Dict[str, Callable[[str, dict], bool]] = {
+    "地獄之門": _en_hellgate,
+    "每日加速": _en_always,
+    "競技場挑戰": _en_arena,
+    "坐騎衝刺": _en_mount_sprint,
+    "雲端戰鬥": _en_cloud_battle,
+    "菇菇武道會": _en_always,
+    "航海": _en_always,
+    "萬神試煉": _en_wanshen,
+    "雙週副本": _en_biweekly,
+    "天梯每週獎勵": _en_ladder,
+    "菇菇雕像每週": _en_statue,
+    "龍骸聖域": _en_dragon,
+    "煩惱消": _en_fannaoxiao,
+}
+
+
+def any_client_due(ip: str, now: Optional[datetime.datetime] = None) -> bool:
+    """本輪是否還有任何『需要開瀏覽器客戶端』的任務該做。
+
+    = OR over 13 個任務的 ``(enable gate) AND is_due(task, ip, now)``。
+    **fail-safe**：讀 config / 任一 enable / 任一 predicate raise → 該任務保守當
+    「due」→ 回 True（寧可開瀏覽器，絕不誤跳過而漏做任務）。
+    """
+    resolved = _resolve_now(now)
+    try:
+        import config_manager
+
+        cfg = config_manager.get_device_config(ip)
+    except Exception:
+        return True  # 讀 config 失敗 → 保守：當作有任務要做
+    for task, enable_fn in _CLIENT_ENABLE.items():
+        try:
+            enabled = enable_fn(ip, cfg)
+        except Exception:
+            return True  # enable 讀取失敗 → 該任務保守當 due
+        if not enabled:
+            continue
+        try:
+            due = is_due(task, ip, resolved)
+        except Exception:
+            return True  # predicate 失敗 → 該任務保守當 due
+        if due:
+            return True
+    return False

@@ -512,6 +512,14 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     cfg = device_cfg.get("ws_token") or {}
     if not cfg.get("enabled", False):
         return frozenset()
+    # 本輪 WS 登入結果訊號（Phase D1 skip-browser 用）：進入「已嘗試的 WS 階段」即先
+    # 重置 False，只有稍後確認登入成功才設 True → 任何失敗/例外/提前 return 都留 False，
+    # 讀到的永遠是本輪結果（不殘留上一輪）。best-effort，寫失敗不影響 WS 階段。
+    try:
+        import bot_state
+        bot_state.set_ws_login_ok(ip, False)
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 重置 WS 登入訊號失敗（忽略）", ip, exc_info=True)
     # kungfu_guess 真相在裝置層 flat ws_token_kungfu_guess；cfg 是 ws_token 巢狀
     # 沒這欄 → 折入,讓 _run_device 統一從 cfg 取（與 ws_runner_service 一致）。
     if "kungfu_guess" not in cfg:
@@ -611,6 +619,14 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
                         ip, report.errors.get("login"))
             return frozenset()
+
+    # 走到這裡 report.login_ok 必為真（前面所有 not-login_ok 路徑皆已 return）。
+    # 記錄本輪 WS 登入成功訊號供 Phase D1 skip-browser 判斷。best-effort。
+    try:
+        import bot_state
+        bot_state.set_ws_login_ok(ip, True)
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 設定 WS 登入成功訊號失敗（忽略）", ip, exc_info=True)
 
     # effective_done = 本輪實質完成 ∪ 先前 ledger 已完成（resume 跳過的那些也算數），
     # 確保續做跳過的任務同樣讓 daily_pipeline 正確略過，不會用瀏覽器重做一次。
