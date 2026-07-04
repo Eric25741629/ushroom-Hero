@@ -31,6 +31,7 @@ CMD_SELL = 0x0505
 CMD_OPEN_ALL = 0x0509
 CMD_TAB_INFO = 0x0510
 CMD_CHOOSE_TAB = 0x0511
+CMD_ERROR = 0x0201
 
 # affix ids
 A_K, A_Y, A_B, A_L, A_S, A_F, A_H = 1037, 1023, 1004, 1016, 1008, 1017, 1012
@@ -421,6 +422,81 @@ def test_open_lamp_v2_waits_between_batches(monkeypatch):
         )
         assert res["opened"] == 2
         assert sleep_calls == [0.2]
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_wear_success_signaled_by_equip_change_push():
+    """Live-probed (2026-07-05): a SUCCESSFUL wear has no 0x0502 echo — the
+    server signals it with the equip_change_s2c 0x0504 push. The wear waiter
+    must accept 0x0504 as a REAL success (not presumed, not a timeout)."""
+    info = _standard_worn_info()
+    drops = _change_body([_p_equip(301, _tmpl(11, 1), {A_K: 600, A_Y: 100})])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c([301])),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_WEAR: lambda _b: [s2c(CMD_EQUIP_CHANGE, b"")],   # success = 0x0504 push
+        CMD_SELL: lambda _b: [s2c(CMD_SELL, b"")],
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=1, sell_timeout=0.2)
+        assert [(t, u) for t, u, _ in res["equipped"]] == [(2, 301)]
+        assert res["presumed_ops"] == 0     # 0x0504 reply = verified success
+        assert res["failed_ops"] == 0
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_wear_rejection_error_reply_counts_failed():
+    """Live-probed: a REJECTED wear replies generic error 0x0201 with the code
+    in field 1 (e.g. code=2 for re-wearing an already-worn uid). That is a
+    genuine rejection -> failed_ops, not presumed."""
+    info = _standard_worn_info()
+    drops = _change_body([_p_equip(301, _tmpl(11, 1), {A_K: 600, A_Y: 100})])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c([301])),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_WEAR: lambda _b: [s2c(CMD_ERROR, codec.pb_uint(1, 2))],  # rejection
+        CMD_SELL: lambda _b: [s2c(CMD_SELL, b"")],
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=1, sell_timeout=0.2)
+        assert res["failed_ops"] == 1
+        assert res["presumed_ops"] == 0
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_presumes_wear_and_sell_on_no_reply():
+    """Residual fallback: if NEITHER a 0x0504 success push nor a 0x0201 error
+    arrives, the op times out and is counted as presumed-applied (belt-and-
+    suspenders; live 31/31 pre-fix wear timeouts were all real successes).
+    sell (0x0505) has no probed success signal yet — timeout stays presumed."""
+    info = _standard_worn_info()
+    # 301 strong KY slot1 wins -> equip tab2 (wear, no reply) + sell displaced 2001
+    drops = _change_body([_p_equip(301, _tmpl(11, 1), {A_K: 600, A_Y: 100})])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c([301])),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_WEAR: lambda _b: [],          # silent apply: withhold 0x0502 reply
+        CMD_SELL: lambda _b: [],          # silent apply: withhold 0x0505 reply
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],   # replies normally
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=1, sell_timeout=0.2)
+        assert [(t, u) for t, u, _ in res["equipped"]] == [(2, 301)]
+        assert 2001 in {u for u, _ in res["sold"]}
+        # wear + displaced-sell both got no reply -> presumed; none real-failed
+        assert res["presumed_ops"] >= 2
+        assert res["failed_ops"] == 0
     finally:
         c.close()
 

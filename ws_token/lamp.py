@@ -336,13 +336,41 @@ def _extract_repeated_uint(body: bytes, field: int) -> list[int]:
 
 
 def _try_call(client: WSGameClient, cmd: int, body: bytes, *, timeout: float,
-              what: str, _log: logging.Logger | None = None) -> bool:
+              what: str, expect_extra: tuple[int, ...] = (),
+              _log: logging.Logger | None = None) -> str:
+    """Send a fire-and-effect equip op. Returns "ok" | "presumed" | "failed".
+
+    wear (0x0502) has NO self-cmd echo (schema defines equip_wear_c2s but no
+    equip_wear_s2c; live-probed 2026-07-05 via CDP on 5554). A SUCCESSFUL wear
+    is signaled by the equip_change_s2c 0x0504 push, a REJECTED wear by the
+    generic error 0x0201 (code in field 1). The wear site therefore passes
+    ``expect_extra=(CMD_EQUIP_CHANGE,)`` so the waiter fires on the real
+    success signal (client `_route` matches waiters by cmd before the push
+    handler). sell (0x0505) also never echoed in live logs (2/2 timeouts, items
+    gone) but has no probed success signal yet.
+
+    Residual timeouts are treated as "presumed" applied (belt-and-suspenders:
+    live 31/31 wear timeouts pre-fix were all real successes), so the run
+    summary stops reporting these as failures. A CMD_ERROR reply is a genuine
+    rejection; a non-timeout exception (dropped connection) is a real "failed".
+    """
     try:
-        client.call_for(cmd, body, expect_cmds=(cmd, CMD_ERROR), timeout=timeout)
-        return True
-    except Exception as exc:
+        rcmd, rbody = client.call_for(
+            cmd, body, expect_cmds=(cmd, CMD_ERROR) + tuple(expect_extra),
+            timeout=timeout)
+    except WSTimeoutError:
+        # ponytail: presumed-applied on no-reply — sell path still UNVERIFIED;
+        # if a sell ever times out AND the items persist, probe sell's success
+        # signal (0x0504? inventory push?) like the wear probe did.
+        return "presumed"
+    except Exception as exc:  # connection drop / unexpected — real failure
         (_log or logger).warning("ws_token lamp: %s failed (%s); continuing", what, exc)
-        return False
+        return "failed"
+    if rcmd == CMD_ERROR:
+        (_log or logger).warning("ws_token lamp: %s rejected (error code=%s)",
+                                 what, codec.walk_dict(rbody).get(1))
+        return "failed"
+    return "ok"
 
 
 def open_lamp(
@@ -424,6 +452,7 @@ def open_lamp(
         log.info("ws_token lamp: target=0 (total=%s percent=%s min_keep=%s); "
                  "open nothing", initial_count, lamp_percent, lamp_min_keep)
         return {"opened": 0, "equipped": [], "sold": [], "left": [],
+                "presumed_ops": 0, "failed_ops": 0,
                 "dry_run": dry_run, "target": 0, "initial_count": initial_count,
                 "remaining": None}
 
@@ -456,6 +485,18 @@ def open_lamp(
     sold: list[tuple[int, str]] = []
     left: list[tuple[int, str]] = []
     opened = 0
+    presumed_ops = 0   # wear/sell/choose-tab ops applied with no reply frame
+    failed_ops = 0     # ops that hit a real error (connection drop etc.)
+
+    def _run_op(cmd: int, body: bytes, what: str,
+                expect_extra: tuple[int, ...] = ()) -> None:
+        nonlocal presumed_ops, failed_ops
+        status = _try_call(client, cmd, body, timeout=sell_timeout, what=what,
+                           expect_extra=expect_extra, _log=log)
+        if status == "presumed":
+            presumed_ops += 1
+        elif status == "failed":
+            failed_ops += 1
     try:
         for batch_index in range(max_batches):
             # 開瀏覽器請求優先：每批前讓出，已開的箱是伺服器端已落地，續做時接續。
@@ -537,13 +578,15 @@ def open_lamp(
                         frozenset(e.code for e in drop_to_equipment(detail, parser).entries)))))
 
             if not dry_run:
-                for tab, uid in batch_equips:
-                    _try_call(client, CMD_WEAR, build_wear(tab, uid),
-                              timeout=sell_timeout, what=f"wear tab={tab} uid={uid}", _log=log)
+                for tab, uid in batch_equips:  # equip first so the old piece frees up
+                    # Success signal for wear is the 0x0504 equip_change push,
+                    # not a 0x0502 echo (which never comes) — see _try_call.
+                    _run_op(CMD_WEAR, build_wear(tab, uid),
+                            f"wear tab={tab} uid={uid}",
+                            expect_extra=(CMD_EQUIP_CHANGE,))
                 for i in range(0, len(batch_sells), _SELL_CHUNK):
                     chunk = batch_sells[i:i + _SELL_CHUNK]
-                    _try_call(client, CMD_SELL, build_sell(chunk),
-                              timeout=sell_timeout, what=f"sell {chunk}", _log=log)
+                    _run_op(CMD_SELL, build_sell(chunk), f"sell {chunk}")
                     time.sleep(_SELL_DELAY_SEC)
 
             if feature_on and target >= 0 and on_progress is not None:
@@ -578,14 +621,25 @@ def open_lamp(
                 log.warning("ws_token lamp: restore active tab %s failed (%s)", active_tab, exc)
         client.set_push_handler(None)
 
+    if presumed_ops:
+        # Silent-apply is the norm for wear/sell — log it once as INFO instead
+        # of a WARNING per item. equipped/sold counts assume these applied.
+        log.info(
+            "ws_token lamp: %d op(s) got no reply — presumed applied "
+            "(server silent-apply, unverified)", presumed_ops)
     reported_target = target if target >= 0 else 0
     if equipped or left:
-        log.info("ws_token lamp: opened=%d/%d equipped=%d left=%d dry_run=%s",
-                 opened, reported_target, len(equipped), len(left), dry_run)
+        log.info("ws_token lamp: opened=%d/%d equipped=%d left=%d "
+                 "presumed_ops=%d failed_ops=%d dry_run=%s",
+                 opened, reported_target, len(equipped), len(left),
+                 presumed_ops, failed_ops, dry_run)
     else:
         log.debug("ws_token lamp: opened=%d/%d equipped=0 sold=%d left=0 "
-                  "dry_run=%s", opened, reported_target, len(sold), dry_run)
+                  "presumed_ops=%d failed_ops=%d dry_run=%s",
+                  opened, reported_target, len(sold),
+                  presumed_ops, failed_ops, dry_run)
     return {"opened": opened, "equipped": equipped, "sold": sold, "left": left,
+            "presumed_ops": presumed_ops, "failed_ops": failed_ops,
             "dry_run": dry_run, "target": reported_target,
             "initial_count": total, "remaining": remaining}
 

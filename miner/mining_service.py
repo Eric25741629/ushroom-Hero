@@ -29,7 +29,6 @@ from miner.planning.planner import (
     base_label,
     enter_cost,
     is_empty as is_air,
-    plan_min_cost_to_floor7,
 )
 from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
@@ -121,6 +120,12 @@ _PICKAXE_OCR_VALIDATE_EVERY: int = 5
 # OCR 漂移容忍 — 內部 count 與 OCR 相差 <= 這個值時不調整。允許小量
 # 抖動（OCR 邊緣抖動、Reward 動畫殘留），超過則以 OCR 為準。
 _PICKAXE_DRIFT_TOLERANCE: int = 2
+
+# 正向漂移（OCR > 內部 count）的例行上限。收集礦坑會回饋鏟子，但 executor 的
+# shovels_used 只扣挖掘、從不計入這些獎勵，於是內部 count 偏低、OCR（真值）偏高。
+# 這在幾乎每次校驗都會發生（實測 66/68 次校正為 +3/+4），屬正常，僅記 INFO；
+# 負向漂移（用得比追蹤的多）或過大的正向跳動才是真正 desync，維持 WARNING。
+_PICKAXE_REWARD_DRIFT_MAX: int = 10
 
 
 def _apply_partial(
@@ -558,10 +563,19 @@ def run(
                     f"[MiningService] 鏟子 OCR 驗證 ok: internal={count}, ocr={ocr_count}"
                 )
             elif kind == "drift":
-                miner_logger.warning(
-                    f"[MiningService] 鏟子漂移 {ocr_count - count:+d} 超過容忍 "
-                    f"±{_PICKAXE_DRIFT_TOLERANCE}, 以 OCR 為準: {count} -> {ocr_count}"
-                )
+                drift = ocr_count - count
+                if 0 < drift <= _PICKAXE_REWARD_DRIFT_MAX:
+                    # 例行正向漂移：礦坑獎勵未計入內部計數。以 OCR 為準，記 INFO。
+                    miner_logger.info(
+                        f"[MiningService] 鏟子正向漂移 {drift:+d}（礦坑獎勵未計入內部計數）"
+                        f", 以 OCR 為準: {count} -> {ocr_count}"
+                    )
+                else:
+                    # 負向或過大正向漂移 = 真正 desync，維持 WARNING。
+                    miner_logger.warning(
+                        f"[MiningService] 鏟子漂移 {drift:+d} 超過容忍 "
+                        f"±{_PICKAXE_DRIFT_TOLERANCE}, 以 OCR 為準: {count} -> {ocr_count}"
+                    )
             else:  # ocr_unavailable
                 miner_logger.info(
                     f"[MiningService] 鏟子 OCR 不可用, 沿用內部 count={count}"
@@ -719,12 +733,6 @@ def run(
 
 
 
-def demo_plan_print(board: List[List[str]]) -> None:
-    """示範輸出規劃結果，方便除錯。"""
-    result_a = plan_min_cost_to_floor7(board)
-    print_plan_result(logger, "最小鏟子成本", result_a, board)
-
-
 if __name__ == "__main__":  # pragma: no cover - manual trigger only
     ip = "adb-fc65396d-4LPqmI._adb-tls-connect._tcp"
     device = u2.connect(ip)
@@ -743,7 +751,6 @@ __all__ = [
     "run",
     "_dismiss_mining_overlay_if_needed",
     "print_plan_result",
-    "demo_plan_print",
     "execute_plan_steps",
     "check_pickaxe_count",
     "check_points",

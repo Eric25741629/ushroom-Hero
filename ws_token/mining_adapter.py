@@ -1,11 +1,20 @@
-"""Adapter: WS MineBoard <-> miner v5 planner grid + plan -> block_id steps.
+"""Adapter: WS MineBoard <-> miner v1 planner grid + plan -> block_id steps.
+
+Uses the **v1** planner (`miner.planning.smart_planner.plan_smart`, whole-board
+A*) — the same default as the screenshot/ADB runtime — because it has the
+highest score/shovel-efficiency on the canonical sim (v1 3711 vs v4 1649).
+The WS mining loop is a supervised scroll loop that needs the planner to keep
+emitting a no_pit progress dig so the board scrolls; v1 used to return an
+EMPTY plan once pits were gone + floor7 was open (why WS previously ran v4),
+but smart_planner's descent-dig fallback fixed that, so v1 now keeps emitting
+no_pit progress digs like v4 did. See the inline comment in `plan()`.
 
 Two layers, kept apart so the pure grid transform never imports the planner:
 
   board_to_grid(mine_board) -> List[List[str]]   (7x6 DEFAULT_CLASSES labels)
       Pure function. No miner import. Tested directly.
-  plan(mine_board, inventory) -> steps           (calls plan_v4 via LAZY import)
-      Builds the grid, runs the bounded DFS, maps each step's (row, col) back
+  plan(mine_board, inventory) -> steps           (calls plan_smart via LAZY import)
+      Builds the grid, runs the v1 A*, maps each step's (row, col) back
       to a WS block_id.
 
 LIVE-CALIBRATION (7fe98fc6 / 小寶 H5/CDP):
