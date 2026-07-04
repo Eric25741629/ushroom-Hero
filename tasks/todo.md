@@ -53,11 +53,36 @@ runtime 訊號層）；② 為下游「client 任務全做完就不必喚醒 h5�
 - [ ] 把 `_run_gacha_free`（已存在，`gacha_free.last_date` 每日 gate）接進走 WS 的裝置；adb 紅點版
       保留為 fallback 或退役（待定）。完成後每個 client 任務的 due 都能不開客戶端判斷。
 
-### Phase D（optional，使用者說「不管網頁有沒有」→ 非必要，先記錄）
-- [ ] `any_client_due(ip, now)` = registry OR。new_main_v2 web_h5：WS 成功 + 無 client due + ws ticket
-      新鮮 → 跳過喚醒瀏覽器直接對齊休眠（token 自癒：ticket 過期時 WS 失敗會回退開瀏覽器刷新）。
-      車位戰鬥保守當「due」不誤跳。
-- [ ] dashboard per-device toggle（memory `feedback_new_feature_toggle_must_have_frontend`）。
+### Phase D（使用者拍板：最強版「沒戰鬥就跳」，2 個 blocker 都消解）
+決策（2026-07-04 調查後）：
+- **車位**：非 blocker——WS `carpark_plan` 已自足（讀 live 停車數自校正 + 8h repark，`ws_token/carpark.py`/
+  `carpark_plan.py`），瀏覽器 Task 0.5 純冗餘。→ 排除在 any_client_due 外。
+- **抽技能夥伴**：使用者確認「遊戲自理、不需 bot」（呼應 lessons 2026-06-15 `free_daily=False`）。→ 排除。
+- 故 any_client_due 只涵蓋 11 個戰鬥/每日客戶端任務（各按 enable flag）。
+
+- [x] A+B+C 完成並併最新 main（branch 964ab61f，49 測綠）。
+- [x] **D1 runtime**（commit 350b3548，審核 MERGE-OK）：`task_due.any_client_due(ip, now)` = OR(enabled client 任務
+      predicate，13 個各 1:1 mirror pipeline enable-gate)；`bot_state.set/get_ws_login_ok`（ws_phase 只在確認登入成功才
+      True，每輪 reset，無 stale）；`game_actions/browser_skip.should_skip_browser`（web_h5 ∧ toggle ∧ ws_token.enabled
+      ∧ ws_login_ok ∧ ¬any_client_due）；new_main_v2 主迴圈 WS 後、喚醒前插 skip → 沿用既有對齊休眠。fail-safe：任何
+      raise/不確定 → 照開瀏覽器。toggle 預設 False = 現況零改。
+- [x] **D2 dashboard**（commit b4f5dad8）：per-device 開關「做完客戶端任務後純 WS 掛機」，比照 `chkWsOfflineFallback`
+      backend-gated（只 h5+WS 方案顯示/可勾），`.checkbox-item` 設計系統元件；`config_manager` DEFAULT + dataclass +
+      bool 轉型加 `skip_browser_when_all_done`。存檔走既有 `POST /api/config/<ip>`。
+
+### Review（2026-07-04，A+B+C+D 完成，branch feat/task-due-unify）
+- **統一達成**：14 個任務 due 判斷收斂到 `game_actions/task_due.py` 單一 registry（純函式、只讀 json_manager/
+  排程/ws_state）。消費端（pipeline hellgate、dungeon 萬神/雙週、rank_events 坐騎、daily_tasks 加速/競技場、
+  cloud 雲端、dragon/fannaoxiao 反向委派）改走 registry，刪掉散落重複的 `return_time+is_next_day`/週序/星期窗 樣板。
+- **每階段獨立 Opus 審核**（feedback_review_before_merge_subagent_fixes）：A/B2/D1 各派獨立審核 subagent；
+  B2 抓到 1 CRITICAL（hellgate 漏傳捕捉時鐘 → minute 邊界漏做），已修（d0592e57）。
+- **Phase D 兩 blocker 消解**：車位=WS carpark_plan 自足（排除）；抽技能夥伴免費抽=遊戲自理不需 bot（使用者確認，排除）。
+- **行為安全**：D toggle 預設 False → 現況零改；skip fail-safe 全朝「照開瀏覽器」；WS 失敗不跳（自癒刷 ticket）。
+- **測試**：108 focused 綠（task_due/browser_skip/dungeon_scheduler/device_config/device_enabled_gate）。
+- ⚠ **需重啟**：`new_main_v2.py`/`daily_pipeline.py`/schedulers/`config_manager.py` 皆 runtime（sys.modules cache）→
+  重啟 `new_main_v2.py` + 中控才生效；dashboard template reload 即生效。
+- **殘留 LOW（非阻擋）**：`_ws_login_ok` 裝置移除未清理（無害，與既有 `_web_launch_requests` 一致）；
+  skip 分支複製休眠 tail（刻意，日後 tail 改需同步兩處）。
 
 ### 邊界 / 明確不做
 - 不新造狀態存儲；registry 只是現有 json_manager 記錄的統一讀取入口。
