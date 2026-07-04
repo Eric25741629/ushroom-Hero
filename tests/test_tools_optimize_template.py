@@ -1,7 +1,7 @@
 """tools_optimize.html 必備 hooks 測試（mirror test_inventory_template.py）。
 
-純字串斷言，不啟瀏覽器、不碰 device：守住「工具 優化類」面板三個工具
-（車位裝飾、純 WS 抽卡、看廣告獎勵）的關鍵 id / 函式 / API 端點，以及與
+純字串斷言，不啟瀏覽器、不碰 device：守住「工具 優化類」面板各工具
+（車位裝飾、純 WS 抽卡、遺物衝刺）的關鍵 id / 函式 / API 端點，以及與
 神器附魔面板同一套的純 WS 連線/閒置/踢線 UI，避免日後改版誤刪。
 """
 from pathlib import Path
@@ -34,18 +34,6 @@ def test_gacha_tool_hooks_intact():
     assert "doDraw()" in html
     assert "/api/gacha/draw/" in html
     assert 'id="gType"' in html and 'id="gMode"' in html
-
-
-def test_ad_reward_section_hooks():
-    html = _html()
-    # 一鍵領取 + 讀取進度 按鈕與函式
-    assert "doAdClaim()" in html
-    assert "loadAdStatus()" in html
-    # API 端點接上
-    assert "/api/ad_reward/claim/" in html
-    assert "/api/ad_reward/status/" in html
-    # 進度卡片容器
-    assert 'id="adGrid"' in html
 
 
 def test_relic_sprint_section_hooks():

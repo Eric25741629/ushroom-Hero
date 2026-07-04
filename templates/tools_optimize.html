@@ -53,13 +53,6 @@
         background:#faf6ee;color:var(--muted)}
   .conn.on{color:var(--status-ok-text);border-color:var(--ok-rim)}
   .conn.off{color:var(--status-danger-text);border-color:var(--danger)}
-  .adgrid{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0}
-  .adcard{background:#faf6ee;border:1px solid var(--line);border-radius:10px;padding:10px 14px;min-width:150px}
-  .adcard .nm{font-weight:700;margin-bottom:4px}
-  .adcard .cnt{font-size:13px;color:var(--muted)}
-  .adcard .cnt b{color:var(--status-accent-text);font-size:16px}
-  .adcard.maxed{border-color:var(--ok-rim)}
-  .adcard.maxed .cnt b{color:var(--status-ok-text)}
   .prog{height:14px;border-radius:8px;background:#faf6ee;border:1px solid var(--line);overflow:hidden;margin:6px 0}
   .prog > span{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--good));width:0}
   .rounds{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0}
@@ -181,28 +174,6 @@
     </div>
 
     <div id="gLog" class="log" style="display:none"></div>
-  </section>
-
-  <!-- 工具三：純 WS 看廣告獎勵（鑽石 + 種子） -->
-  <section class="panel">
-    <h2>看廣告獎勵 <span class="pill">鑽石 + 種子 · 純 WS · 到上限不送</span></h2>
-    <div class="controls">
-      <button id="btnAdStatus" class="ghost" onclick="loadAdStatus()">讀取當日進度</button>
-      <button id="btnAdClaim" class="warn" onclick="doAdClaim()">一鍵領取（鑽石+種子）</button>
-    </div>
-    <div class="note">說明：直接送遊戲看廣告封包 <code>0x1602 {config_id,is_free:1}</code>（帳號已買免廣告特權，即時發獎、不需真看影片）。
-      讀一次當日次數，每項只補到每日上限、冷卻未到不送封包，故<strong>到上限的項目顯示已滿、不會送請求</strong>。純 WS 免開瀏覽器。</div>
-
-    <div id="adState" class="empty-state">
-      <div class="es-icon" aria-hidden="true">📺</div>
-      <div class="es-title">尚未讀取當日進度</div>
-      <div class="es-hint">連線後按「讀取當日進度」查看鑽石/種子的今日可領次數。</div>
-    </div>
-    <div id="adSkeleton" style="display:none">
-      <div class="skeleton skeleton--block"></div>
-    </div>
-    <div id="adGrid" class="adgrid" style="display:none"></div>
-    <div id="adMsg" class="note"></div>
   </section>
 
   <!-- 工具四：純 WS 遺物碎片均勻升級（衝刺） -->
@@ -612,53 +583,6 @@ let _lastAct=0;
 function onActivity(){ if(idleCdTimer) return; const now=Date.now(); if(now-_lastAct>5000){ _lastAct=now; if(connectedDev) resetIdle(); } }
 ['mousemove','keydown','click','scroll'].forEach(ev=>window.addEventListener(ev,onActivity,{passive:true}));
 window.addEventListener('beforeunload',()=>{ if(connectedDev) navigator.sendBeacon(`/api/ws_session/${encodeURIComponent(connectedDev)}/disconnect`); });
-
-/* ===== 工具三：純 WS 看廣告獎勵（鑽石 + 種子） ===== */
-function renderAdStatus(items){
-  _show('adState', false); _show('adSkeleton', false);
-  const g=$('adGrid'); g.style.display='flex'; g.innerHTML='';
-  (items||[]).forEach(it=>{
-    const div=document.createElement('div');
-    div.className='adcard'+(it.maxed?' maxed':'');
-    div.innerHTML=`<div class="nm">${(it.name||'').replace(/</g,'&lt;')}</div>`+
-      `<div class="cnt">已領 <b>${it.count}</b> / ${it.cap}${it.maxed?'（已滿）':''}</div>`;
-    g.appendChild(div);
-  });
-}
-async function loadAdStatus(){
-  if(!await ensureConnected()){ $('adMsg').textContent='未連線，無法讀取。'; return; }
-  $('btnAdStatus').disabled=true; $('adMsg').textContent='讀取當日看廣告進度…';
-  _show('adState', false); _show('adGrid', false); _show('adSkeleton', true);
-  try{
-    const r=await fetch(`/api/ad_reward/status/${encodeURIComponent(dev())}`);
-    const j=await r.json();
-    if(j.status!=='ok'){ $('adMsg').textContent='讀取失敗，請重試。';
-      if(j.message) console.warn('[ad_reward status]', j.message);
-      _show('adSkeleton', false); showToolError('adState', '讀取當日進度失敗', loadAdStatus); return; }
-    renderAdStatus(j.data.items); $('adMsg').textContent='已更新當日進度。';
-  }catch(e){ console.warn('[ad_reward status]', e); $('adMsg').textContent='讀取發生錯誤，請重試。';
-    _show('adSkeleton', false); showToolError('adState', '讀取當日進度失敗', loadAdStatus); }
-  finally{ $('btnAdStatus').disabled=false; _show('adSkeleton', false); }
-}
-async function doAdClaim(){
-  if(!await ensureConnected()){ $('adMsg').textContent='未連線，無法領取。'; return; }
-  if(!await confirmDialog({ danger:true, title:'一鍵領取看廣告獎勵', okLabel:'確定領取',
-      body:'將領取鑽石 + 種子（純 WS）。到上限的項目不會送請求。' })) return;
-  $('btnAdClaim').disabled=true; $('adMsg').textContent='領取中…（純 WS）';
-  try{
-    const r=await fetch(`/api/ad_reward/claim/${encodeURIComponent(dev())}`,{method:'POST',
-      headers:{'Content-Type':'application/json'}, body:JSON.stringify({})});
-    const j=await r.json();
-    if(j.status!=='ok'){ $('adMsg').textContent='領取失敗：'+(j.message||''); return; }
-    const parts=(j.results||[]).map(x=>{
-      if(x.skipped) return `${x.name}：略過（${x.skipped}）`;
-      return `${x.name}：領 ${x.claimed} 次${x.stopped?`（${x.stopped}）`:''}`;
-    });
-    $('adMsg').textContent=`完成：共領 ${j.total_claimed} 次。`+(parts.length?' '+parts.join('；'):'');
-    await loadAdStatus();
-  }catch(e){ $('adMsg').textContent='領取錯誤：'+e; }
-  finally{ $('btnAdClaim').disabled=false; }
-}
 
 /* ===== 工具四：純 WS 遺物碎片均勻升級（衝刺）— 兩階段 規劃 → 確認執行 ===== */
 let RS_PLAN = null;
