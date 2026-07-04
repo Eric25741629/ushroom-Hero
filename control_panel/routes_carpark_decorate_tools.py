@@ -32,6 +32,8 @@ _DEFAULT_MAX_STEPS = 30
 _HARD_MAX_STEPS = 80
 _READ_TIMEOUT = 25      # WS read is ~3-4s, not a 90s cocos walk
 _EXEC_TIMEOUT = 45      # one buy(up to 30 frags)+upgrade step
+_STEP_GAP_S = 10        # server silently drops skin_up sent too soon after the
+                        # previous one (live 2026-07-05: ~1s dropped, 10s ok)
 
 
 def _ws_client(ip: str):
@@ -189,7 +191,8 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             with _jobs_lock:
                 if jid in _jobs and _jobs[jid].get("result"):
                     _jobs[jid]["result"]["executed"] = list(executed)
-            time.sleep(0.4)
+            if idx < len(steps):
+                time.sleep(_STEP_GAP_S)
 
         _job_update(jid, status="done", phase="done", result={
             **plan, "executed": executed, "spent": spent,

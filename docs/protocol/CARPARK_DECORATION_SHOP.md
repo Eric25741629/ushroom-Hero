@@ -438,3 +438,24 @@ netManager 會自行決定傳輸，邏輯 cmd 仍是 12817；s2c 回 `car_park_s
   全測 27 passed。
 - **live 驗證**：異世之界(30092, shop1759, lv1→2, 1 碎片) 真實 buy+upgrade，菇車幣
   88,643,235 → 88,443,235（−200,000 exact）、等級 1→2、已買 1→2。success path 通過。
+
+### 10.4 純 WS 執行層三個坑 (live 定案 2026-07-05, 7fe98fc6)
+
+1. **skin_up 必須走 `json_proto` 封套**：真實 client 是 `netManager.send("car_park.
+   car_park_skin_up_c2s", {type, skin_id}, /*useJson=*/true)` → wire 上送
+   **14337 `json_proto_c2s` protobuf `{1: proto_id=12817(int32), 2: msg='{"type":0,
+   "skin_id":N}'(string)}`**，回包仍是原生 12817 protobuf。§10.2「直接送 12817
+   protobuf」在 server 端行為不定（live 觀察三態：執行+回包 / 執行但不回包 /
+   完全忽略），§9.8 的 wire 抓包(0x3801=14337)才是對的。
+2. **skin_up 有 server 冷卻（靜默丟棄）**：距上一次 skin_up 太近（~1s 內）的請求被
+   直接忽略，**不回 0x0201**；間隔 10s 實測 100% 成功。executor 步間隔 10s
+   （`_STEP_GAP_S`），未確認時等 `_COOLDOWN_WAIT_S` 再 re-verify → 才重送一次
+   （先 re-verify 防 late-landing 重複升級）。
+3. **季節限定碎片會下架**：configMall `_data[9]` 有 `open_time` 販售時間窗
+   （cap=30 的活動款全帶窗，如 shop 1739 = 2024-06-28~07-21）；窗外購買回
+   **0x0201 code=283**。`ws_token/data/mall_parking_frag.json` 已補 `open_time`
+   欄位，`read_state` 窗外把 `limit_remaining` 歸 0（`off_shelf: true`），
+   planner 自動跳過 —— 這就是「按執行第一步就無法購買」的原因。
+
+回包一律只當 fast path：買/升級成功與否以 re-read（6913 已買數 / 12801 等級）為準；
+0x0201 一律解碼 `error_code`（err 格式 `buy_rejected_code_N` / `upgrade_rejected_code_N`）。
