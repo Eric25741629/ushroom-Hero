@@ -344,6 +344,27 @@ def test_exec_upgrade_late_execution_caught_by_reverify(monkeypatch):
     assert client.sent.count(14337) == 1, "must not re-send after late landing"
 
 
+def test_exec_retry_rejected_but_first_send_landed_is_success(monkeypatch):
+    """First send lands after the re-verify; the retry gets rejected (frags
+    already consumed). The level re-read must win over the reject."""
+    monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("raise", WSTimeoutError("no response for cmd=12817")),
+        ("reply", 12801, _skin_list_body([(40097, 1)])),   # verify: unchanged
+        ("reply", 12801, _skin_list_body([(40097, 1)])),   # re-verify: unchanged
+        ("reply", 513, codec.pb_uint(1, 3)),               # retry rejected
+        ("reply", 12801, _skin_list_body([(40097, 2)])),   # but level landed!
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1)
+    assert err is None
+    assert res["ok"] is True
+    assert res["after_level"] == 2
+
+
 def test_exec_upgrade_rejected_decodes_error_code():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),

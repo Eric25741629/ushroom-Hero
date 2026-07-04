@@ -92,6 +92,9 @@ def _is_on_sale(open_time, now=None) -> bool:
         (sd, st), (ed, et) = open_time
         start = datetime.datetime(*sd, *st)
         end = datetime.datetime(*ed, *et)
+        # Assumes host TZ == server TZ (UTC+8, true for this deployment).
+        # Worst case at a boundary: quota is zeroed and the planner skips —
+        # never a bad mutation.
         now = now or datetime.datetime.now()
         return start <= now <= end
     except Exception:  # noqa: BLE001 — malformed window: assume on sale
@@ -431,10 +434,12 @@ def exec_buy_and_upgrade(
                 skin_id, before_level)
             if after_level <= before_level:
                 outcome, code = _send_upgrade()
-                if outcome == "rejected":
-                    return _rejected(code)
                 after_level = _read_levels(client, role_id, timeout).get(
                     skin_id, before_level)
+                # A rejected retry can mask a late-landing first send (frags
+                # already consumed): trust the level re-read, not the reject.
+                if outcome == "rejected" and after_level <= before_level:
+                    return _rejected(code)
 
         if after_level <= before_level:
             return {"ok": False, "bought": bought, "name": name,
