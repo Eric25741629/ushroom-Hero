@@ -53,7 +53,7 @@ img_tools/
 ├── ocr_client.py        # OCRServerPool (circuit-breaker + fallback)
 ├── template_match.py    # find_and_click, non_max_suppression
 ├── text_clicker.py      # click_str_by_server, check_str_in_region, wait_for_any_text
-└── screen_utils.py      # check_red_dot, encode_image, save_stage_debug_image
+└── screen_utils.py      # check_red_dot, encode_image（save_stage_debug_image 已於 2026-07-05 移除）
 ```
 
 - 將 `_OCR_SERVER_FAIL_UNTIL` 等狀態封裝為 `OCRServerPool` 類別的實例屬性
@@ -157,7 +157,7 @@ img_tools/
 control_panel/
 ├── __init__.py          # Flask app factory
 ├── routes/
-│   ├── device.py        # /api/device_data, /api/config, /api/pause 等
+│   ├── device.py        # /api/status, /api/config, /api/pause 等（舊 /api/device_data 已於 2026-07-05 移除）
 │   ├── ocr.py           # /api/ocr_config, /api/analyze_stage
 │   ├── labeler.py       # /api/labeler/*
 │   ├── trainer.py       # /api/trainer/*

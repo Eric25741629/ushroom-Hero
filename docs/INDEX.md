@@ -17,9 +17,9 @@
 |---|---|
 | 改任務流程（順序 / 新增每日任務 / 主頁守衛） | `game_actions/daily_pipeline.py`（單一任務排序真相）+ `game_actions/stage_guard.py`（`_run_at_main_page` / `get_stage_with_check`） |
 | 改辨識 / OCR | `img_tools.py`（核心 OCR 管線 + 多 server fallback + circuit breaker）；本地推理權重 `OCR_model/`；訓練/廠商源 `OCR/`（離線）；分析見 [../OPTIMIZE_ocr_system.md](../OPTIMIZE_ocr_system.md) |
-| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v1**（A* whole-board，`miner/planning/`），可切 v3/v4（v2 已移除 2026-06-05、v5 已移除 2026-06-18；WS 挖礦路徑走 v4）；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py`；分析+礦物出現率校正 [protocol 外的 `../docs/MINING_ALGORITHM_ANALYSIS.md`](MINING_ALGORITHM_ANALYSIS.md) |
+| 改挖礦 | `miner/`（orchestrator `miner/mining_service.py`）；planner 預設 **v1**（A* whole-board，`miner/planning/`），可切 v3/v4（v2 已移除 2026-06-05、v5 已移除 2026-06-18；WS 挖礦路徑 2026-07-05 起走 v1 `plan_smart`）；機制真相 `miner/core/mechanics.py`；入口任務 `game_actions/miner_action.py`；分析+礦物出現率校正 [protocol 外的 `../docs/MINING_ALGORITHM_ANALYSIS.md`](MINING_ALGORITHM_ANALYSIS.md) |
 | 改神燈（開裝備） | `opengold_v2/`（`lamp_service.py` 的 `LampService` 為唯一 live 實作）；排程 `game_actions/lamp_scheduler.py`；V1 `Open_gold_paddle_ocr.py` 已廢棄 |
-| 改農場（打工） | `farm_v2/`（狀態機 `states.py` + `manager.py` + `operations/`）；H5 變體 `farm_v2/web_farm.py` |
+| 改農場（打工） | `farm_v2/`（`manager.py` + `operations/`；舊 `states.py` 狀態機 2026-07-05 移除）；H5 變體 `farm_v2/web_farm.py` |
 | 改航海（Sea） | web_h5 走 `sea_v2/`（flag `use_sea_v2` 預設 OFF）；adb 走 `Sea.py`；路由在 `game_actions/daily_pipeline.py` 的 `_sea_dispatch` |
 | 改車位（Carpark） | web_h5 cocos：`game_actions/carpark_scheduler.py` → `utils/carpark_auto.py` / `utils/carpark_state.py`；ADB 雛形 `utils/carpark_adb.py`；legacy ADB（已停用）`park.py` / `new_park.py` / `fight_car.py` |
 | 中控儀表板 | `control_panel_app.py`（Flask :5002，master）；獨立靜態服務 `app.py`（:5000）；推播 `push_project/` |
@@ -59,7 +59,7 @@
 | `inference_slot` / `configure_torch_runtime` | `utils/torch_runtime.py` | 共用 CNN forward 必須包 `with inference_slot():` 序列化跨 thread GPU；startup 一次性 cap intra-op threads（分流運算） |
 | `ensure_local_model` | `utils/model_sync.py` | NAS/SMB 權重複製到本地 SSD cache（MD5 版本化 + atomic rename）；`torch.load` 前先呼叫 |
 | `handle_device_wakeup` | `utils/wake_up_handler.py` | 每裝置喚醒/解鎖/同步：skip-list + blackout-hour gating、5558↔5554 互檢、電量螢幕、啟動錯峰（adb） |
-| `WebGameAPI.call_raw` / `is_in_game` / `is_login_conflict` | `utils/web_game_api.py` | web_h5 後端 RPC 基元：對 live WS 送任意 game cmd 拿解密 body，外加 WS/game-readiness 與踢線偵測 |
+| `WebGameAPI.call_raw` / `is_in_game` | `utils/web_game_api.py` | web_h5 後端 RPC 基元：對 live WS 送任意 game cmd 拿解密 body，外加 WS/game-readiness 判定 |
 | `_walk_pb` / `decode_equip_template` | `utils/web_game_api.py` | 最小 protobuf wire walker + 裝備 template 解碼；解析 game WS body 的正典所在（redpack_detector 有重複版，待整併） |
 | `WSFrameTracker` | `utils/ws_listener.py` | per-device WS frame 擷取（device_wrapper 為每個 web_h5 裝置實例化）；高價值 cmd body 自動落盤供協議分析 |
 | `PageDetector` / `try_detect_main_page_fast` | `utils/page_detector.py` | cocos-first / OCR-fallback 頁面辨識 + 共用 `PageState` enum；新 web_h5 導航/狀態機的建議基石（目前 flag-gated experimental） |
@@ -229,7 +229,7 @@
 - **協議文件**（`docs/protocol/`）：見第 6 節「協議反推」表，為所有 WS/protobuf 反推與 cocos 節點對照的真相來源。
 
 ### ⚠️ 已知 CLAUDE.md 過時點（依本次審計）
-- **挖礦**（2026-06-21 更新）：`miner/mining_service.py` 預設 `mining_planner_version='v1'`（A* whole-board；v5 已移除 2026-06-18、v2 已移除 2026-06-05），可切 **v3/v4**；WS 挖礦路徑(`ws_token/mining_adapter`)走 v4。CLAUDE.md(line 84) 已正確。完整分析與礦物出現率校正見 `docs/MINING_ALGORITHM_ANALYSIS.md`。
+- **挖礦**（2026-06-21 更新）：`miner/mining_service.py` 預設 `mining_planner_version='v1'`（A* whole-board；v5 已移除 2026-06-18、v2 已移除 2026-06-05），可切 **v3/v4**；WS 挖礦路徑(`ws_token/mining_adapter`)2026-07-05 起走 **v1** `plan_smart`（smart_planner 有 descent-dig fallback，no_pit 不再卡；sim 3711 vs v4 1649）。完整分析與礦物出現率校正見 `docs/MINING_ALGORITHM_ANALYSIS.md`。
 - **神燈**：entry-points 仍列 V1 `Open_gold_paddle_ocr.py`，但 `lamp_scheduler.py` 一律路由 `opengold_v2.LampService`（「一律走 V2」）；舊的 `use_opengold_v2` 切換旗標已於 2026-06-07 從 config schema / 儀表板移除（router 本來就不讀）。
 - **潛在 bug**：`game_state/detector.new_stage_check` 用 `if [ ...list... ]:`（非空 list 恆 True），疑似應為 `all()`/`any()`，值得查證。
 
