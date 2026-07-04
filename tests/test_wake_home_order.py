@@ -75,12 +75,14 @@ def _import_wake_handler(monkeypatch, events):
     monkeypatch.setitem(sys.modules, "device", device)
 
     game_initialization = types.ModuleType("game_initialization")
-    game_initialization.check_on_line = lambda *args, **kwargs: False
     monkeypatch.setitem(sys.modules, "game_initialization", game_initialization)
 
     config_manager = types.ModuleType("config_manager")
     config_manager.get_device_config = lambda ip: {}
     config_manager.get_global_config = lambda: {}
+    # wake_up_handler 的人類帳號守門 (human-account guard) 會查 role_id；
+    # 測試裝置一律視為無綁定角色。
+    config_manager.get_device_role_id = lambda ip: None
     monkeypatch.setitem(sys.modules, "config_manager", config_manager)
 
     monkeypatch.setitem(sys.modules, "bot_state", _FakeBotState())

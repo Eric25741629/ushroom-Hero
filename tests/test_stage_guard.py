@@ -51,7 +51,7 @@ if "device" not in sys.modules:
     sys.modules["device"] = _dev
 
 # Other test files (e.g. test_wake_loop_escape.py) stub `game_initialization`
-# with only `check_on_line`. Top up the attribute stage_guard needs. If the
+# as an empty module. Top up the attribute stage_guard needs. If the
 # stub is missing entirely, create one.
 _gi = sys.modules.get("game_initialization")
 if _gi is None:
@@ -63,8 +63,6 @@ if not hasattr(_gi, "StartupLoginConflictError"):
     class _StartupLoginConflictError(Exception):
         pass
     _gi.StartupLoginConflictError = _StartupLoginConflictError
-if not hasattr(_gi, "check_on_line"):
-    _gi.check_on_line = lambda *a, **k: False
 if not hasattr(_gi, "handle_game_startup_pages"):
     _gi.handle_game_startup_pages = lambda *a, **k: True
 

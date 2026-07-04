@@ -43,8 +43,6 @@ for name in ("adb_operations", "device", "game_initialization", "config_manager"
             # superset：test_device_scan_absence / device_scan_service 會
             # `from device import get_adb_devices`，缺了會在同跑時炸 collection。
             m.get_adb_devices = lambda *a, **k: []
-        if name == "game_initialization":
-            m.check_on_line = lambda *a, **k: False
         if name == "config_manager":
             m.get_device_config = lambda ip: {}
             m.get_global_config = lambda: {}

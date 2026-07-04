@@ -43,8 +43,6 @@ for name in (
             m.get_battery_level = lambda *a, **k: 100
         if name == "device":
             m.close_notification = lambda *a, **k: None
-        if name == "game_initialization":
-            m.check_on_line = lambda *a, **k: False
         if name == "config_manager":
             m.get_device_config = lambda ip: {}
             m.get_global_config = lambda: {}

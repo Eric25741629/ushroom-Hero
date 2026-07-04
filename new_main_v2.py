@@ -31,7 +31,6 @@ from utils.logging_utils import (
 )
 from game_actions.reward_manager import reward
 from game_initialization import (
-    check_on_line,
     handle_game_startup_pages,
     StartupLoginConflictError,
 )
