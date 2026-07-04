@@ -252,13 +252,27 @@ def _extract_repeated_uint(body: bytes, field: int) -> list[int]:
 
 
 def _try_call(client: WSGameClient, cmd: int, body: bytes, *, timeout: float,
-              what: str) -> bool:
+              what: str) -> str:
+    """Send a fire-and-effect equip op. Returns "ok" | "presumed" | "failed".
+
+    wear (0x0502) and sell (0x0505) apply SILENTLY on the server — they never
+    emit a reply frame, so ``call_for`` always times out even though the change
+    took effect (live-observed 2026-07: 31/31 wears and 2/2 sells timed out yet
+    the equipment did change). Treat a timeout as "presumed" applied rather than
+    a per-item failure, so the run summary stops reporting these as failures.
+    A non-timeout error (e.g. a dropped connection) is a real "failed".
+    """
     try:
         client.call_for(cmd, body, expect_cmds=(cmd, CMD_ERROR), timeout=timeout)
-        return True
-    except Exception as exc:  # timeout OR connection drop — never abort the run
+        return "ok"
+    except WSTimeoutError:
+        # ponytail: presumed-applied on no-reply — UNVERIFIED. If live logs ever
+        # show a wear that timed out but did NOT apply, verify by re-reading
+        # equip_info (0x0501) here and comparing worn uid for the tab.
+        return "presumed"
+    except Exception as exc:  # connection drop / unexpected — real failure
         logger.warning("ws_token lamp: %s failed (%s); continuing", what, exc)
-        return False
+        return "failed"
 
 
 def open_lamp(
@@ -303,6 +317,16 @@ def open_lamp(
     sold: list[tuple[int, str]] = []
     left: list[tuple[int, str]] = []
     opened = 0
+    presumed_ops = 0   # wear/sell/choose-tab ops applied with no reply frame
+    failed_ops = 0     # ops that hit a real error (connection drop etc.)
+
+    def _run_op(cmd: int, body: bytes, what: str) -> None:
+        nonlocal presumed_ops, failed_ops
+        status = _try_call(client, cmd, body, timeout=sell_timeout, what=what)
+        if status == "presumed":
+            presumed_ops += 1
+        elif status == "failed":
+            failed_ops += 1
     try:
         for batch_index in range(max_batches):
             try:
@@ -357,26 +381,33 @@ def open_lamp(
 
             if not dry_run:
                 for tab, uid in batch_equips:  # equip first so the old piece frees up
-                    _try_call(client, CMD_WEAR, build_wear(tab, uid),
-                              timeout=sell_timeout, what=f"wear tab={tab} uid={uid}")
+                    _run_op(CMD_WEAR, build_wear(tab, uid), f"wear tab={tab} uid={uid}")
                 for i in range(0, len(batch_sells), _SELL_CHUNK):
                     chunk = batch_sells[i:i + _SELL_CHUNK]
-                    _try_call(client, CMD_SELL, build_sell(chunk),
-                              timeout=sell_timeout, what=f"sell {chunk}")
+                    _run_op(CMD_SELL, build_sell(chunk), f"sell {chunk}")
                     time.sleep(_SELL_DELAY_SEC)
 
             if batch_delay > 0 and batch_index < max_batches - 1:
                 time.sleep(batch_delay)
 
         if not dry_run and active_tab:
-            _try_call(client, CMD_CHOOSE_TAB, build_choose_tab(active_tab),
-                      timeout=sell_timeout, what=f"restore active tab {active_tab}")
+            _run_op(CMD_CHOOSE_TAB, build_choose_tab(active_tab),
+                    f"restore active tab {active_tab}")
     finally:
         client.set_push_handler(None)
 
-    logger.info("ws_token lamp: opened=%d equipped=%d sold=%d left=%d dry_run=%s",
-                opened, len(equipped), len(sold), len(left), dry_run)
+    if presumed_ops:
+        # Silent-apply is the norm for wear/sell — log it once as INFO instead
+        # of a WARNING per item. equipped/sold counts assume these applied.
+        logger.info(
+            "ws_token lamp: %d op(s) got no reply — presumed applied "
+            "(server silent-apply, unverified)", presumed_ops)
+    logger.info("ws_token lamp: opened=%d equipped=%d sold=%d left=%d "
+                "presumed_ops=%d failed_ops=%d dry_run=%s",
+                opened, len(equipped), len(sold), len(left),
+                presumed_ops, failed_ops, dry_run)
     return {"opened": opened, "equipped": equipped, "sold": sold, "left": left,
+            "presumed_ops": presumed_ops, "failed_ops": failed_ops,
             "dry_run": dry_run}
 
 

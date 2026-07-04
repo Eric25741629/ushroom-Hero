@@ -1,5 +1,12 @@
 """Adapter: WS MineBoard <-> miner v4 planner grid + plan -> block_id steps.
 
+Uses the **v4** planner (bounded rolling-horizon DFS), NOT the v1 A* default
+that the screenshot/ADB runtime uses. The WS mining loop is a supervised
+scroll loop: it needs the planner to keep emitting a no_pit progress dig so
+the board scrolls. v1 returns an empty plan when there is no pit and floor7 is
+already open, which stalls the loop; v4 (with its no_pit progress-dig
+fallback) keeps advancing. See `mining_service.py` for the ADB path default.
+
 Two layers, kept apart so the pure grid transform never imports the planner:
 
   board_to_grid(mine_board) -> List[List[str]]   (7x6 DEFAULT_CLASSES labels)

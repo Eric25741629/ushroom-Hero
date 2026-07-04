@@ -235,6 +235,21 @@ def test_plan_v4_no_pit_already_floor7_open_returns_no_steps():
     assert len(plan["steps"]) == 0
 
 
+def test_plan_v4_no_pit_floor7_open_but_diggable_dirt_emits_progress_dig():
+    """REGRESSION (item M9): floor7 is already open (row-6 col0 is reachable
+    air) so the DFS bails with an empty plan, but the game only auto-scrolls on
+    a FULL row-6 clear and row 6 still has diggable rocks. Returning 0 steps
+    stalls the WS supervised loop into its empty-plan abort. The planner must
+    fall back to one reachable progress dig (preferring row 6)."""
+    board = [["empty"] * 6 for _ in range(7)]
+    board[6] = ["empty"] + ["rock"] * 5   # col0 air -> floor7_open, rest diggable
+    plan = plan_v4(board, shovels=20, items={"drill": 0, "bomb": 0})
+    assert plan["ok"] is True
+    assert plan["strategy_class"] == "no_pit"
+    assert len(plan["steps"]) == 1, f"expected 1 progress dig, got: {plan['steps']}"
+    assert tuple(plan["steps"][0]["pos"])[0] == 6, "progress dig should target row 6"
+
+
 def test_plan_v4_no_pit_picks_row5_dirt_when_it_floods_row6():
     """Cross-row cascade: row 6 starts unreachable, only path to opening it
     is digging a row-5 dirt cell whose flood promotes a row-6 cell. One

@@ -370,6 +370,34 @@ def test_open_lamp_v2_waits_between_batches(monkeypatch):
         c.close()
 
 
+def test_open_lamp_v2_presumes_wear_and_sell_on_no_reply():
+    """Live protocol: wear (0x0502) and sell (0x0505) apply silently with NO
+    reply frame, so call_for times out. Those must be counted as presumed-
+    applied (not per-item failures), the equip/sold summary must still stand,
+    and presumed_ops must reflect them."""
+    info = _standard_worn_info()
+    # 301 strong KY slot1 wins -> equip tab2 (wear, no reply) + sell displaced 2001
+    drops = _change_body([_p_equip(301, _tmpl(11, 1), {A_K: 600, A_Y: 100})])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c([301])),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_WEAR: lambda _b: [],          # silent apply: withhold 0x0502 reply
+        CMD_SELL: lambda _b: [],          # silent apply: withhold 0x0505 reply
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],   # replies normally
+    })
+    try:
+        res = lamp.open_lamp(c, dry_run=False, batch_num=1, max_batches=1, sell_timeout=0.2)
+        assert [(t, u) for t, u, _ in res["equipped"]] == [(2, 301)]
+        assert 2001 in {u for u, _ in res["sold"]}
+        # wear + displaced-sell both got no reply -> presumed; none real-failed
+        assert res["presumed_ops"] >= 2
+        assert res["failed_ops"] == 0
+    finally:
+        c.close()
+
+
 def test_open_lamp_v2_tolerates_sell_timeout():
     info = _standard_worn_info()
     drops = _change_body([_p_equip(302, _tmpl(5, 2), {A_K: 100, A_Y: 100})])  # one reject

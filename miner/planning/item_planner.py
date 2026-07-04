@@ -12,7 +12,7 @@ from .planner import (
 
 TOOL_VALUE_LABELS: Set[str] = {"reachable_pit", "unreachable_pit"}
 TOOL_MIN_COST_SAVINGS: float = 2.0
-TOOL_DEBUG: bool = True
+TOOL_DEBUG: bool = False
 BOTTOM_TRIPLET_HIDDEN_CELLS: int = 6
 PATH_GAIN_WEIGHT: float = 0.35
 PATH_GAIN_CONSERVATIVE_FACTOR: float = 0.5

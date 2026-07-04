@@ -1,8 +1,8 @@
-"""V4 mining planner — bounded 5-step rolling-horizon search.
+"""V4 mining planner — bounded 3-step rolling-horizon search.
 
 See design discussion 2026-04-25:
 
-- Depth-limited DFS (default max_depth=5). mining_service re-plans each
+- Depth-limited DFS (default max_depth=3). mining_service re-plans each
   iteration anyway, so "global" search is wasted effort.
 - Item rarity is PRICED into the objective: drill and bomb aren't worth 3
   shovels, they're scarce resources.
@@ -263,8 +263,8 @@ def _action_priority(
 
     if action["type"] == "use":
         # Items only outrank shovels when they cover ≥2 pits in one shot —
-        # on a single-pit hit, drill (cost 1.5) and shovel (cost 1.0) deliver
-        # the same gain, so we don't want a base bonus that promotes drill
+        # on a single-pit hit, drill (cost 2.5) and shovel (cost 1.0) deliver
+        # the same pit-clearing gain, so we don't want a base bonus that promotes drill
         # above shovel and risks the branching cap dropping the cheaper dig.
         if pit_hit_count >= 2:
             priority += 30.0 * (pit_hit_count - 1)
@@ -335,6 +335,33 @@ def _no_pit_dig_filter(board: Board) -> List[Dict[str, Any]]:
                     actions.append(action)
                     break
     return actions
+
+
+def _cheapest_progress_dig(board: Board) -> Optional[Dict[str, Any]]:
+    """Pick one reachable frontier dig to keep no_pit scrolling.
+
+    When `floor7_open` is already True (some — but not all — of row 6 is
+    reachable air) the DFS bails immediately with an empty plan, yet the H5
+    game only auto-scrolls once row 6 is FULLY clear. The WS supervised
+    mining loop (`ws_token/mining_adapter.py`) then sees repeated empty plans
+    and aborts via the consecutive-empty-plans guard even though there is
+    still diggable dirt that would advance the board. Fall back to the
+    cheapest reachable frontier dig, preferring deeper rows (closer to floor
+    7) then leftmost, so the loop keeps making scroll progress.
+
+    Returns None when the board has no diggable dirt at all (e.g. row 6 is
+    already fully air), so a genuinely finished board still yields an empty
+    plan.
+    """
+    best_action: Optional[Dict[str, Any]] = None
+    best_key: Optional[Tuple[int, int, int]] = None
+    for action in enumerate_dig_actions(board):
+        r, c = action["pos"]
+        key = (dig_cost(normalize_label(board[r][c])), -r, c)
+        if best_key is None or key < best_key:
+            best_key = key
+            best_action = action
+    return best_action
 
 
 def _action_affected_cells(
@@ -781,6 +808,25 @@ def plan_v4(
                 return
 
     dfs(work, item_state, 0.0, 0.0, 0, 0, 0, [], 0)
+
+    # no_pit scroll-progress fallback: the DFS returns an empty plan whenever
+    # floor7 is already open (it bails before enumerating any dig), but the
+    # game only scrolls on a FULL row-6 clear. Emit one cheap reachable dig so
+    # the WS supervised loop keeps advancing instead of tripping its
+    # empty-plan abort. No-op when nothing is diggable (truly finished board).
+    if strategy == "no_pit" and not best.plan:
+        fallback = _cheapest_progress_dig(work)
+        if fallback is not None:
+            sim = _simulate(work, item_state, fallback)
+            if sim is not None:
+                next_board, _next_items, step_cost, shovel_cost = sim
+                step = dict(fallback)
+                step["step_cost"] = step_cost
+                step["target"] = fallback.get("pos")
+                best.plan = [step]
+                best.cost = step_cost
+                best.shovel_cost = shovel_cost
+                best.final_board = next_board
 
     elapsed_ms = (time.perf_counter() - started_at) * 1000.0
     final_board = best.final_board if best.final_board is not None else work

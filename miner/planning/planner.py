@@ -44,10 +44,6 @@ def is_empty(lbl: str) -> bool:
     return base_label(lbl) in ("empty", "void", "dug_pit")
 
 
-def is_void(lbl: str) -> bool:
-    return base_label(lbl) == "void"
-
-
 def is_mine(lbl: str) -> bool:
     return base_label(lbl) in MINE_LABELS
 
@@ -222,121 +218,6 @@ def find_best_descend_target(dist: List[List[float]], prev: List[List[Optional[C
     # 排序：成本低 > 起點深 > 靠左
     candidates.sort(key=lambda x: (x['cost'], -x['start_row'], x['c']))
     return candidates[0]
-
-
-# ---------------------------------------------------------------------------
-# 規劃：最省鏟子到第 7 層
-# ---------------------------------------------------------------------------
-def plan_min_cost_to_floor7(board: Board) -> Dict[str, Any]:
-    work_board = [row[:] for row in board]
-    R = len(work_board)
-    C = len(work_board[0])
-    dist, prev = dijkstra_from_all_empties(work_board)
-
-    best = find_best_descend_target(dist, prev, R, C)
-    if not best:
-        return {"ok": False, "message": "第 7 列沒有可達位置。"}
-
-    end = (R - 1, best['c'])
-    path = best['path']
-    dig_list, total_cost = summarize_path(work_board, path)
-    return {
-        "ok": True,
-        "mode": "min_cost_floor7",
-        "end": end,
-        "path": path,
-        "dig_list": dig_list,
-        "total_cost": total_cost,
-        "message": f"最小鏟子成本={total_cost}，第 7 層觸發位置={end}",
-    }
-
-
-# ---------------------------------------------------------------------------
-# 規劃：貪婪採礦
-# ---------------------------------------------------------------------------
-def plan_greedy_with_rewards(
-    board: Board,
-    lambda_cost: float = 1.0,
-    stop_on_first_floor7: bool = True,
-    use_ratio: bool = False,
-) -> Dict[str, Any]:
-    bd = [row[:] for row in board]
-    R, C = len(bd), len(bd[0])
-    steps: List[Dict[str, Any]] = []
-    total_cost = 0
-    total_reward = 0
-
-    while True:
-        if floor7_triggered(bd) and stop_on_first_floor7:
-            break
-
-        dist, prev = dijkstra_from_all_empties(bd)
-        best_info: Optional[Dict[str, Any]] = None
-        for r in range(R - 1, -1, -1):
-            for c in range(C):
-                if is_mine(bd[r][c]):
-                    d = dist[r][c]
-                    if d == inf:
-                        continue
-                    label = base_label(bd[r][c])
-                    reward = REWARD_TABLE.get(label, 0)
-                    score = reward / (d + 1e-6) if use_ratio else reward - lambda_cost * d
-                    if best_info is None or score > best_info["score"]:
-                        best_info = {"pos": (r, c), "cost": float(d), "reward": reward, "score": float(score)}
-
-        if best_info and best_info["score"] > 0:
-            end = best_info["pos"]
-            path = reconstruct_path(prev, end)
-            dig_list, step_cost = summarize_path(bd, path)
-            mark_path_as_empty(bd, dig_list)
-            total_cost += step_cost
-            total_reward += best_info["reward"]
-            steps.append(
-                {
-                    "action": "mine",
-                    "target": end,
-                    "gain": best_info["reward"],
-                    "step_cost": step_cost,
-                    "score": best_info["score"],
-                    "path": path,
-                    "dig_list": dig_list,
-                }
-            )
-            if floor7_triggered(bd) and stop_on_first_floor7:
-                break
-            continue
-
-        best = find_best_descend_target(dist, prev, R, C)
-        if not best:
-            break
-            
-        end = (R - 1, best['c'])
-        path = best['path']
-        dig_list, step_cost = summarize_path(bd, path)
-        mark_path_as_empty(bd, dig_list)
-        total_cost += step_cost
-        steps.append(
-            {
-                "action": "descend",
-                "target": end,
-                "step_cost": step_cost,
-                "path": path,
-                "dig_list": dig_list,
-            }
-        )
-        break
-
-    return {
-        "ok": True,
-        "mode": "greedy_reward",
-        "lambda_cost": lambda_cost,
-        "use_ratio": use_ratio,
-        "total_cost": int(total_cost),
-        "total_reward": int(total_reward),
-        "steps": steps,
-        "board_after": bd,
-        "message": f"總成本={int(total_cost)}, 總獎勵={int(total_reward)}, 步驟數={len(steps)}",
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +638,6 @@ __all__ = [
     "base_label",
     "enter_cost",
     "is_empty",
-    "is_void",
     "is_mine",
     "is_pit",
     "is_dug_pit",
@@ -769,7 +649,5 @@ __all__ = [
     "summarize_path",
     "mark_path_as_empty",
     "floor7_triggered",
-    "plan_min_cost_to_floor7",
-    "plan_greedy_with_rewards",
     "plan_collect_all_mines_then_descend_v2",
 ]
