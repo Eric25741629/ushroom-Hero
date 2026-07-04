@@ -113,7 +113,7 @@ def check() -> None:
     # If either snapshot failed (empty), we can't safely compare -> assume
     # diverged and abort (better safe than wrong-click). If both are present
     # and differ, also abort.
-    if before != after:
+    if before != after or not before or not after:
         raise TaskAborted(
             f"view stack changed during pause: '{before}' -> '{after}'"
         )

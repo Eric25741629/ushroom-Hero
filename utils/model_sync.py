@@ -85,6 +85,14 @@ def ensure_local_model(remote_path, cache_name=".mushroom_cache"):
                         bar = '█' * filled_len + '-' * (bar_len - filled_len)
                         print(f'\r[同步中] |{bar}| {percent:.1f}% ({copied/1024/1024:.1f}MB)', end='', flush=True)
             
+            # 完整性檢查：NAS 讀取可能提前 EOF 導致截斷，rename 前先驗證位元組數
+            if copied != remote_size:
+                print(f"\n✗ 同步不完整: 已複製 {copied} bytes，預期 {remote_size} bytes")
+                if temp_path.exists():
+                    try: temp_path.unlink()
+                    except: pass
+                return remote_path
+
             # 同步成功後，進行原子更名
             if temp_path.exists():
                 if local_path.exists():

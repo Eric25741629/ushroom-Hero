@@ -33,9 +33,14 @@ def test_device_id_parsed_from_logger_name():
     # WS-only loggers must also bridge to the dashboard (ws_farm_ / ws_mining_).
     assert _device_id_from_logger_name("ws_farm_emulator-5554") == "emulator-5554"
     assert _device_id_from_logger_name("ws_mining_emulator-5554") == "emulator-5554"
+    # ws_ad_reward_ / ws_lamp_ loggers must bridge too (regression: were omitted).
+    assert _device_id_from_logger_name("ws_ad_reward_emulator-5554") == "emulator-5554"
+    assert _device_id_from_logger_name("ws_lamp_emulator-5554") == "emulator-5554"
     # original device_id (not the filename-safe form) is preserved -> exact ip key
     assert _device_id_from_logger_name("ws_farm_127.0.0.1:5555") == "127.0.0.1:5555"
     assert _device_id_from_logger_name("ws_mining_127.0.0.1:5555") == "127.0.0.1:5555"
+    assert _device_id_from_logger_name("ws_ad_reward_127.0.0.1:5555") == "127.0.0.1:5555"
+    assert _device_id_from_logger_name("ws_lamp_127.0.0.1:5555") == "127.0.0.1:5555"
     assert _device_id_from_logger_name("ocr_trace_emulator-5554") is None
     assert _device_id_from_logger_name("__main__") is None
 
@@ -43,7 +48,9 @@ def test_device_id_parsed_from_logger_name():
 def test_ws_loggers_forward_lines_to_bot_state():
     """WS-only farm/mining logger lines must land on the dashboard log-box too."""
     for prefix, msg in (("ws_farm_", "豐收卡循環完成"),
-                        ("ws_mining_", "WS 挖礦掘進中")):
+                        ("ws_mining_", "WS 挖礦掘進中"),
+                        ("ws_ad_reward_", "看廣告獎勵領取完成"),
+                        ("ws_lamp_", "WS 開神燈完成")):
         ip = f"test-bridge-{prefix}5554"
         _cleanup(ip)
         log = logging.getLogger(f"{prefix}{ip}")

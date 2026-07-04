@@ -35,13 +35,17 @@ def save_error_screenshot(device_obj, ip: str, stage: str, reason: str) -> Optio
 
 def log_main_page_mismatch(device_obj, ip: str, stage: str, task: str, reason: str) -> Optional[str]:
     bot_state.update_state(ip, task=task, step=f"未在主頁面: {stage}")
-    screenshot_path = _smart_shot.capture(
-        device_obj=device_obj,
-        ip=ip,
-        stage=stage,
-        reason=reason,
-        task=task,
-    )
+    try:
+        screenshot_path = _smart_shot.capture(
+            device_obj=device_obj,
+            ip=ip,
+            stage=stage,
+            reason=reason,
+            task=task,
+        )
+    except Exception as e:
+        logger.error(f"[{ip}] 主頁檢測截圖失敗: reason={reason}, stage={stage}, err={e}", exc_info=True)
+        screenshot_path = None
     if not screenshot_path:
         screenshot_path = save_error_screenshot(device_obj, ip, stage, reason)
     logger.error(f"[{ip}] {reason}，stage={stage}, screenshot={screenshot_path}")
