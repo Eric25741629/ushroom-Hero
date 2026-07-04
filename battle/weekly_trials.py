@@ -171,6 +171,7 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     # rogue 結算 / 秘寶閣面板不會自動回主頁；不主動返回的話，本輪後續任務
     # (雲端戰鬥/好友禮物/開神燈/轉盤金幣) 會全部因「不在主頁面」被跳過。
     # 進『副本』後一律在收尾返回主頁（成功與中止路徑皆然）。
+    aborted = False  # 入場/進場/結算失敗 → 收尾除 _recover_to_home 外再強制導回主頁
     try:
         # 副本清單找『萬神試煉』(Beta)：命中文字+偏移=該列入場鈕；找不到就上滑捲動再試
         entered = False
@@ -184,6 +185,7 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
             time.sleep(1)
         if not entered:
             logger.warning("[萬神試煉] 副本清單找不到『萬神試煉』入口 → 中止(未挑戰)")
+            aborted = True
             return False
         time.sleep(2)
 
@@ -191,11 +193,13 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         for r in range(rounds):
             if not _advance_to_stage(d):
                 logger.warning("[萬神試煉] 第 %d/%d 局無法進入關卡視圖 → 停止", r + 1, rounds)
+                aborted = True
                 break
             fought = _battle_loop(d)
             logger.info("[萬神試煉] 第 %d/%d 局完成 %d 關(打到失敗/逾時)", r + 1, rounds, fought)
             if not _settle_run(d):
                 logger.warning("[萬神試煉] 第 %d/%d 局結算退出失敗 → 停止", r + 1, rounds)
+                aborted = True
                 break
             completed += 1
             logger.info("[萬神試煉] 已完成 %d/%d 局", completed, rounds)
@@ -211,3 +215,13 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     finally:
         # ponytail: 單次 best-effort 回主頁；殘留面板時下次對齊喚醒由 detector 重啟恢復。
         _recover_to_home(d)
+        if aborted:
+            # 中止路徑(入場失敗/進場失敗/結算退出失敗)：_recover_to_home 的盲點序列
+            # 不保證離開 Rogue 殘留面板(5558 log 實測 23 次停在非主頁污染後續任務)，
+            # 再疊一層共用導航 helper 強制回主頁。lazy import 避免 battle 套件
+            # 在載入期拉進 game_state.detector 的重依賴。
+            try:
+                from game_actions.navigation import navigate_to_main_page
+                navigate_to_main_page(d, label="weekly_trials")
+            except Exception:
+                logger.exception("[萬神試煉] 中止後導回主頁失敗")

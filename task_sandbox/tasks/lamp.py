@@ -35,6 +35,5 @@ LAMP = TaskSpec(
     references=(
         "opengold_v2/lamp_service.py",
         "opengold_v2/ui_controller.py",
-        "Open_gold_paddle_ocr.py",
     ),
 )

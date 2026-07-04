@@ -1,8 +1,9 @@
 import time
-from json_manager import return_time, time_recording
+from json_manager import time_recording
 from utils.logging_utils import logger
 import new_cnn.cnn_model as cnn_model_module
 import img_tools
+from game_actions.navigation import navigate_to_main_page
 from game_actions.task_due import is_due
 
 def daily_acceleration(d, ip, Cnn_model=None):
@@ -44,6 +45,9 @@ def daily_acceleration(d, ip, Cnn_model=None):
             
         if not success_enter:
             logger.warning(f"[{ip}] 無法進入家園頁面，跳過每日加速")
+            # 失敗時遊戲可能停在未知頁面，先導回主頁面再返回，
+            # 否則後續任務會連鎖判為「不在主頁面」而中止整條 pipeline。
+            navigate_to_main_page(d, Cnn_model, ip, label="daily_accel")
             return
 
         # 2. 執行研究中心加速
@@ -122,50 +126,3 @@ def click_arena_challenges(d, ip):
             logger.error(f"[{ip}] 競技場挑戰執行失敗: {e}")
     else:
         logger.info(f"[{ip}] 今日已執行過競技場挑戰，跳過")
-
-
-def claim_daily_free_pack(d, ip):
-    """
-    領取每日自選禮包免費獎勵
-    
-    Args:
-        d: uiautomator2 device 物件
-        ip: 設備 IP
-    """
-    record = return_time(ip, name="daily_free_pack")
-    should_execute = False
-    if record is None:
-        should_execute = True
-    else:
-        should_execute = record.get("is_next_day", False)
-    
-    if should_execute:
-        logger.info(f"[{ip}] 檢查每日自選禮包")
-        try:
-            # 1. 點擊自選禮包
-            if img_tools.click_str_by_server(d, '自選禮包', wait_timeout=5):
-                time.sleep(2)
-                # 2. 點擊免費
-                if img_tools.click_str_by_server(d, '免費', y_range=(334, 380), wait_timeout=5):
-                    time.sleep(1.5)
-                    # 3. 點擊恭喜獲得 (關閉獎勵彈窗)
-                    img_tools.click_str_by_server(d, '恭喜獲得', wait_timeout=5)
-                    time.sleep(1.5)
-                    # 4. 點擊特定座標關閉禮包介面
-                    d.click(274, 841)
-                    logger.info(f"[{ip}] ✓ 成功領取每日自選禮包")
-                    time_recording(ip, name="daily_free_pack")
-                    return True
-                else:
-                    logger.info(f"[{ip}] ! 未找到免費獎勵，可能已領取")
-                    # 嘗試關閉介面
-                    d.click(274, 841)
-                    time_recording(ip, name="daily_free_pack")
-                    return False
-            return False
-        except Exception as e:
-            logger.error(f"[{ip}] 領取自選禮包時發生錯誤: {e}")
-            return False
-    else:
-        # logger.info(f"[{ip}] 今日已領取過自選禮包，跳過")
-        pass
