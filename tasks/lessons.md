@@ -448,3 +448,23 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   另 logs/ 被 gitignore 也會讓部分工具默默跳過。
 - **Rule**：在本 repo 掃 log/檔案，(1) 先用一個「必定有 match」的 pattern 驗證工具真的有讀到檔；
   (2) 失敗就改逐檔明確路徑或 Bash POSIX grep；(3) dispatch subagent 的 prompt 要預先警告這個坑。
+
+## 2026-07-05 Agent worktree 隔離可能建在落後基底上（5 中 3 中招）
+
+- **情境**：用 Agent tool `isolation:"worktree"` fan-out 5 支修復 agents，3 支的 worktree 基底是
+  落後 main 237 commits 的舊 commit。症狀極隱蔽：agent 會自信回報「審計引用過期/檔案不存在」，
+  實際是它自己的 checkout 舊（例：說 `task_due._due_wanshen` 不存在，main :124 明明有）。
+  另外 2 支自己發現並 fast-forward 才倖免。
+- **Rule**：(1) fan-out prompt 一律加「開工前先 `git merge-base HEAD main` 對照 `git log main -1`，
+  落後就先 `git merge main`」。(2) 收到 agent 回報「audit 引用不存在/過期」時，先在主樹驗證
+  該檔案/符號，不可直接採信。(3) 收工報告必附 merge-base 證明。
+
+## 2026-07-05 挖礦道具優化的兩個方向性錯誤（使用者即時糾正）
+
+- **「log 顯示 bomb 數百顆」≠ 無限資源**：道具是庫存資產（存量），使用者政策 = 不可因存量大就降價狂用。
+  優化目標是「同樣道具支出下最大化每顆效益」（per-prop benefit at fixed spend），不是提高用量。
+  Sim 也證實：action 受限 regime 狂用道具反而掉分（246→231），只省會回復的鎬。
+- **先確認 production 走哪條路徑再設計**：使用者主力已是純 WS 挖礦（mining_supervised），
+  「省 CNN 截圖迴圈」這種 ADB 論點完全不適用。且 live WS 的道具決策大多走
+  `_select_dig_step` 的 prop_step_for_pit/pit_directed 覆寫路徑，不是 plan_smart 的 lookahead —
+  分析 planner 本體之前先追「執行面誰真的在做決策」。
