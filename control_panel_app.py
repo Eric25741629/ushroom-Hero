@@ -19,6 +19,7 @@
 """
 import hashlib
 import logging
+import os
 
 import requests  # noqa: F401 — re-exported（tests monkeypatch cpa.requests.post）
 from flask import Flask, jsonify, request  # noqa: F401 — jsonify re-exported for tests
@@ -36,15 +37,23 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
-app.secret_key = hashlib.sha256(b"mushroom-fly-pet-dashboard-key").digest()
+# secret_key from env (MUSHROOM_DASHBOARD_SECRET) so a forgeable static key is not
+# shipped in source; falls back to the legacy constant when unset (keeps live
+# sessions valid). SECURITY: set it to a long random string —
+# see docs/BACKEND_ARCH_AUDIT_2026-06-21.md §3.5.
+_secret_src = os.environ.get("MUSHROOM_DASHBOARD_SECRET")
+app.secret_key = hashlib.sha256(
+    _secret_src.encode("utf-8") if _secret_src else b"mushroom-fly-pet-dashboard-key"
+).digest()
 
 # --- shared 層 re-export（與 blueprint 共用同一批物件） ---
 from control_panel.shared.auth import (  # noqa: E402,F401
-    _FLY_PET_USERS,
     _fly_pet_auth,
+    check_request_auth,
 )
 from control_panel.shared.cdp import (  # noqa: E402,F401
     _FLY_PET_LOCK_JS,
+    _cdp_err_code,
     _cdp_evaluate,
     _cdp_json_response,
 )
@@ -61,18 +70,29 @@ from control_panel.shared.command_queue import (  # noqa: E402,F401
 
 # --- blueprints ---
 from control_panel import (  # noqa: E402
+    routes_admin,
+    routes_auth,
+    routes_relic_sprint,
+    routes_carpark_decorate_tools,
+    routes_gacha_tools,
+    routes_dragon_tools,
     routes_config,
     routes_control,
+    routes_dragon_sos,
     routes_fly_pet,
+    routes_inventory,
     routes_labeler,
     routes_live_view,
     routes_pages,
     routes_status,
     routes_web_session,
     routes_worker,
+    ws_session,
 )
 
 for _mod in (
+    routes_auth,
+    routes_admin,
     routes_pages,
     routes_status,
     routes_config,
@@ -82,6 +102,13 @@ for _mod in (
     routes_live_view,
     routes_labeler,
     routes_fly_pet,
+    routes_inventory,
+    routes_carpark_decorate_tools,
+    routes_gacha_tools,
+    routes_dragon_tools,
+    routes_relic_sprint,
+    routes_dragon_sos,
+    ws_session,
 ):
     app.register_blueprint(_mod.bp)
 
@@ -117,8 +144,20 @@ routes_live_view.init_ws(sock)
 routes_status.init_ws(sock)
 
 
+@app.before_request
+def _global_auth_guard():
+    # 全站登入牆：豁免清單與守門邏輯集中在 control_panel.shared.auth。
+    return check_request_auth()
+
+
 @app.after_request
 def add_no_cache_headers(response):
+    # Static design-system assets (/static/lib/tokens.css, components.css, app.js,
+    # favicon, …) are versioned via a ?v= query that changes per deploy, so they
+    # can be cached aggressively — the query busts the cache when the lib changes.
+    if request.method == "GET" and request.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
     # Fly-pet icons are immutable real-sprite PNGs keyed by config_id — let the
     # browser cache them so the card wall doesn't re-fetch ~38 URLs on every scroll.
     if request.method == "GET" and not request.path.startswith("/api/fly_pet_icon/"):
@@ -136,4 +175,8 @@ def run_server(port=5002):
     # threaded=True：let WebSocket (live-view) connections coexist with the
     # status-polling endpoints instead of blocking the single WSGI worker.
 
-    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False, threaded=True)
+    # Bind host from env (MUSHROOM_DASHBOARD_HOST); defaults to 0.0.0.0 for
+    # backward-compat. SECURITY: set 127.0.0.1 if the dashboard need not be
+    # LAN-reachable — see docs/BACKEND_ARCH_AUDIT_2026-06-21.md §3.5.
+    host = os.environ.get("MUSHROOM_DASHBOARD_HOST", "0.0.0.0")
+    app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)

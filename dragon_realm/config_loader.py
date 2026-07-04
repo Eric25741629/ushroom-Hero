@@ -13,9 +13,9 @@ KV_STAMINA_ITEM = 26
 
 _READ_CONFIG_JS = r"""
 () => {
-  const get = (idx) => {
-    try { return window.__dr_getKV(idx); } catch(_) { return null; }
-  };
+  const c = window.__drCache;
+  if (!c || !c.getKVList) return {};
+  const get = (idx) => { try { return c.getKVList(idx); } catch(_) { return null; } };
   return {
     tier2: get(7), tier3: get(8), chest: get(15),
     back_kill: get(16), stamina_tier: get(17), stamina_item: get(26),

@@ -126,7 +126,7 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
         # Force-sleep requested while the device is already sleeping is
         # effectively a no-op: the device is already in the desired state.
         # Consume the flag and refresh the displayed state so the dashboard
-        # doesn't get stuck on the transient "強制休眠" text set by
+        # doesn't get stuck on the transient "休眠中" text set by
         # bot_state.request_force_sleep().
         if bot_state.check_force_sleep(ip):
             remain_sec = max(0, int(wake_ts - time.time()))
@@ -149,6 +149,10 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
             logger_obj.info(f"[{ip}] 收到跳過休眠指令，立即喚醒")
             return True
 
+        if bot_state.has_pending_web_close_request(ip):
+            logger_obj.info(f"[{ip}] 收到關閉瀏覽器請求，中斷休眠交由裝置 thread 處理")
+            return True
+
         wake_ts, should_wake_now = apply_manual_wake_override(
             ip, wake_ts, logger_obj, task="休眠中"
         )
@@ -158,11 +162,6 @@ def sleep_until_wake_or_interrupt(ip: str, wake_ts: float, logger_obj) -> bool:
         if bot_state.has_pending_web_launch_request(ip):
             logger_obj.info(f"[{ip}] 收到中控網頁啟動請求，提前喚醒處理手動模式")
             return True
-
-        if bot_state.is_online_check_checker(ip):
-            if bot_state.has_pending_online_check_request(ip):
-                logger_obj.info(f"[{ip}] 偵測到 requester 上線檢查請求，提前喚醒處理")
-                return True
 
         if time.time() >= wake_ts:
             logger_obj.info(f"[{ip}] 已達對齊後喚醒時間，執行喚醒")

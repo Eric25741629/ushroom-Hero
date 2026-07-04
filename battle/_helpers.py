@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, Optional
 
 import img_tools
 from json_manager import JsonDataManager
+from utils.log_paths import LogPaths
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,7 @@ def _recover_to_home(d, logger_obj: Optional[logging.Logger] = None) -> bool:
 def _append_biweekly_log(ip: str, payload: Dict[str, Any]) -> None:
     try:
         os.makedirs("logs", exist_ok=True)
-        safe_ip = ip.replace(":", "_").replace(" ", "_")
+        safe_ip = LogPaths.safe_device_id(ip)
         path = os.path.join("logs", f"biweekly_{safe_ip}.log")
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")

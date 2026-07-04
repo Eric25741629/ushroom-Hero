@@ -11,8 +11,8 @@ from __future__ import annotations
 
 def use_dragon_realm(ip: str, config: dict) -> bool:
     """Feature flag: per-device ``dragon_realm_enabled`` overrides
-    ``global.dragon_realm_enabled``. Defaults off."""
+    ``global.dragon_realm_enabled``. Defaults on."""
     dev = (config.get("devices") or {}).get(ip) or {}
     if "dragon_realm_enabled" in dev:
         return bool(dev["dragon_realm_enabled"])
-    return bool((config.get("global") or {}).get("dragon_realm_enabled", False))
+    return bool((config.get("global") or {}).get("dragon_realm_enabled", True))

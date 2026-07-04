@@ -22,10 +22,9 @@ from typing import Optional
 
 import bot_state
 import config_manager
-from game_initialization import check_on_line
 from json_manager import return_time
 from runtime_services.device_runtime_service import sleep_until_wake_or_interrupt
-from runtime_services.web_session_service import process_online_check_requests
+from runtime_services.wake_parity import parse_hour_parity, parse_minute_offset
 from utils.car_fight_utils import adjust_wake_time_for_cars
 from utils.logging_utils import logger
 
@@ -35,26 +34,55 @@ class StartupBypassError(Exception):
     pass
 
 
-def _parse_hour_parity(value) -> Optional[int]:
-    """Map a device-config value to an hour-parity constraint.
+def _load_ws_state(ip: str) -> dict:
+    """Lazy seam over ws_token.state.load_state (kept light; tests monkeypatch)."""
+    from ws_token import state as ws_state
+    return ws_state.load_state(ip)
 
-    ``'even'`` / ``0`` -> 0, ``'odd'`` / ``1`` -> 1; anything else
-    (including ``None``) -> ``None`` (no constraint, keep legacy hourly
-    behavior). ``bool`` is rejected so ``True``/``False`` don't sneak in
-    as 1/0.
+
+def _load_carpark_next_ts(ip: str):
+    """The stored carpark wake epoch (8h re-park / 09:59 grab) for this device,
+    or None. Gated on ``ws_token.carpark_plan.enabled`` so non-carpark devices
+    and the disabled state are unaffected. Written by ws_token.runner._run_carpark
+    into ``ws_state/<ip>.json`` key ``carpark_repark.next_ts``."""
+    try:
+        cfg = config_manager.get_device_config(ip) or {}
+    except Exception:  # noqa: BLE001 — config read must never break sleep
+        return None
+    plan = (cfg.get("ws_token") or {}).get("carpark_plan") or {}
+    if not plan.get("enabled"):
+        return None
+    try:
+        st = _load_ws_state(ip)
+        v = (st.get("carpark_repark") or {}).get("next_ts")
+        return float(v) if v is not None else None
+    except Exception:  # noqa: BLE001 — advisory only
+        return None
+
+
+def _apply_carpark_repark_wake(ip, wake_ts, cur_ts, logger_obj, *,
+                               next_ts_loader=None):
+    """Pull the wake EARLIER to the carpark event (8h re-park / 09:59 grab).
+
+    Only ever moves the wake earlier — never later, never into the past — so it
+    can't delay any other scheduled wake. No-op when nothing is stored.
     """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, str):
-        v = value.strip().lower()
-        if v == "even":
-            return 0
-        if v == "odd":
-            return 1
-        return None
-    if isinstance(value, int) and value in (0, 1):
-        return value
-    return None
+    loader = next_ts_loader or _load_carpark_next_ts  # resolve at call time
+    next_ts = loader(ip)
+    if next_ts is None or next_ts <= cur_ts or next_ts >= wake_ts:
+        return wake_ts
+    logger_obj.info(
+        f"[{ip}] 跨界車位排程：喚醒提前 "
+        f"{time.strftime('%m-%d %H:%M', time.localtime(wake_ts))} -> "
+        f"{time.strftime('%m-%d %H:%M:%S', time.localtime(next_ts))}")
+    return next_ts
+
+
+# Canonical 分流 parsers live in runtime_services.wake_parity (shared with
+# startup_sleep). Kept under the original private names so call sites and the
+# pinning tests in tests/test_sleep_service.py stay unchanged.
+_parse_hour_parity = parse_hour_parity
+_parse_minute_offset = parse_minute_offset
 
 
 def _hour_parity_ok(hour_start_ts: float, hour_parity: Optional[int]) -> bool:
@@ -65,20 +93,6 @@ def _hour_parity_ok(hour_start_ts: float, hour_parity: Optional[int]) -> bool:
     if hour_parity is None:
         return True
     return time.localtime(hour_start_ts).tm_hour % 2 == hour_parity
-
-
-def _parse_minute_offset(value) -> Optional[int]:
-    """Map a device-config value to a fixed wake-minute offset.
-
-    A non-negative int (e.g. 0, 5, 15) -> that minute within the window;
-    anything else (incl. ``None``, ``bool``) -> ``None`` (random minute,
-    legacy behavior).
-    """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int) and value >= 0:
-        return value
-    return None
 
 
 def calc_aligned_wake_ts(
@@ -152,6 +166,18 @@ def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger
         logger_obj.warning(f"[{ip}] 強制休眠停止裝置失敗: backend={backend_kind}, err={stop_err}")
 
 
+def should_stop_runtime_device_for_sleep(cfg: dict, backend_kind: str) -> bool:
+    """一般休眠前是否要關閉 runtime device。
+
+    web_h5 的 keep_page 表示保留頁面；close/close_page/close_browser 表示
+    休眠時釋放 Playwright/Chrome，dashboard 應顯示「開啟網頁」。
+    """
+    if backend_kind != "web_h5":
+        return False
+    stop_mode = str((cfg or {}).get("web_stop_mode", "keep_page")).strip().lower()
+    return stop_mode in {"close", "close_page", "close_browser"}
+
+
 def run_sleep_cycle(
     ip: str,
     logger_obj,
@@ -181,6 +207,11 @@ def run_sleep_cycle(
         )
 
     wake_ts = adjust_wake_time_for_cars(wake_ts)
+
+    # 跨界車位：把喚醒往前 clamp 到 8h 重停 / 09:59 開窗搶位時刻（只提前不延後）。
+    # 強制休眠（登入衝突 30 分鐘等）不被覆寫——那是刻意的冷卻。
+    if forced_wake_ts is None:
+        wake_ts = _apply_carpark_repark_wake(ip, wake_ts, cur_ts, logger_obj)
 
     if ip == "emulator-5556" and enable_dungeon_manager:
         today_wday = time.localtime().tm_wday
@@ -238,30 +269,17 @@ def _maybe_resume_sleep(
 
     Returns (updated_ts, updated_reason, should_continue).
     Caller does `if should_continue: continue`.
+
+    Online-check no longer resumes here — it is served out-of-loop by the
+    master-only ``runtime_services.online_check_service``. ``Cnn_model`` is kept
+    only for call-site signature stability.
     """
-    if bot_state.is_online_check_checker(ip):
-        has_req = bot_state.has_pending_online_check_request(ip)
-        has_priority = bot_state.is_online_check_priority_active(ip)
-        if has_req or has_priority:
-            process_online_check_requests(ip, Cnn_model, logger_obj, check_on_line)
-            time.sleep(0.2)
-            return resume_sleep_until_ts, resume_sleep_reason, True
-        if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
-            wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
-            remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
-            detail = resume_sleep_reason or "返回休眠"
-            bot_state.update_state(
-                ip,
-                task="休眠中",
-                step=f"{detail} | 預計休眠 {remain_sec/60:.1f} 分鐘 (預計 {wake_time_str} 喚醒)",
-                next_wake_at=resume_sleep_until_ts,
-            )
-            logger_obj.info(f"[{ip}] {detail}，返回休眠至 {wake_time_str}")
-            interrupted = sleep_until_wake_or_interrupt(ip, resume_sleep_until_ts, logger_obj)
-            if interrupted:
-                return None, "", True
-            return None, "", False
-    elif resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+    if resume_sleep_until_ts is not None and time.time() < resume_sleep_until_ts:
+        # Returning to sleep must honor the 跨界車位 09:59 grab clamp
+        # (only-earlier), mirroring run_sleep_cycle — else an interrupted device
+        # can oversleep the daily 10:00 搶車位 window.
+        resume_sleep_until_ts = _apply_carpark_repark_wake(
+            ip, resume_sleep_until_ts, time.time(), logger_obj)
         wake_time_str = time.strftime("%H:%M", time.localtime(resume_sleep_until_ts))
         remain_sec = max(0, int(resume_sleep_until_ts - time.time()))
         detail = resume_sleep_reason or "返回休眠"

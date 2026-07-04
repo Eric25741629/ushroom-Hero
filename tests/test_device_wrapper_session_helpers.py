@@ -14,11 +14,21 @@ integration check against the real registry.
 """
 from __future__ import annotations
 
+import sys
 import threading
+import types
 
 import pytest
 
-device_wrapper = pytest.importorskip("device_wrapper")
+if "cv2" not in sys.modules:
+    cv2_stub = types.ModuleType("cv2")
+    cv2_stub.IMREAD_COLOR = 1
+    cv2_stub.COLOR_BGR2RGB = 4
+    cv2_stub.imdecode = lambda *args, **kwargs: None
+    cv2_stub.cvtColor = lambda img, *args, **kwargs: img
+    sys.modules["cv2"] = cv2_stub
+
+import device_wrapper
 
 
 class _SentinelDevice:
@@ -32,6 +42,19 @@ class _SentinelDevice:
     def is_alive(self) -> bool:  # pragma: no cover — must NOT be called
         self.is_alive_calls += 1
         return False
+
+
+class _Logger:
+    def info(self, *args, **kwargs):
+        return None
+
+    def warning(self, *args, **kwargs):
+        return None
+
+
+class _PageAtGameUrl:
+    def __init__(self, url: str) -> None:
+        self.url = url
 
 
 @pytest.fixture
@@ -109,3 +132,110 @@ def test_handles_entry_without_owner_thread_id(clean_registry):
 
     clean_registry["emulator-5554"] = _NoOwnerAttr()
     assert device_wrapper.get_same_thread_web_device("emulator-5554") is None
+
+
+def test_app_start_skips_second_goto_when_restart_already_loaded_game_url(monkeypatch):
+    dev = device_wrapper.PlaywrightGameDevice.__new__(
+        device_wrapper.PlaywrightGameDevice
+    )
+    dev.device_id = "emulator-5554"
+    dev.logger = _Logger()
+    dev.web_url = "https://game.example/play"
+    dev._page = None
+    dev._in_game = False
+    dev._closed_by_stop = True
+
+    open_calls = []
+
+    def ensure_session(reason: str = ""):
+        assert reason == "app_start"
+        dev._page = _PageAtGameUrl(dev.web_url)
+        return True
+
+    def open_game_url():
+        open_calls.append("goto")
+        return True
+
+    monkeypatch.setattr(dev, "_ensure_browser_session", ensure_session)
+    monkeypatch.setattr(dev, "_open_game_url", open_game_url)
+
+    assert dev.app_start("com.mxdzz.tw.and") is True
+    assert open_calls == []
+    assert dev._in_game is True
+    assert dev._closed_by_stop is False
+
+
+class _Keyboard:
+    def __init__(self) -> None:
+        self.presses = []
+
+    def press(self, key):
+        self.presses.append(key)
+
+
+class _HealthyPage:
+    def __init__(self) -> None:
+        self.keyboard = _Keyboard()
+
+
+class _ClosedPage:
+    """Stand-in for a page whose target is already gone — keyboard.press raises."""
+
+    def __init__(self) -> None:
+        self.keyboard = self
+
+    def press(self, key):  # pragma: no cover — must NOT be reached after self-heal
+        raise RuntimeError(
+            "Keyboard.press: Target page, context or browser has been closed"
+        )
+
+
+def test_press_back_self_heals_session_before_keyboard(monkeypatch):
+    """Regression: web_h5 press('back') used to call self._page.keyboard.press
+    directly with no session guard — unlike tap/swipe/screenshot — so a closed
+    page raised a raw TargetClosedError up into the startup loop
+    (game_initialization.py:240). press() must first _ensure_browser_session +
+    _sync_active_page so a dead page is reopened, mirroring tap()."""
+    dev = device_wrapper.PlaywrightGameDevice.__new__(
+        device_wrapper.PlaywrightGameDevice
+    )
+    dev.device_id = "emulator-5554"
+    dev.logger = _Logger()
+    dev._page = _ClosedPage()
+
+    order = []
+
+    def ensure_session(reason: str = ""):
+        order.append(("ensure", reason))
+        dev._page = _HealthyPage()  # self-heal swaps in a live page
+        return True
+
+    def sync_page():
+        order.append(("sync",))
+        return True
+
+    monkeypatch.setattr(dev, "_ensure_browser_session", ensure_session)
+    monkeypatch.setattr(dev, "_sync_active_page", sync_page)
+
+    assert dev.press("back") is True
+    # Session guard must run BEFORE we touch the keyboard.
+    assert order and order[0] == ("ensure", "press")
+    # And the Escape must land on the healed (live) page, not the closed one.
+    assert isinstance(dev._page, _HealthyPage)
+    assert dev._page.keyboard.presses == ["Escape"]
+
+
+def test_press_home_is_noop_without_touching_page(monkeypatch):
+    """home() must stay a cheap no-op that never touches the page/session."""
+    dev = device_wrapper.PlaywrightGameDevice.__new__(
+        device_wrapper.PlaywrightGameDevice
+    )
+    dev.device_id = "emulator-5554"
+    dev.logger = _Logger()
+    dev._page = _ClosedPage()  # would raise if home touched it
+
+    def boom(*_a, **_k):  # pragma: no cover - must NOT run for home
+        raise AssertionError("home() must not call _ensure_browser_session")
+
+    monkeypatch.setattr(dev, "_ensure_browser_session", boom)
+    assert dev.press("home") is True

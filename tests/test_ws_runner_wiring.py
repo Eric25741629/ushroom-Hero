@@ -105,7 +105,8 @@ def test_ws_fields_are_typed_with_off_defaults():
     assert dc.ws_token_spend is False
     assert dc.ws_token_sweep_list == []
     assert dc.ws_token_mining is None
-    assert DEFAULT_DEVICE_CONFIG["ws_token"]["mining"]["enabled"] is False
+    # 2026-06-12: ws_token 子功能預設全開（使用者指示）
+    assert DEFAULT_DEVICE_CONFIG["ws_token"]["mining"]["enabled"] is True
 
 
 def test_from_dict_reads_ws_fields():
@@ -136,6 +137,7 @@ def test_update_device_config_keeps_ws_token_backend(temp_config):
     config_manager.update_device_config("ws-001", {"backend": "ws_token"})
     raw = json.loads(temp_config.read_text(encoding="utf-8"))
     assert raw["devices"]["ws-001"]["backend"] == "ws_token"
+    assert raw["devices"]["ws-001"]["use_ws_runner"] is True
 
 
 def test_update_device_config_unknown_backend_downgrades_to_adb(temp_config):
@@ -252,15 +254,43 @@ def patched_runner(monkeypatch):
     calls = []
 
     def fake_run_device(ip, *, spend=False, sweep_list=None, open_lamp=False,
+                        lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
                         farm_config=None, dungeon_sweeps=None, carpark_target=None,
-                        couple_gifts=True, forge_ring=False, workshop_rotate=True,
-                        mining_config=None, progress=None):
+                        carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
+                        workshop_rotate=True, kungfu_guess=False,
+                        mail_claim=False, mail_gem_threshold=None,
+                        mail_skill_threshold=None,
+                        relic_upgrade=False, relic_max_steps=10,
+                        relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
+                        relic_sprint_enabled=False, relic_sprint_target=900000,
+                        gacha_config=None,
+                        mining_config=None,
+                        sea_config=None,
+                        only_tasks=None,
+                        progress=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
-                      "open_lamp": open_lamp, "farm_config": farm_config,
+                      "open_lamp": open_lamp, "lamp_percent": lamp_percent,
+                      "lamp_min_keep": lamp_min_keep,
+                      "lamp_daily_min": lamp_daily_min, "farm_config": farm_config,
                       "dungeon_sweeps": dungeon_sweeps, "carpark_target": carpark_target,
+                      "carpark_auto": carpark_auto,
+                      "carpark_plan": carpark_plan,
                       "couple_gifts": couple_gifts, "forge_ring": forge_ring,
                       "workshop_rotate": workshop_rotate,
-                      "mining_config": mining_config})
+                      "kungfu_guess": kungfu_guess,
+                      "mail_claim": mail_claim,
+                      "mail_gem_threshold": mail_gem_threshold,
+                      "mail_skill_threshold": mail_skill_threshold,
+                      "relic_upgrade": relic_upgrade,
+                      "relic_max_steps": relic_max_steps,
+                      "relic_fragment_floor": relic_fragment_floor,
+                      "tycoon": tycoon, "tycoon_max_rolls": tycoon_max_rolls,
+                      "relic_sprint_enabled": relic_sprint_enabled,
+                      "relic_sprint_target": relic_sprint_target,
+                      "gacha_config": gacha_config,
+                      "mining_config": mining_config,
+                      "sea_config": sea_config,
+                      "only_tasks": only_tasks})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -279,11 +309,149 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
     report = svc.run_ws_device_cycle("ws-x", cfg, _NullLogger())
     assert len(calls) == 1
     assert calls[0] == {"ip": "ws-x", "spend": True, "sweep_list": [[1, 2, 3]],
-                        "open_lamp": False, "farm_config": None,
+                        "open_lamp": False, "lamp_percent": 0.0,
+                        "lamp_min_keep": 0, "lamp_daily_min": 0,
+                        "farm_config": None,
                         "dungeon_sweeps": None, "carpark_target": None,
+                        "carpark_auto": False,
+                        "carpark_plan": None,
                         "couple_gifts": True, "forge_ring": False,
-                        "workshop_rotate": True, "mining_config": None}
+                        "workshop_rotate": True, "kungfu_guess": False,
+                        "mail_claim": False, "mail_gem_threshold": None,
+                        "mail_skill_threshold": None,
+                        "relic_upgrade": False, "relic_max_steps": 10,
+                        "relic_fragment_floor": 0,
+                        "tycoon": False, "tycoon_max_rolls": 50,
+                        "relic_sprint_enabled": False,
+                        "relic_sprint_target": 900000,
+                        "gacha_config": None,
+                        "mining_config": None,
+                        "sea_config": None,
+                        "only_tasks": None}
     assert report.login_ok is True
+
+
+def test_run_ws_device_cycle_passes_kungfu_guess(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True, "ws_token_kungfu_guess": True}
+    )
+    svc.run_ws_device_cycle("ws-kf", cfg, _NullLogger())
+    assert calls[0]["kungfu_guess"] is True
+
+
+def test_run_ws_device_cycle_mail_claim_defaults_false(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-nomail", cfg, _NullLogger())
+    assert calls[0]["mail_claim"] is False
+    assert calls[0]["mail_gem_threshold"] is None
+    assert calls[0]["mail_skill_threshold"] is None
+
+
+def test_run_ws_device_cycle_reads_mail_claim_from_nested(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"mail_claim": True,
+                      "mail_gem_threshold": 500, "mail_skill_threshold": 80}}
+    )
+    svc.run_ws_device_cycle("ws-mail", cfg, _NullLogger())
+    assert calls[0]["mail_claim"] is True
+    assert calls[0]["mail_gem_threshold"] == 500
+    assert calls[0]["mail_skill_threshold"] == 80
+
+
+def test_run_ws_device_cycle_kungfu_guess_defaults_false(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-nokf", cfg, _NullLogger())
+    assert calls[0]["kungfu_guess"] is False
+
+
+def test_run_ws_device_cycle_relic_tycoon_default_off(patched_runner):
+    """遺物強化 / 傳奇大亨 預設 OFF + bounded（無巢狀設定時走預設上限）。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-no-rt", cfg, _NullLogger())
+    assert calls[0]["relic_upgrade"] is False
+    assert calls[0]["relic_max_steps"] == 10
+    assert calls[0]["relic_fragment_floor"] == 0
+    assert calls[0]["tycoon"] is False
+    assert calls[0]["tycoon_max_rolls"] == 50
+
+
+def test_run_ws_device_cycle_reads_relic_tycoon_from_nested(patched_runner):
+    """遺物強化 / 傳奇大亨 來自巢狀 ws_token dict（單一真相），coerce 後傳入。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"relic_upgrade": True, "relic_max_steps": 5,
+                      "relic_fragment_floor": 200000,
+                      "tycoon": True, "tycoon_max_rolls": 12}}
+    )
+    svc.run_ws_device_cycle("ws-rt", cfg, _NullLogger())
+    assert calls[0]["relic_upgrade"] is True
+    assert calls[0]["relic_max_steps"] == 5
+    assert calls[0]["relic_fragment_floor"] == 200000
+    assert calls[0]["tycoon"] is True
+    assert calls[0]["tycoon_max_rolls"] == 12
+
+
+def test_run_ws_device_cycle_relic_sprint_default_off(patched_runner):
+    """遺物碎片衝刺 預設 OFF：service 不傳 → fake 收到預設 (False / 900000)。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-no-sprint", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is False
+    assert calls[0]["relic_sprint_target"] == 900000
+
+
+def test_run_ws_device_cycle_reads_relic_sprint_from_nested(patched_runner):
+    """遺物碎片衝刺 來自巢狀 ws_token.relic_sprint（單一真相），啟用時傳 True + target。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"relic_sprint": {"enabled": True, "target_spend": 450000}}}
+    )
+    svc.run_ws_device_cycle("ws-sprint", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is True
+    assert calls[0]["relic_sprint_target"] == 450000
+
+
+def test_run_ws_device_cycle_relic_sprint_enabled_uses_default_target(patched_runner):
+    """啟用但沒給 target_spend → service 不傳 target，run_device 走預設 900000。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"relic_sprint": {"enabled": True}}}
+    )
+    svc.run_ws_device_cycle("ws-sprint-def", cfg, _NullLogger())
+    assert calls[0]["relic_sprint_enabled"] is True
+    assert calls[0]["relic_sprint_target"] == 900000
+
+
+def test_run_ws_device_cycle_reads_gacha_from_nested(patched_runner):
+    """抽卡設定來自巢狀 ws_token.gacha（單一真相），coerce 後傳入 run_device。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"gacha": {"enabled": True, "types": [1],
+                                "mode": "fixed", "count": 35, "batches": 2}}}
+    )
+    svc.run_ws_device_cycle("ws-gacha", cfg, _NullLogger())
+    g = calls[0]["gacha_config"]
+    assert g is not None and g["enabled"] is True
+    assert g["types"] == [1] and g["mode"] == "fixed"
+    assert g["count"] == 35 and g["batches"] == 2
+
+
+def test_run_ws_device_cycle_gacha_defaults_off(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-nogacha", cfg, _NullLogger())
+    g = calls[0]["gacha_config"]
+    assert g is None or g.get("enabled") is False
 
 
 def test_run_ws_device_cycle_passes_mining_config(patched_runner):
@@ -309,9 +477,17 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
     svc, calls = patched_runner
 
     def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False,
+                      lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
                       farm_config=None, dungeon_sweeps=None, carpark_target=None,
-                      couple_gifts=True, forge_ring=False, workshop_rotate=True,
-                      mining_config=None, progress=None):
+                      carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
+                      workshop_rotate=True, kungfu_guess=False,
+                      mail_claim=False, mail_gem_threshold=None,
+                      mail_skill_threshold=None,
+                      relic_upgrade=False, relic_max_steps=10,
+                      relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
+                      gacha_config=None,
+                      mining_config=None, sea_config=None,
+                      only_tasks=None, progress=None):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -327,9 +503,16 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
     svc, _calls = patched_runner
 
     def boom(ip, *, spend=False, sweep_list=None, open_lamp=False,
+             lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
              farm_config=None, dungeon_sweeps=None, carpark_target=None,
+             carpark_auto=False, carpark_plan=None,
              couple_gifts=True, forge_ring=False, workshop_rotate=True,
-             mining_config=None, progress=None):
+             kungfu_guess=False, mail_claim=False, mail_gem_threshold=None,
+             mail_skill_threshold=None,
+             relic_upgrade=False, relic_max_steps=10, relic_fragment_floor=0,
+             tycoon=False, tycoon_max_rolls=50,
+             mining_config=None, sea_config=None,
+             only_tasks=None, progress=None):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)
@@ -405,3 +588,89 @@ def test_loop_force_sleep_skips_cycle(monkeypatch):
     svc.run_ws_device_loop("ws-fs", _NullLogger())
     assert cycle_calls == []                 # force-sleep skipped the run
     assert seen["policy"] == "force_sleep"   # and applied the force-sleep policy
+
+
+def test_run_ws_device_cycle_passes_nested_carpark_plan(patched_runner):
+    svc, calls = patched_runner
+    plan = {"enabled": True,
+            "day": {"window": ["08:00", "20:00"], "cross": 1, "silver": 5}}
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True, "ws_token": {"carpark_plan": plan}}
+    )
+    svc.run_ws_device_cycle("ws-plan", cfg, _NullLogger())
+    assert calls[0]["carpark_plan"]["enabled"] is True
+    assert calls[0]["carpark_plan"]["day"]["cross"] == 1
+
+
+def test_run_ws_device_cycle_reads_lamp_percent_min_keep_from_nested(patched_runner):
+    """開神燈百分比/最低保留來自巢狀 ws_token dict（單一真相），coerce 後傳入。"""
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict(
+        {"use_ws_runner": True,
+         "ws_token": {"lamp_percent": "1.5", "lamp_min_keep": "500000",
+                     "lamp_daily_min": "60"}}
+    )
+    svc.run_ws_device_cycle("ws-lamp", cfg, _NullLogger())
+    assert calls[0]["lamp_percent"] == 1.5
+    assert calls[0]["lamp_min_keep"] == 500000
+    assert calls[0]["lamp_daily_min"] == 60
+
+
+def test_run_ws_device_cycle_lamp_defaults_zero_when_absent(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-nolamp", cfg, _NullLogger())
+    assert calls[0]["lamp_percent"] == 0.0
+    assert calls[0]["lamp_min_keep"] == 0
+    assert calls[0]["lamp_daily_min"] == 0
+
+
+def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
+    """_progress(..., 'progress', '12/34') 應把 bot_state step 設成 'WS 開神燈 (12/34)'。"""
+    import runtime_services.ws_runner_service as svc
+
+    steps: list[tuple] = []
+    monkeypatch.setattr(svc.bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured_progress = {}
+
+    def fake_run_device(ip, *, progress=None, **k):
+        captured_progress["fn"] = progress
+        return types.SimpleNamespace(
+            device=ip, login_ok=True, spend=False, tasks={}, errors={})
+
+    monkeypatch.setattr(svc, "_load_run_device", lambda: fake_run_device)
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-prog", cfg, _NullLogger())
+
+    progress = captured_progress["fn"]
+    assert callable(progress)
+    progress("lamp", "progress", "12/34")
+    assert ("ws-prog", "WS 開神燈 (12/34)") in steps
+
+
+def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):
+    """harvest_card tag 應在 dashboard 顯示為「豐收卡」。"""
+    import runtime_services.ws_runner_service as svc
+
+    steps: list[tuple] = []
+    monkeypatch.setattr(svc.bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured_progress = {}
+
+    def fake_run_device(ip, *, progress=None, **k):
+        captured_progress["fn"] = progress
+        return types.SimpleNamespace(
+            device=ip, login_ok=True, spend=False, tasks={}, errors={})
+
+    monkeypatch.setattr(svc, "_load_run_device", lambda: fake_run_device)
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("ws-prog-card", cfg, _NullLogger())
+
+    progress = captured_progress["fn"]
+    progress("harvest_card", "start", "")
+    progress("harvest_card", "ok", "")
+    assert ("ws-prog-card", "WS 任務執行中: 豐收卡") in steps
+    assert ("ws-prog-card", "WS 任務完成: 豐收卡") in steps

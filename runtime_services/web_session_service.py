@@ -28,14 +28,52 @@ def mark_login_conflict_sleep(ip: str, sleep_sec: int = LOGIN_CONFLICT_SLEEP_SEC
     return wake_ts
 
 
-def check_on_line_detail(cnn_model, logger_obj, check_on_line_fn, check_ip: str = "emulator-5554"):
-    try:
-        is_busy = bool(check_on_line_fn(cnn_model))
-        reason = "account_online" if is_busy else "account_offline"
-        return is_busy, reason
-    except Exception as e:
-        logger_obj.warning(f"[{check_ip}] check_on_line_detail fallback due to error: {e}")
-        return True, f"check_failed:{e}"
+# 互檢 gate 等待 checker 結果時的輪詢分片：把單一 60s 盲等切成 0.5s 一片，
+# 讓「開啟網頁」/ force-sleep 最慢 ~0.5s 就能中斷，而非卡滿整段 timeout。
+_GATE_RESULT_POLL_SEC = 0.5
+
+
+def _web_launch_release_requested(ip: str, logger_obj, checker_ip: str) -> bool:
+    """放行互檢 gate：使用者按「開啟瀏覽器」是最高優先的手動介入，絕不能卡在
+    跨裝置互檢等待後面。回傳後 caller 會重讀 has_pending_web_launch_request，
+    使 WS pre-phase 被跳過、瀏覽器立即開啟。"""
+    if bot_state.has_pending_web_launch_request(ip):
+        logger_obj.info(
+            f"[{ip}] 手動開啟網頁請求進來，放行互檢 gate（{checker_ip} online-check）"
+        )
+        return True
+    return False
+
+
+def _wait_online_check_result_interruptible(
+    ip: str,
+    req_id: str,
+    logger_obj,
+    checker_ip: str,
+    total_timeout_sec: float = 60.0,
+):
+    """等 checker 回應，但以 0.5s 分片輪詢，讓手動開網頁 / force-sleep 能即時中斷。
+
+    回傳 result 快照；若期間使用者按了「開啟網頁」則回傳 None（caller 應放行）。
+    force-sleep 期間照常拋出 ForceSleepRequested。
+    """
+    deadline = time.time() + max(_GATE_RESULT_POLL_SEC, float(total_timeout_sec))
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            # 逾時：回最後一張快照（多半仍 pending），由 caller 視為 incomplete→busy。
+            return bot_state.wait_online_check_result(req_id, timeout_sec=0.1)
+        slice_sec = min(_GATE_RESULT_POLL_SEC, remaining)
+        result = bot_state.wait_online_check_result(req_id, timeout_sec=slice_sec)
+        if str(result.get("status", "pending")) != "pending":
+            return result
+        if bot_state.check_force_sleep(ip):
+            logger_obj.warning(
+                f"[{ip}] force sleep requested while waiting for {checker_ip} online-check result"
+            )
+            raise ForceSleepRequested()
+        if _web_launch_release_requested(ip, logger_obj, checker_ip):
+            return None
 
 
 def wait_for_checker_gate_before_start(
@@ -47,16 +85,21 @@ def wait_for_checker_gate_before_start(
         if bot_state.check_force_sleep(ip):
             logger_obj.warning(f"[{ip}] force sleep requested while waiting for {checker_ip} online-check")
             raise ForceSleepRequested()
+        if _web_launch_release_requested(ip, logger_obj, checker_ip):
+            return
         logger_obj.info(f"[{ip}] waiting for {checker_ip} online-check...")
         is_busy = True
         try:
-            target_pid = config_manager.get_device_config(ip).get("online_check_target_pid")
+            target_pid = config_manager.get_device_role_id(ip)
             req_id = bot_state.submit_online_check_request(
                 requester_ip=ip,
                 checker_ip=checker_ip,
                 target_pid=target_pid,
             )
-            result = bot_state.wait_online_check_result(req_id, timeout_sec=60.0)
+            result = _wait_online_check_result_interruptible(ip, req_id, logger_obj, checker_ip)
+            if result is None:
+                # 手動開網頁，放行 gate。
+                return
             status = str(result.get("status", "pending"))
             if status == "done":
                 is_busy = bool(result.get("result_busy", True))
@@ -68,6 +111,8 @@ def wait_for_checker_gate_before_start(
                     f"[{ip}] {checker_ip} online-check incomplete: status={status}, error={result.get('error', '')}"
                 )
                 is_busy = True
+        except ForceSleepRequested:
+            raise
         except Exception as e:
             logger_obj.error(f"[{ip}] online-check request to {checker_ip} failed: {e}")
             is_busy = True
@@ -83,106 +128,10 @@ def wait_for_checker_gate_before_start(
             if bot_state.check_force_sleep(ip):
                 logger_obj.warning(f"[{ip}] force sleep requested during checker retry backoff")
                 raise ForceSleepRequested()
+            if _web_launch_release_requested(ip, logger_obj, checker_ip):
+                return
             bot_state.update_state(ip, task="等待互檢", step=f"{checker_ip} 忙碌中，{remain} 秒後重試")
             time.sleep(1)
-
-
-def process_online_check_requests(ip: str, cnn_model, logger_obj, check_on_line_fn) -> None:
-    """Serve pending cross-device online-check requests as a checker.
-
-    Decoupled (2026-06-09): any device in the configured `online_check_checkers`
-    list may serve requests (default: just emulator-5554, so legacy behaviour is
-    unchanged). The check is **protocol-only** (friend list, no OCR): the
-    requester's `target_pid` is read off the request, and
-    `game_initialization.check_on_line_protocol_only` judges presence via this
-    checker's web_h5 session.
-
-    The `check_on_line_fn` / `cnn_model` params are kept for signature
-    compatibility but no longer drive the check (no OCR fallback by design).
-    """
-    if not bot_state.is_online_check_checker(ip):
-        return
-
-    while True:
-        req = bot_state.pop_online_check_request(ip)
-        if not req:
-            return
-
-        req_id = req.get("id")
-        requester_ip = req.get("requester_ip")
-        target_pid = req.get("target_pid")
-        try:
-            logger_obj.info(
-                f"[{ip}] processing online-check request from {requester_ip} "
-                f"(req={req_id}, target_pid={target_pid})"
-            )
-            bot_state.update_state(
-                ip,
-                task="互檢中",
-                step=f"處理 {requester_ip} 的上線檢查",
-            )
-            is_busy, reason = _run_checker_protocol_only(
-                ip, target_pid, requester_ip, logger_obj
-            )
-            if is_busy is None:
-                # Cannot determine on this checker (e.g. target not in friend
-                # list). Fail so the requester retries and another checker can
-                # claim it — never 放行 on an unknown result.
-                logger_obj.info(
-                    f"[{ip}] online-check 無法判定 (req={req_id}, reason={reason})，"
-                    f"交給其他 checker / 下一輪重試"
-                )
-                bot_state.fail_online_check_request(
-                    req_id, f"undetermined by {ip}: {reason}"
-                )
-                continue
-            bot_state.complete_online_check_request(
-                req_id,
-                is_busy=is_busy,
-                detail=f"checked by {ip} for requester={requester_ip}; reason={reason}",
-            )
-        except Exception as e:
-            logger_obj.error(f"[{ip}] online-check request failed: req={req_id}, err={e}")
-            bot_state.fail_online_check_request(req_id, str(e))
-
-
-def _run_checker_protocol_only(ip, target_pid, requester_ip, logger_obj):
-    """Resolve the target_pid then run the protocol-only check on this checker.
-
-    Returns (is_busy, reason); is_busy is None when the result is undetermined.
-    On error, conservatively returns (True, "check_failed:...") so the requester
-    keeps waiting rather than 放行.
-    """
-    # Backward-compat: legacy requesters submitted without a target_pid (the old
-    # check_on_line read it from the hardcoded emulator-5558 config). Fall back
-    # to the requester's own online_check_target_pid so the 5558 path is intact.
-    pid = target_pid
-    if not pid:
-        try:
-            pid = config_manager.get_device_config(requester_ip).get("online_check_target_pid")
-        except Exception:
-            pid = None
-    if not pid:
-        # No way to do a protocol check → undetermined (let caller fail it).
-        return None, "online_check_target_pid not set"
-
-    threshold_sec = 60
-    try:
-        threshold_sec = int(
-            config_manager.get_device_config(requester_ip).get(
-                "online_check_threshold_sec", 60
-            )
-        )
-    except Exception:
-        threshold_sec = 60
-
-    from game_initialization import check_on_line_protocol_only  # lazy import
-
-    try:
-        return check_on_line_protocol_only(ip, int(pid), threshold_sec)
-    except Exception as e:
-        logger_obj.warning(f"[{ip}] protocol-only online-check error: {e}; conservative → busy")
-        return True, f"check_failed:{e}"
 
 
 def initialize_runtime_device(
@@ -219,6 +168,11 @@ def initialize_runtime_device(
         wait_for_checker_gate_before_start(ip, device_logger, checker_ip=checker_ip)
         if is_requester:
             skip_online_check_once = True
+        # Gate 可能因等待期間使用者按了「開啟網頁」而放行。重讀 live flag，
+        # 讓底下的 WS pre-phase 被跳過、瀏覽器立即開啟（與「進函式前就 pending」
+        # 的 fast-path 一致）。
+        if bot_state.has_pending_web_launch_request(ip):
+            has_manual_web_launch_request = True
 
     if (
         backend_kind == "web_h5"
@@ -266,6 +220,9 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
             force_headful=force_headful,
         )
         bot_state.complete_web_launch_request(ip, ok=True, message="web page opened")
+        # Browser is now open — publish the truth so the dashboard toggle flips to
+        # 關閉網頁 immediately (without waiting for the hold loop's first tick).
+        bot_state.set_web_browser_open(ip, True)
 
         if manual_hold_until_closed:
             logger_obj.info(f"[{ip}] manual hold enabled, waiting for page to close")
@@ -280,6 +237,23 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
                     still_open = bool(alive_fn()) if callable(alive_fn) else False
                 except Exception:
                     still_open = False
+                # Publish each tick so the dashboard toggle flips back to 開啟網頁
+                # the moment the user closes the browser window (≤1s).
+                bot_state.set_web_browser_open(ip, still_open)
+
+                if bot_state.check_web_close(ip):
+                    logger_obj.info(f"[{ip}] manual hold close-browser requested")
+                    close_fn = getattr(device_obj, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception as close_err:
+                            logger_obj.warning(
+                                f"[{ip}] close browser during manual hold failed: {close_err}"
+                            )
+                    bot_state.set_web_browser_open(ip, False)
+                    bot_state.update_state(ip, task="手動操作", step="已關閉瀏覽器")
+                    break
 
                 if bot_state.check_manual_release(ip):
                     logger_obj.info(f"[{ip}] manual release requested, resume automation")

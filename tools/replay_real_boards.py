@@ -26,7 +26,7 @@ from miner.planning.smart_planner import plan_smart
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 
-# v2 removed 2026-06-05 (violated the <300ms budget on 18.8% of real boards).
+# v2 removed 2026-06-05; v5 removed 2026-06-18 (lowest score at real 3.6% density).
 PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4}
 
 SYMBOL_TO_LABEL = {

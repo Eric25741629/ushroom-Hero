@@ -17,7 +17,7 @@ import bot_state
 import config_manager
 
 from control_panel.shared.auth import _fly_pet_auth
-from control_panel.shared.cdp import _cdp_evaluate, _FLY_PET_LOCK_JS
+from control_panel.shared.cdp import _cdp_err_code, _cdp_evaluate, _FLY_PET_LOCK_JS
 
 bp = Blueprint("fly_pet", __name__)
 
@@ -414,8 +414,7 @@ def fly_pet_shelve(ip):
     js = f"IS(ISInclude.FlyPetControl).send_66_23({int(pet_id)}, {type_val}, 0)"
     result, err = _cdp_evaluate(ip, js)
     if err:
-        code = 400 if err == "no web_debug_port" else 502 if "no CDP target" in err else 500
-        return jsonify({"status": "error", "message": err}), code
+        return jsonify({"status": "error", "message": err}), _cdp_err_code(err)
     return jsonify({"status": "ok"})
 
 

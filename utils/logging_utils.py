@@ -163,6 +163,66 @@ def _build_formatter() -> logging.Formatter:
     )
 
 
+# Map a per-device logger name back to its device id. The per-device loggers are
+# named "<prefix><device_id>" with the ORIGINAL device_id (not the filename-safe
+# form), so the bridge handler can recover the device id from the LogRecord alone
+# (no thread-local lookup needed) and it matches bot_state's ip key exactly.
+#   setup_logger_for_device       -> "logger_<id>"
+#   setup_miner_logger            -> "miner_<id>"
+#   get_or_create_ws_mining_logger-> "ws_mining_<id>"   (WS 純掛機挖礦)
+#   get_or_create_ws_farm_logger  -> "ws_farm_<id>"     (WS 純掛機農場)
+# Order: longest/most-specific WS prefixes first so e.g. "ws_mining_" is not
+# accidentally shadowed (none currently overlap, but keep the invariant explicit).
+_DEVICE_LOGGER_NAME_PREFIXES = ("ws_mining_", "ws_farm_", "logger_", "miner_")
+
+
+def _device_id_from_logger_name(name: str):
+    for prefix in _DEVICE_LOGGER_NAME_PREFIXES:
+        if name.startswith(prefix):
+            return name[len(prefix):]
+    return None
+
+
+class BotStateLogHandler(logging.Handler):
+    """Forward each per-device log line into bot_state's dashboard ring buffer.
+
+    The dashboard log-box reads bot_state._states[ip]["logs"] via /api/status.
+    Without this bridge that buffer is fed only by the handful of
+    update_state(log=...) call sites (error / sleep / scan), so the box renders
+    near-empty even while the device emits hundreds of logger.info(...) lines.
+    Attaching this handler to the device/miner loggers mirrors the real
+    execution log onto the dashboard.
+
+    Defensive by construction: a compact "HH:MM:SS - message" line, a lazy
+    bot_state import (logging_utils is imported very early; bot_state must not be
+    pulled in at module load), and full exception suppression so a logging path
+    can never crash a device thread.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.setFormatter(logging.Formatter('%(asctime)s - %(message)s', datefmt='%H:%M:%S'))
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            device_id = _device_id_from_logger_name(record.name)
+            if not device_id:
+                return
+            import bot_state  # lazy: avoid import cycle / early-load cost
+            bot_state.append_log(device_id, self.format(record))
+        except Exception:  # never let dashboard logging break the bot
+            return
+
+
+def _attach_bot_state_handler(logger_obj: logging.Logger) -> None:
+    """Idempotently attach the dashboard-bridge handler to a device logger."""
+    if any(isinstance(h, BotStateLogHandler) for h in logger_obj.handlers):
+        return
+    handler = BotStateLogHandler()
+    handler.setLevel(logging.INFO)
+    logger_obj.addHandler(handler)
+
+
 def _purge_old_files(pattern: str, max_age_days: int) -> None:
     cutoff_ts = time.time() - (max_age_days * 86400)
     for path in glob.glob(pattern):
@@ -207,6 +267,7 @@ def setup_logger_for_device(device_id: str) -> logging.Logger:
 
         logger_obj.addHandler(file_handler)
         logger_obj.addHandler(console_handler)
+        _attach_bot_state_handler(logger_obj)
 
         _purge_old_files(str(log_path.parent / "main.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
         return logger_obj
@@ -246,6 +307,155 @@ def get_or_create_ocr_logger(device_id: str) -> logging.Logger:
         return logger_obj
 
 
+_ws_mining_logger_cache: dict = {}
+
+
+def get_or_create_ws_mining_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS mining logger → ws_mining.log."""
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_mining_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_mining_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Name with the ORIGINAL device_id (not safe_id) so BotStateLogHandler can
+        # recover the exact bot_state ip key and bridge WS-mining lines to dashboard.
+        logger_name = f"ws_mining_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_mining.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_mining_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
+_ws_farm_logger_cache: dict = {}
+
+
+def get_or_create_ws_farm_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS farm logger → ws_farm.log.
+
+    Mirrors get_or_create_ws_mining_logger: per-device file handler, rotation,
+    purge of old rotated copies, propagate=False (so 豐收卡循環/種植/收成/打工
+    log lines land in a device-scoped retention file for live verification).
+    """
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_farm_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_farm_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Name with the ORIGINAL device_id (not safe_id) so BotStateLogHandler can
+        # recover the exact bot_state ip key and bridge WS-farm lines to dashboard.
+        logger_name = f"ws_farm_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_farm.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_farm_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
+_ws_ad_reward_logger_cache: dict = {}
+
+
+def get_or_create_ws_ad_reward_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS ad-reward logger → ws_ad_reward.log.
+
+    Mirrors get_or_create_ws_farm_logger: per-device file handler, rotation,
+    purge of old rotated copies, propagate=False (so 看廣告獎勵領取細節 — 各 AdType
+    的 claimed/skipped、total_claimed — land in a device-scoped retention file for
+    live verification of 挖礦鎬子/鑽頭/炸彈 廣告 是否真的領到).
+    """
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_ad_reward_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_ad_reward_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        # Name with the ORIGINAL device_id (not safe_id) so BotStateLogHandler can
+        # recover the exact bot_state ip key and bridge WS-ad-reward lines to dashboard.
+        logger_name = f"ws_ad_reward_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_ad_reward.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_ad_reward_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
+_ws_lamp_logger_cache: dict = {}
+
+
+def get_or_create_ws_lamp_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS lamp logger -> ws_lamp.log."""
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_lamp_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_lamp_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logger_name = f"ws_lamp_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_lamp.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_lamp_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
 def setup_miner_logger(device_id: str) -> logging.Logger:
     """Create miner logger writing to logs/<device>/miner.log and console."""
     log_path = LogPaths.miner_log(device_id)
@@ -273,6 +483,7 @@ def setup_miner_logger(device_id: str) -> logging.Logger:
 
         logger_obj.addHandler(file_handler)
         logger_obj.addHandler(console_handler)
+        _attach_bot_state_handler(logger_obj)
 
         _purge_old_files(str(log_path.parent / "miner.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
         return logger_obj

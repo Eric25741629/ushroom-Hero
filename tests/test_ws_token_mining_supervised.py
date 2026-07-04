@@ -209,7 +209,7 @@ def test_plan_current_board_dry_run_never_digs(monkeypatch):
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda got_board, inventory, max_depth=None: plan,
+        lambda got_board, inventory, max_depth=None, terrain=None: plan,
     )
 
     def forbidden_dig(*args, **kwargs):
@@ -243,7 +243,7 @@ def test_plan_current_board_replans_between_executed_steps(monkeypatch):
         lambda client, timeout=None: board1,
     )
 
-    def fake_plan(board, inventory, max_depth=None):
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
         planned_boards.append(board)
         step = step1 if board is board1 else step2
         return {"message": "ok", "ws_steps": [step]}
@@ -296,7 +296,7 @@ def test_mine_until_pickaxe_empty_uses_tracker_inventory_and_items(monkeypatch):
         lambda client, timeout=None: board1,
     )
 
-    def fake_plan(board, inventory, max_depth=None):
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
         plans.append(dict(inventory))
         if board is board1:
             return {"message": "use drill", "ws_steps": [
@@ -355,13 +355,162 @@ def test_mine_until_pickaxe_empty_uses_tracker_inventory_and_items(monkeypatch):
     assert result["final_inventory"]["pickaxe"] == 0
 
 
-def test_mine_until_pickaxe_empty_skips_when_pickaxe_count_unknown():
+def test_mine_until_pickaxe_empty_seeds_when_count_unknown_then_adopts_push(monkeypatch):
+    """No login snapshot -> seed so the planner runs, then adopt the real count
+    from the consume push (tracker) after the first dig and stop at 0."""
+    tracker = mining_supervised.mining.InventoryTracker()  # empty: no has_item(4001)
+    board1 = _board(actives=[16239104])
+    board2 = _board(actives=[16239204])
+    seen_inventories = []
+
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board1)
+
+    def fake_plan(board, inventory, max_depth=None, terrain=None):
+        seen_inventories.append(dict(inventory))
+        bid = 16239104 if board is board1 else 16239204
+        return {"message": "dig", "ws_steps": [{"type": "dig", "block_id": bid}]}
+
+    after = {16239104: board2, 16239204: _board(actives=[])}
+
+    def fake_execute(client, step, **kwargs):
+        # simulate the consume push landing in the tracker: real count 1 left after
+        # the first dig (adopted in place of the seed), then 0 after the second.
+        tracker.counts[GOODS_PICKAXE] = 1 if step["block_id"] == 16239104 else 0
+        return {"goods_id": GOODS_PICKAXE, "block_id": step["block_id"], "hits": 1,
+                "confirmed": True, "confirmation": "confirmed_by_board_change",
+                "after_board": after[step["block_id"]]}
+
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", fake_plan)
+    monkeypatch.setattr(mining_supervised, "execute_plan_step", fake_execute)
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=10)
+
+    assert "skipped" not in result
+    assert seen_inventories[0]["pickaxe"] == 999          # seeded for the first plan
+    assert result["stopped_reason"] == "pickaxe_empty"     # adopted real count, hit 0
+    assert len(result["executed"]) == 2
+
+
+def test_select_dig_step_skips_non_active_and_collected_pits():
+    # planner proposes a non-active pit, then an already-collected pit (count 0),
+    # then a valid active pit -> the valid one is chosen.
+    board = _board(
+        actives=[12206204],
+        blocks=[
+            _block(12206202, 2, 122062, config_id=401, count=1),  # not in actives
+            _block(12206203, 3, 122062, config_id=401, count=0),  # collected
+            _block(12206204, 4, 122062, config_id=401, count=1),  # valid
+        ],
+    )
+    steps = [
+        {"type": "dig", "block_id": 12206202},
+        {"type": "dig", "block_id": 12206203},
+        {"type": "dig", "block_id": 12206204},
+    ]
+    chosen = mining_supervised._select_dig_step(board, steps)
+    assert chosen["block_id"] == 12206204
+
+
+def test_select_dig_step_falls_back_to_frontier_when_all_steps_stale():
+    # every planner step targets an already-collected pit; fall back to the
+    # deepest diggable frontier cell (implicit dirt: active, no block entry).
+    board = _board(
+        actives=[12206602, 12206604],  # implicit frontier cells (no block entries)
+        blocks=[_block(12206204, 4, 122062, config_id=401, count=0)],  # collected
+    )
+    steps = [{"type": "dig", "block_id": 12206204}]
+    chosen = mining_supervised._select_dig_step(board, steps)
+    assert chosen["block_id"] in (12206602, 12206604)
+    assert chosen["type"] == "dig"
+
+
+def test_select_dig_step_skips_dug_count0_block_picks_undug():
+    # LIVE CDP dig 2026-06-20 (小寶): a count==0 block (incl. stone 202) is
+    # ALREADY-DUG air — digging is a no-op (0x0c03 no reply, board unchanged), so
+    # it is NOT a valid dig target. A fresh stone actually carries count>0.
+    dug = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=0)])
+    assert mining_supervised._select_dig_step(dug, [{"type": "dig", "block_id": 9901}]) is None
+    live = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=202, count=1)])
+    chosen = mining_supervised._select_dig_step(live, [{"type": "dig", "block_id": 9901}])
+    assert chosen["block_id"] == 9901
+
+
+def test_select_dig_step_honors_exclude():
+    # an excluded (already-rejected) block is skipped even though it is diggable.
+    board = _board(actives=[9901, 9902],
+                   blocks=[_block(9901, 1, 99, config_id=201, count=1),
+                           _block(9902, 2, 99, config_id=201, count=1)])
+    steps = [{"type": "dig", "block_id": 9901}, {"type": "dig", "block_id": 9902}]
+    chosen = mining_supervised._select_dig_step(board, steps, exclude={9901})
+    assert chosen["block_id"] == 9902
+
+
+def test_mine_retries_next_candidate_after_unconfirmed(monkeypatch):
+    """單一被伺服器拒挖的目標不該中止整輪挖礦：黑名單後改試下一個可達格。
+
+    regression: hold_floor 盤面挑到被上方石頭擋住的 frontier 格 → unconfirmed →
+    之前第一步就 break、整輪 digs=1 挖 0；修正後應跳過該格、挖到第二個候選。
+    """
     tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 5}
+    board0 = _board(actives=[9901, 9902],
+                    blocks=[_block(9901, 1, 99, config_id=201, count=1),
+                            _block(9902, 2, 99, config_id=201, count=1)])
+    board1 = _board(actives=[])  # 一次 confirmed dig 後此盤無可挖目標
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board0)
 
-    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker)
+    def fake_plan(b, inv, max_depth=None, terrain=None):
+        if b is board0:
+            return {"message": "dig", "hold_floor": False, "grid": None,
+                    "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0},
+                                 {"type": "dig", "block_id": 9902, "row": 0, "col": 1}]}
+        return {"message": "done", "hold_floor": False, "grid": None, "ws_steps": []}
 
-    assert result["skipped"] == "inventory snapshot missing"
-    assert result["executed"] == []
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", fake_plan)
+
+    def fake_exec(c, step, **kw):
+        confirmed = step["block_id"] == 9902  # 9901 被拒、9902 成功
+        return {"step": dict(step), "goods_id": GOODS_PICKAXE,
+                "block_id": step["block_id"], "hits": 1, "confirmed": confirmed,
+                "confirmation": ("confirmed_by_board_change" if confirmed
+                                 else "unconfirmed_no_board_change"),
+                "after_board": board1 if confirmed else board0}
+
+    monkeypatch.setattr(mining_supervised, "execute_plan_step", fake_exec)
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=5)
+
+    confirmed = [it for it in result["executed"] if it.get("confirmed")]
+    assert len(confirmed) == 1 and confirmed[0]["block_id"] == 9902
+    assert "skipped" not in result          # 有挖到 → 不標 skipped、不退回 ADB
+    assert result["stopped_reason"] == "no_steps"
+
+
+def test_select_dig_step_empty_plan_returns_none():
+    board = _board(actives=[9901], blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    assert mining_supervised._select_dig_step(board, []) is None
+
+
+def test_mine_until_pickaxe_empty_should_abort_raises(monkeypatch):
+    """should_abort true at the step-loop top -> WSRunAborted before any plan /
+    execute, so the in-progress mining task is left pending for the resume."""
+    from ws_token.abort import WSRunAborted
+
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 5}
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: _board(actives=[16239104]))
+
+    def fail_plan(*a, **k):
+        raise AssertionError("plan must not run after abort")
+
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", fail_plan)
+
+    with pytest.raises(WSRunAborted):
+        mining_supervised.mine_until_pickaxe_empty(
+            object(), tracker, max_steps=5, should_abort=lambda: True)
 
 
 def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
@@ -389,7 +538,7 @@ def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda board, inventory, max_depth=None: {"message": "no step", "ws_steps": []},
+        lambda board, inventory, max_depth=None, terrain=None: {"message": "no step", "ws_steps": []},
     )
 
     with caplog.at_level("INFO", logger=mining_supervised.logger.name):
@@ -408,6 +557,65 @@ def test_mine_until_pickaxe_empty_logs_board_projection_and_dropped_blocks(
     assert "grid=" in text
 
 
+def test_mine_marks_skipped_when_no_confirmed_dig(monkeypatch):
+    """死結（第一步 unconfirmed、0 confirmed dig）→ 回傳帶 "skipped" sentinel。
+
+    判定用 confirmed_digs==0，不是 executed==[]：unconfirmed step 也會 append 進
+    executed（confirmed 檢查之前），死結時 executed 長度為 1。用 "skipped" sentinel
+    讓 ws_phase 不把「挖礦/Oracle」記為完成、保留 ADB 後備。
+    """
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 2}
+    board = _board(actives=[9901],
+                   blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board)
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter, "plan",
+        lambda b, inv, max_depth=None, terrain=None: {
+            "message": "dig", "hold_floor": False, "grid": None,
+            "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
+    monkeypatch.setattr(
+        mining_supervised, "execute_plan_step",
+        lambda c, step, **kw: {
+            "step": dict(step), "goods_id": GOODS_PICKAXE,
+            "block_id": step["block_id"], "hits": 1, "confirmed": False,
+            "confirmation": "unconfirmed_no_board_change", "after_board": board})
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=3)
+
+    assert result["stopped_reason"] == "unconfirmed"
+    assert "skipped" in result
+    assert len(result["executed"]) == 1  # unconfirmed step 仍被記錄
+
+
+def test_mine_no_skipped_when_pickaxe_empty(monkeypatch):
+    """有 confirmed dig 挖到鎬子用完 → 不加 "skipped"（視為完成，skip ADB）。"""
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 1}
+    board1 = _board(actives=[9901],
+                    blocks=[_block(9901, 1, 99, config_id=201, count=1)])
+    board2 = _board(actives=[])
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board1)
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter, "plan",
+        lambda b, inv, max_depth=None, terrain=None: {
+            "message": "dig", "hold_floor": False, "grid": None,
+            "ws_steps": [{"type": "dig", "block_id": 9901, "row": 0, "col": 0}]})
+    monkeypatch.setattr(
+        mining_supervised, "execute_plan_step",
+        lambda c, step, **kw: {
+            "step": dict(step), "goods_id": GOODS_PICKAXE,
+            "block_id": step["block_id"], "hits": 1, "confirmed": True,
+            "confirmation": "confirmed_by_board_change", "after_board": board2})
+
+    result = mining_supervised.mine_until_pickaxe_empty(object(), tracker, max_steps=3)
+
+    assert result["stopped_reason"] == "pickaxe_empty"
+    assert "skipped" not in result
+
+
 def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     tracker = mining_supervised.mining.InventoryTracker()
     tracker.counts = {GOODS_PICKAXE: 1}
@@ -422,7 +630,7 @@ def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     monkeypatch.setattr(
         mining_supervised.mining_adapter,
         "plan",
-        lambda board, inventory, max_depth=None: {
+        lambda board, inventory, max_depth=None, terrain=None: {
             "message": "dig",
             "ws_steps": [{"type": "dig", "block_id": 16239104}],
         },

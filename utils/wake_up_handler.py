@@ -2,7 +2,7 @@ import logging
 import os
 import time
 import random
-from adb_operations import connect_u2_with_retries, get_battery_level
+from adb_operations import connect_u2_with_retries, ensure_on_launcher, get_battery_level
 
 logger = logging.getLogger(__name__)
 from device import close_notification
@@ -183,6 +183,16 @@ def release_wakeup_lock(ip):
     if 'emulator-5554' in ip or '3a8d31f2' in ip:
         _wakeup_lock = False
 
+
+def _press_home_repeated(d, count: int = 3, delay_sec: float = 0.2) -> None:
+    """連續按 Home，讓剛喚醒/剛關通知欄的手機有時間回到 launcher。"""
+    press_fn = getattr(d, "press", None)
+    if not callable(press_fn):
+        return
+    for _ in range(max(0, int(count))):
+        press_fn("home")
+        time.sleep(delay_sec)
+
 def _wait_for_phone_connection(d, ip, logger, max_wait_sec=None):
     """Block until the direct-connect phone's u2 session answers again.
 
@@ -242,7 +252,7 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     # 互檢；checker 不再寫死 5554（由 online_check_checkers 清單動態決定）。預設
     # 只有 5558 設了 target_pid → 行為與舊版相同。is_online_check_checker(ip) 用來
     # 避免 checker 自己對自己發起互檢。
-    _online_check_target_pid = config_manager.get_device_config(ip).get('online_check_target_pid')
+    _online_check_target_pid = config_manager.get_device_role_id(ip)
     _wants_online_check = (
         bool(_online_check_target_pid)
         and not skip_online_check_once
@@ -314,6 +324,9 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         d = _wait_for_phone_connection(d, ip, logger, max_wait_sec=PHONE_CONNECT_MAX_WAIT_SEC)
 
         while d.info.get('screenOn'):
+            # 使用者實體操作手機時 bot 在此等螢幕關閉；同時honor儀表板控制，
+            # 讓暫停/強制休眠/開網頁能中斷這段空轉（否則使用者按了沒反應）。
+            _honor_dashboard_controls(ip)
             logger.warning(f"[{ip}] 偵測到螢幕開啟 (人為操作中)，每 5 秒自動檢測一次...")
             bot_state.update_state(ip, task="等待中", step="等待螢幕關閉 (人為操作中)")
             time.sleep(5)
@@ -337,26 +350,23 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         logger.info(f"[{ip}] 執行啟動分流，等待 5 分鐘...")
         deadline = time.time() + (60 * 5)
         while time.time() < deadline:
-            if bot_state.is_online_check_checker(ip) and bot_state.has_pending_online_check_request(ip):
-                logger.info(f"[{ip}] 偵測到 online-check 請求，提前結束分流等待")
-                break
+            # Online-check no longer breaks the load-spreading stagger — it is
+            # served out-of-loop by online_check_service. Only a manual skip_sleep
+            # cuts it short.
             if bot_state.check_skip_sleep(ip):
                 logger.info(f"[{ip}] 收到 skip_sleep，提前結束分流等待")
                 break
             time.sleep(1)
-
-        # Checker 裝置若此時已有互檢請求，直接回主迴圈先處理 mailbox，
-        # 不要繼續往下執行自己的 app_stop / 喚醒流程。
-        if bot_state.is_online_check_checker(ip):
-            if bot_state.has_pending_online_check_request(ip):
-                logger.info(f"[{ip}] 偵測到互檢請求，先返回主迴圈處理 requester 上線檢查")
-                return d
     elif '3a8d31f2' in ip:
         time.sleep(10)
     
     time.sleep(2)
-    
-    d.app_stop("com.mxdzz.tw.and")
+
+    is_web_backend = getattr(d, "backend_kind", None) == "web_h5"
+    if not is_web_backend:
+        d.app_stop("com.mxdzz.tw.and")
+    else:
+        logger.info(f"[{ip}] web_h5 backend，略過 Android app_stop，避免關閉 Playwright 瀏覽器")
     
     if 'emulator-5560' in ip:
         time.sleep(30)
@@ -370,14 +380,25 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
         d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.05)
         time.sleep(1)
         
-    d.press("home")
-    d.press("home")
-    d.press("home")
+    # 停止遊戲後必須等 Android 桌面真的成為前景；直連手機剛喚醒時
+    # launcher 切換較慢，先連按 Home，再用 launcher 檢查守住順序。
+    # web_h5（PlaywrightGameDevice）沒有 Android 桌面；且 app_stop 會關閉
+    # Playwright 瀏覽器，因此整段 Android-only 清理都要略過。
+    if not is_web_backend:
+        _press_home_repeated(d)
+        if not ensure_on_launcher(d, ip, logger):
+            logger.warning(f"[{ip}] 喚醒後未能確認回到桌面，仍繼續後續啟動流程")
 
-    try:
-        d.app_stop("com.facebook.orca")
-    except Exception:
-        pass
-    close_notification(d)
+        close_notification(d)
+
+        # close_notification 會拉下系統選單；處理 Messenger 前先確定選單已收起。
+        _press_home_repeated(d)
+        if not ensure_on_launcher(d, ip, logger):
+            logger.warning(f"[{ip}] 清理通知後未能確認回到桌面，仍繼續關閉 Messenger")
+
+        try:
+            d.app_stop("com.facebook.orca")
+        except Exception:
+            pass
 
     return d

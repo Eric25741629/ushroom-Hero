@@ -29,6 +29,7 @@ from .scheduling import (
     should_execute_cycle_from_record,
     should_execute_cycle_with_cooldown,
     should_execute_sea_with_cooldown,
+    is_sea_week,
     _should_execute_cycle,
 )
 
@@ -94,6 +95,7 @@ __all__ = [
     "is_expired",
     "_should_execute_cycle",
     "should_execute_sea_with_cooldown",
+    "is_sea_week",
     # internal helpers re-exported for tests
     "_atomic_write_json",
     "_safe_cast",

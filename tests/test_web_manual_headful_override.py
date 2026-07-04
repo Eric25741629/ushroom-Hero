@@ -39,7 +39,9 @@ class _FakeBotState:
         self._req_payload = req_payload
         self.updated = []
         self.completed = []
+        self.browser_open = []
         self.manual_release = False
+        self.web_close = False
 
     def consume_web_launch_request(self, _ip):
         return {"payload": dict(self._req_payload)}
@@ -59,10 +61,20 @@ class _FakeBotState:
             return True
         return False
 
+    def check_web_close(self, _ip):
+        if self.web_close:
+            self.web_close = False
+            return True
+        return False
+
+    def set_web_browser_open(self, ip, is_open):
+        self.browser_open.append((ip, bool(is_open)))
+
 
 class _FakeDevice:
     def __init__(self, alive_sequence=None):
         self.app_start_calls = []
+        self.close_calls = 0
         self.restore_calls = []
         self._alive_sequence = list(alive_sequence or [False])
 
@@ -73,6 +85,10 @@ class _FakeDevice:
     def restore_configured_headless_session(self, **kwargs):
         self.restore_calls.append(dict(kwargs))
         return True
+
+    def close(self):
+        self.close_calls += 1
+        self._alive_sequence = [False]
 
     def is_alive(self):
         if self._alive_sequence:
@@ -138,3 +154,24 @@ def test_manual_hold_restores_configured_headless_after_release(monkeypatch, web
     assert handled is True
     assert len(fake_device.restore_calls) == 1
     assert fake_device.restore_calls[0]["reason"] == "manual web launch completed"
+
+
+def test_manual_hold_consumes_web_close_request(monkeypatch, web_session_service):
+    fake_state = _FakeBotState(
+        req_payload={"manual_hold_until_closed": True, "force_headful": True}
+    )
+    fake_state.web_close = True
+    fake_device = _FakeDevice(alive_sequence=[True, True])
+    monkeypatch.setattr(web_session_service, "bot_state", fake_state)
+    monkeypatch.setattr(web_session_service.time, "sleep", lambda _s: None)
+
+    handled = web_session_service.handle_pending_web_launch(
+        "emu-1",
+        fake_device,
+        backend_kind="web_h5",
+        logger_obj=logging.getLogger("test"),
+    )
+
+    assert handled is True
+    assert fake_device.close_calls == 1
+    assert ("emu-1", False) in fake_state.browser_open

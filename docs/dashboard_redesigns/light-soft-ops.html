@@ -1,0 +1,1162 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>菇勇者 · 中控 · Soft Ops</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,360;9..144,500;9..144,600;9..144,800&family=Manrope:wght@400;500;600;700;800&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+/* =========================================================================
+   菇勇者 Soft Ops — Light Luxury / Soft UI dashboard
+   Design language: warm pastel surfaces, dual-light neumorphic depth,
+   oversized rounded radii, editorial Fraunces display + Manrope body,
+   semantic colour, designed interaction states, data-viz as system.
+   ========================================================================= */
+
+:root{
+  /* ---- atmosphere (warm desaturated paper) ---- */
+  --paper:#f4f0ea;            /* base canvas */
+  --paper-2:#efe9e1;          /* recessed canvas */
+  --surface:#fbf8f3;          /* raised card */
+  --surface-hi:#ffffff;       /* highlight edge */
+  --surface-sink:#e9e2d8;     /* pressed / inset */
+
+  /* ---- ink ---- */
+  --ink:#33302b;             /* primary text */
+  --ink-2:#6f685d;           /* secondary */
+  --ink-3:#a39b8d;           /* tertiary / hints */
+  --ink-line:#e3dccf;        /* hairlines */
+
+  /* ---- semantic accents (muted gem tones) ---- */
+  --sage:#7d9b76;  --sage-soft:#dfeadb;  --sage-ink:#3f5a3a;
+  --amber:#cf9a52; --amber-soft:#f4e6cf; --amber-ink:#8a5e23;
+  --rose:#c97f7f;  --rose-soft:#f3dede;  --rose-ink:#8a4444;
+  --slate:#7e8aa3; --slate-soft:#dee2ec; --slate-ink:#41506e;
+  --teal:#5fa3a0;  --teal-soft:#d3eae8;  --teal-ink:#2f6663;
+  --lilac:#9487b5; --lilac-soft:#e6e1f0; --lilac-ink:#564b73;
+
+  /* signature accent gradient */
+  --accent-a:#e6b15e;
+  --accent-b:#d98f76;
+  --accent-grad:linear-gradient(120deg,#f0c378 0%,#e29b6f 52%,#cf85a0 100%);
+
+  /* ---- soft-UI dual shadow (light from top-left) ---- */
+  --sh-up:-7px -7px 18px rgba(255,255,255,.85), 8px 9px 22px rgba(154,138,112,.22);
+  --sh-up-sm:-4px -4px 11px rgba(255,255,255,.8), 5px 6px 15px rgba(154,138,112,.2);
+  --sh-flat:0 2px 10px rgba(120,104,80,.10), -2px -2px 8px rgba(255,255,255,.7);
+  --sh-in:inset 4px 4px 9px rgba(154,138,112,.28), inset -4px -4px 9px rgba(255,255,255,.85);
+  --sh-in-sm:inset 2px 2px 6px rgba(154,138,112,.26), inset -2px -2px 6px rgba(255,255,255,.85);
+  --sh-float:0 22px 48px -18px rgba(120,98,66,.42), -8px -8px 22px rgba(255,255,255,.7);
+
+  --r-xl:30px; --r-lg:22px; --r-md:16px; --r-sm:11px; --r-pill:999px;
+
+  --fast:150ms; --norm:300ms; --slow:520ms;
+  --ease:cubic-bezier(.16,1,.3,1);
+
+  --rail-w:230px; --rail-w-c:74px;
+}
+
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:"Manrope",system-ui,sans-serif;
+  color:var(--ink);
+  background:
+    radial-gradient(120% 95% at 88% -8%, #fbe9cf 0%, rgba(251,233,207,0) 46%),
+    radial-gradient(90% 80% at -5% 4%, #e7ecf3 0%, rgba(231,236,243,0) 42%),
+    radial-gradient(110% 120% at 50% 120%, #f3e3ea 0%, rgba(243,227,234,0) 50%),
+    var(--paper);
+  background-attachment:fixed;
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  letter-spacing:.005em;
+}
+/* faint grain so flat areas have tooth */
+body::before{
+  content:"";position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.4;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.045'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply;
+}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit;}
+a{color:inherit;text-decoration:none;}
+:focus-visible{outline:2.5px solid var(--amber);outline-offset:3px;border-radius:8px;}
+::selection{background:var(--amber-soft);color:var(--amber-ink);}
+
+/* ===================== LAYOUT SHELL ===================== */
+.shell{position:relative;z-index:1;display:flex;min-height:100vh;}
+
+/* ---- Navigation rail ---- */
+.rail{
+  position:fixed;top:0;left:0;bottom:0;width:var(--rail-w);z-index:200;
+  display:flex;flex-direction:column;gap:6px;
+  padding:22px 16px;
+  background:linear-gradient(180deg,#fbf8f3 0%, #f3ede4 100%);
+  border-right:1px solid var(--ink-line);
+  box-shadow:14px 0 40px -28px rgba(120,98,66,.5);
+  transition:width var(--norm) var(--ease);
+}
+.rail.collapsed{width:var(--rail-w-c);}
+.brand{display:flex;align-items:center;gap:12px;padding:6px 8px 18px;min-height:52px;}
+.brand-mark{
+  flex:0 0 auto;width:42px;height:42px;border-radius:14px;
+  background:var(--accent-grad);
+  display:grid;place-items:center;font-size:22px;
+  box-shadow:var(--sh-up-sm);transition:transform var(--norm) var(--ease);
+}
+.rail:hover .brand-mark{transform:rotate(-6deg) scale(1.04);}
+.brand-txt{overflow:hidden;white-space:nowrap;}
+.brand-txt b{font-family:"Fraunces",serif;font-weight:600;font-size:19px;letter-spacing:.01em;display:block;line-height:1.1;}
+.brand-txt span{font-size:10.5px;color:var(--ink-3);letter-spacing:.22em;text-transform:uppercase;font-weight:600;}
+.rail.collapsed .brand-txt{opacity:0;width:0;}
+
+.rail-toggle{
+  position:absolute;top:24px;right:-13px;width:26px;height:26px;border-radius:50%;
+  background:var(--surface);box-shadow:var(--sh-up-sm);
+  display:grid;place-items:center;font-size:13px;color:var(--ink-2);
+  transition:transform var(--fast) var(--ease),color var(--fast);
+}
+.rail-toggle:hover{color:var(--amber-ink);transform:scale(1.12);}
+.rail-toggle:active{transform:scale(.94);}
+
+.nav-section-label{font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--ink-3);font-weight:700;padding:14px 12px 6px;white-space:nowrap;overflow:hidden;}
+.rail.collapsed .nav-section-label{opacity:0;height:8px;padding-top:8px;padding-bottom:0;}
+
+.nav-item{
+  display:flex;align-items:center;gap:13px;
+  padding:11px 12px;border-radius:var(--r-md);
+  color:var(--ink-2);font-weight:600;font-size:14.5px;
+  white-space:nowrap;overflow:hidden;position:relative;
+  transition:color var(--fast),background var(--fast),box-shadow var(--fast),transform var(--fast) var(--ease);
+}
+.nav-item .ic{flex:0 0 auto;width:24px;text-align:center;font-size:18px;transition:transform var(--fast) var(--ease);}
+.nav-item:hover{color:var(--ink);background:var(--surface);box-shadow:var(--sh-flat);}
+.nav-item:hover .ic{transform:scale(1.12);}
+.nav-item:active{transform:translateX(2px) scale(.99);}
+.nav-item.active{
+  color:var(--amber-ink);background:var(--surface);
+  box-shadow:var(--sh-in-sm);
+}
+.nav-item.active::before{
+  content:"";position:absolute;left:-16px;top:50%;transform:translateY(-50%);
+  width:5px;height:24px;border-radius:0 6px 6px 0;background:var(--accent-grad);
+}
+.nav-ext{margin-top:auto;}
+.nav-item.ext .ic{font-size:17px;}
+.rail.collapsed .nav-item span.lbl{opacity:0;width:0;}
+
+.rail-status{
+  margin-top:10px;padding:13px;border-radius:var(--r-md);
+  background:var(--paper-2);box-shadow:var(--sh-in-sm);
+  white-space:nowrap;overflow:hidden;
+}
+.rail-status .row{display:flex;align-items:center;gap:9px;font-size:12px;color:var(--ink-2);font-weight:600;}
+.rail-status .row+.row{margin-top:7px;}
+.dot{width:9px;height:9px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 0 4px rgba(125,155,118,.16);}
+.dot.ok{background:var(--sage);box-shadow:0 0 0 4px rgba(125,155,118,.18);}
+.dot.busy{background:var(--amber);box-shadow:0 0 0 4px rgba(207,154,82,.18);animation:breathe 2s var(--ease) infinite;}
+.dot.bad{background:var(--rose);box-shadow:0 0 0 4px rgba(201,127,127,.18);}
+@keyframes breathe{0%,100%{opacity:1;}50%{opacity:.4;}}
+.rail.collapsed .rail-status{opacity:0;height:0;padding:0;margin:0;pointer-events:none;}
+
+/* ---- Main column ---- */
+.main{flex:1;margin-left:var(--rail-w);transition:margin var(--norm) var(--ease);min-width:0;}
+.rail.collapsed ~ .main{margin-left:var(--rail-w-c);}
+
+/* ===================== TOP BAR ===================== */
+.topbar{
+  position:sticky;top:0;z-index:120;
+  padding:20px clamp(20px,3vw,42px) 18px;
+  background:linear-gradient(180deg, rgba(244,240,234,.92) 0%, rgba(244,240,234,.62) 100%);
+  backdrop-filter:blur(14px) saturate(1.2);
+  border-bottom:1px solid rgba(227,220,207,.7);
+}
+.topbar-grid{display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap;}
+.page-head{flex:1 1 280px;min-width:0;}
+.eyebrow{font-size:11px;letter-spacing:.26em;text-transform:uppercase;color:var(--amber-ink);font-weight:700;margin-bottom:5px;}
+.page-title{
+  font-family:"Fraunces",serif;font-weight:600;
+  font-size:clamp(28px,3.4vw,44px);line-height:1.02;letter-spacing:-.01em;margin:0;
+}
+.page-title em{font-style:italic;color:var(--rose);font-weight:500;}
+.page-sub{margin-top:8px;color:var(--ink-2);font-size:13.5px;font-weight:500;display:flex;gap:18px;flex-wrap:wrap;align-items:center;}
+.page-sub .sep{width:4px;height:4px;border-radius:50%;background:var(--ink-3);}
+
+/* status capsules row */
+.statbar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;}
+.capsule{
+  display:flex;align-items:center;gap:10px;
+  padding:9px 15px;border-radius:var(--r-pill);
+  background:var(--surface);box-shadow:var(--sh-flat);
+  font-size:12.5px;font-weight:700;color:var(--ink-2);
+}
+.capsule .lab{color:var(--ink-3);font-weight:600;font-size:11px;letter-spacing:.04em;}
+.capsule.ok{color:var(--sage-ink);}
+.capsule.bad{color:var(--rose-ink);}
+
+/* program info chip — clickable */
+.prog-chip{
+  display:flex;align-items:center;gap:12px;padding:8px 9px 8px 14px;border-radius:var(--r-pill);
+  background:var(--surface);box-shadow:var(--sh-up-sm);
+  transition:transform var(--fast) var(--ease),box-shadow var(--fast);
+}
+.prog-chip:hover{transform:translateY(-2px);box-shadow:var(--sh-up);}
+.prog-chip:active{transform:translateY(0);box-shadow:var(--sh-in-sm);}
+.prog-chip .v{font-family:"Spline Sans Mono",monospace;font-size:12.5px;font-weight:600;color:var(--ink);}
+.prog-chip .t{font-size:10.5px;color:var(--ink-3);}
+.prog-chip .badge{
+  width:30px;height:30px;border-radius:10px;background:var(--accent-grad);
+  display:grid;place-items:center;font-size:15px;box-shadow:var(--sh-up-sm);
+}
+
+/* ===================== BUTTON SYSTEM ===================== */
+.btn{
+  --bg:var(--surface); --fg:var(--ink);
+  display:inline-flex;align-items:center;gap:8px;justify-content:center;
+  padding:10px 17px;border-radius:var(--r-pill);
+  font-weight:700;font-size:13px;letter-spacing:.01em;
+  background:var(--bg);color:var(--fg);box-shadow:var(--sh-up-sm);
+  position:relative;overflow:hidden;
+  transition:transform var(--fast) var(--ease),box-shadow var(--fast),color var(--fast),background var(--fast);
+}
+.btn .ic{font-size:15px;}
+.btn:hover{transform:translateY(-2px);box-shadow:var(--sh-up);}
+.btn:active{transform:translateY(1px) scale(.985);box-shadow:var(--sh-in-sm);}
+.btn:disabled{opacity:.5;cursor:not-allowed;box-shadow:var(--sh-flat);transform:none;}
+
+.btn-primary{--bg:transparent;--fg:#fff;background:var(--accent-grad);box-shadow:0 8px 20px -8px rgba(217,143,118,.7),var(--sh-up-sm);}
+.btn-primary:hover{box-shadow:0 14px 28px -10px rgba(217,143,118,.78),var(--sh-up);}
+
+.btn-ghost{--bg:transparent;box-shadow:none;color:var(--ink-2);padding:9px 13px;}
+.btn-ghost:hover{background:var(--surface);box-shadow:var(--sh-flat);color:var(--ink);transform:translateY(-1px);}
+
+.btn-sage{--fg:var(--sage-ink);background:var(--sage-soft);}
+.btn-amber{--fg:var(--amber-ink);background:var(--amber-soft);}
+.btn-rose{--fg:var(--rose-ink);background:var(--rose-soft);}
+.btn-slate{--fg:var(--slate-ink);background:var(--slate-soft);}
+.btn-teal{--fg:var(--teal-ink);background:var(--teal-soft);}
+.btn-sm{padding:8px 13px;font-size:12px;}
+
+/* sheen sweep on primary hover */
+.btn-primary::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(115deg,transparent 30%,rgba(255,255,255,.45) 50%,transparent 70%);
+  transform:translateX(-130%);transition:transform var(--slow) var(--ease);
+}
+.btn-primary:hover::after{transform:translateX(130%);}
+
+/* pending / locked state (preserves .btn-pending semantics) */
+.btn-pending{pointer-events:none;color:transparent !important;}
+.btn-pending .ic{opacity:0;}
+.btn-pending::before{
+  content:"";position:absolute;top:50%;left:50%;width:15px;height:15px;margin:-7.5px 0 0 -7.5px;
+  border:2.4px solid rgba(120,104,80,.3);border-top-color:var(--amber);border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ===================== CONTENT ===================== */
+.content{padding:26px clamp(20px,3vw,42px) 60px;}
+.page{display:none;animation:pageIn var(--slow) var(--ease);}
+.page.active{display:block;}
+@keyframes pageIn{from{opacity:0;transform:translateY(10px);}to{opacity:1;transform:none;}}
+
+/* ---- fleet overview strip (data-viz as system) ---- */
+.fleet{
+  display:grid;grid-template-columns:1.3fr 1fr 1fr 1fr;gap:16px;margin-bottom:30px;
+}
+.fleet-card{
+  background:var(--surface);border-radius:var(--r-lg);padding:20px 22px;
+  box-shadow:var(--sh-up);position:relative;overflow:hidden;
+}
+.fleet-card .k{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.fleet-card .big{font-family:"Fraunces",serif;font-weight:600;font-size:40px;line-height:1;margin-top:10px;letter-spacing:-.02em;}
+.fleet-card .big small{font-size:16px;color:var(--ink-3);font-family:"Manrope";font-weight:700;}
+.fleet-card .meta{font-size:12px;color:var(--ink-2);margin-top:6px;font-weight:600;}
+/* health bar */
+.health{display:flex;gap:4px;margin-top:16px;height:9px;border-radius:var(--r-pill);overflow:hidden;background:var(--surface-sink);box-shadow:var(--sh-in-sm);}
+.health i{display:block;height:100%;}
+.health i.on{background:var(--sage);}
+.health i.ps{background:var(--amber);}
+.health i.dg{background:var(--teal);}
+.health i.of{background:var(--ink-line);}
+.fleet-legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:11.5px;color:var(--ink-2);font-weight:600;}
+.fleet-legend span{display:inline-flex;align-items:center;gap:6px;}
+.fleet-legend i{width:9px;height:9px;border-radius:3px;}
+/* mini sparkline donut for OCR */
+.ring{position:absolute;right:-14px;bottom:-14px;width:96px;height:96px;opacity:.9;}
+
+/* section header editorial */
+.sec-head{display:flex;align-items:flex-end;justify-content:space-between;gap:18px;margin:0 0 18px;flex-wrap:wrap;}
+.sec-head h2{font-family:"Fraunces",serif;font-weight:600;font-size:25px;margin:0;letter-spacing:-.01em;}
+.sec-head .count{font-size:12.5px;color:var(--ink-3);font-weight:700;}
+.toolbar{display:flex;gap:9px;flex-wrap:wrap;}
+
+/* ---- DEVICE CARDS — bento, not uniform ---- */
+.fleet-grid{
+  display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));
+  gap:20px;align-items:start;
+}
+.dev{
+  background:var(--surface);border-radius:var(--r-xl);padding:22px;
+  box-shadow:var(--sh-up);position:relative;overflow:hidden;
+  border:1px solid rgba(255,255,255,.6);
+  transition:transform var(--norm) var(--ease),box-shadow var(--norm);
+}
+.dev:hover{transform:translateY(-4px);box-shadow:var(--sh-float);}
+/* status accent — top-left arc glow + left bead */
+.dev::before{
+  content:"";position:absolute;top:0;left:0;width:140px;height:140px;
+  border-radius:0 0 100% 0;opacity:.5;pointer-events:none;
+  background:radial-gradient(circle at top left,var(--accent,var(--sage-soft)) 0%,transparent 70%);
+}
+.dev .statusbead{
+  position:absolute;top:22px;left:0;width:5px;height:42px;border-radius:0 6px 6px 0;
+  background:var(--bead,var(--sage));
+}
+.dev.online{--accent:var(--sage-soft);--bead:var(--sage);}
+.dev.paused{--accent:var(--amber-soft);--bead:var(--amber);}
+.dev.degraded{--accent:var(--teal-soft);--bead:var(--teal);}
+.dev.offline{--accent:#e9e4db;--bead:#bdb5a7;}
+.dev.disabled{--accent:#e9e4db;--bead:#bdb5a7;}
+.dev.offline,.dev.disabled{filter:saturate(.55);}
+.dev.offline:hover,.dev.disabled:hover{filter:saturate(.7);transform:translateY(-2px);}
+
+.dev-top{display:flex;align-items:flex-start;gap:14px;position:relative;z-index:1;}
+.dev-avatar{
+  flex:0 0 auto;width:48px;height:48px;border-radius:15px;
+  background:var(--surface);box-shadow:var(--sh-up-sm);
+  display:grid;place-items:center;font-size:23px;
+}
+.dev-id{flex:1;min-width:0;}
+.dev-name{font-family:"Fraunces",serif;font-weight:600;font-size:20px;line-height:1.1;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dev-ip{font-family:"Spline Sans Mono",monospace;font-size:11.5px;color:var(--ink-3);margin-top:3px;font-weight:500;}
+.dev-gear{
+  flex:0 0 auto;width:36px;height:36px;border-radius:12px;background:var(--surface);
+  box-shadow:var(--sh-up-sm);display:grid;place-items:center;font-size:16px;color:var(--ink-2);
+  transition:transform var(--fast) var(--ease),color var(--fast),box-shadow var(--fast);
+}
+.dev-gear:hover{color:var(--amber-ink);transform:rotate(60deg);box-shadow:var(--sh-up);}
+.dev-gear:active{transform:rotate(60deg) scale(.9);box-shadow:var(--sh-in-sm);}
+
+.status-pill{
+  display:inline-flex;align-items:center;gap:7px;margin-top:11px;
+  padding:5px 13px;border-radius:var(--r-pill);font-size:11.5px;font-weight:800;letter-spacing:.04em;
+}
+.status-pill .d{width:7px;height:7px;border-radius:50%;}
+.sp-online{background:var(--sage-soft);color:var(--sage-ink);} .sp-online .d{background:var(--sage);animation:breathe 2.4s var(--ease) infinite;}
+.sp-paused{background:var(--amber-soft);color:var(--amber-ink);} .sp-paused .d{background:var(--amber);}
+.sp-degraded{background:var(--teal-soft);color:var(--teal-ink);} .sp-degraded .d{background:var(--teal);animation:breathe 2.4s var(--ease) infinite;}
+.sp-offline{background:#e9e4db;color:#8a8275;} .sp-offline .d{background:#bdb5a7;}
+.sp-disabled{background:#e9e4db;color:#8a8275;} .sp-disabled .d{background:#bdb5a7;}
+
+/* current task headline */
+.task-line{
+  margin-top:16px;padding:14px 16px;border-radius:var(--r-md);
+  background:var(--paper-2);box-shadow:var(--sh-in-sm);
+}
+.task-line .now{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.task-line .task{font-family:"Fraunces",serif;font-size:17px;font-weight:600;margin-top:3px;}
+.task-line .step{font-size:12.5px;color:var(--ink-2);margin-top:4px;font-weight:600;display:flex;align-items:center;gap:8px;}
+.step-timer{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--amber-ink);background:var(--amber-soft);padding:2px 8px;border-radius:var(--r-pill);font-weight:600;}
+
+/* info grid */
+.info{display:grid;grid-template-columns:1fr 1fr;gap:11px 14px;margin-top:16px;}
+.info .cell .lab{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.info .cell .val{font-size:13.5px;font-weight:700;margin-top:2px;display:flex;align-items:center;gap:6px;}
+.info .cell .val.mono{font-family:"Spline Sans Mono",monospace;font-weight:600;font-size:13px;}
+.tag{font-size:10px;font-weight:800;padding:2px 8px;border-radius:var(--r-pill);letter-spacing:.04em;}
+.tag.adb{background:var(--slate-soft);color:var(--slate-ink);}
+.tag.ws{background:var(--lilac-soft);color:var(--lilac-ink);}
+.tag.h5{background:var(--teal-soft);color:var(--teal-ink);}
+.tag.v5{background:var(--sage-soft);color:var(--sage-ink);}
+.tag.v4{background:var(--amber-soft);color:var(--amber-ink);}
+.tag.v1{background:var(--rose-soft);color:var(--rose-ink);}
+
+.countdown{font-family:"Spline Sans Mono",monospace;font-weight:600;}
+.countdown b{font-size:18px;color:var(--ink);}
+.countdown.waking{color:var(--amber-ink);}
+
+/* carpark expandable */
+.carpark{margin-top:14px;border-radius:var(--r-md);background:var(--paper-2);box-shadow:var(--sh-in-sm);overflow:hidden;}
+.carpark-head{display:flex;align-items:center;gap:10px;padding:11px 15px;font-size:12.5px;font-weight:700;color:var(--slate-ink);}
+.carpark-head .ic{font-size:15px;}
+.carpark-head .chev{margin-left:auto;transition:transform var(--fast) var(--ease);color:var(--ink-3);}
+.carpark.open .chev{transform:rotate(180deg);}
+.carpark-head .mini{font-family:"Spline Sans Mono",monospace;color:var(--ink-2);font-weight:600;font-size:11.5px;}
+.carpark-body{max-height:0;overflow:hidden;transition:max-height var(--norm) var(--ease);}
+.carpark.open .carpark-body{max-height:260px;}
+.carpark-inner{padding:0 15px 13px;}
+.car-row{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px dashed var(--ink-line);font-size:12px;}
+.car-row .pos{font-family:"Spline Sans Mono",monospace;font-weight:600;color:var(--ink-2);width:30px;}
+.car-row .nm{flex:1;color:var(--ink);font-weight:600;}
+.car-bar{flex:0 0 84px;height:6px;border-radius:var(--r-pill);background:var(--surface-sink);overflow:hidden;box-shadow:var(--sh-in-sm);}
+.car-bar i{display:block;height:100%;background:var(--accent-grad);}
+.car-row .rem{font-family:"Spline Sans Mono",monospace;font-size:11px;color:var(--ink-2);width:46px;text-align:right;}
+
+/* progress badges */
+.prog{margin-top:16px;}
+.prog .lab{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;margin-bottom:9px;display:flex;justify-content:space-between;}
+.prog .lab .pct{color:var(--sage-ink);font-weight:800;}
+.badges{display:flex;gap:7px;flex-wrap:wrap;}
+.badge-t{
+  display:inline-flex;align-items:center;gap:5px;padding:5px 11px;border-radius:var(--r-pill);
+  font-size:11.5px;font-weight:700;background:var(--paper-2);color:var(--ink-3);box-shadow:var(--sh-in-sm);
+  transition:transform var(--fast) var(--ease);
+}
+.badge-t:hover{transform:translateY(-2px);}
+.badge-t.done{background:var(--sage-soft);color:var(--sage-ink);box-shadow:var(--sh-flat);}
+.badge-t .ic{font-size:11px;}
+
+/* log box */
+.logbox{
+  margin-top:16px;height:80px;overflow:hidden;border-radius:var(--r-md);
+  background:#322f2a;box-shadow:var(--sh-in);
+  padding:11px 14px;font-family:"Spline Sans Mono",monospace;font-size:11px;line-height:1.55;
+}
+.logbox .ln{color:#cfc7b6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.logbox .ln .ts{color:#8c8576;}
+.logbox .ln.warn{color:#e6b15e;}
+.logbox .ln.ok{color:#a6c79b;}
+
+/* action bar */
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:16px;border-top:1px solid var(--ink-line);}
+
+/* offline card simpler body */
+.dev .dim-note{margin-top:14px;font-size:12.5px;color:var(--ink-3);font-weight:600;line-height:1.5;}
+
+/* ===================== INVENTORY MINI ENTRY ===================== */
+.inv-banner{
+  margin:34px 0 0;border-radius:var(--r-xl);overflow:hidden;position:relative;
+  background:linear-gradient(120deg,#f6ecd9 0%, #f1e3ec 100%);
+  box-shadow:var(--sh-up);padding:26px clamp(22px,3vw,40px);
+  display:flex;align-items:center;gap:26px;flex-wrap:wrap;
+}
+.inv-banner::after{content:"📦";position:absolute;right:-6px;bottom:-30px;font-size:150px;opacity:.12;transform:rotate(-8deg);}
+.inv-banner .txt{flex:1;min-width:240px;position:relative;z-index:1;}
+.inv-banner h3{font-family:"Fraunces",serif;font-weight:600;font-size:26px;margin:0;}
+.inv-banner p{color:var(--ink-2);font-size:13.5px;font-weight:600;margin:8px 0 0;}
+.inv-banner .chips{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;}
+.inv-chip{padding:6px 13px;border-radius:var(--r-pill);background:var(--surface);box-shadow:var(--sh-flat);font-size:12px;font-weight:700;color:var(--ink-2);}
+.inv-chip b{color:var(--lilac-ink);}
+
+/* ===================== MODALS ===================== */
+.overlay{
+  position:fixed;inset:0;z-index:1200;display:none;
+  background:rgba(80,68,52,.32);backdrop-filter:blur(6px);
+  align-items:center;justify-content:center;padding:24px;
+  animation:fadeIn var(--norm) var(--ease);
+}
+.overlay.show{display:flex;}
+@keyframes fadeIn{from{opacity:0;}to{opacity:1;}}
+.modal{
+  width:100%;max-width:560px;max-height:88vh;overflow:auto;
+  background:var(--surface);border-radius:var(--r-xl);padding:0;
+  box-shadow:var(--sh-float);animation:modalIn var(--norm) var(--ease);
+  border:1px solid rgba(255,255,255,.7);
+}
+@keyframes modalIn{from{opacity:0;transform:translateY(18px) scale(.97);}to{opacity:1;transform:none;}}
+.modal-head{position:sticky;top:0;background:linear-gradient(180deg,var(--surface),rgba(251,248,243,.85));backdrop-filter:blur(8px);padding:22px 26px 16px;border-bottom:1px solid var(--ink-line);z-index:2;}
+.modal-head .eyebrow{margin-bottom:4px;}
+.modal-head h3{font-family:"Fraunces",serif;font-weight:600;font-size:23px;margin:0;}
+.modal-head .x{position:absolute;top:18px;right:20px;width:34px;height:34px;border-radius:11px;background:var(--paper-2);box-shadow:var(--sh-in-sm);display:grid;place-items:center;font-size:17px;color:var(--ink-2);transition:color var(--fast),transform var(--fast) var(--ease);}
+.modal-head .x:hover{color:var(--rose-ink);transform:rotate(90deg);}
+.modal-body{padding:22px 26px;}
+.modal-foot{position:sticky;bottom:0;background:linear-gradient(0deg,var(--surface),rgba(251,248,243,.8));backdrop-filter:blur(8px);padding:16px 26px 22px;border-top:1px solid var(--ink-line);display:flex;justify-content:flex-end;gap:10px;}
+
+/* form controls — soft inset */
+.field{margin-bottom:17px;}
+.field>label{display:block;font-size:12px;font-weight:700;color:var(--ink-2);margin-bottom:7px;letter-spacing:.02em;}
+.field .hint{font-size:11px;color:var(--ink-3);font-weight:500;margin-top:5px;}
+.inp,select.inp,textarea.inp{
+  width:100%;padding:11px 14px;border-radius:var(--r-sm);border:none;
+  background:var(--paper-2);box-shadow:var(--sh-in-sm);
+  font-family:inherit;font-size:14px;color:var(--ink);font-weight:600;
+  transition:box-shadow var(--fast);
+}
+.inp:focus,select.inp:focus,textarea.inp:focus{outline:none;box-shadow:var(--sh-in),0 0 0 2.5px var(--amber-soft);}
+textarea.inp{resize:vertical;min-height:78px;font-weight:500;line-height:1.5;}
+select.inp{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23a39b8d' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 14px center;padding-right:34px;}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;}
+
+/* soft toggle switch */
+.switch{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 14px;border-radius:var(--r-sm);background:var(--paper-2);box-shadow:var(--sh-in-sm);margin-bottom:11px;}
+.switch .sw-lab b{font-size:13.5px;font-weight:700;display:block;}
+.switch .sw-lab span{font-size:11px;color:var(--ink-3);font-weight:500;}
+.toggle{flex:0 0 auto;width:48px;height:27px;border-radius:var(--r-pill);background:var(--surface-sink);box-shadow:var(--sh-in-sm);position:relative;transition:background var(--norm) var(--ease);}
+.toggle::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:var(--surface-hi);box-shadow:var(--sh-up-sm);transition:transform var(--norm) var(--ease);}
+.toggle.on{background:var(--sage);}
+.toggle.on::after{transform:translateX(21px);}
+.toggle:active::after{width:25px;}
+
+.modal-fieldset{margin:0 0 20px;padding:16px;border-radius:var(--r-md);background:var(--paper);box-shadow:var(--sh-in-sm);}
+.modal-fieldset>.legend{font-family:"Fraunces",serif;font-size:15px;font-weight:600;margin-bottom:13px;color:var(--ink);}
+details.adv{margin-bottom:17px;border-radius:var(--r-sm);background:var(--paper-2);box-shadow:var(--sh-in-sm);overflow:hidden;}
+details.adv>summary{padding:11px 14px;font-weight:700;font-size:12.5px;color:var(--ink-2);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;}
+details.adv>summary::-webkit-details-marker{display:none;}
+details.adv>summary::before{content:"›";font-size:18px;transition:transform var(--fast) var(--ease);color:var(--ink-3);}
+details.adv[open]>summary::before{transform:rotate(90deg);}
+details.adv .adv-body{padding:0 14px 14px;}
+
+.fixnote{background:var(--sage-soft);color:var(--sage-ink);border-radius:var(--r-sm);padding:12px 14px;font-size:13px;font-weight:600;line-height:1.55;margin-top:12px;}
+
+.statusbox{margin-top:14px;padding:13px 15px;border-radius:var(--r-sm);background:#322f2a;color:#cfc7b6;font-family:"Spline Sans Mono",monospace;font-size:11.5px;line-height:1.6;min-height:60px;}
+
+/* ===================== LIVE VIEW ===================== */
+#liveViewModal .modal{max-width:600px;}
+.lv-canvas-wrap{border-radius:var(--r-md);overflow:hidden;background:#2a2824;box-shadow:var(--sh-in);display:grid;place-items:center;aspect-ratio:540/960;max-height:62vh;margin:0 auto;}
+.lv-canvas-wrap .placeholder{color:#8c8576;font-family:"Spline Sans Mono",monospace;font-size:13px;text-align:center;padding:30px;}
+
+/* ===================== LABELER / OTHER PAGES ===================== */
+.panel{background:var(--surface);border-radius:var(--r-xl);padding:24px;box-shadow:var(--sh-up);margin-bottom:20px;}
+.panel h3{font-family:"Fraunces",serif;font-weight:600;font-size:21px;margin:0 0 16px;}
+.placeholder-page{text-align:center;padding:70px 20px;color:var(--ink-3);}
+.placeholder-page .big{font-size:60px;margin-bottom:14px;opacity:.5;}
+.placeholder-page h3{font-family:"Fraunces",serif;font-size:24px;color:var(--ink);margin:0 0 8px;}
+
+/* labeler stat strip */
+.lab-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:14px;margin-bottom:18px;}
+.lab-stat{background:var(--paper-2);border-radius:var(--r-md);padding:15px;box-shadow:var(--sh-in-sm);}
+.lab-stat .k{font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:700;}
+.lab-stat .v{font-family:"Fraunces",serif;font-size:28px;font-weight:600;margin-top:4px;}
+.lab-stat.sage .v{color:var(--sage-ink);} .lab-stat.rose .v{color:var(--rose-ink);} .lab-stat.amber .v{color:var(--amber-ink);}
+
+/* ===================== RESPONSIVE ===================== */
+@media(max-width:1180px){
+  .fleet{grid-template-columns:1fr 1fr;}
+}
+@media(max-width:1024px){
+  .fleet-grid{grid-template-columns:repeat(auto-fill,minmax(320px,1fr));}
+}
+@media(max-width:768px){
+  :root{--rail-w:230px;}
+  .rail{transform:translateX(-100%);transition:transform var(--norm) var(--ease);box-shadow:24px 0 60px -10px rgba(80,60,30,.4);}
+  .rail.mobile-open{transform:none;}
+  .rail.collapsed{width:var(--rail-w);}
+  .main{margin-left:0 !important;}
+  .rail.collapsed ~ .main{margin-left:0;}
+  .mobile-nav-btn{display:grid !important;}
+  .fleet{grid-template-columns:1fr 1fr;}
+  .fleet-card .big{font-size:32px;}
+  .row3{grid-template-columns:1fr 1fr;}
+}
+@media(max-width:480px){
+  .fleet{grid-template-columns:1fr;}
+  .fleet-grid{grid-template-columns:1fr;}
+  .row2,.row3{grid-template-columns:1fr;}
+  .page-title{font-size:30px;}
+  .topbar{padding:16px 16px 14px;}
+  .content{padding:18px 14px 50px;}
+  .dev{padding:18px;}
+}
+.mobile-nav-btn{display:none;position:fixed;top:18px;left:14px;z-index:300;width:44px;height:44px;border-radius:14px;background:var(--surface);box-shadow:var(--sh-up);place-items:center;font-size:18px;}
+
+@media(prefers-reduced-motion:reduce){
+  *{animation:none !important;transition-duration:.01ms !important;}
+}
+</style>
+</head>
+<body>
+
+<button class="mobile-nav-btn" onclick="toggleMobileNav()" aria-label="開啟選單">☰</button>
+
+<div class="shell">
+
+  <!-- ===================== NAV RAIL ===================== -->
+  <nav class="rail" id="rail" aria-label="主要導覽">
+    <button class="rail-toggle" onclick="toggleSidebar()" aria-label="收合側欄" title="收合 / 展開">‹</button>
+
+    <div class="brand">
+      <div class="brand-mark">🍄</div>
+      <div class="brand-txt">
+        <b>菇勇者</b>
+        <span>Soft Ops</span>
+      </div>
+    </div>
+
+    <div class="nav-section-label">控制台</div>
+    <a class="nav-item active" onclick="switchPage('dashboard',this)" role="button" tabindex="0">
+      <span class="ic">🏠</span><span class="lbl">儀表板</span>
+    </a>
+    <a class="nav-item" onclick="switchPage('labeler',this)" role="button" tabindex="0">
+      <span class="ic">🏷</span><span class="lbl">自動標註</span>
+    </a>
+    <a class="nav-item" onclick="switchPage('readme',this)" role="button" tabindex="0">
+      <span class="ic">📢</span><span class="lbl">更新公告</span>
+    </a>
+
+    <div class="nav-section-label">外部頁面</div>
+    <a class="nav-item ext" href="/fly-pet">
+      <span class="ic">🥁</span><span class="lbl">飛寵圖鑑</span>
+    </a>
+    <a class="nav-item ext" href="/inventory">
+      <span class="ic">📦</span><span class="lbl">倉庫檢視</span>
+    </a>
+
+    <div class="nav-ext"></div>
+    <div class="rail-status">
+      <div class="row"><span class="dot ok"></span> 6 台在線</div>
+      <div class="row"><span class="dot busy"></span> OCR 服務正常</div>
+      <div class="row"><span class="dot bad"></span> 1 台離線</div>
+    </div>
+  </nav>
+
+  <!-- ===================== MAIN ===================== -->
+  <div class="main">
+
+    <!-- TOP BAR -->
+    <header class="topbar">
+      <div class="topbar-grid">
+        <div class="page-head">
+          <div class="eyebrow">中控台 · Control Center</div>
+          <h1 class="page-title">菇勇者 <em>全自動</em> 掛機</h1>
+          <div class="page-sub">
+            <span id="ocr-runtime">最近成功節點 · ocr-tw-02.local</span>
+            <span class="sep"></span>
+            <span>裝置 8 · 在線 6 · 離線 1 · 停用 1</span>
+          </div>
+        </div>
+
+        <div class="statbar">
+          <div class="capsule ok" id="ocr-status"><span class="dot ok"></span><span class="lab">OCR</span> 服務正常</div>
+          <div class="prog-chip" role="button" tabindex="0" onclick="openModal('programInfoModal')" aria-label="程式資訊">
+            <div class="badge">📦</div>
+            <div>
+              <div class="v">v3.18.2</div>
+              <div class="t">更新 06-13 22:41</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="statbar" style="margin-top:18px;">
+        <button class="btn btn-primary" onclick="openModal('registerModal')"><span class="ic">＋</span> 新增帳號</button>
+        <button class="btn btn-sage" onclick="globalAction('resume')"><span class="ic">▶</span> 全部恢復</button>
+        <button class="btn btn-amber" onclick="globalAction('pause')"><span class="ic">⏸</span> 全部暫停</button>
+        <button class="btn btn-teal" onclick="globalAction('skip')"><span class="ic">⤓</span> 全部跳過睡眠</button>
+        <button class="btn" onclick="refreshDevices(this)"><span class="ic">↻</span> 重啟 ADB</button>
+        <button class="btn btn-ghost" onclick="openModal('ocrModal')"><span class="ic">⚙</span> OCR 設定</button>
+        <button class="btn btn-ghost" onclick="openModal('bugModal')"><span class="ic">🐞</span> 回報問題</button>
+      </div>
+    </header>
+
+    <!-- CONTENT -->
+    <main class="content">
+
+      <!-- ====== DASHBOARD PAGE ====== -->
+      <section class="page active" id="page-dashboard">
+
+        <!-- fleet overview (data-viz as system) -->
+        <div class="fleet">
+          <div class="fleet-card">
+            <div class="k">機隊健康度</div>
+            <div class="big">75<small>%</small></div>
+            <div class="meta">8 台中 6 台運轉中</div>
+            <div class="health" aria-hidden="true">
+              <i class="on" style="flex:4"></i><i class="ps" style="flex:1"></i><i class="dg" style="flex:1"></i><i class="of" style="flex:2"></i>
+            </div>
+            <div class="fleet-legend">
+              <span><i style="background:var(--sage)"></i>在線 4</span>
+              <span><i style="background:var(--amber)"></i>暫停 1</span>
+              <span><i style="background:var(--teal)"></i>降級 1</span>
+              <span><i style="background:var(--ink-line)"></i>離線/停用 2</span>
+            </div>
+          </div>
+
+          <div class="fleet-card">
+            <div class="k">今日任務</div>
+            <div class="big">41<small>/56</small></div>
+            <div class="meta" style="color:var(--sage-ink)">▲ 完成率 73%</div>
+            <div class="health" aria-hidden="true" style="margin-top:24px;">
+              <i class="on" style="flex:41"></i><i class="of" style="flex:15"></i>
+            </div>
+          </div>
+
+          <div class="fleet-card">
+            <div class="k">OCR 成功率</div>
+            <div class="big">98<small>.6%</small></div>
+            <div class="meta">近 1h · 3 節點可用</div>
+            <svg class="ring" viewBox="0 0 36 36" aria-hidden="true">
+              <circle cx="18" cy="18" r="15.5" fill="none" stroke="var(--surface-sink)" stroke-width="4"/>
+              <circle cx="18" cy="18" r="15.5" fill="none" stroke="url(#g1)" stroke-width="4" stroke-linecap="round"
+                stroke-dasharray="97 100" stroke-dashoffset="25" transform="rotate(-90 18 18)"/>
+              <defs><linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f0c378"/><stop offset="1" stop-color="#cf85a0"/>
+              </linearGradient></defs>
+            </svg>
+          </div>
+
+          <div class="fleet-card">
+            <div class="k">最近喚醒</div>
+            <div class="big" style="font-size:30px;margin-top:14px;">小寶</div>
+            <div class="meta" style="font-family:'Spline Sans Mono',monospace;">下一台 · emulator-5560 · 04:12</div>
+            <div class="fleet-legend" style="margin-top:18px;">
+              <span style="font-family:'Spline Sans Mono',monospace;color:var(--ink-3)">⏱ 整點 :00–:20 對齊</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- device section -->
+        <div class="sec-head">
+          <h2>裝置機隊 <span class="count">· 8 台</span></h2>
+          <div class="toolbar">
+            <button class="btn btn-ghost btn-sm">全部</button>
+            <button class="btn btn-ghost btn-sm">在線</button>
+            <button class="btn btn-ghost btn-sm">離線</button>
+          </div>
+        </div>
+
+        <div class="fleet-grid" id="deviceGrid"><!-- injected by JS --></div>
+
+        <!-- inventory entry banner -->
+        <a class="inv-banner" href="/inventory" aria-label="前往倉庫檢視">
+          <div class="txt">
+            <h3>倉庫檢視 · 守護靈與神器附魔</h3>
+            <p>檢視守護靈詞條、依品質排序神器寶石，並批次分解低品質素材。</p>
+            <div class="chips">
+              <span class="inv-chip">守護靈 <b>142</b></span>
+              <span class="inv-chip">神器寶石 <b>318</b></span>
+              <span class="inv-chip">可分解 <b>27</b></span>
+            </div>
+          </div>
+          <button class="btn btn-primary"><span class="ic">📦</span> 開啟倉庫</button>
+        </a>
+      </section>
+
+      <!-- ====== LABELER PAGE ====== -->
+      <section class="page" id="page-labeler">
+        <div class="sec-head"><h2>自動標註 <span class="count">· LLM 工作流</span></h2></div>
+        <div class="panel">
+          <h3>標註設定</h3>
+          <div class="row2">
+            <div class="field"><label>LLM 端點</label><input class="inp" id="labelerEndpoint" value="http://ocr-tw-02.local:8800/v1" /></div>
+            <div class="field"><label>模型名稱</label><input class="inp" id="labelerModel" value="qwen2.5-vl-7b" /></div>
+          </div>
+          <div class="row2">
+            <div class="field"><label>每日執行時間</label><input class="inp" id="labelerDailyTime" value="03:30" /></div>
+            <div class="field"><label>連線狀態</label><div class="capsule ok" style="width:fit-content"><span class="dot ok"></span> 已連線</div></div>
+          </div>
+          <div class="toolbar" style="margin-top:6px;">
+            <button class="btn btn-primary">儲存設定</button>
+            <button class="btn">檢查連線</button>
+            <button class="btn btn-sage">執行一次</button>
+            <button class="btn btn-amber">暫停</button>
+            <button class="btn btn-rose">終止</button>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>執行狀態</h3>
+          <div class="lab-stats">
+            <div class="lab-stat"><div class="k">進度</div><div class="v">428<small style="font-size:15px;color:var(--ink-3)">/600</small></div></div>
+            <div class="lab-stat sage"><div class="k">保留</div><div class="v">391</div></div>
+            <div class="lab-stat rose"><div class="k">刪除</div><div class="v">34</div></div>
+            <div class="lab-stat amber"><div class="k">錯誤</div><div class="v">3</div></div>
+          </div>
+          <div class="statusbox">
+            <div>[03:31:02] start session · source=raw_caps/ output=labeled/</div>
+            <div>[03:31:08] cap_00412.png → block_iron (0.97)</div>
+            <div>[03:31:09] cap_00413.png → empty (0.91) · kept</div>
+            <div>[03:31:11] cap_00414.png → low_conf 0.42 · skipped</div>
+          </div>
+        </div>
+        <div class="panel">
+          <h3>模型訓練</h3>
+          <div class="row2">
+            <div class="field"><label>Epochs</label><input class="inp" type="number" value="40" /></div>
+            <div class="field" style="display:flex;align-items:flex-end;"><button class="btn btn-primary" style="width:100%">開始訓練</button></div>
+          </div>
+          <div class="switch"><div class="sw-lab"><b>完成後移除來源</b><span>訓練後刪除原始素材</span></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+        </div>
+      </section>
+
+      <!-- ====== README PAGE ====== -->
+      <section class="page" id="page-readme">
+        <div class="placeholder-page">
+          <div class="big">📢</div>
+          <h3>更新公告</h3>
+          <p>此頁載入 <code>/updates/</code> iframe，顯示版本更新與公告。</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<!-- ===================== MODALS ===================== -->
+
+<!-- Device config -->
+<div class="overlay" id="configModal" onclick="bgClose(event,'configModal')">
+  <div class="modal">
+    <div class="modal-head">
+      <button class="x" onclick="closeModal('configModal')" aria-label="關閉">×</button>
+      <div class="eyebrow">裝置設定</div>
+      <h3 id="cfgTitle">小寶 · emulator-5554</h3>
+    </div>
+    <div class="modal-body">
+      <div class="row2">
+        <div class="field"><label>顯示名稱</label><input class="inp" id="editName" value="小寶" /></div>
+        <div class="field"><label>挖礦規劃器</label>
+          <select class="inp" id="editMiningPlanner"><option>v5 · 歷史先驗（預設）</option><option>v4 · DFS</option><option>v3 · cluster</option><option>v1 · A*</option></select>
+        </div>
+      </div>
+      <div class="switch"><div class="sw-lab"><b>啟用自動掛機</b><span>主開關</span></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+      <div class="field"><label>後端方案</label>
+        <select class="inp" id="editBackend" onchange="toggleBackendInputs()"><option value="adb">adb</option><option value="adb_ws">adb + ws</option><option value="h5">h5</option><option value="h5_ws">h5 + ws</option><option value="ws_token">ws_token</option></select>
+      </div>
+
+      <div class="modal-fieldset" id="webBackendGroup" style="display:none">
+        <div class="legend">Web H5 設定</div>
+        <div class="row2">
+          <div class="field"><label>畫布寬</label><input class="inp" id="editWebViewportWidth" value="540" /></div>
+          <div class="field"><label>畫布高</label><input class="inp" id="editWebViewportHeight" value="960" /></div>
+        </div>
+        <div class="switch"><div class="sw-lab"><b>無頭模式</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>清除 Cookie</b></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+        <details class="adv"><summary>進階 Web 設定</summary><div class="adv-body">
+          <div class="field"><label>Canvas 選擇器</label><input class="inp" value="#GameCanvas" /></div>
+          <div class="field"><label>Profile 目錄</label><input class="inp" value="playwright_profile1" /></div>
+          <div class="field"><label>瀏覽器通道</label><input class="inp" value="chrome" /></div>
+        </div></details>
+      </div>
+
+      <div class="modal-fieldset">
+        <div class="legend">跨服泊車</div>
+        <div class="switch"><div class="sw-lab"><b>啟用跨服泊車</b><span>泊銀計畫</span></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="field"><label>泊車等級</label><select class="inp" id="editCarparkTier"><option>泊銀 Silver</option></select></div>
+      </div>
+
+      <div class="modal-fieldset">
+        <div class="legend">執行間隔</div>
+        <div class="row3">
+          <div class="field"><label>上線檢查 (h)</label><input class="inp" value="1" /></div>
+          <div class="field"><label>神燈間隔 (h)</label><input class="inp" value="2" /></div>
+          <div class="field"><label>挖礦時長 (m)</label><input class="inp" value="6" /></div>
+        </div>
+        <div class="row2">
+          <div class="field"><label>睡眠下限 (h)</label><input class="inp" type="number" step="0.5" value="1" /></div>
+          <div class="field"><label>睡眠上限 (h)</label><input class="inp" type="number" step="0.5" value="3" /></div>
+        </div>
+      </div>
+
+      <div class="modal-fieldset">
+        <div class="legend">功能開關</div>
+        <div class="switch"><div class="sw-lab"><b>農場任務</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>武道會</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>挖礦 AI</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>WS 開神燈</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>WS 挖礦</b></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>地獄之門</b></div><div class="toggle on" onclick="this.classList.toggle('on')"></div></div>
+        <div class="switch"><div class="sw-lab"><b>真機模式</b><span>需要 recover 按鈕</span></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+        <div class="row2" style="margin-top:6px;">
+          <div class="field"><label>WS 神燈保留 %</label><input class="inp" value="35" /></div>
+          <div class="field"><label>WS 神燈最少保留</label><input class="inp" value="50" /></div>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn btn-slate btn-sm">Web 登入</button>
+        <button class="btn btn-teal btn-sm">備份 Cookie</button>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="closeModal('configModal')">取消</button>
+      <button class="btn btn-primary" onclick="closeModal('configModal')">儲存設定</button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR config -->
+<div class="overlay" id="ocrModal" onclick="bgClose(event,'ocrModal')">
+  <div class="modal">
+    <div class="modal-head"><button class="x" onclick="closeModal('ocrModal')">×</button><div class="eyebrow">全域設定</div><h3>OCR 伺服器設定</h3></div>
+    <div class="modal-body">
+      <div class="field"><label>OCR 模式</label><select class="inp"><option>自動 Auto</option><option>主要 Main</option><option>備用 Backup</option></select></div>
+      <div class="field"><label>OCR 伺服器 (一行一個)</label><textarea class="inp" rows="3">http://ocr-tw-01.local:8000
+http://ocr-tw-02.local:8000
+http://127.0.0.1:8000</textarea></div>
+      <div class="row3">
+        <div class="field"><label>HTTP 逾時 (s)</label><input class="inp" value="20" /></div>
+        <div class="field"><label>解碼重試</label><input class="inp" value="3" /></div>
+        <div class="field"><label>空結果重試</label><input class="inp" value="2" /></div>
+      </div>
+      <div class="field"><label>重試延遲 (s)</label><input class="inp" value="0.6" /></div>
+      <div class="switch"><div class="sw-lab"><b>啟用預設辨識區域</b></div><div class="toggle" onclick="this.classList.toggle('on')"></div></div>
+      <div class="row2">
+        <div class="field"><label>X 最小 / 最大</label><input class="inp" value="0" /></div>
+        <div class="field"><label>Y 最小 / 最大</label><input class="inp" value="0" /></div>
+      </div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('ocrModal')">取消</button><button class="btn btn-primary" onclick="closeModal('ocrModal')">儲存</button></div>
+  </div>
+</div>
+
+<!-- Program info -->
+<div class="overlay" id="programInfoModal" onclick="bgClose(event,'programInfoModal')">
+  <div class="modal" style="max-width:460px">
+    <div class="modal-head"><button class="x" onclick="closeModal('programInfoModal')">×</button><div class="eyebrow">程式資訊</div><h3>菇勇者全自動掛機</h3></div>
+    <div class="modal-body">
+      <div class="row2">
+        <div class="field"><label>版本</label><div class="inp" style="font-family:'Spline Sans Mono',monospace">v3.18.2</div></div>
+        <div class="field"><label>Git 更新時間</label><div class="inp" style="font-family:'Spline Sans Mono',monospace">06-13 22:41</div></div>
+      </div>
+      <label style="font-size:12px;font-weight:700;color:var(--ink-2)">修正說明</label>
+      <div class="fixnote">修正 WS-fallback 離線誤判、carpark 配額持久化、v5 priors 污染。Dashboard Web H5 設定隱藏固定登入網址，少用欄位收進進階摺疊區。</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-primary" onclick="closeModal('programInfoModal')">了解</button></div>
+  </div>
+</div>
+
+<!-- Bug feedback -->
+<div class="overlay" id="bugModal" onclick="bgClose(event,'bugModal')">
+  <div class="modal"><div class="modal-head"><button class="x" onclick="closeModal('bugModal')">×</button><div class="eyebrow">問題回報</div><h3>回報一個問題</h3></div>
+    <div class="modal-body">
+      <div class="field"><label>標題</label><input class="inp" placeholder="簡述問題" /></div>
+      <div class="field"><label>詳細描述</label><textarea class="inp" rows="8" placeholder="重現步驟 / 預期結果 / 實際結果"></textarea></div>
+      <div class="field"><label>回報人 (選填)</label><input class="inp" placeholder="你的名字" /></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('bugModal')">取消</button><button class="btn btn-primary" onclick="closeModal('bugModal')">送出</button></div>
+  </div>
+</div>
+
+<!-- Register -->
+<div class="overlay" id="registerModal" onclick="bgClose(event,'registerModal')">
+  <div class="modal"><div class="modal-head"><button class="x" onclick="closeModal('registerModal')">×</button><div class="eyebrow">新增帳號</div><h3>註冊新裝置</h3></div>
+    <div class="modal-body">
+      <div class="field"><label>裝置 ID</label><input class="inp" placeholder="僅限英數 / _ / -" /><div class="hint">作為主鍵，建立後不可更改。</div></div>
+      <div class="field"><label>Web 網址 (選填)</label><input class="inp" placeholder="留空使用預設" /></div>
+      <div class="statusbox">等待註冊 · 送出後將輪詢登入狀態…</div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-ghost" onclick="closeModal('registerModal')">取消</button><button class="btn btn-primary" onclick="closeModal('registerModal')">送出並登入</button></div>
+  </div>
+</div>
+
+<!-- Live view -->
+<div class="overlay" id="liveViewModal" onclick="bgClose(event,'liveViewModal')">
+  <div class="modal"><div class="modal-head">
+    <button class="x" onclick="closeModal('liveViewModal')">×</button>
+    <div class="eyebrow">遠端畫面 · 手動控制</div>
+    <h3 id="lvDeviceLabel">小寶 · emulator-5554</h3>
+  </div>
+    <div class="modal-body">
+      <div class="capsule" style="width:fit-content;margin-bottom:14px;"><span class="dot busy"></span> 已就緒，等待畫面…</div>
+      <div class="lv-canvas-wrap"><div class="placeholder">540 × 960<br/>JPEG 串流畫面<br/>（指標事件直接傳至裝置）</div></div>
+    </div>
+    <div class="modal-foot"><button class="btn btn-rose" onclick="closeModal('liveViewModal')">關閉瀏覽器</button><button class="btn btn-primary" onclick="closeModal('liveViewModal')">完成</button></div>
+  </div>
+</div>
+
+<script>
+/* ============ FAKE DEVICE DATA ============ */
+const DEVICES = [
+  {ip:"emulator-5554",name:"小寶",avatar:"🐣",status:"online",backend:"adb",bk:"ws",planner:"v5",
+   task:"挖礦 / Oracle",step:"執行 v5 規劃 · 第 3 步",timer:"剩 4m 12s",wake:"00:14:08",upd:"剛剛",sst:"312ms",
+   carpark:{cur:5,tgt:6,worst:"2.4h",next:"09:59",cars:[["A1","炎龍坐騎",62,"6.1h"],["A2","風行鹿",88,"1.2h"],["B3","雪原熊",40,"7.8h"]]},
+   prog:{"地獄之門":1,"農場":1,"寶箱":1,"家族":1,"商店":0,"挖礦":1,"武道會":0,"航海":1},
+   logs:[["22:41:02","已切換至挖礦頁，載入棋盤","ok"],["22:41:05","v5 規劃完成 26ms · 3 步","ok"],["22:41:08","執行 dig (4,2)",""]]},
+
+  {ip:"emulator-5560",name:"阿福",avatar:"🦊",status:"online",backend:"adb",bk:"adb",planner:"v5",
+   task:"農場任務",step:"打工收成 · 第 2/3 塊",timer:"",wake:"00:51:30",upd:"6 秒前",sst:"288ms",
+   prog:{"地獄之門":1,"農場":1,"寶箱":1,"家族":0,"商店":1,"挖礦":0,"武道會":1,"航海":0},
+   logs:[["22:40:18","農場：自動播種完成","ok"],["22:40:51","收成第 1 塊 +1240","ok"],["22:41:00","移動到第 2 塊耕地",""]]},
+
+  {ip:"192.168.1.42:5555",name:"手機fc",avatar:"📱",status:"degraded",backend:"adb",bk:"ws",planner:"v5",realphone:true,
+   task:"WS 階段任務",step:"WS 離線後備執行中",timer:"剩 1m 40s",wake:"喚醒中…",waking:true,upd:"18 秒前",sst:"--",
+   logs:[["22:40:30","WS 連線逾時，啟動離線後備","warn"],["22:40:44","守護靈批次領取完成","ok"],["22:41:01","重連 WS ticket …","warn"]]},
+
+  {ip:"emulator-5558",name:"小米",avatar:"🐹",status:"paused",backend:"web_h5",bk:"h5",planner:"v4",
+   task:"已暫停",step:"等待手動恢復",timer:"",wake:"已暫停",upd:"3 分前",sst:"402ms",
+   prog:{"地獄之門":1,"農場":0,"寶箱":1,"家族":1,"商店":0,"挖礦":1,"武道會":0,"航海":1},
+   logs:[["22:38:11","使用者手動暫停","warn"],["22:38:11","保存當前進度","ok"]]},
+
+  {ip:"emulator-5556",name:"花生",avatar:"🥜",status:"online",backend:"web_h5",bk:"h5",planner:"v5",
+   task:"開神燈",step:"比對裝備中 · 保留 35%",timer:"剩 2m 03s",wake:"00:33:55",upd:"12 秒前",sst:"356ms",
+   prog:{"地獄之門":1,"農場":1,"寶箱":1,"家族":1,"商店":1,"挖礦":1,"武道會":1,"航海":1},
+   logs:[["22:40:55","神燈：第 6 連開","ok"],["22:40:58","掉落紫裝 · 比對保留","ok"],["22:41:02","出售 3 件低品質",""]]},
+
+  {ip:"emulator-5562",name:"豆豆",avatar:"🫛",status:"online",backend:"web_h5",bk:"ws",planner:"v3",
+   task:"航海任務",step:"領取賽季獎勵",timer:"",wake:"01:22:40",upd:"40 秒前",sst:"298ms",
+   prog:{"地獄之門":1,"農場":1,"寶箱":0,"家族":1,"商店":1,"挖礦":1,"武道會":0,"航海":1},
+   logs:[["22:39:40","航海：抵達節點 7","ok"],["22:40:20","領取賽季獎勵 ×3","ok"]]},
+
+  {ip:"192.168.1.88:5555",name:"老王",avatar:"🧓",status:"offline",backend:"adb",bk:"adb",planner:"v5",
+   note:"連線中斷超過 1 小時，已標記離線。最後上線 21:02。",
+   logs:[]},
+
+  {ip:"emulator-5570",name:"備機",avatar:"🛏",status:"disabled",backend:"web_h5",bk:"h5",planner:"v4",
+   note:"裝置已停用，自動掛機關閉。可開啟瀏覽器進行手動登入設定。",
+   logs:[]},
+];
+
+const TASK_ICONS = {"地獄之門":"🔥","農場":"🌾","寶箱":"🎁","家族":"👪","商店":"🛒","挖礦":"⛏","武道會":"🥊","航海":"⚓"};
+const STATUS_TXT = {online:"在線運轉",paused:"已暫停",degraded:"降級 · WS後備",offline:"離線",disabled:"已停用"};
+const BK_TXT = {adb:"adb",ws:"+ ws",h5:"h5"};
+
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+function progressHtml(prog){
+  if(!prog) return "";
+  const keys=Object.keys(prog); const done=keys.filter(k=>prog[k]).length;
+  const pct=Math.round(done/keys.length*100);
+  const badges=keys.map(k=>`<span class="badge-t ${prog[k]?'done':''}"><span class="ic">${prog[k]?'✓':'○'}</span>${esc(k)}</span>`).join("");
+  return `<div class="prog"><div class="lab"><span>今日進度</span><span class="pct">${done}/${keys.length} · ${pct}%</span></div><div class="badges">${badges}</div></div>`;
+}
+
+function carparkHtml(ip,cp){
+  if(!cp) return "";
+  const rows=cp.cars.map(([pos,nm,fill,rem])=>`
+    <div class="car-row"><span class="pos">${esc(pos)}</span><span class="nm">${esc(nm)}</span>
+    <span class="car-bar"><i style="width:${fill}%"></i></span><span class="rem">${esc(rem)}</span></div>`).join("");
+  return `<div class="carpark" id="carpark-${esc(ip)}">
+    <div class="carpark-head" onclick="toggleCarpark('${esc(ip)}')" role="button" tabindex="0">
+      <span class="ic">🅿️</span> 跨服泊車
+      <span class="mini">${cp.cur}/${cp.tgt} · 最快 ${esc(cp.worst)} · 下次 ${esc(cp.next)}</span>
+      <span class="chev">▾</span>
+    </div>
+    <div class="carpark-body"><div class="carpark-inner">${rows}</div></div>
+  </div>`;
+}
+
+function logsHtml(logs){
+  if(!logs||!logs.length) return `<div class="logbox"><div class="ln" style="color:#8c8576">— 無近期日誌 —</div></div>`;
+  return `<div class="logbox">${logs.slice(-3).map(([ts,msg,cls])=>`<div class="ln ${cls||''}"><span class="ts">${esc(ts)}</span> ${esc(msg)}</div>`).join("")}</div>`;
+}
+
+function actionsHtml(d){
+  const ip=esc(d.ip);
+  if(d.status==="offline")
+    return `<div class="actions"><button class="btn btn-ghost btn-sm" onclick="refreshDevices(this)">↻ 重試連線</button></div>`;
+  if(d.status==="disabled")
+    return `<div class="actions"><button class="btn btn-sage btn-sm" onclick="lock(this,2000)">啟用裝置</button><button class="btn btn-slate btn-sm" onclick="lock(this,3000)">開啟瀏覽器登入</button></div>`;
+  let btns="";
+  if(d.status==="paused")
+    btns+=`<button class="btn btn-sage btn-sm" data-ctrlbtn="${ip}" onclick="lock(this,2000)"><span class="ic">▶</span> 恢復</button>`;
+  else
+    btns+=`<button class="btn btn-amber btn-sm" data-ctrlbtn="${ip}" onclick="lock(this,2000)"><span class="ic">⏸</span> 暫停</button>`;
+  btns+=`<button class="btn btn-teal btn-sm" onclick="openLiveView('${ip}','${esc(d.name)}')"><span class="ic">👁</span> 即時畫面</button>`;
+  btns+=`<button class="btn btn-ghost btn-sm" onclick="lock(this,1500)">⤓ 跳過睡眠</button>`;
+  btns+=`<button class="btn btn-ghost btn-sm" data-ctrlbtn="${ip}" onclick="lock(this,2000)">💤 強制睡眠</button>`;
+  if(d.backend==="web_h5") btns+=`<button class="btn btn-slate btn-sm" data-webbtn="${ip}" onclick="lock(this,3000)">🌐 瀏覽器</button>`;
+  if(d.realphone) btns+=`<button class="btn btn-rose btn-sm" onclick="lock(this,2000)">📲 復原螢幕</button>`;
+  return `<div class="actions">${btns}</div>`;
+}
+
+function deviceCard(d){
+  const ip=esc(d.ip);
+  const stText=STATUS_TXT[d.status];
+  let body;
+  if(d.status==="offline"||d.status==="disabled"){
+    body=`<div class="dim-note">${esc(d.note||"")}</div>${actionsHtml(d)}`;
+  }else{
+    const stepTimer=d.timer?`<span class="step-timer">${esc(d.timer)}</span>`:"";
+    const wakeHtml=d.waking
+      ?`<span class="countdown waking">喚醒中…</span>`
+      :(/[:：]/.test(d.wake)&&!/已暫停/.test(d.wake)
+        ?`<span class="countdown"><b>${esc(d.wake)}</b></span>`
+        :`<span class="countdown">${esc(d.wake)}</span>`);
+    body=`
+      <div class="task-line">
+        <div class="now">當前任務</div>
+        <div class="task">${esc(d.task)}</div>
+        <div class="step">${esc(d.step)} ${stepTimer}</div>
+      </div>
+      <div class="info">
+        <div class="cell"><div class="lab">下次喚醒</div><div class="val">${wakeHtml}</div></div>
+        <div class="cell"><div class="lab">後端 / 規劃器</div><div class="val">
+          <span class="tag ${d.bk==='ws'?'ws':d.bk==='h5'?'h5':'adb'}">${esc(BK_TXT[d.bk]||d.bk)}</span>
+          <span class="tag ${d.planner}">${esc(d.planner)}</span></div></div>
+        <div class="cell"><div class="lab">最後更新</div><div class="val mono">${esc(d.upd)}</div></div>
+        <div class="cell"><div class="lab">擷圖耗時</div><div class="val mono">${esc(d.sst)}</div></div>
+      </div>
+      ${carparkHtml(d.ip,d.carpark)}
+      ${progressHtml(d.prog)}
+      ${logsHtml(d.logs)}
+      ${actionsHtml(d)}`;
+  }
+  return `<article class="dev ${d.status}" id="card-${ip}" data-ip="${ip}">
+    <span class="statusbead"></span>
+    <div class="dev-top">
+      <div class="dev-avatar">${d.avatar}</div>
+      <div class="dev-id">
+        <div class="dev-name" id="title-${ip}">${esc(d.name)}</div>
+        <div class="dev-ip" id="backend-${ip}">${ip}</div>
+        <span class="status-pill sp-${d.status}" id="status-${ip}"><span class="d"></span>${esc(stText)}</span>
+      </div>
+      <button class="dev-gear" onclick="openSettings('${ip}','${esc(d.name)}')" aria-label="裝置設定">⚙</button>
+    </div>
+    ${body}
+  </article>`;
+}
+
+document.getElementById("deviceGrid").innerHTML = DEVICES.map(deviceCard).join("");
+
+/* ============ INTERACTIONS ============ */
+function toggleSidebar(){
+  const r=document.getElementById("rail");
+  r.classList.toggle("collapsed");
+  r.querySelector(".rail-toggle").textContent=r.classList.contains("collapsed")?"›":"‹";
+}
+function toggleMobileNav(){document.getElementById("rail").classList.toggle("mobile-open");}
+
+function switchPage(name,el){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-"+name).classList.add("active");
+  document.querySelectorAll(".nav-item").forEach(n=>n.classList.remove("active"));
+  if(el) el.classList.add("active");
+  document.getElementById("rail").classList.remove("mobile-open");
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function openModal(id){document.getElementById(id).classList.add("show");}
+function closeModal(id){document.getElementById(id).classList.remove("show");}
+function bgClose(e,id){if(e.target===e.currentTarget) closeModal(id);}
+
+function openSettings(ip,name){
+  document.getElementById("cfgTitle").textContent=(name||"")+" · "+ip;
+  document.getElementById("editName").value=name||"";
+  openModal("configModal");
+}
+function toggleBackendInputs(){
+  const v=document.getElementById("editBackend").value;
+  document.getElementById("webBackendGroup").style.display=(v==="h5"||v==="h5_ws")?"":"none";
+}
+function openLiveView(ip,name){
+  document.getElementById("lvDeviceLabel").textContent=(name||"")+" · "+ip;
+  openModal("liveViewModal");
+}
+function toggleCarpark(ip){document.getElementById("carpark-"+ip).classList.toggle("open");}
+
+/* button lock + spinner (preserves .btn-pending semantics) */
+function lock(btn,ms){
+  if(btn.classList.contains("btn-pending")) return;
+  btn.classList.add("btn-pending");
+  setTimeout(()=>btn.classList.remove("btn-pending"),ms||2000);
+}
+function refreshDevices(btn){if(btn)lock(btn,1800);}
+function globalAction(kind){
+  document.querySelectorAll(`[data-ctrlbtn]`).forEach(b=>{});
+}
+
+/* keyboard: Esc closes any open modal */
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape") document.querySelectorAll(".overlay.show").forEach(o=>o.classList.remove("show"));
+  if((e.key==="Enter"||e.key===" ")&&document.activeElement&&document.activeElement.getAttribute("role")==="button"){
+    e.preventDefault();document.activeElement.click();
+  }
+});
+
+/* gentle live demo: tick the first device's countdown */
+(function liveDemo(){
+  const el=document.querySelector("#card-emulator-5554 .countdown b");
+  if(!el)return;
+  let [h,m,s]=el.textContent.split(":").map(Number);
+  setInterval(()=>{
+    let t=h*3600+m*60+s-1; if(t<0)t=900;
+    h=Math.floor(t/3600);m=Math.floor(t%3600/60);s=t%60;
+    el.textContent=[h,m,s].map(x=>String(x).padStart(2,"0")).join(":");
+  },1000);
+})();
+</script>
+</body>
+</html>

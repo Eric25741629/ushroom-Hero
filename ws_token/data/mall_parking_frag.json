@@ -1,0 +1,308 @@
+{
+  "203": {
+    "shop_id": 1501,
+    "price_cur": 201,
+    "price": 5000,
+    "cap": 5
+  },
+  "1334": {
+    "shop_id": 1502,
+    "price_cur": 201,
+    "price": 5000,
+    "cap": 5
+  },
+  "60102": {
+    "shop_id": 1703,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60103": {
+    "shop_id": 1705,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 120
+  },
+  "60104": {
+    "shop_id": 1706,
+    "price_cur": 201,
+    "price": 100000,
+    "cap": 120
+  },
+  "60105": {
+    "shop_id": 1707,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60106": {
+    "shop_id": 1708,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60107": {
+    "shop_id": 1719,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 120
+  },
+  "60108": {
+    "shop_id": 1720,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 120
+  },
+  "60109": {
+    "shop_id": 1739,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 30
+  },
+  "60111": {
+    "shop_id": 1732,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 30
+  },
+  "60112": {
+    "shop_id": 1754,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 120
+  },
+  "60202": {
+    "shop_id": 1701,
+    "price_cur": 201,
+    "price": 500000,
+    "cap": 120
+  },
+  "60203": {
+    "shop_id": 1702,
+    "price_cur": 201,
+    "price": 400000,
+    "cap": 120
+  },
+  "60204": {
+    "shop_id": 1721,
+    "price_cur": 201,
+    "price": 600000,
+    "cap": 120
+  },
+  "60302": {
+    "shop_id": 1704,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60303": {
+    "shop_id": 1709,
+    "price_cur": 201,
+    "price": 120000,
+    "cap": 120
+  },
+  "60304": {
+    "shop_id": 1710,
+    "price_cur": 201,
+    "price": 180000,
+    "cap": 120
+  },
+  "60305": {
+    "shop_id": 1711,
+    "price_cur": 201,
+    "price": 140000,
+    "cap": 120
+  },
+  "60306": {
+    "shop_id": 1712,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60307": {
+    "shop_id": 1718,
+    "price_cur": 201,
+    "price": 80000,
+    "cap": 120
+  },
+  "60308": {
+    "shop_id": 1722,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60402": {
+    "shop_id": 1713,
+    "price_cur": 201,
+    "price": 180000,
+    "cap": 120
+  },
+  "60403": {
+    "shop_id": 1714,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60404": {
+    "shop_id": 1715,
+    "price_cur": 201,
+    "price": 120000,
+    "cap": 120
+  },
+  "60405": {
+    "shop_id": 1716,
+    "price_cur": 201,
+    "price": 130000,
+    "cap": 120
+  },
+  "60406": {
+    "shop_id": 1717,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60407": {
+    "shop_id": 1723,
+    "price_cur": 201,
+    "price": 180000,
+    "cap": 120
+  },
+  "60408": {
+    "shop_id": 1740,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60411": {
+    "shop_id": 1731,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60412": {
+    "shop_id": 1753,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60523": {
+    "shop_id": 1733,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60524": {
+    "shop_id": 1734,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60525": {
+    "shop_id": 1735,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60526": {
+    "shop_id": 1736,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60527": {
+    "shop_id": 1741,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 30
+  },
+  "60571": {
+    "shop_id": 1750,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60572": {
+    "shop_id": 1751,
+    "price_cur": 201,
+    "price": 600000,
+    "cap": 120
+  },
+  "60573": {
+    "shop_id": 1752,
+    "price_cur": 201,
+    "price": 400000,
+    "cap": 120
+  },
+  "60577": {
+    "shop_id": 1756,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60578": {
+    "shop_id": 1757,
+    "price_cur": 201,
+    "price": 300000,
+    "cap": 120
+  },
+  "60579": {
+    "shop_id": 1758,
+    "price_cur": 201,
+    "price": 600000,
+    "cap": 120
+  },
+  "60580": {
+    "shop_id": 1759,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "60581": {
+    "shop_id": 1760,
+    "price_cur": 201,
+    "price": 200000,
+    "cap": 120
+  },
+  "240003": {
+    "shop_id": 1602,
+    "price_cur": 201,
+    "price": 10000,
+    "cap": 1
+  },
+  "240005": {
+    "shop_id": 1603,
+    "price_cur": 201,
+    "price": 15000,
+    "cap": 1
+  },
+  "240006": {
+    "shop_id": 1604,
+    "price_cur": 201,
+    "price": 40000,
+    "cap": 3
+  },
+  "240009": {
+    "shop_id": 1605,
+    "price_cur": 201,
+    "price": 80000,
+    "cap": 3
+  },
+  "240010": {
+    "shop_id": 1606,
+    "price_cur": 201,
+    "price": 80000,
+    "cap": 1
+  },
+  "240011": {
+    "shop_id": 1607,
+    "price_cur": 201,
+    "price": 250000,
+    "cap": 2
+  },
+  "240012": {
+    "shop_id": 1608,
+    "price_cur": 201,
+    "price": 25000,
+    "cap": 3
+  }
+}

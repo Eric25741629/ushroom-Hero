@@ -13,6 +13,7 @@ import cv2
 
 import mask
 from json_manager import return_time, time_recording
+from utils.main_page_guard import is_main_page_with_popup
 
 
 class BattleManager:
@@ -47,7 +48,7 @@ class BattleManager:
     def capture_screenshot(self):
         """取得當前螢幕截圖"""
         img = self.device.screenshot(format='opencv')
-        if abs(np.sum(img[234, 189]) - np.sum([179,  91,  70])) < 10 and abs(np.sum(img[218, 236]) - np.sum([254, 241, 225])) < 10 and abs(np.sum(img[228, 318]) - np.sum([254, 241, 225])) < 10 and abs(np.sum(img[236, 363]) - np.sum([179,  91,  70])) < 10 and abs(np.sum(img[249, 132]) - np.sum([162,  75,  57])) < 10 and abs(np.sum(img[264, 139]) - np.sum([162,  75,  57])) < 10 and abs(np.sum(img[329, 154]) - np.sum([194, 219, 227])) < 10 and abs(np.sum(img[361, 370]) - np.sum([193, 218, 226])) < 10 and abs(np.sum(img[337, 451]) - np.sum([44, 155, 111])) < 10:
+        if is_main_page_with_popup(img):
             self.device.click(509, 56)
             time.sleep(1)
             img = self.device.screenshot(format='opencv')

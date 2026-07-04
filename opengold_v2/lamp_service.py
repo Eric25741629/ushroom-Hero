@@ -154,7 +154,7 @@ class LampService:
         """If on the 全部出售 page, run the bulk-sell action and return True."""
         if not self.ui.is_lamp_sell_page():
             return False
-        logger.info(f"[LampService] {label}")
+        logger.debug(f"[LampService] {label}")
         self.ui.click_all_sell()
         return True
 
@@ -233,7 +233,7 @@ class LampService:
             if packet_combo:
                 combo_norm = packet_combo
                 unwanted = self.parser.is_unwanted_combo(combo_norm)
-                logger.info(f"[LampService] 技能組合(封包為主): {combo_norm} ; 不要? {unwanted}")
+                combo_msg = f"[LampService] 技能組合(封包為主): {combo_norm} ; 不要? {unwanted}"
             else:
                 skill_roi = self.ui.get_skill_roi()
                 self._log_roi(skill_roi, "skill_roi")
@@ -247,12 +247,16 @@ class LampService:
                 parsed = self.parser.parse_ocr(skill_result.get('ocr_results', []))
                 combo_norm = parsed.combo_norm
                 unwanted = parsed.unwanted
-                logger.info(
+                combo_msg = (
                     f"[LampService] 技能組合: {parsed.combo_raw} => {combo_norm} ; 不要? {unwanted}"
                 )
+            if unwanted:
+                logger.debug(combo_msg)
+            else:
+                logger.info(combo_msg)
 
             if unwanted:
-                logger.info("[LampService] 不需要的組合，執行出售")
+                logger.debug("[LampService] 不需要的組合，執行出售")
                 self._log_screenshot(prefix="lamp", suffix="sold_unwanted")
                 self.ui.click_sell_button()
                 self.state.record_ocr_success()
@@ -341,8 +345,8 @@ class LampService:
         rolled_pairs = self._read_pairs_from_rois(rolled_rois)
         original_pairs = self._read_pairs_from_rois(orig_rois_primary)
 
-        logger.info(f"[LampService] rolled pairs: {rolled_pairs}")
-        logger.info(f"[LampService] original pairs: {original_pairs}")
+        logger.debug(f"[LampService] rolled pairs: {rolled_pairs}")
+        logger.debug(f"[LampService] original pairs: {original_pairs}")
 
         if self._is_pairs_incomplete(original_pairs):
             logger.info("[LampService] 原有詞條解析不完整，嘗試使用備用 ROI 重試...")
@@ -360,8 +364,8 @@ class LampService:
 
         if self._is_pairs_incomplete(rolled_pairs) or self._is_pairs_incomplete(original_pairs):
             logger.warning("[LampService] OCR 無法完整辨識詞條，跳過自動比較")
-            # 階段5：OCR 不完整（診斷截圖）
             self._log_screenshot(prefix="lamp", suffix="incomplete_ocr")
+            self._return_to_original_equipment(stage_texts)
             return True
 
         rolled_equip = Equipment.from_pairs(rolled_pairs)
@@ -370,16 +374,14 @@ class LampService:
         evaluator = SkillEvaluator(self.config, self.has_lian_shan_equip)
         result = evaluator.compare_skill_pairs(rolled_equip, original_equip, is_compare)
 
-        logger.info(f"[LampService] 比對結果: replace={result.should_replace} ; reason: {result.reason}")
-
         if result.should_replace:
+            logger.info(f"[LampService] 比對結果: replace=True ; reason: {result.reason}")
             logger.info("[LampService] 執行換裝")
-            # 階段6a：決定保留（換裝）
             self._log_screenshot(prefix="lamp", suffix="kept")
             self.ui.click_keep_button()
         else:
-            logger.info("[LampService] 不換，執行出售")
-            # 階段6b：決定出售（不換）
+            logger.debug(f"[LampService] 比對結果: replace=False ; reason: {result.reason}")
+            logger.debug("[LampService] 不換，執行出售")
             self._log_screenshot(prefix="lamp", suffix="sold")
             self.ui.click_sell_button()
 
@@ -603,8 +605,12 @@ class LampService:
                 logger.warning(f"[LampService] _finish_clean 失敗: {exc}")
             break
 
-    def run(self, times: int = 1000, is_compare: bool = True):
+    def run(self, times: int = 1000, is_compare: bool = True, min_keep: int = 0):
         """執行開神燈主流程。times=-1 表示無限。
+
+        ``min_keep``：剩餘神燈 <= 此值時不啟動自動開裝(仍會清殘留再離開)。
+        對齊 WS 開燈的 ``lamp_min_keep``，讓「保留 N 顆」政策在 WS 路徑失敗、
+        fallback 到 H5 開燈時依然生效(否則 H5 會無視保留量狂開)。0 = 不限制。
 
         Outer loop is gated by LampLoopState — only triggers process_single_lamp
         on HANDLE_POPUP (count stable + popup OCR detected). All other states
@@ -635,8 +641,14 @@ class LampService:
                 logger.warning(f"[LampService] 收尾失敗: {exc}")
             return
 
-        if pre_count == 0:
-            logger.info("[LampService] 剩餘神燈為 0，已清乾淨殘留，不啟動自動開裝")
+        # 剩餘 <= 保留量(min_keep，0 含「沒燈」)→ 清完殘留就離開，不啟動自動開裝。
+        keep_floor = max(0, int(min_keep or 0))
+        if pre_count is not None and pre_count <= keep_floor:
+            if keep_floor > 0:
+                logger.info(f"[LampService] 剩餘神燈 {pre_count} <= 保留量 {keep_floor}，"
+                            "已清殘留，不啟動自動開裝")
+            else:
+                logger.info("[LampService] 剩餘神燈為 0，已清乾淨殘留，不啟動自動開裝")
             try:
                 self.ui.exit_lamp()
             except Exception as exc:
@@ -724,7 +736,7 @@ class LampService:
                 cnt = int(digits) if digits else None
 
             if st == "sell_grid":
-                logger.info("[LampService] 開燈中出現賣場 grid → 全部出售")
+                logger.debug("[LampService] 開燈中出現賣場 grid → 全部出售")
                 self.ui.click_all_sell_and_verify()
                 last_drop_ts = time.time()
                 continue
@@ -866,7 +878,7 @@ class LampService:
             # Sell-page intercept must come BEFORE tick: gold ROI on this page
             # returns the sell-all-gold total, not lamp count.
             if self.ui.is_lamp_sell_page():
-                logger.info("[LampService] 全部出售頁面，執行 click_all_sell_and_verify")
+                logger.debug("[LampService] 全部出售頁面，執行 click_all_sell_and_verify")
                 self.ui.click_all_sell_and_verify()
                 time.sleep(1)
                 continue

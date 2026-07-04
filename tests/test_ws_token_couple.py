@@ -391,7 +391,7 @@ def test_forge_ring_until_empty_respects_max_forges():
         c.close()
 
 
-# --- give_all_in_hand: batches of 20, server caps, code 3 = done -------------
+# --- give_all_in_hand: batches of 10, code 3 -> downgrade then done ----------
 
 def _err_s2c(code):
     """error_info_s2c {error_code#1} on the 0x0201 channel."""
@@ -399,11 +399,43 @@ def _err_s2c(code):
 
 
 def test_give_all_in_hand_stops_on_code3_after_batches():
-    # 2 batches succeed (server capped them to inventory), 3rd batch -> code 3.
+    # 2 batches of 10 succeed; then code 3 -> downgrade 5/2/1 all rejected -> done.
     replies = [
         [s2c(CMD_GIVE_FLOWER, b"")],
         [s2c(CMD_GIVE_FLOWER, b"")],
-        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],
+    ]
+    calls = []
+
+    def responder(body):
+        calls.append(body)
+        if len(calls) <= len(replies):
+            return replies[len(calls) - 1]
+        return [_err_s2c(ERR_NOT_ENOUGH_ITEM)]
+
+    c, fake = _client({CMD_GIVE_FLOWER: responder})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=MILK_TEA, spacing=0)
+        assert out == {"batches_ok": 2, "stopped_reason": "error_code=3"}
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_GIVE_FLOWER]
+        nums = [codec.walk_dict(b)[3] for b in sent]
+        assert nums == [10, 10, 10, 5, 2, 1]  # downgrade ladder after code 3
+        for b in sent:
+            d = codec.walk_dict(b)
+            assert (d[1], d[2]) == (111, MILK_TEA)
+    finally:
+        c.close()
+
+
+def test_give_all_in_hand_downgrade_flushes_remainder():
+    # 7 in hand: num=10 rejected (code 3), num=5 ok, num=2 ok, then rejections
+    # walk 2 -> 1 -> done. Remainder is flushed instead of being left in hand.
+    replies = [
+        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],   # num=10
+        [s2c(CMD_GIVE_FLOWER, b"")],       # num=5
+        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],   # num=5
+        [s2c(CMD_GIVE_FLOWER, b"")],       # num=2
+        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],   # num=2
+        [_err_s2c(ERR_NOT_ENOUGH_ITEM)],   # num=1
     ]
     calls = []
 
@@ -416,31 +448,47 @@ def test_give_all_in_hand_stops_on_code3_after_batches():
         out = give_all_in_hand(c, friend_id=111, flower_id=MILK_TEA, spacing=0)
         assert out == {"batches_ok": 2, "stopped_reason": "error_code=3"}
         sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_GIVE_FLOWER]
-        assert len(sent) == 3
-        for b in sent:  # every batch is num=20 {friend_id#1, flower_id#2, num#3}
-            assert codec.walk_dict(b) == {1: 111, 2: MILK_TEA, 3: 20}
+        nums = [codec.walk_dict(b)[3] for b in sent]
+        assert nums == [10, 5, 5, 2, 2, 1]
     finally:
         c.close()
 
 
 def test_give_all_in_hand_empty_inventory_first_batch():
-    c, _ = _client({CMD_GIVE_FLOWER: lambda _b: [_err_s2c(ERR_NOT_ENOUGH_ITEM)]})
+    c, fake = _client({CMD_GIVE_FLOWER: lambda _b: [_err_s2c(ERR_NOT_ENOUGH_ITEM)]})
     try:
         out = give_all_in_hand(c, friend_id=111, flower_id=FLOWER, spacing=0)
         assert out == {"batches_ok": 0, "stopped_reason": "error_code=3"}
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_GIVE_FLOWER]
+        nums = [codec.walk_dict(b)[3] for b in sent]
+        assert nums == [10, 5, 2, 1]  # empty hand walks the whole ladder once
+    finally:
+        c.close()
+
+
+def test_give_all_in_hand_non_code3_error_stops_immediately():
+    # A non-物品不足 rejection (e.g. code 2 bad param) must NOT downgrade-retry.
+    c, fake = _client({CMD_GIVE_FLOWER: lambda _b: [_err_s2c(2)]})
+    try:
+        out = give_all_in_hand(c, friend_id=111, flower_id=FLOWER, spacing=0)
+        assert out == {"batches_ok": 0, "stopped_reason": "error_code=2"}
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_GIVE_FLOWER]
+        assert len(sent) == 1
     finally:
         c.close()
 
 
 def test_give_all_in_hand_success_notice_369_counts_as_ok():
     # live: give success replies on 0x0201 with code 369 (贈送成功) — must count
-    # as a successful batch, then a real code 3 ends the loop.
-    replies = [[_err_s2c(369)], [_err_s2c(ERR_NOT_ENOUGH_ITEM)]]
+    # as a successful batch, then real code 3s walk the downgrade ladder and end.
+    replies = [[_err_s2c(369)]]
     calls = []
 
     def responder(body):
         calls.append(body)
-        return replies[len(calls) - 1]
+        if len(calls) <= len(replies):
+            return replies[len(calls) - 1]
+        return [_err_s2c(ERR_NOT_ENOUGH_ITEM)]
 
     c, _ = _client({CMD_GIVE_FLOWER: responder})
     try:

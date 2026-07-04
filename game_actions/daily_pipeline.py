@@ -15,6 +15,7 @@ entry point is `run(ctx)`.
 """
 from __future__ import annotations
 
+import datetime
 import logging
 import random
 import time
@@ -34,6 +35,9 @@ from Skill import get_skill_and_partner
 
 from game_actions.carpark_scheduler import run_carpark_check_if_due
 from game_actions.dragon_realm_scheduler import run_dragon_realm_if_due
+from game_actions.fannaoxiao_scheduler import run_fannaoxiao_if_due
+from game_actions.escort_scheduler import run_escort_if_due
+from game_actions.ladder_reward_weekly import run_ladder_reward_if_due
 from game_actions.daily_tasks import click_arena_challenges, daily_acceleration
 from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_dungeon
 from game_actions.lamp_scheduler import _run_lamp_if_due
@@ -48,6 +52,8 @@ from game_actions.periodic_tasks import (
 from game_actions.reward_manager import reward
 from game_actions.skill_manager import switch_skill
 from game_actions.stage_guard import _run_at_main_page, get_stage_with_check
+from game_actions import task_due
+from runtime_services.device_runtime_service import ForceSleepRequested
 from json_manager import (
     is_record_expired,
     return_time,
@@ -101,6 +107,13 @@ class DailyContext:
     wheel_manager: Any
     mission_manager: Any
     family_manager: Any
+    # Granular 每日任務開關（皆有預設 True，向後相容舊呼叫點）
+    enable_hellgate: bool = True
+    enable_arena: bool = True
+    enable_mining: bool = True
+    enable_wanshen: bool = True
+    enable_cloud_battle: bool = True
+    enable_biweekly: bool = True
     ws_done: frozenset = frozenset()  # WS 階段已完成的任務名（ws_phase 對照表輸出）
 
 
@@ -132,10 +145,22 @@ def _run_tasks(ctx: DailyContext) -> None:
     clf = ctx.clf
     rl_recorder = ctx.rl_recorder
     current_time = ctx.current_time
-    enable_dungeon_manager = ctx.enable_dungeon_manager
+    # NB: ctx.enable_dungeon_manager 欄位保留（呼叫介面不變），但 _run_tasks
+    # 內已全面改用 granular flag，不再解包它。
+    enable_hellgate = ctx.enable_hellgate
+    enable_arena = ctx.enable_arena
+    enable_mining = ctx.enable_mining
+    enable_wanshen = ctx.enable_wanshen
+    enable_cloud_battle = ctx.enable_cloud_battle
+    enable_biweekly = ctx.enable_biweekly
     wheel_manager = ctx.wheel_manager
     mission_manager = ctx.mission_manager
     family_manager = ctx.family_manager
+
+    def _force_sleep_checkpoint() -> None:
+        """共用中斷點：force-sleep 一旦出現就立刻轉入睡眠流程。"""
+        if bot_state.check_force_sleep(ip):
+            raise ForceSleepRequested("force sleep requested from dashboard")
 
     def _ws_skip(task_name: str) -> bool:
         """WS 階段已完成 → 記 log + 更新狀態並跳過該任務。"""
@@ -168,44 +193,46 @@ def _run_tasks(ctx: DailyContext) -> None:
         return stage
 
     def _guarded_run(task_name, mismatch_reason, fn, *, step="執行中", log=None) -> str:
+        _force_sleep_checkpoint()
         return _track(
             _run_at_main_page(d, ip, Cnn_model, task_name, mismatch_reason, fn, step=step, log=log)
         )
 
     # Task 0 (experimental): 紅包檢查 — web_h5 + flag-gated, no-op for others
+    _force_sleep_checkpoint()
     if not _ws_skip("紅包檢查"):
         run_redpack_check_if_due(d, ip)
 
     # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
+    _force_sleep_checkpoint()
     run_carpark_check_if_due(d, ip)
     click_white(d)  # dismiss any popup triggered during carpark (e.g. car-attacked notification)
 
     # Device startup: 5558 啟動切換到「戰士推圖」方案 (cleanup 時切回「騙人用」)
+    _force_sleep_checkpoint()
     if ip == "emulator-5558":
         switch_skill(d, '戰士推圖')
 
     # Task 1: 地獄之門
-    stage = get_stage_with_check(d, ip, Cnn_model)
-    record_time = return_time(ip, name="地獄之門")
-    logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
-    logging.info("地獄之門紀錄: {}".format(record_time))
-    # NB: previously had `hell_gate_time = 1` + `or hell_gate_time == 0` here.
-    # The flag was always 1 inside this else branch so the `== 0` clause was
-    # dead. Simplified to plain "is_next_day" check.
-    if record_time is None:
-        should_execute = True
+    _force_sleep_checkpoint()
+    if not enable_hellgate:
+        logger.info("[%s] 地獄之門：已停用，跳過", ip)
     else:
-        should_execute = record_time.get("is_next_day", False)
-        logging.info("should_execute: {}, record_time: {}".format(should_execute, record_time))
-    if should_execute and current_time.tm_min < 20:
-        if stage == "主頁面":
-            bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
-            new_battle.hell_door(d, ip)
-            time_recording(ip, name="地獄之門")
+        stage = get_stage_with_check(d, ip, Cnn_model)
+        logging.info("目前頁面: {}, 當前時間: {}:{}".format(stage, current_time.tm_hour, current_time.tm_min))
+        # due 判斷唯一來源：task_due.is_due("地獄之門")（record.is_next_day + 當前分鐘<20）。
+        # 傳入 pipeline 開頭捕捉的 current_time（非即時 now）：Task 1 前隔了紅包/車位/
+        # get_stage_with_check（秒級），即時 now 可能跨過 :20 minute 邊界而漏做，故用捕捉時鐘
+        # 還原原碼 current_time.tm_min 的等價（_due_hellgate 只讀 .minute，naive datetime 即足）。
+        if task_due.is_due("地獄之門", ip, datetime.datetime(*current_time[:6])):
+            if stage == "主頁面":
+                bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
+                new_battle.hell_door(d, ip)
+                time_recording(ip, name="地獄之門")
+            else:
+                log_main_page_mismatch(d, ip, stage, "地獄之門", "地獄之門到達執行時間但不在主頁面")
         else:
-            log_main_page_mismatch(d, ip, stage, "地獄之門", "地獄之門到達執行時間但不在主頁面")
-    else:
-        logger.info("地獄之門: 尚未到達執行時間或已執行過")
+            logger.info("地獄之門: 尚未到達執行時間或已執行過")
 
     # Task 2: 農場任務
     if not _ws_skip("農場任務"):
@@ -242,6 +269,7 @@ def _run_tasks(ctx: DailyContext) -> None:
         stage = _track(get_stage_with_check(d, ip, Cnn_model))
 
     # Task 5 & 6: 守護靈 + 技能夥伴 (reuse stage from Task 4, matching original)
+    _force_sleep_checkpoint()
     if not _DEVICE_SKIP_GUARDIAN.get(ip, False) and not _ws_skip("領取守護靈"):
         if stage == "主頁面":
             guardian_record = return_time(ip, name="guardian_spirit")
@@ -254,15 +282,24 @@ def _run_tasks(ctx: DailyContext) -> None:
                 time_recording(ip, name="guardian_spirit")
         else:
             log_main_page_mismatch(d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面")
+    _force_sleep_checkpoint()
     if not _DEVICE_SKIP_GUARDIAN.get(ip, False):
         if stage == "主頁面":
+            # WS 付費抽 (gacha 0x0902) 已完成 → 只跳過 ADB 週末付費抽 (weekend_to_buy)，
+            # 但每日免費紅點抽 (get_skill_and_partner 前半段) WS 不涵蓋（free_daily 永遠
+            # 關，遊戲自理，見 tasks/lessons.md 2026-06-15），故仍照跑，避免漏做。
+            # skip 來源：WS_TO_PIPELINE_SKIPS["gacha"] → "抽技能夥伴"（ctx.ws_done）。
+            skip_weekend_draw = "抽技能夥伴" in ctx.ws_done
+            if skip_weekend_draw:
+                logger.info("[%s] 抽技能夥伴: WS 付費抽已完成，跳過週末購買（免費紅點抽照跑）", ip)
             bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
-            get_skill_and_partner(d)
+            get_skill_and_partner(d, skip_weekend_draw=skip_weekend_draw)
             time.sleep(3)
         else:
             log_main_page_mismatch(d, ip, stage, "抽技能夥伴", "抽技能夥伴前不在主頁面")
 
     # Task 7: 商店購買
+    _force_sleep_checkpoint()
     if not _ws_skip("商店購買"):
         stage = _track(get_stage_with_check(d, ip, Cnn_model))
         if stage == "主頁面":
@@ -284,6 +321,7 @@ def _run_tasks(ctx: DailyContext) -> None:
             logger.error(f"[{ip}] 商店購買前不在主頁面，stage={stage}, screenshot={screenshot_path}")
 
     # Task 8: 坐騎強化
+    _force_sleep_checkpoint()
     stage = _guarded_run(
         task_name="坐騎強化",
         mismatch_reason="坐騎強化前不在主頁面",
@@ -291,30 +329,40 @@ def _run_tasks(ctx: DailyContext) -> None:
     )
 
     # Task 9: 每日加速 (no main-page guard)
+    _force_sleep_checkpoint()
     bot_state.update_state(ip, task="每日加速", step="領取中")
     daily_acceleration(d, ip, Cnn_model)
 
     # Task 10: 競技場挑戰
-    stage = _guarded_run(
-        task_name="競技場挑戰",
-        mismatch_reason="競技場挑戰前不在主頁面",
-        fn=lambda: click_arena_challenges(d, ip),
-        step="領取中",
-    )
+    _force_sleep_checkpoint()
+    if not enable_arena:
+        logger.info("[%s] 競技場：已停用，跳過", ip)
+    else:
+        stage = _guarded_run(
+            task_name="競技場挑戰",
+            mismatch_reason="競技場挑戰前不在主頁面",
+            fn=lambda: click_arena_challenges(d, ip),
+            step="領取中",
+        )
 
     # Task 11: 挖礦/Oracle (original had duplicate get_stage_with_check — collapsed to one via helper)
-    stage = _guarded_run(
-        task_name="挖礦/Oracle",
-        mismatch_reason="挖礦/Oracle 前不在主頁面",
-        fn=lambda: oracle(
-            d, None, ip=ip, clf=clf, rl_recorder=rl_recorder,
-            Cnn_model=Cnn_model,
-            max_duration_minutes=config_manager.get_device_config(ip).get("mining_duration_min", 6),
-        ),
-        log="開始執行挖礦任務",
-    )
+    _force_sleep_checkpoint()
+    if not enable_mining:
+        logger.info("[%s] 挖礦/Oracle：已停用，跳過", ip)
+    elif not _ws_skip("挖礦/Oracle"):
+        stage = _guarded_run(
+            task_name="挖礦/Oracle",
+            mismatch_reason="挖礦/Oracle 前不在主頁面",
+            fn=lambda: oracle(
+                d, None, ip=ip, clf=clf, rl_recorder=rl_recorder,
+                Cnn_model=Cnn_model,
+                max_duration_minutes=config_manager.get_device_config(ip).get("mining_duration_min", 6),
+            ),
+            log="開始執行挖礦任務",
+        )
 
     # Task 12: 所有日常任務 (20:00–23:00 only)
+    _force_sleep_checkpoint()
     if 20 <= current_time.tm_hour < 23 and not _ws_skip("所有日常任務"):
         stage = _run_at_main_page(
             d, ip, Cnn_model,
@@ -325,6 +373,7 @@ def _run_tasks(ctx: DailyContext) -> None:
         )
 
     # Task 13: 菇菇武道會
+    _force_sleep_checkpoint()
     _guarded_run(
         task_name="菇菇武道會",
         mismatch_reason="菇菇武道會前不在主頁面",
@@ -341,6 +390,7 @@ def _run_tasks(ctx: DailyContext) -> None:
     )
 
     # Task 13.5: 菇菇雕像每週五一鍵消耗 (gated by cfg.statue_weekly.enabled)
+    _force_sleep_checkpoint()
     _guarded_run(
         task_name="菇菇雕像每週",
         mismatch_reason="菇菇雕像每週執行前不在主頁面",
@@ -349,6 +399,7 @@ def _run_tasks(ctx: DailyContext) -> None:
     )
 
     # Task 14: 航海任務
+    _force_sleep_checkpoint()
     _guarded_run(
         task_name="航海任務 (Sea)",
         mismatch_reason="航海任務前不在主頁面",
@@ -365,18 +416,42 @@ def _run_tasks(ctx: DailyContext) -> None:
     )
 
     # Task 14.5: 龍骸聖域（flag 預設 off；H5 only，adb 會自行 abort）
+    _force_sleep_checkpoint()
     try:
         run_dragon_realm_if_due(ip, d)
     except Exception:
         logger.exception("[%s] 龍骸聖域 任務異常", ip)
 
+    # Task 14.6: 煩惱消（flag 預設 off；H5 only、每日一次、整局免費有界）
+    _force_sleep_checkpoint()
+    try:
+        run_fannaoxiao_if_due(d, ip)
+    except Exception:
+        logger.exception("[%s] 煩惱消 任務異常", ip)
+
+    # Task 14.65: 賞金之路（flag 預設 off；H5 only、六日>=11點、清一輪 NPC；adb 自行跳過）
+    _force_sleep_checkpoint()
+    try:
+        run_escort_if_due(d, ip)
+    except Exception:
+        logger.exception("[%s] 賞金之路 任務異常", ip)
+
+    # Task 14.7: 天梯每週獎勵（每週二一次；H5 only，走頁面 WS 0x4001；無記錄則跳過）
+    _force_sleep_checkpoint()
+    try:
+        run_ladder_reward_if_due(d, ip)
+    except Exception:
+        logger.exception("[%s] 天梯每週獎勵 任務異常", ip)
+
     # Task 15: 萬神試煉
+    _force_sleep_checkpoint()
     if not _ws_skip("萬神試煉"):
         stage = get_stage_with_check(d, ip, Cnn_model)
-        _run_weekly_dungeon(d, ip, stage, enable_dungeon_manager, current_time)
+        _run_weekly_dungeon(d, ip, stage, enable_wanshen, current_time)
 
     # Task 16: 雲端戰鬥
-    if enable_dungeon_manager:
+    _force_sleep_checkpoint()
+    if enable_cloud_battle:
         _run_at_main_page(
             d, ip, Cnn_model,
             task_name="雲端戰鬥",
@@ -385,14 +460,16 @@ def _run_tasks(ctx: DailyContext) -> None:
             step="領取中",
         )
     else:
-        logger.info(f"[{ip}] 副本管家已停用，跳過雲端戰鬥")
+        logger.info(f"[{ip}] 雲端戰鬥已停用，跳過")
 
     # Task 17: 雙週副本
+    _force_sleep_checkpoint()
     stage = get_stage_with_check(d, ip, Cnn_model)
     now_local = time.localtime()
-    _run_biweekly_dungeon(d, ip, stage, enable_dungeon_manager, now_local)
+    _run_biweekly_dungeon(d, ip, stage, enable_biweekly, now_local)
 
     # Task 18: 好友每日禮物 — stage refreshed after run for Task 19 (lamp)
+    _force_sleep_checkpoint()
     if not _ws_skip("好友每日禮物"):
         stage = _guarded_run(
             task_name="好友每日禮物",
@@ -406,10 +483,12 @@ def _run_tasks(ctx: DailyContext) -> None:
         stage = get_stage_with_check(d, ip, Cnn_model)
 
     # Task 19: 開神燈
+    _force_sleep_checkpoint()
     if not _ws_skip("開神燈"):
         _run_lamp_if_due(d, ip, stage)
 
     # Task 20: 轉盤金幣
+    _force_sleep_checkpoint()
     def _spin_wheel():
         logger.info(f"[{ip}] 準備執行轉盤金幣")
         if wheel_manager.spin_and_send_gold():

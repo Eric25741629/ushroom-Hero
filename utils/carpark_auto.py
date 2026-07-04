@@ -654,6 +654,20 @@ def _silver_tier_has_empty(page: Any, *, attempts: int = 6,
 # ───────────────────────────────────────────────────────────────────
 
 
+def _reenter_silver_detail_list(page: Any, pool_id: int) -> bool:
+    """Re-open the SILVER detail list to advance to the next lot.
+
+    Closing a full / no-cluster lot view back to the detail list isn't automatic,
+    so restart the picker flow: ParkingMain → space+cross tab → pool tier.
+    Returns False if any step fails (caller should return None / abort).
+    """
+    if not _ensure_parking_main_open(page):
+        return False
+    if not _open_space_view_and_cross_tab(page):
+        return False
+    return _click_pool_tier(page, pool_id)
+
+
 def park_one_silver(
     page: Any,
     prefer_back: bool = True,
@@ -719,23 +733,14 @@ def park_one_silver(
                 continue
             if snap.empty_count == 0:
                 logger.debug(f"[carpark_auto] 鉑銀{idx+1} full ({snap.occupied_count}/{snap.total})")
-                # Need to re-enter the detail list to try next — closing
-                # the lot view back to detail list isn't automatic here.
-                # Re-click pool tier to restart the picker flow.
-                if not _ensure_parking_main_open(page):
-                    return None
-                if not _open_space_view_and_cross_tab(page):
-                    return None
-                if not _click_pool_tier(page, pool_id):
+                # Closing the lot view back to the detail list isn't automatic;
+                # re-enter to advance to the next lot.
+                if not _reenter_silver_detail_list(page, pool_id):
                     return None
                 continue
             if pass_no == 0 and cluster and not snap.has_cluster_bonus:
                 logger.debug(f"[carpark_auto] 鉑銀{idx+1} has empties but no cluster ({snap.occupied_count}/{snap.total})")
-                if not _ensure_parking_main_open(page):
-                    return None
-                if not _open_space_view_and_cross_tab(page):
-                    return None
-                if not _click_pool_tier(page, pool_id):
+                if not _reenter_silver_detail_list(page, pool_id):
                     return None
                 continue
             logger.info(f"[carpark_auto] 鉑銀{idx+1} OK ({snap.occupied_count}/{snap.total}); "
@@ -1148,6 +1153,25 @@ def take_snapshot(page: Any) -> Optional[CarparkSnapshot]:
     return CarparkSnapshot(deployed=deployed, home_occupied=home_occupied, home_total=home_total)
 
 
+def _build_snapshot_summary(s):
+    """Pure projection of a CarparkSnapshot into the dashboard summary dict.
+
+    Hoisted from a nested closure in reconcile() (cx-7); reads only its arg
+    ``s``. Keep the returned shape byte-identical — the dashboard reads it.
+    """
+    return {
+        "cross_deployed": s.cross_count,
+        "home_occupied": s.home_occupied if s.home_total else "not-visible",
+        "home_capacity": s.home_total if s.home_total else "n/a",
+        "normal_at_friends": "not-visible",
+        "deployed_detail": [
+            {"slot": d.slot_idx, "hp_pct": d.hp_pct, "elapsed": d.timer_str,
+             "park_type": d.park_type, "at_limit": d.at_limit}
+            for d in s.deployed
+        ],
+    }
+
+
 def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
     """One-shot reconciliation: compare current deployed state vs target,
     take corrective actions, return a summary dict.
@@ -1195,19 +1219,6 @@ def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
         # home_occupied is whoever is parked at *my* home — mine + foreign;
         # normal_at_friends is what's deployed at friends' lots and is NOT
         # visible from this view, hence the "not-visible" marker).
-        def _build_snapshot_summary(s):
-            return {
-                "cross_deployed": s.cross_count,
-                "home_occupied": s.home_occupied if s.home_total else "not-visible",
-                "home_capacity": s.home_total if s.home_total else "n/a",
-                "normal_at_friends": "not-visible",
-                "deployed_detail": [
-                    {"slot": d.slot_idx, "hp_pct": d.hp_pct, "elapsed": d.timer_str,
-                     "park_type": d.park_type, "at_limit": d.at_limit}
-                    for d in s.deployed
-                ],
-            }
-
         summary = {
             "snapshot": _build_snapshot_summary(snap),
             "target": {

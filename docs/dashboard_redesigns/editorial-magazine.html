@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>菇勇者中控 — The Daily Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,900;1,500;1,700&family=Spectral:ital,wght@0,400;0,500;0,600;1,400&family=Archivo:wght@400;500;600;700&family=Noto+Serif+TC:wght@500;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     THE DAILY DISPATCH — Editorial / Magazine control panel
+     Warm-paper & ink palette, serif display + sans body,
+     numbered section markers, kickers, rules, drop-caps.
+     ============================================================ */
+
+  :root {
+    /* — Paper & ink palette — */
+    --paper:        #f4efe4;   /* warm newsprint */
+    --paper-2:      #ece4d3;   /* deeper paper for panels */
+    --paper-card:   #fbf8f0;   /* bright stock for cards */
+    --ink:          #1c1812;   /* near-black ink */
+    --ink-soft:     #45403a;   /* body ink */
+    --ink-faint:    #8a8175;   /* captions / metadata */
+    --rule:         #c9bfa8;   /* hairline rules */
+    --rule-bold:    #1c1812;   /* heavy editorial rules */
+
+    /* — Editorial accents (semantic, restrained) — */
+    --vermilion:    #c2401c;   /* alerts / offline / masthead flag */
+    --vermilion-d:  #9b3115;
+    --forest:       #2f6b41;   /* online / live / done */
+    --forest-d:     #234f31;
+    --ochre:        #b9831f;   /* paused / pending */
+    --ochre-d:      #8f6414;
+    --teal:         #1f6b6b;   /* degraded / ws */
+    --indigo:       #2a3b66;   /* links / labeler */
+
+    /* — Type scale (editorial, large contrast) — */
+    --display: "Playfair Display", "Noto Serif TC", Georgia, serif;
+    --serif:   "Spectral", "Noto Serif TC", Georgia, serif;
+    --sans:    "Archivo", "Helvetica Neue", Arial, sans-serif;
+    --mono:    "JetBrains Mono", "SF Mono", monospace;
+
+    --shadow-card: 0 1px 0 rgba(28,24,18,.05), 0 18px 40px -28px rgba(28,24,18,.45);
+    --shadow-lift: 0 2px 0 rgba(28,24,18,.06), 0 30px 60px -30px rgba(28,24,18,.55);
+
+    --rail-w: 232px;
+    --rail-w-collapsed: 70px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    font-family: var(--sans);
+    color: var(--ink);
+    background-color: var(--paper);
+    /* paper grain via layered subtle gradients + noise */
+    background-image:
+      radial-gradient(circle at 20% 10%, rgba(255,255,255,.5), transparent 40%),
+      radial-gradient(circle at 85% 80%, rgba(201,191,168,.25), transparent 45%),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection { background: var(--vermilion); color: var(--paper); }
+
+  /* Custom thin scrollbar */
+  ::-webkit-scrollbar { width: 11px; height: 11px; }
+  ::-webkit-scrollbar-track { background: var(--paper-2); }
+  ::-webkit-scrollbar-thumb { background: var(--rule); border: 3px solid var(--paper-2); border-radius: 0; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--ink-faint); }
+
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; cursor: pointer; }
+
+  /* ============================================================
+     LAYOUT SHELL
+     ============================================================ */
+  .shell { display: flex; min-height: 100vh; }
+
+  /* — — — SIDE RAIL (the spine of the magazine) — — — */
+  .rail {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: var(--rail-w);
+    background: var(--ink);
+    color: var(--paper);
+    display: flex;
+    flex-direction: column;
+    z-index: 200;
+    transition: width .42s cubic-bezier(.16,1,.3,1);
+    overflow: hidden;
+  }
+  .rail.collapsed { width: var(--rail-w-collapsed); }
+
+  .rail__top {
+    padding: 18px 18px 14px;
+    border-bottom: 1px solid rgba(244,239,228,.16);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .rail__toggle {
+    appearance: none; background: transparent; border: 1px solid rgba(244,239,228,.3);
+    color: var(--paper); width: 34px; height: 34px; flex: 0 0 34px;
+    display: grid; place-items: center; font-size: 16px;
+    transition: background .2s, border-color .2s, transform .3s;
+  }
+  .rail__toggle:hover { background: rgba(244,239,228,.12); }
+  .rail__toggle:active { transform: scale(.92); }
+  .rail__toggle:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+
+  .rail__brand { overflow: hidden; white-space: nowrap; }
+  .rail__brand .vol {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .22em;
+    text-transform: uppercase; color: var(--ochre); display: block; margin-bottom: 1px;
+  }
+  .rail__brand .name {
+    font-family: var(--display); font-weight: 700; font-size: 18px; line-height: 1;
+    font-style: italic;
+  }
+  .rail.collapsed .rail__brand { opacity: 0; }
+
+  nav.rail__nav { padding: 14px 12px; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .nav-sec-label {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase;
+    color: rgba(244,239,228,.4); padding: 14px 10px 6px; white-space: nowrap;
+  }
+  .rail.collapsed .nav-sec-label { opacity: 0; height: 18px; padding: 8px 0; }
+
+  .nav-item {
+    display: flex; align-items: center; gap: 14px;
+    padding: 11px 12px; color: rgba(244,239,228,.78);
+    background: transparent; border: none; width: 100%; text-align: left;
+    position: relative; font-family: var(--sans); font-size: 13.5px; font-weight: 500;
+    letter-spacing: .01em; white-space: nowrap;
+    transition: color .2s, background .2s;
+  }
+  .nav-item .ico {
+    flex: 0 0 26px; width: 26px; height: 26px; display: grid; place-items: center;
+    font-size: 15px; opacity: .92;
+  }
+  .nav-item .lbl { overflow: hidden; transition: opacity .3s; }
+  .rail.collapsed .nav-item .lbl { opacity: 0; }
+  .nav-item::before {
+    content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%) scaleY(0);
+    width: 3px; height: 60%; background: var(--vermilion); transition: transform .28s cubic-bezier(.16,1,.3,1);
+  }
+  .nav-item:hover { color: var(--paper); background: rgba(244,239,228,.06); }
+  .nav-item:hover::before { transform: translateY(-50%) scaleY(1); }
+  .nav-item.active { color: var(--paper); }
+  .nav-item.active::before { transform: translateY(-50%) scaleY(1); }
+  .nav-item.active .ico { color: var(--vermilion); opacity: 1; }
+  .nav-item:focus-visible { outline: 2px solid var(--vermilion); outline-offset: -2px; }
+
+  .rail__foot {
+    padding: 14px; border-top: 1px solid rgba(244,239,228,.16);
+    font-family: var(--mono); font-size: 9px; letter-spacing: .12em; color: rgba(244,239,228,.45);
+    white-space: nowrap;
+  }
+  .rail.collapsed .rail__foot { opacity: 0; }
+
+  /* — — — MAIN CANVAS — — — */
+  .canvas {
+    margin-left: var(--rail-w);
+    flex: 1; min-width: 0;
+    transition: margin-left .42s cubic-bezier(.16,1,.3,1);
+  }
+  .rail.collapsed ~ .canvas { margin-left: var(--rail-w-collapsed); }
+
+  .page { display: none; }
+  .page.active { display: block; animation: pageIn .5s cubic-bezier(.16,1,.3,1); }
+  @keyframes pageIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+  /* ============================================================
+     MASTHEAD (top bar) — front page of a paper
+     ============================================================ */
+  .masthead {
+    padding: 26px clamp(20px, 4vw, 56px) 0;
+    max-width: 1500px;
+  }
+  .masthead__flagline {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap;
+    border-top: 3px solid var(--rule-bold);
+    border-bottom: 1px solid var(--rule-bold);
+    padding: 8px 0;
+  }
+  .masthead__date {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-soft);
+  }
+  .masthead__edition {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-soft);
+    display: flex; align-items: center; gap: 7px;
+  }
+  .masthead__edition .price {
+    border: 1px solid var(--rule-bold); padding: 1px 6px; font-weight: 500;
+  }
+
+  .masthead__title {
+    text-align: center; padding: 18px 0 12px;
+    border-bottom: 3px double var(--rule-bold);
+  }
+  .masthead__title h1 {
+    font-family: var(--display); font-weight: 900; font-style: italic;
+    font-size: clamp(34px, 6.5vw, 78px); line-height: .92; margin: 0;
+    letter-spacing: -.015em;
+  }
+  .masthead__title .sub {
+    font-family: var(--serif); font-style: italic; font-size: clamp(12px, 1.6vw, 17px);
+    color: var(--ink-soft); margin-top: 8px; letter-spacing: .02em;
+  }
+
+  /* secondary control strip below masthead */
+  .ctrlstrip {
+    display: flex; align-items: stretch; gap: 0;
+    border-bottom: 1px solid var(--rule-bold);
+    flex-wrap: wrap;
+  }
+  .ctrlstrip__col {
+    padding: 12px 18px; border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 6px; justify-content: center;
+    flex: 1 1 auto;
+  }
+  .ctrlstrip__col:last-child { border-right: none; }
+  .col-kicker {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* OCR status badge */
+  .ocr-badge {
+    display: inline-flex; align-items: center; gap: 9px;
+    font-family: var(--serif); font-size: 14px; font-weight: 500;
+  }
+  .ocr-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; position: relative; }
+  .ocr-badge.ok .ocr-dot { background: var(--forest); }
+  .ocr-badge.ok .ocr-dot::after {
+    content: ""; position: absolute; inset: -5px; border-radius: 50%;
+    border: 1px solid var(--forest); animation: ping 2.4s cubic-bezier(0,0,.2,1) infinite;
+  }
+  .ocr-badge.error .ocr-dot { background: var(--vermilion); }
+  @keyframes ping { 0% { transform: scale(.6); opacity: .9; } 80%,100% { transform: scale(1.7); opacity: 0; } }
+  .ocr-runtime { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+
+  /* program info "byline" card */
+  .byline {
+    border: none; background: transparent; text-align: left; padding: 0;
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .byline .ver {
+    font-family: var(--display); font-style: italic; font-weight: 700; font-size: 17px;
+    transition: color .2s;
+  }
+  .byline:hover .ver { color: var(--vermilion); }
+  .byline .git { font-family: var(--mono); font-size: 9.5px; color: var(--ink-faint); letter-spacing: .05em; }
+  .byline:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 4px; }
+
+  /* button cluster */
+  .btn-cluster { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+  /* ============================================================
+     EDITORIAL BUTTON SYSTEM
+     ============================================================ */
+  .ebtn {
+    --bc: var(--ink);
+    position: relative;
+    appearance: none; border: 1.5px solid var(--bc); background: transparent;
+    color: var(--bc); font-family: var(--sans); font-weight: 600;
+    font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase;
+    padding: 9px 15px; line-height: 1; display: inline-flex; align-items: center; gap: 7px;
+    transition: color .22s, background .22s, transform .12s, box-shadow .22s;
+    overflow: hidden; white-space: nowrap;
+  }
+  .ebtn::before {
+    content: ""; position: absolute; inset: 0; background: var(--bc);
+    transform: scaleY(0); transform-origin: bottom; transition: transform .26s cubic-bezier(.16,1,.3,1);
+    z-index: 0;
+  }
+  .ebtn > * { position: relative; z-index: 1; }
+  .ebtn:hover { color: var(--paper-card); }
+  .ebtn:hover::before { transform: scaleY(1); }
+  .ebtn:active { transform: translateY(1px); }
+  .ebtn:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+  .ebtn:disabled { opacity: .4; cursor: not-allowed; }
+  .ebtn:disabled:hover { color: var(--bc); }
+  .ebtn:disabled:hover::before { transform: scaleY(0); }
+
+  .ebtn--solid { background: var(--bc); color: var(--paper-card); }
+  .ebtn--solid:hover { color: var(--paper-card); }
+  .ebtn--solid::before { background: rgba(255,255,255,.16); transform: scaleX(0); transform-origin: left; }
+  .ebtn--solid:hover::before { transform: scaleX(1); }
+
+  .ebtn--vermilion { --bc: var(--vermilion); }
+  .ebtn--forest    { --bc: var(--forest); }
+  .ebtn--ochre     { --bc: var(--ochre); }
+  .ebtn--indigo    { --bc: var(--indigo); }
+  .ebtn--teal      { --bc: var(--teal); }
+  .ebtn--ghost     { --bc: var(--ink-faint); }
+
+  .ebtn--sm { font-size: 10px; padding: 7px 11px; letter-spacing: .05em; }
+  .ebtn--icon { width: 36px; height: 36px; padding: 0; justify-content: center; font-size: 15px; }
+
+  /* pending / spinner state */
+  .ebtn.pending { pointer-events: none; color: transparent !important; }
+  .ebtn.pending::before { transform: scaleY(1); }
+  .ebtn.pending::after {
+    content: ""; position: absolute; z-index: 2; top: 50%; left: 50%;
+    width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px;
+    border: 2px solid var(--paper-card); border-top-color: transparent; border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ============================================================
+     DASHBOARD BODY — asymmetric editorial grid
+     ============================================================ */
+  .dash-body { padding: 0 clamp(20px, 4vw, 56px) 80px; max-width: 1500px; }
+
+  /* section header — numbered marker + kicker + rule */
+  .sec-head {
+    display: flex; align-items: flex-end; gap: 18px;
+    margin: 40px 0 22px; padding-bottom: 10px;
+    border-bottom: 2px solid var(--rule-bold);
+  }
+  .sec-num {
+    font-family: var(--display); font-style: italic; font-weight: 900;
+    font-size: clamp(38px, 5vw, 58px); line-height: .8; color: var(--vermilion);
+    flex: 0 0 auto;
+  }
+  .sec-head__text { flex: 1; }
+  .sec-kicker {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 4px;
+  }
+  .sec-head h2 {
+    font-family: var(--display); font-weight: 700; font-size: clamp(22px, 3vw, 32px);
+    margin: 0; line-height: 1; letter-spacing: -.01em;
+  }
+  .sec-head__meta {
+    font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--ink-soft);
+    text-align: right; flex: 0 0 auto; max-width: 240px;
+  }
+
+  /* device grid — masonry-ish columns, varied widths */
+  .fleet-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(348px, 1fr));
+    gap: 24px;
+    align-items: start;
+  }
+
+  /* ============================================================
+     DEVICE CARD — a magazine "article"
+     ============================================================ */
+  .card {
+    position: relative;
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    box-shadow: var(--shadow-card);
+    display: flex; flex-direction: column;
+    transition: transform .35s cubic-bezier(.16,1,.3,1), box-shadow .35s;
+  }
+  .card::before {
+    /* status edge stripe — left margin rule of a column */
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: var(--ink-faint); transition: background .3s;
+  }
+  .card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lift); }
+
+  .card.ONLINE::before   { background: var(--forest); }
+  .card.PAUSED::before   { background: var(--ochre); }
+  .card.OFFLINE::before  { background: var(--vermilion); }
+  .card.DISABLED::before { background: var(--rule); }
+  .card.DEGRADED::before { background: var(--teal); }
+
+  .card.OFFLINE, .card.DISABLED { opacity: .82; }
+  .card.OFFLINE .card__head h3, .card.DISABLED .card__head h3 { color: var(--ink-faint); }
+
+  /* card header */
+  .card__head {
+    padding: 16px 18px 12px 20px;
+    border-bottom: 1px solid var(--rule);
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .card__headmain { flex: 1; min-width: 0; }
+  .card__eyebrow {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase;
+    color: var(--ink-faint); display: flex; align-items: center; gap: 7px; margin-bottom: 5px;
+  }
+  .card__head h3 {
+    font-family: var(--display); font-weight: 700; font-size: 21px; line-height: 1;
+    margin: 0; letter-spacing: -.01em;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .card__ip {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ink-faint); margin-top: 4px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .backend-tag {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .04em;
+    padding: 1px 6px; border: 1px solid var(--rule); color: var(--ink-soft);
+    text-transform: uppercase;
+  }
+  .backend-tag.ws { border-color: var(--teal); color: var(--teal); }
+
+  .gear {
+    flex: 0 0 auto; appearance: none; background: transparent; border: 1px solid var(--rule);
+    width: 30px; height: 30px; display: grid; place-items: center; color: var(--ink-soft);
+    font-size: 14px; transition: background .2s, color .2s, transform .4s, border-color .2s;
+  }
+  .gear:hover { background: var(--ink); color: var(--paper-card); border-color: var(--ink); transform: rotate(60deg); }
+  .gear:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+
+  /* status badge ribbon */
+  .status-ribbon {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--sans); font-weight: 600; font-size: 10px; letter-spacing: .1em;
+    text-transform: uppercase; padding: 3px 9px 3px 7px;
+    border: 1px solid currentColor;
+  }
+  .status-ribbon .sdot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .st-ONLINE   { color: var(--forest-d); }
+  .st-PAUSED   { color: var(--ochre-d); }
+  .st-OFFLINE  { color: var(--vermilion-d); }
+  .st-DISABLED { color: var(--ink-faint); }
+  .st-DEGRADED { color: var(--teal); }
+  .st-ONLINE .sdot { animation: livepulse 1.8s ease-in-out infinite; }
+  @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  /* card lede — current task as a pull-quote with drop-cap */
+  .card__lede {
+    padding: 14px 18px 14px 20px;
+    border-bottom: 1px dashed var(--rule);
+  }
+  .lede-kicker {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--vermilion); margin-bottom: 4px;
+  }
+  .lede-task {
+    font-family: var(--serif); font-size: 17px; font-weight: 500; line-height: 1.25;
+    color: var(--ink); letter-spacing: .005em;
+  }
+  .lede-step {
+    font-family: var(--serif); font-style: italic; font-size: 12.5px; color: var(--ink-soft);
+    margin-top: 5px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  }
+  .step-timer {
+    font-family: var(--mono); font-size: 10.5px; color: var(--ochre-d);
+    border: 1px solid var(--ochre); padding: 0 5px; letter-spacing: .04em;
+  }
+
+  /* info ledger — like a stat table in a magazine */
+  .ledger {
+    padding: 6px 18px 12px 20px;
+  }
+  .ledger-row {
+    display: grid; grid-template-columns: 1fr auto;
+    align-items: baseline; gap: 12px;
+    padding: 7px 0; border-bottom: 1px solid rgba(201,191,168,.4);
+  }
+  .ledger-row:last-child { border-bottom: none; }
+  .ledger-label {
+    font-family: var(--sans); font-size: 10.5px; letter-spacing: .04em; color: var(--ink-faint);
+    text-transform: uppercase;
+  }
+  .ledger-val {
+    font-family: var(--mono); font-size: 12.5px; color: var(--ink); text-align: right;
+  }
+  .ledger-val.big {
+    font-family: var(--display); font-style: italic; font-weight: 700; font-size: 19px;
+  }
+  .ledger-val .unit { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); font-style: normal; }
+  .planner-chip {
+    font-family: var(--mono); font-size: 10px; padding: 1px 6px; border: 1px solid var(--indigo);
+    color: var(--indigo); letter-spacing: .04em;
+  }
+
+  /* carpark expandable row */
+  .carpark {
+    margin: 0 18px 12px 20px; border: 1px solid var(--rule);
+    background: linear-gradient(180deg, rgba(236,228,211,.5), transparent);
+  }
+  .carpark__toggle {
+    width: 100%; appearance: none; background: transparent; border: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 9px 12px; text-align: left;
+  }
+  .carpark__toggle:hover { background: rgba(201,191,168,.2); }
+  .carpark__toggle:focus-visible { outline: 2px solid var(--vermilion); outline-offset: -2px; }
+  .cp-title {
+    font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--ink-soft); display: flex; align-items: center; gap: 8px;
+  }
+  .cp-summary { font-family: var(--mono); font-size: 11px; color: var(--ink); }
+  .cp-caret { transition: transform .3s; color: var(--ink-faint); font-size: 11px; }
+  .carpark.open .cp-caret { transform: rotate(90deg); }
+  .carpark__detail {
+    display: grid; grid-template-rows: 0fr; transition: grid-template-rows .35s cubic-bezier(.16,1,.3,1);
+  }
+  .carpark.open .carpark__detail { grid-template-rows: 1fr; }
+  .carpark__detail > div { overflow: hidden; }
+  .cp-car {
+    display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center;
+    padding: 7px 12px; border-top: 1px dashed var(--rule); font-family: var(--mono); font-size: 10.5px;
+  }
+  .cp-bar { height: 4px; background: var(--rule); position: relative; }
+  .cp-bar i { position: absolute; inset: 0 auto 0 0; background: var(--teal); }
+
+  /* daily progress badges — a "contents list" of dailies */
+  .progress {
+    padding: 4px 18px 14px 20px; border-top: 1px solid rgba(201,191,168,.5);
+  }
+  .progress__kicker {
+    font-family: var(--mono); font-size: 8.5px; letter-spacing: .2em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 8px;
+  }
+  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge {
+    font-family: var(--sans); font-size: 10.5px; font-weight: 500;
+    padding: 3px 8px; border: 1px solid var(--rule); color: var(--ink-faint);
+    display: inline-flex; align-items: center; gap: 5px; letter-spacing: .01em;
+    transition: background .2s, color .2s, border-color .2s;
+  }
+  .badge .mk { font-size: 9px; }
+  .badge.done { color: var(--forest-d); border-color: var(--forest); background: rgba(47,107,65,.07); }
+  .badge.done .mk { color: var(--forest); }
+
+  /* log box — ticker / wire feed */
+  .logbox {
+    margin: 0 18px 14px 20px; background: var(--ink); color: var(--paper);
+    border: 1px solid var(--ink); padding: 9px 12px; height: 78px; overflow: hidden;
+    font-family: var(--mono); font-size: 10.5px; line-height: 1.5; position: relative;
+  }
+  .logbox::before {
+    content: "WIRE"; position: absolute; top: 6px; right: 8px;
+    font-size: 8px; letter-spacing: .2em; color: rgba(244,239,228,.3);
+  }
+  .logbox .lline { color: rgba(244,239,228,.62); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .logbox .lline:last-child { color: var(--paper); }
+  .logbox .lline .t { color: var(--ochre); }
+
+  /* action bar */
+  .card__actions {
+    margin-top: auto; padding: 13px 18px 16px 20px; border-top: 1px solid var(--rule-bold);
+    display: flex; flex-wrap: wrap; gap: 7px;
+  }
+
+  /* ============================================================
+     SIDE editorial column note (atmosphere)
+     ============================================================ */
+  .editorial-note {
+    grid-column: 1 / -1;
+    display: grid; grid-template-columns: 1fr; gap: 0;
+  }
+
+  /* fleet summary strip — data-viz as editorial infographic */
+  .fleet-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    border: 1px solid var(--rule-bold); background: var(--paper-card);
+    margin-bottom: 6px; box-shadow: var(--shadow-card);
+  }
+  .summary-cell {
+    padding: 16px 18px; border-right: 1px solid var(--rule);
+    display: flex; flex-direction: column; gap: 3px;
+  }
+  .summary-cell:last-child { border-right: none; }
+  .summary-num {
+    font-family: var(--display); font-weight: 900; font-style: italic; font-size: 40px; line-height: .85;
+  }
+  .summary-num.online { color: var(--forest); }
+  .summary-num.paused { color: var(--ochre); }
+  .summary-num.offline { color: var(--vermilion); }
+  .summary-label {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint);
+  }
+  .summary-cell .spark { display: flex; align-items: flex-end; gap: 2px; height: 22px; margin-top: 4px; }
+  .summary-cell .spark i { flex: 1; background: var(--ink-faint); opacity: .5; }
+  .summary-cell .spark i.hi { background: var(--vermilion); opacity: 1; }
+
+  /* ============================================================
+     MODALS
+     ============================================================ */
+  .overlay {
+    position: fixed; inset: 0; z-index: 1000; display: none;
+    background: rgba(28,24,18,.55);
+    backdrop-filter: blur(3px) saturate(.9);
+    padding: 40px 20px; overflow-y: auto;
+  }
+  .overlay.open { display: flex; align-items: flex-start; justify-content: center; animation: fade .3s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  .modal {
+    background: var(--paper-card); width: 100%; max-width: 640px;
+    border: 1px solid var(--rule-bold);
+    box-shadow: 0 40px 90px -30px rgba(0,0,0,.7);
+    animation: modalIn .42s cubic-bezier(.16,1,.3,1);
+    position: relative;
+  }
+  @keyframes modalIn { from { opacity: 0; transform: translateY(24px) scale(.98); } to { opacity: 1; transform: none; } }
+  .modal.wide { max-width: 760px; }
+
+  .modal__head {
+    padding: 22px 26px 16px; border-bottom: 3px double var(--rule-bold);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;
+  }
+  .modal__kicker {
+    font-family: var(--mono); font-size: 9px; letter-spacing: .24em; text-transform: uppercase;
+    color: var(--vermilion); margin-bottom: 6px;
+  }
+  .modal__head h2 {
+    font-family: var(--display); font-weight: 700; font-size: 27px; margin: 0; line-height: 1;
+  }
+  .modal__head p { font-family: var(--serif); font-style: italic; font-size: 13px; color: var(--ink-soft); margin: 8px 0 0; }
+  .modal__close {
+    flex: 0 0 auto; appearance: none; background: transparent; border: 1.5px solid var(--ink);
+    width: 34px; height: 34px; font-size: 16px; color: var(--ink);
+    transition: background .2s, color .2s, transform .12s;
+  }
+  .modal__close:hover { background: var(--vermilion); border-color: var(--vermilion); color: var(--paper-card); }
+  .modal__close:active { transform: scale(.92); }
+  .modal__close:focus-visible { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+
+  .modal__body { padding: 22px 26px; }
+  .modal__foot {
+    padding: 16px 26px 22px; border-top: 1px solid var(--rule);
+    display: flex; justify-content: flex-end; gap: 10px;
+  }
+
+  /* form fields */
+  .field { margin-bottom: 16px; }
+  .field > label {
+    display: block; font-family: var(--mono); font-size: 9.5px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--ink-soft); margin-bottom: 6px;
+  }
+  .field input[type=text], .field input[type=number], .field input[type=url],
+  .field select, .field textarea {
+    width: 100%; font-family: var(--serif); font-size: 14px; color: var(--ink);
+    background: var(--paper); border: none; border-bottom: 1.5px solid var(--ink);
+    padding: 9px 4px; transition: border-color .2s, background .2s;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-bottom-color: var(--vermilion); background: rgba(194,64,28,.04);
+  }
+  .field textarea { resize: vertical; min-height: 70px; line-height: 1.5; }
+  .field select {
+    appearance: none; cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%231c1812'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 6px center; padding-right: 22px;
+  }
+  .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .field-row-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+
+  .check {
+    display: flex; align-items: center; gap: 10px; padding: 8px 0; cursor: pointer;
+    font-family: var(--serif); font-size: 14px;
+  }
+  .check input { position: absolute; opacity: 0; }
+  .check .box {
+    width: 20px; height: 20px; border: 1.5px solid var(--ink); flex: 0 0 20px;
+    display: grid; place-items: center; transition: background .2s;
+  }
+  .check .box::after { content: "✓"; font-size: 12px; color: var(--paper-card); opacity: 0; transition: opacity .15s; }
+  .check input:checked + .box { background: var(--ink); }
+  .check input:checked + .box::after { opacity: 1; }
+  .check input:focus-visible + .box { outline: 2px solid var(--vermilion); outline-offset: 2px; }
+
+  .modal-subhead {
+    font-family: var(--display); font-style: italic; font-weight: 700; font-size: 17px;
+    margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--rule);
+    display: flex; align-items: baseline; gap: 10px;
+  }
+  .modal-subhead .n {
+    font-family: var(--mono); font-style: normal; font-size: 11px; color: var(--vermilion); font-weight: 400;
+  }
+  details.adv { margin: 8px 0 4px; border: 1px solid var(--rule); }
+  details.adv summary {
+    cursor: pointer; padding: 10px 14px; font-family: var(--mono); font-size: 10px;
+    letter-spacing: .12em; text-transform: uppercase; color: var(--ink-soft); list-style: none;
+    display: flex; align-items: center; gap: 8px;
+  }
+  details.adv summary::-webkit-details-marker { display: none; }
+  details.adv summary::before { content: "＋"; color: var(--vermilion); }
+  details.adv[open] summary::before { content: "－"; }
+  details.adv[open] summary { border-bottom: 1px solid var(--rule); }
+  details.adv .adv-body { padding: 14px; }
+
+  .features-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+
+  .statusbox {
+    font-family: var(--mono); font-size: 11px; color: var(--ink-soft);
+    background: var(--paper); border: 1px solid var(--rule); padding: 12px;
+    min-height: 60px; white-space: pre-wrap; line-height: 1.55;
+  }
+  .fix-note {
+    font-family: var(--serif); font-size: 14px; color: var(--forest-d);
+    background: rgba(47,107,65,.07); border-left: 3px solid var(--forest);
+    padding: 12px 14px; margin-top: 14px; line-height: 1.55;
+  }
+
+  /* ============================================================
+     LIVE VIEW MODAL
+     ============================================================ */
+  .lvoverlay {
+    position: fixed; inset: 0; z-index: 1300; display: none;
+    background: rgba(12,10,8,.9); padding: 24px; flex-direction: column; align-items: center;
+  }
+  .lvoverlay.open { display: flex; animation: fade .3s ease; }
+  .lv-head {
+    width: 100%; max-width: 560px; display: flex; align-items: center; justify-content: space-between;
+    color: var(--paper); padding-bottom: 14px; gap: 14px;
+  }
+  .lv-head .lbl { font-family: var(--display); font-style: italic; font-weight: 700; font-size: 20px; }
+  .lv-status { font-family: var(--mono); font-size: 11px; color: var(--ochre); margin: 8px 0; }
+  .lv-canvas-frame { border: 1px solid rgba(244,239,228,.2); box-shadow: 0 30px 80px -20px rgba(0,0,0,.8); background: #000; }
+  .lv-canvas-frame canvas { display: block; width: min(300px, 80vw); height: auto; aspect-ratio: 540/960; }
+
+  /* ============================================================
+     LABELER PAGE
+     ============================================================ */
+  .subpage { padding: 0 clamp(20px,4vw,56px) 80px; max-width: 1200px; }
+  .subpage .sub-masthead {
+    border-top: 3px solid var(--rule-bold); border-bottom: 1px solid var(--rule-bold);
+    padding: 22px 0 16px; margin-top: 26px;
+  }
+  .subpage .sub-masthead .kick {
+    font-family: var(--mono); font-size: 10px; letter-spacing: .24em; text-transform: uppercase; color: var(--vermilion);
+  }
+  .subpage .sub-masthead h1 {
+    font-family: var(--display); font-weight: 900; font-style: italic; font-size: clamp(30px,5vw,52px);
+    margin: 6px 0 0; line-height: .95;
+  }
+  .panel {
+    background: var(--paper-card); border: 1px solid var(--rule); box-shadow: var(--shadow-card);
+    padding: 22px 24px; margin-top: 22px;
+  }
+  .panel h3 {
+    font-family: var(--display); font-style: italic; font-weight: 700; font-size: 20px; margin: 0 0 4px;
+  }
+  .panel .panel-kick { font-family: var(--mono); font-size: 9px; letter-spacing: .2em; text-transform: uppercase; color: var(--ink-faint); margin-bottom: 16px; }
+  .readme-frame-wrap { border: 1px solid var(--rule-bold); margin-top: 22px; background: var(--paper-card); }
+  .readme-frame-wrap iframe { width: 100%; height: 70vh; border: none; display: block; }
+
+  /* ============================================================
+     RESPONSIVE
+     ============================================================ */
+  @media (max-width: 1024px) {
+    .fleet-grid { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+    .features-grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 768px) {
+    .rail { transform: translateX(0); width: var(--rail-w-collapsed); }
+    .rail .rail__brand, .rail .nav-item .lbl, .rail .nav-sec-label, .rail .rail__foot { opacity: 0; }
+    .rail.collapsed { width: var(--rail-w); }
+    .rail.collapsed .rail__brand, .rail.collapsed .nav-item .lbl,
+    .rail.collapsed .nav-sec-label, .rail.collapsed .rail__foot { opacity: 1; }
+    .canvas { margin-left: var(--rail-w-collapsed); }
+    .rail.collapsed ~ .canvas { margin-left: var(--rail-w); }
+    .ctrlstrip__col { flex-basis: 100%; border-right: none; border-bottom: 1px solid var(--rule); }
+    .field-row, .field-row-3 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .fleet-grid { grid-template-columns: 1fr; }
+    .masthead, .dash-body, .subpage { padding-left: 16px; padding-right: 16px; }
+    .sec-num { font-size: 34px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <!-- ===================== SIDE RAIL ===================== -->
+  <aside class="rail" id="rail" aria-label="主導覽">
+    <div class="rail__top">
+      <button class="rail__toggle" id="railToggle" onclick="toggleSidebar()" aria-label="展開或收合側欄">☰</button>
+      <div class="rail__brand">
+        <span class="vol">Vol. VII · Daily</span>
+        <span class="name">The Dispatch</span>
+      </div>
+    </div>
+
+    <nav class="rail__nav">
+      <div class="nav-sec-label">編輯室 · Newsroom</div>
+      <button class="nav-item active" data-page="dashboard" onclick="switchPage('dashboard', this)">
+        <span class="ico">🏠</span><span class="lbl">頭版 · 機隊總覽</span>
+      </button>
+      <button class="nav-item" data-page="labeler" onclick="switchPage('labeler', this)">
+        <span class="ico">🏷</span><span class="lbl">標註室 · Labeler</span>
+      </button>
+      <button class="nav-item" data-page="readme" onclick="switchPage('readme', this)">
+        <span class="ico">📢</span><span class="lbl">公告欄 · Updates</span>
+      </button>
+
+      <div class="nav-sec-label">附錄 · Annex</div>
+      <a class="nav-item" href="/fly-pet">
+        <span class="ico">🥁</span><span class="lbl">飛寵專欄</span>
+      </a>
+      <a class="nav-item" href="/inventory">
+        <span class="ico">📦</span><span class="lbl">倉庫 · 守護靈／附魔</span>
+      </a>
+    </nav>
+
+    <div class="rail__foot">EST. 2026 · MUSHROOM PRESS</div>
+  </aside>
+
+  <!-- ===================== MAIN CANVAS ===================== -->
+  <main class="canvas">
+
+    <!-- ============ DASHBOARD PAGE ============ -->
+    <section class="page active" id="page-dashboard">
+
+      <!-- MASTHEAD -->
+      <header class="masthead">
+        <div class="masthead__flagline">
+          <span class="masthead__date" id="liveDate">星期日 · 二〇二六年六月十四日</span>
+          <span class="masthead__edition">
+            自動掛機特刊 · Autopilot Edition
+            <span class="price">中控版</span>
+          </span>
+        </div>
+
+        <div class="masthead__title">
+          <h1>中控 · 菇勇者全自動掛機</h1>
+          <div class="sub">「機隊整裝，晝夜不歇 — 一份關於放置勇者的日報」</div>
+        </div>
+
+        <div class="ctrlstrip">
+          <div class="ctrlstrip__col" style="flex:0 0 auto;">
+            <span class="col-kicker">辨識服務 · OCR</span>
+            <span class="ocr-badge ok" id="ocr-status"><span class="ocr-dot"></span>OCR 服務正常</span>
+            <span class="ocr-runtime" id="ocr-runtime">last → ocr-02.lan:8866</span>
+          </div>
+
+          <div class="ctrlstrip__col" style="flex:0 0 auto;">
+            <span class="col-kicker">版本 · Masthead</span>
+            <button class="byline" onclick="openModal('programModal')" tabindex="0" aria-label="程式資訊，點擊查看詳情"
+              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openModal('programModal');}">
+              <span class="ver">v3.7.2 “Newsprint”</span>
+              <span class="git">git · 2026-06-14 04:55 (+0800)</span>
+            </button>
+          </div>
+
+          <div class="ctrlstrip__col">
+            <span class="col-kicker">編輯臺指令 · Desk</span>
+            <div class="btn-cluster">
+              <button class="ebtn ebtn--ghost ebtn--sm" onclick="openModal('bugModal')">🐞 回報</button>
+              <button class="ebtn ebtn--ghost ebtn--sm" onclick="openModal('ocrModal')">⚙ OCR 設定</button>
+              <button class="ebtn ebtn--sm" onclick="pretendRefresh(this)">↻ 重啟 ADB</button>
+              <button class="ebtn ebtn--ochre ebtn--sm" onclick="toast('已對全部裝置送出暫停')">‖ 全部暫停</button>
+              <button class="ebtn ebtn--forest ebtn--sm" onclick="toast('已對全部裝置送出恢復')">▶ 全部恢復</button>
+              <button class="ebtn ebtn--sm" onclick="toast('全部裝置已跳過睡眠')">⏭ 跳過睡眠</button>
+              <button class="ebtn ebtn--solid ebtn--sm" onclick="openModal('registerModal')">＋ 新增帳號</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- DASHBOARD BODY -->
+      <div class="dash-body">
+
+        <!-- SECTION 01 — fleet summary infographic -->
+        <div class="sec-head">
+          <span class="sec-num">01</span>
+          <div class="sec-head__text">
+            <div class="sec-kicker">By the Numbers · 機隊速覽</div>
+            <h2>今日機隊概況</h2>
+          </div>
+          <div class="sec-head__meta">截至 04:55，七臺裝置在編，五臺巡航中。</div>
+        </div>
+
+        <div class="fleet-summary" role="group" aria-label="機隊統計">
+          <div class="summary-cell">
+            <span class="summary-num online">5</span>
+            <span class="summary-label">巡航中 · Online</span>
+            <span class="spark" aria-hidden="true"><i></i><i class="hi"></i><i></i><i class="hi"></i><i class="hi"></i><i></i><i class="hi"></i></span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-num paused">1</span>
+            <span class="summary-label">暫停 · Paused</span>
+            <span class="spark" aria-hidden="true"><i></i><i></i><i class="hi"></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-num offline">1</span>
+            <span class="summary-label">離線 · Offline</span>
+            <span class="spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i class="hi"></i><i></i></span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-num">42<span style="font-size:18px;font-style:normal;color:var(--ink-faint)">ms</span></span>
+            <span class="summary-label">平均擷圖 · Avg SST</span>
+            <span class="spark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="summary-cell">
+            <span class="summary-num">v5</span>
+            <span class="summary-label">主力規劃器 · Planner</span>
+            <span class="spark" aria-hidden="true"><i class="hi"></i><i class="hi"></i><i class="hi"></i><i class="hi"></i><i class="hi"></i><i></i><i></i></span>
+          </div>
+        </div>
+
+        <!-- SECTION 02 — the device fleet (articles) -->
+        <div class="sec-head">
+          <span class="sec-num">02</span>
+          <div class="sec-head__text">
+            <div class="sec-kicker">The Field Reports · 裝置現場</div>
+            <h2>機隊現況 · 逐臺速寫</h2>
+          </div>
+          <div class="sec-head__meta">每臺裝置一則現場報導 — 任務、進度與下一次甦醒時刻。</div>
+        </div>
+
+        <div class="fleet-grid" id="fleet"><!-- cards injected by JS --></div>
+
+      </div>
+    </section>
+
+    <!-- ============ LABELER PAGE ============ -->
+    <section class="page" id="page-labeler">
+      <div class="subpage">
+        <div class="sub-masthead">
+          <div class="kick">Section L · The Labeling Desk</div>
+          <h1>標註室</h1>
+        </div>
+
+        <div class="panel">
+          <div class="panel-kick">Configuration · 設定</div>
+          <h3>自動標註與訓練</h3>
+          <div class="field-row" style="margin-top:16px">
+            <div class="field"><label>LLM 端點 URL</label><input type="url" id="labelerEndpoint" value="http://10.0.0.6:8000/v1"></div>
+            <div class="field"><label>模型名稱</label><input type="text" id="labelerModel" value="qwen2.5-vl-7b"></div>
+          </div>
+          <div class="field-row-3">
+            <div class="field"><label>每日排程時間</label><input type="text" id="labelerDailyTime" value="03:30"></div>
+            <div class="field"><label>來源資料夾</label><input type="text" id="labelerSourceDir" value="data/raw"></div>
+            <div class="field"><label>輸出資料夾</label><input type="text" id="labelerOutputDir" value="data/labeled"></div>
+          </div>
+          <div class="btn-cluster" style="margin-top:12px">
+            <button class="ebtn ebtn--solid ebtn--sm" onclick="toast('標註設定已儲存')">儲存</button>
+            <button class="ebtn ebtn--sm" onclick="toast('連線測試 → OK 138ms')">檢查連線</button>
+            <button class="ebtn ebtn--forest ebtn--sm" onclick="toast('單次標註已啟動')">執行一次</button>
+            <button class="ebtn ebtn--ochre ebtn--sm" onclick="toast('已暫停')">暫停</button>
+            <button class="ebtn ebtn--sm" onclick="toast('已恢復')">恢復</button>
+            <button class="ebtn ebtn--vermilion ebtn--sm" onclick="toast('已終止')">終止</button>
+          </div>
+          <p style="font-family:var(--mono);font-size:11px;color:var(--forest-d);margin-top:14px">connection · 已連線，延遲 138ms</p>
+          <div class="statusbox" style="margin-top:14px" id="labelerStatus">running · 進度 348 / 920 · kept 312 · deleted 31 · errors 5
+current: scene_0473.png</div>
+          <div class="logbox" style="height:160px;margin:14px 0 0">
+            <div class="lline"><span class="t">[03:31:02]</span> 載入模型 qwen2.5-vl-7b … ok</div>
+            <div class="lline"><span class="t">[03:31:40]</span> scene_0471.png → 分類 air/pit/ore</div>
+            <div class="lline"><span class="t">[03:31:41]</span> scene_0472.png → kept</div>
+            <div class="lline"><span class="t">[03:31:43]</span> scene_0473.png → 推論中…</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-kick">Training · 訓練</div>
+          <h3>分類模型再訓練</h3>
+          <div class="field-row" style="margin-top:16px">
+            <div class="field"><label>Epochs</label><input type="number" id="trainerEpochs" value="40"></div>
+            <div class="field" style="display:flex;align-items:flex-end">
+              <label class="check"><input type="checkbox" id="trainerRemoveSource"><span class="box"></span>訓練後移除來源</label>
+            </div>
+          </div>
+          <button class="ebtn ebtn--solid ebtn--sm" onclick="toast('訓練已排入佇列')">開始訓練</button>
+          <div class="statusbox" style="margin-top:14px">idle · 上次訓練 acc 0.981 · 2026-06-13 04:12</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ README PAGE ============ -->
+    <section class="page" id="page-readme">
+      <div class="subpage">
+        <div class="sub-masthead">
+          <div class="kick">Section U · Bulletin Board</div>
+          <h1>公告欄</h1>
+        </div>
+        <div class="readme-frame-wrap">
+          <iframe id="readmeFrame" title="更新公告" srcdoc="<body style='font-family:Spectral,Georgia,serif;background:%23fbf8f0;color:%231c1812;padding:48px;line-height:1.7'><h2 style='font-family:Georgia;font-style:italic'>更新公告 · 2026-06-14</h2><hr><p>本頁實際運行時載入 <code>/updates/</code> iframe。此處為示意內容。</p><ul><li>v5 planner 預設啟用，真實 board empty-plan 0.96%</li><li>WS-token 階段 token bootstrap 已上線</li><li>儀表板模組化重構完成</li></ul></body>"></iframe>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===================== MODALS ===================== -->
+
+<!-- Device Config Modal -->
+<div class="overlay" id="configModal" onclick="if(event.target===this)closeModal('configModal')">
+  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="cfgTitle">
+    <div class="modal__head">
+      <div>
+        <div class="modal__kicker">Device Dossier · 裝置設定</div>
+        <h2 id="cfgTitle">編輯：客廳手機 fc</h2>
+        <p>調整後端、運行區間與功能開關。儲存後於下一回合生效。</p>
+      </div>
+      <button class="modal__close" onclick="closeModal('configModal')" aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="field-row">
+        <div class="field"><label>裝置名稱</label><input type="text" id="editName" value="客廳手機 fc"></div>
+        <div class="field" style="display:flex;align-items:flex-end">
+          <label class="check"><input type="checkbox" id="chkEnabled" checked><span class="box"></span>啟用自動掛機</label>
+        </div>
+      </div>
+
+      <div class="modal-subhead"><span class="n">i.</span> 後端與連線</div>
+      <div class="field-row">
+        <div class="field"><label>後端 Backend</label>
+          <select id="editBackend" onchange="toggleBackendInputs()">
+            <option value="adb">adb</option>
+            <option value="adb_ws" selected>adb + ws</option>
+            <option value="h5">h5</option>
+            <option value="h5_ws">h5 + ws</option>
+            <option value="ws_token">ws_token</option>
+          </select>
+        </div>
+        <div class="field"><label>挖礦規劃器</label>
+          <select id="editMiningPlanner">
+            <option>v1</option><option>v3</option><option>v4</option><option selected>v5</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="webBackendGroup" style="display:none">
+        <div class="field"><label>Web URL</label><input type="url" id="editWebUrl" value="https://h5.example-game.com/play"></div>
+        <div class="field-row-3">
+          <div class="field"><label>Viewport 寬</label><input type="number" id="editWebViewportWidth" value="540"></div>
+          <div class="field"><label>Viewport 高</label><input type="number" id="editWebViewportHeight" value="960"></div>
+          <div class="field" style="display:flex;align-items:flex-end">
+            <label class="check"><input type="checkbox" id="chkWebHeadless" checked><span class="box"></span>Headless</label>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="chkWebClearCookies"><span class="box"></span>啟動前清除 Cookies</label>
+        <details class="adv"><summary>進階 Web 設定</summary>
+          <div class="adv-body">
+            <div class="field"><label>Canvas Selector</label><input type="text" id="editCanvasSelector" value="#GameCanvas"></div>
+            <div class="field-row">
+              <div class="field"><label>Browser Channel</label><input type="text" id="editWebChannel" value="chrome"></div>
+              <div class="field"><label>Profile Dir</label><input type="text" id="editWebProfileDir" value="playwright_profile_fc"></div>
+            </div>
+            <div class="field-row">
+              <div class="field"><label>Stop Mode</label>
+                <select id="editWebStopMode"><option>graceful</option><option>kill</option></select></div>
+              <div class="field"><label>Screenshot Method</label>
+                <select id="editWebScreenshotMethod"><option>cdp</option><option>page</option></select></div>
+            </div>
+            <div class="field"><label>State File</label><input type="text" id="editWebStateFile" value="auth_state/fc.json"></div>
+          </div>
+        </details>
+      </div>
+
+      <div class="modal-subhead"><span class="n">ii.</span> 跨服泊車</div>
+      <label class="check"><input type="checkbox" id="chkCarparkEnabled" checked onchange="onCarparkEnabledChange()"><span class="box"></span>啟用跨服泊車</label>
+      <div class="field"><label>泊車等級</label>
+        <select id="editCarparkTier"><option selected>泊銀 · Silver</option></select>
+      </div>
+
+      <div class="modal-subhead"><span class="n">iii.</span> 運行區間</div>
+      <div class="field-row-3">
+        <div class="field"><label>在線檢查 (分)</label><input type="number" id="editOnlineInterval" value="30"></div>
+        <div class="field"><label>神燈檢查 (時)</label><input type="number" id="editLampInterval" value="2"></div>
+        <div class="field"><label>神燈時長 (秒)</label><input type="number" id="editLampDuration" value="180"></div>
+      </div>
+      <div class="field-row-3">
+        <div class="field"><label>挖礦時長 (分)</label><input type="number" id="editMiningDuration" value="12"></div>
+        <div class="field"><label>睡眠下限 (時)</label><input type="number" id="editSleepMinHours" value="1" step="0.5"></div>
+        <div class="field"><label>睡眠上限 (時)</label><input type="number" id="editSleepMaxHours" value="3" step="0.5"></div>
+      </div>
+
+      <div class="modal-subhead"><span class="n">iv.</span> 功能開關</div>
+      <div class="features-grid">
+        <label class="check"><input type="checkbox" id="chkFarm" checked><span class="box"></span>農場任務</label>
+        <label class="check"><input type="checkbox" id="chkArena" checked><span class="box"></span>武道會</label>
+        <label class="check"><input type="checkbox" id="chkMining" checked><span class="box"></span>挖礦 AI</label>
+        <label class="check"><input type="checkbox" id="chkDungeon" checked><span class="box"></span>地獄之門</label>
+        <label class="check"><input type="checkbox" id="chkWsOpenLamp" checked><span class="box"></span>WS 開神燈</label>
+        <label class="check"><input type="checkbox" id="chkWsMining"><span class="box"></span>WS 挖礦</label>
+        <label class="check"><input type="checkbox" id="chkRealPhone" checked><span class="box"></span>實體手機模式</label>
+        <label class="check"><input type="checkbox" id="chkWsOfflineFallback" checked><span class="box"></span>離線後援</label>
+      </div>
+      <div class="field-row" style="margin-top:12px">
+        <div class="field"><label>WS 神燈保留 %</label><input type="number" id="inpWsLampPercent" value="20"></div>
+        <div class="field"><label>WS 神燈最低保留數</label><input type="number" id="inpWsLampMinKeep" value="5"></div>
+      </div>
+
+      <div class="btn-cluster" style="margin-top:18px">
+        <button class="ebtn ebtn--indigo ebtn--sm" onclick="toast('已開啟手動登入')">Web 登入</button>
+        <button class="ebtn ebtn--sm" onclick="toast('Cookies 已備份')">備份 Cookies</button>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="ebtn ebtn--ghost" onclick="closeModal('configModal')">取消</button>
+      <button class="ebtn ebtn--solid" onclick="closeModal('configModal');toast('設定已儲存')">儲存設定</button>
+    </div>
+  </div>
+</div>
+
+<!-- OCR Config Modal -->
+<div class="overlay" id="ocrModal" onclick="if(event.target===this)closeModal('ocrModal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ocrTitle">
+    <div class="modal__head">
+      <div>
+        <div class="modal__kicker">Global Settings · 辨識服務</div>
+        <h2 id="ocrTitle">OCR 設定</h2>
+        <p>多臺伺服器依優先序 fallback，連續失敗後啟用冷卻。</p>
+      </div>
+      <button class="modal__close" onclick="closeModal('ocrModal')" aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="field"><label>模式 Mode</label>
+        <select id="ocrServerMode"><option>主要 Main</option><option>備援 Backup</option><option selected>自動 Auto</option></select>
+      </div>
+      <div class="field"><label>伺服器 (每行一個 URL)</label>
+        <textarea id="ocrServers" rows="3">http://ocr-01.lan:8866
+http://ocr-02.lan:8866</textarea>
+      </div>
+      <div class="field-row-3">
+        <div class="field"><label>逾時 (秒)</label><input type="number" id="ocrTimeout" value="20"></div>
+        <div class="field"><label>解碼重試</label><input type="number" id="ocrImgRetries" value="3"></div>
+        <div class="field"><label>空結果重試</label><input type="number" id="ocrEmptyRetries" value="2"></div>
+      </div>
+      <div class="field"><label>重試延遲 (秒)</label><input type="number" id="ocrRetryDelay" value="0.6" step="0.1"></div>
+      <label class="check"><input type="checkbox" id="ocrDefaultRegionEnabled" checked><span class="box"></span>啟用預設辨識區域</label>
+      <div class="field-row" style="margin-top:8px">
+        <div class="field"><label>X min</label><input type="number" id="ocrXMin" value="0"></div>
+        <div class="field"><label>X max</label><input type="number" id="ocrXMax" value="540"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label>Y min</label><input type="number" id="ocrYMin" value="0"></div>
+        <div class="field"><label>Y max</label><input type="number" id="ocrYMax" value="960"></div>
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="ebtn ebtn--ghost" onclick="closeModal('ocrModal')">取消</button>
+      <button class="ebtn ebtn--solid" onclick="closeModal('ocrModal');toast('OCR 設定已儲存')">儲存</button>
+    </div>
+  </div>
+</div>
+
+<!-- Program Info Modal -->
+<div class="overlay" id="programModal" onclick="if(event.target===this)closeModal('programModal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="prgTitle">
+    <div class="modal__head">
+      <div>
+        <div class="modal__kicker">Colophon · 版本資訊</div>
+        <h2 id="prgTitle">v3.7.2 “Newsprint”</h2>
+        <p>git 更新時間 · 2026-06-14 04:55 (+0800)</p>
+      </div>
+      <button class="modal__close" onclick="closeModal('programModal')" aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      <p style="font-family:var(--serif);font-size:14px;color:var(--ink-soft);line-height:1.7">
+        本版聚焦於儀表板模組化重構，並收斂 WS-fallback 離線誤判、carpark 配額持久化與 v5 priors 污染等問題。
+      </p>
+      <div class="fix-note">
+        <strong>修正摘要：</strong> WS-fallback 離線誤判已修正；carpark 配額改為持久化；v5 priors 不再被即時 board 污染；神燈賣出 log 噪音降低。
+      </div>
+    </div>
+    <div class="modal__foot">
+      <button class="ebtn ebtn--solid" onclick="closeModal('programModal')">關閉</button>
+    </div>
+  </div>
+</div>
+
+<!-- Bug Feedback Modal -->
+<div class="overlay" id="bugModal" onclick="if(event.target===this)closeModal('bugModal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="bugTitleH">
+    <div class="modal__head">
+      <div>
+        <div class="modal__kicker">Letters to the Editor · 問題回報</div>
+        <h2 id="bugTitleH">回報問題</h2>
+        <p>請描述重現步驟、預期結果與實際結果。</p>
+      </div>
+      <button class="modal__close" onclick="closeModal('bugModal')" aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="field"><label>標題</label><input type="text" id="bugTitle" placeholder="一句話描述問題"></div>
+      <div class="field"><label>詳細描述</label><textarea id="bugDetail" rows="8" placeholder="步驟 / 預期 / 實際…"></textarea></div>
+      <div class="field"><label>回報人 (選填)</label><input type="text" id="bugReporter" placeholder="你的名字"></div>
+    </div>
+    <div class="modal__foot">
+      <button class="ebtn ebtn--ghost" onclick="closeModal('bugModal')">取消</button>
+      <button class="ebtn ebtn--solid" onclick="closeModal('bugModal');toast('已送出，感謝回報')">送出</button>
+    </div>
+  </div>
+</div>
+
+<!-- Register Account Modal -->
+<div class="overlay" id="registerModal" onclick="if(event.target===this)closeModal('registerModal')">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="regTitle">
+    <div class="modal__head">
+      <div>
+        <div class="modal__kicker">New Subscription · 新增帳號</div>
+        <h2 id="regTitle">登錄新裝置</h2>
+        <p>送出後將輪詢登入狀態，於瀏覽器完成手動登入。</p>
+      </div>
+      <button class="modal__close" onclick="closeModal('registerModal')" aria-label="關閉">✕</button>
+    </div>
+    <div class="modal__body">
+      <div class="field"><label>裝置 ID</label><input type="text" id="regDeviceId" placeholder="英數 / 底線 / 連字號"></div>
+      <div class="field"><label>Web URL (選填)</label><input type="url" id="regWebUrl" placeholder="留空使用預設"></div>
+      <div class="statusbox" id="regStatusBox">等待送出…</div>
+    </div>
+    <div class="modal__foot">
+      <button class="ebtn ebtn--ghost" onclick="closeModal('registerModal')">取消</button>
+      <button class="ebtn ebtn--solid" id="regSubmitBtn" onclick="pretendRegister(this)">送出並開始登入</button>
+    </div>
+  </div>
+</div>
+
+<!-- Live View Modal -->
+<div class="lvoverlay" id="liveViewModal" onclick="if(event.target===this)closeLiveView()">
+  <div class="lv-head">
+    <div>
+      <div class="lbl" id="lvDeviceLabel">即時畫面 · emulator-5554</div>
+      <div class="lv-status" id="lvStatus">直播中 · 27 fps</div>
+    </div>
+    <div style="display:flex;gap:8px">
+      <button class="ebtn ebtn--vermilion ebtn--sm" id="lv-btn-closebrowser" onclick="toast('已關閉瀏覽器')">關閉瀏覽器</button>
+      <button class="modal__close" style="border-color:var(--paper);color:var(--paper)" onclick="closeLiveView()" aria-label="關閉直播">✕</button>
+    </div>
+  </div>
+  <div class="lv-canvas-frame">
+    <canvas id="lvCanvas" width="540" height="960"></canvas>
+  </div>
+</div>
+
+<!-- toast -->
+<div id="toast" style="position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(120%);background:var(--ink);color:var(--paper);padding:12px 22px;font-family:var(--serif);font-size:14px;z-index:2000;border-left:3px solid var(--vermilion);box-shadow:0 20px 50px -20px rgba(0,0,0,.6);transition:transform .4s cubic-bezier(.16,1,.3,1);max-width:90vw"></div>
+
+<script>
+/* ============================================================
+   FAKE DATA — 7 devices, varied states
+   ============================================================ */
+const DEVICES = [
+  {
+    ip:"emulator-5554", name:"主控 · 5554", status:"ONLINE", backend:"adb", ws:"adb+ws",
+    task:"挖礦 / Oracle 探勘", step:"執行 v5 規劃 · 第 3 步", stepTimer:"剩 2m 14s",
+    wake:"38m 12s", update:"剛剛", sst:39, planner:"v5", realPhone:false, liveView:true,
+    carpark:{cur:7,tgt:8,worstH:5.8,next:"09:59",cars:[
+      {id:"#1042",pos:"B-12",rem:5.8},{id:"#0931",pos:"C-04",rem:2.1},{id:"#1188",pos:"A-21",rem:0.4}]},
+    progress:{"地獄之門":true,"農場":true,"寶箱":true,"家族":true,"商店":false,"挖礦":true,"武道會":false,"航海":true,"神燈":true},
+    logs:["地獄之門 已完成 ×3","農場：採收 18 格 + 補種","挖礦：v5 plan, depth 142, cost 11.0"]
+  },
+  {
+    ip:"emulator-5556", name:"萬神 · 5556", status:"ONLINE", backend:"adb", ws:"adb",
+    task:"萬神試煉 (週本)", step:"進入第 6 層", stepTimer:"剩 41s",
+    wake:"1h 04m", update:"12s 前", sst:44, planner:"v4", realPhone:false, liveView:true,
+    carpark:null,
+    progress:{"地獄之門":true,"農場":true,"寶箱":true,"家族":false,"商店":true,"挖礦":true,"武道會":true,"航海":false,"萬神試煉":false},
+    logs:["商店：購買每日特惠 ×2","武道會：勝場 5 / 5","萬神試煉：開始挑戰"]
+  },
+  {
+    ip:"192.168.1.77", name:"客廳手機 fc", status:"DEGRADED", backend:"web_h5", ws:"ws_token",
+    task:"WS 純任務 · 開神燈", step:"離線後援模式運行中", stepTimer:null,
+    wake:"喚醒中…", update:"3s 前", sst:null, planner:"v5", realPhone:true, liveView:true,
+    carpark:{cur:6,tgt:8,worstH:7.2,next:"09:59",cars:[
+      {id:"#2201",pos:"D-09",rem:7.2},{id:"#2188",pos:"D-10",rem:3.9}]},
+    progress:{"地獄之門":true,"農場":false,"寶箱":true,"家族":true,"商店":false,"挖礦":false,"神燈":true},
+    logs:["WS token bootstrap 成功","神燈：開啟 ×12，保留 5","ⓘ ADB 掉線 → WS 離線後援啟用"]
+  },
+  {
+    ip:"emulator-5558", name:"夜班 · 5558", status:"PAUSED", backend:"adb", ws:"adb+ws",
+    task:"— 已暫停 —", step:"等待編輯臺指令", stepTimer:null,
+    wake:"已暫停", update:"6m 前", sst:51, planner:"v3", realPhone:false, liveView:true,
+    carpark:null,
+    progress:{"地獄之門":true,"農場":true,"寶箱":false,"家族":false,"商店":false,"挖礦":false,"航海":false},
+    logs:["使用者於 04:49 暫停","上回合：挖礦 depth 88","在線檢查：5554 代為執行"]
+  },
+  {
+    ip:"h5-glass-01", name:"H5 玻璃帷幕", status:"ONLINE", backend:"web_h5", ws:"h5+ws",
+    task:"農場任務 · 打工偵測", step:"派遣團隊 7001", stepTimer:"剩 1m 02s",
+    wake:"22m 47s", update:"剛剛", sst:88, planner:"v5", realPhone:false, liveView:true,
+    carpark:null,
+    progress:{"地獄之門":true,"農場":true,"寶箱":true,"家族":true,"商店":true,"挖礦":true,"神燈":false},
+    logs:["瀏覽器 session 健康","莊園：施肥 ×3 + 播種","打工：偵測到 18690"]
+  },
+  {
+    ip:"emulator-5560", name:"晨更 · 5560", status:"ONLINE", backend:"adb", ws:"adb",
+    task:"轉盤金幣", step:"領取每日轉盤", stepTimer:null,
+    wake:"49m 33s", update:"20s 前", sst:36, planner:"v5", realPhone:false, liveView:true,
+    carpark:null,
+    progress:{"地獄之門":true,"農場":true,"寶箱":true,"家族":true,"商店":true,"挖礦":true,"武道會":true,"航海":true,"神燈":true,"轉盤":false},
+    logs:["全日任務 9 / 10 完成","挖礦：v5 plan, depth 167","轉盤：今日尚未領取"]
+  },
+  {
+    ip:"192.168.1.142", name:"備機 · S22", status:"OFFLINE", backend:"adb", ws:"adb",
+    task:"— 連線中斷 —", step:"上次回報於 1h 47m 前", stepTimer:null,
+    wake:"離線", update:"1h 47m 前", sst:null, planner:"v4", realPhone:true, liveView:false,
+    carpark:null,
+    progress:{"地獄之門":false,"農場":false,"寶箱":false},
+    logs:["WARN 心跳逾時","ADB 連線中斷 @ 03:08","等待裝置重新上線"]
+  }
+];
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+function esc(s){return String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));}
+
+function statusText(s){return {ONLINE:"巡航中",PAUSED:"已暫停",OFFLINE:"離線",DISABLED:"停用",DEGRADED:"後援"}[s]||s;}
+
+function renderCard(d){
+  const cp = d.carpark;
+  const progKeys = Object.keys(d.progress);
+  const badges = progKeys.map(k=>{
+    const done=d.progress[k];
+    return `<span class="badge ${done?'done':''}"><span class="mk">${done?'✓':'·'}</span>${esc(k)}</span>`;
+  }).join("");
+
+  const logs = d.logs.map((l,i)=>{
+    const m=l.match(/^(\[?[^\]]*\]?)?\s*(.*)$/);
+    return `<div class="lline">${esc(l)}</div>`;
+  }).join("");
+
+  let carparkHtml = "";
+  if(cp){
+    const cars = cp.cars.map(c=>{
+      const pct = Math.max(4, Math.min(100, (1-c.rem/8)*100));
+      return `<div class="cp-car"><span>${esc(c.id)}</span>
+        <span class="cp-bar"><i style="width:${pct}%"></i></span>
+        <span>${esc(c.pos)} · ${c.rem}h</span></div>`;
+    }).join("");
+    carparkHtml = `
+      <div class="carpark" id="carpark-${esc(d.ip)}">
+        <button class="carpark__toggle" onclick="toggleCarpark(this)" aria-expanded="false">
+          <span class="cp-title">🅿 跨服泊車 · ${cp.cur}/${cp.tgt}
+            <span class="cp-caret">▶</span></span>
+          <span class="cp-summary">最快 ${cp.worstH}h · 下次 ${esc(cp.next)}</span>
+        </button>
+        <div class="carpark__detail"><div>${cars}</div></div>
+      </div>`;
+  }
+
+  // action bar varies by state
+  let actions = "";
+  if(d.status==="OFFLINE"){
+    actions = `<button class="ebtn ebtn--ghost ebtn--sm" disabled>離線中</button>
+      ${d.realPhone?`<button class="ebtn ebtn--vermilion ebtn--sm" onclick="lock(this,'recover')">回復螢幕</button>`:''}
+      <button class="ebtn ebtn--sm" onclick="pretendRefresh(this)">↻ 重連</button>`;
+  } else if(d.status==="DISABLED"){
+    actions = `<button class="ebtn ebtn--forest ebtn--sm" onclick="toast('已啟用裝置')">啟用裝置</button>`;
+  } else {
+    const pauseBtn = d.status==="PAUSED"
+      ? `<button class="ebtn ebtn--forest ebtn--sm" data-ctrlbtn="${esc(d.ip)}" onclick="lock(this,'resume')">▶ 恢復</button>`
+      : `<button class="ebtn ebtn--ochre ebtn--sm" data-ctrlbtn="${esc(d.ip)}" onclick="lock(this,'pause')">‖ 暫停</button>`;
+    const webBtn = d.backend==="web_h5"
+      ? `<button class="ebtn ebtn--indigo ebtn--sm" data-webbtn="${esc(d.ip)}" onclick="lock(this,'web')">🌐 開瀏覽器</button>` : "";
+    const liveBtn = d.liveView
+      ? `<button class="ebtn ebtn--teal ebtn--sm" onclick="openLiveView('${esc(d.ip)}','${esc(d.name)}')">▣ 即時畫面</button>` : "";
+    const recoverBtn = d.realPhone
+      ? `<button class="ebtn ebtn--ghost ebtn--sm" onclick="lock(this,'recover')">回復螢幕</button>` : "";
+    actions = `${pauseBtn}
+      <button class="ebtn ebtn--sm" onclick="toast('已跳過睡眠')">⏭ 跳睡</button>
+      <button class="ebtn ebtn--ghost ebtn--sm" data-ctrlbtn="${esc(d.ip)}" onclick="lock(this,'force')">⏾ 強睡</button>
+      ${webBtn}${liveBtn}${recoverBtn}`;
+  }
+
+  const stepTimer = d.stepTimer ? `<span class="step-timer">${esc(d.stepTimer)}</span>` : "";
+  const sstVal = d.sst!=null ? `${d.sst}<span class="unit"> ms</span>` : "--";
+  const wakeBig = (d.status==="ONLINE") ? "big" : "";
+
+  return `
+  <article class="card ${d.status}" id="card-${esc(d.ip)}" data-ip="${esc(d.ip)}">
+    <div class="card__head">
+      <div class="card__headmain">
+        <div class="card__eyebrow">
+          <span class="status-ribbon st-${d.status}"><span class="sdot"></span>${statusText(d.status)}</span>
+        </div>
+        <h3 id="title-${esc(d.ip)}">${esc(d.name)}</h3>
+        <div class="card__ip" id="backend-${esc(d.ip)}">
+          ${esc(d.ip)}
+          <span class="backend-tag ${d.ws.includes('ws')?'ws':''}">${esc(d.ws)}</span>
+        </div>
+      </div>
+      <button class="gear" onclick="openConfig('${esc(d.name)}')" aria-label="裝置設定">⚙</button>
+    </div>
+
+    <div class="card__lede">
+      <div class="lede-kicker">Now Running · 當前任務</div>
+      <div class="lede-task" id="task-${esc(d.ip)}">${esc(d.task)}</div>
+      <div class="lede-step" id="step-${esc(d.ip)}">${esc(d.step)} ${stepTimer}</div>
+    </div>
+
+    <div class="ledger">
+      <div class="ledger-row">
+        <span class="ledger-label">下次甦醒 · Next Wake</span>
+        <span class="ledger-val ${wakeBig}" id="countdown-${esc(d.ip)}">${esc(d.wake)}</span>
+      </div>
+      <div class="ledger-row">
+        <span class="ledger-label">最後更新 · Updated</span>
+        <span class="ledger-val" id="time-${esc(d.ip)}">${esc(d.update)}</span>
+      </div>
+      <div class="ledger-row">
+        <span class="ledger-label">擷圖耗時 · SST</span>
+        <span class="ledger-val" id="sst-${esc(d.ip)}">${sstVal}</span>
+      </div>
+      <div class="ledger-row">
+        <span class="ledger-label">規劃器 · Planner</span>
+        <span class="ledger-val"><span class="planner-chip">${esc(d.planner)}</span></span>
+      </div>
+    </div>
+
+    ${carparkHtml}
+
+    <div class="progress" id="progress-${esc(d.ip)}">
+      <div class="progress__kicker">Daily Contents · 每日進度</div>
+      <div class="badges">${badges}</div>
+    </div>
+
+    <div class="logbox" id="log-${esc(d.ip)}">${logs}</div>
+
+    <div class="card__actions" id="actions-${esc(d.ip)}">${actions}</div>
+  </article>`;
+}
+
+document.getElementById("fleet").innerHTML = DEVICES.map(renderCard).join("");
+
+/* ============================================================
+   INTERACTIONS
+   ============================================================ */
+function toggleSidebar(){
+  const r = document.getElementById("rail");
+  r.classList.toggle("collapsed");
+}
+
+function switchPage(name, el){
+  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.getElementById("page-"+name).classList.add("active");
+  document.querySelectorAll(".nav-item").forEach(n=>n.classList.remove("active"));
+  if(el) el.classList.add("active");
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+
+function openModal(id){ document.getElementById(id).classList.add("open"); }
+function closeModal(id){ document.getElementById(id).classList.remove("open"); }
+function openConfig(name){
+  document.getElementById("cfgTitle").textContent = "編輯："+name;
+  openModal("configModal");
+}
+function toggleBackendInputs(){
+  const v = document.getElementById("editBackend").value;
+  const web = (v==="h5"||v==="h5_ws");
+  document.getElementById("webBackendGroup").style.display = web ? "block" : "none";
+}
+function onCarparkEnabledChange(){
+  document.getElementById("editCarparkTier").disabled = !document.getElementById("chkCarparkEnabled").checked;
+}
+
+function toggleCarpark(btn){
+  const wrap = btn.closest(".carpark");
+  const open = wrap.classList.toggle("open");
+  btn.setAttribute("aria-expanded", open ? "true":"false");
+}
+
+/* button lock + spinner (debounce) */
+function lock(btn, kind){
+  if(btn.classList.contains("pending")) return;
+  btn.classList.add("pending");
+  const ms = kind==="web" ? 3000 : 2000;
+  setTimeout(()=>{
+    btn.classList.remove("pending");
+    const map={pause:"已暫停",resume:"已恢復",force:"已強制睡眠",web:"瀏覽器已開啟",recover:"已回復螢幕"};
+    toast(map[kind]||"完成");
+    if(kind==="pause"){ btn.className="ebtn ebtn--forest ebtn--sm"; btn.innerHTML="▶ 恢復"; btn.onclick=()=>lock(btn,"resume"); }
+    else if(kind==="resume"){ btn.className="ebtn ebtn--ochre ebtn--sm"; btn.innerHTML="‖ 暫停"; btn.onclick=()=>lock(btn,"pause"); }
+    else if(kind==="web"){ btn.className="ebtn ebtn--vermilion ebtn--sm"; btn.innerHTML="🌐 關瀏覽器"; }
+  }, ms);
+}
+
+function pretendRefresh(btn){
+  if(btn.classList.contains("pending")) return;
+  btn.classList.add("pending");
+  setTimeout(()=>{ btn.classList.remove("pending"); toast("已重啟 ADB / 重新掃描裝置"); }, 1600);
+}
+
+function pretendRegister(btn){
+  const box = document.getElementById("regStatusBox");
+  btn.classList.add("pending");
+  box.textContent = "送出中…";
+  let n=0; const steps=["已登錄裝置，啟動瀏覽器…","等待手動登入 (輪詢中)…","偵測到登入狀態…","登入成功，已寫入 state file。"];
+  const iv=setInterval(()=>{
+    box.textContent = steps[n++];
+    if(n>=steps.length){ clearInterval(iv); btn.classList.remove("pending"); toast("新裝置登錄完成"); }
+  }, 900);
+}
+
+/* Live view canvas — paints a faux game frame (no real WS) */
+let lvAnim=null;
+function openLiveView(ip, name){
+  document.getElementById("lvDeviceLabel").textContent = "即時畫面 · "+name;
+  document.getElementById("liveViewModal").classList.add("open");
+  const cv=document.getElementById("lvCanvas"), ctx=cv.getContext("2d");
+  let t=0;
+  function frame(){
+    t+=0.03;
+    // warm sky gradient
+    const g=ctx.createLinearGradient(0,0,0,960);
+    g.addColorStop(0,"#2a3b66"); g.addColorStop(.55,"#6b4f7a"); g.addColorStop(1,"#c2401c");
+    ctx.fillStyle=g; ctx.fillRect(0,0,540,960);
+    // ground
+    ctx.fillStyle="#1c1812"; ctx.fillRect(0,720,540,240);
+    // mine grid
+    for(let r=0;r<6;r++)for(let c=0;c<7;c++){
+      const x=20+c*72, y=740+r*34;
+      ctx.fillStyle = (Math.sin(t+r*1.3+c*0.7)>0.6)?"#b9831f":"#45403a";
+      ctx.fillRect(x,y,64,26);
+    }
+    // bobbing hero
+    const hy=620+Math.sin(t*2)*12;
+    ctx.fillStyle="#f4efe4"; ctx.beginPath(); ctx.arc(270,hy,34,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle="#1c1812"; ctx.fillRect(254,hy-8,8,8); ctx.fillRect(278,hy-8,8,8);
+    // HUD
+    ctx.fillStyle="rgba(244,239,228,.9)"; ctx.font="20px Georgia";
+    ctx.fillText("⛏ "+(140+Math.floor(t*4)), 24, 48);
+    lvAnim=requestAnimationFrame(frame);
+  }
+  frame();
+}
+function closeLiveView(){
+  document.getElementById("liveViewModal").classList.remove("open");
+  if(lvAnim) cancelAnimationFrame(lvAnim);
+}
+
+/* toast */
+let toastTimer=null;
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg;
+  t.style.transform="translateX(-50%) translateY(0)";
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(()=>{ t.style.transform="translateX(-50%) translateY(120%)"; }, 2600);
+}
+
+/* esc closes any open modal */
+document.addEventListener("keydown", e=>{
+  if(e.key==="Escape"){
+    document.querySelectorAll(".overlay.open").forEach(o=>o.classList.remove("open"));
+    closeLiveView();
+  }
+});
+
+/* faux live countdown tick for ONLINE devices (cosmetic motion) */
+setInterval(()=>{
+  document.querySelectorAll(".card.ONLINE .ledger-val.big").forEach(el=>{
+    const m=el.textContent.match(/(\d+)m\s+(\d+)s/);
+    if(m){
+      let s=parseInt(m[1])*60+parseInt(m[2])-1; if(s<0)s=3600;
+      el.textContent = Math.floor(s/60)+"m "+String(s%60).padStart(2,"0")+"s";
+    }
+  });
+}, 1000);
+</script>
+</body>
+</html>

@@ -118,14 +118,17 @@ def test_handle_startup_sleep_early_exits_on_web_launch(
     assert len(fake_bot_state["_updates"]) == 0
 
 
-def test_handle_startup_sleep_5554_early_exits_on_online_check(
+def test_handle_startup_sleep_does_not_early_exit_on_online_check(
     startup_mod, fake_bot_state, zero_sleep, monkeypatch,
 ):
+    # Online-check is served out-of-loop by online_check_service now, so a
+    # pending request must NOT cut the startup-stagger sleep short — the gate
+    # was removed. With no web-launch pending, the loop runs to completion.
     monkeypatch.setattr(startup_mod, "STARTUP_SLEEP_SEC_BY_DEVICE", {"emulator-5554": 10})
     monkeypatch.setattr(startup_mod, "PROCESS_START_TS", startup_mod.time.time())
     fake_bot_state["pending_online"] = True
     startup_mod._handle_startup_sleep("emulator-5554", logging.getLogger("t"))
-    assert len(fake_bot_state["_updates"]) == 0
+    assert len(fake_bot_state["_updates"]) > 0
 
 
 # ---------------------------------------------------------------------------

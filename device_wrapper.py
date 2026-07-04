@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
 from utils.ws_listener import WSFrameTracker
+from utils.web_profile_paths import resolve_profile_dir, resolve_state_file
 from runtime_services.device_runtime_service import ForceSleepRequested, WakeLoopInterrupted
 
 logger = logging.getLogger(__name__)
@@ -21,15 +22,226 @@ _WEB_DEVICE_REGISTRY: Dict[str, "PlaywrightGameDevice"] = {}
 # call sites. 500 ms is the operator-set ceiling for "something's wrong".
 _SLOW_SCREENSHOT_MS = 500
 
+# web_h5 launch recovery: Chrome exits 21 (CHROME_RESULT_CODE_NORMAL_EXIT_PROCESS_NOTIFIED)
+# when a freshly-spawned process finds an existing browser already holding this
+# --user-data-dir, forwards its command line to that instance, then exits. Playwright
+# surfaces it as a launch failure. It is transient — the previous browser for the profile
+# is still tearing down — so we wait and retry the SAME (logged-in) profile instead of
+# switching to a separate, login-less fallback profile dir (which used to trigger a long
+# "未知頁面" loop + an extra game restart on emulator-5554, 2026-06-13).
+_PROFILE_IN_USE_MAX_RETRIES = 3
+_PROFILE_IN_USE_WAIT_SEC = 2.0
+
+
+def _is_profile_in_use_error(exc: Exception) -> bool:
+    text = str(exc or "").lower()
+    return (
+        "exitcode=21" in text
+        or "process_notified" in text
+        or "already in use" in text
+        or ("profile" in text and "in use" in text)
+        # Windows hand-off: a freshly-spawned Chrome that finds an existing
+        # instance on the same --user-data-dir forwards its command line and
+        # exits cleanly with exitCode=0 (NOT 21). Playwright surfaces this as
+        # "Failed to launch the browser process." (7fe98fc6, 2026-06-16).
+        or (
+            "failed to launch the browser process" in text
+            and "exitcode=0" in text
+        )
+    )
+
+
+def _cmdline_uses_profile(cmdline, target_normcase_abspath: str) -> bool:
+    """True if a process command line sets --user-data-dir to the target path."""
+    try:
+        for i, arg in enumerate(cmdline or []):
+            arg = str(arg)
+            val = ""
+            if arg.startswith("--user-data-dir="):
+                val = arg.split("=", 1)[1]
+            elif arg == "--user-data-dir" and i + 1 < len(cmdline):
+                val = str(cmdline[i + 1])
+            if (
+                val
+                and os.path.normcase(os.path.abspath(val))
+                == target_normcase_abspath
+            ):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _kill_chrome_holding_profile(
+    profile_dir: str,
+    logger_obj: logging.Logger,
+    device_id: str,
+    *,
+    process_iter=None,
+) -> int:
+    """Kill any Chrome/Chromium process whose command line uses this EXACT
+    --user-data-dir. Returns the number of processes killed.
+
+    Surgical by design: matches only the given profile dir, so it never touches
+    other devices' browsers or the user's personal Chrome. Strictly best-effort —
+    psutil import errors, iteration hiccups, races and access errors are swallowed
+    (returns what it managed to kill). Used to clear a stale Chrome that lingered
+    across a sleep and is now holding the profile lock — the root cause of the
+    7fe98fc6 login-less-fallback thrash (2026-06-16).
+    """
+    try:
+        target = os.path.normcase(os.path.abspath(profile_dir))
+    except Exception:
+        return 0
+    if process_iter is None:
+        try:
+            import psutil
+        except Exception as exc:
+            logger_obj.debug(
+                f"[{device_id}] psutil unavailable, skip orphan-kill: {exc}"
+            )
+            return 0
+        process_iter = psutil.process_iter
+    try:
+        procs = process_iter(["name", "cmdline"])
+    except Exception as exc:
+        logger_obj.debug(f"[{device_id}] orphan-kill process_iter failed: {exc}")
+        return 0
+    killed = 0
+    for proc in procs:
+        try:
+            info = getattr(proc, "info", {}) or {}
+            name = str(info.get("name") or "").lower()
+            if "chrome" not in name and "chromium" not in name:
+                continue
+            if not _cmdline_uses_profile(info.get("cmdline") or [], target):
+                continue
+            proc.kill()
+            killed += 1
+            logger_obj.warning(
+                f"[{device_id}] killed stale chrome pid={getattr(proc, 'pid', '?')} "
+                f"holding profile {profile_dir}"
+            )
+        except Exception as exc:
+            logger_obj.debug(f"[{device_id}] orphan-kill skipped one proc: {exc}")
+            continue
+    return killed
+
+
+def _launch_with_profile_recovery(
+    *,
+    profile_dir: str,
+    fallback_profile_dir: str,
+    launch_fn,
+    logger_obj: logging.Logger,
+    device_id: str,
+    sleep_fn=time.sleep,
+    max_in_use_retries: int = _PROFILE_IN_USE_MAX_RETRIES,
+    in_use_wait_sec: float = _PROFILE_IN_USE_WAIT_SEC,
+    kill_orphan_fn=None,
+):
+    """Launch a persistent context, preferring the original (logged-in) profile.
+
+    On a profile-in-use failure (Chrome exit 21, or the Windows exitCode=0
+    hand-off) the original profile is held by a stale Chrome that lingered across
+    a sleep. We KILL that holder and retry the SAME (logged-in) profile up to
+    `max_in_use_retries` times. If it still fails as in-use we RAISE — we must NOT
+    switch to the separate, login-less fallback profile, because that spawns a
+    second un-authed session that never reaches the main page (the 7fe98fc6
+    3-hour 未知 thrash, 2026-06-16). The fallback profile is reserved for genuine
+    NON profile-in-use launch errors (e.g. a missing Chrome channel binary).
+
+    `launch_fn(target_profile, use_channel) -> context` performs the real launch.
+    `kill_orphan_fn(profile_dir) -> int` kills the stale holder (defaults to the
+    real psutil-based killer; injected in tests).
+    Returns `(context, used_profile_dir)`; raises the last error if recovery fails.
+    """
+    if kill_orphan_fn is None:
+        def kill_orphan_fn(p):
+            return _kill_chrome_holding_profile(p, logger_obj, device_id)
+
+    last_err: Optional[Exception] = None
+    last_was_in_use = False
+
+    # Phase 1 — the original (logged-in) profile: Chrome channel, then bundled chromium.
+    for use_channel in (True, False):
+        retries_left = max_in_use_retries
+        while True:
+            try:
+                return launch_fn(profile_dir, use_channel), profile_dir
+            except Exception as exc:
+                last_err = exc
+                last_was_in_use = _is_profile_in_use_error(exc)
+                if last_was_in_use and retries_left > 0:
+                    retries_left -= 1
+                    attempt_no = max_in_use_retries - retries_left
+                    killed = 0
+                    try:
+                        killed = kill_orphan_fn(profile_dir)
+                    except Exception as kexc:
+                        logger_obj.debug(f"[{device_id}] orphan kill raised: {kexc}")
+                    logger_obj.warning(
+                        f"[{device_id}] web_h5 profile in use; killed {killed} stale "
+                        f"chrome; retrying SAME profile in {in_use_wait_sec}s "
+                        f"({attempt_no}/{max_in_use_retries})"
+                    )
+                    sleep_fn(in_use_wait_sec)
+                    continue
+                logger_obj.warning(
+                    f"[{device_id}] web_h5 launch failed "
+                    f"(profile={profile_dir}, use_channel={use_channel}): {exc}"
+                )
+                break
+
+    # The logged-in profile is still unusable. If it was profile-in-use, raise —
+    # do NOT degrade to the login-less fallback profile. The startup ceiling +
+    # 30-minute avoidance then lets the lock clear; the next wake reuses the real
+    # profile.
+    if last_was_in_use:
+        raise last_err
+
+    # Non profile-in-use failure: the separate fallback profile is a last resort.
+    if fallback_profile_dir and os.path.abspath(
+        fallback_profile_dir
+    ) != os.path.abspath(profile_dir):
+        try:
+            context = launch_fn(fallback_profile_dir, True)
+            logger_obj.warning(
+                f"[{device_id}] web_h5 switched profile dir to fallback: {fallback_profile_dir}"
+            )
+            return context, fallback_profile_dir
+        except Exception as exc:
+            last_err = exc
+            logger_obj.warning(
+                f"[{device_id}] web_h5 launch failed "
+                f"(profile={fallback_profile_dir}, use_channel=True): {exc}"
+            )
+
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError(
+        f"[{device_id}] web_h5 launch failed without detailed exception"
+    )
+
 
 def _reset_thread_event_loop() -> None:
     # Playwright sync API rejects start() when the calling thread's event loop
     # reports is_running()==True. A previous _playwright.stop() whose dispatcher
-    # fiber didn't fully shut down (e.g. Chrome was force-killed) can leave that
-    # flag stuck, which then poisons every subsequent restart in the same thread
-    # — exactly the 5554 failure mode in logs/emulator-5554/main.log (~210
-    # "Sync API inside the asyncio loop" errors). Installing a fresh loop here
-    # guarantees the next sync_playwright().start() sees a clean slate.
+    # fiber didn't fully shut down (e.g. Chrome was force-killed, or an 異地-kicked
+    # tab went unresponsive) can leave that flag stuck, which then poisons every
+    # subsequent restart in the same thread — exactly the 5554 failure mode in
+    # logs/emulator-5554/main.log (260 "Sync API inside the asyncio loop" errors
+    # on 2026-06-13). Playwright reads asyncio.get_running_loop(); that is backed
+    # by asyncio's C-level _running_loop thread-state, which set_event_loop() does
+    # NOT touch. So we must clear _running_loop explicitly first — installing a
+    # fresh default loop alone never rescued the poisoned thread (proven against
+    # Python 3.10.18). Clearing the leftover loop is safe here: the device thread
+    # is always synchronous, and any loop still registered as "running" belongs to
+    # a dead/abandoned Playwright session we are about to replace.
+    try:
+        asyncio.events._set_running_loop(None)
+    except Exception as e:
+        logger.debug(f"asyncio _set_running_loop(None) failed: {e}")
     try:
         asyncio.set_event_loop(asyncio.new_event_loop())
     except Exception as e:
@@ -164,7 +376,7 @@ class MonitoredDevice:
     def _to_px(self, x, y):
         """支援座標比率或絕對座標。
 
-        若 $0 \le x,y < 1$，視為螢幕比例；否則視為絕對座標。
+        若 0 <= x,y < 1，視為螢幕比例；否則視為絕對座標。
         """
         if (
             isinstance(x, (int, float))
@@ -192,20 +404,11 @@ class MonitoredDevice:
         return self._d.click(x, y, *args, **kwargs)
 
     def click(self, x, y, *args, **kwargs):
-        """點擊前先檢查是否暫停"""
-        meaning = str(
-            kwargs.pop("trace_meaning", "") or kwargs.pop("trace_purpose", "") or ""
-        )
-        payload = {"x": x, "y": y}
-        self._trace(
-            "click", payload, meaning=self._auto_meaning("click", meaning, payload)
-        )
-        kwargs["trace_meaning"] = meaning
-        return self.tap(x, y, *args, **kwargs)
+        """點擊入口 — 直接委派給 tap（tap 內含 pause_guard / _to_px / trace）。
 
-    def click_pct(self, x_ratio: float, y_ratio: float, *args, **kwargs):
-        """以螢幕比例點擊。"""
-        return self.tap(x_ratio, y_ratio, *args, **kwargs)
+        不在此處另記 trace，避免單次點擊被 click + tap 重複記兩筆。
+        """
+        return self.tap(x, y, *args, **kwargs)
 
     def gesture_swipe(self, *args, **kwargs):
         self._pause_guard()
@@ -239,10 +442,6 @@ class MonitoredDevice:
                 "swipe", payload, meaning=self._auto_meaning("swipe", meaning, payload)
             )
         return self.gesture_swipe(*args, **kwargs)
-
-    def swipe_pct(self, x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs):
-        """以螢幕比例滑動。"""
-        return self.swipe(x0_ratio, y0_ratio, x1_ratio, y1_ratio, *args, **kwargs)
 
     def screenshot(self, *args, **kwargs):
         """截圖前也檢查暫停，確保不會在暫停時瘋狂截圖"""
@@ -472,34 +671,14 @@ class PlaywrightGameDevice:
                 "Playwright is required for web_h5 backend. Please install playwright."
             ) from exc
 
-        profile_dir = (
-            str(
-                self.cfg.get("web_profile_dir") or "playwright_profile/{device_id}"
-            ).strip()
-            or "playwright_profile/{device_id}"
-        )
         # 每個裝置都使用自己的 profile/cookies 資料夾，避免共享登入狀態。
-        # 若設定值包含 {device_id} / {ip}，會先做字串替換；否則會自動在尾端附加 device_id。
-        profile_dir = profile_dir.format(device_id=self.device_id, ip=self.device_id)
-        if not os.path.normpath(profile_dir).endswith(self.device_id):
-            profile_dir = os.path.join(profile_dir, self.device_id)
-        if not os.path.isabs(profile_dir):
-            profile_dir = os.path.join(os.getcwd(), profile_dir)
+        # 路徑解析與中控 routes_web_session 共用同一 helper（normpath 統一），確保
+        # dashboard 手動登入與 runtime 解析到同一目錄字串（見 utils/web_profile_paths）。
+        profile_dir = resolve_profile_dir(self.device_id, self.cfg.get("web_profile_dir"))
         os.makedirs(profile_dir, exist_ok=True)
 
         channel = str(self.cfg.get("web_channel") or "chrome").strip()
-        state_file_raw = (
-            str(self.cfg.get("web_state_file") or "auth_state/{device_id}.json").strip()
-            or "auth_state/{device_id}.json"
-        )
-        state_file = state_file_raw.format(device_id=self.device_id, ip=self.device_id)
-        if "{device_id}" not in state_file_raw and "{ip}" not in state_file_raw:
-            if os.path.basename(state_file).lower() == "auth_state.json":
-                state_file = os.path.join(
-                    os.path.dirname(state_file), "auth_state", f"{self.device_id}.json"
-                )
-        if state_file and not os.path.isabs(state_file):
-            state_file = os.path.join(os.getcwd(), state_file)
+        state_file = resolve_state_file(self.device_id, self.cfg.get("web_state_file"))
 
         def _clear_chrome_singleton_locks(target_dir: str) -> None:
             # Stale singleton files can make Chrome exit immediately with profile-in-use errors.
@@ -545,37 +724,27 @@ class PlaywrightGameDevice:
         )
 
         self._playwright = sync_playwright().start()
-        last_err: Optional[Exception] = None
-        launch_attempts = [(profile_dir, True)]
-        if fallback_profile_dir and os.path.abspath(
-            fallback_profile_dir
-        ) != os.path.abspath(profile_dir):
-            launch_attempts.append((fallback_profile_dir, True))
-        # Last fallback: same profile, but no channel ("chrome") to avoid channel-specific startup issues.
-        launch_attempts.append((profile_dir, False))
 
-        for target_profile, use_channel in launch_attempts:
-            try:
-                os.makedirs(target_profile, exist_ok=True)
-                _clear_chrome_singleton_locks(target_profile)
-                launch_kwargs = _build_launch_kwargs(
-                    target_profile, use_channel=use_channel
-                )
-                self._context = self._playwright.chromium.launch_persistent_context(
-                    **launch_kwargs
-                )
-                if target_profile != profile_dir:
-                    self.logger.warning(
-                        f"[{self.device_id}] web_h5 switched profile dir to fallback: {target_profile}"
-                    )
-                break
-            except Exception as exc:
-                last_err = exc
-                self.logger.warning(
-                    f"[{self.device_id}] web_h5 launch failed "
-                    f"(profile={target_profile}, use_channel={use_channel}): {exc}"
-                )
-                self._context = None
+        def _launch_fn(target_profile: str, use_channel: bool):
+            os.makedirs(target_profile, exist_ok=True)
+            _clear_chrome_singleton_locks(target_profile)
+            launch_kwargs = _build_launch_kwargs(
+                target_profile, use_channel=use_channel
+            )
+            return self._playwright.chromium.launch_persistent_context(**launch_kwargs)
+
+        last_err: Optional[Exception] = None
+        try:
+            self._context, _ = _launch_with_profile_recovery(
+                profile_dir=profile_dir,
+                fallback_profile_dir=fallback_profile_dir,
+                launch_fn=_launch_fn,
+                logger_obj=self.logger,
+                device_id=self.device_id,
+            )
+        except Exception as exc:
+            last_err = exc
+            self._context = None
 
         if self._context is None:
             # Ensure Playwright process is cleaned if all attempts fail.
@@ -697,16 +866,40 @@ class PlaywrightGameDevice:
             logger.debug(f"[{self.device_id}] non-blank-page fallback iter failed: {e}")
         return False
 
-    def _ensure_browser_session(self, reason: str = "") -> None:
-        """Best-effort self-heal for transient web_h5 browser/page loss."""
+    def _ensure_browser_session(self, reason: str = "") -> bool:
+        """Best-effort self-heal for transient web_h5 browser/page loss.
+
+        Returns True when this call rebuilt the Playwright session.
+        """
         if (not self._is_session_unavailable()) and self._sync_active_page():
-            return
+            return False
         suffix = f" ({reason})" if reason else ""
         self.logger.warning(
             f"[{self.device_id}] web_h5 session unavailable{suffix}, restarting browser session..."
         )
         self._restart_browser_session()
         self._sync_active_page()
+        return True
+
+    def _current_page_matches_game_url(self) -> bool:
+        """Return True when the active page is already on the configured game URL."""
+        if not self.web_url or self._page is None:
+            return False
+        try:
+            current_url = str(getattr(self._page, "url", "") or "").strip()
+        except Exception:
+            return False
+        game_url = str(self.web_url or "").strip()
+        if not current_url or not game_url:
+            return False
+        if current_url == game_url:
+            return True
+        if not current_url.startswith(game_url):
+            return False
+        if game_url.endswith(("/", "?", "#")):
+            return True
+        suffix = current_url[len(game_url): len(game_url) + 1]
+        return suffix in {"/", "?", "#"}
 
     def _restart_browser_session(self) -> None:
         """Recreate playwright context/page in-place after browser/page was closed."""
@@ -1019,13 +1212,20 @@ class PlaywrightGameDevice:
 
     def app_start(self, *args, **kwargs):
         force_headful = bool(kwargs.pop("force_headful", False))
+        session_restarted = False
         if force_headful:
             self.restart_with_headful(reason="manual web launch")
-        self._ensure_browser_session("app_start")
+            session_restarted = True
+        session_restarted = bool(self._ensure_browser_session("app_start")) or session_restarted
 
         if self.web_url and self._page is not None:
             try:
-                self._open_game_url()
+                if session_restarted and self._current_page_matches_game_url():
+                    self.logger.info(
+                        f"[{self.device_id}] web_h5 app_start reused game url loaded during restart"
+                    )
+                else:
+                    self._open_game_url()
             except Exception as e:
                 logger.warning(f"[{self.device_id}] app_start: _open_game_url failed: {e}")
         self._in_game = True
@@ -1072,6 +1272,13 @@ class PlaywrightGameDevice:
     def press(self, key, *args, **kwargs):
         key_str = str(key).lower()
         if key_str in {"back", "escape"}:
+            # Self-heal a closed page before touching it, mirroring tap/swipe/
+            # screenshot. Without this, a page closed by a same-account login
+            # conflict made press('back') raise a raw TargetClosedError up into
+            # the startup loop (game_initialization.py:240) instead of reopening
+            # the browser.
+            self._ensure_browser_session("press")
+            self._sync_active_page()
             self._page.keyboard.press("Escape")
             return True
         if key_str == "home":

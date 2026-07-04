@@ -1,7 +1,11 @@
 """Dashboard 的「開啟網頁」按鈕要能 toggle 成「關閉網頁」,且點擊後鎖 3 秒防連點。
 
-Toggle 是樂觀的(client-side 狀態):按「開啟網頁」→ 變「關閉網頁」(POST /api/web_launch);
-按「關閉網頁」→ 變「開啟網頁」(POST /api/web_close)。3 秒鎖避免使用者不耐煩連點重複送請求。
+按「開啟網頁」→ 變「關閉網頁」(POST /api/web_launch);按「關閉網頁」→ 變「開啟網頁」
+(POST /api/web_close)。3 秒鎖避免連點重複送請求。
+
+按鈕狀態以**後端權威值** `info.web_browser_open`(device thread 發布 is_alive())對帳:
+client-side 樂觀 flag (`_webOpenState`/`_webOpenTs`) 只當點擊瞬間的即時回饋 + grace
+window,下一輪 status 一到就以真值校正 → 外部手動關閉瀏覽器後按鈕會自動翻回「開啟網頁」。
 測試為純字串比對(與 test_dashboard_template.py 同風格)。
 """
 from pathlib import Path
@@ -34,6 +38,20 @@ def test_launch_still_posts_web_launch():
 def test_optimistic_toggle_state_tracked_per_ip():
     html = _html()
     assert "_webOpenState" in html
+
+
+def test_toggle_reconciles_with_authoritative_browser_state():
+    # The button must derive from the backend-published truth, not only the
+    # optimistic flag, so an external/manual close flips it back to 開啟網頁.
+    html = _html()
+    assert "web_browser_open" in html
+    # a grace timestamp lets the optimistic "open" survive the launch gap
+    assert "_webOpenTs" in html
+
+
+def test_close_clears_open_grace_window():
+    html = _html()
+    assert "delete _webOpenTs[ip]" in html
 
 
 def test_three_second_click_lock():

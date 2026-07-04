@@ -78,6 +78,14 @@ _PROTECT_WAIT_SEC_DEFAULT = 60.0
 # reconnecting (which would just race the human who logged in elsewhere). The
 # next wake's online-protection probe then decides whether to resume.
 _KICK_COOLDOWN_SEC = 1800.0
+_WS_TASK_LABELS = {
+    "harvest_card": "豐收卡",
+}
+
+
+def _ws_task_label(name: str) -> str:
+    """Dashboard-facing WS task label; internal task keys stay English."""
+    return _WS_TASK_LABELS.get(name, name)
 
 
 def _load_run_device():
@@ -163,9 +171,11 @@ def _protected_player_online(ip: str, cfg: Any, logger_obj) -> Optional[bool]:
     (timeout / no checker / error) is treated as **online** — we would rather
     not run than kick a live player.
     """
-    target_pid = cfg.get("online_check_target_pid")
+    # cfg (caller-supplied) wins for the explicit target; resolver adds the
+    # creds fallback so this matches get_device_role_id everywhere else.
+    target_pid = cfg.get("online_check_target_pid") or config_manager.get_device_role_id(ip)
     if not target_pid:
-        return False  # nothing to protect — original behaviour
+        return False  # nothing to protect — no creds, no config
 
     try:
         wait_sec = float(cfg.get("online_check_timeout_sec", _PROTECT_WAIT_SEC_DEFAULT))
@@ -229,25 +239,121 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     farm_config = cfg.get("ws_token_farm_config") or None
     dungeon_sweeps = cfg.get("ws_token_dungeon_sweeps") or None
     carpark_target = cfg.get("ws_token_carpark_target") or None
+    carpark_auto = bool(cfg.get("ws_token_carpark_auto", False))
+    _ws_nested = cfg.get("ws_token") or {}
+    if not isinstance(_ws_nested, dict):
+        _ws_nested = {}
+    carpark_plan = _ws_nested.get("carpark_plan") or None
     couple_gifts = bool(cfg.get("ws_token_couple_gifts", True))
     forge_ring = bool(cfg.get("ws_token_forge_ring", False))
     workshop_rotate = bool(cfg.get("ws_token_workshop_rotate", True))
+    kungfu_guess = bool(cfg.get("ws_token_kungfu_guess", False))
+    # 每日自動領郵件附件：單一真相在巢狀 ws_token dict（mail_claim 預設關）。
+    mail_claim = bool(_ws_nested.get("mail_claim", False))
+
+    def _opt_int(key: str):
+        try:
+            v = _ws_nested.get(key)
+            return int(v) if v not in (None, "", 0) else None
+        except (TypeError, ValueError):
+            return None
+    mail_gem_threshold = _opt_int("mail_gem_threshold")
+    mail_skill_threshold = _opt_int("mail_skill_threshold")
+    # 遺物 平均強化 (SPENDS 遺物碎片) / 傳奇大亨擲骰：單一真相在巢狀 ws_token dict。
+    relic_upgrade = bool(_ws_nested.get("relic_upgrade", False))
+    tycoon = bool(_ws_nested.get("tycoon", False))
+    # 跨服戰 放置獎勵 純-WS 每 ≤4h 自動領取 (預設關)；只在 act_list 顯示活動 Open 才送。
+    xwar_idle_enabled = bool(_ws_nested.get("xwar_idle", False))
+    # 抽卡 (技能/同伴) — 巢狀 ws_token.gacha 子設定 (預設關)；消耗抽卡券。
+    gacha_config = _ws_nested.get("gacha") or None
+    # 秘寶 (塵世尋寶) — 巢狀 ws_token.secret_jewel 子設定 (預設關)。
+    # draw_free=免費抽 (免費)；buy_daily=每日買尋寶圖 (SPENDS 粉鑽)。任一開才傳。
+    _sj_cfg = _ws_nested.get("secret_jewel")
+    secret_jewel_config = None
+    if isinstance(_sj_cfg, dict) and (_sj_cfg.get("draw_free") or _sj_cfg.get("buy_daily")):
+        secret_jewel_config = _sj_cfg
+    # 看廣告獎勵 (鑽石/種子) — 巢狀 ws_token.ad_rewards 子設定 (預設關)；is_free=1 純 WS 領。
+    # enabled 且 config_ids 非空才傳 list，否則保持不傳 (run_device 該任務 self-skip)。
+    _ad_cfg = _ws_nested.get("ad_rewards")
+    ad_reward_config_ids = None
+    if isinstance(_ad_cfg, dict) and bool(_ad_cfg.get("enabled")):
+        _ids = _ad_cfg.get("config_ids")
+        if isinstance(_ids, (list, tuple)):
+            clean_ids = [int(x) for x in _ids if isinstance(x, (int, float))]
+            ad_reward_config_ids = clean_ids or None
+
+    def _nested_int(key: str, default: int) -> int:
+        try:
+            return int(_ws_nested.get(key, default))
+        except (TypeError, ValueError):
+            return default
+    relic_max_steps = _nested_int("relic_max_steps", 10)
+    relic_fragment_floor = _nested_int("relic_fragment_floor", 0)
+    tycoon_max_rolls = _nested_int("tycoon_max_rolls", 50)
+    # 遺物碎片衝刺 (衝刺榜，SPENDS 遺物碎片) — 巢狀 ws_token.relic_sprint 子設定 (預設關)。
+    # 啟用時才把 enabled/target 透過 extra_kwargs 傳入,未啟用維持既有 wiring 行為。
+    _sprint_cfg = _ws_nested.get("relic_sprint")
+    relic_sprint_enabled = False
+    relic_sprint_target = None
+    if isinstance(_sprint_cfg, dict) and bool(_sprint_cfg.get("enabled")):
+        relic_sprint_enabled = True
+        try:
+            _t = int(_sprint_cfg.get("target_spend"))
+            relic_sprint_target = _t if _t > 0 else None
+        except (TypeError, ValueError):
+            relic_sprint_target = None
     mining_config = cfg.get("ws_token_mining") or None
+    sea_config = _ws_nested.get("sea_season") or None
+    only_tasks = _ws_nested.get("only_tasks") or None
+    # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
+    try:
+        lamp_percent = max(0.0, float(_ws_nested.get("lamp_percent", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_percent = 0.0
+    try:
+        lamp_min_keep = max(0, int(_ws_nested.get("lamp_min_keep", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_min_keep = 0
+    try:
+        lamp_daily_min = max(0, int(_ws_nested.get("lamp_daily_min", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_daily_min = 0
 
     run_device = _load_run_device()
+    # 看廣告獎勵預設關 → 不傳此參數 (run_device 走預設 None)，維持既有 wiring 行為；
+    # 只有啟用時才附上，避免對沒有 **kwargs 的測試 fake 多傳一個關鍵字。
+    extra_kwargs: dict = {}
+    if ad_reward_config_ids is not None:
+        extra_kwargs["ad_reward_config_ids"] = ad_reward_config_ids
+    # 遺物碎片衝刺預設關 → 不傳這兩個參數 (run_device 走預設 False/SPRINT_TOTAL)，維持既有
+    # wiring 行為；只有啟用時才附上,避免對沒有 **kwargs 的測試 fake 多傳關鍵字。
+    if relic_sprint_enabled:
+        extra_kwargs["relic_sprint_enabled"] = True
+        if relic_sprint_target is not None:
+            extra_kwargs["relic_sprint_target"] = relic_sprint_target
+    # 秘寶預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
+    if secret_jewel_config is not None:
+        extra_kwargs["secret_jewel_config"] = secret_jewel_config
+    # 跨服戰閒置獎勵預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
+    if xwar_idle_enabled:
+        extra_kwargs["xwar_idle_enabled"] = True
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
+        label = _ws_task_label(name)
         if status == "start":
-            step = f"WS 任務執行中: {name}"
-            logger_obj.info(f"[{ip}] ws_token 任務開始: {name}")
+            step = f"WS 任務執行中: {label}"
+            logger_obj.info(f"[{ip}] ws_token 任務開始: {label}")
         elif status == "ok":
-            step = f"WS 任務完成: {name}"
-            logger_obj.info(f"[{ip}] ws_token 任務完成: {name}")
+            step = f"WS 任務完成: {label}"
+            logger_obj.info(f"[{ip}] ws_token 任務完成: {label}")
+        elif status == "progress":
+            step = f"WS 開神燈 ({detail})"
+            logger_obj.info(f"[{ip}] ws_token 開神燈進度: {detail}")
         else:
-            step = f"WS 任務失敗: {name}"
-            logger_obj.warning(f"[{ip}] ws_token 任務失敗: {name} ({detail})")
+            step = f"WS 任務失敗: {label}"
+            logger_obj.warning(f"[{ip}] ws_token 任務失敗: {label} ({detail})")
         try:
             bot_state.update_state(ip, task="WS 任務", step=step)
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
@@ -256,12 +362,29 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
                             progress=_progress,
-                            open_lamp=open_lamp, farm_config=farm_config,
+                            open_lamp=open_lamp, lamp_percent=lamp_percent,
+                            lamp_min_keep=lamp_min_keep,
+                            lamp_daily_min=lamp_daily_min, farm_config=farm_config,
                             dungeon_sweeps=dungeon_sweeps,
                             carpark_target=carpark_target,
+                            carpark_auto=carpark_auto,
+                            carpark_plan=carpark_plan,
                             couple_gifts=couple_gifts, forge_ring=forge_ring,
                             workshop_rotate=workshop_rotate,
-                            mining_config=mining_config)
+                            kungfu_guess=kungfu_guess,
+                            mail_claim=mail_claim,
+                            mail_gem_threshold=mail_gem_threshold,
+                            mail_skill_threshold=mail_skill_threshold,
+                            relic_upgrade=relic_upgrade,
+                            relic_max_steps=relic_max_steps,
+                            relic_fragment_floor=relic_fragment_floor,
+                            tycoon=tycoon,
+                            tycoon_max_rolls=tycoon_max_rolls,
+                            gacha_config=gacha_config,
+                            mining_config=mining_config,
+                            sea_config=sea_config,
+                            only_tasks=only_tasks,
+                            **extra_kwargs)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")

@@ -6,11 +6,14 @@ equip_info (combo->tab + per-tab 連閃), decide_v2 branches, and the open loop'
 equip + chunked-sell + restore-active-tab behavior (dry-run vs live).
 """
 import sys
+import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+sys.modules.setdefault("cv2", types.SimpleNamespace())
 
 from opengold_v2.config import OpenGoldConfig  # noqa: E402
 from opengold_v2.ocr_parser import OCRParser  # noqa: E402
@@ -274,6 +277,58 @@ def test_open_lamp_v2_sells_twenty_rejects_in_one_request():
         sell_bodies = [b for _s, cmd, b in fake.framed_sent() if cmd == CMD_SELL]
         assert len(sell_bodies) == 1
         assert sell_bodies[0] == lamp.build_sell(uids)
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_info_log_hides_direct_sells(caplog):
+    info = _standard_worn_info()
+    uids = [501, 502]
+    drops = _change_body([
+        _p_equip(uid, _tmpl(5, 1), {A_K: 100, A_Y: 100})
+        for uid in uids
+    ])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c(uids)),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_SELL: lambda _b: [s2c(CMD_SELL, b"")],
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],
+    })
+    try:
+        with caplog.at_level("INFO", logger=lamp.logger.name):
+            res = lamp.open_lamp(c, dry_run=False, batch_num=2, max_batches=1)
+        assert {uid for uid, _reason in res["sold"]} == set(uids)
+        assert "SELL" not in caplog.text
+        assert "sold=" not in caplog.text
+        assert "uid=501" not in caplog.text
+        assert "uid=502" not in caplog.text
+    finally:
+        c.close()
+
+
+def test_open_lamp_v2_info_log_shows_equips_only(caplog):
+    info = _standard_worn_info()
+    drops = _change_body([_p_equip(601, _tmpl(11, 1), {A_K: 600, A_Y: 100}),
+                          _p_equip(602, _tmpl(5, 2), {A_K: 100, A_Y: 100})])
+    c, _fake = _client({
+        CMD_TAB_INFO: lambda _b: [s2c(CMD_TAB_INFO, codec.pb_uint(1, 1))],
+        CMD_EQUIP_INFO: lambda _b: [s2c(CMD_EQUIP_INFO, info)],
+        CMD_OPEN_ALL: lambda _b: [s2c(CMD_OPEN_ALL, _open_all_s2c([601, 602])),
+                                  s2c(CMD_EQUIP_CHANGE, drops)],
+        CMD_WEAR: lambda _b: [s2c(CMD_WEAR, b"")],
+        CMD_SELL: lambda _b: [s2c(CMD_SELL, b"")],
+        CMD_CHOOSE_TAB: lambda _b: [s2c(CMD_CHOOSE_TAB, b"")],
+    })
+    try:
+        with caplog.at_level("INFO", logger=lamp.logger.name):
+            res = lamp.open_lamp(c, dry_run=False, batch_num=2, max_batches=1)
+        assert [(tab, uid) for tab, uid, _reason in res["equipped"]] == [(2, 601)]
+        assert "uid=601 -> EQUIP" in caplog.text
+        assert "uid=602" not in caplog.text
+        assert "SELL" not in caplog.text
+        assert "sold=" not in caplog.text
     finally:
         c.close()
 

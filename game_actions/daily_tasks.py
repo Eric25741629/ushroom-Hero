@@ -3,6 +3,7 @@ from json_manager import return_time, time_recording
 from utils.logging_utils import logger
 import new_cnn.cnn_model as cnn_model_module
 import img_tools
+from game_actions.task_due import is_due
 
 def daily_acceleration(d, ip, Cnn_model=None):
     """
@@ -13,12 +14,7 @@ def daily_acceleration(d, ip, Cnn_model=None):
         ip: 設備 IP
         Cnn_model: CNN 模型實例 (可選)
     """
-    record = return_time(ip, name="daily_acceleration")
-    should_execute = False
-    if record is None:
-        should_execute = True
-    else:
-        should_execute = record.get("is_next_day", False)
+    should_execute = is_due("每日加速", ip)
     if should_execute:
         logger.info(f"[{ip}] 執行每日加速")
         
@@ -79,13 +75,8 @@ def click_arena_challenges(d, ip):
         d: uiautomator2 device 物件
         ip: 設備 IP
     """
-    record = return_time(ip, name="arena_challenges")
-    should_execute = False
-    if record is None:
-        should_execute = True
-    else:
-        should_execute = record.get("is_next_day", False)
-    
+    should_execute = is_due("競技場挑戰", ip)
+
     if should_execute:
         logger.info(f"[{ip}] 執行競技場每日挑戰")
         try:

@@ -555,6 +555,7 @@ def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
             'com.android.launcher3',
             'com.google.android.launcher',
             'com.miui.home',  # 小米
+            'com.mi.android.globallauncher',  # 小米/POCO 國際版 (POCO Launcher)
             'com.huawei.android.launcher',  # 華為
             'com.sec.android.app.launcher',  # 三星
             'com.oppo.launcher',  # OPPO
@@ -571,14 +572,15 @@ def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
 
         is_launcher = any(pkg in package for pkg in launcher_packages)
 
+        serial = getattr(d, "serial", "?")
         if is_launcher:
-            logger.debug(f"[{d.serial}] 檢測到桌面: {package}")
+            logger.debug(f"[{serial}] 檢測到桌面: {package}")
         else:
-            logger.debug(f"[{d.serial}] 當前應用不是桌面: {package}")
+            logger.debug(f"[{serial}] 當前應用不是桌面: {package}")
 
         return is_launcher
     except Exception as e:
-        logger.warning(f"[{d.serial}] 檢查桌面狀態失敗: {e}")
+        logger.warning(f"[{getattr(d, 'serial', '?')}] 檢查桌面狀態失敗: {e}")
         return False
 
 

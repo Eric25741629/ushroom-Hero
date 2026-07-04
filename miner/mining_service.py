@@ -21,7 +21,9 @@ from miner.planning.executor import (
     execute_plan_steps,
 )
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
+from miner.depth_tracker import DepthTracker
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
+from miner.core.ws_inventory import read_ws_prop_counts
 from miner.planning.item_planner import find_tool_candidate
 from miner.planning.planner import (
     base_label,
@@ -97,6 +99,19 @@ USE_ITEMS: bool = True
 
 # 連續拿到空 plan 的容忍上限，避免無限空轉。
 _MAX_EMPTY_PLANS: int = 3
+
+# 連續相同版面（非空 plan 卻毫無變化）的容忍上限 — 真正的「identical state」死結偵測。
+_MAX_IDENTICAL_BOARDS: int = 3
+
+
+def _identical_board_exceeded(cur_sig, prev_sig, count: int):
+    """Return (new_count, tripped). Increments when the board signature is
+    unchanged from the previous iteration; resets to 0 when it changes."""
+    if prev_sig is not None and cur_sig == prev_sig:
+        count += 1
+    else:
+        count = 0
+    return count, count >= _MAX_IDENTICAL_BOARDS
 
 # OCR 鏟子驗證頻率（每 N 個 iter 對照一次）。從原本 3 拉長到 5 —
 # 現在 count 由 executor 回傳的 ExecutionResult.shovels_used 增量扣減，
@@ -294,6 +309,8 @@ def _dispatch_planner(
     blocked_actions: Set[Tuple[Any, ...]],
     planner_version: str,
     miner_logger,
+    depth: Optional[int] = None,
+    device: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Route to the correct planner version and return (plan, plan_title)."""
     if planner_version == "v4":
@@ -321,13 +338,16 @@ def _log_planner_stats(
     plan_elapsed_ms: float,
     blocked_count: int,
     miner_logger,
+    depth: Optional[int] = None,
 ) -> None:
     if planner_version not in {"v3", "v4"}:
         return
+    depth_str = "?" if depth is None else str(depth)
     miner_logger.info(
-        "[MiningService] planner=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
+        "[MiningService] planner=%s depth=%s calc_ms=%.3f result_ms=%s nodes=%s steps=%s strategy=%s"
         % (
             planner_version,
+            depth_str,
             plan_elapsed_ms,
             plan.get("elapsed_ms", "?"),
             plan.get("explored_nodes", "?"),
@@ -367,6 +387,25 @@ def _diagnose_empty_plan(board: List[List[str]], plan: Dict[str, Any], miner_log
         miner_logger.error("[Mining] 致命問題：棋盤找不到任何空氣！分類器可能有問題")
 
 
+def _forced_descent_dig(board):
+    """Pick the deepest reachable non-pit frontier cell so digging it drives
+    the viewport toward a scroll. Used to escape a board where the only
+    remaining pits are uncollectable (blacklisted / sealed-pocket reachable).
+    Returns (r, c) or None when no diggable non-pit frontier exists."""
+    from miner.v3.board import is_frontier_diggable, is_pit
+    rows = len(board)
+    cols = len(board[0]) if board else 0
+    best = None  # (depth_row, col)
+    for r in range(rows):
+        for c in range(cols):
+            if is_pit(board[r][c]):
+                continue
+            if is_frontier_diggable(board, r, c):
+                if best is None or r > best[0]:
+                    best = (r, c)
+    return best
+
+
 def _verify_items_pre_execution(
     d: u2.Device,
     plan: Dict[str, Any],
@@ -381,11 +420,17 @@ def _verify_items_pre_execution(
     if not planned_item_uses:
         return False
 
-    live_frame = d.screenshot(format="opencv")
-    live_counts = {
-        "drill": check_drill_num(d, frame=live_frame),
-        "bomb": check_boom_num(d, frame=live_frame),
-    }
+    # web_h5: authoritative drill/bomb現量 from WS (0x0401); browser-screenshot
+    # bomb OCR mis-reads 0. adb / WS-unavailable falls back to OCR.
+    ws_counts = read_ws_prop_counts(d)
+    if ws_counts is not None:
+        live_counts = {"drill": ws_counts["drill"], "bomb": ws_counts["bomb"]}
+    else:
+        live_frame = d.screenshot(format="opencv")
+        live_counts = {
+            "drill": check_drill_num(d, frame=live_frame),
+            "bomb": check_boom_num(d, frame=live_frame),
+        }
     needs_replan = False
     for item_name, need_count in planned_item_uses.items():
         live_count = int(live_counts.get(item_name, 0))
@@ -415,16 +460,15 @@ def run(
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     miner_logger = setup_miner_logger(ip)
     device_cfg = config_manager.get_device_config(ip)
-    # Default planner is v4 (planner-eval 2026-06-05 real-board replay: v4 is
-    # fastest at mean 1.1 ms / max 46 ms with 0 budget violations, and carries
-    # the unseal-corridor fallback for buried pits). v1 is the most shovel-
-    # efficient alternative; v3 is cluster-aware. v2 was removed (violated the
-    # <300 ms budget on 18.8% of real boards). Override per-device with
-    # `mining_planner_version` in config.
-    planner_version = str(device_cfg.get("mining_planner_version", "v4")).strip().lower()
+    # Default planner is v1 (A*). Real-board eval at the recalibrated 3.6%
+    # density (docs/.../2026-06-18-...top-pileup-fix.md): v1 is the most
+    # shovel-efficient and highest-scoring of all planners; v3 is cluster-aware;
+    # v4 is a bounded 3-step DFS. v5 (priors-driven) and v2 were removed.
+    # Override per-device with `mining_planner_version` in config.
+    planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
     if planner_version not in {"v1", "v3", "v4"}:
-        planner_version = "v4"
+        planner_version = "v1"
 
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
@@ -447,10 +491,19 @@ def run(
             items_available["drill"] = 0
             items_available["bomb"] = 0
             return
-        for name, value in {
-            "drill": check_drill_num(d, frame=shared_frame),
-            "bomb": check_boom_num(d, frame=shared_frame),
-        }.items():
+        # web_h5: read authoritative drill/bomb現量 from WS (0x0401). The browser
+        # screenshot bomb OCR mis-reads 0, which blacklists bombs and kills the
+        # drill->bomb combo (5554 live: bomb=930, OCR=0). adb / WS-unavailable
+        # falls back to OCR.
+        ws_counts = read_ws_prop_counts(d)
+        if ws_counts is not None:
+            item_counts = {"drill": ws_counts["drill"], "bomb": ws_counts["bomb"]}
+        else:
+            item_counts = {
+                "drill": check_drill_num(d, frame=shared_frame),
+                "bomb": check_boom_num(d, frame=shared_frame),
+            }
+        for name, value in item_counts.items():
             if name in item_blacklist:
                 items_available[name] = 0
                 continue
@@ -472,8 +525,14 @@ def run(
     blocked_action_signatures: Set[Tuple[Any, Any, Any, Any, Any]] = set()
     last_board_signature: Optional[Tuple[Tuple[str, ...], ...]] = None
 
+    # 追蹤本 session 捲動深度（純觀測 telemetry，寫進 miner.log / plan stats）。
+    depth_tracker = DepthTracker()
+    prev_board: Optional[List[List[str]]] = None
+
     iterations = 0
     consecutive_empty_plans = 0
+    identical_board_count = 0
+    prev_exec_sig = None
     while count >= 1:
         _check_force_sleep(ip)
         if time.time() - start_time > max_duration_seconds:
@@ -521,6 +580,16 @@ def run(
         board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
         miner_logger.info(f"\n[MiningService] Current Board:\n{get_visual_board(board)}")
         _log_board_validation(ip, board, miner_logger)
+        shifted = depth_tracker.update(board)
+        if depth_tracker.last_uncertain:
+            miner_logger.info(
+                f"[MiningService] depth={depth_tracker.depth} (scroll uncertain)"
+            )
+        else:
+            miner_logger.info(
+                f"[MiningService] depth={depth_tracker.depth} (+{shifted})"
+            )
+        prev_board = board
         state_signature = _board_signature(board)
         if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
             miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")
@@ -530,10 +599,11 @@ def run(
         current_items = items_available.copy() if USE_ITEMS else {"drill": 0, "bomb": 0}
         plan_started_at = time.perf_counter()
         plan, plan_title = _dispatch_planner(
-            board, count, current_items, blocked_action_signatures, planner_version, miner_logger
+            board, count, current_items, blocked_action_signatures, planner_version, miner_logger,
+            depth=depth_tracker.depth, device=ip,
         )
         plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
-        _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger)
+        _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger, depth_tracker.depth)
 
         _check_force_sleep(ip)
 
@@ -550,6 +620,35 @@ def run(
 
         if not plan.get("steps"):
             _diagnose_empty_plan(board, plan, miner_logger)
+            # If reachable pits remain but the planner can't collect them
+            # (blacklisted / sealed-pocket reachable), don't just count toward
+            # abort — scroll past them so mining continues productively.
+            # NOTE: gate on remaining_pits, NOT `count` — `count` is the pickaxe
+            # count (the loop condition is `while count >= 1`), so it is almost
+            # always true and would NOT mean "pits remain".
+            if int(plan.get("remaining_pits", 0) or 0) > 0:
+                descent = _forced_descent_dig(board)
+                if descent is not None:
+                    miner_logger.warning(
+                        f"[MiningService] 空 plan 但仍有礦無法採集，強制下挖 {descent} 推進下樓"
+                    )
+                    try:
+                        descent_result = execute_plan_steps(
+                            d, clf, board,
+                            [{"type": "dig", "action": "dig", "dig_list": [descent],
+                              "target": descent}],
+                            rl_recorder=rl_recorder, deadline=start_time + max_duration_seconds,
+                        )
+                    except NoBoardChangeError as exc:
+                        # even forced descent did nothing — fall through to abort
+                        blocked_action_signatures.add(_step_signature(exc.step))
+                    else:
+                        # Credit the pickaxe(s) the forced dig consumed, like every
+                        # other execute_plan_steps call — otherwise internal count
+                        # drifts high until the next OCR reconcile.
+                        count = _apply_partial(descent_result, count, items_available, miner_logger)
+                        consecutive_empty_plans = 0
+                        continue
             consecutive_empty_plans += 1
             if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
                 miner_logger.warning(
@@ -599,7 +698,19 @@ def run(
         # Plan executed cleanly — credit shovels / items consumed.
         count = _apply_partial(exec_result, count, items_available, miner_logger)
 
-
+        # Identical-state deadlock guard: if executing a non-empty plan left
+        # the board unchanged for too many iterations in a row, abort instead
+        # of spinning (Task A1 normally blacklists first; this is the backstop).
+        identical_board_count, tripped = _identical_board_exceeded(
+            state_signature, prev_exec_sig, identical_board_count
+        )
+        prev_exec_sig = state_signature
+        if tripped:
+            miner_logger.warning(
+                f"[MiningService] 版面連續 {identical_board_count} 次無變化（非空 plan），"
+                f"判定死結，中止挖礦迴圈"
+            )
+            break
 
     if rl_recorder:
         rl_recorder.flush()

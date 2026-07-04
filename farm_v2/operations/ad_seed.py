@@ -38,6 +38,10 @@ def _today_count(time_manager) -> int:
     return int(time_manager.get_numeric_value(AD_RECORD, "count", 0))
 
 
+# remove-after-ws-farm-verify(2026-06-19): 整個 ad_seed 模組由 ws_token ad_reward(config_id=15,
+# AD_FARM_SEED, item101×3) 取代。ADB 路徑本來就是 honest stub(行 60-63 永遠回 0,無功能損失);
+# H5 路徑被純 WS is_free=1 領取取代。移除前置:5556/5558/5560/7fe98fc6/adb-fc65396d 都接上
+# ws_token.ad_rewards{enabled:true, config_ids:[15]} 並 live 驗證。呼叫端:farm_v2/manager.py:195。
 def claim_ad_seeds(d: "uiauto.Device", device_ip: str, time_manager) -> int:
     """Top up 初級種子 by watching the (free, no-ad-card) seed ads.
 

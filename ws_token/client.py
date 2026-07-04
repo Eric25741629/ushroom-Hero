@@ -187,7 +187,11 @@ class WSGameClient:
             self._start_heartbeat()
         logger.info("ws_token login ok role_id=%s serv_time=%s",
                     fields.get(2), fields.get(4))
-        return {"code": code, "role_id": fields.get(2), "serv_time": fields.get(4)}
+        # role_login_s2c {code#1, role_id#2, server_id#3, serv_time#4, ...}
+        # (AUTH_HANDSHAKE_SPEC §4) — server_id == 本服 id (e.g. 小寶 1467),
+        # consumed by carpark 同服抱團 ranking.
+        return {"code": code, "role_id": fields.get(2),
+                "server_id": fields.get(3), "serv_time": fields.get(4)}
 
     def reconnect(self) -> dict:
         """Tear down and log in again, reusing the same (reusable) ticket."""
