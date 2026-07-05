@@ -860,8 +860,14 @@ tools_optimize 頁的手動面板（讀取當日進度 / 一鍵領取）冗餘�
 - [x] `tools/probe_science_ad.py`：CDP-attach 探針（不開新 WS 登入，不踢真人），`state`/`claim` 子命令。
 - [x] `tests/test_ws_token_ad_reward.py` +7（doing gate true/false/read-fail-safe、claim_ads skip/claim）；
       全檔 28 綠。
-- [ ] **未加入 `DEFAULT_CONFIG_IDS`**（opt-in）：要啟用需在該裝置 `bot_config.json`
-      `ad_rewards.config_ids` 手動加 `5`（doing gate 已防呆，可安全開）。
+- [x] **全裝置啟用**（2026-07-06，commit cf7e3252）：`bot_config.json` 8 台 `ad_rewards.config_ids`
+      都加 `5`（未動 `DEFAULT_CONFIG_IDS`，仍是各裝置 opt-in 清單驅動）。
+- [x] **GUI 冗餘跳過**：`ws_token/runner.py` `_run_ad_rewards` 在 WS 實際加速成功（claimed>0）或
+      額度已滿（"maxed"）時，寫 `json_manager.time_recording(ip, "daily_acceleration")`——
+      跟 `game_actions/task_due.py:_due_daily_acceleration` 讀的是同一筆記錄，讓
+      `daily_tasks.daily_acceleration`（進科技園點 5 次「跳過30分鐘」的 ADB/H5 流程）自動 skip，
+      不用再跑一趟。「無研究中」skip 不標記（沒做到事，留給 GUI 自己判斷）。
+- [ ] ⚠ 需重啟 `new_main_v2.py` 生效（runtime 模組，無 hot-reload）。
 
 ---
 
