@@ -437,8 +437,13 @@ def scan_cycle(
             _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
             if occ in target_ids and len(found[occ]) < max_per_target:
                 start_time = space.get("start_time")
+                # 房東（車位主人）名字/公會取自本輪開頭的 known 快照（純記憶體讀，無額外 IO）；
+                # 房東尚未進 known 時為 None。dashboard 需要 owner_name/owner_guild 顯示坐騎停在誰家。
+                owner_info = known.get(str(owner)) or {}
                 found[occ].append({
                     "owner": owner,
+                    "owner_name": owner_info.get("name"),
+                    "owner_guild": owner_info.get("guild"),
                     "pos": space.get("pos"),
                     "start_time": start_time,
                     "found_ts": now_fn(),
@@ -461,14 +466,26 @@ def scan_cycle(
         elif cur > 0:
             _stage(owner, host_hits=cur - 1)
 
-    # 已打掉標記剪枝：每個 target 只保留本輪 found 仍出現的實例鍵（移走/消失者自動清）。
+    # 已打掉標記剪枝：只有「該實例的房東本輪確實被掃到」時才有資格判定它是否還在。
+    # found 受 max_per_target / 提早收工 / top_n / 房東是否被掃 影響（非全量），因此
+    # 房東本輪沒被掃（owner not in scanned_owners）時一律保留標記，避免誤刪仍停著的標記。
     new_attacked: dict = {}
     for rid in target_ids:
         prev = attacked.get(str(rid))
         if not prev:
             continue
         present = {f"{e['owner']}:{e['start_time']}" for e in found[rid]}
-        kept = {k: v for k, v in prev.items() if k in present}
+        kept: dict = {}
+        for key, value in prev.items():
+            try:
+                key_owner = int(key.split(":")[0])
+            except (TypeError, ValueError, IndexError):
+                # 壞鍵（理論上不會出現，mark_attacked 一律 f"{owner}:{start_time}"）→ 保守保留。
+                kept[key] = value
+                continue
+            # 房東未被掃 → 無從判定，保留；房東被掃到但實例已不在 found → 剪掉。
+            if key_owner not in scanned_owners or key in present:
+                kept[key] = value
         if kept:
             new_attacked[str(rid)] = kept
 
@@ -480,7 +497,9 @@ def scan_cycle(
     summary = {
         "scanned": len(scanned_owners),
         "queued": len(queue),
+        # per-target 命中數（dict），保留供細分；dashboard 需要純量避免 Number(dict)=NaN。
         "found": {str(rid): len(found[rid]) for rid in target_ids},
+        "found_total": sum(len(found[rid]) for rid in target_ids),
         "target_guilds": sorted(target_guilds),
     }
     store.set_last_run({"ts": now_fn(), **summary})
@@ -528,6 +547,15 @@ def get_store() -> MountTrackerStore:
         return _store
 
 
+def wake_scan() -> None:
+    """催醒 daemon 立刻掃一輪（例如剛把開關切成啟用時）。
+
+    只 set() 間隔 event，daemon 迴圈末端的 ``_wake.wait`` 會立即返回並跑下一輪；
+    未起 daemon 時亦為安全 no-op（event 已 set，首輪起跑時立即通過）。
+    """
+    _wake.set()
+
+
 def _get_ws_client(dev: str):
     """借用 ``dev`` 的 dashboard 純 WS 連線並取得 live client。
 
@@ -554,11 +582,18 @@ def _release_dev(dev: str) -> None:
         logger.debug("[mount-tracker] release dev=%s failed", dev, exc_info=True)
 
 
-def _read_lot(dev: str, owner_role_id: int) -> Optional[dict]:
-    """真 reader：借 ``dev`` 讀 ``owner_role_id`` 的車位佔用並解析。任何例外回 None。"""
+def _read_lot(dev: str, owner_role_id: int,
+              on_ensure: Optional[Callable[[str], None]] = None) -> Optional[dict]:
+    """真 reader：借 ``dev`` 讀 ``owner_role_id`` 的車位佔用並解析。任何例外回 None。
+
+    ``on_ensure``：``ws_session.ensure`` 成功（拿到 live client）即回呼一次，讓呼叫端在
+    「連線建立當下」就登記借用——即使本次 ``call`` 立刻被踢，收尾仍會歸還此連線，杜絕洩漏。
+    """
     client = _get_ws_client(dev)
     if client is None:
         return None
+    if on_ensure is not None:
+        on_ensure(dev)
     try:
         body = client.call(mount_scan.CMD_LOT_INFO,
                            mount_scan.enc_lot_info(int(owner_role_id)))
@@ -572,24 +607,35 @@ def _read_lot(dev: str, owner_role_id: int) -> Optional[dict]:
 def _run_one_cycle() -> None:
     """跑一輪真掃描：借 idle 裝置、連線重用、結束時歸還所有借用連線。
 
-    idle_picker 先沿用本輪已借且仍活著的裝置（連線重用、借用維持短），該裝置被踢
-    才換新的 idle 裝置；scan_cycle 只看到 reader / idle_picker 兩個注入點。
+    idle_picker 每次沿用前先重檢借用裝置「仍 idle 且尚未即將自我喚醒」；一旦某借用
+    裝置進入自身喚醒窗（或不再 idle）立即歸還、換新的 idle 裝置，避免它被壓在自己的
+    喚醒窗外（spec §6：每次讀取前重檢 about-to-wake）。scan_cycle 只看到 reader /
+    idle_picker 兩個注入點。
     """
     store = get_store()
     borrowed: list[str] = []
 
+    def _mark_borrowed(dev: str) -> None:
+        # ensure 成功即登記借用（連線建立當下），即使本次讀取被踢，收尾 finally 仍會歸還。
+        if dev not in borrowed:
+            borrowed.append(dev)
+
     def idle_picker() -> Optional[str]:
-        # 沿用已借且連線仍活著的裝置（避免每個房東都重挑 / 重連）。
-        for dev in borrowed:
-            if _ws_active(dev):
+        # 沿用已借裝置，但每次都重檢：仍 idle 且尚未即將自我喚醒才沿用。
+        # 不可用 is_safe_to_borrow 判沿用——它要求 _ws_active==False，但我們正持有此機 WS
+        # 連線（active），會誤判不可借；沿用判定 = _is_idle 且 not _about_to_wake。
+        states = _states()
+        for dev in list(borrowed):
+            if _is_idle(dev, states) and not _about_to_wake(dev, states):
                 return dev
+            # 進入自身喚醒窗 / 不再 idle → 歸還並移除，讓位給該裝置自身 bot loop。
+            _release_dev(dev)
+            borrowed.remove(dev)
         return pick_idle_device()
 
     def reader(dev: str, owner: int) -> Optional[dict]:
-        lot = _read_lot(dev, owner)
-        if dev not in borrowed and _ws_active(dev):
-            borrowed.append(dev)   # ensure 成功建立了連線 → 記錄以便收尾歸還
-        return lot
+        # on_ensure 在連線建立當下登記借用（見 _read_lot），故被踢也不會漏歸還。
+        return _read_lot(dev, owner, on_ensure=_mark_borrowed)
 
     store.set_running(True)
     try:

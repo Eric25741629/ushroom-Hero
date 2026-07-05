@@ -92,11 +92,12 @@ def test_attacked_annotate_and_prune(tmp_path):
     store = MountTrackerStore(state_dir=str(tmp_path))
     store.add_target({"role_id": 100, "name": "T"})
     store.upsert_known(1, name="owner1")
-    # 兩個預標記：1:111 本輪會出現、2:222 本輪不會出現（應被剪枝）。
+    store.upsert_known(2, name="owner2")   # 房東 2 也進 queue，本輪會被掃到（空車位）
+    # 兩個預標記：1:111 本輪會出現、2:222 本輪房東被掃但實例已不在（應被剪枝）。
     store.set_attacked({"100": {"1:111": 1000.0, "2:222": 2000.0}})
 
     def reader(dev, owner):
-        # 只有房東 1 的車位停著目標；目標自身車位（owner=100）為空。
+        # 只有房東 1 的車位停著目標；房東 2 / 目標自身車位（owner=100）為空但仍被掃到。
         if owner == 1:
             return {"skin_list": [],
                     "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
@@ -106,7 +107,7 @@ def test_attacked_annotate_and_prune(tmp_path):
 
     entry = store.get_results()["100"][0]
     assert entry["attacked"] is True                       # 命中預標記
-    # 剪枝：僅保留本輪 found 仍出現的 1:111，缺席的 2:222 被移除。
+    # 剪枝：房東 2 本輪被掃到但實例 2:222 已不在 → 移除；1:111 仍在 → 保留。
     assert store.get_attacked() == {"100": {"1:111": 1000.0}}
 
 
@@ -126,6 +127,88 @@ def test_unmarked_instance_annotated_false(tmp_path):
 
     assert store.get_results()["100"][0]["attacked"] is False
     assert store.get_attacked() == {}
+
+
+def test_found_entry_carries_owner_name_and_guild(tmp_path):
+    """FIX 1：found 項需帶房東（車位主人）名字/公會，取自 cycle 開頭 known 快照。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="房東一", guild="羽皇居")   # 房東 1 有名字/公會
+
+    def reader(dev, owner):
+        if owner == 1:                                    # 目標停在房東 1 的車位
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    entry = store.get_results()["100"][0]
+    assert entry["owner"] == 1
+    assert entry["owner_name"] == "房東一"                 # 由 known 拉出
+    assert entry["owner_guild"] == "羽皇居"
+
+
+def test_found_entry_owner_fields_none_when_owner_unknown(tmp_path):
+    """FIX 1：房東尚未進 known → owner_name / owner_guild 為 None（不崩）。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name=None)                       # 房東 1 只有空殼、無 name/guild
+
+    def reader(dev, owner):
+        if owner == 1:
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    entry = store.get_results()["100"][0]
+    assert entry["owner_name"] is None
+    assert entry["owner_guild"] is None
+
+
+def test_summary_has_scalar_found_total(tmp_path):
+    """FIX 2：summary / last_run 帶純量 found_total（int），避免 dashboard Number(dict)=NaN。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.add_target({"role_id": 200, "name": "T2"})
+    store.upsert_known(1, name="o1")
+
+    def reader(dev, owner):
+        if owner == 1:
+            return {"skin_list": [], "spaces": [
+                {"pos": 1, "role_id": 100, "start_time": 111, "name": "T"},
+                {"pos": 2, "role_id": 200, "start_time": 222, "name": "T2"},
+            ]}
+        return {"skin_list": [], "spaces": []}
+
+    out = scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    assert isinstance(out["found_total"], int) and out["found_total"] == 2
+    assert isinstance(out["found"], dict)                  # per-target dict 仍保留
+    lr = store.get_last_run()
+    assert isinstance(lr["found_total"], int) and lr["found_total"] == 2
+
+
+def test_attacked_mark_survives_when_owner_not_scanned(tmp_path):
+    """FIX 3：房東本輪未被掃到 → 其標記保留；房東被掃到但實例已不在 → 剪掉。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="o1")
+    store.upsert_known(2, name="o2")
+    # 房東 1（本輪掃到、但實例 1:111 已不在）；房東 2（本輪讀失敗、未 scanned）。
+    store.set_attacked({"100": {"1:111": 1000.0, "2:222": 2000.0}})
+
+    def reader(dev, owner):
+        if owner == 1:
+            return {"skin_list": [], "spaces": []}         # 掃到但實例消失
+        return None                                        # 房東 2 / 目標自身讀失敗（未 scanned）
+
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    # 2:222 房東未被掃 → 保留；1:111 房東被掃但實例不在 → 剪掉。
+    assert store.get_attacked() == {"100": {"2:222": 2000.0}}
 
 
 def test_skips_when_no_idle_device(tmp_path):

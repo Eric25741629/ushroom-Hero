@@ -286,6 +286,7 @@ def test_toggle_non_admin_forbidden(app, monkeypatch):
 def test_toggle_admin_ok(app, monkeypatch):
     calls = []
     monkeypatch.setattr(rmt, "_set_enabled", lambda v: calls.append(v))
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: None)
     client = app.test_client()
     _login(client, admin=True)
 
@@ -295,3 +296,68 @@ def test_toggle_admin_ok(app, monkeypatch):
     assert d["status"] == "ok"
     assert d["enabled"] is True
     assert calls == [True]
+
+
+# --- FIX 5：開啟開關立即催掃 -------------------------------------------------
+
+def test_toggle_on_kicks_scan(app, monkeypatch):
+    monkeypatch.setattr(rmt, "_set_enabled", lambda v: None)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client, admin=True)
+
+    resp = client.post("/api/mount_tracker/toggle", json={"enabled": True})
+    assert resp.status_code == 200
+    assert woke == [True]                              # 啟用 → 催掃一輪
+
+
+def test_toggle_off_does_not_kick_scan(app, monkeypatch):
+    monkeypatch.setattr(rmt, "_set_enabled", lambda v: None)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client, admin=True)
+
+    resp = client.post("/api/mount_tracker/toggle", json={"enabled": False})
+    assert resp.status_code == 200
+    assert woke == []                                  # 停用 → 不催掃
+
+
+# --- FIX 6：非數字輸入回 400 信封而非 500 -----------------------------------
+
+def test_targets_non_numeric_role_id_is_400(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/targets", json={"role_id": "abc"})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert store.added == []                            # 未觸及 store
+
+
+def test_targets_non_numeric_remove_is_400(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/targets", json={"remove": "xyz"})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert store.removed == []
+
+
+def test_mark_non_numeric_is_400(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark",
+                       json={"target_role_id": 100, "owner_role_id": "bad", "start_time": 111})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert store.marked == []

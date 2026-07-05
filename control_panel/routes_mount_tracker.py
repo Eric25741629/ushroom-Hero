@@ -44,6 +44,15 @@ def _set_enabled(v: bool) -> None:
     set_mount_tracker_enabled(bool(v))
 
 
+def _wake_scan() -> None:
+    """催醒坐騎追蹤器 daemon 立刻掃一輪（延遲 import 服務層；服務層缺席時容錯 no-op）。"""
+    try:
+        from runtime_services.mount_tracker_service import wake_scan
+    except Exception:  # noqa: BLE001 — 催掃失敗不可讓 toggle 回 500
+        return
+    wake_scan()
+
+
 # --- UID 還原（roleId → 顯示用 UID）------------------------------------------
 
 def _uid_of(role_id: int) -> str:
@@ -137,20 +146,24 @@ def mount_tracker_targets():
     """
     body = request.get_json(silent=True) or {}
 
-    # 移除
-    if body.get("remove") is not None:
-        _store().remove_target(int(body["remove"]))
-        return jsonify({"status": "ok"})
+    try:
+        # 移除
+        if body.get("remove") is not None:
+            _store().remove_target(int(body["remove"]))
+            return jsonify({"status": "ok"})
 
-    # 直接以 roleId 新增
-    if body.get("role_id") is not None:
-        rid = int(body["role_id"])
-        _store().add_target({
-            "role_id": rid,
-            "name": body.get("name"),
-            "uid": body.get("uid"),
-        })
-        return jsonify({"status": "ok"})
+        # 直接以 roleId 新增
+        if body.get("role_id") is not None:
+            rid = int(body["role_id"])
+            _store().add_target({
+                "role_id": rid,
+                "name": body.get("name"),
+                "uid": body.get("uid"),
+            })
+            return jsonify({"status": "ok"})
+    except (ValueError, TypeError):
+        # 非數字的 remove / role_id → 400 而非 500。
+        return jsonify({"status": "error", "message": "參數格式錯誤"}), 400
 
     # UID 離線解析
     uid = body.get("uid")
@@ -181,9 +194,13 @@ def mount_tracker_mark():
         return jsonify({"status": "error",
                         "message": "缺少 target_role_id / owner_role_id / start_time"}), 400
     on = body.get("on")
-    _store().mark_attacked(
-        int(target_role_id), int(owner_role_id), int(start_time),
-        bool(on if on is not None else True))
+    try:
+        _store().mark_attacked(
+            int(target_role_id), int(owner_role_id), int(start_time),
+            bool(on if on is not None else True))
+    except (ValueError, TypeError):
+        # 非數字的 target_role_id / owner_role_id / start_time → 400 而非 500。
+        return jsonify({"status": "error", "message": "參數格式錯誤"}), 400
     return jsonify({"status": "ok"})
 
 
@@ -193,4 +210,6 @@ def mount_tracker_toggle():
     """啟用/停用坐騎追蹤器（限管理員）。"""
     enabled = bool((request.get_json(silent=True) or {}).get("enabled"))
     _set_enabled(enabled)
+    if enabled:
+        _wake_scan()  # 開啟時立即催掃一輪，不必等下一個整點間隔。
     return jsonify({"status": "ok", "enabled": enabled})

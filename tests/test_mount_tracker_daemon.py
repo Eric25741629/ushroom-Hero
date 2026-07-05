@@ -79,6 +79,65 @@ def test_get_store_singleton():
     assert a is b
 
 
+def test_read_lot_records_borrow_at_ensure_even_if_read_kicked(monkeypatch):
+    """FIX 7：ensure 成功但 call 立刻被踢 → 回 None，但 on_ensure 已登記借用（收尾會歸還）。"""
+    class KickClient:
+        def call(self, *a, **k):
+            raise RuntimeError("kicked")
+
+    monkeypatch.setattr(mt, "_get_ws_client", lambda dev: KickClient())
+    seen = []
+    out = mt._read_lot("devX", 5, on_ensure=lambda d: seen.append(d))
+    assert out is None                 # 讀取被踢 → None
+    assert seen == ["devX"]            # 連線已建立 → 已登記借用（即使讀取失敗）
+
+
+def test_borrowed_dev_released_when_about_to_wake(monkeypatch):
+    """FIX 4：借用中的裝置進入自身喚醒窗 → idle_picker 歸還它並改挑新的 idle 裝置。"""
+    captured = {}
+
+    def fake_scan_cycle(store, reader, idle_picker, sleeper, now_fn, **kw):
+        captured["reader"] = reader
+        captured["idle_picker"] = idle_picker
+        return {}
+
+    class FakeStore:
+        def set_running(self, running):
+            pass
+
+    def fake_read_lot(dev, owner, on_ensure=None):
+        if on_ensure is not None:
+            on_ensure(dev)             # ensure 成功即登記借用
+        return {"skin_list": [], "spaces": []}
+
+    monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    monkeypatch.setattr(mt, "_read_lot", fake_read_lot)
+    monkeypatch.setattr(mt, "_now", lambda: 1000.0)
+
+    released = []
+    monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
+
+    states = {"val": {"devA": {"task": "休眠中", "next_wake_at": 9_999_999.0}}}
+    monkeypatch.setattr(mt, "_states", lambda: states["val"])
+    picks = iter(["devA", "devB"])
+    monkeypatch.setattr(mt, "pick_idle_device", lambda: next(picks))
+
+    # fake scan_cycle 只擷取 closures 即返回（borrowed 仍空、finally 不歸還）。
+    mt._run_one_cycle()
+    idle_picker = captured["idle_picker"]
+    reader = captured["reader"]
+
+    assert idle_picker() == "devA"     # borrowed 空 → pick_idle_device → devA
+    reader("devA", 1)                  # ensure 成功 → borrowed=[devA]
+
+    # devA 進入自身喚醒窗（1060 - 1000 = 60s < 120s lead）。
+    states["val"] = {"devA": {"task": "休眠中", "next_wake_at": 1060.0},
+                     "devB": {"task": "休眠中", "next_wake_at": 9_999_999.0}}
+    assert idle_picker() == "devB"     # devA 被歸還、改挑 devB
+    assert released == ["devA"]
+
+
 def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
     # 關鍵安全性：_run_one_cycle 給 scan_cycle 的 sleeper 必須是 _cooldown（真 sleep），
     # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。
