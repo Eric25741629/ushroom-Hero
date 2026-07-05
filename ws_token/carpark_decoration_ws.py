@@ -340,6 +340,25 @@ def _read_buy_counts(client: WSGameClient, timeout: float) -> dict[int, int]:
     return _parse_shop_buy_info(body)
 
 
+def _cum_frags(catalog: dict, deco_id: int, level: int) -> int:
+    """Ladder frags consumed to stand at ``level`` (expend of rows 1..level-1).
+
+    Row 0 (the acquisition row) is excluded: decorations come from the free
+    ParkingDecorateSelectView picker, so shop-bought frags only ever feed star
+    upgrades — ``shop_bought - _cum_frags`` is then exactly the frags still
+    held. If an acquisition DID consume row 0 the estimate overshoots by that
+    row; the executor self-heals by buying the shortfall when the upgrade is
+    rejected (see exec_buy_and_upgrade).
+    """
+    total = 0
+    for lv in range(1, max(1, int(level))):
+        row = catalog.get((deco_id, lv))
+        if row and row.get("expend"):
+            e = row["expend"][0]
+            total += int(e[1]) if len(e) >= 2 else 0
+    return total
+
+
 def exec_buy_and_upgrade(
     client: WSGameClient,
     shop_id: int,
@@ -348,12 +367,19 @@ def exec_buy_and_upgrade(
     *,
     do_upgrade: bool = True,
     timeout: float = 10.0,
+    target_level: int | None = None,
 ) -> tuple[dict | None, str | None]:
     """Buy frags + upgrade one star via pure WS. Returns (result, error).
 
-    result: {ok, bought, name, before_level, after_level, err?}
+    result: {ok, bought, name, before_level, after_level, frags_bought, err?}
     Mutations are ground-truth verified by re-reads: a lost reply frame is not
     treated as failure, and a real 0x0201 reject surfaces its decoded code.
+
+    Idempotent by design so an interrupted step can be retried/re-run safely:
+    - ``target_level``: if the decoration already sits at/above it (the
+      interrupted upgrade landed after all), return ok without mutating.
+    - frags already held (shop bought count minus the ladder's consumption for
+      the current level) are not re-bought — only the shortfall is purchased.
     """
     try:
         from ws_token.client import WSTimeoutError
@@ -364,40 +390,60 @@ def exec_buy_and_upgrade(
         reply_wait = min(_REPLY_WAIT_S, timeout)
 
         before_level = _read_levels(client, role_id, timeout).get(skin_id, 0)
+        if target_level is not None and before_level >= int(target_level):
+            return {"ok": True, "bought": False, "already_done": True,
+                    "name": name, "before_level": before_level,
+                    "after_level": before_level, "frags_bought": 0}, None
 
-        # Buy frags (reply = fast path; timeout -> verify via 6913 count delta)
-        bought = False
-        if frags > 0:
-            pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
+        frags_bought = 0
+
+        def _fail(err: str, after: int | None = None):
+            return {"ok": False, "bought": frags_bought > 0, "name": name,
+                    "before_level": before_level,
+                    "after_level": before_level if after is None else after,
+                    "frags_bought": frags_bought, "err": err}, None
+
+        def _buy_frags(qty: int, pre_count: int | None = None):
+            """Buy ``qty`` frags. -> (True, None) | (False, err_string).
+
+            Reply frame = fast path; on timeout the buy is ground-truth
+            verified via the 6913 count delta.
+            """
+            if pre_count is None:
+                pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
             buy_body = (codec.pb_uint(1, 11)
                         + codec.pb_uint(2, shop_id)
-                        + codec.pb_uint(3, frags))
+                        + codec.pb_uint(3, qty))
             try:
                 cmd, reply = client.call_for(
                     CMD_SHOP_BUY, buy_body,
                     expect_cmds=(CMD_SHOP_BUY, CMD_ERROR),
                     timeout=reply_wait)
                 if cmd == CMD_SHOP_BUY:
-                    bought = True
-                else:
-                    return {"ok": False, "bought": False, "name": name,
-                            "before_level": before_level,
-                            "err": f"buy_rejected_code_{_error_code(reply)}"}, None
+                    return True, None
+                return False, f"buy_rejected_code_{_error_code(reply)}"
             except WSTimeoutError:
                 post_count = _read_buy_counts(client, timeout).get(shop_id, 0)
-                if post_count >= pre_count + frags:
-                    bought = True  # reply frame lost but the buy landed
-                else:
-                    return {"ok": False, "bought": False, "name": name,
-                            "before_level": before_level,
-                            "err": "buy_unconfirmed_no_reply"}, None
-        else:
-            bought = True
+                if post_count >= pre_count + qty:
+                    return True, None  # reply frame lost but the buy landed
+                return False, "buy_unconfirmed_no_reply"
+
+        if frags > 0:
+            pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
+            held = max(0, pre_count - _cum_frags(catalog, skin_id, before_level))
+            to_buy = max(0, frags - held)
+            if to_buy:
+                ok, buy_err = _buy_frags(to_buy, pre_count)
+                if not ok:
+                    return _fail(buy_err)
+                frags_bought = to_buy
+        bought = True
 
         if not do_upgrade:
             return {"ok": True, "bought": bought, "name": name,
                     "before_level": before_level,
-                    "after_level": before_level}, None
+                    "after_level": before_level,
+                    "frags_bought": frags_bought}, None
 
         def _send_upgrade():
             """-> ('rejected', code) | ('replied', None) | ('silent', None)."""
@@ -415,15 +461,19 @@ def exec_buy_and_upgrade(
             except WSTimeoutError:
                 return "silent", None
 
-        def _rejected(code):
-            return {"ok": False, "bought": bought, "name": name,
-                    "before_level": before_level,
-                    "after_level": before_level,
-                    "err": f"upgrade_rejected_code_{code}"}, None
-
         outcome, code = _send_upgrade()
+        if outcome == "rejected" and frags_bought < frags:
+            # The buy was skipped/shortened on the held-frags estimate; a
+            # reject here can mean the estimate overshot (e.g. an acquisition
+            # consumed row 0). Buy the remaining shortfall once and resend —
+            # total bought never exceeds ``frags``, so no double spend.
+            ok, buy_err = _buy_frags(frags - frags_bought)
+            if not ok:
+                return _fail(buy_err)
+            frags_bought = frags
+            outcome, code = _send_upgrade()
         if outcome == "rejected":
-            return _rejected(code)
+            return _fail(f"upgrade_rejected_code_{code}")
         after_level = _read_levels(client, role_id, timeout).get(
             skin_id, before_level)
         if after_level <= before_level and outcome == "silent":
@@ -439,16 +489,14 @@ def exec_buy_and_upgrade(
                 # A rejected retry can mask a late-landing first send (frags
                 # already consumed): trust the level re-read, not the reject.
                 if outcome == "rejected" and after_level <= before_level:
-                    return _rejected(code)
+                    return _fail(f"upgrade_rejected_code_{code}")
 
         if after_level <= before_level:
-            return {"ok": False, "bought": bought, "name": name,
-                    "before_level": before_level,
-                    "after_level": after_level,
-                    "err": "upgrade_no_levelup"}, None
+            return _fail("upgrade_no_levelup", after=after_level)
         return {"ok": True, "bought": bought, "name": name,
                 "before_level": before_level,
-                "after_level": after_level}, None
+                "after_level": after_level,
+                "frags_bought": frags_bought}, None
 
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"
