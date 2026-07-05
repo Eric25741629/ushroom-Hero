@@ -27,9 +27,11 @@ from ws_token import codec  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.ad_reward import (  # noqa: E402
     AD_NAMES,
+    AD_SCIENCE_1,
     CMD_AD_INFO,
     CMD_AD_REWARD,
     CMD_ERROR,
+    CMD_SCIENCE_INFO,
     DEFAULT_CONFIG_IDS,
     IS_FREE,
     TIMES,
@@ -38,6 +40,7 @@ from ws_token.ad_reward import (  # noqa: E402
     claim_ad,
     claim_ads,
     claim_once,
+    is_science_researching,
     read_ad_counts,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
@@ -68,6 +71,13 @@ def test_default_config_ids_and_times_and_names():
     assert DEFAULT_CONFIG_IDS == [1, 2, 3, 12, 14, 15]
     assert TIMES[12] == 3 and TIMES[14] == 5 and TIMES[15] == 2
     assert AD_NAMES[12] and AD_NAMES[14] and AD_NAMES[15]
+
+
+def test_ad_science_1_not_in_default_ids_but_has_times_and_name():
+    # opt-in only (untested idle-claim behavior) -> not auto-enabled by default.
+    assert AD_SCIENCE_1 not in DEFAULT_CONFIG_IDS
+    assert TIMES[AD_SCIENCE_1] == 4
+    assert AD_NAMES[AD_SCIENCE_1]
 
 
 # --- read_ad_counts: repeated field1 parse ----------------------------------
@@ -238,6 +248,81 @@ def test_claim_ad_stops_when_server_returns_future_next_ts():
         assert out["claimed"] == 1
         claims = [cmd for _s, cmd, _b in fake.framed_sent() if cmd == CMD_AD_REWARD]
         assert len(claims) == 1  # stopped after the cooldown kicked in
+    finally:
+        c.close()
+
+
+# --- is_science_researching: type=1 doing gate ------------------------------
+
+def _science_info_body(type_: int, doing: int) -> bytes:
+    """science_info_s2c: repeated field#1 ScienceTreeInfo{type#1, doing#2}."""
+    inner = codec.pb_uint(1, type_) + codec.pb_uint(2, doing)
+    return codec.pb_msg(1, inner)
+
+
+def test_is_science_researching_true_when_doing_nonzero():
+    body = _science_info_body(1, 1023)
+    c, fake = _client({CMD_SCIENCE_INFO: lambda _b: [s2c(CMD_SCIENCE_INFO, body)]})
+    try:
+        assert is_science_researching(c) is True
+        sent = [b for _sid, cmd, b in fake.framed_sent() if cmd == CMD_SCIENCE_INFO]
+        assert sent == [b""]
+    finally:
+        c.close()
+
+
+def test_is_science_researching_false_when_doing_zero():
+    body = _science_info_body(1, 0)
+    c, _ = _client({CMD_SCIENCE_INFO: lambda _b: [s2c(CMD_SCIENCE_INFO, body)]})
+    try:
+        assert is_science_researching(c) is False
+    finally:
+        c.close()
+
+
+def test_is_science_researching_false_on_read_failure():
+    # no responder registered -> call_for times out -> fail-closed to False.
+    c, _ = _client({})
+    try:
+        assert is_science_researching(c, timeout=0.2) is False
+    finally:
+        c.close()
+
+
+# --- claim_ads: config 5 gated on research-in-progress ----------------------
+
+def test_claim_ads_skips_science_ad_when_not_researching():
+    idle = _science_info_body(1, 0)
+    c, fake = _client({
+        CMD_AD_INFO: lambda _b: [s2c(CMD_AD_INFO, b"")],
+        CMD_SCIENCE_INFO: lambda _b: [s2c(CMD_SCIENCE_INFO, idle)],
+    })
+    try:
+        out = claim_ads(c, [AD_SCIENCE_1], timeout=1.0)
+        assert out["results"][AD_NAMES[AD_SCIENCE_1]]["skipped"] == "no research in progress"
+        assert out["total_claimed"] == 0
+        assert all(cmd != CMD_AD_REWARD for _s, cmd, _b in fake.framed_sent())
+    finally:
+        c.close()
+
+
+def test_claim_ads_claims_science_ad_when_researching():
+    doing = _science_info_body(1, 1023)
+
+    def _ad_resp(_b):
+        return [s2c(CMD_AD_REWARD, _reward_body(AD_SCIENCE_1, 1, 0))]
+
+    c, fake = _client({
+        CMD_AD_INFO: lambda _b: [s2c(CMD_AD_INFO, b"")],
+        CMD_SCIENCE_INFO: lambda _b: [s2c(CMD_SCIENCE_INFO, doing)],
+        CMD_AD_REWARD: _ad_resp,
+    })
+    try:
+        out = claim_ads(c, [AD_SCIENCE_1], timeout=1.0)
+        # next_ts stays 0 in this fake -> loops to the daily cap (TIMES[5]=4),
+        # same discipline as test_claim_ad_loops_until_remaining_zero.
+        assert out["results"][AD_NAMES[AD_SCIENCE_1]]["claimed"] == TIMES[AD_SCIENCE_1]
+        assert out["total_claimed"] == TIMES[AD_SCIENCE_1]
     finally:
         c.close()
 

@@ -65,6 +65,14 @@ CMD_AD_REWARD = 0x1602   # 5634  ad_reward_c2s {config_id, ext, is_free}
 CMD_AD_INFO = 0x1601     # 5633  ad_info_c2s {} -> repeated per-config counts
 CMD_ERROR = 0x0201       # error.error_info_s2c {error_code#1}
 
+# science.science_info_c2s/s2c (module 11 / 0x0B); c2s body empty.
+# s2c = repeated field#1 ScienceTreeInfo{type#1, doing#2(science_id, 0=idle),
+# etime#3, science_list#4}. AD_SCIENCE_1 only has an effect while type=1's
+# doing != 0 (live-verified 2026-07-06, 小寶: claiming while doing=1023 cut
+# etime by 1800s; claiming while idle is untested -> gate defensively).
+CMD_SCIENCE_INFO = 2817  # 0x0B01
+AD_SCIENCE_1 = 5
+
 # Server is_free flag. The account bought NO_ADS, so is_free=1 grants the reward
 # instantly with no video (live-verified 2026-06-19).
 IS_FREE = 1
@@ -72,13 +80,14 @@ IS_FREE = 1
 # Per-config daily cap (configAds ``times``). 13/16/17 are out of the default
 # ad_rewards scope but kept so callers that opt them in are still capped
 # correctly — 13 (AD_TURNTABLE) is claimed by ws_token.turntable, not here.
-TIMES: dict[int, int] = {1: 2, 2: 2, 3: 2, 12: 3, 13: 2, 14: 5, 15: 2, 16: 2, 17: 4}
+TIMES: dict[int, int] = {1: 2, 2: 2, 3: 2, 5: 4, 12: 3, 13: 2, 14: 5, 15: 2, 16: 2, 17: 4}
 
 # Human names for logging (AdType / configAds key).
 AD_NAMES: dict[int, str] = {
     1: "挖礦鎬子廣告",
     2: "挖礦鑽頭廣告",
     3: "挖礦炸彈廣告",
+    5: "科技研究加速廣告",
     12: "商城廣告鑽石",
     13: "轉盤廣告次數",
     14: "浮動廣告鑽石",
@@ -261,6 +270,28 @@ def claim_ad(client: WSGameClient, config_id: int, *,
     return {"name": name, "claimed": claimed, "stopped": stopped}
 
 
+def is_science_researching(client: WSGameClient, *,
+                           timeout: Optional[float] = None) -> bool:
+    """True if the main science tree (type=1) has a research in progress.
+
+    AD_SCIENCE_1 only shortens an active research; claiming while idle is
+    untested live, so callers gate on this first (fail-closed: any read
+    error is treated as "not researching" -> skip the claim).
+    """
+    try:
+        cmd, reply = client.call_for(CMD_SCIENCE_INFO, b"",
+                                     expect_cmds=(CMD_SCIENCE_INFO,),
+                                     timeout=timeout)
+    except Exception:  # noqa: BLE001 — unknown state -> don't burn a claim
+        return False
+    for fnum, val in codec.walk(reply):
+        if fnum == 1 and isinstance(val, (bytes, bytearray)):
+            info = codec.walk_dict(bytes(val))
+            if _as_int(info.get(1)) == 1:
+                return _as_int(info.get(2)) != 0
+    return False
+
+
 def claim_ads(client: WSGameClient,
               config_ids: Iterable[int] = DEFAULT_CONFIG_IDS,
               *, timeout: Optional[float] = None,
@@ -286,6 +317,10 @@ def claim_ads(client: WSGameClient,
     results: dict[str, dict] = {}
     total = 0
     for cid in ids:
+        if cid == AD_SCIENCE_1 and not is_science_researching(client, timeout=timeout):
+            results[AD_NAMES[AD_SCIENCE_1]] = {
+                "name": AD_NAMES[AD_SCIENCE_1], "skipped": "no research in progress"}
+            continue
         res = claim_ad(client, cid, counts=counts, now=now, timeout=timeout,
                        device_id=device_id)
         results[res.get("name", str(cid))] = res

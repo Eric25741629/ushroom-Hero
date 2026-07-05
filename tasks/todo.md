@@ -6,6 +6,31 @@
 
 ---
 
+## 🚧 2026-07-05 車位裝飾升級：WS 斷線續跑 + 買碎片冪等（session 44fccb3b）
+
+背景：dashboard 一鍵升級跑到 [26/30] 北極熊 ★6→7 時 `WebSocketConnectionClosedException`
+整個 job 停掉；且該步的買碎片(80萬)可能已入帳，重跑會盲買重複碎片。
+慢的部分不修：每步 10s 是 skin_up 伺服器冷卻實測下限（<10s 默默丟包）。
+
+- [x] `ws_token/carpark_decoration_ws.py`：exec 加 `target_level` 護欄（已達目標星級直接回 ok，不重升）
+- [x] 同檔：買碎片冪等 — 持有碎片 = 6913 已買數 − 階梯累積消耗(排除 row0，裝飾來自免費自選)，只補買缺口；
+      升級被拒且有靠推算持有時，補買差額再送一次（自癒高估）
+- [x] `control_panel/routes_carpark_decorate_tools.py`：job 迴圈連線類錯誤 → 等 10s（吃冷卻+晚到）→ `ws_session.ensure` 重連 → 同步重試一次
+- [x] `tests/test_carpark_ws_io.py`：新案例（target 護欄 / 跳過買 / 只買缺口 / 被拒自癒 / 斷線重連續跑 / 非連線錯誤不重試）+ 既有腳本改 level-consistent 買數；54 tests 全綠
+- [x] 測試過 → merge 回 main（74c19145 / merge fb8b4dc9）→ worktree+branch 已清
+- [ ] 待辦：重啟 `new_main_v2.py` 後生效（無 hot-reload）；重跑升級時中斷那步(北極熊 ★6→7, 800k)若已入帳會被冪等買折抵，不會重花
+- [x] **根因修正（2026-07-05 已合併 0bb232e6）**：斷線真因＝同帳號互踢，非網路非冷卻。
+      追加查證：ws_phase 觀察者閘門 11:44:17 有跑但秒放行 → 好友清單 presence **看不到純 WS
+      session**（只反映遊戲客戶端在線），故互檢擋不住 dashboard 工具連線。
+      修法落地：`ws_session.is_active()`（無 keep-alive 副作用）+
+      `ws_phase.wait_for_dashboard_ws_release()`（15s 輪詢、開網頁請求即放行），接在
+      `_run_ws_phase_for_wake` 頂端（enabled 檢查前）與 ws_runner 每輪 check_pause 後。
+      已知限制（可接受，記錄備查）：① 使用者在 bot 週期進行中才啟動 job 仍可能互踢
+      （job 端已有斷線重連重試兜底）；② worker 模式遠端裝置的 registry 在 master 行程，
+      閘門查不到；③ bot_state 入睡清理無條件 `_pause_events[ip].set()`（~bot_state.py:583）
+      未動 — 有了 registry 閘門後 pause 被吃不再致命。
+- [ ] 重啟 `new_main_v2.py` 生效（兩個 fix 都要重啟）
+
 ## 🚧 2026-07-04 統一任務 due 狀態檢測（single source of truth + 精簡）— 待使用者過目
 
 ### 背景 / 動機
@@ -734,6 +759,45 @@ q=depth+6 ; area=q//7 ; tpl_row=q%7
 terrain[depth][col] = configMine_template[ area_info[area] ][tpl_row][col]   # 100 air / 201 dirt / 202 stone
 ```
 - `area_info` 的 value 就是 template id（`board.area_info` 已解析,在 0x0c01 裡）。
+
+---
+
+## Plan: 在線檢測延遲 + detector 自身不顯示在線 — 2026-07-05（待使用者過目）
+
+### 使用者回報（三症狀）
+1. 在線檢測延遲，超過 30s poll 能解釋的範圍。
+2. 介面快照顯示「剛剛」（很新鮮），但目標實際已下線仍寫「在線」。
+3. 被選為監視者（detector）的裝置，介面上自己不顯示在線。
+
+### 根因（已查證，非猜測）
+- 好友列表 sf7 `last_login_ts` 語意（`web_game_api.is_player_online` 實測註記）：
+  `0` = 現在在線（sentinel，實測可靠）；`>0` = 離線時間戳（= 遊戲內「X 分鐘前」）。
+- `poll_friends`（`ws_token/online_monitor.py:89-104`）把 `online=(now-ts)<threshold_sec`
+  **烘進快照**，monitor 預設 `threshold_sec=120` → 登出後最多 120s 仍被判「在線」，
+  加上 30s poll 週期，最壞 ~2.5 分鐘才轉離線。快照 age（剛剛）與 entry.online
+  是兩回事 → 症狀 1+2。
+- `_check_monitor_snapshot`（`runtime_services/online_check_service.py:83-113`）fast path
+  直接回烘入的 bool（120s 門檻），**忽略 requester 配置的 `online_check_threshold_sec`(60)**。
+- detector 永遠不在自己好友列表 → `_account_presence`（`control_panel/routes_status.py:434-441`）
+  的 {rid: online} 沒有它 → 徽章不顯示在線 → 症狀 3。monitor 明明持有它的活 WS session。
+
+### 修法（最小 diff；poll_sec=30 不動）
+- [x] A. `routes_status._account_presence`：顯示層改用 `last_login_ts == 0` 精確判定
+      （StatusEntry 本來就帶 ts），並 overlay `current_detector()` 的 rid → True。
+      效果：登出後最慢下一輪 poll（≤30s）徽章就轉離線；detector 顯示在線。
+- [x] B. `online_check_service._check_monitor_snapshot`：改收 threshold 參數，用
+      entry.last_login_ts + requester 的 threshold 重算（ts None → None → 落一次性 WS 路徑）。
+      效果：5558 互檢延遲從 ~150s 降回 threshold(60)+poll(≤30)。
+- [x] C. 不動：guard 路徑（`account_online` / ws_phase 人帳保護閘）維持烘入 120s 寬限，
+      登出後多等 2 分鐘才敢動人帳是保護特性，不是 bug。
+- [x] 測試：新增 `tests/test_online_presence_display.py`（8 案，TDD 先紅後綠）；
+      相關既有測試 52 個全綠（online_check_service / ws_human_offline_gate /
+      config_role_id_cache / online_monitor）。
+
+### Review — 完成 2026-07-05，commit b5e26567（worktree 開發後 ff-merge 回 main）
+- 生效需重啟 `new_main_v2.py`（無 hot-reload）。
+- 已知顯示差異（設計如此）：徽章比互檢/guard 更快轉離線（徽章精確、閘門保守）。
+- detector overlay 只在 monitor 連線中成立；monitor 斷線時該裝置徽章回歸快照原值。
 - area_info 帶 prev/cur/next 3 個 area = 21 列,覆蓋 7 列視窗(跨 ≤2 area)綽綽有餘。
 - 模板來源:`docs/protocol/mine_config_tables.json`(已有,= live configMine_template)。
 
@@ -773,19 +837,31 @@ tools_optimize 頁的手動面板（讀取當日進度 / 一鍵領取）冗餘�
 **注意**: bot_config.json 有 2 台裝置 `ad_rewards.enabled=false`（其餘皆 true）。
 面板移除後這 2 台沒有手動領取入口，要領就到 dashboard 開啟該裝置的看廣告獎勵開關。
 
-## Plan: 科技園研究加速廣告接入純 WS — 2026-07-04（待 live 驗證）
+## ✅ 2026-07-06 科技園研究加速廣告接入純 WS（完成，待 Probe B 補驗）
 
-**協議事實（已從 client 原始碼確認）**:
-- 科技園「跳過30分鐘」= AdType **5 = AD_SCIENCE_1**（非建築加速 17），每日 4 次。
-- 走統一廣告通道 `ad.ad_reward_c2s` 0x1602，`onAdClick` → `tryWatchAd(AD_SCIENCE_1)`。
-- 效果 = 當前研究倒數 -30 分鐘；client 端按鈕邏輯綁 `getScienceTreeByType(1).doing`。
+**協議事實（client 原始碼 + live 驗證）**:
+- 科技園「跳過30分鐘」= AdType **5 = AD_SCIENCE_1**（非建築加速 17），每日 4 次，走統一廣告
+  通道 `ad.ad_reward_c2s` 0x1602。
+- `science.science_info_c2s/s2c`（module 11，cmd **2817**，c2s 空 body）= 唯一讀「研究中？」的來源：
+  s2c repeated field#1 `ScienceTreeInfo{type#1, doing#2(science_id,0=idle), etime#3, science_list#4}`。
 
-**待辦（今日 4 次已用完，明天 live 驗證後再接線）**:
-- [ ] Probe A：有研究進行中時 `ad_reward(5, is_free=1)` → 確認 0x1602 成功 + 研究 etime -1800s。
-- [ ] Probe B：無研究進行中時 claim → 看 server 是 reject（error code?）還是白燒次數。
-- [ ] 依 Probe B 決定：無條件加進 `DEFAULT_CONFIG_IDS`，或 claim 前先讀科技狀態（rogue science doing/etime）再領。
-- [ ] 接線：`ws_token/ad_reward.py` `TIMES` 加 `5: 4`、`AD_NAMES` 加「科技研究加速廣告」+ 測試。
-- [ ] 注意：價值取決於研究隊列是否常態有東西在跑；若常閒置，考慮只在 doing!=0 時領。
+**Probe A（2026-07-06，小寶 7fe98fc6，CDP 9226，`tools/probe_science_ad.py claim`，live 驗證 OK）**:
+科技樹 doing=1023（研究中）時 claim `ad_reward(5,is_free=1)` → `count` 0→1、`etime` 減少 1832s
+（≈30min+來回延遲），確認協議假設成立。
+
+**Probe B（未測，doing 全程非 0，今日只留 1 次額度沒有刻意再燒）**：閒置時 claim 會 reject 還是
+白燒次數仍未知 → 用防禦性做法解決，不用被動等這個狀態出現：`ws_token/ad_reward.py`
+`is_science_researching(client)` 先讀 `science_info`，`claim_ads` 對 config_id 5 在
+`doing==0`（或讀失敗，fail-closed）時直接 skip，不送 0x1602。
+
+**接線（commit 待做）**：
+- [x] `ws_token/ad_reward.py`：`CMD_SCIENCE_INFO=2817`、`AD_SCIENCE_1=5`、`TIMES[5]=4`、
+      `AD_NAMES[5]="科技研究加速廣告"`、`is_science_researching()`、`claim_ads` 對 5 加 doing gate。
+- [x] `tools/probe_science_ad.py`：CDP-attach 探針（不開新 WS 登入，不踢真人），`state`/`claim` 子命令。
+- [x] `tests/test_ws_token_ad_reward.py` +7（doing gate true/false/read-fail-safe、claim_ads skip/claim）；
+      全檔 28 綠。
+- [ ] **未加入 `DEFAULT_CONFIG_IDS`**（opt-in）：要啟用需在該裝置 `bot_config.json`
+      `ad_rewards.config_ids` 手動加 `5`（doing gate 已防呆，可安全開）。
 
 ---
 
@@ -806,8 +882,11 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
   - 打贏 NPC 節點變 `active:false`（留原地變灰）；打輸行為未直接觀測 → loop 用「每隻只嘗試一次」避免無限重打。
 
 ### 設計（範本：gating 學跨服戰、driver 機制學 fannaoxiao）
-- 便宜閘門：live page 讀首頁 `btnEscort` banner active/存在 → 不存在即活動關閉，**不導航直接 skip**。
-- daily 冷卻（~20h，NPC 與次數每日 09:00 重置）；成功清一輪才記錄，失敗下輪重試。
+- **日/時閘門（便宜前置，使用者指定 2026-07-04）**：只在**週六/週日**且本地時間 **>= 11:00** 才動作；
+  否則直接 return（不讀 page、不導航）。週一~五完全 no-op（「無須每日尋找」）。
+- 開放檢查（兜底 biweekly 交錯）：過了日/時閘門後，live page 讀首頁 `btnEscort` banner active/存在
+  → 不存在即該週末非賞金之路（可能是跨服戰週末），**不導航直接 skip**。
+- daily 冷卻（~20h）：六日每天最多清一輪，避免 11:00 後每次喚醒重入；成功才記錄，失敗下輪重試。
 - loop 護欄：進地圖前收集所有 monster 節點 `uuid`；逐一嘗試（still active 才打），打完/打輸都標記 attempted → 一輪最多打每隻一次，絕不無限。
 
 ### Global Constraints（本 repo）
