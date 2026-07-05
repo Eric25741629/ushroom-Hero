@@ -252,3 +252,154 @@ def pick_idle_device(candidates: list[str] = CANDIDATES) -> Optional[str]:
         if is_safe_to_borrow(ip):
             return ip
     return None
+
+
+# ============================================================================
+# Task 5：scan_cycle — 掃描核心（依賴注入、純可測）
+# ----------------------------------------------------------------------------
+# 以權重排序 known players 當「房東（owner）」候選，逐一借 idle 裝置開一次性 WS
+# 連線讀該房東的車位佔用，比對是否停著追蹤目標；順手把新看到的佔用者滾進 known
+# （雪球）、更新房東車位加成與 host_hits。所有 IO（reader / idle_picker / sleeper /
+# now_fn）皆注入，測試不碰真 socket / 真 sleep / 真時鐘。
+# ============================================================================
+
+# reader(device, owner_role_id) -> parse_lot_occupants dict | None（None=讀失敗）
+Reader = Callable[[str, int], Optional[dict]]
+IdlePicker = Callable[[], Optional[str]]
+Sleeper = Callable[[float], Any]
+NowFn = Callable[[], float]
+
+
+def scan_cycle(
+    store: MountTrackerStore,
+    reader: Reader,
+    idle_picker: IdlePicker,
+    sleeper: Sleeper,
+    now_fn: NowFn,
+    *,
+    top_n: int = 1600,
+    budget_s: float = 1500,
+    cooldown_s: float = 3.0,
+    max_per_target: int = 5,
+) -> dict:
+    """跑一輪坐騎掃描，回傳摘要 dict。
+
+    流程：
+      1. 無追蹤目標 → 直接回 ``{"skipped": "no_targets"}``。
+      2. 以 known players（含 targets 自身）依 :func:`mount_scan.weight` 由高到低
+         排序，取前 ``top_n`` 個當房東候選。
+      3. 逐一借 idle 裝置讀車位；每讀一次前 sleeper(cooldown_s)；無裝置則 sleeper
+         後換下一個房東。
+      4. 車位裡的佔用者：是追蹤目標且該目標尚未收滿 ``max_per_target`` → 收錄；
+         一律 upsert 進 known（雪球）。
+      5. 更新房東 coin（車位加成）與 host_hits，寫回 results / last_run。
+      6. 超過 ``budget_s`` 或所有目標都收滿 → 提早結束。
+    """
+    targets = store.get_targets()
+    if not targets:
+        return {"skipped": "no_targets"}
+
+    target_ids = {int(t["role_id"]) for t in targets if t.get("role_id") is not None}
+    known = store.get_known()
+
+    # 目標所屬公會集合（供 weight 的同公會加權）。
+    target_guilds: set = set()
+    for rid in target_ids:
+        guild = (known.get(str(rid)) or {}).get("guild")
+        if guild:
+            target_guilds.add(guild)
+
+    # 房東候選 = known players（含尚未在 known 的 target 自身），依權重排序取 top_n。
+    entries: list[dict] = []
+    seen: set = set()
+    for key, val in known.items():
+        try:
+            rid = int(key)
+        except (TypeError, ValueError):
+            continue
+        entry = dict(val)
+        entry["role_id"] = rid
+        entries.append(entry)
+        seen.add(rid)
+    for rid in target_ids:
+        if rid not in seen:
+            entry = dict(known.get(str(rid), {}))
+            entry["role_id"] = rid
+            entries.append(entry)
+            seen.add(rid)
+    entries.sort(key=lambda e: mount_scan.weight(e, target_guilds), reverse=True)
+    queue = entries[:top_n]
+
+    deadline = now_fn() + budget_s
+    found: dict[int, list] = {rid: [] for rid in target_ids}
+    scanned_owners: set = set()   # 本輪成功讀到車位的房東
+    host_hit_ids: set = set()     # 本輪車位停著追蹤目標的房東
+
+    for owner_entry in queue:
+        # 所有目標都收滿 → 沒必要再掃。
+        if all(len(found[rid]) >= max_per_target for rid in target_ids):
+            break
+        # 超過時間預算 → 提早收工，剩下的留給下一輪。
+        if now_fn() >= deadline:
+            break
+
+        owner = int(owner_entry["role_id"])
+        dev = idle_picker()
+        if dev is None:
+            sleeper(cooldown_s)  # 暫無 idle 裝置：冷卻後換下一個房東
+            continue
+
+        sleeper(cooldown_s)      # 每次讀取前冷卻，避免打太快
+        lot = reader(dev, owner)
+        if lot is None:
+            continue             # 讀失敗（被踢 / 例外）→ 換下一個房東
+        scanned_owners.add(owner)
+
+        for space in lot.get("spaces", []):
+            occ = space.get("role_id")
+            if not occ:
+                continue
+            occ = int(occ)
+            name = space.get("name")
+            store.upsert_known(occ, name=name)  # 雪球：新佔用者滾進 known
+            if occ in target_ids and len(found[occ]) < max_per_target:
+                found[occ].append({
+                    "owner": owner,
+                    "pos": space.get("pos"),
+                    "start_time": space.get("start_time"),
+                    "found_ts": now_fn(),
+                    "name": name,
+                })
+                host_hit_ids.add(owner)
+
+        # 房東車位加成（菇車幣）+ 掃描時間戳。
+        bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
+        store.upsert_known(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
+
+    _update_host_hits(store, scanned_owners, host_hit_ids)
+
+    results = {str(rid): found[rid] for rid in target_ids}
+    store.set_results(results)
+    summary = {
+        "scanned": len(scanned_owners),
+        "queued": len(queue),
+        "found": {str(rid): len(found[rid]) for rid in target_ids},
+        "target_guilds": sorted(target_guilds),
+    }
+    store.set_last_run({"ts": now_fn(), **summary})
+    return summary
+
+
+def _update_host_hits(store: MountTrackerStore, scanned_owners: set, host_hit_ids: set) -> None:
+    """更新本輪掃過房東的 host_hits：停著目標 +1（上限 5），否則 decay，不 <0。
+
+    只動本輪實際掃到的房東——沒掃到的沿用舊值（下一輪權重排序仍會優先掃到高
+    host_hits 者，故會自我收斂，不需每輪掃全表）。
+    """
+    known_now = store.get_known()
+    for owner in scanned_owners:
+        cur = int((known_now.get(str(owner)) or {}).get("host_hits", 0) or 0)
+        if owner in host_hit_ids:
+            store.upsert_known(owner, host_hits=min(cur + 1, 5))
+        elif cur > 0:
+            store.upsert_known(owner, host_hits=cur - 1)
