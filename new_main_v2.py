@@ -91,7 +91,7 @@ from runtime_services.ws_fallback_service import (
     should_ws_fallback,
 )
 from game_actions import daily_pipeline
-from game_actions.ws_phase import run_ws_phase
+from game_actions.ws_phase import run_ws_phase, wait_for_dashboard_ws_release
 from game_actions.browser_skip import should_skip_browser
 
 
@@ -100,6 +100,9 @@ atexit.register(lambda: shutdown_web_devices(logger))
 
 def _run_ws_phase_for_wake(ip, logger_obj):
     """執行單輪 WS-first 階段，並寫入裝置專屬 log。"""
+    # dashboard 純 WS 工具（裝飾升級/抽卡等）使用中 → 先等釋放，別醒來就同帳號
+    # 互踢。放在 enabled 檢查前：未啟用 WS 的裝置接著開 H5/APP 一樣會踢。
+    wait_for_dashboard_ws_release(ip, logger_obj)
     ws_cfg = config_manager.get_device_config(ip).get("ws_token") or {}
     if not ws_cfg.get("enabled", False):
         return frozenset()

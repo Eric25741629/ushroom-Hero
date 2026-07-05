@@ -504,6 +504,11 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
                 if bot_state.check_force_sleep(ip):
                     raise ForceSleepRequested("force sleep requested during pause")
 
+                # Dashboard 純 WS 工具連線使用中 → 等釋放再登入（同帳號互踢防護；
+                # pause 可能被入睡清理吃掉，這裡直接查 ws_session registry）。
+                from game_actions.ws_phase import wait_for_dashboard_ws_release
+                wait_for_dashboard_ws_release(ip, logger_obj)
+
                 # Re-read config each wake so live toggles (spend/sweep) apply.
                 cfg = config_manager.get_device_config(ip)
                 protect = _device_needs_protection(cfg)
