@@ -384,15 +384,37 @@ function tickCountdowns(){
 }
 
 // ---- render status bar ----
+//  掃描中（progress.phase !== 'idle'）：由 in-memory 進度即時驅動數字（每 2s 輪詢跳動）；
+//  閒置時沿用 last_run / known_count / bootstrap_done。回傳 running 供輪詢決定節奏。
 function renderStatus(d){
   currentEnabled = !!d.enabled;
   setToggleVisual(currentEnabled, false);
   const lr = d.last_run || {};
-  $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
-  $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found) + ' 台') : '—';
-  $('mtKnown').textContent = fmt(d.known_count);
-  $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
-  $('mtRunningWrap').style.display = d.running ? '' : 'none';
+  const p = d.progress || {};
+  const scanning = !!(p.phase && p.phase !== 'idle');
+  const running = scanning || !!d.running;
+
+  if(scanning && p.phase === 'bootstrap'){
+    // 建立玩家庫中：顯示公會/成員蒐集進度。
+    $('mtLastRun').textContent = '建立玩家庫中…';
+    $('mtScanStat').textContent = fmt(p.guilds) + ' 會 / ' + fmt(p.members) + ' 人';
+    $('mtKnown').textContent = fmt(p.known);
+    $('mtBootstrap').textContent = '建立中…';
+  } else if(scanning){
+    // 掃描中：即時 scanned / found / 玩家庫規模。
+    $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '掃描中…';
+    $('mtScanStat').textContent = fmt(p.scanned) + ' / ' + fmt(p.found) + ' 台';
+    $('mtKnown').textContent = fmt((p.known != null && p.known > 0) ? p.known : d.known_count);
+    $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
+  } else {
+    // 閒置：沿用上次掃描結果（維持既有行為）。
+    $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
+    $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found) + ' 台') : '—';
+    $('mtKnown').textContent = fmt(d.known_count);
+    $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
+  }
+  $('mtRunningWrap').style.display = running ? '' : 'none';
+  return running;
 }
 
 // ---- #cards 佔位（重用 lib .empty-state / .error-state）：首屏載入 + 取得失敗都不留白頁 ----
@@ -409,20 +431,27 @@ function cardsError(){
     '<div class="es-actions"><button type="button" class="btn btn--secondary mt-retry">立即重試</button></div></div>';
 }
 
-// ---- 5s data refresh (countdown tick is a separate 1s interval) ----
+// ---- data refresh：掃描中 2s、閒置 5s（自我重排的 setTimeout）；1s 倒數 tick 獨立 ----
+let refreshTimer = null;
+function scheduleRefresh(running){
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(refresh, running ? 2000 : 5000);
+}
 async function refresh(){
   let d;
   try{ d = await UI.apiGet('/api/mount_tracker/results'); }
   catch(e){
     // 401 已由 apiGet 導向登入。其餘（含首次載入失敗）：尚未成功載過就顯示錯誤態
-    // （含重試鈕），別留白頁；已載過則保留現有資料，交給下一輪 5s poll 自動重試。
+    // （含重試鈕），別留白頁；已載過則保留現有資料，交給下一輪 poll 自動重試。
     if(!loadedOnce) cardsError();
+    scheduleRefresh(false);            // 失敗時用慢速（5s）重試
     return;
   }
   loadedOnce = true;
-  renderStatus(d);
+  const running = renderStatus(d);
   renderTargets(d.targets || []);
   renderCards(d);
+  scheduleRefresh(running);            // 掃描中加快到 2s，讓即時數字跳得順
 }
 
 // ---- boot (app.js is `defer`, so UI is ready by DOMContentLoaded) ----
@@ -449,8 +478,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if(b) markMount(b);
   });
   cardsLoading();                 // 首屏先顯示「載入中…」，避免第一筆資料到達前留白
-  refresh();
-  setInterval(refresh, 5000);
+  refresh();                       // refresh 內部自我重排（scheduleRefresh），不需固定 interval
   setInterval(tickCountdowns, 1000);
 });
 </script>

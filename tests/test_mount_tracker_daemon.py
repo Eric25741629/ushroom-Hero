@@ -200,6 +200,31 @@ def test_run_one_cycle_skips_bootstrap_when_done(monkeypatch):
     assert events["scan"] == 1                   # 正常掃描照跑
 
 
+def test_progress_roundtrip_and_copy_isolation():
+    """get_progress / _set_progress / _reset_progress 往返 + 回傳複本隔離。"""
+    mt._reset_progress("bootstrap")
+    p = mt.get_progress()
+    assert p["phase"] == "bootstrap"
+    assert p["scanned"] == 0 and p["found"] == 0 and p["known"] == 0
+    assert p["guilds"] == 0 and p["members"] == 0
+    assert p["started_ts"] is not None
+
+    mt._set_progress(scanned=7, found=3, known=42)     # 只合併傳入鍵
+    p2 = mt.get_progress()
+    assert (p2["scanned"], p2["found"], p2["known"]) == (7, 3, 42)
+    assert p2["phase"] == "bootstrap"                   # 未傳 phase → 保留
+
+    # 複本隔離：改動回傳的 dict 不會回寫內部狀態。
+    p2["phase"] = "TAMPERED"
+    p2["scanned"] = 999
+    assert mt.get_progress()["phase"] == "bootstrap"
+    assert mt.get_progress()["scanned"] == 7
+
+    mt._reset_progress("idle")                          # 收尾歸零，避免污染其他測試
+    assert mt.get_progress()["phase"] == "idle"
+    assert mt.get_progress()["scanned"] == 0
+
+
 def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
     # 關鍵安全性：_run_one_cycle 給 scan_cycle 的 sleeper 必須是 _cooldown（真 sleep），
     # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。

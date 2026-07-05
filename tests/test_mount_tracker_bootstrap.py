@@ -126,3 +126,24 @@ def test_deadline_in_past_returns_empty():
                               lambda: True, deadline=0.0)
     assert seed == {}
     assert calls["members"] == [] and calls["levels"] == []
+
+
+# --- 即時進度回報 ------------------------------------------------------------
+
+def test_bootstrap_known_reports_guilds_members_known_progress():
+    """on_progress：階段1 回報 guilds、階段2 回報 members、階段3 回報 known。"""
+    calls = {"members": [], "levels": []}
+    events = []
+    mt.bootstrap_known(_make_caller(calls), lambda s: None, lambda: 0.0,
+                       lambda: True, deadline=1e9,
+                       on_progress=lambda **kw: events.append(kw))
+
+    keys = set().union(*[set(e) for e in events]) if events else set()
+    assert {"guilds", "members", "known"} <= keys      # 三階段都有回報
+
+    guild_vals = [e["guilds"] for e in events if "guilds" in e]
+    assert guild_vals and max(guild_vals) == 1          # 合格公會只有 900
+    member_vals = [e["members"] for e in events if "members" in e]
+    assert member_vals and max(member_vals) == 2        # 公會 900 的兩名成員
+    known_vals = [e["known"] for e in events if "known" in e]
+    assert known_vals and max(known_vals) == 2          # 階段3 補等級後 known=2

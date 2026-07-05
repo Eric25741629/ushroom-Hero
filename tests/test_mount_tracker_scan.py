@@ -211,6 +211,43 @@ def test_attacked_mark_survives_when_owner_not_scanned(tmp_path):
     assert store.get_attacked() == {"100": {"2:222": 2000.0}}
 
 
+def test_scan_cycle_reports_progress_with_increasing_scanned(tmp_path):
+    """on_progress：每處理完一個房東就回報，scanned 單調遞增，欄位齊全。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 5):                        # 4 個房東 +目標自身 → queue 長 5
+        store.upsert_known(oid, name=f"o{oid}")
+
+    def reader(dev, owner):
+        return {"skin_list": [], "spaces": []}     # 空車位，仍算掃到（scanned +1）
+
+    events = []
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0,
+               budget_s=10_000, on_progress=lambda **kw: events.append(kw))
+
+    assert events                                   # 有回報
+    scanned = [e["scanned"] for e in events]
+    assert scanned == sorted(scanned)               # 單調遞增
+    assert scanned[-1] == 5                          # 5 個房東全掃到
+    assert all({"scanned", "found", "known"} <= set(e) for e in events)
+
+
+def test_scan_cycle_on_progress_none_unchanged(tmp_path):
+    """on_progress=None（預設）：行為與回傳不變。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="o1")
+
+    def reader(dev, owner):
+        if owner == 1:                             # 只有房東 1 停著目標
+            return _target_lot(100)
+        return {"skin_list": [], "spaces": []}     # 目標自身車位為空
+
+    out = scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0,
+                     budget_s=10_000)
+    assert out["scanned"] == 2 and out["found_total"] == 1
+
+
 def test_skips_when_no_idle_device(tmp_path):
     store = MountTrackerStore(state_dir=str(tmp_path))
     store.add_target({"role_id": 100, "name": "T"})
