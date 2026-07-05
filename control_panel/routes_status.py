@@ -432,13 +432,27 @@ def _device_role_id(device):
 
 
 def _account_presence():
-    """{role_id: online} from the online-monitor snapshot (empty if unavailable)."""
+    """{role_id: online} from the online-monitor snapshot (empty if unavailable).
+
+    顯示層用 server 的 presence sentinel（last_login_ts == 0）精確判定，不吃快照
+    烘入的 guard 寬限 bool（poll_friends threshold_sec=120 會讓登出後 ~2 分鐘仍
+    顯示在線）。另 detector 永遠不在自己好友列表，但 monitor 正持有其 WS
+    session → overlay 為在線。
+    """
     try:
-        from ws_token.online_monitor import get_snapshot
+        from ws_token.online_monitor import get_snapshot, current_detector
         snap = get_snapshot()
     except Exception:
         return {}
-    return {e.role_id: e.online for e in snap.entries} if snap else {}
+    if not snap:
+        return {}
+    presence = {e.role_id: e.last_login_ts == 0 for e in snap.entries}
+    detector = current_detector()
+    if detector:
+        rid = _device_role_id(detector)
+        if rid is not None:
+            presence[int(rid)] = True
+    return presence
 
 
 @bp.route("/api/status")

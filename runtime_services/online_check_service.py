@@ -80,11 +80,15 @@ def _guild_for(checker_ip: str) -> Optional[int]:
         return None
 
 
-def _check_monitor_snapshot(target_pid: int) -> Optional[bool]:
+def _check_monitor_snapshot(target_pid: int, threshold_sec: int) -> Optional[bool]:
     """Fast path: signal monitor to refresh, then read the snapshot.
 
     Cold start (snapshot is None): wait up to 10s for the first snapshot.
     Warm path (snapshot exists): signal poll_now, wait up to 3s for a <5s-fresh one.
+
+    Presence 從 entry 的原始 last_login_ts 以 requester 自己的 ``threshold_sec``
+    重算——快照烘入的 bool 帶 monitor 的 120s guard 寬限，直接沿用會讓互檢在
+    目標登出後多報 ~2 分鐘在線。ts 缺失回 None（落一次性 WS 路徑）。
     """
     try:
         from ws_token.online_monitor import get_snapshot, _monitor
@@ -107,7 +111,12 @@ def _check_monitor_snapshot(target_pid: int) -> Optional[bool]:
             return None
         for entry in snap.entries:
             if entry.role_id == target_pid:
-                return entry.online
+                ts = entry.last_login_ts
+                if ts is None:
+                    return None
+                if ts == 0:
+                    return True  # server presence sentinel: currently online
+                return (int(time.time()) - int(ts)) < int(threshold_sec)
     except Exception:  # noqa: BLE001 — monitor import/read must never block
         pass
     return None
@@ -121,8 +130,10 @@ def _serve_one(req: Dict[str, Any], candidates: List[str]) -> None:
         bot_state.fail_online_check_request(req_id, "online_check_target_pid not set")
         return
 
+    threshold_sec = _threshold_for(req.get("requester_ip"))
+
     # fast path: persistent monitor has a fresh answer
-    cached = _check_monitor_snapshot(int(target_pid))
+    cached = _check_monitor_snapshot(int(target_pid), threshold_sec)
     if cached is not None:
         bot_state.complete_online_check_request(
             req_id, is_busy=cached,
@@ -130,7 +141,6 @@ def _serve_one(req: Dict[str, Any], candidates: List[str]) -> None:
         return
 
     # slow path: one-shot WS login (fallback when monitor is not running)
-    threshold_sec = _threshold_for(req.get("requester_ip"))
     for checker in candidates:
         result = check_via_ws(
             checker, int(target_pid), logger,
