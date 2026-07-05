@@ -183,6 +183,25 @@ class MountTrackerStore:
             data["running"] = running
             self._save(data)
 
+    # ---- 冷啟 bootstrap 完成戳 bootstrap_done -------------------------------
+    # 冷啟（known_players 空）時 daemon 會借一台 idle 裝置跑一次性 guild-scan 灌
+    # known_players；完成後寫入時間戳，之後不再重跑（避免每輪重灌）。使用者要重建
+    # 玩家庫時把它設回 None 即可讓 daemon 下一輪重跑一次。
+    def get_bootstrap_done(self) -> float | None:
+        """回傳冷啟 bootstrap 完成時間戳（秒）；尚未跑過回 None。"""
+        with _LOCK:
+            return self._load().get("bootstrap_done")
+
+    def set_bootstrap_done(self, ts) -> None:
+        """寫入 / 清除冷啟 bootstrap 完成戳；``ts`` 為 None 時移除該鍵（觸發重建）。"""
+        with _LOCK:
+            data = self._load()
+            if ts is None:
+                data.pop("bootstrap_done", None)
+            else:
+                data["bootstrap_done"] = ts
+            self._save(data)
+
     # ---- 快照 ---------------------------------------------------------------
     def snapshot(self) -> dict:
         """一次讀出整體狀態摘要，供 dashboard / API 使用。"""
@@ -195,6 +214,7 @@ class MountTrackerStore:
                 "known_count": len(known),
                 "last_run": data.get("last_run", {}),
                 "running": data.get("running", False),
+                "bootstrap_done": data.get("bootstrap_done"),
             }
 
 
@@ -507,6 +527,109 @@ def scan_cycle(
 
 
 # ============================================================================
+# 冷啟 bootstrap：一次性 guild-scan 灌 known_players（依賴注入、純可測）
+# ----------------------------------------------------------------------------
+# 冷啟時 known_players 空，只靠 scan_cycle 的雪球擴散很慢。此函式借一台 idle 裝置
+# 掃全服公會 → 成員 → 批次補等級，一次性把 level>=5 公會的全體成員（含 name/guild/
+# level）灌進 known，讓權重掃描一開始就有正確的候選房東。純函式：不碰 socket / sleep /
+# 時鐘，只用注入的 caller / sleeper / now_fn / should_continue + mount_scan 的 enc/parse。
+# ============================================================================
+
+# caller(cmd, body) -> bytes | None（None = 呼叫失敗 / 跳過該次）
+Caller = Callable[[int, bytes], Optional[bytes]]
+# should_continue() -> bool（False = 停止當前階段，例如借用裝置即將自我喚醒）
+ShouldContinue = Callable[[], bool]
+
+
+def bootstrap_known(
+    caller: Caller,
+    sleeper: Sleeper,
+    now_fn: NowFn,
+    should_continue: ShouldContinue,
+    *,
+    deadline: float,
+    cooldown_s: float = 3.0,
+    min_guild_level: int = 5,
+    max_pages: int = 90,
+    batch: int = 40,
+) -> dict[int, dict]:
+    """一次性掃全服公會，回傳 ``{role_id: {"name", "guild", "level"}}`` 供批次灌 known。
+
+    三階段（每次網路呼叫前先 ``sleeper(cooldown_s)``；每次迴圈開頭若
+    ``now_fn() >= deadline`` 或 ``not should_continue()`` 即停止該階段）：
+
+    1. **公會蒐集**：``typ ∈ (2, 3)``，逐頁 :data:`mount_scan.CMD_GUILD_SEARCH`；
+       收 ``guild_level >= min_guild_level`` 且有 guild_id 的公會進 ``{guild_id: name}``。
+       某 type 的某「非空頁」若 0 筆合格公會即提早收該 type（列表依等級遞減排序，深頁
+       全是低等公會）；或 ``page >= page_num-1`` 時收該 type。回應 None → 跳過該頁。
+    2. **成員展開**：對每個公會 :data:`mount_scan.CMD_GUILD_MEMBERS`；成員以
+       ``setdefault`` 收錄（同一玩家橫跨多公會時「先到的公會」勝出）。
+    3. **等級補齊**：把成員 id 依 ``batch`` 切塊，逐塊 :data:`mount_scan.CMD_ROLE_OTHERS`，
+       回填 ``level``。
+    """
+    def _stop() -> bool:
+        # 時間預算用盡或借用裝置即將自我喚醒 → 停止當前階段。
+        return now_fn() >= deadline or not should_continue()
+
+    # --- 階段 1：蒐集 level>=min_guild_level 的公會 --------------------------
+    guilds: dict[int, str | None] = {}
+    for typ in (2, 3):
+        if _stop():
+            break
+        for page in range(max_pages):
+            if _stop():
+                break
+            sleeper(cooldown_s)
+            body = caller(mount_scan.CMD_GUILD_SEARCH,
+                          mount_scan.enc_guild_search(typ, page))
+            if body is None:
+                continue  # 該頁呼叫失敗 → 跳過（不影響提早收 type 的判定）
+            parsed = mount_scan.parse_guild_search(body)
+            page_num = parsed.get("page_num")
+            page_guilds = parsed.get("guilds", [])
+            qualifying = 0
+            for g in page_guilds:
+                gid = g.get("guild_id")
+                if gid and (g.get("guild_level") or 0) >= min_guild_level:
+                    guilds.setdefault(gid, g.get("name"))
+                    qualifying += 1
+            # 提早收該 type：非空頁 0 筆合格（深頁全低等）或已到最後一頁。
+            if (page_guilds and qualifying == 0) or \
+               (page_num is not None and page >= page_num - 1):
+                break
+
+    # --- 階段 2：展開各公會成員（先到的公會勝出）----------------------------
+    members: dict[int, dict] = {}
+    for gid, gname in guilds.items():
+        if _stop():
+            break
+        sleeper(cooldown_s)
+        body = caller(mount_scan.CMD_GUILD_MEMBERS, mount_scan.enc_guild_members(gid))
+        if body is None:
+            continue
+        for m in mount_scan.parse_guild_members(body):
+            rid = m.get("role_id")
+            if rid:
+                members.setdefault(rid, {"name": m.get("name"), "guild": gname})
+
+    # --- 階段 3：批次補等級 --------------------------------------------------
+    ids = list(members)
+    for i in range(0, len(ids), batch):
+        if _stop():
+            break
+        sleeper(cooldown_s)
+        body = caller(mount_scan.CMD_ROLE_OTHERS,
+                      mount_scan.enc_role_others(ids[i:i + batch]))
+        if body is None:
+            continue
+        for rid, info in mount_scan.parse_role_others(body).items():
+            if rid in members:
+                members[rid]["level"] = info.get("level")
+
+    return members
+
+
+# ============================================================================
 # Task 6：daemon + 真 IO 綁定 + 冪等啟動
 # ----------------------------------------------------------------------------
 # 共用 store singleton、hourly daemon（可停可催的 Event.wait）、真 reader（借
@@ -526,6 +649,9 @@ _start_lock = threading.Lock()
 _wake = threading.Event()
 
 _CYCLE_INTERVAL_SEC = 3600.0
+# 冷啟 bootstrap 單輪時間預算（秒）：全服公會掃描較久，給 20 分鐘上限，逾時就地收工
+# （已灌到的照樣寫入、標記完成，剩下的交給雪球補齊）。
+_BOOTSTRAP_BUDGET_S = 1200.0
 
 
 def _cooldown(sec: float) -> None:
@@ -604,6 +730,20 @@ def _read_lot(dev: str, owner_role_id: int,
     return mount_scan.parse_lot_occupants(body)
 
 
+def _safe_call(client, cmd: int, body: bytes) -> Optional[bytes]:
+    """對借用中的 live client 發一次 WS 呼叫，供 bootstrap 的 caller 用。
+
+    被踢（``is_kicked()``）/ timeout / 任何例外一律回 None，讓 :func:`bootstrap_known`
+    當作「該次呼叫跳過」而不中斷整個 bootstrap。
+    """
+    try:
+        if client.is_kicked():
+            return None
+        return client.call(cmd, body, timeout=12)
+    except Exception:  # noqa: BLE001 — 被踢 / timeout / 例外一律視為該次呼叫失敗
+        return None
+
+
 def _run_one_cycle() -> None:
     """跑一輪真掃描：借 idle 裝置、連線重用、結束時歸還所有借用連線。
 
@@ -639,6 +779,28 @@ def _run_one_cycle() -> None:
 
     store.set_running(True)
     try:
+        # --- 冷啟一次性 guild-scan bootstrap（僅在尚未跑過時）------------------
+        # 借一台 idle 裝置掃全服公會灌 known_players，之後不再重跑。借用透過
+        # _mark_borrowed 登記，收尾 finally 一律歸還；完成（即使部分）就標記，
+        # 避免每輪重灌，剩下的交給 scan_cycle 雪球補齊。
+        if store.get_bootstrap_done() is None:
+            dev = pick_idle_device()
+            if dev:
+                client = _get_ws_client(dev)
+                _mark_borrowed(dev)  # ensure 當下即登記借用，收尾 finally 會歸還
+                if client:
+                    deadline = time.time() + _BOOTSTRAP_BUDGET_S
+                    # 借用裝置一旦接近自身喚醒窗即停止 bootstrap，讓位給它的 bot loop。
+                    should_continue = lambda: not _about_to_wake(dev, _states())  # noqa: E731
+                    caller = lambda cmd, body: _safe_call(client, cmd, body)      # noqa: E731
+                    seed = bootstrap_known(caller, _cooldown, time.time,
+                                           should_continue, deadline=deadline)
+                    if seed:
+                        store.bulk_upsert_known(seed)   # 一次批次寫回（NAS I/O 友善）
+                    store.set_bootstrap_done(time.time())  # 即使部分完成也標記，避免重跑
+                    wake_scan()  # 催下一輪（很快）跑一次「已灌種子」的正式掃描
+                    return       # 本輪跳過 scan_cycle（finally 仍歸還借用 + set_running）
+            # 無 idle 裝置（dev 為 None）→ 不標記完成，下一輪重試 bootstrap。
         # sleeper 用 _cooldown（真 sleep），不可用 _wake.wait——見 _cooldown docstring。
         scan_cycle(store, reader, idle_picker, _cooldown, time.time)
     finally:

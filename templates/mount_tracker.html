@@ -95,9 +95,12 @@
       <div class="mt-stat">上次掃描<b id="mtLastRun">—</b></div>
       <div class="mt-stat">掃描 / 找到<b id="mtScanStat">—</b></div>
       <div class="mt-stat">已知坐騎<b id="mtKnown">—</b></div>
+      <div class="mt-stat">玩家庫<b id="mtBootstrap">—</b></div>
       <div class="mt-stat" id="mtRunningWrap" style="display:none">
         <span class="mt-running"><span class="spinner" aria-hidden="true"></span>掃描中…</span>
       </div>
+      <button id="mtRebootstrap" type="button" class="btn btn--secondary"
+              style="margin-left:auto" onclick="rebootstrap()">重建玩家庫</button>
     </div>
   </section>
 
@@ -179,6 +182,26 @@ async function toggleScanner(){
   } else {
     UI.toast((res.data && res.data.message) || '切換失敗', 'err');
     setToggleVisual(currentEnabled, false);             // 還原
+  }
+}
+
+// ---- 重建玩家庫（限管理員；清 bootstrap 戳 + 催掃，下一輪重灌 known_players）----
+async function rebootstrap(){
+  const ok = await UI.confirmDialog({
+    title:'重建玩家庫', okLabel:'重建', cancelLabel:'取消',
+    body:'重新以公會掃描灌入已知玩家庫？下一輪掃描會先花數分鐘重建，期間會借用一台閒置裝置。'
+  });
+  if(!ok) return;
+  const btn = $('mtRebootstrap');
+  UI.setLoading(btn, true);
+  let res;
+  try{ res = await postJSON('/api/mount_tracker/rebootstrap', {}); }
+  finally{ UI.setLoading(btn, false); }
+  if(res.httpStatus === 403){ UI.toast('需要管理員權限', 'err'); return; }
+  if(res.data && res.data.status === 'ok'){
+    UI.toast('已觸發重建玩家庫', 'ok'); refresh();
+  } else {
+    UI.toast((res.data && res.data.message) || '重建失敗', 'err');
   }
 }
 
@@ -368,6 +391,7 @@ function renderStatus(d){
   $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
   $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found) + ' 台') : '—';
   $('mtKnown').textContent = fmt(d.known_count);
+  $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
   $('mtRunningWrap').style.display = d.running ? '' : 'none';
 }
 

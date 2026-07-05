@@ -90,6 +90,25 @@ def test_set_attacked_overwrites(tmp_path):
     assert s.get_attacked() == {"200": {"9:9": 1.0}}
 
 
+def test_bootstrap_done_roundtrip(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    assert s.get_bootstrap_done() is None            # 尚未跑過
+    s.set_bootstrap_done(1699999999.0)
+    s2 = MountTrackerStore(state_dir=str(tmp_path))   # reload from disk
+    assert s2.get_bootstrap_done() == 1699999999.0
+    s2.set_bootstrap_done(None)                       # None 清除（觸發重建）
+    assert s2.get_bootstrap_done() is None
+    assert MountTrackerStore(state_dir=str(tmp_path)).get_bootstrap_done() is None
+
+
+def test_snapshot_has_bootstrap_done(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    snap = s.snapshot()
+    assert "bootstrap_done" in snap and snap["bootstrap_done"] is None
+    s.set_bootstrap_done(123.0)
+    assert s.snapshot()["bootstrap_done"] == 123.0
+
+
 def test_bulk_upsert_known_single_write(tmp_path, monkeypatch):
     s = MountTrackerStore(state_dir=str(tmp_path))
     calls = {"n": 0}

@@ -21,6 +21,7 @@ class FakeStore:
         self.added: list[dict] = []
         self.removed: list[int] = []
         self.marked: list[tuple] = []
+        self.bootstrap_cleared: list = []
         self._snap = snap if snap is not None else {
             "targets": [],
             "results": {},
@@ -43,6 +44,9 @@ class FakeStore:
 
     def mark_attacked(self, target_role_id, owner_role_id, start_time, on=True):
         self.marked.append((target_role_id, owner_role_id, start_time, on))
+
+    def set_bootstrap_done(self, ts):
+        self.bootstrap_cleared.append(ts)
 
 
 @pytest.fixture
@@ -310,6 +314,36 @@ def test_toggle_on_kicks_scan(app, monkeypatch):
     resp = client.post("/api/mount_tracker/toggle", json={"enabled": True})
     assert resp.status_code == 200
     assert woke == [True]                              # 啟用 → 催掃一輪
+
+
+def test_rebootstrap_admin_clears_and_wakes(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client, admin=True)
+
+    resp = client.post("/api/mount_tracker/rebootstrap", json={})
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+    assert store.bootstrap_cleared == [None]           # set_bootstrap_done(None) 清除戳
+    assert woke == [True]                               # 催掃一輪（下一輪重跑 bootstrap）
+
+
+def test_rebootstrap_non_admin_forbidden(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client, admin=False)
+
+    resp = client.post("/api/mount_tracker/rebootstrap", json={})
+    assert resp.status_code == 403
+    assert resp.get_json()["status"] == "error"
+    assert store.bootstrap_cleared == []               # 未觸及 store
+    assert woke == []                                  # 未催掃
 
 
 def test_toggle_off_does_not_kick_scan(app, monkeypatch):
