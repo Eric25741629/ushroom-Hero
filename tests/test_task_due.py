@@ -159,17 +159,30 @@ def test_mount_sprint_not_due_when_not_cycle_week(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# 雲端戰鬥
+# 雲端戰鬥（每週一次；任一天手機在線即可補跑，僅週一保留凌晨 3 點下限）
 # --------------------------------------------------------------------------
-def test_cloud_not_due_when_not_monday(monkeypatch):
+def test_cloud_due_on_wednesday_when_not_run_this_week(monkeypatch):
+    # 放寬後：非週一（此處週三）只要本週未跑就 due（原本只限週一 → False）。
     _patch_records(monkeypatch, {})
-    # 2026-07-07 是週二
-    assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 7, 10)) is False
+    assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 8, 10)) is True
+
+
+def test_cloud_due_on_sunday_when_not_run_this_week(monkeypatch):
+    # 使用者實際踩到的情境：該週週一漏跑，週日補打。
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 12, 20)) is True
 
 
 def test_cloud_not_due_when_monday_before_3am(monkeypatch):
+    # 僅週一保留凌晨 3 點下限，避開每週重置前空跑。
     _patch_records(monkeypatch, {})
     assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 6, 2)) is False
+
+
+def test_cloud_due_on_tuesday_before_3am(monkeypatch):
+    # 週二起重置已過，凌晨下限不再套用。
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 7, 2)) is True
 
 
 def test_cloud_due_when_monday_after_3am_no_record(monkeypatch):
@@ -178,13 +191,14 @@ def test_cloud_due_when_monday_after_3am_no_record(monkeypatch):
 
 
 def test_cloud_not_due_when_already_this_week(monkeypatch):
-    now = _dt(2026, 7, 6, 10)
-    _patch_records(monkeypatch, {"cloud_fighting_weekly": {"timestamp": now.timestamp()}})
-    assert task_due.is_due("雲端戰鬥", "ip", now=now) is False
+    # 本 ISO 週已跑過（週一）→ 同週週四再查仍不跑。
+    monday = _dt(2026, 7, 6, 10)
+    _patch_records(monkeypatch, {"cloud_fighting_weekly": {"timestamp": monday.timestamp()}})
+    assert task_due.is_due("雲端戰鬥", "ip", now=_dt(2026, 7, 9, 10)) is False
 
 
 def test_cloud_due_when_last_run_prior_week(monkeypatch):
-    now = _dt(2026, 7, 6, 10)
+    now = _dt(2026, 7, 8, 10)  # 週三
     prior = (now - datetime.timedelta(days=14)).timestamp()
     _patch_records(monkeypatch, {"cloud_fighting_weekly": {"timestamp": prior}})
     assert task_due.is_due("雲端戰鬥", "ip", now=now) is True

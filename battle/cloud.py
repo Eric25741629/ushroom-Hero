@@ -213,8 +213,8 @@ def run_saturday_help_single(d, ip: str) -> None:
 
 
 def run_weekly_cloud_fighting_single(d, ip: str) -> None:
-    """單一 IP 版本：每週一凌晨 3 點後執行一次 cloud_fighting。裝置未上線時 bot 喚醒循環會持續重試。"""
-    # due 判斷（週一凌晨3點後 + 本週未執行）改由 task_due registry 統一。
+    """單一 IP 版本：每週一次 cloud_fighting，任一天手機在線即補打（不再綁死週一）。"""
+    # due 判斷（每週一次 + 僅週一保留凌晨3點下限）改由 task_due registry 統一。
     from game_actions.task_due import is_due
     if not is_due("雲端戰鬥", ip):
         print(f"{ip} weekly cloud_fighting 未到執行時間或本週已執行，跳過")

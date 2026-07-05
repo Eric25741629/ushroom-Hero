@@ -75,10 +75,12 @@ def _due_mount_sprint(ip: str, now: datetime.datetime) -> bool:
 
 
 def _due_cloud_fighting(ip: str, now: datetime.datetime) -> bool:
-    # 對照 battle/cloud.py:219-244（run_weekly_cloud_fighting_single 的 due 判斷）
-    if now.weekday() != 0:  # 僅週一
-        return False
-    if now.hour < 3:  # 週一凌晨 3 點後
+    # 每週一次；放寬自「僅週一」→ 任一天手機在線即可補跑（2026-07-05，使用者要求）。
+    # 原「僅週一」在手機該週一整天 ADB 離線時會整週報廢：雲端戰鬥是純視覺 OCR 任務、
+    # 無 WS 版，ADB 不在線就跑不了，錯過週一就得等下週。改為 once-per-ISO-week，
+    # 哪天手機在線就哪天補打。僅週一保留凌晨 3 點下限，避開每週重置前空跑；
+    # 週二起重置已過，無下限。
+    if now.weekday() == 0 and now.hour < 3:
         return False
 
     try:
@@ -86,13 +88,14 @@ def _due_cloud_fighting(ip: str, now: datetime.datetime) -> bool:
     except Exception:
         rec = None
 
-    # 已於本週執行過 → not due；週序比較異常時視為未執行（due），與原邏輯一致。
+    # 本 ISO 週已執行過 → not due；週序比較異常時視為未執行（due），與原邏輯一致。
+    # 比 (iso_year, iso_week) 而非只比週序號，避免跨年同週號誤判。
     if rec and isinstance(rec, dict) and rec.get("timestamp"):
         try:
             last_ts = float(rec.get("timestamp"))
-            last_week = datetime.datetime.fromtimestamp(last_ts, now.tzinfo).isocalendar()[1]
-            curr_week = now.date().isocalendar()[1]
-            if last_week == curr_week:
+            last_yw = datetime.datetime.fromtimestamp(last_ts, now.tzinfo).isocalendar()[:2]
+            curr_yw = now.isocalendar()[:2]
+            if tuple(last_yw) == tuple(curr_yw):
                 return False
         except Exception:
             return True
