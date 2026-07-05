@@ -212,3 +212,16 @@ def mount_tracker_toggle():
     if enabled:
         _wake_scan()  # 開啟時立即催掃一輪，不必等下一個整點間隔。
     return jsonify({"status": "ok", "enabled": enabled})
+
+
+@bp.route("/api/mount_tracker/rebootstrap", methods=["POST"])
+@require_admin
+def mount_tracker_rebootstrap():
+    """重建玩家庫（限管理員）：清除 bootstrap 完成戳並催掃。
+
+    下一輪 daemon 見 ``bootstrap_done is None`` 會重跑一次性 guild-scan，把 level>=5
+    公會的全體成員重新灌進 known_players。
+    """
+    _store().set_bootstrap_done(None)
+    _wake_scan()  # 立即催醒 daemon 跑下一輪（會先做 bootstrap）。
+    return jsonify({"status": "ok"})

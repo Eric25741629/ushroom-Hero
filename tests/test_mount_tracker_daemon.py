@@ -102,6 +102,8 @@ def test_borrowed_dev_released_when_about_to_wake(monkeypatch):
         return {}
 
     class FakeStore:
+        def get_bootstrap_done(self):
+            return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan_cycle 路徑
         def set_running(self, running):
             pass
 
@@ -138,6 +140,66 @@ def test_borrowed_dev_released_when_about_to_wake(monkeypatch):
     assert released == ["devA"]
 
 
+def test_run_one_cycle_runs_bootstrap_when_not_done(monkeypatch):
+    """bootstrap_done is None → 借 idle 裝置跑 bootstrap、灌 known、標記完成、催掃、跳過 scan。"""
+    events = {"scan": 0, "wake": 0, "seed": None, "done": None}
+
+    class FakeStore:
+        def get_bootstrap_done(self):
+            return None                         # 尚未跑過 → 觸發 bootstrap
+        def set_bootstrap_done(self, ts):
+            events["done"] = ts
+        def bulk_upsert_known(self, seed):
+            events["seed"] = seed
+        def set_running(self, running):
+            pass
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    monkeypatch.setattr(mt, "pick_idle_device", lambda: "devA")
+    monkeypatch.setattr(mt, "_get_ws_client", lambda dev: object())   # 非 None → 進 bootstrap
+    monkeypatch.setattr(mt, "_states", lambda: {})
+    monkeypatch.setattr(mt, "_about_to_wake", lambda dev, states: False)
+    monkeypatch.setattr(mt, "bootstrap_known",
+                        lambda *a, **k: {555: {"name": "X", "guild": "G", "level": 9}})
+    monkeypatch.setattr(mt, "wake_scan", lambda: events.__setitem__("wake", events["wake"] + 1))
+    monkeypatch.setattr(mt, "scan_cycle",
+                        lambda *a, **k: events.__setitem__("scan", events["scan"] + 1))
+    released = []
+    monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
+
+    mt._run_one_cycle()
+
+    assert events["seed"] == {555: {"name": "X", "guild": "G", "level": 9}}  # 一次批次灌
+    assert events["done"] is not None            # 標記完成（即使部分）
+    assert events["wake"] == 1                    # 催下一輪
+    assert events["scan"] == 0                    # 本輪跳過正式掃描
+    assert released == ["devA"]                   # 借用裝置收尾歸還
+
+
+def test_run_one_cycle_skips_bootstrap_when_done(monkeypatch):
+    """bootstrap_done 已設 → 不跑 bootstrap，直接走正式 scan_cycle。"""
+    events = {"scan": 0, "bootstrap": 0}
+
+    class FakeStore:
+        def get_bootstrap_done(self):
+            return 12345.0                       # 已完成
+        def set_running(self, running):
+            pass
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    monkeypatch.setattr(
+        mt, "bootstrap_known",
+        lambda *a, **k: (events.__setitem__("bootstrap", events["bootstrap"] + 1) or {}))
+    monkeypatch.setattr(mt, "scan_cycle",
+                        lambda *a, **k: events.__setitem__("scan", events["scan"] + 1))
+    monkeypatch.setattr(mt, "pick_idle_device", lambda: None)
+
+    mt._run_one_cycle()
+
+    assert events["bootstrap"] == 0              # 未跑 bootstrap
+    assert events["scan"] == 1                   # 正常掃描照跑
+
+
 def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
     # 關鍵安全性：_run_one_cycle 給 scan_cycle 的 sleeper 必須是 _cooldown（真 sleep），
     # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。
@@ -148,6 +210,8 @@ def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
         return {}
 
     class FakeStore:
+        def get_bootstrap_done(self):
+            return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan_cycle 路徑
         def set_running(self, running):
             pass
 
