@@ -13,8 +13,10 @@
 from __future__ import annotations
 
 import threading
-from typing import Any
+import time
+from typing import Any, Callable, Optional
 
+from ws_token import mount_scan, parking_bonus
 from ws_token.state import load_state, save_state
 
 # 模組級鎖：保護每個 public 方法的 read-modify-write（load -> mutate -> save）。
@@ -133,3 +135,120 @@ class MountTrackerStore:
                 "last_run": data.get("last_run", {}),
                 "running": data.get("running", False),
             }
+
+
+# ============================================================================
+# Task 4：idle 裝置借用判定
+# ----------------------------------------------------------------------------
+# 坐騎掃描要借「正在休眠、且不會馬上被叫醒、也沒被 dashboard 純 WS 佔用」的裝置
+# 來開一次性連線讀車位。判定沿用 online_monitor 的「安全 detector」語意，額外加上
+# 「非 human_played 保護帳號」閘門。所有外部依賴走薄封裝間接層，測試可 monkeypatch。
+# ============================================================================
+
+# 距離下次喚醒少於此秒數 → 讓位給裝置自身 bot loop，不借用。
+_HANDOFF_LEAD_SEC = 120
+# 視為 idle（可安全登入、不會踢掉 live session）的 task 字串。
+_IDLE_TASKS = ("休眠中", "啟動後休眠")
+# 預設候選借用裝置（皆為受控 bot 帳號；human_played 帳號另由保護集合擋掉）。
+CANDIDATES = ["7fe98fc6", "emulator-5554", "emulator-5556", "emulator-5560"]
+
+
+# ---- 外部依賴間接層（供測試 monkeypatch）-----------------------------------
+
+def _states() -> dict:
+    """回傳所有裝置的即時狀態表；讀取失敗回空 dict。"""
+    try:
+        import bot_state
+        return bot_state.get_all_states()
+    except Exception:  # noqa: BLE001 — 狀態讀取不可弄垮判定
+        return {}
+
+
+def _ws_active(ip: str) -> bool:
+    """該裝置是否已有 dashboard 純 WS 連線在跑（借用會互踢）。容錯回 False。"""
+    try:
+        from control_panel import ws_session
+        return bool(ws_session.is_active(ip))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _protected_roles() -> set:
+    """human_played 保護帳號的 roleId 集合（絕不借用）。容錯回空集合。"""
+    try:
+        from ws_token.online_monitor import resolve_protected_role_ids
+        return set(resolve_protected_role_ids())
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def _role_id(ip: str) -> Optional[int]:
+    """讀取裝置對應的 roleId（寬鬆讀 capture 檔）；無 creds 回 None。"""
+    try:
+        from ws_token.creds import load_role_id
+        return load_role_id(ip)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _now() -> float:
+    """現在時間（秒）。"""
+    return time.time()
+
+
+# ---- 判定 -------------------------------------------------------------------
+
+def _is_idle(ip: str, states: dict) -> bool:
+    """裝置是否 idle（登入不會踢掉 live session）。
+
+    無 row（thread 未起）/ status OFFLINE / task ∈ 休眠中｜啟動後休眠 → idle。
+    """
+    st = states.get(ip)
+    if not st:
+        return True  # 沒有跑中的 thread → 安全
+    if str(st.get("status") or "").upper() == "OFFLINE":
+        return True
+    return str(st.get("task") or "") in _IDLE_TASKS
+
+
+def _about_to_wake(ip: str, states: dict) -> bool:
+    """裝置是否即將（<_HANDOFF_LEAD_SEC）被自身排程叫醒。"""
+    nwa = (states.get(ip) or {}).get("next_wake_at")
+    if not nwa:
+        return False
+    try:
+        return (float(nwa) - _now()) <= _HANDOFF_LEAD_SEC
+    except (TypeError, ValueError):
+        return False
+
+
+def is_safe_to_borrow(ip: str) -> bool:
+    """能否安全借用 ``ip`` 開一次性 WS 連線掃車位。
+
+    全部成立才算安全：
+      1. idle（休眠 / OFFLINE / 無 thread）。
+      2. 不在 _HANDOFF_LEAD_SEC 內即將自我喚醒。
+      3. 沒有 dashboard 純 WS 連線佔用（否則同帳號互踢）。
+      4. 不是 human_played 保護帳號；有保護集合時，roleId 讀不出來也一律不借。
+    """
+    states = _states()
+    if not _is_idle(ip, states):
+        return False
+    if _about_to_wake(ip, states):
+        return False
+    if _ws_active(ip):
+        return False
+    protected = _protected_roles()
+    if protected:
+        rid = _role_id(ip)
+        if rid is None or int(rid) in protected:
+            return False
+    return True
+
+
+def pick_idle_device(candidates: list[str] = CANDIDATES) -> Optional[str]:
+    """回傳第一個可安全借用的候選裝置；全部不安全回 None。"""
+    for ip in candidates:
+        if is_safe_to_borrow(ip):
+            return ip
+    return None
