@@ -6,7 +6,6 @@ hermetic 策略：不 import 真實 ``control_panel_app`` / 服務層 / 設定�
 (``_fly_pet_auth`` / ``require_admin``)：它們只讀 session，用 ``session_transaction``
 直接塞 ``dash_user`` / ``dash_admin`` 即可，無需全站 before_request。
 """
-import importlib.util
 
 import flask
 import pytest
@@ -62,9 +61,9 @@ def _use_store(monkeypatch, store):
 
 # --- 模組在服務層缺席時仍可 import ------------------------------------------
 
-def test_module_imports_without_service_present():
-    # 服務層由另一分支建置，本 worktree 不存在；延遲 import 讓本模組仍能載入。
-    assert importlib.util.find_spec("runtime_services.mount_tracker_service") is None
+def test_module_imports_cleanly():
+    # 服務層走延遲 import（包在間接函式內），故本模組 import 時不依賴服務層是否存在，
+    # 兩分支合併前後皆能載入。確認 blueprint 正常建立即可。
     assert rmt.bp.name == "mount_tracker"
 
 
