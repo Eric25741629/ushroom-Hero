@@ -146,8 +146,9 @@ def test_exec_step_delegates_to_ws_module(monkeypatch):
     def fake_ws_client(ip):
         return "fake_client", None
 
-    def fake_exec(client, shop_id, skin_id, frags, timeout=10):
-        captured.update(client=client, shop_id=shop_id, skin_id=skin_id, frags=frags)
+    def fake_exec(client, shop_id, skin_id, frags, timeout=10, target_level=None):
+        captured.update(client=client, shop_id=shop_id, skin_id=skin_id,
+                        frags=frags, target_level=target_level)
         return {"ok": True, "bought": True, "after_level": 10}, None
 
     monkeypatch.setattr(routes, "_ws_client", fake_ws_client)
@@ -161,6 +162,7 @@ def test_exec_step_delegates_to_ws_module(monkeypatch):
     assert captured["shop_id"] == 1705
     assert captured["skin_id"] == 10003
     assert captured["frags"] == 5
+    assert captured["target_level"] == 10, "exec must know the planned star cap"
 
 
 # --- exec_buy_and_upgrade robustness (live 2026-07-05 7fe98fc6) --------------
@@ -206,9 +208,11 @@ class _FakeExecClient:
         self._creds = SimpleNamespace(role_id=42)
         self.script = list(script)
         self.sent = []
+        self.bodies = []
 
     def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
         self.sent.append(cmd)
+        self.bodies.append((cmd, body))
         action = self.script.pop(0)
         if action[0] == "raise":
             raise action[1]
@@ -223,7 +227,7 @@ class _FakeExecClient:
 def test_exec_buy_rejected_decodes_error_code():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # before level
-        ("reply", 6913, _buy_info_body({1753: 1})),        # pre-buy count
+        ("reply", 6913, _buy_info_body({1753: 0})),        # pre-buy count
         ("reply", 513, codec.pb_uint(1, 3)),               # buy rejected code=3
     ])
     res, err = deco_ws.exec_buy_and_upgrade(
@@ -237,9 +241,9 @@ def test_exec_buy_rejected_decodes_error_code():
 def test_exec_buy_reply_lost_but_bought_continues_to_upgrade():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # before level
-        ("reply", 6913, _buy_info_body({1753: 1})),        # pre-buy count
+        ("reply", 6913, _buy_info_body({1753: 0})),        # pre-buy count
         ("raise", WSTimeoutError("no response for cmd=6914")),
-        ("reply", 6913, _buy_info_body({1753: 2})),        # verify: count +1
+        ("reply", 6913, _buy_info_body({1753: 1})),        # verify: count +1
         ("reply", 12817, _skin_up_ok_body(40097, 2)),      # upgrade ok
         ("reply", 12801, _skin_list_body([(40097, 2)])),   # verify level
     ])
@@ -254,9 +258,9 @@ def test_exec_buy_reply_lost_but_bought_continues_to_upgrade():
 def test_exec_buy_reply_lost_and_not_bought_aborts():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("raise", WSTimeoutError("no response for cmd=6914")),
-        ("reply", 6913, _buy_info_body({1753: 1})),        # verify: unchanged
+        ("reply", 6913, _buy_info_body({1753: 0})),        # verify: unchanged
     ])
     res, err = deco_ws.exec_buy_and_upgrade(
         client, shop_id=1753, skin_id=40097, frags=1)
@@ -269,7 +273,7 @@ def test_exec_buy_reply_lost_and_not_bought_aborts():
 def test_exec_upgrade_reply_lost_but_levelled_is_success():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("raise", WSTimeoutError("no response for cmd=12817")),
         ("reply", 12801, _skin_list_body([(40097, 2)])),   # verify: level +1
@@ -286,7 +290,7 @@ def test_exec_upgrade_reply_lost_and_no_levelup_fails(monkeypatch):
     monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("raise", WSTimeoutError("no response for cmd=12817")),
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # verify: unchanged
@@ -309,7 +313,7 @@ def test_exec_upgrade_dropped_by_cooldown_retried_once(monkeypatch):
     monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("raise", WSTimeoutError("no response for cmd=12817")),  # dropped
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # verify: unchanged
@@ -330,7 +334,7 @@ def test_exec_upgrade_late_execution_caught_by_reverify(monkeypatch):
     monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("raise", WSTimeoutError("no response for cmd=12817")),
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # verify: unchanged
@@ -350,7 +354,7 @@ def test_exec_retry_rejected_but_first_send_landed_is_success(monkeypatch):
     monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("raise", WSTimeoutError("no response for cmd=12817")),
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # verify: unchanged
@@ -368,7 +372,7 @@ def test_exec_retry_rejected_but_first_send_landed_is_success(monkeypatch):
 def test_exec_upgrade_rejected_decodes_error_code():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("reply", 513, codec.pb_uint(1, 3)),                # upgrade rejected
     ])
@@ -389,7 +393,7 @@ def test_exec_upgrade_is_sent_as_json_proto_envelope():
     """
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),
+        ("reply", 6913, _buy_info_body({1753: 0})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("reply", 12817, _skin_up_ok_body(40097, 2)),
         ("reply", 12801, _skin_list_body([(40097, 2)])),
@@ -449,3 +453,164 @@ def test_read_state_zeroes_quota_for_off_shelf_deco():
     assert by_id[10009]["off_shelf"] is True
     assert by_id[40097]["limit_remaining"] > 0
     assert by_id[40097]["off_shelf"] is False
+
+
+# --- idempotent buy + target-level cap (WS 斷線續跑, live 2026-07-05) ---------
+#
+# A run died mid-step with WebSocketConnectionClosedException: the step's buy
+# may have landed (coin spent) while the upgrade did not. Retrying/re-running
+# must never double-buy frags nor upgrade past the planned star. held frags =
+# shop bought count (6913) minus the catalog ladder's consumption for the
+# current level (row 0 excluded — decorations come from the free picker).
+
+
+def test_exec_target_level_reached_skips_all_mutations():
+    """Reconnect retry: the interrupted upgrade landed late — never re-send."""
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 2)])),   # already at target
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1, target_level=2)
+    assert err is None
+    assert res["ok"] is True
+    assert res["after_level"] == 2
+    assert 6914 not in client.sent and 14337 not in client.sent
+
+
+def test_exec_skips_buy_when_frags_already_held():
+    """A landed-but-interrupted buy is not re-bought (no double spend):
+    level 1 consumed 0 ladder frags, bought=1 -> holds 1, step needs 1."""
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 1})),        # held 1 >= frags 1
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),      # upgrade directly
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1)
+    assert err is None
+    assert res["ok"] is True
+    assert 6914 not in client.sent, "held frags must not be re-bought"
+    assert res["frags_bought"] == 0
+
+
+def test_exec_buys_only_the_shortfall():
+    """Level 2 consumed 1 ladder frag (row 1); bought=2 -> holds 1; the ★2→3
+    step needs 2 frags so only 1 is bought."""
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+        ("reply", 6913, _buy_info_body({1753: 2})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 12817, _skin_up_ok_body(40097, 3)),
+        ("reply", 12801, _skin_list_body([(40097, 3)])),
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=2)
+    assert err is None
+    assert res["ok"] is True
+    buy_bodies = [b for c, b in client.bodies if c == 6914]
+    assert codec.walk_dict(buy_bodies[0])[3] == 1, "must buy only the shortfall"
+    assert res["frags_bought"] == 1
+
+
+def test_exec_held_overestimate_selfheals_on_reject():
+    """If the held estimate overshoots (an acquisition consumed row 0), the
+    rejected upgrade triggers a one-shot shortfall buy + resend."""
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 1})),        # held estimate 1 -> skip buy
+        ("reply", 513, codec.pb_uint(1, 159)),             # skin_up rejected 次數不足
+        ("reply", 6913, _buy_info_body({1753: 1})),        # shortfall-buy pre read
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),      # resend lands
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1)
+    assert err is None
+    assert res["ok"] is True
+    assert res["after_level"] == 2
+    assert 6914 in client.sent
+    assert res["frags_bought"] == 1
+
+
+def test_exec_full_buy_reject_does_not_selfheal():
+    """A reject after buying the FULL planned frags is a real reject — no
+    shortfall loop, no extra spend."""
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 0})),        # nothing held
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 513, codec.pb_uint(1, 3)),               # upgrade rejected
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1)
+    assert err is None
+    assert res["ok"] is False
+    assert res["err"] == "upgrade_rejected_code_3"
+    assert client.sent.count(6914) == 1, "must not buy again after a real reject"
+
+
+# --- execute job: reconnect + resume on connection loss ----------------------
+
+
+from control_panel import tools_optimize_jobs as jobs
+
+
+def test_execute_job_reconnects_and_retries_on_conn_lost(monkeypatch):
+    monkeypatch.setattr(routes, "_STEP_GAP_S", 0)
+    monkeypatch.setattr(routes, "_read_state", lambda ip: (_ws_state(), None))
+    calls = {"exec": 0, "ensure": 0}
+
+    def fake_exec(ip, step):
+        calls["exec"] += 1
+        if calls["exec"] == 1:
+            return None, ("WebSocketConnectionClosedException: "
+                          "socket is already closed.")
+        return {"ok": True, "bought": True, "after_level": step["to_level"],
+                "frags_bought": step["frags"]}, None
+
+    def fake_ensure(ip):
+        calls["ensure"] += 1
+        return {"status": "ok", "connected": True}
+
+    monkeypatch.setattr(routes, "_exec_step", fake_exec)
+    monkeypatch.setattr(routes.ws_session, "ensure", fake_ensure)
+    monkeypatch.setattr(routes.ws_session, "get_client", lambda ip: None)
+
+    jid = jobs._new_job()
+    routes._run_execute_job(jid, "emulator-5554", 0, 5)
+    job = jobs._jobs[jid]
+    assert job["status"] == "done"
+    assert calls["ensure"] == 1, "connection loss must trigger one reconnect"
+    result = job["result"]
+    assert result["stopped_reason"] is None
+    assert len(result["executed"]) == 2
+    assert all(s["ok"] for s in result["executed"])
+
+
+def test_execute_job_non_conn_error_stops_without_retry(monkeypatch):
+    monkeypatch.setattr(routes, "_STEP_GAP_S", 0)
+    monkeypatch.setattr(routes, "_read_state", lambda ip: (_ws_state(), None))
+    ensure_calls = []
+    exec_calls = []
+
+    def fake_exec(ip, step):
+        exec_calls.append(step["to_level"])
+        return {"ok": False, "bought": True, "frags_bought": step["frags"],
+                "err": "upgrade_rejected_code_3"}, None
+
+    def fake_ensure(ip):
+        ensure_calls.append(ip)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(routes, "_exec_step", fake_exec)
+    monkeypatch.setattr(routes.ws_session, "ensure", fake_ensure)
+
+    jid = jobs._new_job()
+    routes._run_execute_job(jid, "emulator-5554", 0, 5)
+    job = jobs._jobs[jid]
+    assert job["status"] == "done"
+    assert not ensure_calls, "logic rejects must not trigger a reconnect"
+    assert len(exec_calls) == 1
+    assert job["result"]["stopped_reason"] == "step_failed:upgrade_rejected_code_3"

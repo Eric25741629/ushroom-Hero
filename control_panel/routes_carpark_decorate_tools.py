@@ -142,7 +142,27 @@ def _exec_step(ip: str, step: dict):
         shop_id=int(step["shop_id"]),
         skin_id=int(step["id"]),
         frags=int(step["frags"]),
+        target_level=int(step["to_level"]),
         timeout=_EXEC_TIMEOUT)
+
+
+# Exception names that mean the WS transport died (vs a game-logic reject).
+_CONN_ERR_MARKERS = ("ConnectionClosed", "ConnectionReset", "BrokenPipe",
+                     "ConnectionAborted", "socket is already closed")
+
+
+def _conn_lost(ip: str, err: str) -> bool:
+    """True when a step failure is a transport loss worth one reconnect."""
+    if any(m in err for m in _CONN_ERR_MARKERS):
+        return True
+    return ws_session.get_client(ip) is None
+
+
+def _step_coin_spent(step: dict, frags_bought: int) -> int:
+    """Actual coin for ``frags_bought`` frags (plan coin = frags × unit price)."""
+    if not step["frags"]:
+        return 0
+    return step["coin"] // step["frags"] * frags_bought
 
 
 def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
@@ -174,9 +194,19 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
                           f"★{step['from_level']}→{step['to_level']} "
                           f"買{step['frags']}碎片 花{step['coin']:,}")
             res, e = _exec_step(ip, step)
+            if e and _conn_lost(ip, e):
+                # 斷線那步的買/升可能已入帳、也可能晚到：等滿一個冷卻再重連。
+                # exec 端 target_level 護欄 + 冪等買保證重試不重花、不多升。
+                _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試…")
+                time.sleep(_STEP_GAP_S)
+                if ws_session.ensure(ip).get("status") != "error":
+                    res, e = _exec_step(ip, step)
             if e or not res or not res.get("ok"):
                 reason = (res or {}).get("err") if res else e
-                coin_spent = step["coin"] if (res and res.get("bought")) else 0
+                fb = (res or {}).get("frags_bought")
+                if fb is None:
+                    fb = step["frags"] if (res and res.get("bought")) else 0
+                coin_spent = _step_coin_spent(step, fb)
                 spent += coin_spent
                 _job_log(jid, f"   ✗ 停止：{reason}"
                               + (f"（已扣 {coin_spent:,} 菇車幣）" if coin_spent else ""))
@@ -184,10 +214,16 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
                                  "coin_spent": coin_spent})
                 stopped = f"step_failed:{reason}"
                 break
-            spent += step["coin"]
-            executed.append({**step, "ok": True, "coin_spent": step["coin"],
+            fb = res.get("frags_bought")
+            coin_spent = (_step_coin_spent(step, fb) if fb is not None
+                          else step["coin"])
+            spent += coin_spent
+            executed.append({**step, "ok": True, "coin_spent": coin_spent,
                              "after_level": res.get("after_level")})
-            _job_log(jid, f"   ✓ 升到 ★{res.get('after_level')}")
+            _job_log(jid, f"   ✓ 升到 ★{res.get('after_level')}"
+                          + (f"（持有碎片折抵，實花 {coin_spent:,}）"
+                             if fb is not None and coin_spent < step["coin"]
+                             else ""))
             with _jobs_lock:
                 if jid in _jobs and _jobs[jid].get("result"):
                     _jobs[jid]["result"]["executed"] = list(executed)
