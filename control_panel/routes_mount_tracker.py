@@ -43,6 +43,12 @@ def _set_enabled(v: bool) -> None:
     set_mount_tracker_enabled(bool(v))
 
 
+def _progress() -> dict:
+    """讀取掃描即時進度（延遲 import 服務層；in-memory 計數，無檔案 I/O）。"""
+    from runtime_services.mount_tracker_service import get_progress
+    return get_progress()
+
+
 def _wake_scan() -> None:
     """催醒坐騎追蹤器 daemon 立刻掃一輪（延遲 import 服務層；服務層缺席時容錯 no-op）。"""
     try:
@@ -127,9 +133,13 @@ def mount_tracker_page():
 @bp.route("/api/mount_tracker/results", methods=["GET"])
 @_fly_pet_auth
 def mount_tracker_results():
-    """回傳追蹤器快照 + 啟用狀態。snapshot() 內含 targets/results/known_count/last_run/running。"""
+    """回傳追蹤器快照 + 啟用狀態 + 即時進度。
+
+    snapshot() 內含 targets/results/known_count/last_run/running；``progress`` 為純記憶體
+    即時掃描進度（phase/scanned/found/known/guilds/members），供頁面輪詢即時跳動。
+    """
     s = _store().snapshot()
-    return jsonify({"status": "ok", "enabled": _get_enabled(), **s})
+    return jsonify({"status": "ok", "enabled": _get_enabled(), "progress": _progress(), **s})
 
 
 @bp.route("/api/mount_tracker/targets", methods=["POST"])

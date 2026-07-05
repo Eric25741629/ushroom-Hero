@@ -27,6 +27,58 @@ _LOCK = threading.RLock()
 logger = logging.getLogger(__name__)
 
 
+# ============================================================================
+# 掃描即時進度（純記憶體，NO file I/O）
+# ----------------------------------------------------------------------------
+# bootstrap（~10-20 分）+ scan（~25 分）過程中只在最後才寫 results/last_run 進磁碟，
+# dashboard 期間一路顯示靜態「掃描中…／0／未建立」。為了讓數字即時跳動，這裡維護一份
+# 純記憶體進度物件：daemon 側於 bootstrap / scan 過程持續更新，results API 直接吐出，
+# 頁面輪詢即時反映。刻意「不落地」——整體設計就是批次寫檔以護 NAS I/O，進度只在記憶體。
+# ============================================================================
+
+# 進度鎖：保護 _progress 的讀改寫（get 回傳 copy、set 合併、reset 清零）。
+_progress_lock = threading.Lock()
+# 單一全域進度物件（所有欄位一律純量 / None，故 dict() 淺拷貝即完整隔離）。
+_progress: dict = {
+    "phase": "idle",      # idle | bootstrap | scan
+    "scanned": 0,         # scan：本輪已讀到車位的房東數
+    "found": 0,           # scan：本輪已找到的追蹤目標坐騎總數（純量）
+    "known": 0,           # scan/bootstrap：已知玩家庫目前規模
+    "guilds": 0,          # bootstrap 階段1：已蒐集的合格公會數
+    "members": 0,         # bootstrap 階段2：已展開的成員數
+    "started_ts": None,   # 本輪起跑時間戳（秒）；idle 時保留上一輪值
+}
+
+
+def get_progress() -> dict:
+    """回傳目前掃描進度的複本（in-memory，供 results API 吐給頁面輪詢）。
+
+    回傳淺拷貝——所有欄位皆純量 / None，故呼叫端任意改動不會回寫內部狀態。
+    """
+    with _progress_lock:
+        return dict(_progress)
+
+
+def _set_progress(**fields: Any) -> None:
+    """合併更新進度欄位（只覆蓋傳入的鍵，其餘保留）。"""
+    with _progress_lock:
+        _progress.update(fields)
+
+
+def _reset_progress(phase: str) -> None:
+    """把計數歸零、切換 ``phase`` 並記錄本輪起跑時間戳（daemon 側呼叫，用真時鐘）。"""
+    with _progress_lock:
+        _progress.update({
+            "phase": phase,
+            "scanned": 0,
+            "found": 0,
+            "known": 0,
+            "guilds": 0,
+            "members": 0,
+            "started_ts": time.time(),
+        })
+
+
 class MountTrackerStore:
     """坐騎追蹤器狀態存取層（薄封裝於 ws_token.state 之上）。"""
 
@@ -362,8 +414,13 @@ def scan_cycle(
     budget_s: float = 1500,
     cooldown_s: float = 3.0,
     max_per_target: int = 5,
+    on_progress: Optional[Callable[..., None]] = None,
 ) -> dict:
     """跑一輪坐騎掃描，回傳摘要 dict。
+
+    ``on_progress``（選用、DI）：每處理完一個房東就以
+    ``on_progress(scanned=..., found=..., known=...)`` 回報即時進度（純記憶體，
+    供 dashboard 輪詢跳動）。為 None 時完全不影響行為與回傳（維持純函式可測）。
 
     流程：
       1. 無追蹤目標 → 直接回 ``{"skipped": "no_targets"}``。
@@ -477,6 +534,15 @@ def scan_cycle(
         bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
         _stage(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
 
+        # 即時進度回報（純記憶體）：scanned / found（純量）/ known 目前規模。
+        # known = 開頭快照 + 本輪雪球新增（pending 中尚未在 known 的 role_id）。
+        if on_progress:
+            on_progress(
+                scanned=len(scanned_owners),
+                found=sum(len(found[rid]) for rid in target_ids),
+                known=len(known) + sum(1 for rid in pending if str(rid) not in known),
+            )
+
     # host_hits：本輪掃到的房東，有停到目標 +1（上限 5），否則 decay，不 <0。
     # 基準值取本輪開頭的 known 快照（沿用舊值）；沒掃到的房東不動，靠權重排序自我收斂。
     for owner in scanned_owners:
@@ -552,8 +618,13 @@ def bootstrap_known(
     min_guild_level: int = 5,
     max_pages: int = 90,
     batch: int = 40,
+    on_progress: Optional[Callable[..., None]] = None,
 ) -> dict[int, dict]:
     """一次性掃全服公會，回傳 ``{role_id: {"name", "guild", "level"}}`` 供批次灌 known。
+
+    ``on_progress``（選用、DI）：階段1 每頁回報 ``guilds=``、階段2 每公會回報
+    ``members=``、階段3 每批回報 ``known=``，供 dashboard 即時顯示玩家庫建立進度。
+    為 None 時完全不影響行為與回傳（維持純函式可測）。
 
     三階段（每次網路呼叫前先 ``sleeper(cooldown_s)``；每次迴圈開頭若
     ``now_fn() >= deadline`` 或 ``not should_continue()`` 即停止該階段）：
@@ -593,6 +664,8 @@ def bootstrap_known(
                 if gid and (g.get("guild_level") or 0) >= min_guild_level:
                     guilds.setdefault(gid, g.get("name"))
                     qualifying += 1
+            if on_progress:
+                on_progress(guilds=len(guilds))  # 階段1：每頁回報累積合格公會數
             # 提早收該 type：非空頁 0 筆合格（深頁全低等）或已到最後一頁。
             if (page_guilds and qualifying == 0) or \
                (page_num is not None and page >= page_num - 1):
@@ -611,6 +684,8 @@ def bootstrap_known(
             rid = m.get("role_id")
             if rid:
                 members.setdefault(rid, {"name": m.get("name"), "guild": gname})
+        if on_progress:
+            on_progress(members=len(members))  # 階段2：每公會回報累積成員數
 
     # --- 階段 3：批次補等級 --------------------------------------------------
     ids = list(members)
@@ -625,6 +700,8 @@ def bootstrap_known(
         for rid, info in mount_scan.parse_role_others(body).items():
             if rid in members:
                 members[rid]["level"] = info.get("level")
+        if on_progress:
+            on_progress(known=len(members))  # 階段3：每批回報 known（成員）數
 
     return members
 
@@ -779,11 +856,14 @@ def _run_one_cycle() -> None:
 
     store.set_running(True)
     try:
+        # 本輪起跑：先決定會不會 bootstrap，據以重置即時進度的 phase / 計數。
+        will_bootstrap = store.get_bootstrap_done() is None
+        _reset_progress("bootstrap" if will_bootstrap else "scan")
         # --- 冷啟一次性 guild-scan bootstrap（僅在尚未跑過時）------------------
         # 借一台 idle 裝置掃全服公會灌 known_players，之後不再重跑。借用透過
         # _mark_borrowed 登記，收尾 finally 一律歸還；完成（即使部分）就標記，
         # 避免每輪重灌，剩下的交給 scan_cycle 雪球補齊。
-        if store.get_bootstrap_done() is None:
+        if will_bootstrap:
             dev = pick_idle_device()
             if dev:
                 client = _get_ws_client(dev)
@@ -793,8 +873,10 @@ def _run_one_cycle() -> None:
                     # 借用裝置一旦接近自身喚醒窗即停止 bootstrap，讓位給它的 bot loop。
                     should_continue = lambda: not _about_to_wake(dev, _states())  # noqa: E731
                     caller = lambda cmd, body: _safe_call(client, cmd, body)      # noqa: E731
+                    # on_progress：把 bootstrap 三階段的 guilds/members/known 灌進記憶體進度。
                     seed = bootstrap_known(caller, _cooldown, time.time,
-                                           should_continue, deadline=deadline)
+                                           should_continue, deadline=deadline,
+                                           on_progress=lambda **kw: _set_progress(**kw))
                     if seed:
                         store.bulk_upsert_known(seed)   # 一次批次寫回（NAS I/O 友善）
                     store.set_bootstrap_done(time.time())  # 即使部分完成也標記，避免重跑
@@ -802,11 +884,14 @@ def _run_one_cycle() -> None:
                     return       # 本輪跳過 scan_cycle（finally 仍歸還借用 + set_running）
             # 無 idle 裝置（dev 為 None）→ 不標記完成，下一輪重試 bootstrap。
         # sleeper 用 _cooldown（真 sleep），不可用 _wake.wait——見 _cooldown docstring。
-        scan_cycle(store, reader, idle_picker, _cooldown, time.time)
+        _set_progress(phase="scan")  # 進入正式掃描階段（頁面顯示 scanned/found/known）
+        scan_cycle(store, reader, idle_picker, _cooldown, time.time,
+                   on_progress=lambda **kw: _set_progress(**kw))
     finally:
         for dev in borrowed:
             _release_dev(dev)
         store.set_running(False)
+        _set_progress(phase="idle")  # 收尾：頁面停止顯示「掃描中…」
 
 
 def _run_loop() -> None:

@@ -103,6 +103,28 @@ def test_results_envelope(app, monkeypatch):
     assert d["running"] is True
 
 
+def test_results_includes_progress(app, monkeypatch):
+    """results 回應含 progress 物件（monkeypatch get_progress 間接口）。"""
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    monkeypatch.setattr(rmt, "_get_enabled", lambda: True)
+    monkeypatch.setattr(rmt, "_progress", lambda: {
+        "phase": "scan", "scanned": 5, "found": 2, "known": 10,
+        "guilds": 0, "members": 0, "started_ts": 1.0,
+    })
+
+    client = app.test_client()
+    _login(client)
+    resp = client.get("/api/mount_tracker/results")
+
+    assert resp.status_code == 200
+    d = resp.get_json()
+    assert "progress" in d
+    assert d["progress"]["phase"] == "scan"
+    assert d["progress"]["scanned"] == 5
+    assert d["progress"]["found"] == 2
+
+
 def test_results_requires_login(app, monkeypatch):
     _use_store(monkeypatch, FakeStore())
     monkeypatch.setattr(rmt, "_get_enabled", lambda: False)
