@@ -623,6 +623,9 @@ if __name__ == "__main__":
             _start_monitor()
         except Exception:
             logger.debug("online_monitor start failed", exc_info=True)
+        # 坐騎追蹤器：hourly 背景掃描（master-only、依 dashboard 開關）。
+        from runtime_services.mount_tracker_service import ensure_mount_tracker_started
+        ensure_mount_tracker_started()
     else:
         logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
         ensure_worker_webhook_started()

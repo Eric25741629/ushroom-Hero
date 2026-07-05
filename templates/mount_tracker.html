@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>坐騎追蹤 · Mount Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
+{% include '_assets_head.html' %}
+<style>
+  /* All colours route through design-system tokens (tokens.css) — no hard-coded
+     hues. The design system is light-only; the tokens carry that single palette.
+     Only the switch knob (#fff, a non-text UI element) and the ok-fill track use
+     fixed values from the token set. */
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif}
+  header h1,.panel h2,.mt-card-title{font-family:"Sora","Noto Sans TC","Microsoft JhengHei",sans-serif}
+  html.embedded a.home{display:none}
+  header{display:flex;align-items:center;gap:16px;padding:12px 18px;background:var(--panel);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0}
+  a.home{color:var(--status-accent-text);text-decoration:none;font-size:13px}
+  .wrap{max-width:1100px;margin:18px auto;padding:0 16px 60px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
+  .panel h2{font-size:15px;margin:0 0 12px}
+
+  /* ---- status bar ---- */
+  .mt-statusbar{display:flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .mt-stat{display:flex;flex-direction:column;font-size:12px;color:var(--muted)}
+  .mt-stat b{font-size:15px;color:var(--text);font-weight:700;font-variant-numeric:tabular-nums}
+  .mt-running{color:var(--status-warn-text);font-weight:700;display:inline-flex;align-items:center;gap:6px}
+
+  /* ---- accessible switch (role=switch) ---- */
+  .mt-switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;background:none;
+    border:0;padding:4px;min-height:44px;color:var(--text)}
+  .mt-switch .track{width:46px;height:26px;border-radius:999px;background:var(--tile-sunk);
+    border:1px solid var(--line-accessible);position:relative;transition:background .2s,border-color .2s;flex:0 0 auto}
+  .mt-switch .knob{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+    background:#fff;box-shadow:var(--sh-1);transition:left .2s}
+  .mt-switch[aria-checked="true"] .track{background:var(--status-ok-fill,#2f8f66);border-color:transparent}
+  .mt-switch[aria-checked="true"] .knob{left:23px}
+  .mt-switch .lbl{font-weight:700;font-size:var(--text-sm)}
+  .mt-switch[aria-busy="true"]{opacity:.6;pointer-events:none}
+
+  /* ---- target management ---- */
+  .mt-addrow{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .mt-addrow .form-control{flex:1;min-width:220px;font-family:var(--body)}
+  .mt-hint{color:var(--muted);font-size:12.5px;margin-top:8px}
+  .mt-cands{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  .mt-targetlist{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+  .mt-target{display:flex;align-items:center;gap:12px;justify-content:space-between;
+    background:var(--tile-sunk);border:1px solid var(--line);border-radius:9px;padding:8px 12px}
+  .mt-target .nm{font-weight:700}
+  .mt-target .sub{color:var(--muted);font-size:12px;margin-left:6px}
+  .mt-target .btn{min-height:34px;padding:5px 12px}
+
+  /* ---- target cards ---- */
+  #cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px}
+  .mt-card-title{font-size:15px;margin:0 0 10px}
+  .mt-rid{color:var(--muted);font-weight:400;font-size:13px}
+  .mt-empty{color:var(--muted);font-size:13px;padding:14px 4px;text-align:center}
+  .mt-status{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mt-protected{color:var(--status-warn-text)}
+  .mt-attackable{color:var(--status-ok-text)}
+  /* 已打掉：只把資料格文字轉 muted 色（不用整列 opacity，否則會把仍可點的
+     「取消標記」按鈕與房東名字一起淡到低於 AA 對比）；狀態欄顯示中性「已打掉」
+     標籤（不再倒數）。按鈕自帶 .btn token 色，故維持全對比、可讀。 */
+  tr.mt-attacked td{color:var(--muted)}
+  .mt-done{color:var(--muted);font-weight:700}
+  .mt-markbtn{min-height:32px;padding:4px 10px;white-space:nowrap}
+
+  @media (max-width:480px){ #cards{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要內容</a>
+<header>
+  <h1>🐎 坐騎追蹤 · Mount Tracker</h1>
+  <a class="home" href="/">← 回主控台</a>
+</header>
+
+<main id="main" class="wrap" tabindex="-1">
+
+  <!-- 狀態列 -->
+  <section class="panel">
+    <div class="mt-statusbar">
+      <button id="mtSwitch" class="mt-switch" type="button" role="switch" aria-checked="false"
+              aria-label="掃描器開關" onclick="toggleScanner()">
+        <span class="track" aria-hidden="true"><span class="knob"></span></span>
+        <span class="lbl" id="mtSwitchLbl">停用</span>
+      </button>
+      <div class="mt-stat">上次掃描<b id="mtLastRun">—</b></div>
+      <div class="mt-stat">掃描 / 找到<b id="mtScanStat">—</b></div>
+      <div class="mt-stat">已知坐騎<b id="mtKnown">—</b></div>
+      <div class="mt-stat" id="mtRunningWrap" style="display:none">
+        <span class="mt-running"><span class="spinner" aria-hidden="true"></span>掃描中…</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 目標管理 -->
+  <section class="panel">
+    <h2>目標管理</h2>
+    <div class="mt-addrow">
+      <input id="mtInput" class="form-control" type="text"
+             aria-label="輸入 roleId / UID / 名字"
+             placeholder="輸入 roleId（14+ 位數字）/ UID（5 碼）/ 名字" autocomplete="off">
+      <button id="mtAddBtn" type="button" class="btn btn--primary">新增目標</button>
+    </div>
+    <div class="mt-hint">數字 14 碼以上視為 roleId、5 碼英數視為 UID，其餘視為名字。UID 合服後可能對應多角色，會列出讓你挑。</div>
+    <div id="candidates"></div>
+    <div id="targetList" class="mt-targetlist"></div>
+  </section>
+
+  <!-- 每個目標一張卡 -->
+  <div id="cards"></div>
+
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const PROTECT_SEC = 170 * 60;   // 保護時間 170 分鐘
+let TARGETS = [];               // 目標清單（保留原始 role_id，避免大數精度）
+let CANDS = [];                 // 合服候選（挑選用）
+let currentEnabled = false;     // 伺服器確認過的啟用狀態
+let loadedOnce = false;         // 是否已成功載入過一次（避免暫時性錯誤蓋掉現有資料）
+
+// ---- formatters ----
+const fmt = n => (n === null || n === undefined) ? '—' : Number(n).toLocaleString();
+const pad2 = n => String(n).padStart(2, '0');
+function fmtDur(sec){
+  sec = Math.max(0, Math.floor(sec));
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h + 'h ' + m + 'm';
+}
+function fmtTime(ts){
+  if(!ts) return '—';
+  try{ return new Date(ts * 1000).toLocaleString('zh-TW', {hour12:false}); }
+  catch(e){ return '—'; }
+}
+
+// ---- POST helper: reads the body so we can see {candidates} / 403 (UI.apiPost
+//      throws before exposing those). Mirrors UI's 401->login behaviour. ----
+async function postJSON(url, body){
+  let r;
+  try{ r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+                            body:JSON.stringify(body || {})}); }
+  catch(e){ return {httpStatus:0, data:{status:'error', message:'網路錯誤'}}; }
+  if(r.status === 401){ location.href = '/fly-pet/login'; return {httpStatus:401, data:{}}; }
+  let data = {};
+  try{ data = await r.json(); }catch(e){ data = {status:'error'}; }
+  return {httpStatus:r.status, data};
+}
+
+// ---- scanner on/off toggle (may 403 for non-admin) ----
+function setToggleVisual(enabled, busy){
+  const sw = $('mtSwitch');
+  sw.setAttribute('aria-checked', enabled ? 'true' : 'false');
+  $('mtSwitchLbl').textContent = enabled ? '啟用中' : '停用';
+  if(busy) sw.setAttribute('aria-busy', 'true'); else sw.removeAttribute('aria-busy');
+}
+async function toggleScanner(){
+  const want = !currentEnabled;
+  setToggleVisual(want, true);                          // 樂觀更新 + busy
+  const res = await postJSON('/api/mount_tracker/toggle', {enabled:want});
+  if(res.httpStatus === 403){
+    UI.toast('需要管理員權限', 'err');
+    setToggleVisual(currentEnabled, false);             // 還原
+    return;
+  }
+  if(res.data && res.data.status === 'ok'){
+    currentEnabled = want;
+    setToggleVisual(currentEnabled, false);
+    UI.toast(want ? '已啟用掃描器' : '已停用掃描器', 'ok');
+  } else {
+    UI.toast((res.data && res.data.message) || '切換失敗', 'err');
+    setToggleVisual(currentEnabled, false);             // 還原
+  }
+}
+
+// ---- add / remove / pick target ----
+function buildAddBody(raw){
+  const s = (raw || '').trim();
+  if(/^\d{14,}$/.test(s)){
+    const n = Number(s);
+    return (String(n) === s) ? {role_id:n} : {role_id:s};   // 超過安全整數則用字串，避免精度丟失
+  }
+  if(/^[A-Za-z0-9]{5}$/.test(s)) return {uid:s};
+  return {name:s};
+}
+function candRoleId(c){ return (c && typeof c === 'object') ? (c.role_id ?? c.roleId) : c; }
+function candLabel(c){
+  if(c === null || c === undefined) return '';
+  if(typeof c === 'object'){
+    const nm = c.name ? (c.name + ' ') : '';
+    const srv = c.server ? (' · ' + c.server) : '';
+    return nm + '(' + (candRoleId(c) ?? '') + ')' + srv;
+  }
+  return String(c);
+}
+function clearCandidates(){ CANDS = []; $('candidates').innerHTML = ''; }
+function renderCandidates(cands){
+  CANDS = cands || [];
+  const host = $('candidates');
+  if(!CANDS.length){ host.innerHTML = ''; return; }
+  host.innerHTML = '<div class="mt-hint">此 UID 對應多個角色（合服），請選擇：</div>' +
+    '<div class="mt-cands">' +
+    CANDS.map((c, i) =>
+      '<button type="button" class="btn btn--secondary" data-cand-idx="' + i + '">' +
+      UI.esc(candLabel(c)) + '</button>').join('') +
+    '</div>';
+}
+
+async function addTarget(){
+  const raw = $('mtInput').value;
+  if(!raw.trim()){ UI.toast('請輸入 roleId / UID / 名字', 'err'); return; }
+  clearCandidates();
+  const btn = $('mtAddBtn');
+  UI.setLoading(btn, true);                              // 送出期間鎖住按鈕，杜絕雙擊重複送出
+  let res;
+  try{ res = await postJSON('/api/mount_tracker/targets', buildAddBody(raw)); }
+  finally{ UI.setLoading(btn, false); }
+  if(res.data && res.data.status === 'ok'){
+    $('mtInput').value = ''; UI.toast('已新增目標', 'ok'); refresh(); return;
+  }
+  if(res.data && Array.isArray(res.data.candidates) && res.data.candidates.length){
+    renderCandidates(res.data.candidates);
+    UI.toast(res.data.message || 'UID 對應多個角色，請選擇', 'info');
+    return;
+  }
+  UI.toast((res.data && res.data.message) || '新增失敗', 'err');
+}
+
+async function pickCandidate(rid){
+  if(rid === null || rid === undefined){ return; }
+  const res = await postJSON('/api/mount_tracker/targets', {role_id:rid});
+  if(res.data && res.data.status === 'ok'){
+    $('mtInput').value = ''; clearCandidates(); UI.toast('已新增目標', 'ok'); refresh();
+  } else {
+    UI.toast((res.data && res.data.message) || '新增失敗', 'err');
+  }
+}
+
+async function removeTarget(rid){
+  const ok = await UI.confirmDialog({
+    danger:true, title:'移除目標', okLabel:'移除', cancelLabel:'取消',
+    body:'確定不再追蹤此目標？'
+  });
+  if(!ok) return;
+  try{
+    await UI.apiPost('/api/mount_tracker/targets', {remove:rid});
+    UI.toast('已移除目標', 'ok'); refresh();
+  }catch(e){ UI.toast('移除失敗', 'err'); }
+}
+
+// ---- mark / unmark a found mount as 已打掉（軟標記，跨掃描保留）----
+async function markMount(btn){
+  // id 皆以字串送出（避免大數 role_id 精度丟失）；start_time 走 Number。
+  const body = {
+    target_role_id: btn.getAttribute('data-target'),
+    owner_role_id: btn.getAttribute('data-owner'),
+    start_time: Number(btn.getAttribute('data-start')),
+    on: btn.getAttribute('data-on') === '1',
+  };
+  btn.disabled = true;
+  const res = await postJSON('/api/mount_tracker/mark', body);
+  if(res.data && res.data.status === 'ok'){
+    UI.toast(body.on ? '已標記為已打掉' : '已取消標記', 'ok');
+    refresh();
+  } else {
+    btn.disabled = false;
+    UI.toast((res.data && res.data.message) || '標記失敗', 'err');
+  }
+}
+
+// ---- render targets list ----
+function renderTargets(list){
+  TARGETS = list || [];
+  const host = $('targetList');
+  if(!TARGETS.length){ host.innerHTML = '<div class="mt-hint">尚未加入任何目標。</div>'; return; }
+  host.innerHTML = TARGETS.map((t, i) => {
+    const uid = t.uid ? ('UID ' + UI.esc(t.uid) + ' · ') : '';
+    return '<div class="mt-target">' +
+      '<div><span class="nm">' + UI.esc(t.name || '(未命名)') + '</span>' +
+      '<span class="sub">' + uid + 'roleId ' + UI.esc(t.role_id) + '</span></div>' +
+      '<button type="button" class="btn btn--danger" data-remove-idx="' + i + '">移除</button>' +
+    '</div>';
+  }).join('');
+}
+
+// ---- render one card per target ----
+function renderCards(d){
+  const targets = d.targets || [];
+  const results = d.results || {};
+  const host = $('cards');
+  if(!targets.length){ host.innerHTML = ''; return; }
+  const nowSec = Date.now() / 1000;
+  host.innerHTML = targets.map(t => {
+    const rows = results[String(t.role_id)] || [];
+    const title = UI.esc(t.name || '(未命名)') +
+      ' <span class="mt-rid">(' + UI.esc(t.role_id) + ')</span>';
+    let inner;
+    if(!rows.length){
+      inner = '<div class="mt-empty">尚未找到（掃描中或未部署）</div>';
+    } else {
+      // 已打掉的列排到底部（不影響原相對順序）。
+      const sorted = rows.slice().sort((a, b) => (a.attacked ? 1 : 0) - (b.attacked ? 1 : 0));
+      const trs = sorted.map(r => {
+        const st = Number(r.start_time) || 0;
+        const parked = st ? UI.esc(fmtDur(nowSec - st)) : '—';
+        const isAtk = !!r.attacked;
+        // 已打掉：中性標籤、無 data-start（排除於 1s 倒數 tick）；否則交給 tick 上色。
+        const statusCell = isAtk
+          ? '<td class="mt-status mt-done">✅ 已打掉</td>'
+          : '<td class="mt-status" data-start="' + st + '">—</td>';
+        const markBtn = '<button type="button" class="btn mt-markbtn ' +
+          (isAtk ? 'btn--secondary' : 'btn--primary') + '"' +
+          ' data-target="' + UI.esc(t.role_id) + '"' +
+          ' data-owner="' + UI.esc(r.owner) + '"' +
+          ' data-start="' + st + '"' +
+          ' data-on="' + (isAtk ? '0' : '1') + '">' +
+          (isAtk ? '取消標記' : '標記已打掉') + '</button>';
+        return '<tr' + (isAtk ? ' class="mt-attacked"' : '') + '>' +
+          '<td>' + UI.esc(r.owner_name || '—') + '</td>' +
+          '<td>' + UI.esc(r.owner_guild || '—') + '</td>' +
+          '<td>' + UI.esc(r.pos) + '</td>' +
+          '<td>' + parked + '</td>' +
+          statusCell +
+          '<td>' + markBtn + '</td>' +
+        '</tr>';
+      }).join('');
+      inner = '<div class="table-scroll"><table class="data-table"><thead><tr>' +
+        '<th>房東名字</th><th>家族</th><th>車位</th><th>已停時間</th><th>狀態</th><th>操作</th>' +
+        '</tr></thead><tbody>' + trs + '</tbody></table></div>';
+    }
+    return '<section class="card"><h2 class="mt-card-title">' + title + '</h2>' + inner + '</section>';
+  }).join('');
+  tickCountdowns();   // 立即上色，不必等下一個 tick
+}
+
+// ---- independent 1s tick: only updates the 狀態 cells (no re-fetch) ----
+function tickCountdowns(){
+  const nowSec = Date.now() / 1000;
+  document.querySelectorAll('.mt-status[data-start]').forEach(cell => {
+    const st = Number(cell.getAttribute('data-start'));
+    if(!st){ cell.textContent = '—'; cell.className = 'mt-status'; return; }
+    const remain = PROTECT_SEC - (nowSec - st);
+    if(remain > 0){
+      const mm = Math.floor(remain / 60), ss = Math.floor(remain % 60);
+      cell.textContent = '🛡 保護中 ' + pad2(mm) + ':' + pad2(ss);
+      cell.className = 'mt-status mt-protected';
+    } else {
+      cell.textContent = '⚔ 可打（已停 ' + fmtDur(nowSec - st) + '）';
+      cell.className = 'mt-status mt-attackable';
+    }
+  });
+}
+
+// ---- render status bar ----
+function renderStatus(d){
+  currentEnabled = !!d.enabled;
+  setToggleVisual(currentEnabled, false);
+  const lr = d.last_run || {};
+  $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
+  $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found) + ' 台') : '—';
+  $('mtKnown').textContent = fmt(d.known_count);
+  $('mtRunningWrap').style.display = d.running ? '' : 'none';
+}
+
+// ---- #cards 佔位（重用 lib .empty-state / .error-state）：首屏載入 + 取得失敗都不留白頁 ----
+function cardsLoading(){
+  $('cards').innerHTML =
+    '<div class="empty-state" style="grid-column:1/-1"><div class="es-icon" aria-hidden="true">⏳</div>' +
+    '<div class="es-title">載入中…</div></div>';
+}
+function cardsError(){
+  $('cards').innerHTML =
+    '<div class="error-state" style="grid-column:1/-1"><div class="es-icon" aria-hidden="true">⚠️</div>' +
+    '<div class="es-title">載入失敗，稍後重試</div>' +
+    '<div class="es-hint">連線異常，每 5 秒自動重試。</div>' +
+    '<div class="es-actions"><button type="button" class="btn btn--secondary mt-retry">立即重試</button></div></div>';
+}
+
+// ---- 5s data refresh (countdown tick is a separate 1s interval) ----
+async function refresh(){
+  let d;
+  try{ d = await UI.apiGet('/api/mount_tracker/results'); }
+  catch(e){
+    // 401 已由 apiGet 導向登入。其餘（含首次載入失敗）：尚未成功載過就顯示錯誤態
+    // （含重試鈕），別留白頁；已載過則保留現有資料，交給下一輪 5s poll 自動重試。
+    if(!loadedOnce) cardsError();
+    return;
+  }
+  loadedOnce = true;
+  renderStatus(d);
+  renderTargets(d.targets || []);
+  renderCards(d);
+}
+
+// ---- boot (app.js is `defer`, so UI is ready by DOMContentLoaded) ----
+document.addEventListener('DOMContentLoaded', () => {
+  $('mtAddBtn').addEventListener('click', addTarget);
+  $('mtInput').addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); addTarget(); }
+  });
+  $('targetList').addEventListener('click', e => {
+    const b = e.target.closest('[data-remove-idx]');
+    if(!b) return;
+    const t = TARGETS[Number(b.getAttribute('data-remove-idx'))];
+    if(t) removeTarget(t.role_id);
+  });
+  $('candidates').addEventListener('click', e => {
+    const b = e.target.closest('[data-cand-idx]');
+    if(!b) return;
+    const c = CANDS[Number(b.getAttribute('data-cand-idx'))];
+    if(c !== undefined) pickCandidate(candRoleId(c));
+  });
+  $('cards').addEventListener('click', e => {
+    if(e.target.closest('.mt-retry')){ cardsLoading(); refresh(); return; }
+    const b = e.target.closest('.mt-markbtn');
+    if(b) markMount(b);
+  });
+  cardsLoading();                 // 首屏先顯示「載入中…」，避免第一筆資料到達前留白
+  refresh();
+  setInterval(refresh, 5000);
+  setInterval(tickCountdowns, 1000);
+});
+</script>
+</body>
+</html>

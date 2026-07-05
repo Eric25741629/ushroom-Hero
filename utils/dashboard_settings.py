@@ -227,6 +227,21 @@ def set_host_role(mode, master_url):
         _save(data)
 
 
+def get_mount_tracker_enabled():
+    """坐騎追蹤器背景掃描開關（預設關）。"""
+    with _LOCK:
+        data = load_settings()
+        return bool(data.get("mount_tracker_enabled", False))
+
+
+def set_mount_tracker_enabled(enabled):
+    """設定坐騎追蹤器背景掃描開關。"""
+    with _LOCK:
+        data = load_settings()
+        data["mount_tracker_enabled"] = bool(enabled)
+        _save(data)
+
+
 def pending_count():
     with _LOCK:
         data = load_settings()
