@@ -64,6 +64,11 @@
   .mt-status{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .mt-protected{color:var(--status-warn-text)}
   .mt-attackable{color:var(--status-ok-text)}
+  /* 已打掉：整列淡化 + 文字轉 muted；狀態欄顯示中性「已打掉」標籤（不再倒數） */
+  tr.mt-attacked{opacity:.5}
+  tr.mt-attacked td{color:var(--muted)}
+  .mt-done{color:var(--muted);font-weight:700}
+  .mt-markbtn{min-height:32px;padding:4px 10px;white-space:nowrap}
 
   @media (max-width:480px){ #cards{grid-template-columns:1fr} }
 </style>
@@ -244,6 +249,26 @@ async function removeTarget(rid){
   }catch(e){ UI.toast('移除失敗', 'err'); }
 }
 
+// ---- mark / unmark a found mount as 已打掉（軟標記，跨掃描保留）----
+async function markMount(btn){
+  // id 皆以字串送出（避免大數 role_id 精度丟失）；start_time 走 Number。
+  const body = {
+    target_role_id: btn.getAttribute('data-target'),
+    owner_role_id: btn.getAttribute('data-owner'),
+    start_time: Number(btn.getAttribute('data-start')),
+    on: btn.getAttribute('data-on') === '1',
+  };
+  btn.disabled = true;
+  const res = await postJSON('/api/mount_tracker/mark', body);
+  if(res.data && res.data.status === 'ok'){
+    UI.toast(body.on ? '已標記為已打掉' : '已取消標記', 'ok');
+    refresh();
+  } else {
+    btn.disabled = false;
+    UI.toast((res.data && res.data.message) || '標記失敗', 'err');
+  }
+}
+
 // ---- render targets list ----
 function renderTargets(list){
   TARGETS = list || [];
@@ -274,19 +299,34 @@ function renderCards(d){
     if(!rows.length){
       inner = '<div class="mt-empty">尚未找到（掃描中或未部署）</div>';
     } else {
-      const trs = rows.map(r => {
+      // 已打掉的列排到底部（不影響原相對順序）。
+      const sorted = rows.slice().sort((a, b) => (a.attacked ? 1 : 0) - (b.attacked ? 1 : 0));
+      const trs = sorted.map(r => {
         const st = Number(r.start_time) || 0;
         const parked = st ? UI.esc(fmtDur(nowSec - st)) : '—';
-        return '<tr>' +
+        const isAtk = !!r.attacked;
+        // 已打掉：中性標籤、無 data-start（排除於 1s 倒數 tick）；否則交給 tick 上色。
+        const statusCell = isAtk
+          ? '<td class="mt-status mt-done">✅ 已打掉</td>'
+          : '<td class="mt-status" data-start="' + st + '">—</td>';
+        const markBtn = '<button type="button" class="btn mt-markbtn ' +
+          (isAtk ? 'btn--secondary' : 'btn--primary') + '"' +
+          ' data-target="' + UI.esc(t.role_id) + '"' +
+          ' data-owner="' + UI.esc(r.owner) + '"' +
+          ' data-start="' + st + '"' +
+          ' data-on="' + (isAtk ? '0' : '1') + '">' +
+          (isAtk ? '取消標記' : '標記已打掉') + '</button>';
+        return '<tr' + (isAtk ? ' class="mt-attacked"' : '') + '>' +
           '<td>' + UI.esc(r.owner_name || '—') + '</td>' +
           '<td>' + UI.esc(r.owner_guild || '—') + '</td>' +
           '<td>' + UI.esc(r.pos) + '</td>' +
           '<td>' + parked + '</td>' +
-          '<td class="mt-status" data-start="' + st + '">—</td>' +
+          statusCell +
+          '<td>' + markBtn + '</td>' +
         '</tr>';
       }).join('');
       inner = '<div class="table-scroll"><table class="data-table"><thead><tr>' +
-        '<th>房東名字</th><th>家族</th><th>車位</th><th>已停時間</th><th>狀態</th>' +
+        '<th>房東名字</th><th>家族</th><th>車位</th><th>已停時間</th><th>狀態</th><th>操作</th>' +
         '</tr></thead><tbody>' + trs + '</tbody></table></div>';
     }
     return '<section class="card"><h2 class="mt-card-title">' + title + '</h2>' + inner + '</section>';
@@ -350,6 +390,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if(!b) return;
     const c = CANDS[Number(b.getAttribute('data-cand-idx'))];
     if(c !== undefined) pickCandidate(candRoleId(c));
+  });
+  $('cards').addEventListener('click', e => {
+    const b = e.target.closest('.mt-markbtn');
+    if(b) markMount(b);
   });
   refresh();
   setInterval(refresh, 5000);

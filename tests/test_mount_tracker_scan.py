@@ -87,6 +87,47 @@ def test_respects_budget(tmp_path):
     assert len(calls) < 10                        # 預算截斷，沒掃完整個 queue
 
 
+def test_attacked_annotate_and_prune(tmp_path):
+    """預先標記的實例本輪回來帶 attacked=True；本輪缺席的舊標記被剪掉。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="owner1")
+    # 兩個預標記：1:111 本輪會出現、2:222 本輪不會出現（應被剪枝）。
+    store.set_attacked({"100": {"1:111": 1000.0, "2:222": 2000.0}})
+
+    def reader(dev, owner):
+        # 只有房東 1 的車位停著目標；目標自身車位（owner=100）為空。
+        if owner == 1:
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    entry = store.get_results()["100"][0]
+    assert entry["attacked"] is True                       # 命中預標記
+    # 剪枝：僅保留本輪 found 仍出現的 1:111，缺席的 2:222 被移除。
+    assert store.get_attacked() == {"100": {"1:111": 1000.0}}
+
+
+def test_unmarked_instance_annotated_false(tmp_path):
+    """未被標記的實例 attacked=False，且不會誤增標記。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="owner1")
+
+    def reader(dev, owner):
+        if owner == 1:
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    assert store.get_results()["100"][0]["attacked"] is False
+    assert store.get_attacked() == {}
+
+
 def test_skips_when_no_idle_device(tmp_path):
     store = MountTrackerStore(state_dir=str(tmp_path))
     store.add_target({"role_id": 100, "name": "T"})

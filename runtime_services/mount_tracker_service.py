@@ -124,6 +124,44 @@ class MountTrackerStore:
             data["results"] = results
             self._save(data)
 
+    # ---- 已打掉標記 attacked ------------------------------------------------
+    # 軟標記：使用者打掉某台停在他人車位的坐騎後，把它標成「已打掉」，跨掃描保留，
+    # 直到該實例移走（房東或停車時間改變）才自然消失。實例唯一鍵 =
+    # ``f"{owner_role_id}:{start_time}"``；外層 key 為 ``str(target_role_id)``。
+    def get_attacked(self) -> dict:
+        """回傳已打掉標記表：``{str(target_role_id): {"<owner>:<start_time>": marked_ts}}``。"""
+        with _LOCK:
+            return self._load().get("attacked", {})
+
+    def set_attacked(self, attacked: dict) -> None:
+        """整批寫入已打掉標記表（供 scan_cycle 批次寫回，維持 NAS I/O 友善，一次全檔寫）。"""
+        with _LOCK:
+            data = self._load()
+            data["attacked"] = attacked
+            self._save(data)
+
+    def mark_attacked(self, target_role_id: int, owner_role_id: int,
+                      start_time: int, on: bool = True) -> None:
+        """標記 / 取消標記某台坐騎實例為「已打掉」（軟標記，read-modify-write in _LOCK）。
+
+        ``key = f"{owner_role_id}:{start_time}"``。``on=True`` 寫入 ``time.time()`` 標記戳；
+        ``on=False`` 移除該鍵（該 target 清空後連同外層 dict 一併移除）。
+        """
+        key = f"{owner_role_id}:{start_time}"
+        tkey = str(target_role_id)
+        with _LOCK:
+            data = self._load()
+            attacked: dict = data.setdefault("attacked", {})
+            if on:
+                attacked.setdefault(tkey, {})[key] = time.time()
+            else:
+                bucket = attacked.get(tkey)
+                if bucket is not None:
+                    bucket.pop(key, None)
+                    if not bucket:
+                        attacked.pop(tkey, None)
+            self._save(data)
+
     # ---- 上次執行資訊 last_run ----------------------------------------------
     def get_last_run(self) -> dict:
         """回傳上次掃描執行資訊。"""
@@ -324,6 +362,8 @@ def scan_cycle(
 
     target_ids = {int(t["role_id"]) for t in targets if t.get("role_id") is not None}
     known = store.get_known()
+    # 本輪開頭的「已打掉」標記快照：供每筆 found 標註 attacked，並於迴圈後剪枝。
+    attacked = store.get_attacked()
 
     # 目標所屬公會集合（供 weight 的同公會加權）。
     target_guilds: set = set()
@@ -396,12 +436,15 @@ def scan_cycle(
             name = space.get("name")
             _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
             if occ in target_ids and len(found[occ]) < max_per_target:
+                start_time = space.get("start_time")
                 found[occ].append({
                     "owner": owner,
                     "pos": space.get("pos"),
-                    "start_time": space.get("start_time"),
+                    "start_time": start_time,
                     "found_ts": now_fn(),
                     "name": name,
+                    # 沿用本輪標記快照標註；同一實例（owner+start_time）已被標記則 True。
+                    "attacked": f"{owner}:{start_time}" in attacked.get(str(occ), {}),
                 })
                 host_hit_ids.add(owner)
 
@@ -418,10 +461,22 @@ def scan_cycle(
         elif cur > 0:
             _stage(owner, host_hits=cur - 1)
 
-    # 一次寫回：known 批次 + results + last_run（全輪最多 3 次全檔寫）。
+    # 已打掉標記剪枝：每個 target 只保留本輪 found 仍出現的實例鍵（移走/消失者自動清）。
+    new_attacked: dict = {}
+    for rid in target_ids:
+        prev = attacked.get(str(rid))
+        if not prev:
+            continue
+        present = {f"{e['owner']}:{e['start_time']}" for e in found[rid]}
+        kept = {k: v for k, v in prev.items() if k in present}
+        if kept:
+            new_attacked[str(rid)] = kept
+
+    # 一次寫回：known 批次 + results + attacked + last_run（全輪最多 4 次全檔寫）。
     store.bulk_upsert_known(pending)
     results = {str(rid): found[rid] for rid in target_ids}
     store.set_results(results)
+    store.set_attacked(new_attacked)
     summary = {
         "scanned": len(scanned_owners),
         "queued": len(queue),

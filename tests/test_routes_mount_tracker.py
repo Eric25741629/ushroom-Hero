@@ -20,6 +20,7 @@ class FakeStore:
         self.known = known or {}
         self.added: list[dict] = []
         self.removed: list[int] = []
+        self.marked: list[tuple] = []
         self._snap = snap if snap is not None else {
             "targets": [],
             "results": {},
@@ -39,6 +40,9 @@ class FakeStore:
 
     def get_known(self):
         return self.known
+
+    def mark_attacked(self, target_role_id, owner_role_id, start_time, on=True):
+        self.marked.append((target_role_id, owner_role_id, start_time, on))
 
 
 @pytest.fixture
@@ -214,6 +218,55 @@ def test_add_by_name_multiple_matches(app, monkeypatch):
     d = resp.get_json()
     assert d["status"] == "error"
     assert {c["role_id"] for c in d["candidates"]} == {123, 456}
+
+
+# --- mark：標記 / 取消標記已打掉 -------------------------------------------
+
+def test_mark_records_call_default_on(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark",
+                       json={"target_role_id": 100, "owner_role_id": 5, "start_time": 111})
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+    assert store.marked == [(100, 5, 111, True)]     # on 預設 True
+
+
+def test_mark_off(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark",
+                       json={"target_role_id": 100, "owner_role_id": 5,
+                             "start_time": 111, "on": False})
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+    assert store.marked == [(100, 5, 111, False)]
+
+
+def test_mark_missing_fields_error(app, monkeypatch):
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark", json={"target_role_id": 100})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert store.marked == []                         # 未觸及 store
+
+
+def test_mark_requires_login(app, monkeypatch):
+    _use_store(monkeypatch, FakeStore())
+    resp = app.test_client().post("/api/mount_tracker/mark",
+                                  json={"target_role_id": 1, "owner_role_id": 2, "start_time": 3})
+    assert resp.status_code == 401
+    assert resp.get_json()["status"] == "error"
 
 
 # --- toggle：僅管理員 -------------------------------------------------------

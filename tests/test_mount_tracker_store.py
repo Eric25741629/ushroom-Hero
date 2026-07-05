@@ -67,6 +67,29 @@ def test_bulk_upsert_known_empty_is_noop(tmp_path):
     assert s.get_known() == {}
 
 
+def test_mark_attacked_set_and_get_roundtrip(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    s.mark_attacked(100, 5, 111)                     # on 預設 True
+    s2 = MountTrackerStore(state_dir=str(tmp_path))  # reload from disk
+    atk = s2.get_attacked()
+    assert set(atk) == {"100"}
+    assert "5:111" in atk["100"] and atk["100"]["5:111"] > 0
+
+
+def test_mark_attacked_off_removes_key_and_empty_target(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    s.mark_attacked(100, 5, 111)
+    s.mark_attacked(100, 5, 111, on=False)           # 取消 → 鍵移除、空 target 一併移除
+    assert s.get_attacked() == {}
+
+
+def test_set_attacked_overwrites(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    s.mark_attacked(100, 5, 111)
+    s.set_attacked({"200": {"9:9": 1.0}})            # 整批覆寫
+    assert s.get_attacked() == {"200": {"9:9": 1.0}}
+
+
 def test_bulk_upsert_known_single_write(tmp_path, monkeypatch):
     s = MountTrackerStore(state_dir=str(tmp_path))
     calls = {"n": 0}

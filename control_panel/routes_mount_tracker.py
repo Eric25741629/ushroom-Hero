@@ -165,6 +165,28 @@ def mount_tracker_targets():
     return jsonify({"status": "error", "message": "缺少 role_id / uid / name"}), 400
 
 
+@bp.route("/api/mount_tracker/mark", methods=["POST"])
+@_fly_pet_auth
+def mount_tracker_mark():
+    """標記 / 取消標記某台坐騎為「已打掉」（軟標記，跨掃描保留）。
+
+    body：``{target_role_id, owner_role_id, start_time, on?}``（``on`` 預設 True）。
+    實例唯一鍵 = ``f"{owner_role_id}:{start_time}"``。三個 id 缺一即回 error。
+    """
+    body = request.get_json(silent=True) or {}
+    target_role_id = body.get("target_role_id")
+    owner_role_id = body.get("owner_role_id")
+    start_time = body.get("start_time")
+    if target_role_id is None or owner_role_id is None or start_time is None:
+        return jsonify({"status": "error",
+                        "message": "缺少 target_role_id / owner_role_id / start_time"}), 400
+    on = body.get("on")
+    _store().mark_attacked(
+        int(target_role_id), int(owner_role_id), int(start_time),
+        bool(on if on is not None else True))
+    return jsonify({"status": "ok"})
+
+
 @bp.route("/api/mount_tracker/toggle", methods=["POST"])
 @require_admin
 def mount_tracker_toggle():
