@@ -152,6 +152,19 @@ def get_client(device: str) -> Optional[WSGameClient]:
         return session.client
 
 
+def is_active(device: str) -> bool:
+    """``device`` 是否有仍在跑的持久連線（無 keep-alive 副作用）。
+
+    給喚醒路徑當互斥閘門：bot 醒來前先確認 dashboard 沒在用這個帳號，避免同帳號
+    異地登入互踢（好友清單 presence 看不到純 WS session，觀察者閘門擋不住這種）。
+    刻意不更新 last_seen — bot 的輪詢不該幫 session 續命，sweeper 的 90s 閒置
+    回收要照常生效。
+    """
+    with _lock:
+        session = _sessions.get(device)
+        return session is not None and session.client.is_running()
+
+
 # --- 內部 helper（多數需在持有 `_lock` 時呼叫） -----------------------------
 
 def _make_kick_handler(device):

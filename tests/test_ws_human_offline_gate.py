@@ -183,3 +183,81 @@ def test_account_online_unknown_when_stale(monkeypatch):
 def test_account_online_unknown_when_no_snapshot(monkeypatch):
     monkeypatch.setattr(online_monitor, "get_snapshot", lambda: None)
     assert online_monitor.account_online(123, now=1030.0) is None
+
+
+# --- dashboard ws_session 閘門（2026-07-05 裝飾 job 互踢實錄）-------------------
+#
+# dashboard 純 WS 工具連線（ws_session）不會點亮好友清單 presence，觀察者閘門
+# 看不到它 → 喚醒週期開跑前必須直接查 ws_session registry，等它釋放。
+
+
+def _no_sleep(monkeypatch):
+    monkeypatch.setattr(ws_phase.time, "sleep",
+                        lambda s: (_ for _ in ()).throw(AssertionError("不該等")))
+
+
+def test_dashboard_gate_passes_when_no_session(monkeypatch):
+    monkeypatch.setattr(ws_phase, "_dashboard_ws_active", lambda ip: False)
+    _no_sleep(monkeypatch)
+    ws_phase.wait_for_dashboard_ws_release("dev", ws_phase.logger)
+
+
+def test_dashboard_gate_waits_until_released(monkeypatch):
+    seq = iter([True, True, False])
+    monkeypatch.setattr(ws_phase, "_dashboard_ws_active", lambda ip: next(seq))
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
+    slept = []
+    monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
+    ws_phase.wait_for_dashboard_ws_release("dev", ws_phase.logger)
+    assert slept == [ws_phase._DASHBOARD_WS_POLL_SEC] * 2
+
+
+def test_dashboard_gate_releases_on_web_launch_request(monkeypatch):
+    """使用者按「開啟網頁」→ 立即放行（開瀏覽器本來就會接管/踢線，屬明確意圖）。"""
+    monkeypatch.setattr(ws_phase, "_dashboard_ws_active", lambda ip: True)
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: True)
+    _no_sleep(monkeypatch)
+    ws_phase.wait_for_dashboard_ws_release("dev", ws_phase.logger)
+
+
+def test_dashboard_gate_active_probe_failure_is_open(monkeypatch):
+    """registry 讀不到（import/例外）→ 當沒有 session，勿卡住喚醒。"""
+    import builtins
+    real_import = builtins.__import__
+
+    def _boom(name, *a, **k):
+        if name.startswith("control_panel"):
+            raise RuntimeError("registry unavailable")
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    assert ws_phase._dashboard_ws_active("dev") is False
+
+
+# --- control_panel.ws_session.is_active ---------------------------------------
+
+
+def test_ws_session_is_active_true_only_when_running_and_no_keepalive():
+    from control_panel import ws_session as wss
+
+    class _C:
+        def __init__(self, running):
+            self._running = running
+
+        def is_running(self):
+            return self._running
+
+    try:
+        with wss._lock:
+            wss._sessions["gate-dev"] = wss._Session(
+                client=_C(True), last_seen=111.0)
+        assert wss.is_active("gate-dev") is True
+        # 刻意不更新 last_seen：bot 的輪詢不能幫 session 續命
+        assert wss._sessions["gate-dev"].last_seen == 111.0
+        wss._sessions["gate-dev"].client._running = False
+        assert wss.is_active("gate-dev") is False
+        assert wss.is_active("no-such-dev") is False
+    finally:
+        with wss._lock:
+            wss._sessions.pop("gate-dev", None)

@@ -408,6 +408,51 @@ def _web_launch_pending(ip: str) -> bool:
         return False
 
 
+# --- dashboard WS session 閘門：喚醒別踢掉 dashboard 純 WS 工具連線 -------------
+# dashboard 的 ws_session（裝飾升級/抽卡/倉庫等純 WS 工具）與本裝置同帳號；喚醒後
+# 的 WS 登入或 H5/APP 啟動都會異地登入把它踢掉，雙方互踢 ping-pong（2026-07-05
+# 7fe98fc6 裝飾升級 job 實錄，見 tasks/todo.md）。好友清單 presence 看不到純 WS
+# session（觀察者閘門 _wait_until_human_offline 擋不住），唯一真相來源是行程內的
+# ws_session registry — 喚醒週期開跑前直接查它、等釋放。sweeper 保證前端關窗或
+# 閒置 >90s 後回收，不會永久卡住喚醒。
+_DASHBOARD_WS_POLL_SEC = 15
+
+
+def _dashboard_ws_active(ip: str) -> bool:
+    """間接層（tests monkeypatch 這裡）：dashboard 是否還有本裝置的活躍純 WS 連線。"""
+    try:
+        from control_panel import ws_session
+        return bool(ws_session.is_active(ip))
+    except Exception:  # noqa: BLE001 — registry 讀不到就當沒有，勿卡喚醒
+        return False
+
+
+def wait_for_dashboard_ws_release(ip: str, log) -> None:
+    """喚醒週期（WS 階段 / 開瀏覽器）開跑前，等 dashboard 純 WS 連線釋放。
+
+    可中斷：使用者按「開啟網頁」→ 立即放行（開瀏覽器屬明確接管意圖，與
+    _wait_until_human_offline 同語意）。
+    """
+    waited = 0
+    while _dashboard_ws_active(ip):
+        if _web_launch_pending(ip):
+            log.info("[%s] 偵測到開啟網頁請求，放行 dashboard WS 閘門", ip)
+            return
+        if waited == 0:
+            log.info("[%s] dashboard 純 WS 連線使用中，喚醒週期等待釋放", ip)
+        try:
+            import bot_state
+            bot_state.update_state(
+                ip, task="等待 dashboard 連線釋放",
+                step=f"dashboard 純 WS 工具使用中，{_DASHBOARD_WS_POLL_SEC}s 後重查")
+        except Exception:  # noqa: BLE001 — 狀態回報失敗不影響等待
+            log.debug("[%s] 等待 dashboard 連線狀態回報失敗", ip, exc_info=True)
+        time.sleep(_DASHBOARD_WS_POLL_SEC)
+        waited += _DASHBOARD_WS_POLL_SEC
+    if waited:
+        log.info("[%s] dashboard 連線已釋放，恢復喚醒週期（等了約 %ds）", ip, waited)
+
+
 def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> None:
     """擋在自己的 WS 登入前，直到觀察者確認帳號離線才放行（所有裝置共用）。
 
