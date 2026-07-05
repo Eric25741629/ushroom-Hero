@@ -92,6 +92,25 @@ class MountTrackerStore:
                     entry[key] = value
             self._save(data)
 
+    def bulk_upsert_known(self, updates: dict) -> None:
+        """一次合併多筆已知玩家更新，只 load / save 一次（NAS I/O 友善）。
+
+        ``updates`` 為 ``{role_id: {field: value}}``；沿用 upsert 的規則：
+        value 為 None 的欄位一律略過（不覆蓋既有值）。掃描一輪上千車位時用它取代
+        數千次 :meth:`upsert_known` 全檔重寫。
+        """
+        if not updates:
+            return
+        with _LOCK:
+            data = self._load()
+            kp: dict = data.setdefault("known_players", {})
+            for role_id, fields in updates.items():
+                entry: dict = kp.setdefault(str(role_id), {})
+                for key, value in (fields or {}).items():
+                    if value is not None:
+                        entry[key] = value
+            self._save(data)
+
     # ---- 掃描結果 results ---------------------------------------------------
     def get_results(self) -> dict:
         """回傳最近一次掃描結果。"""
@@ -338,6 +357,16 @@ def scan_cycle(
     found: dict[int, list] = {rid: [] for rid in target_ids}
     scanned_owners: set = set()   # 本輪成功讀到車位的房東
     host_hit_ids: set = set()     # 本輪車位停著追蹤目標的房東
+    # 本輪所有 known 更新累積在記憶體，迴圈結束後「一次寫回」，避免每個車位一次
+    # 全檔重寫（NAS/SMB I/O 敏感）。{role_id: {field: value}}。
+    pending: dict[int, dict] = {}
+
+    def _stage(role_id: int, **fields: Any) -> None:
+        """把一筆 known 更新累積進 pending（None 欄位跳過，與 upsert_known 一致）。"""
+        target = pending.setdefault(role_id, {})
+        for key, value in fields.items():
+            if value is not None:
+                target[key] = value
 
     for owner_entry in queue:
         # 所有目標都收滿 → 沒必要再掃。
@@ -365,7 +394,7 @@ def scan_cycle(
                 continue
             occ = int(occ)
             name = space.get("name")
-            store.upsert_known(occ, name=name)  # 雪球：新佔用者滾進 known
+            _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
             if occ in target_ids and len(found[occ]) < max_per_target:
                 found[occ].append({
                     "owner": owner,
@@ -378,10 +407,19 @@ def scan_cycle(
 
         # 房東車位加成（菇車幣）+ 掃描時間戳。
         bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
-        store.upsert_known(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
+        _stage(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
 
-    _update_host_hits(store, scanned_owners, host_hit_ids)
+    # host_hits：本輪掃到的房東，有停到目標 +1（上限 5），否則 decay，不 <0。
+    # 基準值取本輪開頭的 known 快照（沿用舊值）；沒掃到的房東不動，靠權重排序自我收斂。
+    for owner in scanned_owners:
+        cur = int((known.get(str(owner)) or {}).get("host_hits", 0) or 0)
+        if owner in host_hit_ids:
+            _stage(owner, host_hits=min(cur + 1, 5))
+        elif cur > 0:
+            _stage(owner, host_hits=cur - 1)
 
+    # 一次寫回：known 批次 + results + last_run（全輪最多 3 次全檔寫）。
+    store.bulk_upsert_known(pending)
     results = {str(rid): found[rid] for rid in target_ids}
     store.set_results(results)
     summary = {
@@ -392,21 +430,6 @@ def scan_cycle(
     }
     store.set_last_run({"ts": now_fn(), **summary})
     return summary
-
-
-def _update_host_hits(store: MountTrackerStore, scanned_owners: set, host_hit_ids: set) -> None:
-    """更新本輪掃過房東的 host_hits：停著目標 +1（上限 5），否則 decay，不 <0。
-
-    只動本輪實際掃到的房東——沒掃到的沿用舊值（下一輪權重排序仍會優先掃到高
-    host_hits 者，故會自我收斂，不需每輪掃全表）。
-    """
-    known_now = store.get_known()
-    for owner in scanned_owners:
-        cur = int((known_now.get(str(owner)) or {}).get("host_hits", 0) or 0)
-        if owner in host_hit_ids:
-            store.upsert_known(owner, host_hits=min(cur + 1, 5))
-        elif cur > 0:
-            store.upsert_known(owner, host_hits=cur - 1)
 
 
 # ============================================================================
@@ -429,6 +452,16 @@ _start_lock = threading.Lock()
 _wake = threading.Event()
 
 _CYCLE_INTERVAL_SEC = 3600.0
+
+
+def _cooldown(sec: float) -> None:
+    """掃描專用冷卻：真的睡 ``sec`` 秒。
+
+    刻意用 ``time.sleep`` 而非 ``_wake.wait``——``_wake`` 是每小時間隔 / 立即催掃的
+    event，一旦被 set()，用它當 sleeper 會讓 cycle 內剩下的冷卻全部瞬間返回，導致
+    WS 打太快（封號風險）。冷卻與間隔必須分離。
+    """
+    time.sleep(sec)
 
 
 def get_store() -> MountTrackerStore:
@@ -505,7 +538,8 @@ def _run_one_cycle() -> None:
 
     store.set_running(True)
     try:
-        scan_cycle(store, reader, idle_picker, _wake.wait, time.time)
+        # sleeper 用 _cooldown（真 sleep），不可用 _wake.wait——見 _cooldown docstring。
+        scan_cycle(store, reader, idle_picker, _cooldown, time.time)
     finally:
         for dev in borrowed:
             _release_dev(dev)

@@ -77,3 +77,36 @@ def test_get_store_singleton():
     a = mt.get_store()
     b = mt.get_store()
     assert a is b
+
+
+def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
+    # 關鍵安全性：_run_one_cycle 給 scan_cycle 的 sleeper 必須是 _cooldown（真 sleep），
+    # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。
+    captured = {}
+
+    def fake_scan_cycle(store, reader, idle_picker, sleeper, now_fn, **kwargs):
+        captured["sleeper"] = sleeper
+        return {}
+
+    class FakeStore:
+        def set_running(self, running):
+            pass
+
+    monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+
+    mt._run_one_cycle()
+
+    sleeper = captured["sleeper"]
+    assert sleeper is mt._cooldown
+    assert sleeper is not mt._wake.wait
+
+    # _wake 被 set 後，冷卻仍實際延遲（time.sleep 被呼叫），不會瞬間返回。
+    slept = []
+    monkeypatch.setattr(mt.time, "sleep", lambda s: slept.append(s))
+    mt._wake.set()
+    try:
+        sleeper(3.0)
+        assert slept == [3.0]
+    finally:
+        mt._wake.clear()

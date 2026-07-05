@@ -47,3 +47,36 @@ def test_snapshot_shape(tmp_path):
     snap = s.snapshot()
     assert set(snap) >= {"targets", "results", "known_count", "last_run", "running"}
     assert snap["known_count"] == 1
+
+
+def test_bulk_upsert_known_merges_and_skips_none(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    s.upsert_known(9, name="X", guild="G")
+    s.bulk_upsert_known({
+        9: {"guild": None, "coin": 145},        # None 不覆蓋既有 guild
+        7: {"name": "曇花一現", "host_hits": 3},
+    })
+    k = s.get_known()
+    assert k["9"] == {"name": "X", "guild": "G", "coin": 145}
+    assert k["7"] == {"name": "曇花一現", "host_hits": 3}
+
+
+def test_bulk_upsert_known_empty_is_noop(tmp_path):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    s.bulk_upsert_known({})
+    assert s.get_known() == {}
+
+
+def test_bulk_upsert_known_single_write(tmp_path, monkeypatch):
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    calls = {"n": 0}
+    orig = s._save
+
+    def counting_save(data):
+        calls["n"] += 1
+        orig(data)
+
+    monkeypatch.setattr(s, "_save", counting_save)
+    s.bulk_upsert_known({1: {"name": "A"}, 2: {"name": "B"}, 3: {"name": "C"}})
+    assert calls["n"] == 1                       # 三筆合併只寫一次
+    assert set(s.get_known()) == {"1", "2", "3"}
