@@ -314,15 +314,89 @@ def test_run_device_main_tasks_collects_then_claims(patched):
 
     run_device("dev", spend=False)
 
+    # main_tasks now runs TWICE per wake (early + 尾端二次領取 main_tasks_late);
+    # both passes append under the "main_tasks" label. Assert the ordering on the
+    # first pass (7 actions) and that the second pass also ran (4 collect_states).
     mt = [a for t, a in calls if t == "main_tasks"]
     assert mt[0] == "collect_state"
+    first_pass = mt[:7]
     # 領完每日任務後重新快照，活躍度寶箱才看得到剛變可領的盒子。
-    assert mt.index("claim_daily_box") > _last_index(mt, "collect_state")
-    assert mt.count("collect_state") == 2
+    assert first_pass.index("claim_daily_box") > _last_index(first_pass, "collect_state")
+    assert first_pass.count("collect_state") == 2
+    assert mt.count("collect_state") == 4  # early pass + late pass
     assert set(mt) == {
         "collect_state", "claim_daily_tasks", "claim_marry_tasks",
         "claim_daily_box", "claim_weekly_box", "claim_achievement"
     }
+
+
+def test_main_tasks_runs_every_wake(monkeypatch):
+    """No once-per-day gate: two same-day wakes each snapshot + claim.
+
+    Fixes the漏領: the old date gate blocked all later wakes once the first
+    post-08:00 wake claimed, so daily tasks/活躍度寶箱 that only became claimable
+    later in the day (arena 20:00, mining, ...) never got claimed.
+    """
+    from datetime import datetime
+
+    from ws_token import runner
+
+    collects = []
+    monkeypatch.setattr(runner.main_tasks, "collect_state",
+                        lambda c, col, **k: collects.append(1) or "STATE")
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_tasks", lambda c, s, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "claim_marry_tasks", lambda c, s, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_box", lambda c, s, **k: False)
+    monkeypatch.setattr(runner.main_tasks, "claim_weekly_box", lambda c, s, **k: False)
+    monkeypatch.setattr(runner.main_tasks, "claim_achievement", lambda c, **k: {})
+
+    day = datetime(2026, 7, 5, 9, 0, 0)
+    runner._run_main_tasks(object(), object(), now=day)
+    runner._run_main_tasks(object(), object(), now=day.replace(hour=15))
+
+    # each wake runs a full pass (2 collect_state); no date gate blocks the 2nd.
+    assert len(collects) == 4
+
+
+def test_main_tasks_before_8_skips(monkeypatch):
+    """The >= 08:00 gate is retained: an early wake claims nothing."""
+    from datetime import datetime
+
+    from ws_token import runner
+
+    collects = []
+    monkeypatch.setattr(runner.main_tasks, "collect_state",
+                        lambda c, col, **k: collects.append(1) or "STATE")
+
+    out = runner._run_main_tasks(object(), object(),
+                                 now=datetime(2026, 7, 5, 7, 0, 0))
+
+    assert out == {"skipped": "before 08:00"}
+    assert collects == []
+
+
+def test_main_tasks_late_runs_after_mining_lamp(patched, monkeypatch):
+    """尾端二次領取 main_tasks_late runs as a step AFTER mining and lamp."""
+    calls, _ = patched
+    events: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(runner.mining_supervised, "mine_until_pickaxe_empty",
+                        lambda c, t, **k: {"executed": [], "stopped_reason": "stub"})
+
+    rep = run_device(
+        "dev", spend=False, open_lamp=True,
+        mining_config={"enabled": True},
+        progress=lambda name, status, detail="": events.append((name, status)),
+    )
+
+    starts = [n for n, s in events if s == "start"]
+    assert "main_tasks_late" in starts
+    assert "main_tasks_late" in rep.tasks
+    # late pass sits after mining and lamp in the run.
+    assert starts.index("main_tasks_late") > starts.index("mining")
+    assert starts.index("main_tasks_late") > starts.index("lamp")
+    # and the early main_tasks pass still runs first.
+    assert starts.index("main_tasks") < starts.index("main_tasks_late")
 
 
 def _last_index(seq, val):
@@ -1508,7 +1582,9 @@ def test_task_order_has_home_features_before_lamp():
     # dragon_realm/sea_season tasks that sit between couple and mining.)
     assert order.index("spirit") < order.index("secret_jewel") < order.index("workshop")
     assert order.index("workshop") < order.index("couple") < order.index("mining")
-    assert order[-1] == "lamp"
+    # 尾端二次領取 main_tasks_late is dead-last, right after lamp.
+    assert order[-1] == "main_tasks_late"
+    assert order.index("lamp") < order.index("main_tasks_late")
     # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
     assert order.index("dungeon") < order.index("rogue") < order.index("guild")
     # 競猜商店 (粉鑽 買競猜幣) sits with the shopping/cost group: after steward,
