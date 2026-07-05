@@ -1,13 +1,12 @@
 """坐騎追蹤器 (mount tracker) dashboard blueprint — 頁面 + targets/results/toggle API。
 
-資料源與開關由**另一分支**建置的服務層提供，本 worktree 尚無：
+資料源與開關由服務層提供，該分支已 merge，本 branch 已具備：
 - ``runtime_services.mount_tracker_service.get_store()`` — 追蹤器狀態儲存
 - ``utils.dashboard_settings.get_mount_tracker_enabled`` / ``set_mount_tracker_enabled``
 
-因此本模組對兩者一律走**延遲 import**（包在 module-level 間接函式內），確保
-(a) 服務層不存在時本模組仍能 import 成功、
+本模組對兩者仍一律走**延遲 import**（包在 module-level 間接函式內）以維持解耦，確保
+(a) 服務層暫時缺席時本模組仍能 import 成功、
 (b) 測試可 monkeypatch ``_store`` / ``_get_enabled`` / ``_set_enabled`` 這些間接口。
-兩分支 merge 後即真正接上服務層。
 
 回應一律 ``{"status":"ok"|"error", ...}`` 信封。
 """

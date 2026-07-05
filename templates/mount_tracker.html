@@ -11,8 +11,9 @@
 {% include '_assets_head.html' %}
 <style>
   /* All colours route through design-system tokens (tokens.css) — no hard-coded
-     hues, so light/dark both work. Only the switch knob (#fff, a non-text UI
-     element) and the ok-fill track use fixed values from the token set. */
+     hues. The design system is light-only; the tokens carry that single palette.
+     Only the switch knob (#fff, a non-text UI element) and the ok-fill track use
+     fixed values from the token set. */
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--text);
        font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif}
@@ -64,8 +65,9 @@
   .mt-status{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}
   .mt-protected{color:var(--status-warn-text)}
   .mt-attackable{color:var(--status-ok-text)}
-  /* 已打掉：整列淡化 + 文字轉 muted；狀態欄顯示中性「已打掉」標籤（不再倒數） */
-  tr.mt-attacked{opacity:.5}
+  /* 已打掉：只把資料格文字轉 muted 色（不用整列 opacity，否則會把仍可點的
+     「取消標記」按鈕與房東名字一起淡到低於 AA 對比）；狀態欄顯示中性「已打掉」
+     標籤（不再倒數）。按鈕自帶 .btn token 色，故維持全對比、可讀。 */
   tr.mt-attacked td{color:var(--muted)}
   .mt-done{color:var(--muted);font-weight:700}
   .mt-markbtn{min-height:32px;padding:4px 10px;white-space:nowrap}
@@ -104,6 +106,7 @@
     <h2>目標管理</h2>
     <div class="mt-addrow">
       <input id="mtInput" class="form-control" type="text"
+             aria-label="輸入 roleId / UID / 名字"
              placeholder="輸入 roleId（14+ 位數字）/ UID（5 碼）/ 名字" autocomplete="off">
       <button id="mtAddBtn" type="button" class="btn btn--primary">新增目標</button>
     </div>
@@ -124,6 +127,7 @@ const PROTECT_SEC = 170 * 60;   // 保護時間 170 分鐘
 let TARGETS = [];               // 目標清單（保留原始 role_id，避免大數精度）
 let CANDS = [];                 // 合服候選（挑選用）
 let currentEnabled = false;     // 伺服器確認過的啟用狀態
+let loadedOnce = false;         // 是否已成功載入過一次（避免暫時性錯誤蓋掉現有資料）
 
 // ---- formatters ----
 const fmt = n => (n === null || n === undefined) ? '—' : Number(n).toLocaleString();
@@ -215,7 +219,11 @@ async function addTarget(){
   const raw = $('mtInput').value;
   if(!raw.trim()){ UI.toast('請輸入 roleId / UID / 名字', 'err'); return; }
   clearCandidates();
-  const res = await postJSON('/api/mount_tracker/targets', buildAddBody(raw));
+  const btn = $('mtAddBtn');
+  UI.setLoading(btn, true);                              // 送出期間鎖住按鈕，杜絕雙擊重複送出
+  let res;
+  try{ res = await postJSON('/api/mount_tracker/targets', buildAddBody(raw)); }
+  finally{ UI.setLoading(btn, false); }
   if(res.data && res.data.status === 'ok'){
     $('mtInput').value = ''; UI.toast('已新增目標', 'ok'); refresh(); return;
   }
@@ -363,11 +371,31 @@ function renderStatus(d){
   $('mtRunningWrap').style.display = d.running ? '' : 'none';
 }
 
+// ---- #cards 佔位（重用 lib .empty-state / .error-state）：首屏載入 + 取得失敗都不留白頁 ----
+function cardsLoading(){
+  $('cards').innerHTML =
+    '<div class="empty-state" style="grid-column:1/-1"><div class="es-icon" aria-hidden="true">⏳</div>' +
+    '<div class="es-title">載入中…</div></div>';
+}
+function cardsError(){
+  $('cards').innerHTML =
+    '<div class="error-state" style="grid-column:1/-1"><div class="es-icon" aria-hidden="true">⚠️</div>' +
+    '<div class="es-title">載入失敗，稍後重試</div>' +
+    '<div class="es-hint">連線異常，每 5 秒自動重試。</div>' +
+    '<div class="es-actions"><button type="button" class="btn btn--secondary mt-retry">立即重試</button></div></div>';
+}
+
 // ---- 5s data refresh (countdown tick is a separate 1s interval) ----
 async function refresh(){
   let d;
   try{ d = await UI.apiGet('/api/mount_tracker/results'); }
-  catch(e){ return; }   // 401 已由 apiGet 導向登入；其餘網路小抖動下一輪再試
+  catch(e){
+    // 401 已由 apiGet 導向登入。其餘（含首次載入失敗）：尚未成功載過就顯示錯誤態
+    // （含重試鈕），別留白頁；已載過則保留現有資料，交給下一輪 5s poll 自動重試。
+    if(!loadedOnce) cardsError();
+    return;
+  }
+  loadedOnce = true;
   renderStatus(d);
   renderTargets(d.targets || []);
   renderCards(d);
@@ -392,9 +420,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if(c !== undefined) pickCandidate(candRoleId(c));
   });
   $('cards').addEventListener('click', e => {
+    if(e.target.closest('.mt-retry')){ cardsLoading(); refresh(); return; }
     const b = e.target.closest('.mt-markbtn');
     if(b) markMount(b);
   });
+  cardsLoading();                 // 首屏先顯示「載入中…」，避免第一筆資料到達前留白
   refresh();
   setInterval(refresh, 5000);
   setInterval(tickCountdowns, 1000);
