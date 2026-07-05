@@ -372,6 +372,74 @@ def test_claim_ads_degrades_to_zero_counts_when_info_read_fails():
         c.close()
 
 
+# --- runner: AD_SCIENCE_1 success marks daily_acceleration done ------------
+
+def test_run_ad_rewards_marks_daily_acceleration_done_when_science_claimed(monkeypatch):
+    """WS AD_SCIENCE_1 IS the GUI「每日加速」科技園按鈕; when it actually fires,
+    mark the same json_manager record so daily_tasks.daily_acceleration skips
+    its redundant 科技園 trip (game_actions/task_due.py:_due_daily_acceleration)."""
+    from ws_token import runner
+
+    monkeypatch.setattr(runner.ad_reward, "claim_ads", lambda client, ids, **k: {
+        "results": {AD_NAMES[AD_SCIENCE_1]: {"name": AD_NAMES[AD_SCIENCE_1], "claimed": 2}},
+        "total_claimed": 2,
+    })
+    recorded = {}
+    monkeypatch.setattr(runner.json_manager, "time_recording",
+                        lambda ip, name="": recorded.update(ip=ip, name=name))
+
+    runner._run_ad_rewards(object(), config_ids=(AD_SCIENCE_1,), enabled=True,
+                           device="emulator-5554")
+    assert recorded == {"ip": "emulator-5554", "name": "daily_acceleration"}
+
+
+def test_run_ad_rewards_marks_done_when_science_already_maxed(monkeypatch):
+    from ws_token import runner
+
+    monkeypatch.setattr(runner.ad_reward, "claim_ads", lambda client, ids, **k: {
+        "results": {AD_NAMES[AD_SCIENCE_1]: {"name": AD_NAMES[AD_SCIENCE_1], "skipped": "maxed 4/4"}},
+        "total_claimed": 0,
+    })
+    recorded = {}
+    monkeypatch.setattr(runner.json_manager, "time_recording",
+                        lambda ip, name="": recorded.update(ip=ip, name=name))
+
+    runner._run_ad_rewards(object(), config_ids=(AD_SCIENCE_1,), enabled=True,
+                           device="emulator-5554")
+    assert recorded == {"ip": "emulator-5554", "name": "daily_acceleration"}
+
+
+def test_run_ad_rewards_does_not_mark_done_when_no_research_in_progress(monkeypatch):
+    from ws_token import runner
+
+    monkeypatch.setattr(runner.ad_reward, "claim_ads", lambda client, ids, **k: {
+        "results": {AD_NAMES[AD_SCIENCE_1]: {"name": AD_NAMES[AD_SCIENCE_1],
+                                             "skipped": "no research in progress"}},
+        "total_claimed": 0,
+    })
+    recorded = {}
+    monkeypatch.setattr(runner.json_manager, "time_recording",
+                        lambda ip, name="": recorded.update(ip=ip, name=name))
+
+    runner._run_ad_rewards(object(), config_ids=(AD_SCIENCE_1,), enabled=True,
+                           device="emulator-5554")
+    assert recorded == {}
+
+
+def test_run_ad_rewards_ignores_science_marking_when_config_5_not_requested(monkeypatch):
+    from ws_token import runner
+
+    monkeypatch.setattr(runner.ad_reward, "claim_ads", lambda client, ids, **k: {
+        "results": {AD_NAMES[15]: {"name": AD_NAMES[15], "claimed": 1}}, "total_claimed": 1,
+    })
+    recorded = {}
+    monkeypatch.setattr(runner.json_manager, "time_recording",
+                        lambda ip, name="": recorded.update(ip=ip, name=name))
+
+    runner._run_ad_rewards(object(), config_ids=(15,), enabled=True, device="emulator-5554")
+    assert recorded == {}
+
+
 # --- runner: _run_ad_rewards enabled / disabled -----------------------------
 
 def test_run_ad_rewards_disabled_self_skips_without_request():

@@ -1,6 +1,7 @@
 {
     "devices": {
         "emulator-5554": {
+            "enable_escort": true,
             "wake_hour_parity": "even",
             "wake_minute_offset": 0,
             "name": "閃電",
@@ -164,7 +165,8 @@
                         3,
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "sea_season": {
@@ -191,6 +193,7 @@
             "dragon_realm_enabled": true
         },
         "emulator-5556": {
+            "enable_escort": true,
             "wake_hour_parity": "even",
             "wake_minute_offset": 15,
             "name": "菜雞",
@@ -337,7 +340,8 @@
                         3,
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "sea_season": {
@@ -479,7 +483,8 @@
                     "config_ids": [
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "only_tasks": [
@@ -514,6 +519,7 @@
             "web_reload_after_goto": false
         },
         "emulator-5560": {
+            "enable_escort": true,
             "wake_hour_parity": "odd",
             "wake_minute_offset": 0,
             "name": "夜路",
@@ -636,7 +642,8 @@
                         3,
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "relic_sprint": {
@@ -665,6 +672,7 @@
             "web_reload_after_goto": false
         },
         "7fe98fc6": {
+            "enable_escort": true,
             "wake_hour_parity": "odd",
             "wake_minute_offset": 5,
             "name": "小寶帳號",
@@ -805,7 +813,8 @@
                         3,
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "sea_season": {
@@ -981,7 +990,8 @@
                         3,
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
                 },
                 "sea_season": {
@@ -1054,7 +1064,7 @@
             "sleep_max_hours": 1.0,
             "online_check_interval": 5,
             "use_ws_runner": false,
-            "ws_token_spend": false,
+            "ws_token_spend": true,
             "ws_token_sweep_list": [],
             "ws_token_open_lamp": false,
             "ws_token_kungfu_guess": false,
@@ -1065,11 +1075,11 @@
                 "max_steps": 200
             },
             "ws_token": {
-                "enabled": false,
+                "enabled": true,
                 "bootstrap_token": true,
                 "offline_fallback": false,
                 "fallback_host": "",
-                "spend": false,
+                "spend": true,
                 "open_lamp": false,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
@@ -1119,6 +1129,7 @@
                 },
                 "tycoon": false,
                 "tycoon_max_rolls": 50,
+                "xwar_idle": false,
                 "mining": {
                     "enabled": false,
                     "allow_bomb": false,
@@ -1138,16 +1149,23 @@
                     "free_daily": false
                 },
                 "ad_rewards": {
-                    "enabled": false,
+                    "enabled": true,
                     "config_ids": [
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
-                }
+                },
+                "secret_jewel": {
+                    "buy_daily": false,
+                    "draw_free": false
+                },
+                "sea_season": null
             },
             "web_reload_after_goto": false,
-            "dragon_realm_enabled": true
+            "dragon_realm_enabled": true,
+            "wanshen_rounds": 8
         },
         "web-002": {
             "name": "暴哥",
@@ -1155,7 +1173,7 @@
             "backend": "web_h5",
             "backend_display_id": "",
             "use_ws_runner": false,
-            "ws_token_spend": false,
+            "ws_token_spend": true,
             "ws_token_sweep_list": [],
             "ws_token_open_lamp": false,
             "ws_token_kungfu_guess": false,
@@ -1182,7 +1200,7 @@
             "web_reload_after_goto": false,
             "enable_farm": true,
             "enable_arena": true,
-            "enable_mining": true,
+            "enable_mining": false,
             "enable_dungeon": true,
             "enable_shop_manager": true,
             "enable_dungeon_manager": true,
@@ -1199,11 +1217,11 @@
             "sleep_min_hours": 1.0,
             "sleep_max_hours": 1.0,
             "ws_token": {
-                "enabled": false,
+                "enabled": true,
                 "bootstrap_token": true,
                 "offline_fallback": false,
                 "fallback_host": "",
-                "spend": false,
+                "spend": true,
                 "open_lamp": false,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
@@ -1253,6 +1271,7 @@
                 },
                 "tycoon": false,
                 "tycoon_max_rolls": 50,
+                "xwar_idle": false,
                 "mining": {
                     "enabled": false,
                     "allow_bomb": false,
@@ -1276,12 +1295,19 @@
                     "config_ids": [
                         12,
                         14,
-                        15
+                        15,
+                        5
                     ]
-                }
+                },
+                "secret_jewel": {
+                    "buy_daily": false,
+                    "draw_free": false
+                },
+                "sea_season": null
             },
             "online_check_interval": 5,
-            "dragon_realm_enabled": true
+            "dragon_realm_enabled": true,
+            "wanshen_rounds": 8
         }
     },
     "global": {

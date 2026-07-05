@@ -54,6 +54,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Sequence
 
+import json_manager
 from ws_token import (
     ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
     idle_reward, kungfu_store, league_solo, main_tasks, mining,
@@ -246,7 +247,29 @@ def _run_ad_rewards(client, *, config_ids, enabled: bool,
     """
     if not enabled or not config_ids:
         return {"skipped": "ad_rewards disabled (set ws_token.ad_rewards.enabled=True)"}
-    return ad_reward.claim_ads(client, list(config_ids), device_id=device)
+    out = ad_reward.claim_ads(client, list(config_ids), device_id=device)
+    if ad_reward.AD_SCIENCE_1 in config_ids:
+        _mark_daily_acceleration_done_if_science_ad_succeeded(out, device)
+    return out
+
+
+def _mark_daily_acceleration_done_if_science_ad_succeeded(
+        claim_ads_result: dict, device: Optional[str]) -> None:
+    """AD_SCIENCE_1 IS the GUI「每日加速」科技園跳過30分鐘 button, over pure WS.
+
+    When this WS claim actually did it (or the daily cap was already spent),
+    mark the same ``daily_acceleration`` json_manager record the GUI task
+    checks (game_actions/task_due.py:_due_daily_acceleration) so daily_tasks
+    skips its redundant trip into 科技園. If it was skipped because no
+    research is in progress, leave the record alone — nothing was done.
+    """
+    if not device:
+        return
+    res = claim_ads_result.get("results", {}).get(ad_reward.AD_NAMES[ad_reward.AD_SCIENCE_1])
+    if not res:
+        return
+    if res.get("claimed") or "maxed" in str(res.get("skipped", "")):
+        json_manager.time_recording(device, name="daily_acceleration")
 
 
 def _run_turntable(client) -> dict:
