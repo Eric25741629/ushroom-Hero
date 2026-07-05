@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Any, Callable, Optional
@@ -21,6 +22,9 @@ from ws_token.state import load_state, save_state
 
 # 模組級鎖：保護每個 public 方法的 read-modify-write（load -> mutate -> save）。
 _LOCK = threading.RLock()
+
+# 用 stdlib logger（getLogger 無副作用），維持本模組 import 時零副作用。
+logger = logging.getLogger(__name__)
 
 
 class MountTrackerStore:
@@ -403,3 +407,132 @@ def _update_host_hits(store: MountTrackerStore, scanned_owners: set, host_hit_id
             store.upsert_known(owner, host_hits=min(cur + 1, 5))
         elif cur > 0:
             store.upsert_known(owner, host_hits=cur - 1)
+
+
+# ============================================================================
+# Task 6：daemon + 真 IO 綁定 + 冪等啟動
+# ----------------------------------------------------------------------------
+# 共用 store singleton、hourly daemon（可停可催的 Event.wait）、真 reader（借
+# dashboard 純 WS 連線讀車位）。master-only；import 本模組不啟動任何 thread、不讀
+# 任何檔——只有呼叫 ensure_mount_tracker_started() 才起 daemon。
+# ============================================================================
+
+# 共用 store（dashboard 與 daemon 讀同一份）。
+_store: Optional[MountTrackerStore] = None
+_store_lock = threading.Lock()
+
+# daemon thread 狀態（冪等啟動）。
+_thread: Optional[threading.Thread] = None
+_started = False
+_start_lock = threading.Lock()
+# 可被 set() 提早喚醒（催掃）、亦作為 daemon 迴圈之間的睡眠閘。
+_wake = threading.Event()
+
+_CYCLE_INTERVAL_SEC = 3600.0
+
+
+def get_store() -> MountTrackerStore:
+    """回傳全域共用的 MountTrackerStore singleton（dashboard 與 daemon 共用）。"""
+    global _store
+    with _store_lock:
+        if _store is None:
+            _store = MountTrackerStore()
+        return _store
+
+
+def _get_ws_client(dev: str):
+    """借用 ``dev`` 的 dashboard 純 WS 連線並取得 live client。
+
+    透過 ``ws_session.ensure`` 註冊借用（會暫停該機 bot loop，讓喚醒禮讓），
+    再取回 live client。取不到（連線失敗 / 已死）回 None。此間接層供測試 monkeypatch，
+    測試不需真的開 socket。
+    """
+    try:
+        from control_panel import ws_session
+    except Exception:  # noqa: BLE001
+        return None
+    res = ws_session.ensure(dev)
+    if res.get("status") != "ok":
+        return None
+    return ws_session.get_client(dev)
+
+
+def _release_dev(dev: str) -> None:
+    """歸還借用的裝置連線並恢復其 bot loop（冪等）。"""
+    try:
+        from control_panel import ws_session
+        ws_session.disconnect(dev)
+    except Exception:  # noqa: BLE001 — 歸還失敗不可弄垮 cycle
+        logger.debug("[mount-tracker] release dev=%s failed", dev, exc_info=True)
+
+
+def _read_lot(dev: str, owner_role_id: int) -> Optional[dict]:
+    """真 reader：借 ``dev`` 讀 ``owner_role_id`` 的車位佔用並解析。任何例外回 None。"""
+    client = _get_ws_client(dev)
+    if client is None:
+        return None
+    try:
+        body = client.call(mount_scan.CMD_LOT_INFO,
+                           mount_scan.enc_lot_info(int(owner_role_id)))
+    except Exception:  # noqa: BLE001 — 被踢 / timeout / 例外一律視為讀失敗
+        logger.debug("[mount-tracker] read lot failed dev=%s owner=%s",
+                     dev, owner_role_id, exc_info=True)
+        return None
+    return mount_scan.parse_lot_occupants(body)
+
+
+def _run_one_cycle() -> None:
+    """跑一輪真掃描：借 idle 裝置、連線重用、結束時歸還所有借用連線。
+
+    idle_picker 先沿用本輪已借且仍活著的裝置（連線重用、借用維持短），該裝置被踢
+    才換新的 idle 裝置；scan_cycle 只看到 reader / idle_picker 兩個注入點。
+    """
+    store = get_store()
+    borrowed: list[str] = []
+
+    def idle_picker() -> Optional[str]:
+        # 沿用已借且連線仍活著的裝置（避免每個房東都重挑 / 重連）。
+        for dev in borrowed:
+            if _ws_active(dev):
+                return dev
+        return pick_idle_device()
+
+    def reader(dev: str, owner: int) -> Optional[dict]:
+        lot = _read_lot(dev, owner)
+        if dev not in borrowed and _ws_active(dev):
+            borrowed.append(dev)   # ensure 成功建立了連線 → 記錄以便收尾歸還
+        return lot
+
+    store.set_running(True)
+    try:
+        scan_cycle(store, reader, idle_picker, _wake.wait, time.time)
+    finally:
+        for dev in borrowed:
+            _release_dev(dev)
+        store.set_running(False)
+
+
+def _run_loop() -> None:
+    """daemon 主迴圈：啟用時每小時掃一輪；可被 _wake.set() 催醒。"""
+    logger.info("[mount-tracker] daemon started")
+    while True:
+        try:
+            from utils.dashboard_settings import get_mount_tracker_enabled
+            if get_mount_tracker_enabled():
+                _run_one_cycle()
+        except Exception:  # noqa: BLE001 — 迴圈永不因單輪錯誤而死
+            logger.warning("[mount-tracker] cycle error", exc_info=True)
+        _wake.wait(_CYCLE_INTERVAL_SEC)
+        _wake.clear()
+
+
+def ensure_mount_tracker_started() -> None:
+    """啟動單一背景 daemon thread（master-only、冪等）。"""
+    global _thread, _started
+    with _start_lock:
+        if _started and _thread is not None and _thread.is_alive():
+            return
+        _thread = threading.Thread(
+            target=_run_loop, name="mount-tracker", daemon=True)
+        _thread.start()
+        _started = True
