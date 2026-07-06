@@ -238,26 +238,18 @@ def test_dashboard_gate_active_probe_failure_is_open(monkeypatch):
 # --- control_panel.ws_session.is_active ---------------------------------------
 
 
-def test_ws_session_is_active_true_only_when_running_and_no_keepalive():
+def test_ws_session_is_active_reflects_registry_all_owners(monkeypatch):
+    # Phase 2：is_active 改讀 registry，涵蓋全 owner（不只工具/追蹤建立的純 WS，
+    # 還含 SCHEDULER 等）——正是喚醒閘門要消除的盲區。
     from control_panel import ws_session as wss
+    from runtime_services import session_registry as reg
 
-    class _C:
-        def __init__(self, running):
-            self._running = running
-
-        def is_running(self):
-            return self._running
-
+    monkeypatch.setattr(reg, "_safe_set_pause", lambda dev, paused: None)
     try:
-        with wss._lock:
-            wss._sessions["gate-dev"] = wss._Session(
-                client=_C(True), last_seen=111.0)
-        assert wss.is_active("gate-dev") is True
-        # 刻意不更新 last_seen：bot 的輪詢不能幫 session 續命
-        assert wss._sessions["gate-dev"].last_seen == 111.0
-        wss._sessions["gate-dev"].client._running = False
         assert wss.is_active("gate-dev") is False
+        # 由 SCHEDULER（非工具建立）佔用，舊版 _sessions 盲區看不到，新版看得到。
+        reg.acquire("gate-dev", reg.Owner.SCHEDULER, reg.Channel.WS)
+        assert wss.is_active("gate-dev") is True
         assert wss.is_active("no-such-dev") is False
     finally:
-        with wss._lock:
-            wss._sessions.pop("gate-dev", None)
+        reg.release("gate-dev", reg.Owner.SCHEDULER)

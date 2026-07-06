@@ -1,11 +1,13 @@
-"""Dashboard 持久純 WS 連線的 registry + Flask 端點。
+"""Dashboard 持久純 WS 連線的生命週期管理 + Flask 端點。
 
 讓 dashboard 不開瀏覽器、用既有的可重用 ticket 直接建立並維持一條純 WS 連線
 （每個 device 一條）。前端視窗開著時持續 ping 保活；偵測異地登入(cmd 259)被踢；
-閒置(>90s 無 ping)或主動關窗時自動回收連線並恢復該機的 bot loop。
+閒置(>90s 無 ping)或主動關窗時自動回收連線。
 
-接線（blueprint 註冊、前端輪詢、routes_inventory 共用 client）由外層之後處理；
-本模組只提供 registry 與三個 Flask 端點。
+**佔用登記 + bot pause 已外包給 `runtime_services.session_registry`**（Phase 2）：
+本模組只管 WSGameClient 連線生命週期（建立 / sweeper / ping / 回收）；
+「哪台裝置帳號此刻被誰佔用」「借用時暫停 bot loop」由 registry 統一負責，
+消除舊版散落此處的 `had_existing → 重連失敗還原 pause` 易錯邏輯與 `is_active` 盲區。
 
 # ponytail: 全機暫停 + 90s sweeper；若要更細粒度再說
 """
@@ -19,8 +21,9 @@ from typing import Optional
 
 from flask import Blueprint, jsonify
 
-import bot_state
 from control_panel.shared.auth import _fly_pet_auth
+from runtime_services import session_registry as registry
+from runtime_services.session_registry import Channel, Owner
 from ws_token.client import WSGameClient
 from ws_token.creds import load_creds
 
@@ -34,10 +37,12 @@ _SWEEP_INTERVAL_SEC = 15.0  # sweeper 掃描週期
 
 @dataclass
 class _Session:
-    """單一 device 的持久 WS 連線狀態。"""
+    """單一 device 的持久 WS 連線狀態。owner/role_id 供回收時向 registry 釋放。"""
 
     client: WSGameClient
     last_seen: float
+    owner: Owner
+    role_id: Optional[int] = None
     kicked: bool = False
     kick_reason: Optional[int] = None
 
@@ -51,15 +56,19 @@ _sweeper_started = False
 _sweeper_lock = threading.Lock()
 
 
-# --- registry API -----------------------------------------------------------
+# --- 連線管理 API -----------------------------------------------------------
 
-def ensure(device: str) -> dict:
+def ensure(device: str, *, owner: Owner = Owner.TOOL,
+           preempt: bool = False) -> dict:
     """確保 ``device`` 有一條 live 純 WS 連線；沒有就建立。
 
-    - 已有且仍 running：更新 last_seen，直接回報已連線。
-    - 無 / 已死 / 被踢：清掉舊的（先記住是否曾暫停 bot，避免重複 pause），
-      重新登入；連線成功才暫停該機 bot loop 並存入 registry。
-    - 例外：回 error，並確保沒有殘留半開連線或未配對的 pause。
+    佔用權先向 registry `acquire`（原子判定 + 借用型自動 pause bot loop），**成功才連線**
+    （先拿權再連，避免連了才發現要退）。
+
+    回傳：
+      - ``{"status": "ok", ...}``        已連線 / 新建成功
+      - ``{"status": "conflict", ...}``  帳號被別的 owner 佔用且不允許搶佔（不建立連線）
+      - ``{"status": "error", ...}``     無 creds / 連線失敗 / 受保護帳號
     """
     _ensure_sweeper()
 
@@ -67,51 +76,74 @@ def ensure(device: str) -> dict:
         existing = _sessions.get(device)
         if existing is not None and existing.client.is_running():
             existing.last_seen = time.time()
+            # 續租（冪等）避免 lease 過期被 sweeper/搶佔誤收。
+            registry.acquire(device, existing.owner, Channel.WS,
+                             label="工具", role_id=existing.role_id)
             return {"status": "ok", "connected": True, "kicked": False}
 
-        # 舊 session 已死/被踢：先記住「之前是否已暫停過 bot」，再清掉。
-        # 若之前已暫停（existing 存在代表 ensure 成功過 → 必定已 pause），
-        # 等下重連成功會再 pause 一次，這裡先不 unpause，交給重連路徑接手；
-        # 但若重連失敗，需把這個既有暫停還回去（見下方 except）。
-        had_existing = existing is not None
+        # 舊 session 已死/被踢：關連線並釋放它的 lease（恢復 bot loop）。
         if existing is not None:
             _close_session_locked(device, existing)
+            registry.release(device, existing.owner)
 
+        # 先讀 creds（拿 role_id 做保護比對；無 creds 直接回錯，不佔 lease）。
         try:
             creds = load_creds(device)
+        except FileNotFoundError:
+            # 無 captured creds 時 load_creds 的訊息含絕對路徑 + 登入指令；對前端只回通用提示。
+            logger.warning("ws_session ensure 無 creds device=%s", device)
+            return {"status": "error",
+                    "message": "此裝置尚未連線（連線詳情見伺服器日誌）"}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ws_session ensure 讀 creds 失敗 device=%s: %s", device, exc)
+            return {"status": "error", "message": str(exc)}
+
+        role_id = int(getattr(creds, "role_id", 0)) or None
+
+        # 先取得佔用權（借用型 owner 成功即 pause bot loop）。
+        result = registry.acquire(device, owner, Channel.WS, label="工具",
+                                  role_id=role_id, preempt=preempt)
+        if not result.ok:
+            if result.reason == "protected":
+                logger.warning("ws_session ensure 拒絕受保護帳號 device=%s", device)
+                return {"status": "error", "message": "此帳號受保護，不可由工具連線"}
+            conflict = result.conflict
+            owner_val = conflict.owner.value if conflict else "其他"
+            label = conflict.label if conflict else ""
+            logger.info("ws_session ensure 佔用衝突 device=%s 現任=%s", device, owner_val)
+            return {
+                "status": "conflict",
+                "message": f"此帳號目前在線中（{owner_val}{'：' + label if label else ''}）",
+                "conflict": {"owner": owner_val, "label": label},
+            }
+
+        # 拿到權才連線。連線失敗要釋放 lease（registry 會恢復 bot loop）。
+        client: Optional[WSGameClient] = None
+        try:
             client = WSGameClient(creds)
             client.set_kick_handler(_make_kick_handler(device))
             client.connect()
         except Exception as exc:  # noqa: BLE001 - 對前端統一回報錯誤訊息
-            logger.warning("ws_session ensure 失敗 device=%s: %s", device, exc)
-            # 確保沒有殘留半開連線。
-            try:
-                client.close()  # type: ignore[possibly-undefined]
-            except Exception:
-                pass
-            # 若先前已有一條（已暫停 bot）的 session 被我們清掉，這次重連又失敗，
-            # 必須把 bot loop 還原，避免裝置永久卡在暫停。
-            if had_existing:
-                _safe_set_pause(device, False)
-            # 無 captured creds 時 load_creds 的訊息含絕對路徑 + adb_token_login 指令；
-            # 對前端只回通用提示（細節已於上方 logger.warning 落伺服器日誌）。
-            if isinstance(exc, FileNotFoundError):
-                return {"status": "error",
-                        "message": "此裝置尚未連線（連線詳情見伺服器日誌）"}
+            logger.warning("ws_session ensure 連線失敗 device=%s: %s", device, exc)
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
+            registry.release(device, owner)
             return {"status": "error", "message": str(exc)}
 
-        # 連線成功才暫停 bot loop，並登錄 session。
-        _safe_set_pause(device, True)
-        _sessions[device] = _Session(client=client, last_seen=time.time())
-        logger.info("ws_session 已建立持久連線 device=%s", device)
+        _sessions[device] = _Session(client=client, last_seen=time.time(),
+                                     owner=owner, role_id=role_id)
+        logger.info("ws_session 已建立持久連線 device=%s owner=%s", device, owner.value)
         return {"status": "ok", "connected": True, "kicked": False}
 
 
 def ping(device: str) -> dict:
     """前端保活心跳：更新 last_seen 並回報目前連線/被踢狀態。
 
-    若 session 已被踢或不再 running，這裡**不**恢復 bot loop（交給 sweeper /
-    disconnect 統一回收），但保留 kicked 狀態讓前端讀得到。
+    若 session 已被踢或不再 running，這裡**不**回收（交給 sweeper / disconnect 統一
+    釋放 lease），但保留 kicked 狀態讓前端讀得到。
     """
     with _lock:
         session = _sessions.get(device)
@@ -126,21 +158,23 @@ def ping(device: str) -> dict:
 
 
 def disconnect(device: str) -> dict:
-    """主動關閉 ``device`` 的持久連線並恢復 bot loop。重複呼叫安全。"""
+    """主動關閉 ``device`` 的持久連線並釋放 registry lease。重複呼叫安全。"""
     with _lock:
         session = _sessions.pop(device, None)
+        owner = session.owner if session is not None else Owner.TOOL
         if session is not None:
             try:
                 session.client.close()
             except Exception:
                 logger.exception("ws_session disconnect close 失敗 device=%s", device)
-        # 不論 registry 中是否還有 session，都確保 bot loop 已恢復（冪等）。
-        _safe_set_pause(device, False)
+        # 釋放 lease（registry 恢復 bot loop）。無 session 時以預設 TOOL owner
+        # 冪等釋放（release 對 owner 不符者無動作）。
+        registry.release(device, owner)
     return {"status": "ok"}
 
 
 def get_client(device: str) -> Optional[WSGameClient]:
-    """供 routes_inventory 讀倉庫共用 live client。
+    """供 routes_inventory 等讀倉庫共用 live client。
 
     僅在連線仍 running 時回傳 client（否則 None），並順手更新 last_seen 保活。
     """
@@ -153,16 +187,14 @@ def get_client(device: str) -> Optional[WSGameClient]:
 
 
 def is_active(device: str) -> bool:
-    """``device`` 是否有仍在跑的持久連線（無 keep-alive 副作用）。
+    """``device`` 帳號此刻是否被任何 owner 佔用（無 keep-alive 副作用）。
 
-    給喚醒路徑當互斥閘門：bot 醒來前先確認 dashboard 沒在用這個帳號，避免同帳號
-    異地登入互踢（好友清單 presence 看不到純 WS session，觀察者閘門擋不住這種）。
-    刻意不更新 last_seen — bot 的輪詢不該幫 session 續命，sweeper 的 90s 閒置
-    回收要照常生效。
+    改讀 registry（Phase 2）：涵蓋**全 owner**——不只 dashboard 工具與坐騎追蹤建立的
+    純 WS，還包含 wake-cycle 的 SCHEDULER、在線監控等（後續 phase 接線後）。這正是
+    喚醒/借用互斥閘門需要的：舊版只看 `_sessions` 有盲區（好友清單 presence 也看不到
+    純 WS session），改讀 registry 消除盲區。刻意不更新任何 last_seen。
     """
-    with _lock:
-        session = _sessions.get(device)
-        return session is not None and session.client.is_running()
+    return registry.peek(device) is not None
 
 
 # --- 內部 helper（多數需在持有 `_lock` 時呼叫） -----------------------------
@@ -171,8 +203,8 @@ def _make_kick_handler(device):
     """產生綁定 ``device`` 的 kick closure。
 
     被踢(cmd 259)時於 reader thread 觸發一次：標記該 device 的 session 為 kicked。
-    kick_reason 目前無法取得：WSGameClient 不對外公開被踢 reason（cmd 259 body 的
-    reason 只在 client 內部 log，callback 無參數、也無 getter），故一律填 None。
+    lease 的回收交給 sweeper（偵測 not is_running() → close + release）。
+    kick_reason 目前無法取得（WSGameClient 未對外公開被踢 reason），一律填 None。
     """
 
     def _on_kick() -> None:
@@ -187,23 +219,15 @@ def _make_kick_handler(device):
 
 
 def _close_session_locked(device: str, session: _Session) -> None:
-    """關閉一條 session 的 client 並從 registry 移除（需持有 `_lock`）。
+    """關閉一條 session 的 client 並從 `_sessions` 移除（需持有 `_lock`）。
 
-    僅負責 client 與 registry；bot loop 的恢復由呼叫端依情境決定。
+    僅負責 client 與 `_sessions`；registry lease 的釋放由呼叫端負責。
     """
     try:
         session.client.close()
     except Exception:
         logger.exception("ws_session 關閉舊連線失敗 device=%s", device)
     _sessions.pop(device, None)
-
-
-def _safe_set_pause(device: str, paused: bool) -> None:
-    """包一層 try/except 的 bot_state.set_pause，避免影響連線生命週期。"""
-    try:
-        bot_state.set_pause(device, paused)
-    except Exception:
-        logger.exception("ws_session set_pause(%s, %s) 失敗", device, paused)
 
 
 # --- sweeper thread ---------------------------------------------------------
@@ -225,7 +249,7 @@ def _ensure_sweeper() -> None:
 
 
 def _sweep_loop() -> None:
-    """每 15 秒掃 registry，回收閒置(>90s)或已死的連線。
+    """每 15 秒掃 `_sessions`，回收閒置(>90s)或已死的連線。
 
     對每個 session 的清理都包 try/except，單一錯誤不可弄垮整條 thread。
     """
@@ -238,7 +262,7 @@ def _sweep_loop() -> None:
 
 
 def _sweep_once() -> None:
-    """掃描一輪：找出該回收的 device，逐一回收。"""
+    """掃描一輪：找出該回收的 device，逐一關連線並釋放 lease。"""
     now = time.time()
     with _lock:
         stale = [
@@ -251,9 +275,10 @@ def _sweep_once() -> None:
             session = _sessions.get(device)
             if session is None:
                 continue
+            owner = session.owner
             try:
                 _close_session_locked(device, session)
-                _safe_set_pause(device, False)
+                registry.release(device, owner)
                 logger.info("ws_session sweeper 已回收閒置/失效連線 device=%s", device)
             except Exception:
                 logger.exception("ws_session sweeper 回收 device=%s 失敗", device)
@@ -271,10 +296,14 @@ bp = Blueprint("ws_session", __name__)
 @bp.route("/api/ws_session/<ip>/connect", methods=["POST"])
 @_fly_pet_auth
 def connect_endpoint(ip: str):
-    """建立 / 復用 ``ip`` 的持久 WS 連線。error 時回 502。"""
+    """建立 / 復用 ``ip`` 的持久 WS 連線。error→502、conflict→409。"""
     result = ensure(ip)
-    status_code = 502 if result.get("status") == "error" else 200
-    return jsonify(result), status_code
+    status = result.get("status")
+    if status == "error":
+        return jsonify(result), 502
+    if status == "conflict":
+        return jsonify(result), 409
+    return jsonify(result), 200
 
 
 @bp.route("/api/ws_session/<ip>/ping", methods=["POST"])
@@ -287,5 +316,5 @@ def ping_endpoint(ip: str):
 @bp.route("/api/ws_session/<ip>/disconnect", methods=["POST"])
 @_fly_pet_auth
 def disconnect_endpoint(ip: str):
-    """主動關閉 ``ip`` 的持久連線並恢復 bot loop。"""
+    """主動關閉 ``ip`` 的持久連線並釋放 lease。"""
     return jsonify(disconnect(ip))
