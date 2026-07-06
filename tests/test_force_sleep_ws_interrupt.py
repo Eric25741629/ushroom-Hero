@@ -56,6 +56,9 @@ def dev(request):
     bot_state.init_device(ip)
     yield ip
     bot_state.check_force_sleep(ip)
+    # run_ws_phase 完整跑完會經 json_manager 在 repo root 寫 <ip>.json（每裝置
+    # 時間記錄），測試裝置的殘檔要清掉，避免污染工作樹。
+    Path(f"{ip}.json").unlink(missing_ok=True)
 
 
 # --- 1. bot_state peek ------------------------------------------------------
