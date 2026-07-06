@@ -180,6 +180,8 @@ class TestMountTrackerPublicExemption(unittest.TestCase):
         self.assertNotIn("/api/mount_tracker/toggle", auth.PUBLIC_PATHS)
         self.assertNotIn("/api/mount_tracker/rebootstrap", auth.PUBLIC_PATHS)
         self.assertNotIn("/api/mount_tracker/scan_now", auth.PUBLIC_PATHS)
+        # 分享搶奪車位卡到家族（借帳號 + 發家族）亦須登入，絕不公開給路人。
+        self.assertNotIn("/api/mount_tracker/rally", auth.PUBLIC_PATHS)
 
 
 class TestVisibility(unittest.TestCase):

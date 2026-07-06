@@ -58,6 +58,15 @@ def _wake_scan() -> None:
     wake_scan()
 
 
+def _rally(target_role_id: int, owner: int, pos: int) -> dict:
+    """把某列坐騎「搶奪車位」卡片送到家族頻道（延遲 import 服務層；缺席時回 error 信封）。"""
+    try:
+        from runtime_services.mount_tracker_service import rally_to_guild
+    except Exception:  # noqa: BLE001 — 服務層缺席不可讓路由回 500
+        return {"status": "error", "message": "服務未就緒"}
+    return rally_to_guild(target_role_id, owner, pos)
+
+
 # --- UID 還原（roleId → 顯示用 UID）------------------------------------------
 
 def _uid_of(role_id: int) -> str:
@@ -229,6 +238,31 @@ def mount_tracker_scan_now():
     if enabled:
         _wake_scan()
     return jsonify({"status": "ok", "enabled": enabled})
+
+
+@bp.route("/api/mount_tracker/rally", methods=["POST"])
+def mount_tracker_rally():
+    """把某列坐騎的「搶奪車位」分享卡片送到家族頻道（搖人）。
+
+    需登入（不在 PUBLIC_PATHS，由全站登入牆守門）：借帳號 + 發家族頻道是敏感動作，
+    路人不可觸發。固定由 5554 送出（見服務層 ``RALLY_DEVICE``）。
+
+    body：``{target_role_id, owner, pos}``——分別為停在車位的目標 roleId、車位主人
+    roleId(master_id)、車位位置。三者缺一 → 400；非數字 → 400。服務結果以信封回傳
+    （5554 忙碌 / 送出失敗 → ``status=error`` + 訊息，仍為 200 由前端顯示）。
+    """
+    body = request.get_json(silent=True) or {}
+    target_role_id = body.get("target_role_id")
+    owner = body.get("owner")
+    pos = body.get("pos")
+    if target_role_id is None or owner is None or pos is None:
+        return jsonify({"status": "error",
+                        "message": "缺少 target_role_id / owner / pos"}), 400
+    try:
+        res = _rally(int(target_role_id), int(owner), int(pos))
+    except (ValueError, TypeError):
+        return jsonify({"status": "error", "message": "參數格式錯誤"}), 400
+    return jsonify(res)
 
 
 @bp.route("/api/mount_tracker/toggle", methods=["POST"])
