@@ -819,6 +819,44 @@ def _release_dev(dev: str) -> None:
         logger.debug("[mount-tracker] release dev=%s failed", dev, exc_info=True)
 
 
+# 固定由此裝置送出家族搖人（使用者 2026-07-06 指定）：被號召的家族 = 此帳號的家族，
+# 故必須固定，不能隨機挑台（不同帳號可能屬不同家族）。
+RALLY_DEVICE = "emulator-5554"
+
+
+def rally_to_guild(target_role_id: int, owner: int, pos: int) -> dict:
+    """把「搶奪車位」分享卡片送到家族頻道（搖人）。固定由 :data:`RALLY_DEVICE`(5554) 送出。
+
+    借用該機開純 WS（``_get_ws_client`` 走 registry：未被佔用 + 非保護 + 非即將喚醒才給），
+    送出後歸還。fire-and-forget（chat s2c 為頻道廣播、非同 cmd 直接回覆，用 ``client.send``
+    不等回應）。5554 忙碌 / 被佔（掃描中、dashboard hold、即將喚醒）→ ensure 被拒回 None →
+    回 error 請稍後再試（不硬搶，避免打斷它自身任務）。
+
+    ``owner`` = 車位主人（master_id）、``target_role_id`` = 停在該車位的目標（role_id）。
+    家園車位固定 ``park_type=0``、``ceng=1``（實測 n=1；若卡片跳錯位再補樣本，不影響頻道安全）。
+    回 ``{"status": "ok"}`` 或 ``{"status": "error", "message": ...}``。
+    """
+    dev = RALLY_DEVICE
+    acquired: list[str] = []
+    # on_ensure 在「取得 lease 當下」登記借用：即使隨後 get_client 回 None，finally 仍歸還，
+    # 杜絕洩漏；ensure 被拒時 on_ensure 不觸發 → acquired 空 → 不歸還（本就沒借到）。
+    client = _get_ws_client(dev, on_ensure=lambda d: acquired.append(d))
+    try:
+        if client is None:
+            return {"status": "error", "message": f"{dev} 忙碌中或連線失敗，稍後再試"}
+        body = mount_scan.enc_parking_call_guild(
+            int(pos), 0, int(owner), int(target_role_id), 1)
+        client.send(mount_scan.CMD_CHAT_MESSAGE, body)
+        return {"status": "ok"}
+    except Exception:  # noqa: BLE001 — 送出失敗回 error，不可炸掉路由
+        logger.warning("[mount-tracker] rally send failed dev=%s owner=%s target=%s",
+                       dev, owner, target_role_id, exc_info=True)
+        return {"status": "error", "message": "送出失敗"}
+    finally:
+        if acquired:
+            _release_dev(dev)
+
+
 def _read_lot(dev: str, owner_role_id: int,
               on_ensure: Optional[Callable[[str], None]] = None) -> Optional[dict]:
     """真 reader：借 ``dev`` 讀 ``owner_role_id`` 的車位佔用並解析。任何例外回 None。
