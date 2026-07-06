@@ -403,29 +403,35 @@ def pick_idle_device(candidates: list[str] = CANDIDATES) -> Optional[str]:
 # ============================================================================
 # Task 5：scan_cycle — 掃描核心（依賴注入、純可測）
 # ----------------------------------------------------------------------------
-# 以權重排序 known players 當「車位主人（owner）」候選，逐一借 idle 裝置開一次性 WS
-# 連線讀該車位主人的車位佔用，比對是否停著追蹤目標；順手把新看到的佔用者滾進 known
-# （雪球）、更新車位主人車位加成與 host_hits。所有 IO（reader / idle_picker / sleeper /
-# now_fn）皆注入，測試不碰真 socket / 真 sleep / 真時鐘。
+# 以權重排序 known players 當「車位主人（owner）」候選，借「所有」安全 idle 裝置各開一條
+# worker 執行緒並行掃描：每台各自冷卻讀車位佔用，比對是否停著追蹤目標；順手把新看到的
+# 佔用者滾進 known（雪球）、更新車位主人車位加成與 host_hits。所有 IO（reader / still_idle /
+# sleeper / now_fn）與並行裝置清單（worker_devices）皆注入，測試不碰真 socket / 真 sleep /
+# 真時鐘。
 # ============================================================================
 
 # reader(device, owner_role_id) -> parse_lot_occupants dict | None（None=讀失敗）
 Reader = Callable[[str, int], Optional[dict]]
-IdlePicker = Callable[[], Optional[str]]
+StillIdle = Callable[[str], bool]  # 該裝置是否仍可續用（idle 且未即將自我喚醒）
 Sleeper = Callable[[float], Any]
 NowFn = Callable[[], float]
+
+# 單一 worker 連續讀失敗達此數 → 視為該台連線壞掉，收掉它，避免它把共享 queue 一路吃成
+# None 餓死其他台（ponytail 上限：非精算，壞台隔到下一輪由權重重排自然重試）。
+_MAX_CONSEC_READ_FAIL = 3
 
 
 def scan_cycle(
     store: MountTrackerStore,
     reader: Reader,
-    idle_picker: IdlePicker,
+    worker_devices: list[str],
+    still_idle: StillIdle,
     sleeper: Sleeper,
     now_fn: NowFn,
     *,
     top_n: int = 1600,
     budget_s: float = 1500,
-    cooldown_s: float = 3.0,
+    cooldown_s: float = 2.0,
     max_per_target: int = 5,
     on_progress: Optional[Callable[..., None]] = None,
 ) -> dict:
@@ -433,16 +439,18 @@ def scan_cycle(
 
     ``on_progress``（選用、DI）：每處理完一個車位主人就以
     ``on_progress(scanned=..., found=..., known=...)`` 回報即時進度（純記憶體，
-    供 dashboard 輪詢跳動）。為 None 時完全不影響行為與回傳（維持純函式可測）。
+    供 dashboard 輪詢跳動）。為 None 時完全不影響行為與回傳。
 
     流程：
       1. 無追蹤目標 → 直接回 ``{"skipped": "no_targets"}``。
       2. 以 known players（含 targets 自身）依 :func:`mount_scan.weight` 由高到低
          排序，取前 ``top_n`` 個當車位主人候選。
-      3. 逐一借 idle 裝置讀車位；每讀一次前 sleeper(cooldown_s)；無裝置則 sleeper
-         後換下一個車位主人。
+      3. ``worker_devices`` 每台各開一條 worker 執行緒並行掃描：共享游標依序取車位
+         主人，每台各自 ``sleeper(cooldown_s)`` 冷卻後讀一台（N 台 → 聚合約
+         N 台/cooldown）。``still_idle(dev)`` 為 False（即將自我喚醒 / 不再 idle）
+         即收掉該 worker；連續讀失敗達 :data:`_MAX_CONSEC_READ_FAIL` 亦收掉。
       4. 車位裡的佔用者：是追蹤目標且該目標尚未收滿 ``max_per_target`` → 收錄；
-         一律 upsert 進 known（雪球）。
+         一律 upsert 進 known（雪球）。共享狀態變更皆在單一 lock 內序列化。
       5. 更新車位主人 coin（車位加成）與 host_hits，寫回 results / last_run。
       6. 超過 ``budget_s`` 或所有目標都收滿 → 提早結束。
     """
@@ -490,71 +498,97 @@ def scan_cycle(
     # 本輪所有 known 更新累積在記憶體，迴圈結束後「一次寫回」，避免每個車位一次
     # 全檔重寫（NAS/SMB I/O 敏感）。{role_id: {field: value}}。
     pending: dict[int, dict] = {}
+    # 並行掃描：worker_devices 每台一條執行緒，共享 queue 游標 + 累積結構；所有共享
+    # 狀態變更都在此 lock 內序列化（reader / sleeper / still_idle 在鎖外並行）。
+    lock = threading.Lock()
+    cursor = 0
 
     def _stage(role_id: int, **fields: Any) -> None:
-        """把一筆 known 更新累積進 pending（None 欄位跳過，與 upsert_known 一致）。"""
+        """把一筆 known 更新累積進 pending（None 欄位跳過）。呼叫端須持有 lock。"""
         target = pending.setdefault(role_id, {})
         for key, value in fields.items():
             if value is not None:
                 target[key] = value
 
-    for owner_entry in queue:
-        # 所有目標都收滿 → 沒必要再掃。
-        if all(len(found[rid]) >= max_per_target for rid in target_ids):
-            break
-        # 超過時間預算 → 提早收工，剩下的留給下一輪。
-        if now_fn() >= deadline:
-            break
+    def _next_owner() -> Optional[int]:
+        """取下一個待掃車位主人 role_id；佇列空 / 早停條件成立回 None（含鎖）。"""
+        nonlocal cursor
+        with lock:
+            if cursor >= len(queue):
+                return None
+            # 所有目標都收滿 / 超過時間預算 → 提早收工，剩下的留給下一輪。
+            if all(len(found[rid]) >= max_per_target for rid in target_ids):
+                return None
+            if now_fn() >= deadline:
+                return None
+            entry = queue[cursor]
+            cursor += 1
+            return int(entry["role_id"])
 
-        owner = int(owner_entry["role_id"])
-        dev = idle_picker()
-        if dev is None:
-            sleeper(cooldown_s)  # 暫無 idle 裝置：冷卻後換下一個車位主人
-            continue
-
-        sleeper(cooldown_s)      # 每次讀取前冷卻，避免打太快
-        lot = reader(dev, owner)
-        if lot is None:
-            continue             # 讀失敗（被踢 / 例外）→ 換下一個車位主人
-        scanned_owners.add(owner)
-
-        for space in lot.get("spaces", []):
-            occ = space.get("role_id")
-            if not occ:
+    def _worker(dev: str) -> None:
+        consec_fail = 0
+        while True:
+            # 該台進入自身喚醒窗 / 不再 idle → 收掉此 worker（連線由呼叫端 finally 歸還）。
+            if not still_idle(dev):
+                return
+            owner = _next_owner()
+            if owner is None:
+                return
+            sleeper(cooldown_s)      # 每台各自冷卻，避免單一帳號 WS 打太快
+            lot = reader(dev, owner)
+            if lot is None:
+                # 連續讀失敗達上限 → 視為此台壞掉，收掉避免餓死其他台（見常數註解）。
+                consec_fail += 1
+                if consec_fail >= _MAX_CONSEC_READ_FAIL:
+                    return
                 continue
-            occ = int(occ)
-            name = space.get("name")
-            _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
-            if occ in target_ids and len(found[occ]) < max_per_target:
-                start_time = space.get("start_time")
-                # 車位主人名字/公會取自本輪開頭的 known 快照（純記憶體讀，無額外 IO）；
-                # 車位主人尚未進 known 時為 None。dashboard 需要 owner_name/owner_guild 顯示坐騎停在誰家。
-                owner_info = known.get(str(owner)) or {}
-                found[occ].append({
-                    "owner": owner,
-                    "owner_name": owner_info.get("name"),
-                    "owner_guild": owner_info.get("guild"),
-                    "pos": space.get("pos"),
-                    "start_time": start_time,
-                    "found_ts": now_fn(),
-                    "name": name,
-                    # 沿用本輪標記快照標註；同一實例（owner+start_time）已被標記則 True。
-                    "attacked": f"{owner}:{start_time}" in attacked.get(str(occ), {}),
-                })
-                host_hit_ids.add(owner)
+            consec_fail = 0
+            with lock:
+                scanned_owners.add(owner)
+                for space in lot.get("spaces", []):
+                    occ = space.get("role_id")
+                    if not occ:
+                        continue
+                    occ = int(occ)
+                    name = space.get("name")
+                    _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
+                    if occ in target_ids and len(found[occ]) < max_per_target:
+                        start_time = space.get("start_time")
+                        # 車位主人名字/公會取自本輪開頭的 known 快照（純記憶體讀）；未進 known
+                        # 時為 None。dashboard 需要 owner_name/owner_guild 顯示坐騎停在誰家。
+                        owner_info = known.get(str(owner)) or {}
+                        found[occ].append({
+                            "owner": owner,
+                            "owner_name": owner_info.get("name"),
+                            "owner_guild": owner_info.get("guild"),
+                            "pos": space.get("pos"),
+                            "start_time": start_time,
+                            "found_ts": now_fn(),
+                            "name": name,
+                            # 沿用本輪標記快照標註；同一實例（owner+start_time）已被標記則 True。
+                            "attacked": f"{owner}:{start_time}" in attacked.get(str(occ), {}),
+                        })
+                        host_hit_ids.add(owner)
 
-        # 車位主人車位加成（菇車幣）+ 掃描時間戳。
-        bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
-        _stage(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
+                # 車位主人車位加成（菇車幣）+ 掃描時間戳。
+                bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
+                _stage(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
 
-        # 即時進度回報（純記憶體）：scanned / found（純量）/ known 目前規模。
-        # known = 開頭快照 + 本輪雪球新增（pending 中尚未在 known 的 role_id）。
-        if on_progress:
-            on_progress(
-                scanned=len(scanned_owners),
-                found=sum(len(found[rid]) for rid in target_ids),
-                known=len(known) + sum(1 for rid in pending if str(rid) not in known),
-            )
+                # 即時進度回報（純記憶體）：scanned / found（純量）/ known 目前規模。
+                # known = 開頭快照 + 本輪雪球新增（pending 中尚未在 known 的 role_id）。
+                if on_progress:
+                    on_progress(
+                        scanned=len(scanned_owners),
+                        found=sum(len(found[rid]) for rid in target_ids),
+                        known=len(known) + sum(1 for rid in pending if str(rid) not in known),
+                    )
+
+    threads = [threading.Thread(target=_worker, args=(dev,), daemon=True)
+               for dev in worker_devices]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
     # host_hits：本輪掃到的車位主人，有停到目標 +1（上限 5），否則 decay，不 <0。
     # 基準值取本輪開頭的 known 快照（沿用舊值）；沒掃到的車位主人不動，靠權重排序自我收斂。
@@ -841,12 +875,12 @@ def _safe_call(client, cmd: int, body: bytes) -> Optional[bytes]:
 
 
 def _run_one_cycle() -> None:
-    """跑一輪真掃描：借 idle 裝置、連線重用、結束時歸還所有借用連線。
+    """跑一輪真掃描：並行借「所有」安全 idle 裝置、連線重用、結束時歸還所有借用連線。
 
-    idle_picker 每次沿用前先重檢借用裝置「仍 idle 且尚未即將自我喚醒」；一旦某借用
-    裝置進入自身喚醒窗（或不再 idle）立即歸還、換新的 idle 裝置，避免它被壓在自己的
-    喚醒窗外（spec §6：每次讀取前重檢 about-to-wake）。scan_cycle 只看到 reader /
-    idle_picker 兩個注入點。
+    每台安全 idle 且能建立連線的裝置各開一條 worker 並行掃描；scan_cycle 內每次讀取前
+    以 still_idle(dev) 重檢「仍 idle 且尚未即將自我喚醒」，一旦某台進入自身喚醒窗即收掉
+    該 worker（該連線由 finally 統一歸還），讓位給它自身 bot loop（spec §6）。scan_cycle
+    只看到 reader / still_idle / worker_devices 三個注入點。
     """
     store = get_store()
     borrowed: list[str] = []
@@ -856,18 +890,11 @@ def _run_one_cycle() -> None:
         if dev not in borrowed:
             borrowed.append(dev)
 
-    def idle_picker() -> Optional[str]:
-        # 沿用已借裝置，但每次都重檢：仍 idle 且尚未即將自我喚醒才沿用。
-        # 不可用 is_safe_to_borrow 判沿用——它要求 _ws_active==False，但我們正持有此機 WS
-        # 連線（active），會誤判不可借；沿用判定 = _is_idle 且 not _about_to_wake。
+    def still_idle(dev: str) -> bool:
+        # 續用判定：仍 idle 且尚未即將自我喚醒。不可用 is_safe_to_borrow——它要求
+        # _ws_active==False，但我們正持有此機 WS 連線（active），會誤判不可借。
         states = _states()
-        for dev in list(borrowed):
-            if _is_idle(dev, states) and not _about_to_wake(dev, states):
-                return dev
-            # 進入自身喚醒窗 / 不再 idle → 歸還並移除，讓位給該裝置自身 bot loop。
-            _release_dev(dev)
-            borrowed.remove(dev)
-        return pick_idle_device()
+        return _is_idle(dev, states) and not _about_to_wake(dev, states)
 
     def reader(dev: str, owner: int) -> Optional[dict]:
         # on_ensure 在連線建立當下登記借用（見 _read_lot），故被踢也不會漏歸還。
@@ -904,7 +931,19 @@ def _run_one_cycle() -> None:
             # 無 idle 裝置（dev 為 None）→ 不標記完成，下一輪重試 bootstrap。
         # sleeper 用 _cooldown（真 sleep），不可用 _wake.wait——見 _cooldown docstring。
         _set_progress(phase="scan")  # 進入正式掃描階段（頁面顯示 scanned/found/known）
-        scan_cycle(store, reader, idle_picker, _cooldown, time.time,
+        # 借「所有」目前安全可借的裝置並各自建立 WS 連線，交給 scan_cycle 各台並行掃描
+        # （每台自冷卻）。只納入連得上的裝置，避免壞台空跑吃掉共享 queue。
+        worker_devices: list[str] = []
+        for dev in CANDIDATES:
+            if not is_safe_to_borrow(dev):
+                continue
+            client = _get_ws_client(dev)
+            # ensure 可能已登記借用（即使隨後 get_client 回 None）→ 一律列入 borrowed，
+            # 由 finally 統一歸還，杜絕「連上但取不到 client」時的借用洩漏。
+            _mark_borrowed(dev)
+            if client is not None:
+                worker_devices.append(dev)
+        scan_cycle(store, reader, worker_devices, still_idle, _cooldown, time.time,
                    on_progress=lambda **kw: _set_progress(**kw))
     finally:
         for dev in borrowed:

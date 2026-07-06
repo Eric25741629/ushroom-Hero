@@ -1,7 +1,8 @@
 """Task 5：scan_cycle 核心測試（全依賴注入，不碰真 socket / sleep / 時鐘）。
 
-reader / idle_picker / sleeper / now_fn 皆為 fake；store 用真 MountTrackerStore
-搭 tmp_path，順帶驗證持久化。
+reader / still_idle / sleeper / now_fn + worker_devices 皆為 fake；store 用真
+MountTrackerStore 搭 tmp_path，順帶驗證持久化。單台 worker_devices=["d"] 的測試等同
+舊循序行為；多台測試驗證並行正確性（每個車位主人恰掃一次、各台自冷卻）。
 """
 from runtime_services.mount_tracker_service import MountTrackerStore, scan_cycle
 
@@ -16,7 +17,7 @@ def _target_lot(target_id=100):
 
 def test_returns_skip_when_no_targets(tmp_path):
     store = MountTrackerStore(state_dir=str(tmp_path))
-    out = scan_cycle(store, lambda d, o: None, lambda: "d", lambda s: None, lambda: 1.0)
+    out = scan_cycle(store, lambda d, o: None, ["d"], lambda dev: True, lambda s: None, lambda: 1.0)
     assert out == {"skipped": "no_targets"}
 
 
@@ -38,7 +39,7 @@ def test_finds_target_and_early_exits_at_5(tmp_path):
         tick[0] += 1.0
         return tick[0]
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, now_fn,
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, now_fn,
                budget_s=10_000, max_per_target=5)
 
     results = store.get_results()
@@ -56,7 +57,7 @@ def test_snowball_adds_new_occupants(tmp_path):
         return {"skin_list": [],
                 "spaces": [{"pos": 2, "role_id": 999, "start_time": 5, "name": "U"}]}
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     known = store.get_known()
     assert "999" in known and known["999"]["name"] == "U"   # 雪球納入
@@ -81,7 +82,7 @@ def test_respects_budget(tmp_path):
         tick[0] += 1000.0                         # 時間飛快前進
         return tick[0]
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, now_fn,
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, now_fn,
                top_n=1600, budget_s=1500, max_per_target=5)
 
     assert len(calls) < 10                        # 預算截斷，沒掃完整個 queue
@@ -103,7 +104,7 @@ def test_attacked_annotate_and_prune(tmp_path):
                     "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
         return {"skin_list": [], "spaces": []}
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     entry = store.get_results()["100"][0]
     assert entry["attacked"] is True                       # 命中預標記
@@ -123,7 +124,7 @@ def test_unmarked_instance_annotated_false(tmp_path):
                     "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
         return {"skin_list": [], "spaces": []}
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     assert store.get_results()["100"][0]["attacked"] is False
     assert store.get_attacked() == {}
@@ -141,7 +142,7 @@ def test_found_entry_carries_owner_name_and_guild(tmp_path):
                     "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
         return {"skin_list": [], "spaces": []}
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     entry = store.get_results()["100"][0]
     assert entry["owner"] == 1
@@ -161,7 +162,7 @@ def test_found_entry_owner_fields_none_when_owner_unknown(tmp_path):
                     "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
         return {"skin_list": [], "spaces": []}
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     entry = store.get_results()["100"][0]
     assert entry["owner_name"] is None
@@ -183,7 +184,7 @@ def test_summary_has_scalar_found_total(tmp_path):
             ]}
         return {"skin_list": [], "spaces": []}
 
-    out = scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    out = scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     assert isinstance(out["found_total"], int) and out["found_total"] == 2
     assert isinstance(out["found"], dict)                  # per-target dict 仍保留
@@ -205,7 +206,7 @@ def test_attacked_mark_survives_when_owner_not_scanned(tmp_path):
             return {"skin_list": [], "spaces": []}         # 掃到但實例消失
         return None                                        # 房東 2 / 目標自身讀失敗（未 scanned）
 
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0, budget_s=10_000)
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
 
     # 2:222 房東未被掃 → 保留；1:111 房東被掃但實例不在 → 剪掉。
     assert store.get_attacked() == {"100": {"2:222": 2000.0}}
@@ -222,7 +223,7 @@ def test_scan_cycle_reports_progress_with_increasing_scanned(tmp_path):
         return {"skin_list": [], "spaces": []}     # 空車位，仍算掃到（scanned +1）
 
     events = []
-    scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0,
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0,
                budget_s=10_000, on_progress=lambda **kw: events.append(kw))
 
     assert events                                   # 有回報
@@ -243,31 +244,118 @@ def test_scan_cycle_on_progress_none_unchanged(tmp_path):
             return _target_lot(100)
         return {"skin_list": [], "spaces": []}     # 目標自身車位為空
 
-    out = scan_cycle(store, reader, lambda: "d", lambda s: None, lambda: 1.0,
+    out = scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0,
                      budget_s=10_000)
     assert out["scanned"] == 2 and out["found_total"] == 1
 
 
-def test_skips_when_no_idle_device(tmp_path):
+def test_no_worker_devices_scans_nothing(tmp_path):
+    """worker_devices 為空（本輪無可借裝置）→ 不崩、不掃、results 空。"""
     store = MountTrackerStore(state_dir=str(tmp_path))
     store.add_target({"role_id": 100, "name": "T"})
-    for oid in range(1, 6):
+    store.upsert_known(1, name="o1")
+
+    calls = []
+    out = scan_cycle(store, lambda d, o: calls.append(o) or _target_lot(100),
+                     [], lambda dev: True, lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    assert calls == []                           # 沒有 worker → 完全沒讀
+    assert out["scanned"] == 0
+    assert store.get_results()["100"] == []
+
+
+def test_parallel_devices_scan_each_owner_exactly_once(tmp_path):
+    """多台 worker 並行：共享游標保證每個車位主人恰被掃一次（不重不漏）。"""
+    import threading
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 21):                      # 20 個車位主人
         store.upsert_known(oid, name=f"o{oid}")
 
-    picks = [None, None] + ["d"] * 100            # 前兩次沒有 idle 裝置，之後才有
-    idx = [0]
+    lock = threading.Lock()
+    seen = []
 
-    def idle_picker():
-        val = picks[idx[0]]
-        idx[0] += 1
-        return val
+    def reader(dev, owner):
+        with lock:
+            seen.append(owner)
+        return {"skin_list": [], "spaces": []}    # 空車位（仍算掃到）
 
-    sleeps = []
+    out = scan_cycle(store, reader, ["a", "b", "c", "d"], lambda dev: True,
+                     lambda s: None, lambda: 1.0, budget_s=10_000)
 
-    scan_cycle(store, reader=lambda d, o: _target_lot(100),
-               idle_picker=idle_picker, sleeper=lambda s: sleeps.append(s),
-               now_fn=lambda: 1.0, budget_s=10_000, max_per_target=5)
+    # 含目標自身車位（role_id 100 也是候選），每個恰一次、無重複無遺漏。
+    assert sorted(seen) == list(range(1, 21)) + [100]
+    assert out["scanned"] == 21
 
-    results = store.get_results()
-    assert len(results["100"]) >= 1              # 不崩、最終仍掃到
-    assert sleeps                                # 無裝置的空檔有冷卻
+
+def test_parallel_per_device_cooldown_once_per_read(tmp_path):
+    """每次讀取前恰冷卻一次：總冷卻次數 == 總讀取次數（各台各自冷卻）。"""
+    import threading
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 13):
+        store.upsert_known(oid, name=f"o{oid}")
+
+    lock = threading.Lock()
+    reads, sleeps = [], []
+
+    def reader(dev, owner):
+        with lock:
+            reads.append(owner)
+        return {"skin_list": [], "spaces": []}
+
+    def sleeper(s):
+        with lock:
+            sleeps.append(s)
+
+    scan_cycle(store, reader, ["a", "b", "c", "d"], lambda dev: True,
+               sleeper, lambda: 1.0, budget_s=10_000, cooldown_s=2.0)
+
+    assert len(sleeps) == len(reads) == 13        # 12 車位主人 + 目標自身，每讀前冷卻一次
+    assert all(s == 2.0 for s in sleeps)          # 冷卻值 = cooldown_s
+
+
+def test_worker_stops_when_device_not_idle(tmp_path):
+    """still_idle=False 的裝置立即收掉其 worker，佇列由其他台掃完。"""
+    import threading
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 11):
+        store.upsert_known(oid, name=f"o{oid}")
+
+    lock = threading.Lock()
+    by_dev = {"live": [], "dead": []}
+
+    def reader(dev, owner):
+        with lock:
+            by_dev[dev].append(owner)
+        return {"skin_list": [], "spaces": []}
+
+    out = scan_cycle(store, reader, ["live", "dead"],
+                     lambda dev: dev == "live",    # dead 一律非 idle → 立即收掉
+                     lambda s: None, lambda: 1.0, budget_s=10_000)
+
+    assert by_dev["dead"] == []                    # dead worker 未讀任何一台
+    assert sorted(by_dev["live"]) == list(range(1, 11)) + [100]  # live 掃完全部（含目標自身）
+    assert out["scanned"] == 11
+
+
+def test_worker_bails_after_consecutive_read_failures(tmp_path):
+    """單台連續讀失敗達上限 → 收掉該 worker，不把整個 queue 吃成 None。"""
+    from runtime_services.mount_tracker_service import _MAX_CONSEC_READ_FAIL
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 21):                       # queue 遠長於失敗上限
+        store.upsert_known(oid, name=f"o{oid}")
+
+    calls = []
+
+    def reader(dev, owner):
+        calls.append(owner)
+        return None                                # 一律讀失敗（連線壞）
+
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None,
+               lambda: 1.0, budget_s=10_000)
+
+    assert len(calls) == _MAX_CONSEC_READ_FAIL     # 達上限即收，未吃完 queue
+    assert store.get_results()["100"] == []
