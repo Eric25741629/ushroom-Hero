@@ -204,14 +204,17 @@ def mount_tracker_mark():  # 刻意公開（PUBLIC_PATHS）：路人可標記已
     if target_role_id is None or owner_role_id is None or start_time is None:
         return jsonify({"status": "error",
                         "message": "缺少 target_role_id / owner_role_id / start_time"}), 400
-    on = body.get("on")
+    on = bool(body.get("on") if body.get("on") is not None else True)
     try:
         _store().mark_attacked(
-            int(target_role_id), int(owner_role_id), int(start_time),
-            bool(on if on is not None else True))
+            int(target_role_id), int(owner_role_id), int(start_time), on)
     except (ValueError, TypeError):
         # 非數字的 target_role_id / owner_role_id / start_time → 400 而非 500。
         return jsonify({"status": "error", "message": "參數格式錯誤"}), 400
+    if on:
+        # 標記已打掉 → mark_attacked 已設 scan_hold_until；催醒 daemon 讓它重排「暫緩後再掃」，
+        # 否則它可能還在長間隔睡眠，5 分鐘後不會自己醒來刷新。
+        _wake_scan()
     return jsonify({"status": "ok"})
 
 

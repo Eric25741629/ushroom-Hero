@@ -26,6 +26,10 @@ _LOCK = threading.RLock()
 # 用 stdlib logger（getLogger 無副作用），維持本模組 import 時零副作用。
 logger = logging.getLogger(__name__)
 
+# 使用者標記某台坐騎「已打掉」後暫緩掃描的秒數：讓他打完不被 daemon 借帳號干擾，
+# 過此秒數 daemon 才「再開始掃」（順便刷新被打掉那台的最新狀態）。
+_POST_ATTACK_HOLD_SEC = 300.0
+
 
 # ============================================================================
 # 掃描即時進度（純記憶體，NO file I/O）
@@ -199,6 +203,9 @@ class MountTrackerStore:
 
         ``key = f"{owner_role_id}:{start_time}"``。``on=True`` 寫入 ``time.time()`` 標記戳；
         ``on=False`` 移除該鍵（該 target 清空後連同外層 dict 一併移除）。
+
+        ``on=True`` 另設 ``scan_hold_until = now + _POST_ATTACK_HOLD_SEC``：daemon 暫緩掃描
+        到此時點才「再開始掃」，讓使用者打完不被借帳號干擾（見 :func:`_wait_out_scan_hold`）。
         """
         key = f"{owner_role_id}:{start_time}"
         tkey = str(target_role_id)
@@ -206,7 +213,9 @@ class MountTrackerStore:
             data = self._load()
             attacked: dict = data.setdefault("attacked", {})
             if on:
-                attacked.setdefault(tkey, {})[key] = time.time()
+                now = time.time()
+                attacked.setdefault(tkey, {})[key] = now
+                data["scan_hold_until"] = now + _POST_ATTACK_HOLD_SEC  # 打掉後暫緩掃描
             else:
                 bucket = attacked.get(tkey)
                 if bucket is not None:
@@ -214,6 +223,14 @@ class MountTrackerStore:
                     if not bucket:
                         attacked.pop(tkey, None)
             self._save(data)
+
+    def get_scan_hold_until(self) -> float:
+        """回傳「暫緩掃描到此 epoch 秒」；未設 / 已過期則為 0.0（見 mark_attacked）。"""
+        with _LOCK:
+            try:
+                return float(self._load().get("scan_hold_until") or 0.0)
+            except (TypeError, ValueError):
+                return 0.0
 
     # ---- 上次執行資訊 last_run ----------------------------------------------
     def get_last_run(self) -> dict:
@@ -1005,6 +1022,22 @@ def _next_interval() -> float:
     return _CYCLE_INTERVAL_SEC
 
 
+def _wait_out_scan_hold() -> None:
+    """剛標記已打掉（``scan_hold_until`` 在未來）→ 睡到該時點才掃，讓使用者打完不被借帳號干擾。
+
+    迴圈重檢：暫緩期間若再標記會把 hold 往後推（mark 路由 wake → wait 被打斷 → 重算），
+    直到不再標記、hold 過期才返回。單次等待上限 ``_POST_ATTACK_HOLD_SEC``，避免壞值久睡。
+    """
+    while True:
+        hold = get_store().get_scan_hold_until()
+        remaining = hold - time.time()
+        if remaining <= 0:
+            return
+        _set_progress(next_scan_ts=hold)  # 頁面「下次掃描」顯示暫緩後的恢復時點
+        _wake.wait(min(remaining, _POST_ATTACK_HOLD_SEC + 1))
+        _wake.clear()
+
+
 def _run_loop() -> None:
     """daemon 主迴圈：啟用時掃一輪，找滿目標則放慢間隔；可被 _wake.set() 催醒。"""
     logger.info("[mount-tracker] daemon started")
@@ -1012,6 +1045,7 @@ def _run_loop() -> None:
         try:
             from utils.dashboard_settings import get_mount_tracker_enabled
             if get_mount_tracker_enabled():
+                _wait_out_scan_hold()  # 剛標記已打掉 → 暫緩到 hold 結束才「再開始掃」
                 _run_one_cycle()
         except Exception:  # noqa: BLE001 — 迴圈永不因單輪錯誤而死
             logger.warning("[mount-tracker] cycle error", exc_info=True)

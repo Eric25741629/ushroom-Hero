@@ -225,6 +225,48 @@ def test_progress_roundtrip_and_copy_isolation():
     assert mt.get_progress()["scanned"] == 0
 
 
+def test_wait_out_scan_hold_waits_until_hold_passes(monkeypatch):
+    """scan_hold_until 在未來 → 睡到該時點（單次等 remaining=hold-now）；過期後返回。"""
+    monkeypatch.setattr(mt.time, "time", lambda: 1000.0)
+    state = {"hold": 1300.0}                       # 未來 300 秒
+
+    class S:
+        def get_scan_hold_until(self):
+            return state["hold"]
+
+    monkeypatch.setattr(mt, "get_store", lambda: S())
+    monkeypatch.setattr(mt, "_set_progress", lambda **kw: None)
+    waits = []
+
+    def fake_wait(sec):
+        waits.append(sec)
+        state["hold"] = 0.0                        # 一次等待後 hold 過期
+
+    monkeypatch.setattr(mt._wake, "wait", fake_wait)
+    monkeypatch.setattr(mt._wake, "clear", lambda: None)
+
+    mt._wait_out_scan_hold()
+
+    assert waits == [300.0]                        # 等 hold-now = 300 秒
+
+
+def test_wait_out_scan_hold_noop_when_no_hold(monkeypatch):
+    """無暫緩（hold=0）→ 立即返回，不等待。"""
+    monkeypatch.setattr(mt.time, "time", lambda: 1000.0)
+
+    class S:
+        def get_scan_hold_until(self):
+            return 0.0
+
+    monkeypatch.setattr(mt, "get_store", lambda: S())
+    waits = []
+    monkeypatch.setattr(mt._wake, "wait", lambda s: waits.append(s))
+
+    mt._wait_out_scan_hold()
+
+    assert waits == []
+
+
 def test_next_interval_slows_when_satisfied(monkeypatch):
     """有目標且上輪 found_total 達門檻（2 目標 → 門檻 2*5-2=8）→ 放慢到 _IDLE_INTERVAL_SEC。"""
     class FakeStore:

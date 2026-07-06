@@ -262,6 +262,37 @@ def test_mark_records_call_default_on(app, monkeypatch):
     assert store.marked == [(100, 5, 111, True)]     # on 預設 True
 
 
+def test_mark_on_wakes_daemon_for_hold(app, monkeypatch):
+    # on=True → mark_attacked 已設暫緩戳；路由催醒 daemon 讓它排「5 分鐘後再掃」。
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark",
+                       json={"target_role_id": 100, "owner_role_id": 5, "start_time": 111})
+    assert resp.status_code == 200
+    assert woke == [True]
+
+
+def test_mark_off_does_not_wake(app, monkeypatch):
+    # 取消標記不催醒（不影響暫緩排程）。
+    store = FakeStore()
+    _use_store(monkeypatch, store)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/mark",
+                       json={"target_role_id": 100, "owner_role_id": 5,
+                             "start_time": 111, "on": False})
+    assert resp.status_code == 200
+    assert woke == []
+
+
 def test_mark_off(app, monkeypatch):
     store = FakeStore()
     _use_store(monkeypatch, store)

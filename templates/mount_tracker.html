@@ -99,6 +99,7 @@
         <span class="lbl" id="mtSwitchLbl">停用</span>
       </button>
       <div class="mt-stat">上次掃描<b id="mtLastRun">—</b></div>
+      <div class="mt-stat">下次掃描<b id="mtNextRun">—</b></div>
       <div class="mt-stat">掃描 / 找到<b id="mtScanStat">—</b></div>
       <div class="mt-stat">已知坐騎<b id="mtKnown">—</b></div>
       <div class="mt-stat">玩家庫<b id="mtBootstrap">—</b></div>
@@ -318,7 +319,7 @@ async function markMount(btn){
   btn.disabled = true;
   const res = await postJSON('/api/mount_tracker/mark', body);
   if(res.data && res.data.status === 'ok'){
-    UI.toast(body.on ? '已標記為已打掉' : '已取消標記', 'ok');
+    UI.toast(body.on ? '已標記為已打掉，掃描暫緩 5 分鐘' : '已取消標記', 'ok');
     refresh();
   } else {
     btn.disabled = false;
@@ -478,6 +479,10 @@ function renderStatus(d){
     $('mtKnown').textContent = fmt(d.known_count);
     $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
   }
+  // 下次掃描時間：停用→「停用中」；掃描中→「掃描中」；否則顯示 progress.next_scan_ts。
+  $('mtNextRun').textContent = !currentEnabled ? '停用中'
+    : running ? '掃描中'
+    : (p.next_scan_ts ? fmtTime(p.next_scan_ts) : '—');
   $('mtRunningWrap').style.display = running ? '' : 'none';
   return running;
 }

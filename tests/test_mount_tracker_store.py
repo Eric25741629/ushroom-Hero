@@ -1,3 +1,4 @@
+import runtime_services.mount_tracker_service as mt
 from runtime_services.mount_tracker_service import MountTrackerStore
 
 
@@ -47,6 +48,17 @@ def test_snapshot_shape(tmp_path):
     snap = s.snapshot()
     assert set(snap) >= {"targets", "results", "known_count", "last_run", "running"}
     assert snap["known_count"] == 1
+
+
+def test_mark_attacked_sets_scan_hold(tmp_path, monkeypatch):
+    """標記已打掉(on=True) → 設 scan_hold_until = now + _POST_ATTACK_HOLD_SEC；取消不改。"""
+    monkeypatch.setattr(mt.time, "time", lambda: 1000.0)
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    assert s.get_scan_hold_until() == 0.0                       # 預設無暫緩
+    s.mark_attacked(100, 5, 111, True)
+    assert s.get_scan_hold_until() == 1000.0 + mt._POST_ATTACK_HOLD_SEC
+    s.mark_attacked(100, 5, 111, False)                         # 取消標記不動 hold
+    assert s.get_scan_hold_until() == 1000.0 + mt._POST_ATTACK_HOLD_SEC
 
 
 def test_snapshot_restamps_attacked_live(tmp_path):
