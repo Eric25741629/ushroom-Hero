@@ -261,9 +261,21 @@ class MountTrackerStore:
         with _LOCK:
             data = self._load()
             known = data.get("known_players", {})
+            attacked = data.get("attacked", {})
+            # 每筆 found 的 attacked 於「讀取時」即時重算（snapshot 是唯一讀出口）：
+            # scan_cycle 只在掃描當下 stamp 一次，若不在此重算，使用者標記/取消標記
+            # 要等下一輪掃描才會反映。key=f"{owner}:{start_time}"（與 mark_attacked 一致）。
+            results = {
+                tkey: [
+                    {**r, "attacked":
+                        f"{r.get('owner')}:{r.get('start_time')}" in attacked.get(tkey, {})}
+                    for r in rows
+                ]
+                for tkey, rows in data.get("results", {}).items()
+            }
             return {
                 "targets": data.get("targets", []),
-                "results": data.get("results", {}),
+                "results": results,
                 "known_count": len(known),
                 "last_run": data.get("last_run", {}),
                 "running": data.get("running", False),

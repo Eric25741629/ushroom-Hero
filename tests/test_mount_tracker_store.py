@@ -49,6 +49,20 @@ def test_snapshot_shape(tmp_path):
     assert snap["known_count"] == 1
 
 
+def test_snapshot_restamps_attacked_live(tmp_path):
+    """snapshot 讀取時即時重算每筆 found 的 attacked，使用者標記後不必等下一輪掃描。"""
+    s = MountTrackerStore(state_dir=str(tmp_path))
+    # 掃描寫入時 attacked=False（尚未打掉）。
+    s.set_results({"1": [{"owner": 2, "start_time": 100, "attacked": False}]})
+    assert s.snapshot()["results"]["1"][0]["attacked"] is False
+    # 使用者標記已打掉 → 下次 snapshot 就是 True（無需重掃）。
+    s.mark_attacked(1, 2, 100, True)
+    assert s.snapshot()["results"]["1"][0]["attacked"] is True
+    # 取消標記 → 立即回 False。
+    s.mark_attacked(1, 2, 100, False)
+    assert s.snapshot()["results"]["1"][0]["attacked"] is False
+
+
 def test_bulk_upsert_known_merges_and_skips_none(tmp_path):
     s = MountTrackerStore(state_dir=str(tmp_path))
     s.upsert_known(9, name="X", guild="G")
