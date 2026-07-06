@@ -473,7 +473,8 @@ function renderStatus(d){
   } else {
     // 閒置：沿用上次掃描結果（維持既有行為）。
     $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
-    $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found) + ' 台') : '—';
+    // lr.found 是 per-target dict（Number(dict)=NaN→「非數值」）；純量在 lr.found_total。
+    $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found_total) + ' 台') : '—';
     $('mtKnown').textContent = fmt(d.known_count);
     $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
   }
