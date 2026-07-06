@@ -26,8 +26,13 @@
 
 使用者已決策：① 在線監控走白名單+顯示借用 ② bot_state 底層一併重構兩態（上線/離線 + owner + 通道 ws/h5/adb）③ 特殊喚醒收斂單點保留。
 登入權限：白名單（腳本排程/坐騎追蹤/在線監控）免確認；其他 dashboard 分頁切裝置不自動登入、手動點登入、在線中彈確認 modal。
-- [ ] 設計文件：`docs/superpowers/specs/2026-07-06-account-session-registry-design.md`（subagent 起草中）
-- [ ] 使用者過目設計 + 分階段計畫後再動工
+- [x] 設計文件：`docs/superpowers/specs/2026-07-06-account-session-registry-design.md`
+- [x] 使用者核准：**一次做完 Phase 1-4**（Phase 5-7 之後再議）
+- [ ] Phase 1：新增 `runtime_services/session_registry.py` + 單測（純加法不接線）
+- [ ] Phase 2：`control_panel/ws_session.py` 改走 registry（is_active 消盲區；pause 移交 registry；ensure 支援 owner 參數）
+- [ ] Phase 3：mount-tracker 借用改 `acquire(MOUNT_TRACKER)`、`still_idle` 改 poll preempted（修誤判可借+TOCTOU）
+- [ ] Phase 4：online_monitor + online_check 改走 registry（5558/human_played 硬擋、三服務不撞台）
+- [ ] Opus review 審整體 diff → merge main → **需重啟 new_main_v2.py + control panel**
 
 ## 🚧 2026-07-05 車位裝飾升級：WS 斷線續跑 + 買碎片冪等（session 44fccb3b）
 
