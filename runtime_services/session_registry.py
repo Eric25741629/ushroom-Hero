@@ -251,15 +251,20 @@ def _load_protected_role_ids() -> frozenset:
 
 
 def _protected_role_ids() -> frozenset:
-    """protected roleId 集合(快取一次)。此為測試 seam,可整個 monkeypatch。"""
+    """protected roleId 集合(快取一次)。此為測試 seam,可整個 monkeypatch。
+
+    空結果不快取:首次呼叫時 creds 可能未就緒而解析出空集,若永久快取會讓
+    「共用受保護 roleId 的別名裝置」漏擋;下次呼叫重試直到取得非空為止
+    (canonical 裝置名仍由 _is_human_played_device 擋住,不受影響)。
+    """
     global _protected_cache
-    if _protected_cache is None:
+    if not _protected_cache:
         try:
             _protected_cache = _load_protected_role_ids()
         except Exception:
             logger.exception("session_registry 載入 protected role_ids 失敗,暫視為空集")
-            _protected_cache = frozenset()
-    return _protected_cache
+            return frozenset()
+    return _protected_cache or frozenset()
 
 
 def _is_human_played_device(device: str) -> bool:

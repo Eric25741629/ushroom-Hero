@@ -42,7 +42,7 @@ def _ws_client(ip: str):
     if client is not None:
         return client, None
     res = ws_session.ensure(ip)
-    if res.get("status") == "error":
+    if res.get("status") != "ok":
         return None, res.get("message", "WS 連線失敗")
     client = ws_session.get_client(ip)
     if client is None:
@@ -199,7 +199,7 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
                 # exec 端 target_level 護欄 + 冪等買保證重試不重花、不多升。
                 _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試…")
                 time.sleep(_STEP_GAP_S)
-                if ws_session.ensure(ip).get("status") != "error":
+                if ws_session.ensure(ip).get("status") == "ok":
                     res, e = _exec_step(ip, step)
             if e or not res or not res.get("ok"):
                 reason = (res or {}).get("err") if res else e

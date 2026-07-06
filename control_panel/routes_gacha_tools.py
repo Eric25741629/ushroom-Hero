@@ -71,7 +71,7 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
         client = ws_session.get_client(ip)
         if client is None:
             res = ws_session.ensure(ip)
-            if res.get("status") == "error":
+            if res.get("status") != "ok":
                 _job_update(jid, status="error",
                             error=f"WS 連線失敗：{res.get('message', '')}")
                 return

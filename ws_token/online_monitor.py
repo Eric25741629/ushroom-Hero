@@ -411,105 +411,122 @@ class OnlineMonitor:
         current: Optional[str] = None
         gate_reconnect = False  # throttle only reopen-after-failure (anti-storm)
 
-        while self._running:
-            # Yield if a higher-priority owner (e.g. the device's SCHEDULER wake)
-            # preempted our detector lease. Drop the connection + release before
-            # sending anything else to a now-contested account.
-            if self._preempted(current):
-                logger.info("online-monitor: detector %s preempted; yielding", current)
-                if client is not None:
-                    self._close(client)
-                self._release_detector(current)
-                client, current = None, None
-                gate_reconnect = False
-                self._set_active(None)
-                self._sleep()
-                continue
-
-            desired = self._select_detector(current, self.snapshot)
-
-            # No idle bot to safely log in as → drop any connection rather than
-            # squat on a busy account and kick its running bot. Go stale; the
-            # one-shot WS fallback covers online-checks meanwhile.
-            if desired is None:
-                if client is not None:
-                    logger.info("online-monitor: no idle detector; disconnecting %s",
+        # 整個迴圈包 try/finally：任何未預期例外導致 thread 死亡時，finally 一定
+        # 釋放 lease（連帶解除 registry 的 set_pause）。否則 sticky detector（通常
+        # 是 5554）會永久 paused + is_active=True，重啟前再也不會喚醒。
+        try:
+            while self._running:
+                # Yield if a higher-priority owner (e.g. the device's SCHEDULER
+                # wake) preempted our detector lease. Drop the connection +
+                # release before sending anything else to a contested account.
+                if self._preempted(current):
+                    logger.info("online-monitor: detector %s preempted; yielding",
                                 current)
+                    if client is not None:
+                        self._close(client)
+                    self._release_detector(current)
+                    client, current = None, None
+                    gate_reconnect = False
+                    self._set_active(None)
+                    self._sleep()
+                    continue
+
+                desired = self._select_detector(current, self.snapshot)
+
+                # No idle bot to safely log in as → drop any connection rather
+                # than squat on a busy account and kick its running bot. Go
+                # stale; the one-shot WS fallback covers online-checks meanwhile.
+                if desired is None:
+                    if client is not None:
+                        logger.info(
+                            "online-monitor: no idle detector; disconnecting %s",
+                            current)
+                        self._close(client)
+                        self._release_detector(current)
+                        client, current = None, None
+                    self._set_active(None)
+                    self._sleep()
+                    continue
+
+                # Current detector went busy (or a better one is preferred) →
+                # hand off immediately. Switching AWAY from a busy account is
+                # never throttled (it stops a conflict); only reopening after a
+                # failure is.
+                if client is not None and current != desired:
+                    logger.info("online-monitor: handing off detector %s -> %s",
+                                current, desired)
                     self._close(client)
                     self._release_detector(current)
                     client, current = None, None
-                self._set_active(None)
-                self._sleep()
-                continue
+                    gate_reconnect = False
 
-            # Current detector went busy (or a better one is preferred) → hand
-            # off immediately. Switching AWAY from a busy account is never
-            # throttled (it stops a conflict); only reopening after a failure is.
-            if client is not None and current != desired:
-                logger.info("online-monitor: handing off detector %s -> %s",
-                            current, desired)
-                self._close(client)
-                self._release_detector(current)
-                client, current = None, None
-                gate_reconnect = False
-
-            if client is None:
-                # A forced (stale-escape) pick bypasses the anti-storm throttle:
-                # the user wants it to retry a fresh random bot every cycle until
-                # the snapshot refreshes.
-                if (gate_reconnect and not self._switch_allowed()
-                        and not self._last_pick_forced):
-                    self._sleep()
-                    continue
-                # Take the account lease BEFORE connecting (atomic gate; loses to
-                # SCHEDULER/TOOL). A conflict means another owner grabbed it since
-                # selection (TOCTOU) → skip this cycle; next select re-peeks it.
-                acq = registry.acquire(desired, Owner.ONLINE_MONITOR, Channel.WS,
-                                       label="在線監控 detector", preempt=False)
-                if not acq.ok:
-                    owner_val = acq.conflict.owner.value if acq.conflict else acq.reason
-                    logger.info("online-monitor: %s 已被 %s 佔用,跳過本輪",
-                                desired, owner_val)
-                    gate_reconnect = True
-                    self._set_active(None)
-                    self._sleep()
-                    continue
-                if self._last_pick_forced:
-                    logger.warning(
-                        "online-monitor: snapshot stale >%.0fs — FORCE blind-connect "
-                        "as %s (may kick a human; excluded=%s)",
-                        self._force_refresh_sec, desired, sorted(self._force_exclude))
-                client = self._connect(desired)
-                self._last_switch_ts = self._now()
                 if client is None:
-                    self._release_detector(desired)  # connect failed → give lease back
-                    current = None
-                    gate_reconnect = True  # connect failed → throttle the retry
+                    # A forced (stale-escape) pick bypasses the anti-storm
+                    # throttle: the user wants it to retry a fresh random bot
+                    # every cycle until the snapshot refreshes.
+                    if (gate_reconnect and not self._switch_allowed()
+                            and not self._last_pick_forced):
+                        self._sleep()
+                        continue
+                    # Take the account lease BEFORE connecting (atomic gate;
+                    # loses to SCHEDULER/TOOL). A conflict means another owner
+                    # grabbed it since selection (TOCTOU) → skip this cycle;
+                    # next select re-peeks it.
+                    acq = registry.acquire(desired, Owner.ONLINE_MONITOR,
+                                           Channel.WS,
+                                           label="在線監控 detector",
+                                           preempt=False)
+                    if not acq.ok:
+                        owner_val = (acq.conflict.owner.value if acq.conflict
+                                     else acq.reason)
+                        logger.info("online-monitor: %s 已被 %s 佔用,跳過本輪",
+                                    desired, owner_val)
+                        gate_reconnect = True
+                        self._set_active(None)
+                        self._sleep()
+                        continue
+                    if self._last_pick_forced:
+                        logger.warning(
+                            "online-monitor: snapshot stale >%.0fs — FORCE "
+                            "blind-connect as %s (may kick a human; excluded=%s)",
+                            self._force_refresh_sec, desired,
+                            sorted(self._force_exclude))
+                    client = self._connect(desired)
+                    self._last_switch_ts = self._now()
+                    if client is None:
+                        self._release_detector(desired)  # connect failed → give lease back
+                        current = None
+                        gate_reconnect = True  # connect failed → throttle the retry
+                        self._set_active(None)
+                        self._sleep()
+                        continue
+                    current = desired
+                    gate_reconnect = False
+                    self._set_active(desired)  # records the clean prev->desired switch
+
+                try:
+                    entries = poll_friends(client, self._threshold_sec)
+                    with self._lock:
+                        self._snapshot = Snapshot(current, self._now(),
+                                                  tuple(entries))
+                except Exception as exc:
+                    logger.warning("online-monitor: poll failed (%s): %s",
+                                   current, exc)
+                    self._close(client)
+                    self._release_detector(current)
+                    client, current = None, None
+                    gate_reconnect = True  # dropped/kicked → throttle reconnect
                     self._set_active(None)
-                    self._sleep()
                     continue
-                current = desired
-                gate_reconnect = False
-                self._set_active(desired)  # records the clean prev->desired switch
 
-            try:
-                entries = poll_friends(client, self._threshold_sec)
-                with self._lock:
-                    self._snapshot = Snapshot(current, self._now(), tuple(entries))
-            except Exception as exc:
-                logger.warning("online-monitor: poll failed (%s): %s", current, exc)
+                self._sleep()
+        except Exception:  # noqa: BLE001 — thread 死亡必須留痕，finally 保證釋放
+            logger.exception("online-monitor: loop crashed; releasing detector")
+        finally:
+            if client is not None:
                 self._close(client)
-                self._release_detector(current)
-                client, current = None, None
-                gate_reconnect = True  # dropped/kicked → throttle reconnect
-                self._set_active(None)
-                continue
-
-            self._sleep()
-
-        if client is not None:
-            self._close(client)
-        self._release_detector(current)
+            self._release_detector(current)
+            self._set_active(None)
 
 
 # --- module-level singleton for dashboard integration -------------------------

@@ -90,7 +90,7 @@ def _session_client(ip: str):
     client = ws_session.get_client(ip)
     if client is None:
         res = ws_session.ensure(ip)
-        if res.get("status") == "error":
+        if res.get("status") != "ok":
             return None, None, res.get("message", "WS 連線失敗")
         client = ws_session.get_client(ip)
         if client is None:
