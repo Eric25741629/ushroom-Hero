@@ -6,6 +6,29 @@
 
 ---
 
+## 🚧 2026-07-06 強制休眠必須立即中斷（含 WS 階段）+ 5554/WS 搶登入排查
+
+背景：dashboard 按「強制休眠」沒反應。根因＝WS 執行路徑沒有 force-sleep 中斷點：
+- `ws_runner_service.run_ws_device_cycle` 呼叫 `run_device` 完全沒傳 `should_abort`（純 WS 裝置整輪跑完才理信號）
+- `ws_phase._should_abort` 只輪詢「開啟瀏覽器」請求（且僅 web_h5），不看 FORCE_SLEEP
+- Playwright 路徑本來就有 `_pause_guard`（每個裝置動作前 raise），只有 WS 是死角
+
+計畫（worktree 隔離）：
+- [x] `bot_state.py`：加 `has_pending_force_sleep(ip)` 非消費 peek
+- [x] `game_actions/ws_phase.py` `_should_abort`：force_sleep pending 也回 True（不限 web_h5）
+- [x] `runtime_services/ws_runner_service.py` `run_ws_device_cycle`：傳 `should_abort` 進 `run_device`，返回後消費信號 raise ForceSleepRequested
+- [x] `new_main_v2.py` `_run_ws_phase_for_wake`：WS 階段後消費信號 raise（init/主迴圈/備援三呼叫端統一咽喉點）
+- [x] 測試（tests/test_force_sleep_ws_interrupt.py，6 案例）+ 相關 122 測試全綠 → merge main（f37abb70）→ worktree/branch 已清
+- [ ] **待辦：重啟 `new_main_v2.py` 生效**（無 hot-reload）
+- [x] 並行排查「5554 搶登入」完成 → 根因＝三服務（mount-tracker/online_monitor/online_check）各自 advisory 檢查、零協調、共用同池帳號；詳見下一節設計案
+
+## 🚧 2026-07-06 帳號佔用 registry + bot_state 兩態重構（設計中，待使用者核准）
+
+使用者已決策：① 在線監控走白名單+顯示借用 ② bot_state 底層一併重構兩態（上線/離線 + owner + 通道 ws/h5/adb）③ 特殊喚醒收斂單點保留。
+登入權限：白名單（腳本排程/坐騎追蹤/在線監控）免確認；其他 dashboard 分頁切裝置不自動登入、手動點登入、在線中彈確認 modal。
+- [ ] 設計文件：`docs/superpowers/specs/2026-07-06-account-session-registry-design.md`（subagent 起草中）
+- [ ] 使用者過目設計 + 分階段計畫後再動工
+
 ## 🚧 2026-07-05 車位裝飾升級：WS 斷線續跑 + 買碎片冪等（session 44fccb3b）
 
 背景：dashboard 一鍵升級跑到 [26/30] 北極熊 ★6→7 時 `WebSocketConnectionClosedException`
