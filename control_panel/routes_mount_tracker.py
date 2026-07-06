@@ -16,7 +16,7 @@ import logging
 
 from flask import Blueprint, jsonify, render_template, request
 
-from control_panel.shared.auth import require_admin
+from control_panel.shared.auth import current_user, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -123,10 +123,16 @@ def _resolve_offline(by: str, value: str):
 
 @bp.route("/mount-tracker")
 def mount_tracker_page():  # 刻意公開（PUBLIC_PATHS）：路人不登入亦可檢視/編輯
-    """坐騎追蹤器頁面（掃描發現的玩家坐騎 + 追蹤名單管理）。"""
+    """坐騎追蹤器頁面（掃描發現的玩家坐騎 + 追蹤名單管理）。
+
+    頁面對路人公開，但「重建玩家庫」等管理操作只在登入後才顯示（``logged_in``）；
+    後端仍以 ``@require_admin`` 為準，此旗標只控制 UI 露出，不當作授權。
+    """
     from control_panel.routes_pages import _get_frontend_version
 
-    return render_template("mount_tracker.html", frontend_version=_get_frontend_version())
+    return render_template("mount_tracker.html",
+                           frontend_version=_get_frontend_version(),
+                           logged_in=bool(current_user()))
 
 
 @bp.route("/api/mount_tracker/results", methods=["GET"])
