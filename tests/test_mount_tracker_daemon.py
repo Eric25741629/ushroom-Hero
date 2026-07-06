@@ -92,52 +92,46 @@ def test_read_lot_records_borrow_at_ensure_even_if_read_kicked(monkeypatch):
     assert seen == ["devX"]            # 連線已建立 → 已登記借用（即使讀取失敗）
 
 
-def test_borrowed_dev_released_when_about_to_wake(monkeypatch):
-    """FIX 4：借用中的裝置進入自身喚醒窗 → idle_picker 歸還它並改挑新的 idle 裝置。"""
+def test_scan_borrows_all_safe_idle_and_releases(monkeypatch):
+    """並行掃描：借「所有」安全 idle 且連得上的裝置當 worker、收尾一律歸還；
+    still_idle 反映 idle 且未即將自我喚醒（進入喚醒窗 → False，讓位給自身 bot loop）。"""
     captured = {}
 
-    def fake_scan_cycle(store, reader, idle_picker, sleeper, now_fn, **kw):
-        captured["reader"] = reader
-        captured["idle_picker"] = idle_picker
+    def fake_scan_cycle(store, reader, worker_devices, still_idle, sleeper, now_fn, **kw):
+        captured["worker_devices"] = list(worker_devices)
+        captured["still_idle"] = still_idle
         return {}
 
     class FakeStore:
         def get_bootstrap_done(self):
-            return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan_cycle 路徑
+            return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan 路徑
         def set_running(self, running):
             pass
 
-    def fake_read_lot(dev, owner, on_ensure=None):
-        if on_ensure is not None:
-            on_ensure(dev)             # ensure 成功即登記借用
-        return {"skin_list": [], "spaces": []}
-
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
-    monkeypatch.setattr(mt, "_read_lot", fake_read_lot)
-    monkeypatch.setattr(mt, "_now", lambda: 1000.0)
+    monkeypatch.setattr(mt, "CANDIDATES", ["devA", "devB", "devC", "devD"])
+    # devA/devC/devD 安全可借；devD 連不上（client None）→ 只借 devA/devC。
+    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: ip in {"devA", "devC", "devD"})
+    monkeypatch.setattr(mt, "_get_ws_client", lambda dev: None if dev == "devD" else object())
 
     released = []
     monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
 
-    states = {"val": {"devA": {"task": "休眠中", "next_wake_at": 9_999_999.0}}}
-    monkeypatch.setattr(mt, "_states", lambda: states["val"])
-    picks = iter(["devA", "devB"])
-    monkeypatch.setattr(mt, "pick_idle_device", lambda: next(picks))
+    # still_idle 判定：devA 仍 idle；devC 即將自我喚醒（1060-1000=60s < 120s lead）。
+    monkeypatch.setattr(mt, "_now", lambda: 1000.0)
+    states = {"devA": {"task": "休眠中", "next_wake_at": 9_999_999.0},
+              "devC": {"task": "休眠中", "next_wake_at": 1060.0}}
+    monkeypatch.setattr(mt, "_states", lambda: states)
 
-    # fake scan_cycle 只擷取 closures 即返回（borrowed 仍空、finally 不歸還）。
     mt._run_one_cycle()
-    idle_picker = captured["idle_picker"]
-    reader = captured["reader"]
 
-    assert idle_picker() == "devA"     # borrowed 空 → pick_idle_device → devA
-    reader("devA", 1)                  # ensure 成功 → borrowed=[devA]
-
-    # devA 進入自身喚醒窗（1060 - 1000 = 60s < 120s lead）。
-    states["val"] = {"devA": {"task": "休眠中", "next_wake_at": 1060.0},
-                     "devB": {"task": "休眠中", "next_wake_at": 9_999_999.0}}
-    assert idle_picker() == "devB"     # devA 被歸還、改挑 devB
-    assert released == ["devA"]
+    assert captured["worker_devices"] == ["devA", "devC"]   # devB 不安全、devD 連不上
+    # 收尾歸還所有登記過借用的裝置；devD 連不上仍列入 borrowed（防洩漏）→ 一併歸還。
+    assert set(released) == {"devA", "devC", "devD"}
+    still_idle = captured["still_idle"]
+    assert still_idle("devA") is True                       # 仍 idle
+    assert still_idle("devC") is False                      # 進入喚醒窗 → 收掉該 worker
 
 
 def test_run_one_cycle_runs_bootstrap_when_not_done(monkeypatch):
@@ -193,6 +187,8 @@ def test_run_one_cycle_skips_bootstrap_when_done(monkeypatch):
     monkeypatch.setattr(mt, "scan_cycle",
                         lambda *a, **k: events.__setitem__("scan", events["scan"] + 1))
     monkeypatch.setattr(mt, "pick_idle_device", lambda: None)
+    # scan 路徑會借「所有」安全 idle 裝置；此測試只驗 scan 有跑，關掉借用避免真連線。
+    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: False)
 
     mt._run_one_cycle()
 
@@ -278,7 +274,7 @@ def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
     # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。
     captured = {}
 
-    def fake_scan_cycle(store, reader, idle_picker, sleeper, now_fn, **kwargs):
+    def fake_scan_cycle(store, reader, worker_devices, still_idle, sleeper, now_fn, **kwargs):
         captured["sleeper"] = sleeper
         return {}
 
@@ -290,6 +286,7 @@ def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
 
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: False)  # 不借用，只驗 sleeper 身分
 
     mt._run_one_cycle()
 
