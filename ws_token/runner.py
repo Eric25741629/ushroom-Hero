@@ -58,8 +58,9 @@ import json_manager
 from ws_token import (
     ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
     idle_reward, kungfu_store, league_solo, main_tasks, mining,
-    mining_supervised, redpack, relic, relic_sprint, rogue, secret_jewel,
-    spirit, statue, steward, turntable, tycoon, workshop, xwar_idle,
+    mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
+    secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
+    xwar_idle,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -84,8 +85,9 @@ TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
     "rogue", "statue", "guild", "steward", "relic", "relic_sprint", "gacha",
-    "gacha_free", "kungfu_store", "spirit", "secret_jewel", "workshop", "couple",
-    "dragon_realm", "sea_season", "mining", "lamp", "main_tasks_late")
+    "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
+    "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
+    "main_tasks_late")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -900,6 +902,15 @@ def _run_kungfu_store(client) -> dict:
             "bought": rep.bought, "stopped": rep.stopped}
 
 
+def _run_pay_mall(client) -> dict:
+    """限時商店 -> 每日商店 免費禮包 (150 鑽石/日, bundle_id 20101).
+
+    Server-gated daily cap (error code 173) — idempotent, safe every wake.
+    """
+    result = pay_mall.claim_free_gift(client)
+    return {"success": result.success, "error_code": result.error_code}
+
+
 def _run_workshop(client, inventory_tracker, *, device: str) -> dict:
     """加工坊「閒置才補配方」: 只對閒置的小隊加工依可做量指派食物,絕不動 running 工坊.
 
@@ -1555,6 +1566,7 @@ def run_device(device: str, *, spend: bool = False,
                   lambda: _run_gacha_free(client, device=device))
         if kungfu_guess:
             _step("kungfu_store", lambda: _run_kungfu_store(client))
+        _step("pay_mall", lambda: _run_pay_mall(client))
         _step("spirit", lambda: _run_spirit(client))
         _sj_cfg = secret_jewel_config or {}
         if _sj_cfg.get("draw_free") or _sj_cfg.get("buy_daily"):
