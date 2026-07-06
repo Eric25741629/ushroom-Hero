@@ -4,7 +4,9 @@ reader / still_idle / sleeper / now_fn + worker_devices 皆為 fake；store 用�
 MountTrackerStore 搭 tmp_path，順帶驗證持久化。單台 worker_devices=["d"] 的測試等同
 舊循序行為；多台測試驗證並行正確性（每個車位主人恰掃一次、各台自冷卻）。
 """
-from runtime_services.mount_tracker_service import MountTrackerStore, scan_cycle
+from runtime_services.mount_tracker_service import (
+    MountTrackerStore, scan_cycle, _focus_owners_if_satisfied,
+)
 
 
 def _target_lot(target_id=100):
@@ -338,6 +340,50 @@ def test_worker_stops_when_device_not_idle(tmp_path):
     assert by_dev["dead"] == []                    # dead worker 未讀任何一台
     assert sorted(by_dev["live"]) == list(range(1, 11)) + [100]  # live 掃完全部（含目標自身）
     assert out["scanned"] == 11
+
+
+def test_focus_owners_scans_only_those(tmp_path):
+    """focus_owners 提供時只重掃指定車位主人，跳過廣域候選（含 target 自身）。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    for oid in range(1, 11):                        # 廣域候選 1-10：聚焦模式應全部忽略
+        store.upsert_known(oid, name=f"o{oid}")
+
+    seen = []
+
+    def reader(dev, owner):
+        seen.append(owner)
+        if owner == 11:                             # 目標停在 11
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    out = scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 1.0,
+                     budget_s=10_000, focus_owners=[11, 12])
+
+    assert sorted(seen) == [11, 12]                 # 只掃聚焦清單，不碰 1-10 / 目標自身
+    assert len(store.get_results()["100"]) == 1     # 在 11 找到
+    assert out["found_total"] == 1
+
+
+def test_focus_owners_if_satisfied_returns_owners_when_full(tmp_path):
+    """全部目標收滿（每個達 5）→ 回結果中的車位主人（去重、保序）。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.set_results({"100": [
+        {"owner": 11, "start_time": 1}, {"owner": 12, "start_time": 2},
+        {"owner": 13, "start_time": 3}, {"owner": 14, "start_time": 4},
+        {"owner": 11, "start_time": 5},             # 11 重複 → 去重
+    ]})
+    assert _focus_owners_if_satisfied(store) == [11, 12, 13, 14]
+
+
+def test_focus_owners_if_satisfied_none_when_not_full(tmp_path):
+    """任一目標未收滿 → None（回全域掃描把缺的找回來）。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.set_results({"100": [{"owner": 11, "start_time": 1}]})   # 1 台 < 5 → 未滿
+    assert _focus_owners_if_satisfied(store) is None
 
 
 def test_worker_bails_after_consecutive_read_failures(tmp_path):

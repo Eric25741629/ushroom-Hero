@@ -433,6 +433,7 @@ def scan_cycle(
     budget_s: float = 1500,
     cooldown_s: float = 2.0,
     max_per_target: int = 5,
+    focus_owners: Optional[list[int]] = None,
     on_progress: Optional[Callable[..., None]] = None,
 ) -> dict:
     """跑一輪坐騎掃描，回傳摘要 dict。
@@ -444,7 +445,8 @@ def scan_cycle(
     流程：
       1. 無追蹤目標 → 直接回 ``{"skipped": "no_targets"}``。
       2. 以 known players（含 targets 自身）依 :func:`mount_scan.weight` 由高到低
-         排序，取前 ``top_n`` 個當車位主人候選。
+         排序，取前 ``top_n`` 個當車位主人候選。``focus_owners`` 提供時改「聚焦模式」：
+         queue 只含這些車位主人、跳過權重展開——用於「全部找到後只盯現有位置的更新」。
       3. ``worker_devices`` 每台各開一條 worker 執行緒並行掃描：共享游標依序取車位
          主人，每台各自 ``sleeper(cooldown_s)`` 冷卻後讀一台（N 台 → 聚合約
          N 台/cooldown）。``still_idle(dev)`` 為 False（即將自我喚醒 / 不再 idle）
@@ -470,26 +472,32 @@ def scan_cycle(
         if guild:
             target_guilds.add(guild)
 
-    # 車位主人候選 = known players（含尚未在 known 的 target 自身），依權重排序取 top_n。
-    entries: list[dict] = []
-    seen: set = set()
-    for key, val in known.items():
-        try:
-            rid = int(key)
-        except (TypeError, ValueError):
-            continue
-        entry = dict(val)
-        entry["role_id"] = rid
-        entries.append(entry)
-        seen.add(rid)
-    for rid in target_ids:
-        if rid not in seen:
-            entry = dict(known.get(str(rid), {}))
+    if focus_owners:
+        # 聚焦模式：所有目標已收滿 → 只重掃「目前停著坐騎的車位主人」，偵測坐騎是否
+        # 移動 / 更新（省去掃廣域候選）。任一台移走 → 該筆 found 消失 → found_total 掉，
+        # 下輪 _run_one_cycle 判定未滿即回全域掃描重找。dict.fromkeys 去重、保序。
+        queue = [{"role_id": int(o)} for o in dict.fromkeys(focus_owners)]
+    else:
+        # 車位主人候選 = known players（含尚未在 known 的 target 自身），依權重排序取 top_n。
+        entries: list[dict] = []
+        seen: set = set()
+        for key, val in known.items():
+            try:
+                rid = int(key)
+            except (TypeError, ValueError):
+                continue
+            entry = dict(val)
             entry["role_id"] = rid
             entries.append(entry)
             seen.add(rid)
-    entries.sort(key=lambda e: mount_scan.weight(e, target_guilds), reverse=True)
-    queue = entries[:top_n]
+        for rid in target_ids:
+            if rid not in seen:
+                entry = dict(known.get(str(rid), {}))
+                entry["role_id"] = rid
+                entries.append(entry)
+                seen.add(rid)
+        entries.sort(key=lambda e: mount_scan.weight(e, target_guilds), reverse=True)
+        queue = entries[:top_n]
 
     deadline = now_fn() + budget_s
     found: dict[int, list] = {rid: [] for rid in target_ids}
@@ -874,6 +882,33 @@ def _safe_call(client, cmd: int, body: bytes) -> Optional[bytes]:
         return None
 
 
+def _focus_owners_if_satisfied(store: MountTrackerStore) -> Optional[list[int]]:
+    """所有目標都收滿（每個目標達 :data:`_MAX_PER_TARGET`）→ 回目前結果中的車位主人清單
+    （聚焦重掃用）；否則回 None（全域掃描）。
+
+    任一坐騎移走使某目標未滿 → 回 None，下輪自動回全域掃描把缺的找回來。回傳去重且保序。
+    """
+    targets = store.get_targets()
+    if not targets:
+        return None
+    results = store.get_results() or {}
+    full = all(
+        len(results.get(str(t["role_id"]), [])) >= _MAX_PER_TARGET
+        for t in targets if t.get("role_id") is not None
+    )
+    if not full:
+        return None
+    owners: list[int] = []
+    seen: set = set()
+    for rows in results.values():
+        for e in rows:
+            o = e.get("owner")
+            if o is not None and int(o) not in seen:
+                seen.add(int(o))
+                owners.append(int(o))
+    return owners or None
+
+
 def _run_one_cycle() -> None:
     """跑一輪真掃描：並行借「所有」安全 idle 裝置、連線重用、結束時歸還所有借用連線。
 
@@ -943,8 +978,11 @@ def _run_one_cycle() -> None:
             _mark_borrowed(dev)
             if client is not None:
                 worker_devices.append(dev)
+        # 全部目標都收滿 → 聚焦模式：只重掃目前停著坐騎的車位主人（偵測是否移動/更新），
+        # 不再掃廣域候選。未滿則 focus=None → 全域掃描把缺的找回來。
+        focus = _focus_owners_if_satisfied(store)
         scan_cycle(store, reader, worker_devices, still_idle, _cooldown, time.time,
-                   on_progress=lambda **kw: _set_progress(**kw))
+                   focus_owners=focus, on_progress=lambda **kw: _set_progress(**kw))
     finally:
         for dev in borrowed:
             _release_dev(dev)

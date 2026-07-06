@@ -107,6 +107,8 @@ def test_scan_borrows_all_safe_idle_and_releases(monkeypatch):
             return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan 路徑
         def set_running(self, running):
             pass
+        def get_targets(self):
+            return []                      # 無目標 → _focus_owners_if_satisfied 回 None
 
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
@@ -179,6 +181,8 @@ def test_run_one_cycle_skips_bootstrap_when_done(monkeypatch):
             return 12345.0                       # 已完成
         def set_running(self, running):
             pass
+        def get_targets(self):
+            return []                            # 無目標 → _focus_owners_if_satisfied 回 None
 
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
     monkeypatch.setattr(
@@ -283,6 +287,8 @@ def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
             return 1.0                     # 已完成 → 跳過 bootstrap，直接驗 scan_cycle 路徑
         def set_running(self, running):
             pass
+        def get_targets(self):
+            return []                      # 無目標 → _focus_owners_if_satisfied 回 None
 
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
