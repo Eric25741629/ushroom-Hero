@@ -6,6 +6,24 @@
 
 ---
 
+## 🚧 2026-07-06 移除 5554/5556 喚醒「等 5 分鐘」硬編分流（已 merge main）
+
+背景：dashboard 顯示 5556「正在檢查螢幕狀態」5 分鐘卡住，使用者困惑。查證：
+- 空等在 `wake_up_handler.py`（原 348-359），只對 5554/5556，夾在 WS 階段（`new_main_v2.py:304`，
+  已在喚醒當下跑完）之後、瀏覽器那半段之前 → 只延後瀏覽器、沒錯開 WS，還把客戶端工作推出 :00–:20 窗。
+- 正解機制早已存在：`wake_minute_offset`（`sleep_service.py:118-130`，窗內固定分鐘分流，保留窗）。
+- 現況 offset：5554=0、5558=5、5556=15；parity：5554/5556/5558=even、5560=odd。
+  5554/5556 已差 15 分醒來、5554 vs 5560 分屬偶奇小時永不撞。
+- 反證：舊空等把 5554 從 :00 推到 :05，**反而撞上 5558 的 :05** → 刪掉後分佈更好。
+
+- [x] 刪除 `utils/wake_up_handler.py` 5554/5556 5 分鐘 while 迴圈；保留 `3a8d31f2` 的 10s
+- [x] `py_compile` 通過；`check_skip_sleep` 本檔僅此處用到，移除後 `bot_state` 仍他處使用
+- [x] worktree `remove-wake-stagger-wait`（29b686de）→ 套回 main（wake_up_handler 兩邊相同直接取檔）
+- [ ] 驗證：5554/5556 醒來後直接跑完 WS+瀏覽器、dashboard 不再卡「檢查螢幕狀態」（需重啟後實測）
+- [ ] 生效需重啟 `new_main_v2.py`（無 hot-reload）
+
+---
+
 ## 🚧 2026-07-06 強制休眠必須立即中斷（含 WS 階段）+ 5554/WS 搶登入排查
 
 背景：dashboard 按「強制休眠」沒反應。根因＝WS 執行路徑沒有 force-sleep 中斷點：

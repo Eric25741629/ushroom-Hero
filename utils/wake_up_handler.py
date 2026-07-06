@@ -346,18 +346,10 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
             time.sleep(1)
         
     # 分流延遲
-    if 'emulator-5556' in ip or 'emulator-5554' in ip:
-        logger.info(f"[{ip}] 執行啟動分流，等待 5 分鐘...")
-        deadline = time.time() + (60 * 5)
-        while time.time() < deadline:
-            # Online-check no longer breaks the load-spreading stagger — it is
-            # served out-of-loop by online_check_service. Only a manual skip_sleep
-            # cuts it short.
-            if bot_state.check_skip_sleep(ip):
-                logger.info(f"[{ip}] 收到 skip_sleep，提前結束分流等待")
-                break
-            time.sleep(1)
-    elif '3a8d31f2' in ip:
+    # 5554/5556 的「等 5 分鐘」硬編分流已移除（2026-07-06）：分流全交給
+    # wake_minute_offset（sleep_service，窗內固定分鐘、保留 :00–:20 窗）。舊空等夾在
+    # WS 階段之後只延後瀏覽器、沒錯開 WS，還把工作推出窗，且反而讓 5554 撞上 5558 的 :05。
+    if '3a8d31f2' in ip:
         time.sleep(10)
     
     time.sleep(2)
