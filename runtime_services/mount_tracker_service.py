@@ -41,12 +41,13 @@ _progress_lock = threading.Lock()
 # 單一全域進度物件（所有欄位一律純量 / None，故 dict() 淺拷貝即完整隔離）。
 _progress: dict = {
     "phase": "idle",      # idle | bootstrap | scan
-    "scanned": 0,         # scan：本輪已讀到車位的房東數
+    "scanned": 0,         # scan：本輪已讀到車位的車位主人數
     "found": 0,           # scan：本輪已找到的追蹤目標坐騎總數（純量）
     "known": 0,           # scan/bootstrap：已知玩家庫目前規模
     "guilds": 0,          # bootstrap 階段1：已蒐集的合格公會數
     "members": 0,         # bootstrap 階段2：已展開的成員數
     "started_ts": None,   # 本輪起跑時間戳（秒）；idle 時保留上一輪值
+    "next_scan_ts": None, # 下一輪預估起跑時間戳（秒）；由 _run_loop 依自適應間隔寫入
 }
 
 
@@ -178,7 +179,7 @@ class MountTrackerStore:
 
     # ---- 已打掉標記 attacked ------------------------------------------------
     # 軟標記：使用者打掉某台停在他人車位的坐騎後，把它標成「已打掉」，跨掃描保留，
-    # 直到該實例移走（房東或停車時間改變）才自然消失。實例唯一鍵 =
+    # 直到該實例移走（車位主人或停車時間改變）才自然消失。實例唯一鍵 =
     # ``f"{owner_role_id}:{start_time}"``；外層 key 為 ``str(target_role_id)``。
     def get_attacked(self) -> dict:
         """回傳已打掉標記表：``{str(target_role_id): {"<owner>:<start_time>": marked_ts}}``。"""
@@ -390,9 +391,9 @@ def pick_idle_device(candidates: list[str] = CANDIDATES) -> Optional[str]:
 # ============================================================================
 # Task 5：scan_cycle — 掃描核心（依賴注入、純可測）
 # ----------------------------------------------------------------------------
-# 以權重排序 known players 當「房東（owner）」候選，逐一借 idle 裝置開一次性 WS
-# 連線讀該房東的車位佔用，比對是否停著追蹤目標；順手把新看到的佔用者滾進 known
-# （雪球）、更新房東車位加成與 host_hits。所有 IO（reader / idle_picker / sleeper /
+# 以權重排序 known players 當「車位主人（owner）」候選，逐一借 idle 裝置開一次性 WS
+# 連線讀該車位主人的車位佔用，比對是否停著追蹤目標；順手把新看到的佔用者滾進 known
+# （雪球）、更新車位主人車位加成與 host_hits。所有 IO（reader / idle_picker / sleeper /
 # now_fn）皆注入，測試不碰真 socket / 真 sleep / 真時鐘。
 # ============================================================================
 
@@ -418,19 +419,19 @@ def scan_cycle(
 ) -> dict:
     """跑一輪坐騎掃描，回傳摘要 dict。
 
-    ``on_progress``（選用、DI）：每處理完一個房東就以
+    ``on_progress``（選用、DI）：每處理完一個車位主人就以
     ``on_progress(scanned=..., found=..., known=...)`` 回報即時進度（純記憶體，
     供 dashboard 輪詢跳動）。為 None 時完全不影響行為與回傳（維持純函式可測）。
 
     流程：
       1. 無追蹤目標 → 直接回 ``{"skipped": "no_targets"}``。
       2. 以 known players（含 targets 自身）依 :func:`mount_scan.weight` 由高到低
-         排序，取前 ``top_n`` 個當房東候選。
+         排序，取前 ``top_n`` 個當車位主人候選。
       3. 逐一借 idle 裝置讀車位；每讀一次前 sleeper(cooldown_s)；無裝置則 sleeper
-         後換下一個房東。
+         後換下一個車位主人。
       4. 車位裡的佔用者：是追蹤目標且該目標尚未收滿 ``max_per_target`` → 收錄；
          一律 upsert 進 known（雪球）。
-      5. 更新房東 coin（車位加成）與 host_hits，寫回 results / last_run。
+      5. 更新車位主人 coin（車位加成）與 host_hits，寫回 results / last_run。
       6. 超過 ``budget_s`` 或所有目標都收滿 → 提早結束。
     """
     targets = store.get_targets()
@@ -449,7 +450,7 @@ def scan_cycle(
         if guild:
             target_guilds.add(guild)
 
-    # 房東候選 = known players（含尚未在 known 的 target 自身），依權重排序取 top_n。
+    # 車位主人候選 = known players（含尚未在 known 的 target 自身），依權重排序取 top_n。
     entries: list[dict] = []
     seen: set = set()
     for key, val in known.items():
@@ -472,8 +473,8 @@ def scan_cycle(
 
     deadline = now_fn() + budget_s
     found: dict[int, list] = {rid: [] for rid in target_ids}
-    scanned_owners: set = set()   # 本輪成功讀到車位的房東
-    host_hit_ids: set = set()     # 本輪車位停著追蹤目標的房東
+    scanned_owners: set = set()   # 本輪成功讀到車位的車位主人
+    host_hit_ids: set = set()     # 本輪車位停著追蹤目標的車位主人
     # 本輪所有 known 更新累積在記憶體，迴圈結束後「一次寫回」，避免每個車位一次
     # 全檔重寫（NAS/SMB I/O 敏感）。{role_id: {field: value}}。
     pending: dict[int, dict] = {}
@@ -496,13 +497,13 @@ def scan_cycle(
         owner = int(owner_entry["role_id"])
         dev = idle_picker()
         if dev is None:
-            sleeper(cooldown_s)  # 暫無 idle 裝置：冷卻後換下一個房東
+            sleeper(cooldown_s)  # 暫無 idle 裝置：冷卻後換下一個車位主人
             continue
 
         sleeper(cooldown_s)      # 每次讀取前冷卻，避免打太快
         lot = reader(dev, owner)
         if lot is None:
-            continue             # 讀失敗（被踢 / 例外）→ 換下一個房東
+            continue             # 讀失敗（被踢 / 例外）→ 換下一個車位主人
         scanned_owners.add(owner)
 
         for space in lot.get("spaces", []):
@@ -514,8 +515,8 @@ def scan_cycle(
             _stage(occ, name=name)  # 雪球：新佔用者滾進 known（None name 也建空 entry）
             if occ in target_ids and len(found[occ]) < max_per_target:
                 start_time = space.get("start_time")
-                # 房東（車位主人）名字/公會取自本輪開頭的 known 快照（純記憶體讀，無額外 IO）；
-                # 房東尚未進 known 時為 None。dashboard 需要 owner_name/owner_guild 顯示坐騎停在誰家。
+                # 車位主人名字/公會取自本輪開頭的 known 快照（純記憶體讀，無額外 IO）；
+                # 車位主人尚未進 known 時為 None。dashboard 需要 owner_name/owner_guild 顯示坐騎停在誰家。
                 owner_info = known.get(str(owner)) or {}
                 found[occ].append({
                     "owner": owner,
@@ -530,7 +531,7 @@ def scan_cycle(
                 })
                 host_hit_ids.add(owner)
 
-        # 房東車位加成（菇車幣）+ 掃描時間戳。
+        # 車位主人車位加成（菇車幣）+ 掃描時間戳。
         bonus = parking_bonus.lot_bonus(lot.get("skin_list", []))
         _stage(owner, coin=bonus.get("coin"), last_scanned_ts=now_fn())
 
@@ -543,8 +544,8 @@ def scan_cycle(
                 known=len(known) + sum(1 for rid in pending if str(rid) not in known),
             )
 
-    # host_hits：本輪掃到的房東，有停到目標 +1（上限 5），否則 decay，不 <0。
-    # 基準值取本輪開頭的 known 快照（沿用舊值）；沒掃到的房東不動，靠權重排序自我收斂。
+    # host_hits：本輪掃到的車位主人，有停到目標 +1（上限 5），否則 decay，不 <0。
+    # 基準值取本輪開頭的 known 快照（沿用舊值）；沒掃到的車位主人不動，靠權重排序自我收斂。
     for owner in scanned_owners:
         cur = int((known.get(str(owner)) or {}).get("host_hits", 0) or 0)
         if owner in host_hit_ids:
@@ -552,9 +553,9 @@ def scan_cycle(
         elif cur > 0:
             _stage(owner, host_hits=cur - 1)
 
-    # 已打掉標記剪枝：只有「該實例的房東本輪確實被掃到」時才有資格判定它是否還在。
-    # found 受 max_per_target / 提早收工 / top_n / 房東是否被掃 影響（非全量），因此
-    # 房東本輪沒被掃（owner not in scanned_owners）時一律保留標記，避免誤刪仍停著的標記。
+    # 已打掉標記剪枝：只有「該實例的車位主人本輪確實被掃到」時才有資格判定它是否還在。
+    # found 受 max_per_target / 提早收工 / top_n / 車位主人是否被掃 影響（非全量），因此
+    # 車位主人本輪沒被掃（owner not in scanned_owners）時一律保留標記，避免誤刪仍停著的標記。
     new_attacked: dict = {}
     for rid in target_ids:
         prev = attacked.get(str(rid))
@@ -569,7 +570,7 @@ def scan_cycle(
                 # 壞鍵（理論上不會出現，mark_attacked 一律 f"{owner}:{start_time}"）→ 保守保留。
                 kept[key] = value
                 continue
-            # 房東未被掃 → 無從判定，保留；房東被掃到但實例已不在 found → 剪掉。
+            # 車位主人未被掃 → 無從判定，保留；車位主人被掃到但實例已不在 found → 剪掉。
             if key_owner not in scanned_owners or key in present:
                 kept[key] = value
         if kept:
@@ -597,7 +598,7 @@ def scan_cycle(
 # ----------------------------------------------------------------------------
 # 冷啟時 known_players 空，只靠 scan_cycle 的雪球擴散很慢。此函式借一台 idle 裝置
 # 掃全服公會 → 成員 → 批次補等級，一次性把 level>=5 公會的全體成員（含 name/guild/
-# level）灌進 known，讓權重掃描一開始就有正確的候選房東。純函式：不碰 socket / sleep /
+# level）灌進 known，讓權重掃描一開始就有正確的候選車位主人。純函式：不碰 socket / sleep /
 # 時鐘，只用注入的 caller / sleeper / now_fn / should_continue + mount_scan 的 enc/parse。
 # ============================================================================
 
@@ -726,6 +727,12 @@ _start_lock = threading.Lock()
 _wake = threading.Event()
 
 _CYCLE_INTERVAL_SEC = 3600.0
+# 找滿目標後改用的「放慢」間隔（3 小時）：目標坐騎都已找到就沒必要每小時再打全服 WS。
+_IDLE_INTERVAL_SEC = 10800.0
+# 每個目標「找滿」的上限筆數（與 scan_cycle 的 max_per_target 對齊）。
+_MAX_PER_TARGET = 5
+# 判定「找滿」時容許的缺額：部分實例可能剛好收不到，留 2 筆寬容避免一直卡在快掃。
+_SATISFIED_GRACE = 2
 # 冷啟 bootstrap 單輪時間預算（秒）：全服公會掃描較久，給 20 分鐘上限，逾時就地收工
 # （已灌到的照樣寫入、標記完成，剩下的交給雪球補齊）。
 _BOOTSTRAP_BUDGET_S = 1200.0
@@ -894,8 +901,23 @@ def _run_one_cycle() -> None:
         _set_progress(phase="idle")  # 收尾：頁面停止顯示「掃描中…」
 
 
+def _next_interval() -> float:
+    """依上輪掃描成果決定下一輪間隔：目標坐騎幾乎都找齊 → 放慢（省 WS 打點）；否則維持快掃。
+
+    找滿門檻 = ``max(1, len(targets) * _MAX_PER_TARGET - _SATISFIED_GRACE)``。有目標且上輪
+    ``found_total`` 達門檻視為找滿，回 :data:`_IDLE_INTERVAL_SEC`；否則（含無目標 / 找不夠）
+    回 :data:`_CYCLE_INTERVAL_SEC`，讓使用者剛加目標或還缺坐騎時保持快掃。
+    """
+    store = get_store()
+    targets = store.get_targets()
+    found_total = (store.get_last_run() or {}).get("found_total") or 0
+    if targets and found_total >= max(1, len(targets) * _MAX_PER_TARGET - _SATISFIED_GRACE):
+        return _IDLE_INTERVAL_SEC
+    return _CYCLE_INTERVAL_SEC
+
+
 def _run_loop() -> None:
-    """daemon 主迴圈：啟用時每小時掃一輪；可被 _wake.set() 催醒。"""
+    """daemon 主迴圈：啟用時掃一輪，找滿目標則放慢間隔；可被 _wake.set() 催醒。"""
     logger.info("[mount-tracker] daemon started")
     while True:
         try:
@@ -904,7 +926,10 @@ def _run_loop() -> None:
                 _run_one_cycle()
         except Exception:  # noqa: BLE001 — 迴圈永不因單輪錯誤而死
             logger.warning("[mount-tracker] cycle error", exc_info=True)
-        _wake.wait(_CYCLE_INTERVAL_SEC)
+        # 自適應間隔：找滿目標放慢到 _IDLE_INTERVAL_SEC，否則維持 _CYCLE_INTERVAL_SEC。
+        interval = _next_interval()
+        _set_progress(next_scan_ts=time.time() + interval)
+        _wake.wait(interval)
         _wake.clear()
 
 

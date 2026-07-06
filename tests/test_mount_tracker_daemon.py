@@ -225,6 +225,54 @@ def test_progress_roundtrip_and_copy_isolation():
     assert mt.get_progress()["scanned"] == 0
 
 
+def test_next_interval_slows_when_satisfied(monkeypatch):
+    """有目標且上輪 found_total 達門檻（2 目標 → 門檻 2*5-2=8）→ 放慢到 _IDLE_INTERVAL_SEC。"""
+    class FakeStore:
+        def get_targets(self):
+            return [{"role_id": 1}, {"role_id": 2}]
+        def get_last_run(self):
+            return {"found_total": 8}
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    assert mt._next_interval() == mt._IDLE_INTERVAL_SEC
+
+
+def test_next_interval_fast_when_not_satisfied(monkeypatch):
+    """found_total 未達門檻（5 < 8）→ 維持快掃間隔 _CYCLE_INTERVAL_SEC。"""
+    class FakeStore:
+        def get_targets(self):
+            return [{"role_id": 1}, {"role_id": 2}]
+        def get_last_run(self):
+            return {"found_total": 5}
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    assert mt._next_interval() == mt._CYCLE_INTERVAL_SEC
+
+
+def test_next_interval_fast_when_no_targets(monkeypatch):
+    """無目標 → 一律快掃（即使 found_total 很高也不放慢）。"""
+    class FakeStore:
+        def get_targets(self):
+            return []
+        def get_last_run(self):
+            return {"found_total": 999}
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    assert mt._next_interval() == mt._CYCLE_INTERVAL_SEC
+
+
+def test_next_interval_fast_when_no_last_run(monkeypatch):
+    """last_run 為 None（尚未掃過）→ found_total 視為 0 → 快掃。"""
+    class FakeStore:
+        def get_targets(self):
+            return [{"role_id": 1}]
+        def get_last_run(self):
+            return None
+
+    monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
+    assert mt._next_interval() == mt._CYCLE_INTERVAL_SEC
+
+
 def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
     # 關鍵安全性：_run_one_cycle 給 scan_cycle 的 sleeper 必須是 _cooldown（真 sleep），
     # 不可是 _wake.wait——否則「立即掃描」催醒 (_wake.set) 會讓冷卻瞬間失效。

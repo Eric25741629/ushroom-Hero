@@ -1250,6 +1250,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     <button id="navFlypet" class="nav-btn" onclick="switchPage('flypet')" aria-label="飛寵管理">&#x1F985; <span class="nav-label">飛寵管理</span></button>
     <button id="navInventory" class="nav-btn" onclick="switchPage('inventory')" aria-label="倉庫 (守護靈/神器附魔)">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></button>
     <button id="navTools" class="nav-btn" onclick="switchPage('tools')" aria-label="工具 優化類">&#x1F6E0;&#xFE0F; <span class="nav-label">工具 優化類</span></button>
+    <button id="navMountTracker" class="nav-btn" onclick="switchPage('mount-tracker')" aria-label="坐騎追蹤">🎯 <span class="nav-label">坐騎追蹤</span></button>
     {% if is_admin %}
     <button id="navAdmin" class="nav-btn" onclick="window.location='/admin'" aria-label="系統設定">&#x2699;&#xFE0F; <span class="nav-label">系統設定</span><span id="pendingBadge" class="badge badge--count admin-pending-badge" hidden></span></button>
     {% endif %}
@@ -1501,6 +1502,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
   <div id="page-tools" class="page">
     <div class="war-room-shell">
       <iframe id="toolsFrame" class="war-room-frame" title="工具 優化類" loading="lazy" src=""></iframe>
+    </div>
+  </div>
+
+  <div id="page-mount-tracker" class="page">
+    <div class="war-room-shell">
+      <iframe id="mountTrackerFrame" class="war-room-frame" title="坐騎追蹤" loading="lazy" src=""></iframe>
     </div>
   </div>
 
@@ -2193,6 +2200,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     let flypetLoaded = false;
     let inventoryLoaded = false;
     let toolsLoaded = false;
+    let mountTrackerLoaded = false;
     let currentFrontendVersion = INITIAL_FRONTEND_VERSION;
 
 
@@ -2441,6 +2449,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.getElementById('page-flypet').classList.toggle('active', page === 'flypet');
       document.getElementById('page-inventory').classList.toggle('active', page === 'inventory');
       document.getElementById('page-tools').classList.toggle('active', page === 'tools');
+      document.getElementById('page-mount-tracker').classList.toggle('active', page === 'mount-tracker');
 
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
 
@@ -2450,6 +2459,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.getElementById('navFlypet').classList.toggle('active', page === 'flypet');
       document.getElementById('navInventory').classList.toggle('active', page === 'inventory');
       document.getElementById('navTools').classList.toggle('active', page === 'tools');
+      document.getElementById('navMountTracker').classList.toggle('active', page === 'mount-tracker');
 
       if (page === 'labeler') {
 
@@ -2474,6 +2484,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         if (!inventoryLoaded) { document.getElementById('inventoryFrame').src = '/inventory'; inventoryLoaded = true; }
       } else if (page === 'tools') {
         if (!toolsLoaded) { document.getElementById('toolsFrame').src = '/tools-optimize'; toolsLoaded = true; }
+      } else if (page === 'mount-tracker') {
+        if (!mountTrackerLoaded) { document.getElementById('mountTrackerFrame').src = '/mount-tracker'; mountTrackerLoaded = true; }
       } else {
 
         fetchStatus();
