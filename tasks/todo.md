@@ -28,11 +28,14 @@
 登入權限：白名單（腳本排程/坐騎追蹤/在線監控）免確認；其他 dashboard 分頁切裝置不自動登入、手動點登入、在線中彈確認 modal。
 - [x] 設計文件：`docs/superpowers/specs/2026-07-06-account-session-registry-design.md`
 - [x] 使用者核准：**一次做完 Phase 1-4**（Phase 5-7 之後再議）
-- [ ] Phase 1：新增 `runtime_services/session_registry.py` + 單測（純加法不接線）
-- [ ] Phase 2：`control_panel/ws_session.py` 改走 registry（is_active 消盲區；pause 移交 registry；ensure 支援 owner 參數）
-- [ ] Phase 3：mount-tracker 借用改 `acquire(MOUNT_TRACKER)`、`still_idle` 改 poll preempted（修誤判可借+TOCTOU）
-- [ ] Phase 4：online_monitor + online_check 改走 registry（5558/human_played 硬擋、三服務不撞台）
-- [ ] Opus review 審整體 diff → merge main → **需重啟 new_main_v2.py + control panel**
+- [x] Phase 1：`runtime_services/session_registry.py` + 單測（a2a70da4）
+- [x] Phase 2：ws_session 改走 registry，is_active 消盲區、pause 移交（a7723070）
+- [x] Phase 3：mount-tracker 借用改 acquire + check_wake 原子閘門（修誤判可借+TOCTOU，18568078）
+- [x] Phase 4：online_monitor/online_check 改走 registry（5558 一般路徑硬擋、三服務不撞台，29036d7d）
+- [x] Opus review：無 blocker；三項修補已落地（monitor loop try/finally 防 lease 洩漏、工具路由透出 conflict 訊息、protected 空集不快取，c44b2121）→ merge main（ed8de0de），211 相關測試全綠
+- [ ] **待辦：重啟 `new_main_v2.py` + control panel 生效**（連同上一節強制休眠修正一起生效）
+- [ ] 重啟後 live 驗證：當前 detector 裝置「開啟瀏覽器 + 手動立即喚醒」即時性（monitor 借用現在會 pause 該台，讓位靠 120s handoff，穩健版等 Phase 5）
+- [ ] Phase 5-7 待議：喚醒 SCHEDULER preempt、統一喚醒計算器、bot_state 兩態 + dashboard UI（登入按鈕/確認 modal/借用顯示）；TOOL 人工確認搶佔需 registry 加 force 機制（Phase 7）
 
 ## 🚧 2026-07-05 車位裝飾升級：WS 斷線續跑 + 買碎片冪等（session 44fccb3b）
 
