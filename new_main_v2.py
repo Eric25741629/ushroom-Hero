@@ -45,7 +45,7 @@ urllib3.disable_warnings(InsecureRequestWarning)
 warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 import requests
 requests.packages.urllib3.disable_warnings()
-from utils.wake_up_handler import handle_device_wakeup, release_wakeup_lock
+from utils.wake_up_handler import handle_device_wakeup
 from utils.log_paths import LogPaths
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 import config_manager
@@ -242,12 +242,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         # 為每個設備生成隨機的喚醒分鐘偏移 (0 到 2 分鐘)
         wake_random_offset = random.randint(0, 2)
         logger.info(f"[{ip}] 設定隨機喚醒偏移: {wake_random_offset} 分鐘")
-        protect = False if ('emulator-5558' in ip or 'emulator-5562' in ip or '7fe98fc6' in ip or 'fc65396d' in ip) else True
-
-        # manager = ParkingManager(
-        #     device=d, reader=easyocr_reader, ip=ip, cnn_model=Cnn_model,protect=protect)
-        # battle_manager = new_battle.BattleManager(
-        #     device=d, reader=easyocr_reader, cnn_model=Cnn_model)
         wheel_manager = spin_wheel(device=d, cnn_model=Cnn_model,devices_serial=ip)
         mission_manager = mission(device=d, ip=ip)
         family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
@@ -336,7 +330,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                             sleep_device_config, backend_kind):
                         stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
                         bot_state.set_web_browser_open(ip, False)
-                    release_wakeup_lock(ip)
                     wake_ts, interrupted, wake_up_time = run_sleep_cycle(
                         ip,
                         logger,
@@ -567,7 +560,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
                 if backend_kind == "web_h5":
                     bot_state.set_web_browser_open(ip, False)
-            release_wakeup_lock(ip)
             wake_ts, interrupted, wake_up_time = run_sleep_cycle(
                 ip,
                 logger,

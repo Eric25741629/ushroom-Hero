@@ -172,18 +172,6 @@ def _honor_dashboard_controls(ip: str) -> None:
             f"[{ip}] web-launch request received during wake-up wait"
         )
 
-# Global lock for synchronization
-_wakeup_lock = False
-
-def release_wakeup_lock(ip):
-    """
-    Releases the lock for specific devices if they are holding it.
-    """
-    global _wakeup_lock
-    if 'emulator-5554' in ip or '3a8d31f2' in ip:
-        _wakeup_lock = False
-
-
 def _press_home_repeated(d, count: int = 3, delay_sec: float = 0.2) -> None:
     """連續按 Home，讓剛喚醒/剛關通知欄的手機有時間回到 launcher。"""
     press_fn = getattr(d, "press", None)
