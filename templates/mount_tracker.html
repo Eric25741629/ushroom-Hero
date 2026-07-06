@@ -74,6 +74,9 @@
   tr.mt-attacked td{color:var(--muted)}
   .mt-done{color:var(--muted);font-weight:700}
   .mt-markbtn{min-height:32px;padding:4px 10px;white-space:nowrap}
+  /* 操作格：標記 + 分享到家族並排，窄螢幕可換行不擠壓。 */
+  .mt-actions{display:flex;gap:6px;flex-wrap:wrap}
+  .mt-rallybtn{min-height:32px;padding:4px 10px;white-space:nowrap}
 
   /* ---- 點名字複製（車位主人名字 / 卡片標題 roleId）---- */
   .mt-copy{cursor:pointer;border-radius:var(--r-xs)}
@@ -138,6 +141,7 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const PROTECT_SEC = 170 * 60;   // 保護時間 170 分鐘
+const LOGGED_IN = {{ 'true' if logged_in else 'false' }};   // 「分享到家族」僅登入顯示（rally 需登入）
 let TARGETS = [];               // 目標清單（保留原始 role_id，避免大數精度）
 let CANDS = [];                 // 合服候選（挑選用）
 let currentEnabled = false;     // 伺服器確認過的啟用狀態
@@ -327,6 +331,27 @@ async function markMount(btn){
   }
 }
 
+// ---- 分享搶奪車位卡到家族頻道（搖人）：固定由 5554 送出 ----
+async function rallyMount(btn){
+  // id 以字串送出（避免大數 role_id 精度丟失）；pos 走 Number（小數字）。
+  const body = {
+    target_role_id: btn.getAttribute('data-target'),
+    owner: btn.getAttribute('data-owner'),
+    pos: Number(btn.getAttribute('data-pos')),
+  };
+  btn.disabled = true;
+  UI.setLoading(btn, true);
+  let res;
+  try{ res = await postJSON('/api/mount_tracker/rally', body); }
+  finally{ UI.setLoading(btn, false); btn.disabled = false; }
+  if(res.httpStatus === 401){ UI.toast('需要登入', 'err'); return; }
+  if(res.data && res.data.status === 'ok'){
+    UI.toast('已分享搶奪車位到家族', 'ok');
+  } else {
+    UI.toast((res.data && res.data.message) || '分享失敗', 'err');
+  }
+}
+
 // ---- 點擊複製：安全語境走 clipboard API，非安全語境（http iframe）退回 execCommand ----
 async function copyText(text){
   const s = String(text == null ? '' : text).trim();
@@ -406,6 +431,13 @@ function renderCards(d){
           ' data-start="' + st + '"' +
           ' data-on="' + (isAtk ? '0' : '1') + '">' +
           (isAtk ? '取消標記' : '標記已打掉') + '</button>';
+        // 分享到家族（搖人）：僅登入顯示；帶目標/車位主人/車位位置給 rally 端點。
+        const rallyBtn = LOGGED_IN
+          ? '<button type="button" class="btn btn--secondary mt-rallybtn"' +
+            ' data-target="' + UI.esc(t.role_id) + '"' +
+            ' data-owner="' + UI.esc(r.owner) + '"' +
+            ' data-pos="' + UI.esc(r.pos) + '">分享到家族</button>'
+          : '';
         // 車位主人名字可點擊複製（有名字才包 mt-copy；無名字顯示「—」不可點）。
         const ownerName = r.owner_name || '';
         const nameCell = ownerName
@@ -418,7 +450,7 @@ function renderCards(d){
           '<td>' + UI.esc(r.pos) + '</td>' +
           '<td>' + parked + '</td>' +
           statusCell +
-          '<td>' + markBtn + '</td>' +
+          '<td><div class="mt-actions">' + markBtn + rallyBtn + '</div></td>' +
         '</tr>';
       }).join('');
       inner = '<div class="table-scroll"><table class="data-table"><thead><tr>' +
@@ -546,6 +578,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const cp = e.target.closest('.mt-copy');
     if(cp){ copyText(cp.getAttribute('data-copy')); return; }
     if(e.target.closest('.mt-retry')){ cardsLoading(); refresh(); return; }
+    const rb = e.target.closest('.mt-rallybtn');
+    if(rb){ rallyMount(rb); return; }
     const b = e.target.closest('.mt-markbtn');
     if(b) markMount(b);
   });

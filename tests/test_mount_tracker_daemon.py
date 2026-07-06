@@ -8,6 +8,58 @@
 import runtime_services.mount_tracker_service as mt
 from utils import dashboard_settings as ds
 from ws_token import codec
+from ws_token import mount_scan
+
+
+class _FakeSendClient:
+    """記錄 send(cmd, body) 的假 WS client（rally 用 fire-and-forget send）。"""
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, cmd, body):
+        self.sent.append((cmd, body))
+
+
+def test_rally_to_guild_borrows_5554_sends_then_releases(monkeypatch):
+    """借 5554（ensure 取得 lease → on_ensure 觸發）、送 CMD_CHAT_MESSAGE、事後歸還。"""
+    ensured, released = [], []
+    client = _FakeSendClient()
+
+    def fake_get(dev, on_ensure=None):
+        ensured.append(dev)
+        if on_ensure is not None:
+            on_ensure(dev)          # ensure 取得佔用
+        return client
+
+    monkeypatch.setattr(mt, "_get_ws_client", fake_get)
+    monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
+
+    r = mt.rally_to_guild(target_role_id=5678, owner=1234, pos=7)
+
+    assert r["status"] == "ok"
+    assert ensured == ["emulator-5554"]
+    assert released == ["emulator-5554"]                    # 借了要歸還
+    assert client.sent == [
+        (mount_scan.CMD_CHAT_MESSAGE,
+         mount_scan.enc_parking_call_guild(7, 0, 1234, 5678, 1))
+    ]
+
+
+def test_rally_to_guild_busy_returns_error_no_release(monkeypatch):
+    """5554 忙碌/被佔 → ensure 被拒（on_ensure 不觸發、回 None）→ error 且不歸還。"""
+    released = []
+
+    def fake_get(dev, on_ensure=None):
+        return None                 # ensure 被拒：不 fire on_ensure
+
+    monkeypatch.setattr(mt, "_get_ws_client", fake_get)
+    monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
+
+    r = mt.rally_to_guild(5678, 1234, 7)
+
+    assert r["status"] == "error"
+    assert released == []                                   # 沒借到 → 不歸還
 
 
 def test_toggle_roundtrip(tmp_path, monkeypatch):

@@ -18,6 +18,14 @@ CMD_GUILD_SEARCH = 7427   # 公會搜尋（分頁列表）
 CMD_GUILD_MEMBERS = 7440  # 公會成員列表
 CMD_ROLE_OTHERS = 780     # 批次查詢其他玩家屬性
 CMD_LOT_INFO = 12801      # 車位（家園）佔用資訊
+CMD_CHAT_MESSAGE = 1537   # chat.chat_message_c2s（module 6）：送聊天訊息（含分享卡片）
+
+# 聊天頻道 enum（實測 decode 確認）：家族 = 3。搖人分享卡固定送家族，硬編此值。
+CHANNEL_GUILD = 3
+# 聊天內容型別：Share（分享卡片）。
+_CONTENT_TYPE_SHARE = 3
+# ChatLinkType.ParkingCall（搶奪車位卡）。
+_LINK_TYPE_PARKING_CALL = 17
 
 # 角色屬性 attr_id -> 我們關心的欄位
 _ATTR_LEVEL = 1001
@@ -66,6 +74,37 @@ def enc_role_others(role_ids: list[int], source: int = 1) -> bytes:
 def enc_lot_info(master_id: int) -> bytes:
     """車位查詢：type(#1)=0 家園車位 + 目標玩家(#2) + reserved(#3)=0。"""
     return codec.pb_uint(1, 0) + codec.pb_uint(2, master_id) + codec.pb_uint(3, 0)
+
+
+def enc_parking_call_guild(pos: int, park_type: int, master_id: int,
+                           role_id: int, ceng: int, *,
+                           channel: int = CHANNEL_GUILD,
+                           content: str = "<搶奪車位>") -> bytes:
+    """組 chat.chat_message_c2s body：把「搶奪車位」分享卡片送到家族頻道（搖人）。
+
+    欄位 id 由 client 自身 protobuf 編碼器序列化後 decode 確認（見
+    tests/test_mount_scan.py 的 byte-exact 測試）：
+      top    ：channel#1 / target_id#2 / content_type#3 / content#4 / links#5
+      p_link ：pos#1 / type#2 / args_list#3(repeated uint64, 非 packed) / string_list#4
+    ``args_list = [車位pos, park_type, master_id(車位主人), role_id(目標), ceng]``。
+    家園車位固定 ``park_type=0``、``ceng=1``（由呼叫端帶入）。
+
+    ``channel`` 預設 :data:`CHANNEL_GUILD`(=3 家族)；保留參數但呼叫端一律用預設，確保
+    搖人只送家族、永不送世界（byte-exact 測試把「送錯頻道」擋在 CI）。
+    """
+    link = (
+        codec.pb_uint(1, 1)                       # pos：link 序號（非車位）
+        + codec.pb_uint(2, _LINK_TYPE_PARKING_CALL)
+        + b"".join(codec.pb_uint(3, v)
+                   for v in (pos, park_type, master_id, role_id, ceng))
+    )
+    return (
+        codec.pb_uint(1, channel)                 # channel=3 家族
+        + codec.pb_uint(2, 0)                     # target_id=0（非私訊）
+        + codec.pb_uint(3, _CONTENT_TYPE_SHARE)   # content_type=Share
+        + codec.pb_str(4, content)                # content 泡泡文字
+        + codec.pb_msg(5, link)                   # links[0]
+    )
 
 
 # --- parsers（解 s2c body）-------------------------------------------------

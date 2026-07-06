@@ -359,6 +359,61 @@ def test_scan_now_skips_when_disabled(app, monkeypatch):
     assert woke == []                          # 停用 → 不催掃
 
 
+# --- rally：分享搶奪車位卡到家族（登入才可）--------------------------------
+
+def test_rally_calls_service_with_row_fields(app, monkeypatch):
+    calls = []
+    monkeypatch.setattr(rmt, "_rally",
+                        lambda t, o, p: calls.append((t, o, p)) or {"status": "ok"})
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/rally",
+                       json={"target_role_id": 5678, "owner": 1234, "pos": 7})
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+    assert calls == [(5678, 1234, 7)]
+
+
+def test_rally_missing_fields_is_400(app, monkeypatch):
+    calls = []
+    monkeypatch.setattr(rmt, "_rally", lambda t, o, p: calls.append(1) or {"status": "ok"})
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/rally", json={"target_role_id": 5678})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert calls == []                                 # 未觸及服務層
+
+
+def test_rally_non_numeric_is_400(app, monkeypatch):
+    calls = []
+    monkeypatch.setattr(rmt, "_rally", lambda t, o, p: calls.append(1) or {"status": "ok"})
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/rally",
+                       json={"target_role_id": 5678, "owner": "bad", "pos": 7})
+    assert resp.status_code == 400
+    assert resp.get_json()["status"] == "error"
+    assert calls == []
+
+
+def test_rally_service_error_passes_through(app, monkeypatch):
+    # 5554 忙碌 → 服務回 error 信封，路由原樣回傳（200 + status=error 供前端顯示）。
+    monkeypatch.setattr(rmt, "_rally",
+                        lambda t, o, p: {"status": "error", "message": "忙碌中"})
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/rally",
+                       json={"target_role_id": 1, "owner": 2, "pos": 3})
+    assert resp.status_code == 200
+    d = resp.get_json()
+    assert d["status"] == "error" and d["message"] == "忙碌中"
+
+
 # --- toggle：僅管理員 -------------------------------------------------------
 
 def test_toggle_non_admin_forbidden(app, monkeypatch):
