@@ -267,7 +267,8 @@ def patched_runner(monkeypatch):
                         mining_config=None,
                         sea_config=None,
                         only_tasks=None,
-                        progress=None):
+                        progress=None,
+                        should_abort=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "lamp_percent": lamp_percent,
                       "lamp_min_keep": lamp_min_keep,
@@ -487,7 +488,7 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
                       relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
                       gacha_config=None,
                       mining_config=None, sea_config=None,
-                      only_tasks=None, progress=None):
+                      only_tasks=None, progress=None, should_abort=None):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}
@@ -512,7 +513,7 @@ def test_run_ws_device_cycle_swallows_run_device_exception(patched_runner, monke
              relic_upgrade=False, relic_max_steps=10, relic_fragment_floor=0,
              tycoon=False, tycoon_max_rolls=50,
              mining_config=None, sea_config=None,
-             only_tasks=None, progress=None):
+             only_tasks=None, progress=None, should_abort=None):
         raise RuntimeError("ws blew up")
 
     monkeypatch.setattr(svc, "_load_run_device", lambda: boom)

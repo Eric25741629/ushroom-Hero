@@ -589,6 +589,17 @@ def check_force_sleep(ip: str) -> bool:
     return consume_signal(ip, Signal.FORCE_SLEEP)
 
 
+def has_pending_force_sleep(ip: str) -> bool:
+    """Return True when a force-sleep request is pending WITHOUT consuming it.
+
+    WS 任務邊界的 should_abort 輪詢用：只能 peek，信號必須留給外層迴圈
+    check_force_sleep 消費並轉成 force_sleep 睡眠語意。
+    """
+    with _global_lock:
+        s = _signals.get(ip)
+        return bool(s and Signal.FORCE_SLEEP in s)
+
+
 def request_web_close(ip: str) -> None:
     """Request the (web_h5) device thread to close its headless browser now.
 

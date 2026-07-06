@@ -583,12 +583,15 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     now = started if now is None else now
 
     def _should_abort() -> bool:
-        """開瀏覽器請求 = 最高優先中斷。僅 web_h5（adb 沒有瀏覽器可開，不中斷）；
-        讀失敗視為不中斷。"""
-        if backend_kind != "web_h5":
-            return False
+        """強制休眠 = 最高優先中斷（任何後端；peek 不消費，信號留給主迴圈轉成
+        force_sleep 睡眠語意）。開瀏覽器請求次之，僅 web_h5（adb 沒有瀏覽器可開，
+        不中斷）。讀失敗視為不中斷。"""
         try:
             import bot_state
+            if bot_state.has_pending_force_sleep(ip):
+                return True
+            if backend_kind != "web_h5":
+                return False
             return bool(bot_state.has_pending_web_launch_request(ip))
         except Exception:  # noqa: BLE001
             return False
@@ -695,11 +698,11 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             import bot_state
             bot_state.update_state(
                 ip, task="WS 階段",
-                step=f"WS 已暫停(開啟瀏覽器)，已完成 {len(effective_done)} 項，"
-                     f"重新上線後續做")
+                step=f"WS 已中斷(強制休眠/開啟瀏覽器)，已完成 {len(effective_done)} 項，"
+                     f"下輪續做")
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響流程
             log.debug("[%s] WS 中斷狀態回報失敗", ip, exc_info=True)
-        log.info("[%s] WS 階段被中斷（開啟瀏覽器），已完成 %s，待續",
+        log.info("[%s] WS 階段被中斷（強制休眠/開啟瀏覽器），已完成 %s，待續",
                  ip, sorted(effective_done))
     else:
         _clear_resume(ip, log, state_dir)
