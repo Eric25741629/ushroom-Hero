@@ -155,6 +155,31 @@ class TestAuthGuard(unittest.TestCase):
         self.assertEqual(r.status_code, 503)
 
 
+class TestMountTrackerPublicExemption(unittest.TestCase):
+    """坐騎追蹤刻意公開：頁面 + 檢視/編輯 API 免登入；管理操作（toggle/rebootstrap）仍受守門。
+
+    直接測 ``check_request_auth``（僅讀 request.path/session，豁免分支先於 settings 讀取），
+    不 import ``control_panel_app`` 也不碰 store / 設定檔，純 hermetic。
+    """
+
+    def _auth_unauthenticated(self, path):
+        import flask
+        from control_panel.shared.auth import check_request_auth
+        app = flask.Flask(__name__)
+        with app.test_request_context(path):     # 無 session = 未登入
+            return check_request_auth()
+
+    def test_public_paths_bypass_login(self):
+        for path in ("/mount-tracker", "/api/mount_tracker/results",
+                     "/api/mount_tracker/targets", "/api/mount_tracker/mark"):
+            self.assertIsNone(self._auth_unauthenticated(path), path)  # None = 放行
+
+    def test_admin_ops_not_public(self):
+        from control_panel.shared import auth
+        self.assertNotIn("/api/mount_tracker/toggle", auth.PUBLIC_PATHS)
+        self.assertNotIn("/api/mount_tracker/rebootstrap", auth.PUBLIC_PATHS)
+
+
 class TestVisibility(unittest.TestCase):
     """裝置可見性過濾：/api/status 出口過濾 + 控制端點 403。"""
 

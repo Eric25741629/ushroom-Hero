@@ -16,7 +16,7 @@ import logging
 
 from flask import Blueprint, jsonify, render_template, request
 
-from control_panel.shared.auth import _fly_pet_auth, require_admin
+from control_panel.shared.auth import require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +122,7 @@ def _resolve_offline(by: str, value: str):
 # --- routes -----------------------------------------------------------------
 
 @bp.route("/mount-tracker")
-@_fly_pet_auth
-def mount_tracker_page():
+def mount_tracker_page():  # 刻意公開（PUBLIC_PATHS）：路人不登入亦可檢視/編輯
     """坐騎追蹤器頁面（掃描發現的玩家坐騎 + 追蹤名單管理）。"""
     from control_panel.routes_pages import _get_frontend_version
 
@@ -131,8 +130,7 @@ def mount_tracker_page():
 
 
 @bp.route("/api/mount_tracker/results", methods=["GET"])
-@_fly_pet_auth
-def mount_tracker_results():
+def mount_tracker_results():  # 刻意公開（PUBLIC_PATHS）
     """回傳追蹤器快照 + 啟用狀態 + 即時進度。
 
     snapshot() 內含 targets/results/known_count/last_run/running；``progress`` 為純記憶體
@@ -143,8 +141,7 @@ def mount_tracker_results():
 
 
 @bp.route("/api/mount_tracker/targets", methods=["POST"])
-@_fly_pet_auth
-def mount_tracker_targets():
+def mount_tracker_targets():  # 刻意公開（PUBLIC_PATHS）：路人可增刪目標
     """新增/移除追蹤 target。
 
     body 型態（依序判斷）：
@@ -188,8 +185,7 @@ def mount_tracker_targets():
 
 
 @bp.route("/api/mount_tracker/mark", methods=["POST"])
-@_fly_pet_auth
-def mount_tracker_mark():
+def mount_tracker_mark():  # 刻意公開（PUBLIC_PATHS）：路人可標記已打掉
     """標記 / 取消標記某台坐騎為「已打掉」（軟標記，跨掃描保留）。
 
     body：``{target_role_id, owner_role_id, start_time, on?}``（``on`` 預設 True）。

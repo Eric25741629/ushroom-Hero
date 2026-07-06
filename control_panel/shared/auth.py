@@ -16,6 +16,15 @@ from utils import dashboard_settings
 
 # 免登入的頁面/端點：登入、申請、登出、favicon。
 EXEMPT_PATHS = {"/login", "/apply", "/logout", "/favicon.ico"}
+# 刻意公開（無需登入即可讀寫）的功能端點：坐騎追蹤頁 + 其檢視/編輯 API。
+# 使用者要求「路人也能看與改」。/toggle 與 /rebootstrap 刻意不在此列——開關整個
+# 掃描器 / 重建玩家庫屬管理操作，仍受全站登入牆 + @require_admin 雙重保護。
+PUBLIC_PATHS = {
+    "/mount-tracker",
+    "/api/mount_tracker/results",
+    "/api/mount_tracker/targets",
+    "/api/mount_tracker/mark",
+}
 # 免登入的路徑前綴：靜態資產（設計系統 lib / 圖示）。
 EXEMPT_PREFIXES = ("/static/",)
 # worker→master 機器對機器同步端點（無瀏覽器 session，不能被登入牆擋住）。
@@ -27,7 +36,7 @@ MACHINE_EXEMPT_PATHS = {"/api/poll_commands", "/api/refresh_devices", "/api/repo
 def check_request_auth():
     """全站守門。回 ``None`` 放行；否則回 Flask response（redirect/401/503）。"""
     p = request.path
-    if p in EXEMPT_PATHS or p in MACHINE_EXEMPT_PATHS:
+    if p in EXEMPT_PATHS or p in MACHINE_EXEMPT_PATHS or p in PUBLIC_PATHS:
         return None
     if any(p.startswith(pre) for pre in EXEMPT_PREFIXES):
         return None

@@ -125,12 +125,13 @@ def test_results_includes_progress(app, monkeypatch):
     assert d["progress"]["found"] == 2
 
 
-def test_results_requires_login(app, monkeypatch):
+def test_results_open_to_anonymous(app, monkeypatch):
+    # 坐騎追蹤刻意公開（PUBLIC_PATHS）：未登入亦可讀 results。
     _use_store(monkeypatch, FakeStore())
     monkeypatch.setattr(rmt, "_get_enabled", lambda: False)
     resp = app.test_client().get("/api/mount_tracker/results")
-    assert resp.status_code == 401
-    assert resp.get_json()["status"] == "error"
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
 
 
 # --- targets：直接 roleId 新增 + 移除 --------------------------------------
@@ -287,12 +288,15 @@ def test_mark_missing_fields_error(app, monkeypatch):
     assert store.marked == []                         # 未觸及 store
 
 
-def test_mark_requires_login(app, monkeypatch):
-    _use_store(monkeypatch, FakeStore())
+def test_mark_open_to_anonymous(app, monkeypatch):
+    # 刻意公開（PUBLIC_PATHS）：未登入亦可標記已打掉。
+    store = FakeStore()
+    _use_store(monkeypatch, store)
     resp = app.test_client().post("/api/mount_tracker/mark",
                                   json={"target_role_id": 1, "owner_role_id": 2, "start_time": 3})
-    assert resp.status_code == 401
-    assert resp.get_json()["status"] == "error"
+    assert resp.status_code == 200
+    assert resp.get_json()["status"] == "ok"
+    assert store.marked == [(1, 2, 3, True)]
 
 
 # --- toggle：僅管理員 -------------------------------------------------------
