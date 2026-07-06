@@ -339,6 +339,12 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         extra_kwargs["xwar_idle_enabled"] = True
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
+    def _should_abort() -> bool:
+        # 強制休眠即時中斷：run_device 在每個任務邊界（含開神燈/挖礦內迴圈）輪詢。
+        # 只 peek 不消費——信號留給 run_device 返回後消費並 raise，讓
+        # run_ws_device_loop 既有的 except ForceSleepRequested 走 force_sleep 睡眠。
+        return bot_state.has_pending_force_sleep(ip)
+
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
         label = _ws_task_label(name)
@@ -362,6 +368,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
                             progress=_progress,
+                            should_abort=_should_abort,
                             open_lamp=open_lamp, lamp_percent=lamp_percent,
                             lamp_min_keep=lamp_min_keep,
                             lamp_daily_min=lamp_daily_min, farm_config=farm_config,
@@ -389,6 +396,12 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")
         return None
+
+    # 強制休眠在 run 期間到達 → run_device 已在任務邊界 abort（只 peek 未消費），
+    # 這裡消費信號並 raise，由 run_ws_device_loop 轉成 force_sleep 睡眠語意。
+    if bot_state.check_force_sleep(ip):
+        from runtime_services.device_runtime_service import ForceSleepRequested
+        raise ForceSleepRequested(f"[{ip}] force sleep requested during ws cycle")
 
     login_ok = bool(getattr(report, "login_ok", False))
     tasks = getattr(report, "tasks", {}) or {}
