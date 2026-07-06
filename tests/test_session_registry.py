@@ -180,6 +180,83 @@ def test_scheduler_preempt_unpauses_the_borrowed_device(_clean_registry):
     assert ("d", True) not in calls
 
 
+# --- check_wake 即將喚醒 / OFFLINE 空窗保守閘門(修 bug#2) --------------------
+
+def test_check_wake_borrows_far_future_wake(monkeypatch):
+    # 明確休眠中 + next_wake_at 遠在 120s 之外 → 借用型可借。
+    monkeypatch.setattr(reg, "_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        reg, "_device_state",
+        lambda dev: {"task": "休眠中", "next_wake_at": 9_999_999.0})
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is True
+
+
+def test_check_wake_refuses_about_to_wake(monkeypatch):
+    # next_wake_at = now + 60s(< 120s lead)→ 即將自我喚醒,拒絕借用。
+    monkeypatch.setattr(reg, "_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        reg, "_device_state",
+        lambda dev: {"task": "休眠中", "next_wake_at": 1060.0})
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is False
+    assert res.reason == "about_to_wake"
+    assert reg.peek("d") is None
+
+
+def test_check_wake_refuses_offline_window_no_next_wake(monkeypatch):
+    # bug#2:OFFLINE 空窗(status OFFLINE、task 非休眠中、next_wake_at 被 pop)→ 保守拒絕。
+    monkeypatch.setattr(reg, "_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        reg, "_device_state",
+        lambda dev: {"status": "OFFLINE", "task": "每日任務"})
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is False
+    assert res.reason == "about_to_wake"
+
+
+def test_check_wake_refuses_missing_state_row(monkeypatch):
+    # 無 state row(thread 未起 / 不明)+ check_wake → 保守拒絕(不再誤判可借)。
+    monkeypatch.setattr(reg, "_device_state", lambda dev: None)
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is False
+    assert res.reason == "about_to_wake"
+
+
+def test_check_wake_allows_sleeping_without_next_wake(monkeypatch):
+    # 明確休眠中但暫無 next_wake_at(force_sleep 剛把 task 設休眠中並 pop 喚醒時刻)→ 安全。
+    monkeypatch.setattr(reg, "_device_state", lambda dev: {"task": "休眠中"})
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is True
+
+
+def test_check_wake_ignored_without_flag(monkeypatch):
+    # 不帶 check_wake(預設 False)→ 不讀 bot_state,一律照舊可借(Phase 1/2 相容)。
+    called = []
+    monkeypatch.setattr(reg, "_device_state",
+                        lambda dev: called.append(dev) or None)
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS)
+    assert res.ok is True
+    assert called == []  # 未帶 flag → 完全不觸碰 wake 判定
+
+
+def test_check_wake_not_applied_to_scheduler(monkeypatch):
+    # SCHEDULER 非借用型:即使帶 check_wake,也不套即將喚醒閘門(它就是喚醒本體)。
+    monkeypatch.setattr(reg, "_device_state", lambda dev: None)
+    res = reg.acquire("d", reg.Owner.SCHEDULER, reg.Channel.WS, check_wake=True)
+    assert res.ok is True
+
+
+def test_check_wake_occupied_returns_conflict_not_wake(monkeypatch):
+    # 裝置被別人佔用時,回 conflict(語意更精確),而非 about_to_wake。
+    monkeypatch.setattr(reg, "_device_state", lambda dev: None)
+    reg.acquire("d", reg.Owner.SCHEDULER, reg.Channel.WS)
+    res = reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS, check_wake=True)
+    assert res.ok is False
+    assert res.conflict is not None
+    assert res.reason is None
+
+
 # --- thread safety 基本 ------------------------------------------------------
 
 def test_concurrent_acquire_single_winner():

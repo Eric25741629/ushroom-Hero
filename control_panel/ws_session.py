@@ -59,15 +59,21 @@ _sweeper_lock = threading.Lock()
 # --- 連線管理 API -----------------------------------------------------------
 
 def ensure(device: str, *, owner: Owner = Owner.TOOL,
-           preempt: bool = False) -> dict:
+           preempt: bool = False, check_wake: bool = False) -> dict:
     """確保 ``device`` 有一條 live 純 WS 連線；沒有就建立。
 
     佔用權先向 registry `acquire`（原子判定 + 借用型自動 pause bot loop），**成功才連線**
     （先拿權再連，避免連了才發現要退）。
 
+    ``check_wake=True``（借用型呼叫者如坐騎追蹤用）：acquire 對空閒裝置額外做即將喚醒/空窗
+    保守閘門，判定不安全（即將自我喚醒 / OFFLINE 空窗 / 無 state row）→ 回
+    ``{"status": "skip"}``，呼叫端換下一台候選。判定在 registry 鎖內與佔用登記原子完成
+    （消 TOCTOU）。
+
     回傳：
       - ``{"status": "ok", ...}``        已連線 / 新建成功
       - ``{"status": "conflict", ...}``  帳號被別的 owner 佔用且不允許搶佔（不建立連線）
+      - ``{"status": "skip", ...}``      裝置即將自我喚醒 / 空窗，暫不借用（不建立連線）
       - ``{"status": "error", ...}``     無 creds / 連線失敗 / 受保護帳號
     """
     _ensure_sweeper()
@@ -102,11 +108,17 @@ def ensure(device: str, *, owner: Owner = Owner.TOOL,
 
         # 先取得佔用權（借用型 owner 成功即 pause bot loop）。
         result = registry.acquire(device, owner, Channel.WS, label="工具",
-                                  role_id=role_id, preempt=preempt)
+                                  role_id=role_id, preempt=preempt,
+                                  check_wake=check_wake)
         if not result.ok:
             if result.reason == "protected":
                 logger.warning("ws_session ensure 拒絕受保護帳號 device=%s", device)
                 return {"status": "error", "message": "此帳號受保護，不可由工具連線"}
+            if result.reason == "about_to_wake":
+                # 借用型 check_wake 閘門:即將自我喚醒 / OFFLINE 空窗 → 呼叫端換下一台候選。
+                logger.info("ws_session ensure 裝置即將喚醒/空窗,暫不借用 device=%s", device)
+                return {"status": "skip",
+                        "message": "此裝置即將自我喚醒，暫不借用"}
             conflict = result.conflict
             owner_val = conflict.owner.value if conflict else "其他"
             label = conflict.label if conflict else ""

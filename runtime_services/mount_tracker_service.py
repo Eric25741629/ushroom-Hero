@@ -17,6 +17,8 @@ import threading
 import time
 from typing import Any, Callable, Optional
 
+from runtime_services import session_registry as registry
+from runtime_services.session_registry import Owner
 from ws_token import mount_scan, parking_bonus
 from ws_token.state import load_state, save_state
 
@@ -284,18 +286,20 @@ class MountTrackerStore:
 
 
 # ============================================================================
-# Task 4：idle 裝置借用判定
+# Task 4：idle 裝置借用（Phase 3：借用判定收斂到 session_registry）
 # ----------------------------------------------------------------------------
-# 坐騎掃描要借「正在休眠、且不會馬上被叫醒、也沒被 dashboard 純 WS 佔用」的裝置
-# 來開一次性連線讀車位。判定沿用 online_monitor 的「安全 detector」語意，額外加上
-# 「非 human_played 保護帳號」閘門。所有外部依賴走薄封裝間接層，測試可 monkeypatch。
+# 坐騎掃描要借「正在休眠、且不會馬上被叫醒、也沒被別人佔用」的裝置來開一次性連線讀
+# 車位。**借用判定（未被佔用 + 非保護帳號 + 非即將喚醒/空窗）已原子收斂進
+# registry.acquire**（經 ws_session.ensure(check_wake=True) 觸發）——不再自製
+# _is_idle / _ws_active / _protected_roles 這些散落判定（消 TOCTOU + OFFLINE 空窗
+# 誤判可借的 bug#2）。此處只保留「續用」判定（still_idle）需要的即將喚醒安全網：
+# poll lease.preempted（被 SCHEDULER 搶佔即讓位）+ next_wake_at（Phase 5 尚未把喚醒
+# 路徑接上 preempt 前的安全網）。
 # ============================================================================
 
-# 距離下次喚醒少於此秒數 → 讓位給裝置自身 bot loop，不借用。
+# 距離下次喚醒少於此秒數 → 讓位給裝置自身 bot loop（續用安全網用）。
 _HANDOFF_LEAD_SEC = 120
-# 視為 idle（可安全登入、不會踢掉 live session）的 task 字串。
-_IDLE_TASKS = ("休眠中", "啟動後休眠")
-# 預設候選借用裝置（皆為受控 bot 帳號；human_played 帳號另由保護集合擋掉）。
+# 預設候選借用裝置（皆為受控 bot 帳號；human_played 帳號由 registry protected 前置擋掉）。
 CANDIDATES = ["7fe98fc6", "emulator-5554", "emulator-5556", "emulator-5560"]
 
 
@@ -310,55 +314,19 @@ def _states() -> dict:
         return {}
 
 
-def _ws_active(ip: str) -> bool:
-    """該裝置是否已有 dashboard 純 WS 連線在跑（借用會互踢）。容錯回 False。"""
-    try:
-        from control_panel import ws_session
-        return bool(ws_session.is_active(ip))
-    except Exception:  # noqa: BLE001
-        return False
-
-
-def _protected_roles() -> set:
-    """human_played 保護帳號的 roleId 集合（絕不借用）。容錯回空集合。"""
-    try:
-        from ws_token.online_monitor import resolve_protected_role_ids
-        return set(resolve_protected_role_ids())
-    except Exception:  # noqa: BLE001
-        return set()
-
-
-def _role_id(ip: str) -> Optional[int]:
-    """讀取裝置對應的 roleId（寬鬆讀 capture 檔）；無 creds 回 None。"""
-    try:
-        from ws_token.creds import load_role_id
-        return load_role_id(ip)
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _now() -> float:
     """現在時間（秒）。"""
     return time.time()
 
 
-# ---- 判定 -------------------------------------------------------------------
-
-def _is_idle(ip: str, states: dict) -> bool:
-    """裝置是否 idle（登入不會踢掉 live session）。
-
-    無 row（thread 未起）/ status OFFLINE / task ∈ 休眠中｜啟動後休眠 → idle。
-    """
-    st = states.get(ip)
-    if not st:
-        return True  # 沒有跑中的 thread → 安全
-    if str(st.get("status") or "").upper() == "OFFLINE":
-        return True
-    return str(st.get("task") or "") in _IDLE_TASKS
-
+# ---- 續用判定（still_idle 安全網）------------------------------------------
 
 def _about_to_wake(ip: str, states: dict) -> bool:
-    """裝置是否即將（<_HANDOFF_LEAD_SEC）被自身排程叫醒。"""
+    """裝置是否即將（<_HANDOFF_LEAD_SEC）被自身排程叫醒。
+
+    續用（still_idle）安全網用：缺 next_wake_at → 回 False（已持有借用的裝置若丟失
+    next_wake_at 不視為即將喚醒；借用進入閘門在 registry.acquire 才是嚴格保守判定）。
+    """
     nwa = (states.get(ip) or {}).get("next_wake_at")
     if not nwa:
         return False
@@ -368,36 +336,16 @@ def _about_to_wake(ip: str, states: dict) -> bool:
         return False
 
 
-def is_safe_to_borrow(ip: str) -> bool:
-    """能否安全借用 ``ip`` 開一次性 WS 連線掃車位。
+def _still_hold(ip: str) -> bool:
+    """本 daemon 是否仍持有 ``ip`` 的 MOUNT_TRACKER 借用且未被搶佔。
 
-    全部成立才算安全：
-      1. idle（休眠 / OFFLINE / 無 thread）。
-      2. 不在 _HANDOFF_LEAD_SEC 內即將自我喚醒。
-      3. 沒有 dashboard 純 WS 連線佔用（否則同帳號互踢）。
-      4. 不是 human_played 保護帳號；有保護集合時，roleId 讀不出來也一律不借。
+    poll registry：lease 不在 / owner 已非 MOUNT_TRACKER（被 SCHEDULER 搶佔改寫）/
+    lease.preempted 被 set（搶佔通知）→ 皆視為已失去借用，收線讓位。
     """
-    states = _states()
-    if not _is_idle(ip, states):
+    lease = registry.peek(ip)
+    if lease is None or lease.owner is not Owner.MOUNT_TRACKER:
         return False
-    if _about_to_wake(ip, states):
-        return False
-    if _ws_active(ip):
-        return False
-    protected = _protected_roles()
-    if protected:
-        rid = _role_id(ip)
-        if rid is None or int(rid) in protected:
-            return False
-    return True
-
-
-def pick_idle_device(candidates: list[str] = CANDIDATES) -> Optional[str]:
-    """回傳第一個可安全借用的候選裝置；全部不安全回 None。"""
-    for ip in candidates:
-        if is_safe_to_borrow(ip):
-            return ip
-    return None
+    return not lease.preempted.is_set()
 
 
 # ============================================================================
@@ -820,20 +768,28 @@ def wake_scan() -> None:
     _wake.set()
 
 
-def _get_ws_client(dev: str):
-    """借用 ``dev`` 的 dashboard 純 WS 連線並取得 live client。
+def _get_ws_client(dev: str, on_ensure: Optional[Callable[[str], None]] = None):
+    """借用 ``dev`` 開純 WS 連線並取得 live client。
 
-    透過 ``ws_session.ensure`` 註冊借用（會暫停該機 bot loop，讓喚醒禮讓），
-    再取回 live client。取不到（連線失敗 / 已死）回 None。此間接層供測試 monkeypatch，
-    測試不需真的開 socket。
+    透過 ``ws_session.ensure(owner=MOUNT_TRACKER, check_wake=True)`` 向 registry 原子
+    取用佔用權：判定「未被佔用 + 非保護帳號 + 非即將喚醒/空窗」並登記 MOUNT_TRACKER
+    lease（會暫停該機 bot loop，讓喚醒禮讓）。取用被拒（conflict / protected / skip）或
+    連線失敗 → 回 None，呼叫端換下一台候選。
+
+    ``on_ensure``：**ensure 取得佔用即回呼一次**（拿到 lease 的當下），讓呼叫端在「連線
+    建立當下」就登記借用——即使隨後 ``get_client`` 回 None（連上瞬間死）或本次讀取被踢，
+    收尾仍會歸還此 lease，杜絕洩漏。此間接層供測試 monkeypatch，測試不需真的開 socket。
     """
     try:
         from control_panel import ws_session
     except Exception:  # noqa: BLE001
         return None
-    res = ws_session.ensure(dev)
+    res = ws_session.ensure(dev, owner=Owner.MOUNT_TRACKER, preempt=False,
+                            check_wake=True)
     if res.get("status") != "ok":
         return None
+    if on_ensure is not None:
+        on_ensure(dev)
     return ws_session.get_client(dev)
 
 
@@ -926,10 +882,12 @@ def _run_one_cycle() -> None:
             borrowed.append(dev)
 
     def still_idle(dev: str) -> bool:
-        # 續用判定：仍 idle 且尚未即將自我喚醒。不可用 is_safe_to_borrow——它要求
-        # _ws_active==False，但我們正持有此機 WS 連線（active），會誤判不可借。
-        states = _states()
-        return _is_idle(dev, states) and not _about_to_wake(dev, states)
+        # 續用判定（每次讀取前 poll）：仍持有本 MOUNT_TRACKER 借用且未被 SCHEDULER 搶佔
+        # （_still_hold poll lease.preempted）；加上即將自我喚醒安全網——Phase 5 尚未把喚醒
+        # 路徑接上 preempt 前，仍看 next_wake_at 讓位給自身 bot loop。
+        if not _still_hold(dev):
+            return False
+        return not _about_to_wake(dev, _states())
 
     def reader(dev: str, owner: int) -> Optional[dict]:
         # on_ensure 在連線建立當下登記借用（見 _read_lot），故被踢也不會漏歸還。
@@ -945,10 +903,17 @@ def _run_one_cycle() -> None:
         # _mark_borrowed 登記，收尾 finally 一律歸還；完成（即使部分）就標記，
         # 避免每輪重灌，剩下的交給 scan_cycle 雪球補齊。
         if will_bootstrap:
-            dev = pick_idle_device()
+            # 借第一台成功取用（registry 原子判定安全）的候選跑 bootstrap。_get_ws_client
+            # 內部經 ws_session.ensure(check_wake=True) 向 registry acquire，被拒（佔用 /
+            # 保護 / 即將喚醒）回 None → 換下一台。on_ensure 於取用當下登記借用，收尾歸還。
+            dev = None
+            client = None
+            for cand in CANDIDATES:
+                c = _get_ws_client(cand, on_ensure=_mark_borrowed)
+                if c is not None:
+                    dev, client = cand, c
+                    break
             if dev:
-                client = _get_ws_client(dev)
-                _mark_borrowed(dev)  # ensure 當下即登記借用，收尾 finally 會歸還
                 if client:
                     deadline = time.time() + _BOOTSTRAP_BUDGET_S
                     # 借用裝置一旦接近自身喚醒窗即停止 bootstrap，讓位給它的 bot loop。
@@ -966,16 +931,15 @@ def _run_one_cycle() -> None:
             # 無 idle 裝置（dev 為 None）→ 不標記完成，下一輪重試 bootstrap。
         # sleeper 用 _cooldown（真 sleep），不可用 _wake.wait——見 _cooldown docstring。
         _set_progress(phase="scan")  # 進入正式掃描階段（頁面顯示 scanned/found/known）
-        # 借「所有」目前安全可借的裝置並各自建立 WS 連線，交給 scan_cycle 各台並行掃描
-        # （每台自冷卻）。只納入連得上的裝置，避免壞台空跑吃掉共享 queue。
+        # 借「所有」目前可安全取用的裝置並各自建立 WS 連線，交給 scan_cycle 各台並行掃描
+        # （每台自冷卻）。取用安全判定（未被佔用 + 非保護 + 非即將喚醒/空窗）原子收斂在
+        # registry.acquire（經 _get_ws_client → ws_session.ensure(check_wake=True)）：被拒
+        # 回 None → 跳過該台。on_ensure 於取用當下登記借用（即使隨後 get_client 回 None），
+        # 由 finally 統一歸還，杜絕「連上但取不到 client」的借用洩漏；只納入連得上的裝置，
+        # 避免壞台空跑吃掉共享 queue。
         worker_devices: list[str] = []
         for dev in CANDIDATES:
-            if not is_safe_to_borrow(dev):
-                continue
-            client = _get_ws_client(dev)
-            # ensure 可能已登記借用（即使隨後 get_client 回 None）→ 一律列入 borrowed，
-            # 由 finally 統一歸還，杜絕「連上但取不到 client」時的借用洩漏。
-            _mark_borrowed(dev)
+            client = _get_ws_client(dev, on_ensure=_mark_borrowed)
             if client is not None:
                 worker_devices.append(dev)
         # 全部目標都收滿 → 聚焦模式：只重掃目前停著坐騎的車位主人（偵測是否移動/更新），

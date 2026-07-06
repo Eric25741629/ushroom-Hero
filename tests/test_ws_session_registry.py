@@ -146,3 +146,18 @@ def test_is_active_covers_all_owners():
     assert wss.is_active("d") is False
     reg.acquire("d", reg.Owner.MOUNT_TRACKER, reg.Channel.WS)
     assert wss.is_active("d") is True
+
+
+def test_ensure_check_wake_skips_about_to_wake(monkeypatch):
+    # 借用型 + check_wake:裝置即將自我喚醒 / 空窗 → skip,不建連、不佔 lease。
+    created = []
+    monkeypatch.setattr(
+        wss, "WSGameClient",
+        lambda creds: created.append(creds) or _FakeClient(creds))
+    # registry 判定該裝置 wake-unsafe(無 state row → 保守拒絕)。
+    monkeypatch.setattr(reg, "_device_state", lambda dev: None)
+    res = wss.ensure("d", owner=reg.Owner.MOUNT_TRACKER, check_wake=True)
+    assert res["status"] == "skip"
+    assert created == []            # 未嘗試連線
+    assert reg.peek("d") is None    # 未佔 lease
+    assert "d" not in wss._sessions

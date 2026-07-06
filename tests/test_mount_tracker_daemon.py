@@ -93,8 +93,8 @@ def test_read_lot_records_borrow_at_ensure_even_if_read_kicked(monkeypatch):
 
 
 def test_scan_borrows_all_safe_idle_and_releases(monkeypatch):
-    """並行掃描：借「所有」安全 idle 且連得上的裝置當 worker、收尾一律歸還；
-    still_idle 反映 idle 且未即將自我喚醒（進入喚醒窗 → False，讓位給自身 bot loop）。"""
+    """並行掃描：借「所有」registry 取用成功且連得上的裝置當 worker、收尾一律歸還；
+    still_idle poll 本借用是否仍持有（_still_hold）+ 即將喚醒安全網（進入喚醒窗 → False）。"""
     captured = {}
 
     def fake_scan_cycle(store, reader, worker_devices, still_idle, sleeper, now_fn, **kw):
@@ -113,26 +113,36 @@ def test_scan_borrows_all_safe_idle_and_releases(monkeypatch):
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
     monkeypatch.setattr(mt, "CANDIDATES", ["devA", "devB", "devC", "devD"])
-    # devA/devC/devD 安全可借；devD 連不上（client None）→ 只借 devA/devC。
-    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: ip in {"devA", "devC", "devD"})
-    monkeypatch.setattr(mt, "_get_ws_client", lambda dev: None if dev == "devD" else object())
+
+    # 取用結果（registry.acquire 經 _get_ws_client 收斂）：
+    #   devB → conflict/skip（回 None、未登記借用）；devA/devC → 取用成功；
+    #   devD → ensure ok 已握 lease 但 get_client 回 None（連上瞬間死）→ 登記借用但非 worker。
+    def fake_get_client(dev, on_ensure=None):
+        if dev == "devB":
+            return None                    # 被拒 → 不登記借用
+        if on_ensure:
+            on_ensure(dev)                 # 取得 lease 當下即登記借用（devA/devC/devD）
+        return None if dev == "devD" else object()
+
+    monkeypatch.setattr(mt, "_get_ws_client", fake_get_client)
 
     released = []
     monkeypatch.setattr(mt, "_release_dev", lambda dev: released.append(dev))
 
-    # still_idle 判定：devA 仍 idle；devC 即將自我喚醒（1060-1000=60s < 120s lead）。
+    # still_idle：devA 仍持有；devC 即將自我喚醒（1060-1000=60s < 120s lead）→ 讓位。
+    monkeypatch.setattr(mt, "_still_hold", lambda dev: True)
     monkeypatch.setattr(mt, "_now", lambda: 1000.0)
-    states = {"devA": {"task": "休眠中", "next_wake_at": 9_999_999.0},
-              "devC": {"task": "休眠中", "next_wake_at": 1060.0}}
+    states = {"devA": {"next_wake_at": 9_999_999.0},
+              "devC": {"next_wake_at": 1060.0}}
     monkeypatch.setattr(mt, "_states", lambda: states)
 
     mt._run_one_cycle()
 
-    assert captured["worker_devices"] == ["devA", "devC"]   # devB 不安全、devD 連不上
-    # 收尾歸還所有登記過借用的裝置；devD 連不上仍列入 borrowed（防洩漏）→ 一併歸還。
+    assert captured["worker_devices"] == ["devA", "devC"]   # devB 被拒、devD client None
+    # 收尾歸還所有登記過借用的裝置；devD 已握 lease（防洩漏）→ 一併歸還；devB 未借用不歸還。
     assert set(released) == {"devA", "devC", "devD"}
     still_idle = captured["still_idle"]
-    assert still_idle("devA") is True                       # 仍 idle
+    assert still_idle("devA") is True                       # 仍持有借用
     assert still_idle("devC") is False                      # 進入喚醒窗 → 收掉該 worker
 
 
@@ -151,8 +161,13 @@ def test_run_one_cycle_runs_bootstrap_when_not_done(monkeypatch):
             pass
 
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
-    monkeypatch.setattr(mt, "pick_idle_device", lambda: "devA")
-    monkeypatch.setattr(mt, "_get_ws_client", lambda dev: object())   # 非 None → 進 bootstrap
+    monkeypatch.setattr(mt, "CANDIDATES", ["devA", "devB"])
+    # bootstrap 借第一台 registry 取用成功的候選（devA）；on_ensure 登記借用。
+    def fake_get_client(dev, on_ensure=None):
+        if on_ensure:
+            on_ensure(dev)
+        return object()
+    monkeypatch.setattr(mt, "_get_ws_client", fake_get_client)
     monkeypatch.setattr(mt, "_states", lambda: {})
     monkeypatch.setattr(mt, "_about_to_wake", lambda dev, states: False)
     monkeypatch.setattr(mt, "bootstrap_known",
@@ -190,9 +205,8 @@ def test_run_one_cycle_skips_bootstrap_when_done(monkeypatch):
         lambda *a, **k: (events.__setitem__("bootstrap", events["bootstrap"] + 1) or {}))
     monkeypatch.setattr(mt, "scan_cycle",
                         lambda *a, **k: events.__setitem__("scan", events["scan"] + 1))
-    monkeypatch.setattr(mt, "pick_idle_device", lambda: None)
-    # scan 路徑會借「所有」安全 idle 裝置；此測試只驗 scan 有跑，關掉借用避免真連線。
-    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: False)
+    # scan 路徑會嘗試借「所有」候選；此測試只驗 scan 有跑，取用一律回 None 避免真連線。
+    monkeypatch.setattr(mt, "_get_ws_client", lambda dev, on_ensure=None: None)
 
     mt._run_one_cycle()
 
@@ -292,7 +306,8 @@ def test_cycle_sleeper_is_cooldown_not_wake(monkeypatch):
 
     monkeypatch.setattr(mt, "scan_cycle", fake_scan_cycle)
     monkeypatch.setattr(mt, "get_store", lambda: FakeStore())
-    monkeypatch.setattr(mt, "is_safe_to_borrow", lambda ip: False)  # 不借用，只驗 sleeper 身分
+    # 取用一律回 None（不借用），只驗 sleeper 身分。
+    monkeypatch.setattr(mt, "_get_ws_client", lambda dev, on_ensure=None: None)
 
     mt._run_one_cycle()
 

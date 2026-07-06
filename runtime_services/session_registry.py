@@ -48,6 +48,12 @@ _PRIORITY: dict[Owner, int] = {
     Owner.TOOL: 20,
 }
 
+# 借用型 owner 若 check_wake=True,取用一台『閒置』裝置前的即將喚醒/空窗保守閘門用:
+# 距離下次喚醒少於此秒數 → 讓位給裝置自身 bot loop,不借用。
+_HANDOFF_LEAD_SEC = 120
+# 視為『明確休眠中』(可安全登入、不會踢掉 live session)的 task 字串。
+_IDLE_TASKS = ("休眠中", "啟動後休眠")
+
 
 @dataclass
 class Lease:
@@ -85,7 +91,8 @@ def _is_borrowing(owner: Owner) -> bool:
 
 def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
             role_id: Optional[int] = None,
-            preempt: bool = False) -> AcquireResult:
+            preempt: bool = False,
+            check_wake: bool = False) -> AcquireResult:
     """嘗試取得 ``device`` 帳號的佔用權。全程持 `_lock`(判定→登記原子化,消 TOCTOU)。
 
     - 同 owner 再次 acquire = 續租(更新 channel/label/role_id/acquired_at)。
@@ -93,6 +100,11 @@ def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
     - preempt=True 且嚴格高於現任 → 觸發現任 `preempted`,改寫 lease。
     - human_played 保護帳號(role_id 命中 protected,或裝置被標 human_played)→
       任何 owner 都回 ``reason="protected"``。
+    - ``check_wake=True`` 且借用型 owner 取用一台**空閒**裝置時,額外做即將喚醒/空窗
+      保守閘門(讀 bot_state next_wake_at):即將自我喚醒(<120s)或缺 next_wake_at 且
+      非明確休眠中(OFFLINE 空窗 / 崩潰重啟 / 無 state row)→ 回 ``reason="about_to_wake"``。
+      此判定與佔用登記在同一鎖內完成(原子),消掉舊 mount-tracker「先判定再 ensure」的
+      TOCTOU 與「OFFLINE 空窗誤判可借」bug。SCHEDULER / 非 check_wake 呼叫不受影響。
 
     借用型 owner acquire 成功 → registry `set_pause(device, True)`;
     釋放 / 被搶佔 → `set_pause(device, False)`(見 §1.4)。
@@ -107,6 +119,7 @@ def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
         existing = _leases.get(device)
         if existing is not None and existing.owner is owner:
             # 續租:更新細節,不觸發 preempted,借用型確保仍暫停(冪等)。
+            # 已持有此借用 → 不再套即將喚醒閘門(續用交給呼叫端 poll preempted)。
             existing.channel = channel
             existing.label = label
             existing.acquired_at = _now()
@@ -115,6 +128,12 @@ def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
             if _is_borrowing(owner):
                 _safe_set_pause(device, True)
             return AcquireResult(ok=True, lease=existing)
+
+        if existing is None:
+            # 全新借用一台空閒裝置:借用型 + check_wake 才套即將喚醒/空窗保守閘門。
+            # 只在裝置空閒時檢查——被別人佔用一律走下面的 conflict(語意更精確)。
+            if check_wake and _is_borrowing(owner) and _borrow_wake_unsafe(device):
+                return AcquireResult(ok=False, reason="about_to_wake")
 
         if existing is not None:
             can_preempt = preempt and _PRIORITY[owner] > _PRIORITY[existing.owner]
@@ -179,6 +198,36 @@ def _end_lease_locked(lease: Lease) -> None:
 
 def _now() -> float:
     return time.time()
+
+
+def _device_state(device: str) -> Optional[dict]:
+    """讀取單一裝置的即時狀態 row(bot_state);讀取失敗 / 無 row 回 None。此為測試 seam。"""
+    try:
+        import bot_state
+        return bot_state.get_all_states().get(device)
+    except Exception:  # noqa: BLE001 — 狀態讀取不可弄垮 acquire 判定
+        return None
+
+
+def _borrow_wake_unsafe(device: str) -> bool:
+    """借用型 owner 取用一台空閒裝置前的即將喚醒/空窗保守閘門(True = 不安全,拒絕借用)。
+
+    - next_wake_at 存在:距下次喚醒 <=_HANDOFF_LEAD_SEC → 不安全(讓位給自身 bot loop);
+      壞值也保守視為不安全。
+    - next_wake_at 缺失:只有 task 明確休眠中/啟動後休眠才安全(睡著,只是還沒算喚醒時刻);
+      其餘(OFFLINE 空窗 / 崩潰重啟 / 無 state row / 執行中任務)一律保守拒絕借用。
+
+    修掉舊 mount-tracker「_is_idle 對無 row/OFFLINE 回 True + _about_to_wake 對缺
+    next_wake_at 回 False」組合誤判『空窗可借』的 bug#2。
+    """
+    st = _device_state(device)
+    nwa = (st or {}).get("next_wake_at")
+    if nwa is not None:
+        try:
+            return (float(nwa) - _now()) <= _HANDOFF_LEAD_SEC
+        except (TypeError, ValueError):
+            return True
+    return str((st or {}).get("task") or "") not in _IDLE_TASKS
 
 
 def _safe_set_pause(device: str, paused: bool) -> None:
