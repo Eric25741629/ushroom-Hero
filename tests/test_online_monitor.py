@@ -9,7 +9,26 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+import runtime_services.session_registry as reg
+from runtime_services.session_registry import Channel, Owner
 from ws_token import online_monitor as om
+
+
+@pytest.fixture(autouse=True)
+def _clean_registry(monkeypatch):
+    """Empty registry + neutralised protected/pause seams for every test, so
+    detector selection sees a clean account-ownership table (no cross-test leak).
+    """
+    with reg._lock:
+        reg._leases.clear()
+    monkeypatch.setattr(reg, "_protected_role_ids", lambda: frozenset())
+    monkeypatch.setattr(reg, "_is_human_played_device", lambda dev: False)
+    monkeypatch.setattr(reg, "_safe_set_pause", lambda dev, paused: None)
+    yield
+    with reg._lock:
+        reg._leases.clear()
 
 
 class _FakeCreds:
@@ -335,3 +354,77 @@ def test_setup_monitor_log_writes_to_dedicated_file(tmp_path, monkeypatch):
                 om.logger.removeHandler(h)
                 h.close()
         om._log_handler_attached = False
+
+
+# --- session_registry 接線 (Phase 4) ----------------------------------------
+# detector 選擇要對候選 registry.peek：被別的 owner 佔用者跳過；5558 一般路徑也硬
+# 排除；被更高優先權搶佔時要收線讓位。
+
+def test_5558_excluded_on_general_select_path(monkeypatch):
+    """bug#3:5558 縱使 idle+有 creds,一般 _select_detector 路徑也永不被選中。"""
+    mon = om.OnlineMonitor(preferred="emulator-5558",
+                           force_exclude=("emulator-5558",))
+    mon._role_map = {1: "emulator-5558", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5558": {"task": "休眠中"},   # idle 但被硬排除
+        "emulator-5556": {"task": "休眠中"},
+    })
+    assert mon._select_detector() == "emulator-5556"
+
+    mon._role_map = {1: "emulator-5558"}  # 只剩被排除者 → 無可選
+    assert mon._select_detector() is None
+
+
+def test_select_skips_device_owned_by_other(monkeypatch):
+    """候選被別的 owner(SCHEDULER)佔用 → 跳過,改選未被佔用的。"""
+    mon = om.OnlineMonitor(preferred="emulator-5554")
+    mon._role_map = {1: "emulator-5554", 2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {
+        "emulator-5554": {"task": "休眠中"},
+        "emulator-5556": {"task": "休眠中"},
+    })
+    reg.acquire("emulator-5554", Owner.SCHEDULER, Channel.WS)  # 別的 owner 佔用
+    assert mon._select_detector() == "emulator-5556"
+
+
+def test_select_keeps_own_detector_lease(monkeypatch):
+    """自己(ONLINE_MONITOR)持有的 lease 不算「被別人佔用」→ sticky 仍成立。"""
+    mon = om.OnlineMonitor(preferred="emulator-5554")
+    mon._role_map = {2: "emulator-5556"}
+    _allow_creds(monkeypatch)
+    _states(monkeypatch, {"emulator-5556": {"task": "休眠中"}})
+    reg.acquire("emulator-5556", Owner.ONLINE_MONITOR, Channel.WS)
+    assert mon._select_detector(current="emulator-5556", snapshot=None) == "emulator-5556"
+
+
+def test_preempted_true_when_own_lease_preempted():
+    """自己 lease 的 preempted Event 被 set → _preempted 回 True(該收線讓位)。"""
+    mon = om.OnlineMonitor()
+    res = reg.acquire("emulator-5554", Owner.ONLINE_MONITOR, Channel.WS)
+    assert mon._preempted("emulator-5554") is False
+    res.lease.preempted.set()
+    assert mon._preempted("emulator-5554") is True
+
+
+def test_preempted_false_for_none_or_other_owner():
+    mon = om.OnlineMonitor()
+    assert mon._preempted(None) is False
+    # 被 SCHEDULER 搶走後,current 的 lease 已不是我們的 → 不再自認被搶(已交出)。
+    reg.acquire("emulator-5554", Owner.ONLINE_MONITOR, Channel.WS)
+    reg.acquire("emulator-5554", Owner.SCHEDULER, Channel.WS, preempt=True)
+    assert mon._preempted("emulator-5554") is False
+
+
+def test_scheduler_preempt_yields_and_releases():
+    """SCHEDULER 搶佔 online-monitor 的 detector:舊 lease 被通知 + 收回佔用。"""
+    old = reg.acquire("emulator-5554", Owner.ONLINE_MONITOR, Channel.WS)
+    mon = om.OnlineMonitor()
+    assert mon._preempted("emulator-5554") is False
+    reg.acquire("emulator-5554", Owner.SCHEDULER, Channel.WS, preempt=True)
+    assert old.lease.preempted.is_set()               # 舊 owner 收到讓位通知
+    assert reg.peek("emulator-5554").owner is Owner.SCHEDULER
+    # monitor 讓位後 release 自己的 lease 是冪等 no-op(owner 已不符)。
+    mon._release_detector("emulator-5554")
+    assert reg.peek("emulator-5554").owner is Owner.SCHEDULER

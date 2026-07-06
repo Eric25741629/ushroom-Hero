@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from runtime_services import session_registry as registry
+from runtime_services.session_registry import Channel, Owner
 from ws_token import online_guard
 from ws_token.client import WSGameClient
 from ws_token.creds import load_creds
@@ -262,19 +264,49 @@ class OnlineMonitor:
                 return not e.online
         return None
 
+    def _occupied_by_other(self, dev: str) -> bool:
+        """True iff the registry shows ``dev``'s account held by a DIFFERENT owner
+        (SCHEDULER online / dashboard TOOL / online-check…). Our own detector lease
+        (``ONLINE_MONITOR``) does not count — otherwise stickiness would drop it.
+        Never raise: a registry read error must not stall detector selection.
+        """
+        try:
+            lease = registry.peek(dev)
+        except Exception:  # noqa: BLE001 — registry read must never break selection
+            return False
+        return lease is not None and lease.owner is not Owner.ONLINE_MONITOR
+
+    def _preempted(self, current: Optional[str]) -> bool:
+        """True iff our own detector lease was preempted by a higher-priority
+        owner (e.g. the device's SCHEDULER wake). Signals the poll loop to drop
+        the connection and yield instead of squatting on a now-contested account.
+        """
+        if current is None:
+            return False
+        try:
+            lease = registry.peek(current)
+        except Exception:  # noqa: BLE001
+            return False
+        return (lease is not None and lease.owner is Owner.ONLINE_MONITOR
+                and lease.preempted.is_set())
+
     def _eligible_pool(self, states: Dict[str, dict]) -> List[str]:
-        """Detector candidates: have creds, bot-idle/offline, not about to wake.
+        """Detector candidates: have creds, bot-idle/offline, not about to wake,
+        not force-excluded (5558), not held by another registry owner.
 
         Deduped, role_map order preserved. Snapshot-offline verification is
         applied later (only when picking a NEW detector), not here, so a sticky
         current detector — which is online via the monitor itself — still
-        qualifies.
+        qualifies. ``force_exclude`` (5558, the most-protected human main) is
+        hard-excluded on EVERY path here — not just the stale-escape blind pick.
         """
         pool: List[str] = []
         for dev in dict.fromkeys(self._role_map.values()):
-            if (self._has_creds(dev)
+            if (dev not in self._force_exclude
+                    and self._has_creds(dev)
                     and self._is_safe_detector(dev, states)
-                    and not self._about_to_wake(dev, states)):
+                    and not self._about_to_wake(dev, states)
+                    and not self._occupied_by_other(dev)):
                 pool.append(dev)
         return pool
 
@@ -366,12 +398,34 @@ class OnlineMonitor:
         self._wake.wait(timeout=self._poll_sec)
         self._wake.clear()
 
+    def _release_detector(self, current: Optional[str]) -> None:
+        """Release our registry lease on ``current`` (idempotent; no-op on None)."""
+        if current is not None:
+            try:
+                registry.release(current, Owner.ONLINE_MONITOR)
+            except Exception:  # noqa: BLE001 — release must never break the loop
+                logger.exception("online-monitor: release lease %s failed", current)
+
     def _loop(self) -> None:
         client: Optional[WSGameClient] = None
         current: Optional[str] = None
         gate_reconnect = False  # throttle only reopen-after-failure (anti-storm)
 
         while self._running:
+            # Yield if a higher-priority owner (e.g. the device's SCHEDULER wake)
+            # preempted our detector lease. Drop the connection + release before
+            # sending anything else to a now-contested account.
+            if self._preempted(current):
+                logger.info("online-monitor: detector %s preempted; yielding", current)
+                if client is not None:
+                    self._close(client)
+                self._release_detector(current)
+                client, current = None, None
+                gate_reconnect = False
+                self._set_active(None)
+                self._sleep()
+                continue
+
             desired = self._select_detector(current, self.snapshot)
 
             # No idle bot to safely log in as → drop any connection rather than
@@ -382,6 +436,7 @@ class OnlineMonitor:
                     logger.info("online-monitor: no idle detector; disconnecting %s",
                                 current)
                     self._close(client)
+                    self._release_detector(current)
                     client, current = None, None
                 self._set_active(None)
                 self._sleep()
@@ -394,6 +449,7 @@ class OnlineMonitor:
                 logger.info("online-monitor: handing off detector %s -> %s",
                             current, desired)
                 self._close(client)
+                self._release_detector(current)
                 client, current = None, None
                 gate_reconnect = False
 
@@ -405,6 +461,19 @@ class OnlineMonitor:
                         and not self._last_pick_forced):
                     self._sleep()
                     continue
+                # Take the account lease BEFORE connecting (atomic gate; loses to
+                # SCHEDULER/TOOL). A conflict means another owner grabbed it since
+                # selection (TOCTOU) → skip this cycle; next select re-peeks it.
+                acq = registry.acquire(desired, Owner.ONLINE_MONITOR, Channel.WS,
+                                       label="在線監控 detector", preempt=False)
+                if not acq.ok:
+                    owner_val = acq.conflict.owner.value if acq.conflict else acq.reason
+                    logger.info("online-monitor: %s 已被 %s 佔用,跳過本輪",
+                                desired, owner_val)
+                    gate_reconnect = True
+                    self._set_active(None)
+                    self._sleep()
+                    continue
                 if self._last_pick_forced:
                     logger.warning(
                         "online-monitor: snapshot stale >%.0fs — FORCE blind-connect "
@@ -413,6 +482,7 @@ class OnlineMonitor:
                 client = self._connect(desired)
                 self._last_switch_ts = self._now()
                 if client is None:
+                    self._release_detector(desired)  # connect failed → give lease back
                     current = None
                     gate_reconnect = True  # connect failed → throttle the retry
                     self._set_active(None)
@@ -429,6 +499,7 @@ class OnlineMonitor:
             except Exception as exc:
                 logger.warning("online-monitor: poll failed (%s): %s", current, exc)
                 self._close(client)
+                self._release_detector(current)
                 client, current = None, None
                 gate_reconnect = True  # dropped/kicked → throttle reconnect
                 self._set_active(None)
@@ -438,6 +509,7 @@ class OnlineMonitor:
 
         if client is not None:
             self._close(client)
+        self._release_detector(current)
 
 
 # --- module-level singleton for dashboard integration -------------------------
