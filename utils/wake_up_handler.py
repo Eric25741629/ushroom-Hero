@@ -349,10 +349,6 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     # 5554/5556 的「等 5 分鐘」硬編分流已移除（2026-07-06）：分流全交給
     # wake_minute_offset（sleep_service，窗內固定分鐘、保留 :00–:20 窗）。舊空等夾在
     # WS 階段之後只延後瀏覽器、沒錯開 WS，還把工作推出窗，且反而讓 5554 撞上 5558 的 :05。
-    if '3a8d31f2' in ip:
-        time.sleep(10)
-    
-    time.sleep(2)
 
     is_web_backend = getattr(d, "backend_kind", None) == "web_h5"
     if not is_web_backend:
@@ -360,9 +356,6 @@ def handle_device_wakeup(d, ip, logger, Cnn_model, easyocr_reader=None, skip_onl
     else:
         logger.info(f"[{ip}] web_h5 backend，略過 Android app_stop，避免關閉 Playwright 瀏覽器")
     
-    if 'emulator-5560' in ip:
-        time.sleep(30)
-        
     # 通用的螢幕開啟檢查與解鎖
     while True:
         if d.info.get('screenOn'):
