@@ -23,6 +23,8 @@ from typing import Any, Dict, List, Optional
 
 import bot_state
 import config_manager
+from runtime_services import session_registry as registry
+from runtime_services.session_registry import Channel, Owner
 from runtime_services.ws_online_checker import check_via_ws
 from utils.logging_utils import logger
 
@@ -37,7 +39,18 @@ _start_lock = threading.Lock()
 
 
 def _is_idle(ip: str, states: Dict[str, Dict[str, Any]]) -> bool:
-    """True iff logging in as ``ip`` won't kick a live session."""
+    """True iff logging in as ``ip`` won't kick a live session.
+
+    Registry is the source of truth (bug#4): any owner holding ``ip`` (SCHEDULER
+    online / dashboard tool / online-monitor detector) means the account has a
+    live session → NOT idle. Only when the registry shows nobody do we fall back
+    to bot_state's sleep/offline heuristic.
+    """
+    try:
+        if registry.peek(ip) is not None:
+            return False  # 已被某 owner 佔用 → 借用會踢掉現有 session
+    except Exception:  # noqa: BLE001 — registry read must never kill the loop
+        pass
     st = states.get(ip)
     if not st:
         return True  # no running thread / never started → safe
@@ -140,11 +153,20 @@ def _serve_one(req: Dict[str, Any], candidates: List[str]) -> None:
             detail=f"online-monitor snapshot (busy={cached})")
         return
 
-    # slow path: one-shot WS login (fallback when monitor is not running)
+    # slow path: one-shot WS login (fallback when monitor is not running).
+    # Each login takes a SHORT-lived ONLINE_CHECK lease so the three account
+    # consumers never collide on the same device; released in finally (bug#5).
     for checker in candidates:
-        result = check_via_ws(
-            checker, int(target_pid), logger,
-            guild_id=_guild_for(checker), threshold_sec=threshold_sec)
+        acq = registry.acquire(checker, Owner.ONLINE_CHECK, Channel.WS,
+                               label="在線檢查")
+        if not acq.ok:
+            continue  # 被 SCHEDULER/工具/監控佔用或受保護 → 換下一台 checker
+        try:
+            result = check_via_ws(
+                checker, int(target_pid), logger,
+                guild_id=_guild_for(checker), threshold_sec=threshold_sec)
+        finally:
+            registry.release(checker, Owner.ONLINE_CHECK)
         if result is not None:
             bot_state.complete_online_check_request(
                 req_id, is_busy=result,

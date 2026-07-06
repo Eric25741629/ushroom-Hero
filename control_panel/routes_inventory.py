@@ -34,7 +34,8 @@ def _session_client(ip: str):
     if client is not None:
         return client, None
     res = ws_session.ensure(ip)
-    if res.get("status") == "error":
+    if res.get("status") != "ok":
+        # error / conflict（帳號在線中，含佔用者資訊）都把 ensure 的 message 透出
         return None, res.get("message", "WS 連線失敗")
     client = ws_session.get_client(ip)
     if client is None:
