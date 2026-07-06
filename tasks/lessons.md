@@ -476,3 +476,19 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   `sys.modules["miner.planning.smart_planner"]=空步stub` 讓同批執行的 WS 挖礦測試全拿空 plan
   （WS adapter lazy-import plan_smart）。規則：測試要 stub 就用 fixture/monkeypatch（會還原）；
   純 Python 輕量模組（smart_planner）根本不需要 stub。單跑綠、整批紅 → 先懷疑收集期 import 副作用。
+
+## 2026-07-06 純 WS 搖人（chat 分享卡）逆協議 + worktree 兩個坑
+
+- **proto 欄位 id 絕不靠 JS 物件 key 順序推**：`netManager.send(name,{channel,...})` 的 key 順序 ≠ wire
+  field id。channel 若不是 #1，硬編 `pb_uint(1,3)` 會塞錯欄位、channel 落預設 → **誤送世界**。
+  正解：CDP attach 後跑一段 JS，暫時把 `sock.sendMessage` 換成「抓 (cmd,body) 但不呼叫 original
+  （抑制送出）」的 stub → 呼叫 `netManager.send(name, obj)` 讓 client 自己的 protobuf 編碼器序列化
+  → 復原 → 回傳 plaintext body bytes → `codec.walk` 讀真實 id → byte-exact 測試鎖死。零猜測、零封包
+  外洩、零額外打擾使用者。詳見 memory `reference-ws-proto-field-ids-via-client-encoder`。
+- **敏感頻道值用 byte-exact 測試當 CI 護欄**：channel=3(家族) 硬編 + 測試斷言 `top[1]==3`，把「送錯
+  頻道」regression 擋在 CI，而非靠人工 review 記得。
+- **EnterWorktree + reset main 後務必重讀檔案再改**：本次先在主樹讀了
+  `mount_tracker_service.py`（舊 borrow API：`_ws_active`/`is_safe_to_borrow`），但 worktree reset 到
+  main HEAD 後該檔已是重構版（registry `_get_ws_client(dev,on_ensure)`、無 `_ws_active`）。照舊模型寫的
+  `rally_to_guild` 一跑測試就 `AttributeError: _ws_active`。**規則：worktree reset main 後，動任何檔前先在
+  worktree 內重讀，不可沿用進 worktree 前於別的 tree/狀態讀到的內容。**
