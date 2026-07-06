@@ -106,8 +106,10 @@
         <span class="mt-running"><span class="spinner" aria-hidden="true"></span>掃描中…</span>
       </div>
       {% if logged_in %}
+      <button id="mtScanNow" type="button" class="btn btn--primary"
+              style="margin-left:auto" onclick="scanNow()">全部刷新</button>
       <button id="mtRebootstrap" type="button" class="btn btn--secondary"
-              style="margin-left:auto" onclick="rebootstrap()">重建玩家庫</button>
+              onclick="rebootstrap()">重建玩家庫</button>
       {% endif %}
     </div>
   </section>
@@ -190,6 +192,22 @@ async function toggleScanner(){
   } else {
     UI.toast((res.data && res.data.message) || '切換失敗', 'err');
     setToggleVisual(currentEnabled, false);             // 還原
+  }
+}
+
+// ---- 全部刷新：催醒 daemon 立刻重新掃一輪（需登入；停用中則提示先開啟）----
+async function scanNow(){
+  const btn = $('mtScanNow');
+  UI.setLoading(btn, true);
+  let res;
+  try{ res = await postJSON('/api/mount_tracker/scan_now', {}); }
+  finally{ UI.setLoading(btn, false); }
+  if(res.httpStatus === 401){ UI.toast('需要登入', 'err'); return; }
+  if(res.data && res.data.status === 'ok'){
+    if(res.data.enabled === false){ UI.toast('掃描器未啟用，請先開啟開關', 'err'); return; }
+    UI.toast('已觸發全部刷新，掃描中…', 'ok'); refresh();
+  } else {
+    UI.toast((res.data && res.data.message) || '刷新失敗', 'err');
   }
 }
 

@@ -299,6 +299,35 @@ def test_mark_open_to_anonymous(app, monkeypatch):
     assert store.marked == [(1, 2, 3, True)]
 
 
+# --- scan_now：立即全部刷新（催掃）-----------------------------------------
+
+def test_scan_now_wakes_when_enabled(app, monkeypatch):
+    monkeypatch.setattr(rmt, "_get_enabled", lambda: True)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/scan_now", json={})
+    assert resp.status_code == 200
+    d = resp.get_json()
+    assert d["status"] == "ok" and d["enabled"] is True
+    assert woke == [True]                      # 啟用中 → 催掃一輪
+
+
+def test_scan_now_skips_when_disabled(app, monkeypatch):
+    monkeypatch.setattr(rmt, "_get_enabled", lambda: False)
+    woke = []
+    monkeypatch.setattr(rmt, "_wake_scan", lambda: woke.append(True))
+    client = app.test_client()
+    _login(client)
+
+    resp = client.post("/api/mount_tracker/scan_now", json={})
+    assert resp.status_code == 200
+    assert resp.get_json()["enabled"] is False
+    assert woke == []                          # 停用 → 不催掃
+
+
 # --- toggle：僅管理員 -------------------------------------------------------
 
 def test_toggle_non_admin_forbidden(app, monkeypatch):

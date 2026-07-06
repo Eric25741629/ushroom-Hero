@@ -215,6 +215,19 @@ def mount_tracker_mark():  # 刻意公開（PUBLIC_PATHS）：路人可標記已
     return jsonify({"status": "ok"})
 
 
+@bp.route("/api/mount_tracker/scan_now", methods=["POST"])
+def mount_tracker_scan_now():
+    """立即催醒 daemon 全部重掃一輪（需登入——不在 PUBLIC_PATHS，由全站登入牆守門，
+    避免路人 spam 觸發掃描借用帳號）。
+
+    停用中則不催掃（daemon 迴圈本就會略過），回 ``enabled=False`` 供前端提示先開啟。
+    """
+    enabled = _get_enabled()
+    if enabled:
+        _wake_scan()
+    return jsonify({"status": "ok", "enabled": enabled})
+
+
 @bp.route("/api/mount_tracker/toggle", methods=["POST"])
 @require_admin
 def mount_tracker_toggle():

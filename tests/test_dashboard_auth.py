@@ -176,8 +176,10 @@ class TestMountTrackerPublicExemption(unittest.TestCase):
 
     def test_admin_ops_not_public(self):
         from control_panel.shared import auth
+        # 需登入的操作端點都不得公開：管理操作 + 立即全部刷新（避免路人 spam 催掃）。
         self.assertNotIn("/api/mount_tracker/toggle", auth.PUBLIC_PATHS)
         self.assertNotIn("/api/mount_tracker/rebootstrap", auth.PUBLIC_PATHS)
+        self.assertNotIn("/api/mount_tracker/scan_now", auth.PUBLIC_PATHS)
 
 
 class TestVisibility(unittest.TestCase):
