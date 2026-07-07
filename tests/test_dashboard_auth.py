@@ -171,7 +171,8 @@ class TestMountTrackerPublicExemption(unittest.TestCase):
 
     def test_public_paths_bypass_login(self):
         for path in ("/mount-tracker", "/api/mount_tracker/results",
-                     "/api/mount_tracker/targets", "/api/mount_tracker/mark"):
+                     "/api/mount_tracker/targets", "/api/mount_tracker/mark",
+                     "/api/mount_tracker/rally"):
             self.assertIsNone(self._auth_unauthenticated(path), path)  # None = 放行
 
     def test_admin_ops_not_public(self):
@@ -180,8 +181,6 @@ class TestMountTrackerPublicExemption(unittest.TestCase):
         self.assertNotIn("/api/mount_tracker/toggle", auth.PUBLIC_PATHS)
         self.assertNotIn("/api/mount_tracker/rebootstrap", auth.PUBLIC_PATHS)
         self.assertNotIn("/api/mount_tracker/scan_now", auth.PUBLIC_PATHS)
-        # 分享搶奪車位卡到家族（借帳號 + 發家族）亦須登入，絕不公開給路人。
-        self.assertNotIn("/api/mount_tracker/rally", auth.PUBLIC_PATHS)
 
 
 class TestVisibility(unittest.TestCase):

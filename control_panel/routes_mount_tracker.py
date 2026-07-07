@@ -241,11 +241,11 @@ def mount_tracker_scan_now():
 
 
 @bp.route("/api/mount_tracker/rally", methods=["POST"])
-def mount_tracker_rally():
+def mount_tracker_rally():  # 刻意公開（PUBLIC_PATHS）：使用者要求路人免登入即可分享
     """把某列坐騎的「搶奪車位」分享卡片送到家族頻道（搖人）。
 
-    需登入（不在 PUBLIC_PATHS，由全站登入牆守門）：借帳號 + 發家族頻道是敏感動作，
-    路人不可觸發。固定由 5554 送出（見服務層 ``RALLY_DEVICE``）。
+    對路人公開（在 PUBLIC_PATHS）：使用者要求免登入即可分享。固定由 5554 送出
+    （見服務層 ``RALLY_DEVICE``）。
 
     body：``{target_role_id, owner, pos}``——分別為停在車位的目標 roleId、車位主人
     roleId(master_id)、車位位置。三者缺一 → 400；非數字 → 400。服務結果以信封回傳

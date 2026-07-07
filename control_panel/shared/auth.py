@@ -17,13 +17,15 @@ from utils import dashboard_settings
 # 免登入的頁面/端點：登入、申請、登出、favicon。
 EXEMPT_PATHS = {"/login", "/apply", "/logout", "/favicon.ico"}
 # 刻意公開（無需登入即可讀寫）的功能端點：坐騎追蹤頁 + 其檢視/編輯 API。
-# 使用者要求「路人也能看與改」。/toggle 與 /rebootstrap 刻意不在此列——開關整個
-# 掃描器 / 重建玩家庫屬管理操作，仍受全站登入牆 + @require_admin 雙重保護。
+# 使用者要求「路人也能看與改」，並要求「分享到家族」免登入即可送出（rally）。
+# /toggle 與 /rebootstrap 刻意不在此列——開關整個掃描器 / 重建玩家庫屬管理操作，
+# 仍受全站登入牆 + @require_admin 雙重保護。
 PUBLIC_PATHS = {
     "/mount-tracker",
     "/api/mount_tracker/results",
     "/api/mount_tracker/targets",
     "/api/mount_tracker/mark",
+    "/api/mount_tracker/rally",
 }
 # 免登入的路徑前綴：靜態資產（設計系統 lib / 圖示）。
 EXEMPT_PREFIXES = ("/static/",)

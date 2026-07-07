@@ -141,7 +141,6 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const PROTECT_SEC = 170 * 60;   // 保護時間 170 分鐘
-const LOGGED_IN = {{ 'true' if logged_in else 'false' }};   // 「分享到家族」僅登入顯示（rally 需登入）
 let TARGETS = [];               // 目標清單（保留原始 role_id，避免大數精度）
 let CANDS = [];                 // 合服候選（挑選用）
 let currentEnabled = false;     // 伺服器確認過的啟用狀態
@@ -431,13 +430,11 @@ function renderCards(d){
           ' data-start="' + st + '"' +
           ' data-on="' + (isAtk ? '0' : '1') + '">' +
           (isAtk ? '取消標記' : '標記已打掉') + '</button>';
-        // 分享到家族（搖人）：僅登入顯示；帶目標/車位主人/車位位置給 rally 端點。
-        const rallyBtn = LOGGED_IN
-          ? '<button type="button" class="btn btn--secondary mt-rallybtn"' +
+        // 分享到家族（搖人）：免登入即可送出；帶目標/車位主人/車位位置給 rally 端點。
+        const rallyBtn = '<button type="button" class="btn btn--secondary mt-rallybtn"' +
             ' data-target="' + UI.esc(t.role_id) + '"' +
             ' data-owner="' + UI.esc(r.owner) + '"' +
-            ' data-pos="' + UI.esc(r.pos) + '">分享到家族</button>'
-          : '';
+            ' data-pos="' + UI.esc(r.pos) + '">分享到家族</button>';
         // 車位主人名字可點擊複製（有名字才包 mt-copy；無名字顯示「—」不可點）。
         const ownerName = r.owner_name || '';
         const nameCell = ownerName
