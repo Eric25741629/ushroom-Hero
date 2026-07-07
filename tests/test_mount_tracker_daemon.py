@@ -23,6 +23,7 @@ class _FakeSendClient:
 
 def test_rally_to_guild_borrows_5554_sends_then_releases(monkeypatch):
     """借 5554（ensure 取得 lease → on_ensure 觸發）、送 CMD_CHAT_MESSAGE、事後歸還。"""
+    mt._rally_last.clear()                                   # 隔離模組級冷卻狀態
     ensured, released = [], []
     client = _FakeSendClient()
 
@@ -48,6 +49,7 @@ def test_rally_to_guild_borrows_5554_sends_then_releases(monkeypatch):
 
 def test_rally_to_guild_busy_returns_error_no_release(monkeypatch):
     """5554 忙碌/被佔 → ensure 被拒（on_ensure 不觸發、回 None）→ error 且不歸還。"""
+    mt._rally_last.clear()                                   # 隔離模組級冷卻狀態
     released = []
 
     def fake_get(dev, on_ensure=None):
@@ -60,6 +62,33 @@ def test_rally_to_guild_busy_returns_error_no_release(monkeypatch):
 
     assert r["status"] == "error"
     assert released == []                                   # 沒借到 → 不歸還
+
+
+def test_rally_to_guild_same_card_cooldown(monkeypatch):
+    """同一張卡成功送出後、60s 內重送 → 冷卻擋下（不借、不再送）；不同卡不受影響。"""
+    mt._rally_last.clear()
+    sends, releases = [], []
+
+    def fake_get(dev, on_ensure=None):
+        if on_ensure is not None:
+            on_ensure(dev)
+        c = _FakeSendClient()
+        c.send = lambda cmd, body: sends.append((cmd, body))
+        return c
+
+    monkeypatch.setattr(mt, "_get_ws_client", fake_get)
+    monkeypatch.setattr(mt, "_release_dev", lambda dev: releases.append(dev))
+
+    assert mt.rally_to_guild(5678, 1234, 7)["status"] == "ok"   # 首送成功
+    assert len(sends) == 1
+
+    r2 = mt.rally_to_guild(5678, 1234, 7)                        # 同卡重送 → 冷卻
+    assert r2["status"] == "error"
+    assert len(sends) == 1                                       # 沒再送出
+    assert releases == ["emulator-5554"]                        # 只有首送借了才歸還
+
+    assert mt.rally_to_guild(5678, 1234, 8)["status"] == "ok"   # 不同 pos → 不受冷卻
+    assert len(sends) == 2
 
 
 def test_toggle_roundtrip(tmp_path, monkeypatch):

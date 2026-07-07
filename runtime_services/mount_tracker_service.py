@@ -823,6 +823,14 @@ def _release_dev(dev: str) -> None:
 # 故必須固定，不能隨機挑台（不同帳號可能屬不同家族）。
 RALLY_DEVICE = "emulator-5554"
 
+# 同一張搶奪車位卡（target+owner+pos）的重送冷卻：rally 免登入公開後，加冷卻防洗家族頻道。
+# 只在「成功送出」後才記戳，故忙碌/失敗不佔冷卻窗、可立即重試。並行雙擊由 registry lease
+# 天然序列化（第二次借 5554 被拒回 busy），故只需擋順序重送。
+# ponytail: 無上限 dict，追蹤目標僅數張卡、長不大；若某天卡量爆增再加過期剪枝。
+_RALLY_COOLDOWN_SEC = 60.0
+_rally_last: dict[tuple[int, int, int], float] = {}
+_rally_lock = threading.Lock()
+
 
 def rally_to_guild(target_role_id: int, owner: int, pos: int) -> dict:
     """把「搶奪車位」分享卡片送到家族頻道（搖人）。固定由 :data:`RALLY_DEVICE`(5554) 送出。
@@ -832,10 +840,17 @@ def rally_to_guild(target_role_id: int, owner: int, pos: int) -> dict:
     不等回應）。5554 忙碌 / 被佔（掃描中、dashboard hold、即將喚醒）→ ensure 被拒回 None →
     回 error 請稍後再試（不硬搶，避免打斷它自身任務）。
 
+    重送冷卻（:data:`_RALLY_COOLDOWN_SEC`=60s）：同一張卡（target+owner+pos）距上次「成功
+    送出」未滿冷卻秒數 → 直接回 error 不送，避免路人洗家族頻道。忙碌/失敗不記戳，可立即重試。
+
     ``owner`` = 車位主人（master_id）、``target_role_id`` = 停在該車位的目標（role_id）。
     家園車位固定 ``park_type=0``、``ceng=1``（實測 n=1；若卡片跳錯位再補樣本，不影響頻道安全）。
     回 ``{"status": "ok"}`` 或 ``{"status": "error", "message": ...}``。
     """
+    key = (int(target_role_id), int(owner), int(pos))
+    with _rally_lock:
+        if time.time() - _rally_last.get(key, 0.0) < _RALLY_COOLDOWN_SEC:
+            return {"status": "error", "message": "同一張卡剛分享過，請 1 分鐘後再試"}
     dev = RALLY_DEVICE
     acquired: list[str] = []
     # on_ensure 在「取得 lease 當下」登記借用：即使隨後 get_client 回 None，finally 仍歸還，
@@ -847,6 +862,8 @@ def rally_to_guild(target_role_id: int, owner: int, pos: int) -> dict:
         body = mount_scan.enc_parking_call_guild(
             int(pos), 0, int(owner), int(target_role_id), 1)
         client.send(mount_scan.CMD_CHAT_MESSAGE, body)
+        with _rally_lock:
+            _rally_last[key] = time.time()   # 只在成功送出後才起冷卻窗
         return {"status": "ok"}
     except Exception:  # noqa: BLE001 — 送出失敗回 error，不可炸掉路由
         logger.warning("[mount-tracker] rally send failed dev=%s owner=%s target=%s",
