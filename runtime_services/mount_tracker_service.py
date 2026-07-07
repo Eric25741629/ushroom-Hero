@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 # 過此秒數 daemon 才「再開始掃」（順便刷新被打掉那台的最新狀態）。
 _POST_ATTACK_HOLD_SEC = 300.0
 
+# 坐騎停在車位滿 8h 遊戲會自動收車 → 停超過此秒數的「未經本輪確認」舊 found 必已失效，剔除。
+# ponytail: 硬編 8h（遊戲規則固定）；若日後改動再抽 config。
+_MOUNT_PARK_MAX_SEC = 8 * 3600
+
 
 # ============================================================================
 # 掃描即時進度（純記憶體，NO file I/O）
@@ -595,9 +599,35 @@ def scan_cycle(
         if kept:
             new_attacked[str(rid)] = kept
 
+    # --- results 合併（而非整個覆蓋）：讓清單跨掃描 / 跨重啟持續存在 ------------
+    # 每輪覆蓋會在「重啟後第一輪沒掃到」時把舊清單洗空（裝置忙 / 坐騎已被遊戲收走）。
+    # 改為合併：本輪 found 為當下實況（一律保留）；舊筆保留條件 =
+    #   (a) 未滿 8h（滿 8h 遊戲自動收車，逾時必失效），且
+    #   (b) 未被本輪確認移走（車位主人本輪沒掃到 → 無從判定，保留；掃到但實例已不在 → 剔除）。
+    # 同一實例（owner:start_time）以本輪 found 為準（較新）。每目標上限 max_per_target。
+    prev_results = store.get_results()
+    now_ts = now_fn()
+    merged: dict[int, list] = {}
+    for rid in target_ids:
+        cur = found[rid]
+        cur_keys = {f"{e['owner']}:{e['start_time']}" for e in cur}
+        kept = list(cur)
+        for e in prev_results.get(str(rid), []):
+            key = f"{e.get('owner')}:{e.get('start_time')}"
+            if key in cur_keys:
+                continue                         # 本輪已有更新版本
+            st = e.get("start_time") or 0
+            if st and now_ts - st >= _MOUNT_PARK_MAX_SEC:
+                continue                         # 滿 8h，遊戲已收走 → 剔除
+            owner = e.get("owner")
+            if owner is not None and int(owner) in scanned_owners:
+                continue                         # 車位主人本輪掃到但實例不在 → 已移走
+            kept.append(e)
+        merged[rid] = kept[:max_per_target]
+
     # 一次寫回：known 批次 + results + attacked + last_run（全輪最多 4 次全檔寫）。
     store.bulk_upsert_known(pending)
-    results = {str(rid): found[rid] for rid in target_ids}
+    results = {str(rid): merged[rid] for rid in target_ids}
     store.set_results(results)
     store.set_attacked(new_attacked)
     summary = {

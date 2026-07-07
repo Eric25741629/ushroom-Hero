@@ -487,6 +487,10 @@ function renderStatus(d){
   const p = d.progress || {};
   const scanning = !!(p.phase && p.phase !== 'idle');
   const running = scanning || !!d.running;
+  // 「找到」一律以實際清單（d.results，合併後跨掃描/跨重啟持續存在）為準，才會
+  // 立刻顯示且永遠跟下方卡片一致，不受 last_run.found_total（僅本輪）延遲/歸零影響。
+  const foundNow = Object.values(d.results || {})
+    .reduce((a, rows) => a + (rows ? rows.length : 0), 0);
 
   if(scanning && p.phase === 'bootstrap'){
     // 建立玩家庫中：顯示公會/成員蒐集進度。
@@ -495,16 +499,18 @@ function renderStatus(d){
     $('mtKnown').textContent = fmt(p.known);
     $('mtBootstrap').textContent = '建立中…';
   } else if(scanning){
-    // 掃描中：即時 scanned / found / 玩家庫規模。
+    // 掃描中：即時 scanned；找到取「實際清單」與「本輪即時 found」較大者（避免掃描中途
+    // 清單尚未寫回時顯示成 0，也讓本輪新找到的即時往上跳）。
     $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '掃描中…';
-    $('mtScanStat').textContent = fmt(p.scanned) + ' / ' + fmt(p.found) + ' 台';
+    $('mtScanStat').textContent = fmt(p.scanned) + ' / ' + fmt(Math.max(foundNow, p.found || 0)) + ' 台';
     $('mtKnown').textContent = fmt((p.known != null && p.known > 0) ? p.known : d.known_count);
     $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
   } else {
-    // 閒置：沿用上次掃描結果（維持既有行為）。
+    // 閒置：掃描台數沿用上次掃描；找到台數改用實際清單 foundNow（重啟後 last_run 尚未
+    // 更新前也能立刻顯示既有清單量，且與卡片一致）。
     $('mtLastRun').textContent = lr.ts ? fmtTime(lr.ts) : '尚未掃描';
-    // lr.found 是 per-target dict（Number(dict)=NaN→「非數值」）；純量在 lr.found_total。
-    $('mtScanStat').textContent = lr.ts ? (fmt(lr.scanned) + ' / ' + fmt(lr.found_total) + ' 台') : '—';
+    $('mtScanStat').textContent = (lr.ts || foundNow)
+      ? (fmt(lr.ts ? lr.scanned : null) + ' / ' + fmt(foundNow) + ' 台') : '—';
     $('mtKnown').textContent = fmt(d.known_count);
     $('mtBootstrap').textContent = d.bootstrap_done ? fmtTime(d.bootstrap_done) : '未建立';
   }

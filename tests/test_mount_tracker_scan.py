@@ -386,6 +386,79 @@ def test_focus_owners_if_satisfied_none_when_not_full(tmp_path):
     assert _focus_owners_if_satisfied(store) is None
 
 
+def test_results_persist_when_owner_not_rescanned(tmp_path):
+    """合併：舊 found 的車位主人本輪沒掃到（無從判定）且未滿 8h → 保留（重啟不洗空）。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="o1")
+    # 舊清單：坐騎停在房東 5（不在 known/queue，本輪不會被掃到）。
+    store.set_results({"100": [{"owner": 5, "start_time": 1000, "pos": 1, "name": "T"}]})
+
+    def reader(dev, owner):
+        return {"skin_list": [], "spaces": []}     # 房東 1 / 目標自身皆空；房東 5 從未被掃
+
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 2000.0,
+               budget_s=10_000)
+
+    rows = store.get_results()["100"]
+    assert [r["owner"] for r in rows] == [5]       # 舊筆保留（車位主人未被本輪掃到）
+
+
+def test_results_drop_entry_after_8h(tmp_path):
+    """合併：舊 found 已停滿 8h（遊戲自動收車）→ 即使車位主人沒被掃到也剔除。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="o1")
+    store.set_results({"100": [{"owner": 5, "start_time": 1000, "pos": 1, "name": "T"}]})
+
+    def reader(dev, owner):
+        return {"skin_list": [], "spaces": []}
+
+    # now - start_time = 29800 - 1000 = 28800 >= 8h → 逾時剔除。
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 29800.0,
+               budget_s=10_000)
+
+    assert store.get_results()["100"] == []
+
+
+def test_results_drop_when_owner_rescanned_and_gone(tmp_path):
+    """合併：舊 found 的車位主人本輪被掃到但實例已不在 → 確認移走 → 剔除。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="o1")
+    store.set_results({"100": [{"owner": 1, "start_time": 1000, "pos": 1, "name": "T"}]})
+
+    def reader(dev, owner):
+        return {"skin_list": [], "spaces": []}     # 房東 1 被掃到，車位已空
+
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 2000.0,
+               budget_s=10_000)
+
+    assert store.get_results()["100"] == []        # 確認移走 → 移除
+
+
+def test_results_current_read_wins_over_stale_prev(tmp_path):
+    """合併：同一實例本輪重讀到 → 以本輪為準（不重複），舊筆不另外附加。"""
+    store = MountTrackerStore(state_dir=str(tmp_path))
+    store.add_target({"role_id": 100, "name": "T"})
+    store.upsert_known(1, name="房東一", guild="羽皇居")
+    # 舊筆缺 owner_name/guild；本輪重讀同實例應覆蓋為帶名字版本。
+    store.set_results({"100": [{"owner": 1, "start_time": 111, "pos": 1}]})
+
+    def reader(dev, owner):
+        if owner == 1:
+            return {"skin_list": [],
+                    "spaces": [{"pos": 1, "role_id": 100, "start_time": 111, "name": "T"}]}
+        return {"skin_list": [], "spaces": []}
+
+    scan_cycle(store, reader, ["d"], lambda dev: True, lambda s: None, lambda: 2000.0,
+               budget_s=10_000)
+
+    rows = store.get_results()["100"]
+    assert len(rows) == 1                          # 不重複
+    assert rows[0]["owner_name"] == "房東一"        # 本輪新版勝出
+
+
 def test_worker_bails_after_consecutive_read_failures(tmp_path):
     """單台連續讀失敗達上限 → 收掉該 worker，不把整個 queue 吃成 None。"""
     from runtime_services.mount_tracker_service import _MAX_CONSEC_READ_FAIL
