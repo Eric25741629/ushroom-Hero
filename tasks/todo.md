@@ -6,6 +6,34 @@
 
 ---
 
+## 🚧 2026-07-07 暫停按鈕無法中斷 WS + WS 後 H5 不該開瀏覽器
+
+根因（systematic-debugging Phase 1-3 已完成）：暫停用 per-device `threading.Event`
+(`bot_state._pause_events`)。`check_pause(ip)` 會 block 到恢復，但只在迴圈/喚醒邊界呼叫。
+WS pipeline（`ws_token/runner.py::run_device`）在每個任務邊界 + 開燈/挖礦內迴圈輪詢
+`should_abort()`，而兩個 `_should_abort` 都只查 `has_pending_force_sleep`（ws_phase 另加
+web_launch），**都沒查暫停** → 強制休眠能中斷，暫停不能。且主迴圈在 WS 階段與喚醒瀏覽器
+之間沒有 check_pause → 「開了瀏覽器才暫停」而非「暫停就不開」。與 line 27「force-sleep
+中斷」是同構問題（該次只補了 force-sleep，漏了 pause）。
+
+修法：新增非阻塞 `is_paused()`，讓 pipeline 暫停即 abort，並在「開瀏覽器前」block。
+- [ ] `bot_state.py`：加 `is_paused(ip)`（peek：pause Event 存在且未 set）。
+- [ ] `game_actions/ws_phase.py` `_should_abort`：force_sleep 後加 `if is_paused(ip): return True`。
+- [ ] `runtime_services/ws_runner_service.py`：`_should_abort` 加 `or is_paused(ip)`；
+      except ForceSleepRequested 後、run_sleep_cycle 前 `if is_paused and not force_sleep_now: continue`。
+- [ ] `runtime_services/web_session_service.py` `initialize_runtime_device`：
+      `before_web_device_start()` 後、`create_web_device_if_enabled` 前加 while 暫停閘
+      （block；手動開網頁優先 break；恢復後重跑 WS 續做）。
+- [ ] `new_main_v2.py`：快取條件加 `and not is_paused(ip)`（半套 WS 不快取）；主迴圈 WS 後、
+      喚醒前 `if is_paused and not has_pending_force_sleep: check_pause; continue`。
+- [ ] `tests/test_bot_state_pause.py`：`is_paused` 反映 set_pause；未註冊回 False。
+- [ ] 生效需重啟 `new_main_v2.py`（無 hot-reload）。
+
+涵蓋：離線 WS fallback 由上述 `_should_abort` + sleep 內既有 check_pause 涵蓋；
+`dungeon_scheduler` should_stop 已含 check_pause。
+
+---
+
 ## 🚧 2026-07-06 移除 5554/5556 喚醒「等 5 分鐘」硬編分流（已 merge main）
 
 背景：dashboard 顯示 5556「正在檢查螢幕狀態」5 分鐘卡住，使用者困惑。查證：
