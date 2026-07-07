@@ -176,9 +176,10 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             nonlocal pre_runtime_ws_done
             if pre_runtime_ws_done is None:
                 result = _run_ws_phase_for_wake(ip, device_logger)
-                # 若這輪 WS 被「開啟瀏覽器」中斷，別快取半套結果：留 None，讓主迴圈
-                # 重跑 WS 階段（讀 ledger 續做未完成），而非沿用部分 skip-set。
-                if not bot_state.has_pending_web_launch_request(ip):
+                # 若這輪 WS 被「開啟瀏覽器」或「暫停」中斷，別快取半套結果：留 None，讓
+                # 主迴圈重跑 WS 階段（讀 ledger 續做未完成），而非沿用部分 skip-set。
+                if (not bot_state.has_pending_web_launch_request(ip)
+                        and not bot_state.is_paused(ip)):
                     pre_runtime_ws_done = result
 
         while True:
@@ -306,6 +307,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         bot_state.has_pending_web_launch_request(ip):
                     device_logger.info(
                         f"[{ip}] WS 階段偵測到開啟瀏覽器請求，回頂端處理開瀏覽器")
+                    continue
+
+                # 暫停閘：WS 階段後、喚醒/開瀏覽器（或 Phase D1 跳過瀏覽器對齊休眠）前。
+                # 使用者暫停時「不喚醒瀏覽器」而非「開了再暫停」→ block 於 check_pause 到
+                # 恢復，恢復後 continue 回頂端重跑 WS 階段（讀 ledger 續做）。force_sleep
+                # 優先（頂端 check_force_sleep 已處理，這裡讓路）。
+                if (bot_state.is_paused(ip)
+                        and not bot_state.has_pending_force_sleep(ip)):
+                    device_logger.info(
+                        f"[{ip}] WS 階段後偵測到暫停，開瀏覽器前先等待恢復")
+                    bot_state.check_pause(ip)
                     continue
 
                 # --- Phase D1：今日客戶端任務全做完 → 跳過喚醒瀏覽器，直接對齊休眠 ---

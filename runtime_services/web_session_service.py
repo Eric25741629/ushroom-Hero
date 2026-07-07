@@ -181,6 +181,14 @@ def initialize_runtime_device(
     ):
         # h5+ws 需要先跑純 WS，再啟動同帳號 H5；否則剛開的 H5 session 會被 WS 登入踢掉。
         before_web_device_start()
+        # 暫停閘：WS 跑完、開 H5 瀏覽器前。使用者暫停時「不啟動瀏覽器」（而非開了再暫停）
+        # → block 於 check_pause 到恢復；恢復後重跑 WS 續做（其 ledger），再回檢查是否又被
+        # 暫停。手動開網頁請求優先放行（要開瀏覽器給人接管）。
+        while bot_state.is_paused(ip):
+            bot_state.check_pause(ip)
+            if bot_state.has_pending_web_launch_request(ip):
+                break
+            before_web_device_start()
 
     web_device = create_web_device_if_enabled(ip, cfg=device_cfg, logger_obj=device_logger)
     if web_device is not None:

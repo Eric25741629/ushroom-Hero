@@ -341,6 +341,17 @@ def get_pause_event(ip: str) -> Optional[threading.Event]:
         return _pause_events.get(ip)
 
 
+def is_paused(ip: str) -> bool:
+    """Non-blocking peek: True iff the device is currently paused.
+
+    check_pause() blocks until resumed; the WS pipeline polls should_abort()
+    at task boundaries and cannot block there, so it needs this peek. Source of
+    truth is the same per-device pause Event (cleared == paused)."""
+    with _global_lock:
+        event = _pause_events.get(ip)
+    return event is not None and not event.is_set()
+
+
 def record_screenshot_time(ip: str, duration_ms: float) -> None:
     """Record one screenshot duration sample for rolling-average tracking."""
     with _global_lock:

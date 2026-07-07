@@ -343,7 +343,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         # 強制休眠即時中斷：run_device 在每個任務邊界（含開神燈/挖礦內迴圈）輪詢。
         # 只 peek 不消費——信號留給 run_device 返回後消費並 raise，讓
         # run_ws_device_loop 既有的 except ForceSleepRequested 走 force_sleep 睡眠。
-        return bot_state.has_pending_force_sleep(ip)
+        # 暫停同樣即時中斷：abort 後迴圈跳過休眠、回頂端 block 於 check_pause。
+        return bot_state.has_pending_force_sleep(ip) or bot_state.is_paused(ip)
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
@@ -577,6 +578,11 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
                 sleep_reason = "強制休眠"
                 cooldown_wake_ts = None  # force-sleep takes priority over cooldown
                 logger_obj.warning(f"[{ip}] ws_token 迴圈收到強制休眠請求: {e}")
+
+            # 暫停中斷：cycle 被 should_abort 提前結束 → 別進睡眠，直接回頂端 block 於
+            # check_pause，恢復後重跑（daily-done 追蹤跳過已完成任務）。force_sleep 優先。
+            if bot_state.is_paused(ip) and not force_sleep_now:
+                continue
 
             enable_dungeon_manager = bool(
                 config_manager.get_device_config(ip).get("enable_dungeon_manager", True)

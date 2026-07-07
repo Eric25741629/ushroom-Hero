@@ -584,11 +584,14 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
 
     def _should_abort() -> bool:
         """強制休眠 = 最高優先中斷（任何後端；peek 不消費，信號留給主迴圈轉成
-        force_sleep 睡眠語意）。開瀏覽器請求次之，僅 web_h5（adb 沒有瀏覽器可開，
-        不中斷）。讀失敗視為不中斷。"""
+        force_sleep 睡眠語意）。暫停次之（任何後端；abort 後主迴圈在開瀏覽器前
+        block 於 check_pause，恢復後讀 ledger 續做）。開瀏覽器請求再次之，僅
+        web_h5（adb 沒有瀏覽器可開，不中斷）。讀失敗視為不中斷。"""
         try:
             import bot_state
             if bot_state.has_pending_force_sleep(ip):
+                return True
+            if bot_state.is_paused(ip):
                 return True
             if backend_kind != "web_h5":
                 return False
