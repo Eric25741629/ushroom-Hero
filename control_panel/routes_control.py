@@ -15,6 +15,43 @@ from control_panel.shared.command_queue import (
 bp = Blueprint("control", __name__)
 
 
+# 加入搶佔/駐守（car_park.server_car_join, cmd 12861）。`{pos}`/`{qt}` 之後用
+# .format 以「已驗證的 int」填入，無注入面；JS 內字面大括號全部 {{ }} 跳脫。
+_SERVER_CAR_JOIN_JS = """
+(function(){{
+  return new Promise(function(resolve){{
+    try {{
+      var nm = window.netManager;
+      if (!nm || !nm._cnet) {{ resolve(JSON.stringify({{error:'請先開啟網頁並進入遊戲(netManager未就緒)'}})); return; }}
+      var sock = nm._cnet;
+      var CMD = 12861;
+      var done = false;
+      var origRecv = sock.reciveMsg.bind(sock);
+      var myWrap;
+      var finish = function(reply){{
+        if (done) return; done = true;
+        try {{ if (sock.reciveMsg === myWrap) sock.reciveMsg = origRecv; }} catch(e){{}}
+        resolve(JSON.stringify(reply));
+      }};
+      myWrap = function(cmd, body){{
+        try {{
+          if ((cmd|0) === CMD && !done) {{
+            var b = body instanceof Uint8Array ? body : (body && body.buffer ? new Uint8Array(body.buffer, body.byteOffset||0, body.byteLength) : null);
+            var hex=''; if (b) {{ for (var i=0;i<Math.min(b.length,2048);i++) hex += b[i].toString(16).padStart(2,'0'); }}
+            finish({{ok:true, reply_hex:hex, len: b?b.length:0}});
+          }}
+        }} catch(e){{}}
+        return origRecv(cmd, body);
+      }};
+      sock.reciveMsg = myWrap;
+      nm.send('car_park.server_car_join', {{pos: {pos}, queue_type: {qt}}});
+      setTimeout(function(){{ finish({{ok:true, sent:true, reply_hex:null}}); }}, 3000);
+    }} catch(e){{ resolve(JSON.stringify({{error: String(e)}})); }}
+  }});
+}})()
+"""
+
+
 @bp.route("/api/pause/<ip>", methods=["POST"])
 def pause_bot(ip):
     require_device_access(ip)
@@ -90,3 +127,27 @@ def recover_screen(ip):
         ), 403
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@bp.route("/api/carpark_rob/<ip>", methods=["POST"])
+def carpark_rob(ip):
+    require_device_access(ip)
+    if ip != "7fe98fc6":
+        return jsonify({"status": "error", "message": "此功能僅限小寶"}), 403
+    payload = request.get_json(silent=True) or {}
+    try:
+        pos = int(payload.get("pos"))
+        queue_type = int(payload.get("queue_type"))
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "pos/queue_type 需為整數"}), 400
+    if pos < 1:
+        return jsonify({"status": "error", "message": "pos 需 >= 1"}), 400
+    if queue_type not in (1, 2):
+        return jsonify(
+            {"status": "error", "message": "queue_type 需為 1(搶佔) 或 2(駐守)"}
+        ), 400
+
+    import control_panel_app as _cpa
+
+    js = _SERVER_CAR_JOIN_JS.format(pos=pos, qt=queue_type)
+    return _cpa._cdp_json_response(ip, js, await_promise=True, data_key="reply", timeout=8)
