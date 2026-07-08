@@ -110,6 +110,17 @@ def ensure(device: str, *, owner: Owner = Owner.TOOL,
         result = registry.acquire(device, owner, Channel.WS, label="工具",
                                   role_id=role_id, preempt=preempt,
                                   check_wake=check_wake)
+        if (not result.ok and result.conflict is not None
+                and owner is Owner.TOOL and not preempt
+                and result.conflict.owner in registry.YIELDING_BORROWERS):
+            # 人的手動工具操作 > 背景借用者（在線監控/檢查/坐騎追蹤）：自動
+            # preempt 搶回，被搶者收到 preempted 會自行收線換一台。SCHEDULER
+            # 不在此列，仍走 conflict。修「監控佔用期間工具被鎖死」。
+            logger.info("ws_session ensure 搶佔借用型 %s device=%s",
+                        result.conflict.owner.value, device)
+            result = registry.acquire(device, owner, Channel.WS, label="工具",
+                                      role_id=role_id, preempt=True,
+                                      check_wake=check_wake)
         if not result.ok:
             if result.reason == "protected":
                 logger.warning("ws_session ensure 拒絕受保護帳號 device=%s", device)

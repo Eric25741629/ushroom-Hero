@@ -148,6 +148,31 @@ def test_is_active_covers_all_owners():
     assert wss.is_active("d") is True
 
 
+def test_ensure_tool_auto_preempts_yielding_borrower(monkeypatch):
+    """工具撞到借用型佔用(在線監控等)→ 自動 preempt 重試,連線成功;
+    被搶的借用者收到 preempted 讓位。修「監控佔 5554 期間工具全被擋」。"""
+    _use_client(monkeypatch)
+    r_mon = reg.acquire("d", reg.Owner.ONLINE_MONITOR, reg.Channel.WS)
+    res = wss.ensure("d")
+    assert res["status"] == "ok"
+    assert reg.peek("d").owner is reg.Owner.TOOL
+    assert r_mon.lease.preempted.is_set()
+    assert "d" in wss._sessions
+
+
+def test_ensure_borrower_owner_does_not_auto_preempt(monkeypatch):
+    """自動升級只給人的 TOOL:借用型 owner(坐騎追蹤)撞到監控仍是 conflict。"""
+    created = []
+    monkeypatch.setattr(
+        wss, "WSGameClient",
+        lambda creds: created.append(creds) or _FakeClient(creds))
+    reg.acquire("d", reg.Owner.ONLINE_MONITOR, reg.Channel.WS)
+    res = wss.ensure("d", owner=reg.Owner.MOUNT_TRACKER)
+    assert res["status"] == "conflict"
+    assert created == []
+    assert reg.peek("d").owner is reg.Owner.ONLINE_MONITOR
+
+
 def test_ensure_check_wake_skips_about_to_wake(monkeypatch):
     # 借用型 + check_wake:裝置即將自我喚醒 / 空窗 → skip,不建連、不佔 lease。
     created = []

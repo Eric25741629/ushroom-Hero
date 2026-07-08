@@ -87,6 +87,37 @@ def test_equal_priority_cannot_preempt():
     assert res.ok is False
 
 
+# --- TOOL 人授權搶佔借用型(design §1.3 的唯一例外) ---------------------------
+
+@pytest.mark.parametrize("borrower", [
+    reg.Owner.ONLINE_MONITOR, reg.Owner.ONLINE_CHECK, reg.Owner.MOUNT_TRACKER])
+def test_tool_preempt_takes_over_yielding_borrower(borrower):
+    """人的手動工具操作(preempt=True)可搶佔任何借用型 owner;被搶者收到
+    preempted 讓位(監控會自動換一台 detector)。修 2026-07-08 監控佔 5554
+    80 分鐘、工具被鎖死只能乾等的實作落差。"""
+    r_old = reg.acquire("d", borrower, reg.Channel.WS)
+    r_new = reg.acquire("d", reg.Owner.TOOL, reg.Channel.WS, preempt=True)
+    assert r_new.ok is True
+    assert r_old.lease.preempted.is_set()
+    assert reg.peek("d").owner is reg.Owner.TOOL
+
+
+def test_tool_preempt_cannot_steal_scheduler():
+    # bot 主迴圈(SCHEDULER)不可被工具搶佔。
+    reg.acquire("d", reg.Owner.SCHEDULER, reg.Channel.WS)
+    res = reg.acquire("d", reg.Owner.TOOL, reg.Channel.WS, preempt=True)
+    assert res.ok is False
+    assert reg.peek("d").owner is reg.Owner.SCHEDULER
+
+
+def test_tool_without_preempt_still_conflicts_with_borrower():
+    # 未帶 preempt 的 TOOL acquire 維持 conflict(自動升級在 ws_session.ensure)。
+    reg.acquire("d", reg.Owner.ONLINE_MONITOR, reg.Channel.WS)
+    res = reg.acquire("d", reg.Owner.TOOL, reg.Channel.WS)
+    assert res.ok is False
+    assert reg.peek("d").owner is reg.Owner.ONLINE_MONITOR
+
+
 # --- protected 保護 ----------------------------------------------------------
 
 def test_acquire_rejected_for_protected_role(monkeypatch):

@@ -48,6 +48,12 @@ _PRIORITY: dict[Owner, int] = {
     Owner.TOOL: 20,
 }
 
+# 借用型且會讓位的 owner:收到 preempted 即收線換一台(監控換 detector、追蹤換
+# 候選)。design §1.3 的唯一例外——人授權的 TOOL preempt 可搶佔這些背景借用者
+# (但永不可搶 SCHEDULER)。修 2026-07-08 監控佔 5554 80 分鐘、工具被鎖死之落差。
+YIELDING_BORROWERS = frozenset(
+    {Owner.ONLINE_MONITOR, Owner.ONLINE_CHECK, Owner.MOUNT_TRACKER})
+
 # 借用型 owner 若 check_wake=True,取用一台『閒置』裝置前的即將喚醒/空窗保守閘門用:
 # 距離下次喚醒少於此秒數 → 讓位給裝置自身 bot loop,不借用。
 _HANDOFF_LEAD_SEC = 120
@@ -136,8 +142,15 @@ def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
                 return AcquireResult(ok=False, reason="about_to_wake")
 
         if existing is not None:
-            can_preempt = preempt and _PRIORITY[owner] > _PRIORITY[existing.owner]
+            can_preempt = preempt and (
+                _PRIORITY[owner] > _PRIORITY[existing.owner]
+                # 人授權例外:TOOL 可搶佔會讓位的背景借用者(不含 SCHEDULER)。
+                or (owner is Owner.TOOL
+                    and existing.owner in YIELDING_BORROWERS))
             if not can_preempt:
+                logger.info(
+                    "session_registry conflict device=%s want=%s held-by=%s",
+                    device, owner.value, existing.owner.value)
                 return AcquireResult(ok=False, conflict=existing)
             # 搶佔:通知現任讓位,並解除它(若為借用型)對 bot loop 的暫停。
             existing.preempted.set()
@@ -274,3 +287,43 @@ def _is_human_played_device(device: str) -> bool:
         return device in set(config_manager.get_human_played_devices())
     except Exception:
         return False
+
+
+# --- 落檔 log(logs/system/session_registry.log) -----------------------------
+
+_log_handler_attached = False
+
+
+def _setup_registry_log() -> None:
+    """Route registry + ws_session lifecycle events to a dedicated file
+    (``logs/system/session_registry.log``),同 online_monitor 的做法。
+
+    2026-07-08 查「工具 WS 為何斷線」時,acquire/conflict/release 與 ws_session
+    建立/回收/被踢全都只進 console、事後零痕跡可查;掛上 rotating file handler
+    讓佔用事件可回溯。pytest 環境不掛(避免測試雜訊寫進真 log)。Idempotent、
+    失敗不阻擋啟動。
+    """
+    global _log_handler_attached
+    import sys
+    if _log_handler_attached or "pytest" in sys.modules:
+        return
+    try:
+        from logging.handlers import RotatingFileHandler
+
+        from utils.log_paths import LogPaths
+        path = LogPaths.system_log("session_registry")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(str(path), maxBytes=2_000_000,
+                                      backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"))
+        for lg in (logger, logging.getLogger("control_panel.ws_session")):
+            lg.setLevel(logging.INFO)
+            lg.addHandler(handler)
+        _log_handler_attached = True
+        logger.info("session_registry: dedicated log -> %s", path)
+    except Exception:  # noqa: BLE001 — logging setup must never block startup
+        logger.debug("session_registry: dedicated log setup failed", exc_info=True)
+
+
+_setup_registry_log()
