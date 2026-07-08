@@ -3267,6 +3267,16 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
+            ${ip === '7fe98fc6' ? `
+              <span class="carpark-rob-group" style="display:inline-flex;gap:4px;align-items:center;margin-left:6px;">
+                <input type="number" min="1" id="carparkRobPos-${ip}" placeholder="pos" style="width:56px;">
+                <select id="carparkRobType-${ip}">
+                  <option value="1">搶佔</option>
+                  <option value="2">駐守</option>
+                </select>
+                <button class="btn btn-skip" onclick="carparkRob('${ip}')">加入</button>
+              </span>` : ''}
+
           `;
 
           }
@@ -3695,6 +3705,35 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         console.error(e);
       } finally {
         fetchStatus();
+      }
+    }
+
+    // 小寶專用：車位「加入搶佔/駐守」— 讀 pos/queue_type，confirm 後打後端 route
+    // (POST /api/carpark_rob/<ip>，走 CDP live session 發 server_car_join 12861)。
+    async function carparkRob(ip) {
+      const posEl = document.getElementById(`carparkRobPos-${ip}`);
+      const typeEl = document.getElementById(`carparkRobType-${ip}`);
+      const pos = parseInt(posEl && posEl.value, 10);
+      const queue_type = parseInt(typeEl && typeEl.value, 10);
+      if (!Number.isInteger(pos) || pos < 1) { alert('請填正確的 pos'); return; }
+      const label = queue_type === 2 ? '駐守' : '搶佔';
+      if (!confirm(`確定送出 加入${label} pos=${pos}？（會真的參戰、用掉當日次數）`)) return;
+      try {
+        const res = await fetch(`/api/carpark_rob/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pos, queue_type }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.status === 'ok') {
+          const r = data.reply || {};
+          window.UI.toast(`已送出 加入${label} pos=${pos}` + (r.reply_hex ? '（有回應）' : '（已送出）'), 'ok');
+        } else {
+          const msg = (data && data.message) || `HTTP ${res.status}`;
+          window.UI.toast('失敗：' + msg, 'err');
+        }
+      } catch (e) {
+        window.UI.toast('錯誤：' + e, 'err');
       }
     }
 
