@@ -5,9 +5,12 @@ background thread tracked by the shared job registry in
 ``control_panel.tools_optimize_jobs``; the frontend polls
 ``/api/carpark/job/<job_id>`` (owned by ``routes_carpark_decorate_tools``).
 """
+import logging
+
 from flask import Blueprint, jsonify, request
 
 from control_panel import ws_session
+from control_panel.routes_carpark_decorate_tools import _conn_lost
 from control_panel.shared.auth import _fly_pet_auth
 from control_panel.tools_optimize_jobs import (
     _job_log,
@@ -17,6 +20,8 @@ from control_panel.tools_optimize_jobs import (
     _spawn,
 )
 from ws_token import gacha as gacha_logic
+
+logger = logging.getLogger(__name__)
 
 bp = Blueprint("gacha_tools", __name__)
 
@@ -87,6 +92,22 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
         batches_done = 0
         stopped = None
 
+        def _draw_with_reconnect(cnt: int):
+            """One draw; on transport loss reconnect once and retry the SAME
+            bundle (mirrors the decoration executor). A landed-but-reply-lost
+            draw retried = one extra bundle at worst — fine for drain (goal is
+            spend-all) and rare enough for fixed."""
+            nonlocal client
+            res, err = _draw_once(client, draw_type, cnt)
+            if err and _conn_lost(ip, err):
+                _job_log(jid, f"  ⚠ WS 斷線（{err}），重連後重試…")
+                if ws_session.ensure(ip).get("status") == "ok":
+                    c2 = ws_session.get_client(ip)
+                    if c2 is not None:
+                        client = c2
+                        res, err = _draw_once(client, draw_type, cnt)
+            return res, err
+
         if mode == "drain":
             _job_log(jid, f"一鍵抽完（{type_name}）：依券餘額選 999/35/15，抽到不足即止")
             remaining = None      # learned from each draw's 0x0402 ticket feedback
@@ -107,10 +128,11 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                         stopped = "exhausted"
                         break
                     rung = _DRAIN_LADDER[fb_idx]
-                res, err = _draw_once(client, draw_type, rung)
+                res, err = _draw_with_reconnect(rung)
                 if err or not res or res.get("err"):
                     stopped = f"error:{err or (res or {}).get('err')}"
                     _job_log(jid, f"  {rung} 抽：傳輸錯誤（{stopped}）")
+                    logger.warning("gacha drain %s 中止: %s", ip, stopped)
                     break
                 if res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
                     reason = (f"reject code={res.get('error_code')}"
@@ -121,32 +143,35 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                     else:
                         fb_idx += 1
                     continue
-                drawn = int(res["drawn"])
-                total += drawn
+                # 0x0902 回覆是彙總後的獎勵「疊數」（live 5554: 999 抽回 24 疊），
+                # 抽數以 bundle 大小計，疊數只進 log。
+                stacks = int(res["drawn"])
+                total += rung
                 batches_done += 1
                 rem = res.get("remaining")
                 if rem is not None:
                     remaining = int(rem)
                 elif remaining is not None:
                     remaining -= _BUNDLE_COST[rung]
-                _job_log(jid, f"  {rung} 抽 → +{drawn}（累計 {total}"
+                _job_log(jid, f"  {rung} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
                               + (f"，券剩 {remaining:,}）" if remaining is not None else "）"))
                 _set_gacha_progress(jid, total, batches_done)
         else:  # fixed: count × batches
             _job_log(jid, f"指定抽（{type_name}）：{count} 抽 × {batches} 批…")
             for b in range(batches):
-                res, err = _draw_once(client, draw_type, count)
+                res, err = _draw_with_reconnect(count)
                 if err or not res or res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
                     reason = (f"reject code={res.get('error_code')}" if (res and res.get("rejected"))
                               else (res or {}).get("err") if res else err)
                     stopped = f"stopped:{reason or 'drawn=0'}"
                     _job_log(jid, f"  第 {b + 1} 批：停（{reason or 'drawn=0'}）")
+                    logger.warning("gacha fixed %s 中止: %s", ip, stopped)
                     break
-                drawn = int(res["drawn"])
-                total += drawn
+                stacks = int(res["drawn"])
+                total += count
                 batches_done += 1
                 rem = res.get("remaining")
-                _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → +{drawn}（累計 {total}"
+                _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
                               + (f"，券剩 {int(rem):,}）" if rem is not None else "）"))
                 _set_gacha_progress(jid, total, batches_done)
 

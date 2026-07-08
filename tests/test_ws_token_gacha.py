@@ -151,15 +151,16 @@ def test_config_default_has_gacha_block():
 
 
 def test_merge_ws_token_sanitizes_gacha():
+    default = config_manager.DEFAULT_DEVICE_CONFIG["ws_token"]["gacha"]
     merged = config_manager._merge_ws_token_phase_config(
         {"gacha": {"enabled": True, "types": [2, 9], "mode": "bogus",
                    "count": 7, "batches": 99999}})
     g = merged["gacha"]
     assert g["enabled"] is True
-    assert g["types"] == [2]            # 9 dropped
-    assert g["mode"] == "drain"         # bogus -> default
-    assert g["count"] == 999            # 7 not a bundle -> default
-    assert g["batches"] == 2000         # clamped to max
+    assert g["types"] == [2]                  # 9 dropped
+    assert g["mode"] == default["mode"]       # bogus -> default
+    assert g["count"] == default["count"]     # 7 not a bundle -> default
+    assert g["batches"] == 2000               # clamped to max
 
 
 def test_merge_ws_token_gacha_defaults_when_absent():
