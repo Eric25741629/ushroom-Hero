@@ -6,6 +6,34 @@
 
 ---
 
+## 🚧 2026-07-09 工具 WS 斷線根因：在線監控與工具搶帳號（registry TOOL 無法搶佔借用者）
+
+根因（live 事證 logs/system/online_monitor.log + logs/emulator-5554/main.log）：
+- 在線監控是「遊牧偵測器」：20:33 連 7fe98fc6 → 20:38:31 連 emulator-5554（**佔用 80 分鐘到 21:58**）→ 23:03 連 5556。
+- 監控登入 = 同帳號異地登入 → 把正在用該帳號的工具 WS 踢斷（裝飾升級 [7/42] 斷線）。
+- 監控持有 ONLINE_MONITOR lease（優先權 40）> TOOL（20），且 registry 規定「嚴格高於現任才可搶佔」
+  → **工具對監控佔用的裝置連 preempt=True 都搶不回**，ensure 一律 conflict
+  →「一鍵抽卡」按下去只得到「此帳號目前在線中（online_monitor）」報錯（有報錯沒工作）。
+- 設計文件 §1.3/§5.2 本意是「人授權的 TOOL 搶佔是唯一例外」，但 registry 實作沒有這個例外 → 實作落差。
+
+修法（design §1.3 的人授權例外落地；監控端已有 preempted 讓位路徑，不用改）：
+- [x] `runtime_services/session_registry.py`：acquire 搶佔規則加例外——
+      `owner is TOOL and preempt=True` 可搶佔**借用型** owner（MONITOR/CHECK/TRACKER）；
+      SCHEDULER 仍不可被 TOOL 搶（bot 主迴圈保護）。
+- [x] `control_panel/ws_session.py` `ensure()`：TOOL conflict 且現任是借用型 → 自動以
+      preempt=True 重試一次（借用者本來就該讓位給人的手動操作；監控會自動換一台）。
+- [x] 觀測性：session_registry acquire/release/conflict + ws_session 事件落檔
+      `logs/system/session_registry.log`（registry+ws_session logger 共用 rotating
+      handler；pytest 不掛）。
+- [x] 測試：TOOL preempt 三種借用者成功且觸發 preempted、TOOL 不可搶 SCHEDULER、
+      無 preempt 仍 conflict、ensure 自動搶佔、借用型 owner 不自動搶佔（158 related pass）。
+- [ ] 生效需重啟 `new_main_v2.py`（未重啟，跑中 bot 仍是舊行為）。
+
+同日已修（同一事件鏈）：裝飾升級步間隔自適應（31f58e97）、一鍵抽卡 job 斷線重連 +
+抽數依 bundle 計（150c76fa）、TOOL 搶佔根修（575abcaa）。
+
+---
+
 ## 🚧 2026-07-07 暫停按鈕無法中斷 WS + WS 後 H5 不該開瀏覽器
 
 根因（systematic-debugging Phase 1-3 已完成）：暫停用 per-device `threading.Event`
