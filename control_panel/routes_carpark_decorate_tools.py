@@ -32,8 +32,10 @@ _DEFAULT_MAX_STEPS = 30
 _HARD_MAX_STEPS = 80
 _READ_TIMEOUT = 25      # WS read is ~3-4s, not a 90s cocos walk
 _EXEC_TIMEOUT = 45      # one buy(up to 30 frags)+upgrade step
-_STEP_GAP_S = 10        # server silently drops skin_up sent too soon after the
-                        # previous one (live 2026-07-05: ~1s dropped, 10s ok)
+_STEP_GAP_S = 10        # proven-safe skin_up→skin_up spacing (live 2026-07-05:
+                        # ~1s dropped, 10s ok); also the wait before a reconnect
+_FAST_GAP_S = 5         # optimistic spacing; exact threshold is unknown between
+                        # 1s and 10s — one detected drop backs off to _STEP_GAP_S
 
 
 def _ws_client(ip: str):
@@ -132,8 +134,12 @@ def _run_plan_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
         _job_update(jid, status="error", error=f"{type(exc).__name__}: {exc}")
 
 
-def _exec_step(ip: str, step: dict):
-    """Execute one buy+upgrade step via pure WS."""
+def _exec_step(ip: str, step: dict, gap: float = _STEP_GAP_S):
+    """Execute one buy+upgrade step via pure WS.
+
+    ``gap`` = min spacing between skin_up sends; the wait happens INSIDE the
+    exec (counted from the previous send), so read/buy time is credited.
+    """
     client, err = _ws_client(ip)
     if err:
         return None, err
@@ -143,7 +149,8 @@ def _exec_step(ip: str, step: dict):
         skin_id=int(step["id"]),
         frags=int(step["frags"]),
         target_level=int(step["to_level"]),
-        timeout=_EXEC_TIMEOUT)
+        timeout=_EXEC_TIMEOUT,
+        skin_up_gap=gap)
 
 
 # Exception names that mean the WS transport died (vs a game-logic reject).
@@ -186,6 +193,7 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
         executed = []
         spent = 0
         stopped = None
+        gap = _FAST_GAP_S
         for idx, step in enumerate(steps, 1):
             if spent + step["coin"] > plan["budget"]:
                 stopped = "budget_exhausted"
@@ -193,14 +201,18 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             _job_log(jid, f"[{idx}/{len(steps)}] {step['name']} "
                           f"★{step['from_level']}→{step['to_level']} "
                           f"買{step['frags']}碎片 花{step['coin']:,}")
-            res, e = _exec_step(ip, step)
+            res, e = _exec_step(ip, step, gap)
             if e and _conn_lost(ip, e):
                 # 斷線那步的買/升可能已入帳、也可能晚到：等滿一個冷卻再重連。
                 # exec 端 target_level 護欄 + 冪等買保證重試不重花、不多升。
                 _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試…")
                 time.sleep(_STEP_GAP_S)
                 if ws_session.ensure(ip).get("status") == "ok":
-                    res, e = _exec_step(ip, step)
+                    res, e = _exec_step(ip, step, gap)
+            if res and res.get("resent") and gap < _STEP_GAP_S:
+                # skin_up 被冷卻靜默丟棄過：樂觀間隔太短，退回實測安全值。
+                gap = _STEP_GAP_S
+                _job_log(jid, f"   ⚠ 偵測到 skin_up 冷卻丟棄，間隔改回 {gap}s")
             if e or not res or not res.get("ok"):
                 reason = (res or {}).get("err") if res else e
                 fb = (res or {}).get("frags_bought")
@@ -227,8 +239,6 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             with _jobs_lock:
                 if jid in _jobs and _jobs[jid].get("result"):
                     _jobs[jid]["result"]["executed"] = list(executed)
-            if idx < len(steps):
-                time.sleep(_STEP_GAP_S)
 
         _job_update(jid, status="done", phase="done", result={
             **plan, "executed": executed, "spent": spent,

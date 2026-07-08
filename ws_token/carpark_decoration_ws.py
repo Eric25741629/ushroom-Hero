@@ -368,12 +368,21 @@ def exec_buy_and_upgrade(
     do_upgrade: bool = True,
     timeout: float = 10.0,
     target_level: int | None = None,
+    skin_up_gap: float = 0.0,
 ) -> tuple[dict | None, str | None]:
     """Buy frags + upgrade one star via pure WS. Returns (result, error).
 
-    result: {ok, bought, name, before_level, after_level, frags_bought, err?}
+    result: {ok, bought, name, before_level, after_level, frags_bought,
+    resent, err?}
     Mutations are ground-truth verified by re-reads: a lost reply frame is not
     treated as failure, and a real 0x0201 reject surfaces its decoded code.
+
+    ``skin_up_gap``: minimum seconds between consecutive skin_up SENDS on this
+    connection (the server silently drops closely-spaced ones). The wait counts
+    from the previous send timestamp stamped on ``client``, so time this step
+    spends on reads/buys is credited — only the remainder is slept.
+    ``resent=True`` in the result means the first send was dropped and a
+    re-send was needed: the caller should back off to a wider gap.
 
     Idempotent by design so an interrupted step can be retried/re-run safely:
     - ``target_level``: if the decoration already sits at/above it (the
@@ -396,12 +405,14 @@ def exec_buy_and_upgrade(
                     "after_level": before_level, "frags_bought": 0}, None
 
         frags_bought = 0
+        resent = False
 
         def _fail(err: str, after: int | None = None):
             return {"ok": False, "bought": frags_bought > 0, "name": name,
                     "before_level": before_level,
                     "after_level": before_level if after is None else after,
-                    "frags_bought": frags_bought, "err": err}, None
+                    "frags_bought": frags_bought, "resent": resent,
+                    "err": err}, None
 
         def _buy_frags(qty: int, pre_count: int | None = None):
             """Buy ``qty`` frags. -> (True, None) | (False, err_string).
@@ -450,6 +461,13 @@ def exec_buy_and_upgrade(
             up_msg = json.dumps({"type": 0, "skin_id": int(skin_id)},
                                 separators=(",", ":"))
             up_body = codec.pb_uint(1, CMD_SKIN_UP) + codec.pb_str(2, up_msg)
+            if skin_up_gap > 0:
+                last = getattr(client, "_last_skin_up_ts", None)
+                if last is not None:
+                    wait = skin_up_gap - (time.monotonic() - last)
+                    if wait > 0:
+                        time.sleep(wait)
+            client._last_skin_up_ts = time.monotonic()
             try:
                 cmd, reply = client.call_for(
                     CMD_JSON_PROTO, up_body,
@@ -483,6 +501,7 @@ def exec_buy_and_upgrade(
             after_level = _read_levels(client, role_id, timeout).get(
                 skin_id, before_level)
             if after_level <= before_level:
+                resent = True
                 outcome, code = _send_upgrade()
                 after_level = _read_levels(client, role_id, timeout).get(
                     skin_id, before_level)
@@ -496,7 +515,7 @@ def exec_buy_and_upgrade(
         return {"ok": True, "bought": bought, "name": name,
                 "before_level": before_level,
                 "after_level": after_level,
-                "frags_bought": frags_bought}, None
+                "frags_bought": frags_bought, "resent": resent}, None
 
     except Exception as exc:
         return None, f"{type(exc).__name__}: {exc}"

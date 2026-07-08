@@ -146,9 +146,11 @@ def test_exec_step_delegates_to_ws_module(monkeypatch):
     def fake_ws_client(ip):
         return "fake_client", None
 
-    def fake_exec(client, shop_id, skin_id, frags, timeout=10, target_level=None):
+    def fake_exec(client, shop_id, skin_id, frags, timeout=10, target_level=None,
+                  skin_up_gap=0.0):
         captured.update(client=client, shop_id=shop_id, skin_id=skin_id,
-                        frags=frags, target_level=target_level)
+                        frags=frags, target_level=target_level,
+                        skin_up_gap=skin_up_gap)
         return {"ok": True, "bought": True, "after_level": 10}, None
 
     monkeypatch.setattr(routes, "_ws_client", fake_ws_client)
@@ -163,6 +165,7 @@ def test_exec_step_delegates_to_ws_module(monkeypatch):
     assert captured["skin_id"] == 10003
     assert captured["frags"] == 5
     assert captured["target_level"] == 10, "exec must know the planned star cap"
+    assert captured["skin_up_gap"] == routes._STEP_GAP_S
 
 
 # --- exec_buy_and_upgrade robustness (live 2026-07-05 7fe98fc6) --------------
@@ -346,6 +349,71 @@ def test_exec_upgrade_late_execution_caught_by_reverify(monkeypatch):
     assert res["ok"] is True
     assert res["after_level"] == 2
     assert client.sent.count(14337) == 1, "must not re-send after late landing"
+
+
+def test_exec_resent_flag_marks_cooldown_resend(monkeypatch):
+    """A step that had to RE-SEND skin_up (cooldown drop) must report
+    resent=True so the job loop can back off to the safe gap."""
+    monkeypatch.setattr(deco_ws, "_COOLDOWN_WAIT_S", 0.0)
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 0})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("raise", WSTimeoutError("no response for cmd=12817")),  # dropped
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1)
+    assert err is None
+    assert res["ok"] is True
+    assert res["resent"] is True
+
+
+def test_exec_skin_up_gap_waits_only_remaining_cooldown(monkeypatch):
+    """skin_up_gap counts from the PREVIOUS skin_up send: time already spent
+    on reads/buys is credited, only the remainder is slept."""
+    import time as _time
+    slept = []
+    monkeypatch.setattr(deco_ws.time, "sleep", lambda s: slept.append(s))
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 0})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+    client._last_skin_up_ts = _time.monotonic() - 2.0   # last send was 2s ago
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1, skin_up_gap=5.0)
+    assert err is None
+    assert res["ok"] is True
+    assert not res.get("resent")
+    assert len(slept) == 1
+    assert 2.5 < slept[0] <= 3.0, "only the remaining ~3s should be slept"
+    assert client._last_skin_up_ts > _time.monotonic() - 1.0, \
+        "send timestamp must be re-stamped for the next step"
+
+
+def test_exec_skin_up_gap_first_send_no_wait(monkeypatch):
+    """No previous skin_up on this connection: send immediately, no sleep."""
+    slept = []
+    monkeypatch.setattr(deco_ws.time, "sleep", lambda s: slept.append(s))
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 0})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1, skin_up_gap=5.0)
+    assert err is None
+    assert res["ok"] is True
+    assert not slept
+    assert hasattr(client, "_last_skin_up_ts")
 
 
 def test_exec_retry_rejected_but_first_send_landed_is_success(monkeypatch):
@@ -562,7 +630,7 @@ def test_execute_job_reconnects_and_retries_on_conn_lost(monkeypatch):
     monkeypatch.setattr(routes, "_read_state", lambda ip: (_ws_state(), None))
     calls = {"exec": 0, "ensure": 0}
 
-    def fake_exec(ip, step):
+    def fake_exec(ip, step, gap=None):
         calls["exec"] += 1
         if calls["exec"] == 1:
             return None, ("WebSocketConnectionClosedException: "
@@ -595,7 +663,7 @@ def test_execute_job_non_conn_error_stops_without_retry(monkeypatch):
     ensure_calls = []
     exec_calls = []
 
-    def fake_exec(ip, step):
+    def fake_exec(ip, step, gap=None):
         exec_calls.append(step["to_level"])
         return {"ok": False, "bought": True, "frags_bought": step["frags"],
                 "err": "upgrade_rejected_code_3"}, None
@@ -614,3 +682,26 @@ def test_execute_job_non_conn_error_stops_without_retry(monkeypatch):
     assert not ensure_calls, "logic rejects must not trigger a reconnect"
     assert len(exec_calls) == 1
     assert job["result"]["stopped_reason"] == "step_failed:upgrade_rejected_code_3"
+
+
+def test_execute_job_starts_fast_and_backs_off_after_resend(monkeypatch):
+    """Steps start at the optimistic gap; the first cooldown re-send flips the
+    remaining steps to the proven-safe gap."""
+    monkeypatch.setattr(routes, "_read_state", lambda ip: (_ws_state(), None))
+    gaps = []
+
+    def fake_exec(ip, step, gap):
+        gaps.append(gap)
+        return {"ok": True, "bought": True, "after_level": step["to_level"],
+                "frags_bought": step["frags"],
+                "resent": len(gaps) == 1}, None
+
+    monkeypatch.setattr(routes, "_exec_step", fake_exec)
+
+    jid = jobs._new_job()
+    routes._run_execute_job(jid, "emulator-5554", 0, 5)
+    job = jobs._jobs[jid]
+    assert job["status"] == "done"
+    assert len(gaps) == 2
+    assert gaps[0] == routes._FAST_GAP_S
+    assert gaps[1] == routes._STEP_GAP_S, "a re-send must back off the gap"
