@@ -195,6 +195,18 @@ def test_dragon_badge_shown_in_dragon_week(monkeypatch):
     assert res["龍骸聖域"] is True
 
 
+def test_wanshen_badge_lit_when_ran_earlier_this_week_not_today(monkeypatch):
+    """萬神試煉是週任務:本週稍早跑過(非今天)燈仍要亮(period=week,非 is_same_day)。"""
+    _no_cycle_gate(monkeypatch)
+    _stub_dragon(monkeypatch, is_week=False)
+    now = datetime.datetime(2026, 6, 24, 12, tzinfo=_TZ)              # 週三
+    data = {"萬神試煉": {"timestamp": _ts_on(datetime.date(2026, 6, 22))}}  # 本週一跑
+    mgr = _FakeManager(data, now=now)
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["萬神試煉"] is True                # is_same_week → 整週維持亮
+    assert mgr.is_same_day("萬神試煉") is False   # 當天述語會是暗(舊 bug 來源)
+
+
 # ── 坐騎衝刺：活動開放窗 gate(週二~週三22:00)。週期週內但活動結算後應隱藏 ──
 # 2026-06-22 為週一 → 06-23 週二、06-24 週三、06-25 週四。
 def _mount_data():

@@ -305,7 +305,7 @@ _DAILY_TASKS_CONFIG = {
     "農場種植": {"key": "farm_plant_click"},
     "挖礦": {"key": ["挖礦", "挖礦"]},
     "地獄之門": {"key": "地獄之門"},
-    "萬神試煉": {"key": "萬神試煉"},
+    "萬神試煉": {"key": "萬神試煉", "period": "week"},
     "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
     "商店購買": {"key": "Store"},
     "每日任務": {"key": "mission_timestamp"},
