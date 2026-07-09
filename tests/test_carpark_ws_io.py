@@ -201,19 +201,36 @@ def _skin_up_ok_body(sid, lev):
         2, codec.pb_uint(1, sid) + codec.pb_uint(2, lev))
 
 
+def _inventory_body(bag):
+    """0x0401 reply: flat repeated {1:item_id, 3:count} under field 1."""
+    return b"".join(
+        codec.pb_msg(1, codec.pb_uint(1, iid) + codec.pb_uint(3, cnt))
+        for iid, cnt in (bag or {}).items())
+
+
+def _frag_item(skin_id):
+    """The bag item_id of a decoration's fragment (from the real catalog)."""
+    return deco_ws._frag_goods_of(deco_ws._load_catalog(), skin_id)
+
+
 class _FakeExecClient:
     """Scripted stand-in: pops one canned action per call/call_for.
 
-    Each action is ("reply", cmd, body) or ("raise", exc).
+    Each action is ("reply", cmd, body) or ("raise", exc). The 0x0401 bag query
+    (held-frags source) is answered out-of-band from ``bag`` WITHOUT consuming a
+    script action, so held is set by ``bag`` and the scripts stay call-ordered.
     """
 
-    def __init__(self, script):
+    def __init__(self, script, bag=None):
         self._creds = SimpleNamespace(role_id=42)
         self.script = list(script)
         self.sent = []
         self.bodies = []
+        self.bag = bag or {}
 
     def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        if cmd == deco_ws.CMD_INVENTORY_QUERY:
+            return cmd, _inventory_body(self.bag)  # held frags — no script pop
         self.sent.append(cmd)
         self.bodies.append((cmd, body))
         action = self.script.pop(0)
@@ -546,14 +563,13 @@ def test_exec_target_level_reached_skips_all_mutations():
 
 
 def test_exec_skips_buy_when_frags_already_held():
-    """A landed-but-interrupted buy is not re-bought (no double spend):
-    level 1 consumed 0 ladder frags, bought=1 -> holds 1, step needs 1."""
+    """Held frags (bag ground truth) cover the step -> no buy, no double spend:
+    bag holds 1, step needs 1 -> upgrade directly."""
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),        # held 1 >= frags 1
         ("reply", 12817, _skin_up_ok_body(40097, 2)),      # upgrade directly
         ("reply", 12801, _skin_list_body([(40097, 2)])),
-    ])
+    ], bag={_frag_item(40097): 1})                          # held 1 >= frags 1
     res, err = deco_ws.exec_buy_and_upgrade(
         client, shop_id=1753, skin_id=40097, frags=1)
     assert err is None
@@ -563,15 +579,14 @@ def test_exec_skips_buy_when_frags_already_held():
 
 
 def test_exec_buys_only_the_shortfall():
-    """Level 2 consumed 1 ladder frag (row 1); bought=2 -> holds 1; the ★2→3
-    step needs 2 frags so only 1 is bought."""
+    """Bag holds 1; the step needs 2 frags so only the shortfall (1) is bought."""
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 2)])),
         ("reply", 6913, _buy_info_body({1753: 2})),
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("reply", 12817, _skin_up_ok_body(40097, 3)),
         ("reply", 12801, _skin_list_body([(40097, 3)])),
-    ])
+    ], bag={_frag_item(40097): 1})                          # holds 1 of 2 needed
     res, err = deco_ws.exec_buy_and_upgrade(
         client, shop_id=1753, skin_id=40097, frags=2)
     assert err is None
@@ -582,17 +597,16 @@ def test_exec_buys_only_the_shortfall():
 
 
 def test_exec_held_overestimate_selfheals_on_reject():
-    """If the held estimate overshoots (an acquisition consumed row 0), the
-    rejected upgrade triggers a one-shot shortfall buy + resend."""
+    """Safety net: if held (bag) looked sufficient but the upgrade is rejected
+    for 次數不足, buy the shortfall once and resend (total bought <= frags)."""
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),
-        ("reply", 6913, _buy_info_body({1753: 1})),        # held estimate 1 -> skip buy
         ("reply", 513, codec.pb_uint(1, 159)),             # skin_up rejected 次數不足
         ("reply", 6913, _buy_info_body({1753: 1})),        # shortfall-buy pre read
         ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
         ("reply", 12817, _skin_up_ok_body(40097, 2)),      # resend lands
         ("reply", 12801, _skin_list_body([(40097, 2)])),
-    ])
+    ], bag={_frag_item(40097): 1})                          # held looked enough
     res, err = deco_ws.exec_buy_and_upgrade(
         client, shop_id=1753, skin_id=40097, frags=1)
     assert err is None

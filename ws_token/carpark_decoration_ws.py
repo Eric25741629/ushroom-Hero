@@ -259,6 +259,7 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
 
         skins = _parse_skin_list(car_body)
         buy_info = _parse_shop_buy_info(shop_body)
+        bag = _read_bag(client, timeout)  # {item_id: count} — held frags source
 
         decos = []
         for skin_id, skin_lev in skins:
@@ -278,6 +279,7 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
                 limit_remaining = 0
 
             steps = _build_steps(catalog, skin_id, skin_lev)
+            held_frags = bag.get(fg, 0) if fg else 0
             decos.append({
                 "id": skin_id,
                 "name": _name_of(catalog, skin_id),
@@ -287,6 +289,7 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
                 "steps": steps,
                 "shop_id": shop_id,
                 "frag_goods": fg,
+                "held_frags": held_frags,
                 "bought": bought,
                 "cap": cap,
                 "off_shelf": off_shelf,
@@ -340,23 +343,33 @@ def _read_buy_counts(client: WSGameClient, timeout: float) -> dict[int, int]:
     return _parse_shop_buy_info(body)
 
 
-def _cum_frags(catalog: dict, deco_id: int, level: int) -> int:
-    """Ladder frags consumed to stand at ``level`` (expend of rows 1..level-1).
+CMD_INVENTORY_QUERY = 0x0401  # full bag snapshot (empty c2s -> flat repeated item)
 
-    Row 0 (the acquisition row) is excluded: decorations come from the free
-    ParkingDecorateSelectView picker, so shop-bought frags only ever feed star
-    upgrades — ``shop_bought - _cum_frags`` is then exactly the frags still
-    held. If an acquisition DID consume row 0 the estimate overshoots by that
-    row; the executor self-heals by buying the shortfall when the upgrade is
-    rejected (see exec_buy_and_upgrade).
+
+def _read_bag(client: WSGameClient, timeout: float) -> dict[int, int]:
+    """Full bag snapshot ``{item_id: count}`` via 0x0401 (empty c2s).
+
+    Ground truth for held fragments — includes frags from ANY source (event
+    drops / gifts / mail), not just shop-bought. This is what actually gets
+    consumed by a star upgrade, so both planner and executor credit it.
+    Best-effort: on any failure returns {} (callers then behave as held=0).
     """
-    total = 0
-    for lv in range(1, max(1, int(level))):
-        row = catalog.get((deco_id, lv))
-        if row and row.get("expend"):
-            e = row["expend"][0]
-            total += int(e[1]) if len(e) >= 2 else 0
-    return total
+    try:
+        cmd, reply = client.call_for(
+            CMD_INVENTORY_QUERY, b"",
+            expect_cmds=(CMD_INVENTORY_QUERY,), timeout=timeout)
+        if cmd != CMD_INVENTORY_QUERY or not reply:
+            return {}
+        bag = {}
+        for fnum, val in codec.walk(reply):
+            if fnum == 1 and isinstance(val, (bytes, bytearray)):
+                d = codec.walk_dict(bytes(val))
+                iid, cnt = d.get(1), d.get(3)
+                if isinstance(iid, int) and isinstance(cnt, int):
+                    bag[iid] = cnt
+        return bag
+    except Exception:  # noqa: BLE001 — bag read is best-effort
+        return {}
 
 
 def exec_buy_and_upgrade(
@@ -440,10 +453,16 @@ def exec_buy_and_upgrade(
                 return False, "buy_unconfirmed_no_reply"
 
         if frags > 0:
-            pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
-            held = max(0, pre_count - _cum_frags(catalog, skin_id, before_level))
+            # Held frags = ground truth from the bag (0x0401), so frags obtained
+            # from ANY source (event drops / gifts / mail) — not just shop-bought
+            # — are credited and never re-bought. Read fresh each call so retries
+            # after a dropped connection never double-buy.
+            frag_item = _frag_goods_of(catalog, skin_id)
+            bag = _read_bag(client, timeout)
+            held = bag.get(frag_item, 0) if frag_item else 0
             to_buy = max(0, frags - held)
             if to_buy:
+                pre_count = _read_buy_counts(client, timeout).get(shop_id, 0)
                 ok, buy_err = _buy_frags(to_buy, pre_count)
                 if not ok:
                     return _fail(buy_err)

@@ -72,7 +72,8 @@ def _build_decos(state: dict):
             id=d["id"], name=d.get("name", str(d["id"])),
             price_per_frag=int(d.get("price", 0)),
             limit_remaining=int(d.get("limit_remaining", 0)),
-            steps=tuple(tuple(int(x) for x in s) for s in steps)))
+            steps=tuple(tuple(int(x) for x in s) for s in steps),
+            held_frags=int(d.get("held_frags", 0))))
         meta[d["id"]] = {"shop_id": d.get("shop_id"),
                          "name": d.get("name"), "price": d.get("price"),
                          "level": d.get("level")}
@@ -96,6 +97,7 @@ def _plan(state: dict, budget: int, max_steps: int):
     steps = [{
         "id": s.id, "name": s.name,
         "shop_id": meta.get(s.id, {}).get("shop_id"),
+        "price": meta.get(s.id, {}).get("price"),
         "from_level": s.from_level,
         "to_level": s.to_level, "frags": s.frags, "coin": s.coin,
         "attr_gain": s.attr_gain,
@@ -229,7 +231,9 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
         for _deco_id, gsteps in groups:
             head = gsteps[0]
             name, shop_id = head["name"], head["shop_id"]
-            unit = head["coin"] // head["frags"] if head["frags"] else 0
+            # 每碎片真實單價:coin 已折抵持有碎片,不能再用 coin//frags 反推。
+            unit = int(head.get("price") or 0) or (
+                head["coin"] // head["frags"] if head["frags"] else 0)
             total_frags = sum(s["frags"] for s in gsteps)
             group_coin = sum(s["coin"] for s in gsteps)
             if spent + group_coin > plan["budget"]:

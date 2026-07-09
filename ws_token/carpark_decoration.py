@@ -352,6 +352,10 @@ class DecoUpgradeState:
     price_per_frag: int
     limit_remaining: int
     steps: tuple[tuple[int, int, int], ...]
+    # 背包已持有、可折抵購買的碎片數(0x0401 實讀)。沿階梯由低星往高星消耗;
+    # 每步實際要買 = max(0, 該步碎片 − 剩餘持有),coin 只算「要買」的部分,
+    # 免費(持有足)的星會排在最前(coin_per_attr=0)。預設 0 = 舊行為(全買)。
+    held_frags: int = 0
 
 
 @dataclass(frozen=True)
@@ -418,7 +422,8 @@ def plan_upgrades(decos, *, budget, max_steps):
     # Mutable per-decoration cursor into its step ladder + remaining quota.
     state = {
         d.id: {"deco": d, "idx": 0, "level": _start_level(d),
-               "frags_left": max(0, _to_int(d.limit_remaining))}
+               "frags_left": max(0, _to_int(d.limit_remaining)),
+               "held_left": max(0, _to_int(d.held_frags))}
         for d in decos
     }
 
@@ -431,9 +436,12 @@ def plan_upgrades(decos, *, budget, max_steps):
         chosen.append(best)
         spent += best.coin
         st = state[best.id]
+        # 持有碎片先折抵這一星,剩下的才是實際買量(只有買量計入限購 quota)。
+        buy = max(0, best.frags - st["held_left"])
         st["idx"] += 1
         st["level"] = best.to_level
-        st["frags_left"] -= best.frags
+        st["held_left"] = max(0, st["held_left"] - best.frags)
+        st["frags_left"] -= buy
 
     if not chosen:
         return UpgradePlan(skipped_reason="no_candidate")
@@ -464,10 +472,12 @@ def _candidate_step(st: dict, remaining_budget: int) -> UpgradeStep | None:
         _to_int(deco.steps[idx][2]))
     if attr_gain <= 0:
         return None  # cosmetic / no stat — never worth coin
-    coin = frags * max(0, _to_int(deco.price_per_frag))
+    # 背包持有碎片折抵:實際要買的才花菇車幣、才占限購 quota。
+    buy = max(0, frags - max(0, _to_int(st.get("held_left", 0))))
+    coin = buy * max(0, _to_int(deco.price_per_frag))
     if coin > remaining_budget:
         return None
-    if frags > st["frags_left"]:
+    if buy > st["frags_left"]:
         return None  # would exceed 限購 remaining quota
     return UpgradeStep(id=deco.id, name=deco.name, from_level=st["level"],
                        to_level=to_level, frags=frags, coin=coin,

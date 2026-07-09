@@ -218,9 +218,10 @@ from ws_token.carpark_decoration import (  # noqa: E402
 )
 
 
-def _deco(id, name, price, limit, steps):
+def _deco(id, name, price, limit, steps, held=0):
     return DecoUpgradeState(id=id, name=name, price_per_frag=price,
-                            limit_remaining=limit, steps=tuple(steps))
+                            limit_remaining=limit, steps=tuple(steps),
+                            held_frags=held)
 
 
 def test_plan_picks_lowest_coin_per_attr_first():
@@ -285,6 +286,43 @@ def test_plan_respects_max_steps():
     # Assert
     assert len(plan.steps) == 2
     assert [s.to_level for s in plan.steps] == [7, 8]
+
+
+def test_plan_credits_held_frags_makes_step_free_and_first():
+    # A needs 4 frags but already holds 4 -> coin 0 (免費升). B costs 400.
+    # The free step must be INCLUDED and ranked first (coin_per_attr 0).
+    decos = [
+        _deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000)], held=4),
+        _deco(2, "B", price=100, limit=999, steps=[(7, 4, 48000)], held=0),
+    ]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=2)
+    assert plan.steps[0].id == 1
+    assert plan.steps[0].coin == 0
+    assert [s.id for s in plan.steps] == [1, 2]
+
+
+def test_plan_held_frags_reduces_buy_cost():
+    # Needs 4 frags, holds 1 -> buy 3 @100 = 300 (not 400).
+    decos = [_deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000)], held=1)]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=1)
+    assert plan.steps[0].coin == 300
+
+
+def test_plan_held_frags_consumed_across_ladder():
+    # Holds 4. Star1 needs 4 (free), star2 needs 6 -> buy 6 @100 = 600.
+    decos = [_deco(1, "A", price=100, limit=999,
+                   steps=[(7, 4, 48000), (8, 6, 48000)], held=4)]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=2)
+    assert [s.coin for s in plan.steps] == [0, 600]
+    assert plan.total_coin == 600
+
+
+def test_plan_quota_counts_only_bought_frags():
+    # limit_remaining=0 (can buy nothing) but holds 4 -> free star still allowed.
+    decos = [_deco(1, "A", price=100, limit=0, steps=[(7, 4, 48000)], held=4)]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=1)
+    assert [s.to_level for s in plan.steps] == [7]
+    assert plan.steps[0].coin == 0
 
 
 def test_plan_skips_zero_attr_gain():
