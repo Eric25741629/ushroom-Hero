@@ -116,11 +116,15 @@ def acquire(device: str, owner: Owner, channel: Channel, label: str = "", *,
     釋放 / 被搶佔 → `set_pause(device, False)`(見 §1.4)。
     """
     with _lock:
-        # human_played 硬前置:任何 owner 都不得佔用保護帳號。
-        if role_id is not None and role_id in _protected_role_ids():
-            return AcquireResult(ok=False, reason="protected")
-        if _is_human_played_device(device):
-            return AcquireResult(ok=False, reason="protected")
+        # human_played 硬前置:背景 owner 一律不得佔用保護帳號。
+        # 例外:dashboard TOOL 是人在儀表板明確操作(按「連線」),允許登入保護
+        # 帳號執行 WS 工具(如車位裝飾升級)。與人手動遊玩互踢的風險由使用者自負;
+        # ws_phase 喚醒前會等此連線釋放(wait_for_dashboard_ws_release)避免 ping-pong。
+        if owner is not Owner.TOOL:
+            if role_id is not None and role_id in _protected_role_ids():
+                return AcquireResult(ok=False, reason="protected")
+            if _is_human_played_device(device):
+                return AcquireResult(ok=False, reason="protected")
 
         existing = _leases.get(device)
         if existing is not None and existing.owner is owner:

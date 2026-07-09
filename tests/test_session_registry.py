@@ -131,9 +131,23 @@ def test_acquire_rejected_for_protected_role(monkeypatch):
 def test_acquire_rejected_for_human_played_device(monkeypatch):
     monkeypatch.setattr(reg, "_is_human_played_device",
                         lambda dev: dev == "phone-fc")
-    res = reg.acquire("phone-fc", reg.Owner.TOOL, reg.Channel.WS)
+    res = reg.acquire("phone-fc", reg.Owner.SCHEDULER, reg.Channel.WS)
     assert res.ok is False
     assert res.reason == "protected"
+
+
+def test_tool_bypasses_protected_role(monkeypatch):
+    # dashboard TOOL 是人明確操作(按「連線」),允許登入保護帳號。
+    monkeypatch.setattr(reg, "_protected_role_ids", lambda: frozenset({777}))
+    res = reg.acquire("d", reg.Owner.TOOL, reg.Channel.WS, role_id=777)
+    assert res.ok is True
+
+
+def test_tool_bypasses_human_played_device(monkeypatch):
+    monkeypatch.setattr(reg, "_is_human_played_device",
+                        lambda dev: dev == "phone-fc")
+    res = reg.acquire("phone-fc", reg.Owner.TOOL, reg.Channel.WS)
+    assert res.ok is True
 
 
 def test_non_protected_role_still_acquires(monkeypatch):
