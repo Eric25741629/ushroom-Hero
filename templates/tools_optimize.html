@@ -321,12 +321,14 @@ async function loadDevices(){
     const r = await fetch('/api/status'); const j = await r.json();
     const bots = j.bots||{}; const sel = $('dev'); sel.innerHTML='';
     Object.keys(bots).forEach(ip => {
-      const b = bots[ip]; if (b.backend !== 'web_h5') return;
+      // 這些工具走純 WS（ws_session），任何有 WS 的裝置都能跑，不限 web_h5：
+      // adb+ws 的手機（backend=adb 但 ws_enabled）也要列入。
+      const b = bots[ip]; if (b.backend !== 'web_h5' && !b.ws_enabled) return;
       const o = document.createElement('option');
       o.value = ip; o.textContent = `${b.name||ip} (${ip})`; sel.appendChild(o);
     });
     if ([...sel.options].some(o=>o.value==='emulator-5554')) sel.value='emulator-5554';
-    if (!sel.options.length) setStatus('沒有 web_h5 裝置', true);
+    if (!sel.options.length) setStatus('沒有可用（web_h5 或已開 WS）的裝置', true);
   }catch(e){ setStatus('讀取裝置失敗：'+e, true); }
 }
 
