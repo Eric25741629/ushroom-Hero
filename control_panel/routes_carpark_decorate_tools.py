@@ -139,6 +139,12 @@ def _exec_step(ip: str, step: dict, gap: float = _STEP_GAP_S):
 
     ``gap`` = min spacing between skin_up sends; the wait happens INSIDE the
     exec (counted from the previous send), so read/buy time is credited.
+
+    When the decoration's frags were pre-bought as a batch (see ``_prebuy_group``)
+    the held-frags accounting in ``exec_buy_and_upgrade`` sees them and buys
+    nothing here — this becomes a pure skin_up. Passing the real per-star
+    ``frags`` (not 0) keeps the self-heal buy as a safety net if the batch
+    estimate ever undershoots.
     """
     client, err = _ws_client(ip)
     if err:
@@ -153,6 +159,26 @@ def _exec_step(ip: str, step: dict, gap: float = _STEP_GAP_S):
         skin_up_gap=gap)
 
 
+def _prebuy_group(ip: str, shop_id: int, skin_id: int, frags: int):
+    """Buy a decoration's WHOLE frag batch in ONE 6914 (held-frags aware).
+
+    ``do_upgrade=False`` so no star is consumed. ``exec_buy_and_upgrade`` only
+    buys the shortfall over frags already held, so a retry after a dropped
+    connection never double-buys. Returns (result, err); result.frags_bought =
+    frags actually purchased this call (0 if already fully held).
+    """
+    client, err = _ws_client(ip)
+    if err:
+        return None, err
+    return deco_ws.exec_buy_and_upgrade(
+        client,
+        shop_id=int(shop_id),
+        skin_id=int(skin_id),
+        frags=int(frags),
+        do_upgrade=False,
+        timeout=_EXEC_TIMEOUT)
+
+
 # Exception names that mean the WS transport died (vs a game-logic reject).
 _CONN_ERR_MARKERS = ("ConnectionClosed", "ConnectionReset", "BrokenPipe",
                      "ConnectionAborted", "socket is already closed")
@@ -163,13 +189,6 @@ def _conn_lost(ip: str, err: str) -> bool:
     if any(m in err for m in _CONN_ERR_MARKERS):
         return True
     return ws_session.get_client(ip) is None
-
-
-def _step_coin_spent(step: dict, frags_bought: int) -> int:
-    """Actual coin for ``frags_bought`` frags (plan coin = frags × unit price)."""
-    if not step["frags"]:
-        return 0
-    return step["coin"] // step["frags"] * frags_bought
 
 
 def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
@@ -190,55 +209,102 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
                                 "stopped_reason": plan.get("skipped_reason")})
             return
 
+        # 同類項合併：選中的步驟集合不變（計畫仍最省），但執行時把同一裝飾的
+        # 步驟聚在一起 → 該裝飾整批碎片一次 6914 買齊，再連續升星。步驟在 steps
+        # 內已是各裝飾的星級遞增（貪心逐階推進），依 id 首次出現排序保留成本序。
+        groups: list[tuple[int, list[dict]]] = []
+        by_id: dict[int, list[dict]] = {}
+        for step in steps:
+            bucket = by_id.get(step["id"])
+            if bucket is None:
+                bucket = by_id[step["id"]] = []
+                groups.append((step["id"], bucket))
+            bucket.append(step)
+
         executed = []
         spent = 0
         stopped = None
         gap = _FAST_GAP_S
-        for idx, step in enumerate(steps, 1):
-            if spent + step["coin"] > plan["budget"]:
+        step_no = 0
+        for _deco_id, gsteps in groups:
+            head = gsteps[0]
+            name, shop_id = head["name"], head["shop_id"]
+            unit = head["coin"] // head["frags"] if head["frags"] else 0
+            total_frags = sum(s["frags"] for s in gsteps)
+            group_coin = sum(s["coin"] for s in gsteps)
+            if spent + group_coin > plan["budget"]:
                 stopped = "budget_exhausted"
                 break
-            _job_log(jid, f"[{idx}/{len(steps)}] {step['name']} "
-                          f"★{step['from_level']}→{step['to_level']} "
-                          f"買{step['frags']}碎片 花{step['coin']:,}")
-            res, e = _exec_step(ip, step, gap)
-            if e and _conn_lost(ip, e):
-                # 斷線那步的買/升可能已入帳、也可能晚到：等滿一個冷卻再重連。
-                # exec 端 target_level 護欄 + 冪等買保證重試不重花、不多升。
-                _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試…")
-                time.sleep(_STEP_GAP_S)
-                if ws_session.ensure(ip).get("status") == "ok":
-                    res, e = _exec_step(ip, step, gap)
-            if res and res.get("resent") and gap < _STEP_GAP_S:
-                # skin_up 被冷卻靜默丟棄過：樂觀間隔太短，退回實測安全值。
-                gap = _STEP_GAP_S
-                _job_log(jid, f"   ⚠ 偵測到 skin_up 冷卻丟棄，間隔改回 {gap}s")
-            if e or not res or not res.get("ok"):
-                reason = (res or {}).get("err") if res else e
-                fb = (res or {}).get("frags_bought")
-                if fb is None:
-                    fb = step["frags"] if (res and res.get("bought")) else 0
-                coin_spent = _step_coin_spent(step, fb)
+
+            # ── 整批預買碎片（一次 6914）───────────────────────────────────
+            if total_frags > 0:
+                _job_log(jid, f"{name} 一次買齊 {total_frags} 碎片"
+                              f"（升 ★{head['from_level']}→{gsteps[-1]['to_level']}）")
+                res, e = _prebuy_group(ip, shop_id, _deco_id, total_frags)
+                if e and _conn_lost(ip, e):
+                    _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試買碎片…")
+                    time.sleep(_STEP_GAP_S)
+                    if ws_session.ensure(ip).get("status") == "ok":
+                        res, e = _prebuy_group(ip, shop_id, _deco_id, total_frags)
+                if e or not res or not res.get("ok"):
+                    reason = (res or {}).get("err") if res else e
+                    fb = (res or {}).get("frags_bought") or 0
+                    coin_spent = unit * fb
+                    spent += coin_spent
+                    _job_log(jid, f"   ✗ 買碎片停止：{reason}"
+                                  + (f"（已扣 {coin_spent:,} 菇車幣）" if coin_spent else ""))
+                    stopped = f"prebuy_failed:{reason}"
+                    break
+                pb_frags = res.get("frags_bought") or 0
+                spent += unit * pb_frags
+                if pb_frags:
+                    held_note = (f"（其餘 {total_frags - pb_frags} 持有折抵）"
+                                 if pb_frags < total_frags else "")
+                    _job_log(jid, f"   ✓ 已買 {pb_frags} 碎片，花 {unit * pb_frags:,}"
+                                  + held_note)
+                else:
+                    _job_log(jid, f"   ✓ 持有碎片已足（{total_frags}），免購")
+
+            # ── 連續升星（碎片已持有 → 純升星）─────────────────────────────
+            broke = False
+            for step in gsteps:
+                step_no += 1
+                _job_log(jid, f"[{step_no}/{len(steps)}] {name} "
+                              f"★{step['from_level']}→{step['to_level']} 升星")
+                res, e = _exec_step(ip, step, gap)
+                if e and _conn_lost(ip, e):
+                    # 斷線那步的升可能已入帳、也可能晚到：等滿一個冷卻再重連。
+                    # target_level 護欄保證重試不多升；碎片已持有不重買。
+                    _job_log(jid, f"   ⚠ WS 斷線（{e}），重連後重試…")
+                    time.sleep(_STEP_GAP_S)
+                    if ws_session.ensure(ip).get("status") == "ok":
+                        res, e = _exec_step(ip, step, gap)
+                if res and res.get("resent") and gap < _STEP_GAP_S:
+                    # skin_up 被冷卻靜默丟棄過：樂觀間隔太短，退回實測安全值。
+                    gap = _STEP_GAP_S
+                    _job_log(jid, f"   ⚠ 偵測到 skin_up 冷卻丟棄，間隔改回 {gap}s")
+                if e or not res or not res.get("ok"):
+                    reason = (res or {}).get("err") if res else e
+                    # 預買已扣款；升星自我修復若補買了碎片也計入。
+                    coin_spent = unit * ((res or {}).get("frags_bought") or 0)
+                    spent += coin_spent
+                    _job_log(jid, f"   ✗ 停止：{reason}"
+                                  + (f"（補買扣 {coin_spent:,}）" if coin_spent else ""))
+                    executed.append({**step, "ok": False, "reason": reason,
+                                     "coin_spent": coin_spent})
+                    stopped = f"step_failed:{reason}"
+                    broke = True
+                    break
+                coin_spent = unit * (res.get("frags_bought") or 0)
                 spent += coin_spent
-                _job_log(jid, f"   ✗ 停止：{reason}"
-                              + (f"（已扣 {coin_spent:,} 菇車幣）" if coin_spent else ""))
-                executed.append({**step, "ok": False, "reason": reason,
-                                 "coin_spent": coin_spent})
-                stopped = f"step_failed:{reason}"
+                executed.append({**step, "ok": True, "coin_spent": coin_spent,
+                                 "after_level": res.get("after_level")})
+                _job_log(jid, f"   ✓ 升到 ★{res.get('after_level')}")
+                with _jobs_lock:
+                    if jid in _jobs and _jobs[jid].get("result"):
+                        _jobs[jid]["result"]["executed"] = list(executed)
+            if broke:
                 break
-            fb = res.get("frags_bought")
-            coin_spent = (_step_coin_spent(step, fb) if fb is not None
-                          else step["coin"])
-            spent += coin_spent
-            executed.append({**step, "ok": True, "coin_spent": coin_spent,
-                             "after_level": res.get("after_level")})
-            _job_log(jid, f"   ✓ 升到 ★{res.get('after_level')}"
-                          + (f"（持有碎片折抵，實花 {coin_spent:,}）"
-                             if fb is not None and coin_spent < step["coin"]
-                             else ""))
-            with _jobs_lock:
-                if jid in _jobs and _jobs[jid].get("result"):
-                    _jobs[jid]["result"]["executed"] = list(executed)
 
         _job_update(jid, status="done", phase="done", result={
             **plan, "executed": executed, "spent": spent,

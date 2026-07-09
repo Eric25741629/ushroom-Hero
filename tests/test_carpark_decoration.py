@@ -311,3 +311,53 @@ def test_plan_from_level_tracks_chain():
                    steps=[(7, 4, 48000), (8, 5, 48000)])]
     plan = plan_upgrades(decos, budget=10_000_000, max_steps=2)
     assert [(s.from_level, s.to_level) for s in plan.steps] == [(6, 7), (7, 8)]
+
+
+# ───────────────────────────────────────────────────────────────────────────
+# Execution batching — the dashboard executor groups the (cost-optimal) planned
+# steps by decoration and buys each decoration's whole frag batch in ONE 6914,
+# then upgrades its stars consecutively. Stubs the WS layer to assert grouping.
+# ───────────────────────────────────────────────────────────────────────────
+
+
+def test_execute_batches_frag_buys_per_decoration(monkeypatch):
+    from control_panel import routes_carpark_decorate_tools as R
+
+    # Two decorations whose cost-optimal steps interleave (A1 400 < B1 500 < A2 600).
+    state = {"coin": 10_000_000, "decos": [
+        {"id": 1, "name": "A", "level": 6, "price": 100, "limit_remaining": 999,
+         "shop_id": 11, "steps": [[7, 4, 48000], [8, 6, 48000]]},
+        {"id": 2, "name": "B", "level": 10, "price": 50, "limit_remaining": 999,
+         "shop_id": 22, "steps": [[11, 10, 48000]]},
+    ]}
+    monkeypatch.setattr(R, "_read_state", lambda ip: (state, None))
+    monkeypatch.setattr(R, "_ws_client", lambda ip: ("client", None))
+    monkeypatch.setattr(R, "_job_log", lambda jid, m: None)
+
+    calls = []
+
+    def fake_exec(client, *, shop_id, skin_id, frags, do_upgrade=True, **kw):
+        calls.append((skin_id, frags, do_upgrade))
+        # Buy-only reports the whole batch bought; upgrades buy nothing (held).
+        fb = frags if do_upgrade is False else 0
+        return ({"ok": True, "frags_bought": fb, "bought": True,
+                 "after_level": kw.get("target_level")}, None)
+
+    monkeypatch.setattr(R.deco_ws, "exec_buy_and_upgrade", fake_exec)
+
+    captured = {}
+    monkeypatch.setattr(R, "_job_update",
+                        lambda jid, **kw: captured.update(kw.get("result") or {}))
+
+    R._run_execute_job("testjid", "ip", 0, 30)
+
+    # One batched buy-only per decoration, with SUMMED frags (A: 4+6=10, B: 10).
+    buys = [(sid, fr) for (sid, fr, up) in calls if up is False]
+    assert buys == [(1, 10), (2, 10)]
+    # Upgrades run consecutively per decoration and buy nothing.
+    ups = [sid for (sid, fr, up) in calls if up is True]
+    assert ups == [1, 1, 2]
+    # Coin accounted from batched buys only (100×10 + 50×10 = 1500); no reason.
+    assert captured["spent"] == 1500
+    assert captured["stopped_reason"] is None
+    assert [e["ok"] for e in captured["executed"]] == [True, True, True]
