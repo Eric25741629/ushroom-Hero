@@ -308,6 +308,14 @@ def test_plan_held_frags_reduces_buy_cost():
     assert plan.steps[0].coin == 300
 
 
+def test_plan_step_exposes_buy_frags_vs_total():
+    # Step needs 4 frags, holds 1 -> frags 4 (executor), buy_frags 3 (display).
+    decos = [_deco(1, "A", price=100, limit=999, steps=[(7, 4, 48000)], held=1)]
+    plan = plan_upgrades(decos, budget=10_000_000, max_steps=1)
+    assert plan.steps[0].frags == 4
+    assert plan.steps[0].buy_frags == 3
+
+
 def test_plan_held_frags_consumed_across_ladder():
     # Holds 4. Star1 needs 4 (free), star2 needs 6 -> buy 6 @100 = 600.
     decos = [_deco(1, "A", price=100, limit=999,

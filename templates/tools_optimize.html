@@ -365,8 +365,12 @@ function renderPlan(res){
   (res.steps||[]).forEach((s,i)=>{
     cum += s.coin;
     const tr = document.createElement('tr');
+    const bf = (s.buy_frags==null ? s.frags : s.buy_frags);
+    const fragCell = (bf < s.frags)
+      ? `${bf} <small style="opacity:.6">/需${s.frags}(持有折抵)</small>`
+      : `${s.frags}`;
     tr.innerHTML = `<td>${i+1}</td><td>${s.name}</td>`+
-      `<td>★${s.from_level}→${s.to_level}</td><td>${s.frags}</td>`+
+      `<td>★${s.from_level}→${s.to_level}</td><td>${fragCell}</td>`+
       `<td>${fmt(s.coin)}</td><td class="good">+${fmt(s.attr_gain)}</td>`+
       `<td>${s.coin_per_attr}</td><td>${fmt(cum)}</td>`;
     body.appendChild(tr);

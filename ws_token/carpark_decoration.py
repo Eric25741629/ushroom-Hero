@@ -366,9 +366,10 @@ class UpgradeStep:
     name: str
     from_level: int
     to_level: int
-    frags: int
+    frags: int              # 該星總需碎片(執行端用來自我修復買量 / 判 target)
     coin: int
     attr_gain: int
+    buy_frags: int = 0      # 折抵持有後「實際要買」的碎片(顯示 / 花費用);frags − 持有
 
     @property
     def coin_per_attr(self) -> float:
@@ -436,12 +437,11 @@ def plan_upgrades(decos, *, budget, max_steps):
         chosen.append(best)
         spent += best.coin
         st = state[best.id]
-        # 持有碎片先折抵這一星,剩下的才是實際買量(只有買量計入限購 quota)。
-        buy = max(0, best.frags - st["held_left"])
+        # 持有碎片先折抵這一星,只有實買量(best.buy_frags)計入限購 quota。
         st["idx"] += 1
         st["level"] = best.to_level
         st["held_left"] = max(0, st["held_left"] - best.frags)
-        st["frags_left"] -= buy
+        st["frags_left"] -= best.buy_frags
 
     if not chosen:
         return UpgradePlan(skipped_reason="no_candidate")
@@ -481,7 +481,7 @@ def _candidate_step(st: dict, remaining_budget: int) -> UpgradeStep | None:
         return None  # would exceed 限購 remaining quota
     return UpgradeStep(id=deco.id, name=deco.name, from_level=st["level"],
                        to_level=to_level, frags=frags, coin=coin,
-                       attr_gain=attr_gain)
+                       attr_gain=attr_gain, buy_frags=buy)
 
 
 def _best_affordable_step(state: dict, remaining_budget: int) -> UpgradeStep | None:

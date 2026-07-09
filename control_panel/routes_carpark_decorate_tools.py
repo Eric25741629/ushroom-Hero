@@ -99,7 +99,9 @@ def _plan(state: dict, budget: int, max_steps: int):
         "shop_id": meta.get(s.id, {}).get("shop_id"),
         "price": meta.get(s.id, {}).get("price"),
         "from_level": s.from_level,
-        "to_level": s.to_level, "frags": s.frags, "coin": s.coin,
+        "to_level": s.to_level, "frags": s.frags,
+        "buy_frags": s.buy_frags,  # 折抵持有後實際購買量(顯示用);frags=總需
+        "coin": s.coin,
         "attr_gain": s.attr_gain,
         "coin_per_attr": round(s.coin_per_attr, 3),
     } for s in (plan.steps if plan else ())]
@@ -235,6 +237,7 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
             unit = int(head.get("price") or 0) or (
                 head["coin"] // head["frags"] if head["frags"] else 0)
             total_frags = sum(s["frags"] for s in gsteps)
+            total_buy = sum(s.get("buy_frags", s["frags"]) for s in gsteps)
             group_coin = sum(s["coin"] for s in gsteps)
             if spent + group_coin > plan["budget"]:
                 stopped = "budget_exhausted"
@@ -242,7 +245,9 @@ def _run_execute_job(jid: str, ip: str, budget: int, max_steps: int) -> None:
 
             # ── 整批預買碎片（一次 6914）───────────────────────────────────
             if total_frags > 0:
-                _job_log(jid, f"{name} 一次買齊 {total_frags} 碎片"
+                held_note = (f"（需 {total_frags}，持有折抵後買 {total_buy}）"
+                             if total_buy < total_frags else f" {total_buy} 碎片")
+                _job_log(jid, f"{name} 一次買齊{held_note}"
                               f"（升 ★{head['from_level']}→{gsteps[-1]['to_level']}）")
                 res, e = _prebuy_group(ip, shop_id, _deco_id, total_frags)
                 if e and _conn_lost(ip, e):
