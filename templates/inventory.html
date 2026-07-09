@@ -249,7 +249,8 @@ async function loadDevices(){
     const bots = (j.bots)||{}; const sel = $('dev'); sel.innerHTML='';
     Object.keys(bots).forEach(ip => {
       const b = bots[ip];
-      if (b.backend !== 'web_h5') return;
+      // 倉庫走純 WS（ws_session 共用 client），adb+ws 裝置也要列入，不限 web_h5。
+      if (b.backend !== 'web_h5' && !b.ws_enabled) return;
       const o = document.createElement('option');
       o.value = ip; o.textContent = `${b.name||ip} (${ip})`;
       sel.appendChild(o);
