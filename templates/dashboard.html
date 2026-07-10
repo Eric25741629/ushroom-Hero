@@ -2242,7 +2242,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         <!-- 動作按鈕 -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
           <button type="button" class="btn btn--danger" onclick="ssSeize()">立即搶佔</button>
-          <button type="button" class="btn btn--primary" onclick="ssSnipe()">預約狙擊</button>
+          <button type="button" id="ssSnipeBtn" class="btn btn--primary" onclick="ssSnipe()">預約狙擊</button>
           <button type="button" class="btn btn--ghost" onclick="ssSnipeCancel()">取消預約</button>
         </div>
 
@@ -4555,6 +4555,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.querySelectorAll('#ssTypePicker .tab').forEach((el, i) => {
         el.setAttribute('aria-selected', String(i + 1 === t));
       });
+      // 預約狙擊 = 解保護瞬間搶攻，只對「搶佔」有意義；駐守無此時間閘 → 停用避免永不開火
+      const snBtn = document.getElementById('ssSnipeBtn');
+      if (snBtn) {
+        snBtn.disabled = (t === 2);
+        snBtn.title = (t === 2) ? '預約狙擊僅適用搶佔（駐守無保護時間閘）' : '';
+      }
     }
 
     async function ssLoadOpponent() {
