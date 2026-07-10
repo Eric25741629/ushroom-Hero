@@ -59,6 +59,9 @@ _locks: Dict[str, threading.Lock] = {} # 每個 IP 一個鎖，避免讀寫衝�
 # 不會殘留上一輪舊值。供 Phase D1 skip-browser 決策使用。
 _ws_login_ok: Dict[str, bool] = {}
 
+# 本輪 WS 是否健康完成，可安全直接交接 H5；與「曾登入成功」分開記錄。
+_ws_h5_handoff_ok: Dict[str, bool] = {}
+
 # 控制信號 (暫停/恢復)
 _pause_events: Dict[str, threading.Event] = {}
 
@@ -776,6 +779,18 @@ def get_ws_login_ok(ip: str) -> bool:
     """Return the latest WS-phase login result for `ip` (False if never set)."""
     with _global_lock:
         return bool(_ws_login_ok.get(ip, False))
+
+
+def set_ws_h5_handoff_ok(ip: str, ok: bool) -> None:
+    """記錄本輪 WS 是否可安全直接交接 H5。"""
+    with _global_lock:
+        _ws_h5_handoff_ok[ip] = bool(ok)
+
+
+def get_ws_h5_handoff_ok(ip: str) -> bool:
+    """回傳本輪 WS 到 H5 的健康交接狀態；未設定時採 fail-closed。"""
+    with _global_lock:
+        return bool(_ws_h5_handoff_ok.get(ip, False))
 
 
 def complete_web_launch_request(ip: str, ok: bool, message: str = "", error: str = "") -> None:
