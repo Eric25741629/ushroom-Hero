@@ -18,11 +18,12 @@
 ### B. Phase 7 — presence 顯示（照母 spec §Phase 7，字樣定案如下）
 - `bot_state` 加 owner/presence 鏡射（加法欄位，worker 經既有 state sync 帶到 master）。
 - `/api/status`（`control_panel/routes_status.py:458`）注入 `session_registry.peek_all()`，per-device 輸出 `{owner, label, channel, since}`。
-- 前端卡片（`dashboard.html:3055-3067`）badge 判定順序：
-  1. lease.owner == SCHEDULER → 「bot 執行中」
-  2. lease.owner 其他 → 「被借走：{owner 中文}（{label}）」；owner 映射：TOOL=工具、MOUNT_TRACKER=坐騎追蹤、ONLINE_MONITOR=上線偵測、ONLINE_CHECK=上線檢查
-  3. 無 lease 且 `account_online == true` → 「玩家在線」（醒目色，代表可能是真人）
-  4. `account_online == false` → 「當前離線」；`null` → 空白（維持現狀）
+- 前端卡片（`dashboard.html:3055-3067`）badge 判定順序（2026-07-10 使用者定案：觀察與執行分開）：
+  1. lease.owner == SCHEDULER → 「腳本執行」
+  2. lease.owner ∈ {ONLINE_MONITOR, ONLINE_CHECK, MOUNT_TRACKER} → 「在線觀察（{owner 中文}）」；映射：ONLINE_MONITOR=上線偵測、ONLINE_CHECK=上線檢查、MOUNT_TRACKER=坐騎追蹤
+  3. lease.owner == TOOL → 「被借走：工具（{label}）」
+  4. 無 lease 且 `account_online == true` → 「玩家在線」（醒目色，代表可能是真人）
+  5. `account_online == false` → 「當前離線」；`null` → 空白（維持現狀）
 - 修正 `dashboard.html:3015` title 與 `:511-523` CSS 註解的錯誤語意（現在宣稱「真人是否在線」）。
 - UI 改動走 `dashboard-ui-review`。
 
