@@ -66,9 +66,17 @@ def seize_cdp(monkeypatch):
     # 避免 sleep 拖慢測試
     monkeypatch.setattr(routes_star_seize.time, "sleep", lambda *_a, **_k: None)
 
+    click_calls = []
+
+    def fake_cdp_click(ip, x, y, timeout=10):
+        click_calls.append({"ip": ip, "x": x, "y": y})
+        return True, None
+
     fake_cpa = types.ModuleType("control_panel_app")
     fake_cpa._cdp_evaluate = fake_cdp_evaluate
+    fake_cpa._cdp_click = fake_cdp_click
     monkeypatch.setitem(sys.modules, "control_panel_app", fake_cpa)
+    responses["click_calls"] = click_calls
     return calls, responses
 
 

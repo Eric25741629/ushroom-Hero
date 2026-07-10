@@ -57,6 +57,56 @@ def _cdp_evaluate(ip, expression, await_promise=False, timeout=15):
         return None, str(exc)
 
 
+def _cdp_click(ip, x, y, timeout=10):
+    """對 web_h5 裝置的 game page target 送「真實」滑鼠點擊(CDP Input.dispatchMouseEvent)。
+
+    用於 cocos Creator 3.x 場景中「沒有可 emit 的 cc 節點」的地圖座標點擊(如奇星車場
+    導航)。cocos 3.x 不吃 JS 合成的 MouseEvent/PointerEvent,只有瀏覽器層真實輸入
+    (Playwright page.mouse.click / CDP Input.*)才會被場景接收;canvas 為 540x960、
+    left/top=0、dpr=1、1:1,座標直接對應。送 mousePressed → mouseReleased 兩發。
+    回 (ok: bool, err: str|None)。
+    """
+    import websocket as _ws
+    from runtime_services.live_view_bridge import find_game_page_target
+
+    cfg = config_manager.get_device_config(ip)
+    debug_port = cfg.get("web_debug_port")
+    if not debug_port:
+        return False, "no web_debug_port"
+
+    ws_url = find_game_page_target(
+        debug_port, "mushroomh5.acenetgame.com", timeout_sec=5.0
+    )
+    if not ws_url:
+        return False, f"no CDP target on port {debug_port}"
+
+    try:
+        ws = _ws.create_connection(ws_url, timeout=timeout, suppress_origin=True)
+        for i, ev_type in enumerate(("mousePressed", "mouseReleased")):
+            ws.send(json.dumps({
+                "id": 100 + i,
+                "method": "Input.dispatchMouseEvent",
+                "params": {
+                    "type": ev_type,
+                    "x": x,
+                    "y": y,
+                    "button": "left",
+                    "clickCount": 1,
+                },
+            }))
+        # 等兩發的 ack,確保事件已被 target 處理再關 ws
+        deadline = time.time() + timeout
+        seen = set()
+        while len(seen) < 2 and time.time() < deadline:
+            msg = json.loads(ws.recv())
+            if msg.get("id") in (100, 101):
+                seen.add(msg["id"])
+        ws.close()
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
 def _cdp_err_code(err: str) -> int:
     """Map a _cdp_evaluate error string to an HTTP status code (single source).
 

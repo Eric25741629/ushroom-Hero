@@ -137,6 +137,44 @@ def _err(msg):
     return jsonify({"status": "error", "message": str(msg)}), 500
 
 
+def _ensure_arena(cpa, ip):
+    """確保停在奇星車場 arena(ParkingMainView / ParkingCrossServerView)。
+
+    已在 arena → 直接回。否則導航:家園 → 菇菇車位(455,420) → 找車位 → 跨服車位
+    → 進場(455,278)。地圖座標點擊走 CDP ``Input.dispatchMouseEvent``「真實輸入」
+    (``_cdp_click``)——cocos Creator 3.x 不吃 JS 合成事件,只有瀏覽器層真實輸入
+    才會被場景接收;emit-label(家園/找車位/跨服車位)是 cc 節點,可靠地走 JS emit。
+    回 err 字串(None = 成功)。
+    """
+    norm, e = _eval_json(
+        cpa._cdp_evaluate(ip, _NORM_JS, await_promise=True, timeout=10)
+    )
+    if e:
+        return e
+    if isinstance(norm, dict) and norm.get("error"):
+        return norm["error"]
+    view = norm.get("view", []) if isinstance(norm, dict) else []
+    if "ParkingMainView" in view or "ParkingCrossServerView" in view:
+        return None  # 已在 arena;OPEN 步驟會處理 view 的開關
+
+    # 導航到奇星車場 arena(emit-label = JS emit;地圖座標 = CDP 真實輸入)
+    cpa._cdp_evaluate(ip, _EMIT_LABEL_JS.format(label="家園"), await_promise=True, timeout=10)
+    time.sleep(1.5)
+    _ok, ce = cpa._cdp_click(ip, 455, 420)  # 菇菇車位
+    if ce:
+        return ce
+    time.sleep(2.0)
+    cpa._cdp_evaluate(ip, _EMIT_LABEL_JS.format(label="找車位"), await_promise=True, timeout=10)
+    time.sleep(1.6)
+    cpa._cdp_evaluate(ip, _EMIT_LABEL_JS.format(label="跨服車位"), await_promise=True, timeout=10)
+    time.sleep(1.8)
+    _ok, ce = cpa._cdp_click(ip, 455, 278)  # 進奇星車場
+    if ce:
+        return ce
+    time.sleep(2.5)
+    return None
+
+
 # --- 注入 JS ---
 # 共用 varint protobuf reader(搬自 live 驗證的 rd),回 {field_number: [values]}。
 
@@ -262,32 +300,33 @@ _OPPONENT_JS = """
 
 # --- /seize orchestration 的分步 JS(照 live 驗證 act_seize.py)---
 
-# Step 1:確保在奇星車場 arena。若不在 ParkingMainView/ParkingCrossServerView 則導航:
-#   家園 → 菇菇車位(455,420) → 找車位 → 跨服車位 → 進場(455,278)。
-# 若停在某 CrossServerView 則先關掉回 MainView。座標點擊以 canvas DOM MouseEvent 模擬
-# (viewport 540x960;Playwright page.mouse.click 已證遊戲吃 DOM 滑鼠事件)。
-_NAV_JS = """
-(async function(){
-  function sleep(ms){ return new Promise(function(r){ setTimeout(r, ms); }); }
-  function norm(){ var s=cc.director.getScene(); var ui=(s.children||[]).filter(function(c){return c.name=='UIRoot';})[0]; if(!ui) return []; var nv=(ui.children||[]).filter(function(c){return c.name=='NormalView';})[0]; if(!nv) return []; return nv.children.filter(function(c){return c.active;}).map(function(c){return c.name;}); }
-  function emitLabel(t){ var s=cc.director.getScene(); var hit=null; var walk=function(n,d){ if(!n||d>20||!n.active) return; var comps=n._components||[]; for(var i=0;i<comps.length;i++){ var c=comps[i]; if(c&&typeof c.string==='string'&&c.string.trim()===t){ var up=n,b=null; for(var j=0;j<6&&up;j++){ if(up.getComponent&&up.getComponent('cc.Button')){ b=up; break; } up=up.parent; } hit=b||n; } } var ch=n.children||[]; for(var k=0;k<ch.length;k++) walk(ch[k],d+1); }; walk(s,0); if(!hit) return false; try{ hit.emit('click',hit); }catch(e){ return false; } return true; }
-  function tapXY(x,y){ var cv=document.querySelector('canvas'); if(!cv) return false; var r=cv.getBoundingClientRect(); var cx=r.left+x, cy=r.top+y; ['mousedown','mouseup','click'].forEach(function(t){ try{ cv.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,clientX:cx,clientY:cy,button:0})); }catch(e){} }); return true; }
-  function closeView(){ var s=cc.director.getScene(); var ui=(s.children||[]).filter(function(c){return c.name=='UIRoot';})[0]; if(!ui) return; var nv=(ui.children||[]).filter(function(c){return c.name=='NormalView';})[0]; if(!nv) return; var v=(nv.children||[]).filter(function(c){return c.name=='ParkingCrossServerView';})[0]; if(!v) return; var walk=function(n,d){ if(!n||d>6) return; if(/btnClose|btnBack/i.test(n.name||'')&&n.active){ try{ n.emit('click',n); }catch(e){} } var ch=n.children||[]; for(var k=0;k<ch.length;k++) walk(ch[k],d+1); }; walk(v,0); }
+# Step 1a:讀目前 NormalView 的 active 子節點名(判斷是否已在奇星車場 arena)。
+_NORM_JS = """
+(function(){
   try{
-    var v = norm();
-    var inMain = v.indexOf('ParkingMainView')>=0;
-    var inCross = v.indexOf('ParkingCrossServerView')>=0;
-    if (!inMain && !inCross){
-      emitLabel('家園'); await sleep(1500); tapXY(455,420); await sleep(2000);
-      emitLabel('找車位'); await sleep(1600); emitLabel('跨服車位'); await sleep(1800);
-      tapXY(455,278); await sleep(2500);
-    }
-    v = norm();
-    if (v.indexOf('ParkingCrossServerView')>=0){ closeView(); await sleep(1200); }
-    v = norm();
-    return JSON.stringify({view:v, inArena: v.indexOf('ParkingMainView')>=0});
+    var s=cc.director.getScene();
+    var ui=(s.children||[]).filter(function(c){return c.name=='UIRoot';})[0];
+    if(!ui) return JSON.stringify({view:[]});
+    var nv=(ui.children||[]).filter(function(c){return c.name=='NormalView';})[0];
+    if(!nv) return JSON.stringify({view:[]});
+    return JSON.stringify({view: nv.children.filter(function(c){return c.active;}).map(function(c){return c.name;})});
   }catch(e){ return JSON.stringify({error:String(e)}); }
 })()
+"""
+
+# Step 1b:以文字比對 emit 某個 cc 標籤的 Button click(家園/找車位/跨服車位)。
+_EMIT_LABEL_JS = """
+(function(){{
+  try{{
+    var t = {label!r};
+    var s=cc.director.getScene(); var hit=null;
+    var walk=function(n,d){{ if(!n||d>20||!n.active) return; var comps=n._components||[]; for(var i=0;i<comps.length;i++){{ var c=comps[i]; if(c&&typeof c.string==='string'&&c.string.trim()===t){{ var up=n,b=null; for(var j=0;j<6&&up;j++){{ if(up.getComponent&&up.getComponent('cc.Button')){{ b=up; break; }} up=up.parent; }} hit=b||n; }} }} var ch=n.children||[]; for(var k=0;k<ch.length;k++) walk(ch[k],d+1); }};
+    walk(s,0);
+    if(!hit) return JSON.stringify({{clicked:false}});
+    try{{ hit.emit('click',hit); }}catch(e){{ return JSON.stringify({{clicked:false}}); }}
+    return JSON.stringify({{clicked:true}});
+  }}catch(e){{ return JSON.stringify({{error:String(e)}}); }}
+}})()
 """
 
 # Step 2:tap building1..4,開啟的 ParkingCrossServerView 標題「星據車位N」→ 比對 N==目標 pos。
@@ -469,14 +508,10 @@ def star_seize_seize(ip):
 
     import control_panel_app as _cpa
 
-    # Step 1: 確保在奇星車場 arena
-    nav, e = _eval_json(
-        _cpa._cdp_evaluate(ip, _NAV_JS, await_promise=True, timeout=25)
-    )
+    # Step 1: 確保在奇星車場 arena(地圖座標點擊走 CDP 真實輸入)
+    e = _ensure_arena(_cpa, ip)
     if e:
         return _err(e)
-    if isinstance(nav, dict) and nav.get("error"):
-        return _err(nav["error"])
     time.sleep(0.3)
 
     # Step 2: 開啟目標 pos 的 building view(標題比對)
