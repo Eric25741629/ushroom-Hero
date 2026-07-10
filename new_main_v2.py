@@ -72,6 +72,7 @@ from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
     initialize_runtime_device,
+    resolve_skip_online_check_once,
     shutdown_web_devices,
 )
 from game_actions.stage_guard import (
@@ -358,12 +359,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 
                 # --- 喚醒與解鎖手機 ---
                 bot_state.update_state(ip, task="喚醒檢查", step="正在檢查螢幕狀態")
+                skip_online_check_for_wakeup = resolve_skip_online_check_once(
+                    ip,
+                    backend_kind,
+                    initial_skip=skip_online_check_once,
+                )
                 d = handle_device_wakeup(
                     d,
                     ip,
                     logger,
                     Cnn_model,
-                    skip_online_check_once=skip_online_check_once,
+                    skip_online_check_once=skip_online_check_for_wakeup,
                 )
                 # wake_up_handler may reconnect and return raw uiautomator2 device.
                 # Re-wrap to keep a consistent interface (tap/click/swipe/pause guard).

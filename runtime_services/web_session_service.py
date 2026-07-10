@@ -134,6 +134,25 @@ def wait_for_checker_gate_before_start(
             time.sleep(1)
 
 
+def resolve_skip_online_check_once(
+    ip: str,
+    backend_kind: str,
+    *,
+    initial_skip: bool = False,
+) -> bool:
+    """決定本輪喚醒是否可略過在線互檢。"""
+    if str(backend_kind).strip().lower() != "web_h5":
+        return bool(initial_skip)
+    try:
+        cfg = config_manager.get_device_config(ip)
+        ws_enabled = bool((cfg.get("ws_token") or {}).get("enabled", False))
+        if not ws_enabled:
+            return bool(initial_skip)
+        return bool(bot_state.get_ws_h5_handoff_ok(ip))
+    except Exception:
+        return False
+
+
 def initialize_runtime_device(
     ip: str,
     device_logger,

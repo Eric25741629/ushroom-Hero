@@ -170,3 +170,44 @@ def test_initialize_skips_ws_phase_when_web_launch_arrives_during_gate(monkeypat
     assert backend_kind == "web_h5"
     assert skip_online is True
     assert order == ["create_web"]  # WS pre-phase 被跳過
+
+
+@pytest.mark.parametrize(
+    ("backend", "ws_enabled", "initial_skip", "handoff_ok", "expected"),
+    [
+        ("web_h5", True, False, True, True),
+        ("web_h5", True, True, False, False),
+        ("web_h5", False, True, False, True),
+        ("web_h5", False, False, True, False),
+        ("adb", True, True, False, True),
+    ],
+)
+def test_resolve_skip_online_check_once(
+    monkeypatch, backend, ws_enabled, initial_skip, handoff_ok, expected
+):
+    monkeypatch.setattr(
+        svc.config_manager,
+        "get_device_config",
+        lambda _ip: {"ws_token": {"enabled": ws_enabled}},
+    )
+    monkeypatch.setattr(
+        svc.bot_state,
+        "get_ws_h5_handoff_ok",
+        lambda _ip: handoff_ok,
+    )
+
+    assert svc.resolve_skip_online_check_once(
+        "dev", backend, initial_skip=initial_skip
+    ) is expected
+
+
+def test_resolve_skip_online_check_once_fails_closed_on_config_error(monkeypatch):
+    monkeypatch.setattr(
+        svc.config_manager,
+        "get_device_config",
+        lambda _ip: (_ for _ in ()).throw(RuntimeError("bad config")),
+    )
+
+    assert svc.resolve_skip_online_check_once(
+        "dev", "web_h5", initial_skip=True
+    ) is False

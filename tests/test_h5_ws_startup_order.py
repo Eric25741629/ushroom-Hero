@@ -79,3 +79,30 @@ def test_main_passes_pre_web_start_hook_to_runtime_init():
         any(keyword.arg == "before_web_device_start" for keyword in call.keywords)
         for call in init_calls
     ), "main() must pass before_web_device_start so h5+ws can run WS before opening H5"
+
+
+def test_main_resolves_online_skip_after_ws_before_wakeup():
+    main_fn = _main_function()
+    resolver_calls = [
+        node
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.Call)
+        and _name(node.func) == "resolve_skip_online_check_once"
+    ]
+    assert resolver_calls, "main() must resolve the current WS-to-H5 handoff"
+
+    wake_calls = [
+        node
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.Call) and _name(node.func) == "handle_device_wakeup"
+    ]
+    skip_values = [
+        keyword.value
+        for call in wake_calls
+        for keyword in call.keywords
+        if keyword.arg == "skip_online_check_once"
+    ]
+    assert any(
+        isinstance(value, ast.Name) and value.id == "skip_online_check_for_wakeup"
+        for value in skip_values
+    ), "handle_device_wakeup() must receive the resolved current-cycle value"
