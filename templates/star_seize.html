@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="zh-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>星據搶佔(奇星車場)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>if(window.top!==window.self)document.documentElement.classList.add('embedded');</script>
+{% include '_assets_head.html' %}
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 "Manrope","Noto Sans TC","Microsoft JhengHei",sans-serif}
+  header h1,.panel h2{font-family:"Sora","Noto Sans TC","Microsoft JhengHei",sans-serif;}
+  html.embedded a.home{display:none;}
+  header{display:flex;align-items:center;gap:16px;padding:12px 18px;background:var(--panel);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;flex-wrap:wrap}
+  header h1{font-size:17px;margin:0}
+  a.home{color:var(--status-accent-text);text-decoration:none;font-size:13px}
+  .wrap{max-width:820px;margin:18px auto;padding:0 16px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:18px}
+  .panel h2{font-size:15px;margin:0 0 12px}
+  .controls{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  label.inline{display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px}
+  select{background:#fbf7ee;color:var(--text);border:1px solid var(--line);border-radius:7px;padding:6px 9px;font:inherit}
+  .spin{color:var(--muted);font-size:13px}
+  .err{color:var(--status-danger-text)}
+  .note{color:var(--muted);font-size:12.5px;margin-top:10px}
+  .pill{display:inline-block;padding:1px 8px;border-radius:999px;background:#f0e9da;color:var(--muted);font-size:12px}
+
+  .cd-banner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+    background:var(--tile,#faf6ee);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:16px}
+  .cd-banner .cd-label{font-size:13px;color:var(--text-secondary,var(--muted))}
+  .cd-banner .cd-val{font-family:ui-monospace,Consolas,monospace;font-size:22px;font-weight:800}
+  .cd-banner.hot .cd-val{color:var(--status-danger-text)}
+  .cd-banner.cool .cd-val{color:var(--status-ok-text)}
+
+  .slots{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:8px}
+  .slot{border:1px solid var(--line);border-radius:var(--r-sm,8px);padding:10px 12px;background:var(--tile,#faf6ee);cursor:pointer}
+  .slot.sel{border-color:var(--coral,#e0663d);box-shadow:0 0 0 1px var(--coral,#e0663d)}
+  .slot .srow{display:flex;justify-content:space-between;align-items:center;margin-bottom:2px}
+  .slot .sub{font-size:.8em;color:var(--text-secondary,var(--muted))}
+  .slot .cd{font-family:ui-monospace,Consolas,monospace;font-size:1.05em;margin-top:2px}
+
+  .field{margin-bottom:14px}
+  .field > label{display:block;font-size:.85em;color:var(--text-secondary,var(--muted));margin-bottom:4px}
+
+  .actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+  @media (max-width:480px){ .slots{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">跳到主要內容</a>
+<header>
+  <h1>⚔️ 星據搶佔(奇星車場)</h1>
+  <a class="home" href="/">← 回主控台</a>
+  <label class="inline">帳號/裝置 <select id="dev" onchange="onDevChange()"></select></label>
+  <span id="status" class="spin"></span>
+</header>
+
+<main id="main" class="wrap" tabindex="-1">
+
+  <!-- 我方攻擊冷卻(死亡冷卻中不可搶) -->
+  <div id="cdBanner" class="cd-banner cool">
+    <span class="cd-label">我方攻擊冷卻</span>
+    <span id="cdVal" class="cd-val">--:--</span>
+    <span id="cdHint" class="note" style="margin:0"></span>
+  </div>
+
+  <section class="panel">
+    <h2>4 槽狀態 <span class="pill">保護倒數本地遞減 · 每 5 秒重讀</span></h2>
+    <div id="serverNote" class="note" style="margin-top:0"></div>
+    <div id="slots" class="slots">
+      <div class="skeleton skeleton--block"></div>
+      <div class="skeleton skeleton--block"></div>
+      <div class="skeleton skeleton--block"></div>
+      <div class="skeleton skeleton--block"></div>
+    </div>
+    <div class="note">狀態鐵律:「可攻」只在後端 <code>attackable===true</code> 時顯示,絕不由「沒有倒數」推得。</div>
+  </section>
+
+  <section class="panel">
+    <h2>搶佔 / 駐守</h2>
+
+    <div class="field">
+      <label>選擇槽位 (pos)</label>
+      <div id="posPicker" class="tab-bar--segmented" role="tablist" aria-label="槽位選擇">
+        <button type="button" class="tab" role="tab" aria-selected="true" onclick="selectPos(1)">1</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" onclick="selectPos(2)">2</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" onclick="selectPos(3)">3</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" onclick="selectPos(4)">4</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>動作 (搶佔=攻 / 駐守=守)</label>
+      <div id="typePicker" class="tab-bar--segmented" role="tablist" aria-label="動作選擇">
+        <button type="button" class="tab" role="tab" aria-selected="true" onclick="selectType(1)">搶佔 (攻)</button>
+        <button type="button" class="tab" role="tab" aria-selected="false" onclick="selectType(2)">駐守 (守)</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px;">
+        <label style="margin:0">對手配置(pos <span id="oppPos">1</span> 守方)</label>
+        <button type="button" class="btn btn--ghost" onclick="loadOpponent()">重新讀取</button>
+      </div>
+      <div id="opponent" class="empty-state"><div class="es-hint">選擇槽位後讀取守隊配置(僅顯示,不當開火閘)</div></div>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="btnSeize" class="btn btn--danger" onclick="doSeize()">搶佔</button>
+      <span id="btnHint" class="note" style="margin:0"></span>
+    </div>
+  </section>
+
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+function setStatus(t, err){ const s=$('status'); s.textContent=t||''; s.className = err?'err':'spin'; }
+function dev(){ return $('dev').value; }
+
+let curPos = 1;
+let curType = 1;               // 1=搶佔(攻) 2=駐守(守)
+let lastState = null;          // 最近一次 /state 回應
+let srvOffset = null;          // serverTime - Date.now()/1000
+let stateTimer = null;         // 5s refetch /state
+let tickTimer = null;          // 1s 本地倒數遞減
+
+const REASON_ZH = {
+  'own-server':'本服車位,不能搶(只能駐守)', 'protected':'保護中,尚未可攻',
+  'cooldown':'我方攻擊冷卻中(死亡冷卻)', 'truce':'休戰時段(台灣時 22:00-10:00)',
+  'pos-not-open':'該槽未開啟或進入序列失敗', 'empty':'該槽無人佔用', 'no-state':'讀不到車位狀態'
+};
+
+function estServerNow(){ return srvOffset===null ? null : Date.now()/1000 + srvOffset; }
+function fmtDur(sec){
+  sec = Math.max(0, Math.floor(sec));
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  const p2=n=>String(n).padStart(2,'0');
+  return h>0 ? `${h}:${p2(m)}:${p2(s)}` : `${p2(m)}:${p2(s)}`;
+}
+function inTruce(estNow){
+  const hr = Math.floor(((((estNow+8*3600)%86400)+86400)%86400)/3600);
+  return hr>=22 || hr<10;
+}
+function attackCdRemaining(estNow){
+  if(!lastState || estNow===null) return 0;
+  const cd = lastState.attack_cd_end_time || 0;
+  return cd>estNow ? (cd-estNow) : 0;
+}
+
+async function loadDevices(){
+  try{
+    const r = await fetch('/api/status'); const j = await r.json();
+    const bots = j.bots||{}; const sel = $('dev'); sel.innerHTML='';
+    Object.keys(bots).forEach(ip => {
+      // 星據面板走 CDP orchestration,只有 web_h5 裝置可用(後端 _gate 亦強制)。
+      const b = bots[ip]; if (b.backend !== 'web_h5') return;
+      const o = document.createElement('option');
+      o.value = ip; o.textContent = `${b.name||ip} (${ip})`; sel.appendChild(o);
+    });
+    if (!sel.options.length){ setStatus('沒有可用的 web_h5 裝置', true); return; }
+    fetchState();
+  }catch(e){ setStatus('讀取裝置失敗:'+e, true); }
+}
+
+function slotStatus(slot, estNow){
+  if(!slot.owner) return { t:'空', c:'' };
+  const my = lastState && lastState.myServer;
+  if(my && slot.owner===my) return { t:'本服', c:'is-warn' };
+  const rem = slot.free_end ? (slot.free_end - estNow) : 0;
+  if(rem>0) return { t:'保護中', c:'is-off' };
+  if(inTruce(estNow)) return { t:'休戰', c:'is-warn' };
+  if(attackCdRemaining(estNow)>0) return { t:'我方冷卻', c:'is-off' };
+  if(slot.attackable===true) return { t:'可攻', c:'is-on' };
+  return { t:'保護已過(待刷新)', c:'' };
+}
+
+function renderCooldown(estNow){
+  const banner=$('cdBanner'), val=$('cdVal'), hint=$('cdHint');
+  const rem = attackCdRemaining(estNow);
+  if(rem>0){
+    banner.className='cd-banner hot'; val.textContent=fmtDur(rem);
+    hint.textContent='死亡冷卻中,搶佔(攻)已停用';
+  } else {
+    banner.className='cd-banner cool'; val.textContent='無';
+    hint.textContent='目前可搶佔';
+  }
+}
+
+function renderButton(estNow){
+  const btn=$('btnSeize'), hint=$('btnHint');
+  btn.textContent = curType===1 ? '搶佔' : '駐守';
+  if(curType===1 && attackCdRemaining(estNow)>0){
+    btn.disabled=true; hint.textContent='冷卻中不可搶佔';
+  } else {
+    btn.disabled=false; hint.textContent='';
+  }
+}
+
+function renderSlots(){
+  const wrap=$('slots'); if(!wrap) return;
+  const estNow=estServerNow();
+  if(estNow!==null){ renderCooldown(estNow); renderButton(estNow); }
+  if(!lastState || !Array.isArray(lastState.slots)) return;
+  wrap.innerHTML = lastState.slots.map(slot => {
+    const pos=slot.pos;
+    const owner = slot.owner ? `[s${slot.owner}]` : '空';
+    const rem = (estNow!==null && slot.free_end) ? (slot.free_end-estNow) : 0;
+    const cd = rem>0 ? fmtDur(rem) : '--:--';
+    const st = (estNow!==null) ? slotStatus(slot, estNow) : { t:'讀取中', c:'' };
+    const sel = pos===curPos ? ' sel' : '';
+    return `<div class="slot${sel}" onclick="selectPos(${pos})">
+        <div class="srow"><strong>槽 ${pos}</strong><span class="status-pill ${st.c}">${st.t}</span></div>
+        <div class="sub">主 ${owner} · 守 ${slot.defQ||0}</div>
+        <div class="cd">${cd}</div>
+      </div>`;
+  }).join('');
+}
+
+async function fetchState(){
+  if(!dev()) return;
+  try{
+    const d = await window.UI.apiGet(`/api/star_seize/state/${dev()}`);
+    lastState = d.state || null;
+    if(lastState && typeof lastState.serverTime==='number'){
+      srvOffset = lastState.serverTime - Date.now()/1000;
+    }
+    const note=$('serverNote');
+    if(note) note.textContent = lastState && lastState.myServer
+      ? `我方 server_id: ${lastState.myServer}`
+      : '我方 server_id 未知(不比對本服;搶佔改由伺服器端擋)';
+    setStatus('');
+    renderSlots();
+  }catch(e){
+    setStatus('讀取狀態失敗:'+((e&&e.message)||e), true);
+    const wrap=$('slots');
+    if(wrap) wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="es-title">讀取失敗</div><div class="es-hint">${(e&&e.message)||e}</div></div>`;
+  }
+}
+
+function selectPos(pos){
+  curPos = pos;
+  document.querySelectorAll('#posPicker .tab').forEach((t,i)=>t.setAttribute('aria-selected', String(i+1===pos)));
+  const op=$('oppPos'); if(op) op.textContent=pos;
+  renderSlots();
+  loadOpponent();
+}
+
+function selectType(t){
+  curType = t;
+  document.querySelectorAll('#typePicker .tab').forEach((el,i)=>el.setAttribute('aria-selected', String(i+1===t)));
+  const estNow=estServerNow();
+  if(estNow!==null) renderButton(estNow); else renderButton(0);
+}
+
+async function loadOpponent(){
+  if(!dev()) return;
+  const el=$('opponent');
+  if(el) el.innerHTML='<div class="skeleton skeleton--text"></div>';
+  try{
+    const d = await window.UI.apiGet(`/api/star_seize/opponent/${dev()}?pos=${curPos}`);
+    const defs = (d.opponent && d.opponent.defenders) || [];
+    if(!defs.length){ if(el) el.innerHTML='<div class="empty-state"><div class="es-hint">此槽無守隊</div></div>'; return; }
+    const rows = defs.map(m => {
+      const kv = (m.attrs_kv||[]).map(e=>`<span class="status-pill" style="font-weight:500;">${e.k}:${e.v}</span>`).join(' ');
+      return `<div style="padding:6px 0;border-bottom:1px solid var(--line);">
+          <div><strong>${m.name||'(無名)'}</strong> [s${m.server||0}] 順位 #${m.queue_index||0}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">${kv || '<span style="color:var(--text-faint);font-size:.8em;">無屬性</span>'}</div>
+        </div>`;
+    });
+    if(el) el.innerHTML = rows.join('');
+  }catch(e){
+    if(el) el.innerHTML = `<div class="empty-state"><div class="es-hint">讀取失敗:${(e&&e.message)||e}</div></div>`;
+  }
+}
+
+async function doSeize(){
+  if(!dev()){ setStatus('請先選裝置', true); return; }
+  const ok = await window.UI.confirmDialog({
+    danger:true, okLabel:'確定送出',
+    title: `確認${curType===1?'搶佔':'駐守'}`,
+    body: '會真的參戰、驗證後才送(冷卻/保護/休戰不過會擋)。'
+  });
+  if(!ok) return;
+  $('btnSeize').disabled = true; setStatus('送出中…(驗證閘門+進場,約需數秒)');
+  try{
+    const d = await window.UI.apiPost(`/api/star_seize/seize/${dev()}`, { pos:curPos, queue_type:curType });
+    const r = d.reply || {};
+    if(r.ok === false){
+      const reason = REASON_ZH[r.reason] || r.reason || '拒絕';
+      window.UI.toast(`未送出:${reason}`, 'err');
+    } else {
+      const code = (r.code==null) ? '?' : r.code;
+      const msg = (r.code===0) ? '成功進佇列' : `已送出(code=${code})`;
+      window.UI.toast(msg, r.code===0 ? 'ok' : 'warn');
+    }
+  }catch(e){
+    window.UI.toast(`失敗:${(e&&e.message)||e}`, 'err');
+  }finally{
+    setStatus('');
+    await fetchState();   // renderButton 會依冷卻重新啟用/停用
+  }
+}
+
+async function onDevChange(){
+  lastState=null; srvOffset=null;
+  $('slots').innerHTML = '<div class="skeleton skeleton--block"></div>'.repeat(4);
+  $('opponent').innerHTML = '<div class="es-hint">選擇槽位後讀取守隊配置(僅顯示,不當開火閘)</div>';
+  await fetchState();
+  loadOpponent();
+}
+
+function stopTimers(){
+  if(stateTimer){ clearInterval(stateTimer); stateTimer=null; }
+  if(tickTimer){ clearInterval(tickTimer); tickTimer=null; }
+}
+window.addEventListener('beforeunload', stopTimers);
+window.addEventListener('pagehide', stopTimers);
+
+(async function init(){
+  await loadDevices();
+  stopTimers();
+  stateTimer = setInterval(fetchState, 5000);   // 每 5s 從後端重讀校準
+  tickTimer  = setInterval(renderSlots, 1000);  // 本地每秒遞減倒數
+})();
+</script>
+</body>
+</html>
