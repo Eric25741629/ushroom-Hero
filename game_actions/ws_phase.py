@@ -568,8 +568,9 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     try:
         import bot_state
         bot_state.set_ws_login_ok(ip, False)
+        bot_state.set_ws_h5_handoff_ok(ip, False)
     except Exception:  # noqa: BLE001
-        log.debug("[%s] 重置 WS 登入訊號失敗（忽略）", ip, exc_info=True)
+        log.debug("[%s] 重置 WS 登入/交接訊號失敗（忽略）", ip, exc_info=True)
     # kungfu_guess 真相在裝置層 flat ws_token_kungfu_guess；cfg 是 ws_token 巢狀
     # 沒這欄 → 折入,讓 _run_device 統一從 cfg 取（與 ws_runner_service 一致）。
     if "kungfu_guess" not in cfg:
@@ -729,4 +730,10 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s aborted=%s skip=%s",
         ip, time.time() - started, list(report.tasks), dict(report.errors),
         report.kicked, report.aborted, sorted(skips))
+    if not report.kicked and not report.aborted:
+        try:
+            import bot_state
+            bot_state.set_ws_h5_handoff_ok(ip, True)
+        except Exception:  # noqa: BLE001
+            log.debug("[%s] 設定 WS→H5 健康交接訊號失敗（忽略）", ip, exc_info=True)
     return frozenset(skips)

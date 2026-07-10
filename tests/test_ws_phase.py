@@ -3,6 +3,8 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -23,9 +25,10 @@ def _cfg(monkeypatch, ws, *, backend="adb"):
                                   {"ws_token": merged_ws, "backend": backend}.get(k, d)})())
 
 
-def _report(tasks, errors=None, login_ok=True):
+def _report(tasks, errors=None, login_ok=True, *, kicked=False, aborted=False):
     return RunReport(device="dev", login_ok=login_ok, spend=False,
-                     tasks=tasks, errors=errors or {})
+                     tasks=tasks, errors=errors or {}, kicked=kicked,
+                     aborted=aborted)
 
 
 def test_disabled_returns_empty(monkeypatch):
@@ -243,6 +246,64 @@ def test_any_exception_returns_empty(monkeypatch):
         raise RuntimeError("creds missing")
     monkeypatch.setattr(ws_phase, "_run_device", _boom)
     assert ws_phase.run_ws_phase("dev") == frozenset()
+
+
+def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report({"redpack": {}}),
+    )
+    ws_phase.run_ws_phase("dev")
+    import bot_state
+    assert bot_state.get_ws_h5_handoff_ok("dev") is True
+
+
+def test_task_error_still_marks_h5_handoff_safe(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"redpack": {}}, errors={"lamp": "WSTimeoutError: x"}
+        ),
+    )
+    ws_phase.run_ws_phase("dev")
+    import bot_state
+    assert bot_state.get_ws_h5_handoff_ok("dev") is True
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        _report({}, errors={"login": "expired"}, login_ok=False),
+        _report({}, kicked=True),
+        _report({}, aborted=True),
+    ],
+    ids=["login-failed", "kicked", "aborted"],
+)
+def test_interrupted_ws_run_keeps_h5_handoff_unsafe(monkeypatch, report):
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: report,
+    )
+    ws_phase.run_ws_phase("dev")
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
+def test_ws_exception_resets_previous_h5_handoff(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+
+    def boom(ip, cfg, progress=None, **_kw):
+        raise RuntimeError("transport failed")
+
+    monkeypatch.setattr(ws_phase, "_run_device", boom)
+    ws_phase.run_ws_phase("dev")
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
 
 
 def test_adb_missing_creds_bootstraps_then_runs(tmp_path, monkeypatch):
