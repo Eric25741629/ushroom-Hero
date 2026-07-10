@@ -546,7 +546,7 @@ async function confirmOccupied(d){
   try{
     const r = await fetch(`/api/ws_session/${encodeURIComponent(d)}/precheck`);
     const j = await r.json();
-    if(j.lease) why = `帳號目前被「${OWNER_ZH[j.lease.owner]||j.lease.owner}${j.lease.label?'：'+j.lease.label:''}」佔用`;
+    if(j.lease){ const o=OWNER_ZH[j.lease.owner]||j.lease.owner, l=(j.lease.label&&j.lease.label!==o)?'：'+j.lease.label:''; why = `帳號目前被「${o}${l}」佔用`; }
     else if(j.account_online === true) why = '帳號目前在線（可能有真人正在遊玩）';
   }catch(e){ return true; }
   if(!why) return true;
