@@ -1,7 +1,7 @@
 # WS 到 H5 健康交接略過重複在線檢查設計
 
-日期：2026-07-11  
-分支：`fix/ws-h5-online-check-handoff`  
+日期：2026-07-11
+分支：`fix/ws-h5-online-check-handoff`
 範圍：web_h5 裝置每輪先跑純 WS、再切換 H5 時，避免在線檢查把本輪自己的 WS 活動誤判為真人在線。
 
 ## 問題
