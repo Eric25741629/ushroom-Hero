@@ -558,6 +558,12 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     ``now`` / ``state_dir`` 供測試注入（預設 ``time.time()`` / 預設 ws_state 路徑）。
     """
     log = logger_obj or logger
+    # 交接訊號必須早於設定讀取重置；設定損壞或讀取例外時也不可沿用上一輪 True。
+    try:
+        import bot_state
+        bot_state.set_ws_h5_handoff_ok(ip, False)
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 重置 WS→H5 交接訊號失敗（忽略）", ip, exc_info=True)
     device_cfg = config_manager.get_device_config(ip)
     cfg = device_cfg.get("ws_token") or {}
     if not cfg.get("enabled", False):
@@ -568,9 +574,8 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     try:
         import bot_state
         bot_state.set_ws_login_ok(ip, False)
-        bot_state.set_ws_h5_handoff_ok(ip, False)
     except Exception:  # noqa: BLE001
-        log.debug("[%s] 重置 WS 登入/交接訊號失敗（忽略）", ip, exc_info=True)
+        log.debug("[%s] 重置 WS 登入訊號失敗（忽略）", ip, exc_info=True)
     # kungfu_guess 真相在裝置層 flat ws_token_kungfu_guess；cfg 是 ws_token 巢狀
     # 沒這欄 → 折入,讓 _run_device 統一從 cfg 取（與 ws_runner_service 一致）。
     if "kungfu_guess" not in cfg:

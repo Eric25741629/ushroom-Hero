@@ -31,6 +31,13 @@ def _report(tasks, errors=None, login_ok=True, *, kicked=False, aborted=False):
                      aborted=aborted)
 
 
+@pytest.fixture
+def ws_handoff_cleanup():
+    yield
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", False)
+
+
 def test_disabled_returns_empty(monkeypatch):
     _cfg(monkeypatch, {"enabled": False})
     assert ws_phase.run_ws_phase("dev") == frozenset()
@@ -248,7 +255,21 @@ def test_any_exception_returns_empty(monkeypatch):
     assert ws_phase.run_ws_phase("dev") == frozenset()
 
 
-def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch):
+def test_config_exception_resets_previous_h5_handoff(monkeypatch,
+                                                     ws_handoff_cleanup):
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+
+    def boom(ip):
+        raise RuntimeError("bad config")
+
+    monkeypatch.setattr(config_manager, "get_device_config", boom)
+    with pytest.raises(RuntimeError, match="bad config"):
+        ws_phase.run_ws_phase("dev")
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
+def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch, ws_handoff_cleanup):
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(
         ws_phase, "_run_device",
@@ -259,7 +280,8 @@ def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch):
     assert bot_state.get_ws_h5_handoff_ok("dev") is True
 
 
-def test_task_error_still_marks_h5_handoff_safe(monkeypatch):
+def test_task_error_still_marks_h5_handoff_safe(monkeypatch,
+                                                ws_handoff_cleanup):
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(
         ws_phase, "_run_device",
@@ -281,7 +303,8 @@ def test_task_error_still_marks_h5_handoff_safe(monkeypatch):
     ],
     ids=["login-failed", "kicked", "aborted"],
 )
-def test_interrupted_ws_run_keeps_h5_handoff_unsafe(monkeypatch, report):
+def test_interrupted_ws_run_keeps_h5_handoff_unsafe(monkeypatch, report,
+                                                    ws_handoff_cleanup):
     _cfg(monkeypatch, {"enabled": True})
     import bot_state
     bot_state.set_ws_h5_handoff_ok("dev", True)
@@ -293,7 +316,8 @@ def test_interrupted_ws_run_keeps_h5_handoff_unsafe(monkeypatch, report):
     assert bot_state.get_ws_h5_handoff_ok("dev") is False
 
 
-def test_ws_exception_resets_previous_h5_handoff(monkeypatch):
+def test_ws_exception_resets_previous_h5_handoff(monkeypatch,
+                                                 ws_handoff_cleanup):
     _cfg(monkeypatch, {"enabled": True})
     import bot_state
     bot_state.set_ws_h5_handoff_ok("dev", True)
