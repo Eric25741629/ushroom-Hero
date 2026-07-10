@@ -631,6 +631,48 @@ def test_run_ws_phase_folds_device_level_kungfu_guess(monkeypatch):
     assert seen.get("kungfu_guess") is True
 
 
+def test_run_ws_phase_folds_device_level_mining_config(monkeypatch):
+    """相容舊設定：頂層 ws_token_mining 必須餵給 WS-first runner。"""
+    mining_cfg = {"enabled": True, "allow_bomb": False,
+                  "allow_drill": False, "max_steps": 200}
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda ip: {"ws_token": {"enabled": True, "bootstrap_token": False},
+                    "ws_token_mining": mining_cfg, "backend": "adb"},
+    )
+    seen: dict = {}
+
+    def fake_run_device(ip, cfg, progress=None, **_kw):
+        seen.update(cfg)
+        return _report({})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+    assert seen.get("mining") == mining_cfg
+
+
+def test_run_ws_phase_nested_mining_config_overrides_device_level(monkeypatch):
+    """新巢狀設定是單一真相；頂層只作舊設定 fallback。"""
+    nested = {"enabled": True, "allow_bomb": True}
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda ip: {"ws_token": {"enabled": True, "bootstrap_token": False,
+                                  "mining": nested},
+                    "ws_token_mining": {"enabled": False}, "backend": "adb"},
+    )
+    seen: dict = {}
+
+    def fake_run_device(ip, cfg, progress=None, **_kw):
+        seen.update(cfg)
+        return _report({})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+    assert seen.get("mining") == nested
+
+
 # --- 農場買種徽章偵測 _farm_seed_bought（farm buy 407 ok → 寫 farm_seed_purchase）--
 
 def test_farm_seed_bought_true_when_407_ok():

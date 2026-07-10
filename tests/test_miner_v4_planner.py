@@ -109,7 +109,7 @@ def test_plan_v4_full_3x3_cluster_uses_bomb():
     )
 
 
-def test_plan_v4_full_2x2_cluster_uses_bomb():
+def test_plan_v4_full_2x2_cluster_avoids_bomb_when_four_digs_score_higher():
     board = _make_board()
     board[5][2] = "reachable_pit"
     board[5][3] = "reachable_pit"
@@ -117,9 +117,10 @@ def test_plan_v4_full_2x2_cluster_uses_bomb():
     board[6][3] = "reachable_pit"
     plan = plan_v4(board, shovels=20, items={"drill": 0, "bomb": 1})
     assert plan["ok"] is True
-    assert plan["stats"]["bombs_used"] == 1, (
-        f"bomb must be used on 2×2 cluster: {plan['steps']}"
-    )
+    # 炸彈只能放空地，這個形狀仍要補一鎬：1 鎬 + bomb 權重 3.5 = 4.5；
+    # 四鎬完整清除成本 4.0，補看第四步後應保留炸彈。
+    assert plan["stats"]["bombs_used"] == 0
+    assert plan["stats"]["shovel_cost"] == 4.0
 
 
 # ---------------------------------------------------------------------------
@@ -462,12 +463,8 @@ def test_unseal_corridor_respects_shovel_budget():
     assert corridor == frozenset()
 
 
-def test_plan_v4_corridor_drill_beats_pure_dig_when_items_available():
-    """Optimality check: on the 2026-05-15 board, the cheapest plan that
-    collects the pit is `drill (column 2) + 2 digs`, not 4–5 shovel digs.
-    The corridor exposes (5,4)/(5,5)/(6,3)/(6,5) etc, the DFS finds a
-    drill placement whose footprint overlaps the corridor, and the
-    cluster scoring picks it because shovel cost beats raw dig count."""
+def test_plan_v4_corridor_prefers_weighted_cheaper_pure_dig_path():
+    """四步補看找到純鎬成本 4.0，優於包含稀有道具權重的三步解。"""
     board = [
         ["dirt", "empty", "dirt", "unreachable_empty", "unreachable_dirt", "unreachable_dirt"],
         ["dirt", "empty", "empty", "rock", "unreachable_rock", "unreachable_empty"],
@@ -481,15 +478,9 @@ def test_plan_v4_corridor_drill_beats_pure_dig_when_items_available():
     assert plan["stats"]["pits_collected"] == 1, (
         f"corridor plan must collect the buried pit: {plan}"
     )
-    # The optimal plan uses at most ~5 shovels — without items, raw shovel
-    # paths to the pit cost 6+ (rock walls). A non-trivial improvement
-    # proves the DFS actually picked an item shortcut.
-    assert plan["stats"]["shovel_cost"] <= 5.0, (
-        f"plan should be shovel-efficient (≤5), got {plan['stats']['shovel_cost']}: {plan}"
-    )
-    assert (
-        plan["stats"]["drills_used"] >= 1 or plan["stats"]["bombs_used"] >= 1
-    ), f"plan should use an item shortcut on this board: {plan}"
+    assert plan["stats"]["shovel_cost"] == 4.0
+    assert plan["stats"]["drills_used"] == 0
+    assert plan["stats"]["bombs_used"] == 0
 
 
 def test_plan_v4_corridor_pure_shovel_path_when_no_items():
@@ -531,3 +522,23 @@ def test_plan_v4_explored_nodes_bounded_by_pruning():
     assert plan["explored_nodes"] < 100_000, (
         f"pruning too weak: {plan['explored_nodes']} nodes explored"
     )
+
+
+def test_plan_v4_5558_20260710_avoids_depth3_bomb_detour():
+    """真實 5558 盤面：四步鎬路線比一鎬加炸彈的三步局部解分數更高。"""
+    board = [
+        ["empty", "dirt", "unreachable_dirt", "unreachable_empty", "unreachable_dirt", "unreachable_empty"],
+        ["empty", "rock", "dirt", "dirt", "unreachable_rock", "unreachable_rock"],
+        ["empty", "empty", "empty", "empty", "dirt", "unreachable_dirt"],
+        ["dirt", "dirt", "empty", "rock", "unreachable_pit", "unreachable_empty"],
+        ["unreachable_dirt", "dirt", "empty", "dirt", "unreachable_dirt", "unreachable_rock"],
+        ["unreachable_dirt", "dirt", "empty", "dirt", "unreachable_dirt", "unreachable_empty"],
+        ["unreachable_dirt", "unreachable_empty", "rock", "unreachable_rock", "unreachable_dirt", "unreachable_empty"],
+    ]
+
+    plan = plan_v4(board, shovels=39, items={"drill": 0, "bomb": 12})
+
+    assert plan["steps"][0]["pos"] == (5, 3)
+    assert plan["stats"]["bombs_used"] == 0
+    assert plan["stats"]["pits_collected"] == 1
+    assert plan["stats"]["shovel_cost"] == 4.0

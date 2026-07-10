@@ -71,12 +71,10 @@ BOMB_COST = 3.5
 # 2026-04-29). One air cell is the trigger; clearing more is wasted shovels.
 FLOOR7_OPEN_BONUS = 20.0
 
-# Depth-3 sweet spot under the 300 ms wall-clock budget. Empirically (skill:
-# planner-eval, 2026-04-29) depth-5 only adds +9 score / +1 pit per game vs
-# depth-3 but blows past 300 ms on cluster-rich seeds (peak 1122 ms). The
-# rolling re-plan in mining_service compensates — multi-iter completes any
-# combo depth-3 can't fit.
+# 一般盤維持低延遲 depth=3；若三步解要花稀有道具，再用 depth=4 驗證一次，
+# 避免 5558 真盤看不到四鎬路徑而誤選一鎬加炸彈的局部解。
 MAX_DEPTH = 3
+ITEM_LOOKAHEAD_DEPTH = 4
 # 8k catches the long tail without hurting plan quality at depth 3.
 NODE_BUDGET = 8_000
 # Wall-clock cap (ms). Hard deadline — when crossed the DFS returns whatever
@@ -603,6 +601,7 @@ def plan_v4(
     max_depth: int = MAX_DEPTH,
     blocked_actions: Optional[Set[Tuple[Any, ...]]] = None,
     node_budget: int = NODE_BUDGET,
+    _verify_item_horizon: bool = True,
 ) -> Dict[str, Any]:
     """Bounded rolling-horizon planner. Returns the best plan within depth."""
     started_at = time.perf_counter()
@@ -854,7 +853,7 @@ def plan_v4(
         f"shovels={stats.shovel_cost:.1f}, "
         f"drill={stats.drills_used}, bomb={stats.bombs_used})"
     )
-    return PlanResult(
+    result = PlanResult(
         ok=True,
         message=message,
         steps=best.plan,
@@ -863,6 +862,26 @@ def plan_v4(
         floor7_open=floor7_open(final_board),
         exit_guard_required=pits_after > 0,
     ).to_dict()
+    result["objective_score"] = best.score
+
+    # 三步解若要消耗稀有道具，補看第四步再用同一評分比較；一般純鎬盤不多跑。
+    if (
+        _verify_item_horizon
+        and max_depth == MAX_DEPTH
+        and (best.drills_used > 0 or best.bombs_used > 0)
+    ):
+        deeper = plan_v4(
+            board,
+            shovels=shovels,
+            items=items,
+            max_depth=ITEM_LOOKAHEAD_DEPTH,
+            blocked_actions=blocked_actions,
+            node_budget=node_budget,
+            _verify_item_horizon=False,
+        )
+        if float(deeper.get("objective_score", -float("inf"))) > best.score:
+            return deeper
+    return result
 
 
 __all__ = ["plan_v4"]

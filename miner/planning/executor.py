@@ -104,6 +104,7 @@ PLACEABLE_MATERIALS = {"empty", "dug_pit"}
 
 from miner.core.vision_utils import check_points
 from miner.core.ocr_utils import check_drill_num, check_boom_num
+from miner.core.ws_inventory import read_ws_prop_counts
 from miner.rl.rl_recorder import RLRecorder
 from tools import click_white
 
@@ -233,7 +234,12 @@ def select_item(d: DeviceLike, item_type: str) -> None:
 
 
 def get_live_item_count(d: DeviceLike, item_type: str) -> int:
-    """Read live consumable count from a fresh screenshot right before use."""
+    """執行前讀道具現量；web_h5 優先 WS，拿不到才退回 OCR。"""
+    if item_type not in {"drill", "bomb"}:
+        return 0
+    ws_counts = read_ws_prop_counts(d)
+    if ws_counts is not None:
+        return int(ws_counts.get(item_type, 0))
     frame = d.screenshot(format="opencv")
     if item_type == "drill":
         return int(check_drill_num(d, frame=frame))
@@ -264,6 +270,9 @@ def verify_cell_empty(
         img2 = d.screenshot(format="opencv")
         board2, confidences2 = clf.classify_board(img2, save_samples=False)
         confidence = confidences2[r][c]
+        new_label = base_label(board2[r][c])
+        if new_label in ("empty", "dug_pit"):
+            return True
         if confidence < error_threshold:
             # 使用者回饋：信心度低於閾值時，不要點擊空白處，而是儲存錯誤樣本
             print(f"    ⚠️ 信心度過低 ({r},{c}): {confidence:.4f} < {error_threshold}")
@@ -271,9 +280,6 @@ def verify_cell_empty(
             # 這裡只需要呼叫，但目前 verify_cell_empty 的 classify_board 參數 save_samples=False)
             # 因此這裡我們選擇忽略點擊空白處的行為。
             continue
-        new_label = base_label(board2[r][c])
-        if new_label in ("empty", "dug_pit"):
-            return True
     return False
 
 

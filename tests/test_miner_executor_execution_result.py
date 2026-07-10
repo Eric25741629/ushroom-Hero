@@ -98,6 +98,43 @@ def _stub_animation(monkeypatch, frame):
     monkeypatch.setattr(executor, "click_white", lambda *a, **kw: None)
 
 
+def test_get_live_item_count_prefers_ws_for_web_h5(monkeypatch):
+    """5558 regression: executor 不可用 OCR=0 否決 WS 已確認的 bomb=12。"""
+    dev = _FakeDevice(_blank_frame())
+    monkeypatch.setattr(
+        executor,
+        "read_ws_prop_counts",
+        lambda _d: {"pickaxe": 39, "drill": 0, "bomb": 12},
+    )
+    monkeypatch.setattr(
+        executor,
+        "check_boom_num",
+        lambda *_a, **_kw: pytest.fail("web_h5 WS 可用時不應呼叫 bomb OCR"),
+    )
+
+    assert executor.get_live_item_count(dev, "bomb") == 12
+
+
+def test_get_live_item_count_falls_back_to_ocr_when_ws_unavailable(monkeypatch):
+    dev = _FakeDevice(_blank_frame())
+    monkeypatch.setattr(executor, "read_ws_prop_counts", lambda _d: None)
+    monkeypatch.setattr(executor, "check_boom_num", lambda *_a, **_kw: 7)
+
+    assert executor.get_live_item_count(dev, "bomb") == 7
+
+
+def test_verify_cell_empty_accepts_low_confidence_empty_without_retry_click(monkeypatch):
+    frame = _blank_frame()
+    dev = _FakeDevice(frame)
+    board = _empty_board()
+    clf = _FakeClassifier(board)
+    clf._conf[3][3] = 0.51
+    monkeypatch.setattr(executor, "check_points", lambda *_a, **_kw: (False, None))
+
+    assert executor.verify_cell_empty(dev, clf, 3, 3, max_retry=1) is True
+    assert dev.clicks == []
+
+
 # ---------------------------------------------------------------------------
 # Empty plan
 # ---------------------------------------------------------------------------

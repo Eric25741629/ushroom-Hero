@@ -576,6 +576,12 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _kf = device_cfg.get("ws_token_kungfu_guess")
         if _kf is not None:
             cfg = {**cfg, "kungfu_guess": bool(_kf)}
+    # 舊裝置設定把 mining 放在頂層 ws_token_mining；WS-first 只讀巢狀 cfg，
+    # 導致全地圖礦點導向從未執行。新巢狀 ws_token.mining 若存在則維持優先。
+    if "mining" not in cfg:
+        _mining = device_cfg.get("ws_token_mining")
+        if _mining is not None:
+            cfg = {**cfg, "mining": _mining}
     # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
     # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
     # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。
