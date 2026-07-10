@@ -53,6 +53,7 @@ from control_panel.shared.auth import (  # noqa: E402,F401
 )
 from control_panel.shared.cdp import (  # noqa: E402,F401
     _FLY_PET_LOCK_JS,
+    _cdp_click,
     _cdp_err_code,
     _cdp_evaluate,
     _cdp_json_response,

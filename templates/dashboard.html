@@ -1254,6 +1254,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     <button id="navInventory" class="nav-btn" onclick="switchPage('inventory')" aria-label="倉庫 (守護靈/神器附魔)">&#x1F4E6; <span class="nav-label">倉庫 (守護靈/神器附魔)</span></button>
     <button id="navTools" class="nav-btn" onclick="switchPage('tools')" aria-label="工具 優化類">&#x1F6E0;&#xFE0F; <span class="nav-label">工具 優化類</span></button>
     <button id="navMountTracker" class="nav-btn" onclick="switchPage('mount-tracker')" aria-label="坐騎追蹤">🎯 <span class="nav-label">坐騎追蹤</span></button>
+    <button id="navStarSeize" class="nav-btn" onclick="switchPage('star-seize')" aria-label="星據搶佔">⚔️ <span class="nav-label">星據搶佔</span></button>
     {% if is_admin %}
     <button id="navAdmin" class="nav-btn" onclick="window.location='/admin'" aria-label="系統設定">&#x2699;&#xFE0F; <span class="nav-label">系統設定</span><span id="pendingBadge" class="badge badge--count admin-pending-badge" hidden></span></button>
     {% endif %}
@@ -1511,6 +1512,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
   <div id="page-mount-tracker" class="page">
     <div class="war-room-shell">
       <iframe id="mountTrackerFrame" class="war-room-frame" title="坐騎追蹤" loading="lazy" src=""></iframe>
+    </div>
+  </div>
+
+  <div id="page-star-seize" class="page">
+    <div class="war-room-shell">
+      <iframe id="starSeizeFrame" class="war-room-frame" title="星據搶佔" loading="lazy" src=""></iframe>
     </div>
   </div>
 
@@ -2183,75 +2190,6 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     </div>
   </div>
 
-  <!-- 星據車位(奇星車場)搶佔面板 — 單一共用 modal,以 module-level _ssIp 依裝置重用 -->
-  <div id="starSeizeModal" class="modal-overlay" onclick="if(event.target===this)closeStarSeize()">
-    <div class="modal" onclick="event.stopPropagation()" style="width:min(640px,calc(100vw - 24px));">
-      <div class="modal-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span>星據搶佔 <span id="ssDeviceLabel" style="color:var(--text-secondary);font-size:.8em"></span></span>
-        <button class="lv-close" onclick="closeStarSeize()" title="關閉" aria-label="關閉">&times;</button>
-      </div>
-      <div style="padding:16px 24px 22px;">
-        <div id="ssServerNote" style="font-size:.75em;color:var(--text-faint);margin-bottom:10px;"></div>
-
-        <!-- 4 槽卡片:owner / 倒數(MM:SS) / 守隊數 / 狀態 pill -->
-        <div id="ssSlots" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:16px;">
-          <div class="skeleton skeleton--block"></div>
-          <div class="skeleton skeleton--block"></div>
-          <div class="skeleton skeleton--block"></div>
-          <div class="skeleton skeleton--block"></div>
-        </div>
-
-        <!-- pos 選擇 (1..4) -->
-        <div style="margin-bottom:12px;">
-          <label style="display:block;font-size:.85em;color:var(--text-secondary);margin-bottom:4px;">選擇槽位 (pos)</label>
-          <div id="ssPosPicker" class="tab-bar--segmented" role="tablist" aria-label="槽位選擇">
-            <button type="button" class="tab" role="tab" aria-selected="true" onclick="ssSelectPos(1)">1</button>
-            <button type="button" class="tab" role="tab" aria-selected="false" onclick="ssSelectPos(2)">2</button>
-            <button type="button" class="tab" role="tab" aria-selected="false" onclick="ssSelectPos(3)">3</button>
-            <button type="button" class="tab" role="tab" aria-selected="false" onclick="ssSelectPos(4)">4</button>
-          </div>
-        </div>
-
-        <!-- 搶佔/駐守 -->
-        <div style="margin-bottom:12px;">
-          <label style="display:block;font-size:.85em;color:var(--text-secondary);margin-bottom:4px;">動作</label>
-          <div id="ssTypePicker" class="tab-bar--segmented" role="tablist" aria-label="動作選擇">
-            <button type="button" class="tab" role="tab" aria-selected="true" onclick="ssSelectType(1)">搶佔 (攻)</button>
-            <button type="button" class="tab" role="tab" aria-selected="false" onclick="ssSelectType(2)">駐守 (守)</button>
-          </div>
-        </div>
-
-        <!-- 套裝(v1 留位) -->
-        <div class="field-inline" style="margin-bottom:14px;">
-          <label>套裝</label>
-          <select disabled aria-disabled="true"><option>使用當前裝備</option></select>
-          <span style="font-size:.75em;color:var(--text-faint);">v1 使用當前裝備(切換套裝待接)</span>
-        </div>
-        <!-- TODO(loadout): 方案切換 0x032a body 08 <scheme_id>;需 id→名對照或 OCR switch_skill,join 前先切方案 -->
-
-        <!-- 對手配置 -->
-        <div style="margin-bottom:14px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:8px;">
-            <label style="font-size:.85em;color:var(--text-secondary);">對手配置(pos <span id="ssOppPos">1</span> 守方)</label>
-            <button type="button" class="btn btn--ghost" onclick="ssLoadOpponent()">重新讀取</button>
-          </div>
-          <div id="ssOpponent" class="empty-state"><div class="es-hint">選擇槽位後讀取守隊首位</div></div>
-        </div>
-        <!-- TODO(opponent-attrs): attrs_kv 只顯示 k:v raw,語意/label 對照待接 -->
-
-        <!-- 動作按鈕 -->
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
-          <button type="button" class="btn btn--danger" onclick="ssSeize()">立即搶佔</button>
-          <button type="button" id="ssSnipeBtn" class="btn btn--primary" onclick="ssSnipe()">預約狙擊</button>
-          <button type="button" class="btn btn--ghost" onclick="ssSnipeCancel()">取消預約</button>
-        </div>
-
-        <!-- 狙擊狀態列 -->
-        <div id="ssSnipeStatus" class="status-pill">狙擊：未啟動</div>
-      </div>
-    </div>
-  </div>
-
   <script>
 
     // ponytail: deferred — the ~30 inline fetch()→window.UI.apiPost and ~25
@@ -2273,6 +2211,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     let inventoryLoaded = false;
     let toolsLoaded = false;
     let mountTrackerLoaded = false;
+    let starSeizeLoaded = false;
     let currentFrontendVersion = INITIAL_FRONTEND_VERSION;
 
 
@@ -2522,6 +2461,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.getElementById('page-inventory').classList.toggle('active', page === 'inventory');
       document.getElementById('page-tools').classList.toggle('active', page === 'tools');
       document.getElementById('page-mount-tracker').classList.toggle('active', page === 'mount-tracker');
+      document.getElementById('page-star-seize').classList.toggle('active', page === 'star-seize');
 
       document.getElementById('navDashboard').classList.toggle('active', page === 'dashboard');
 
@@ -2532,6 +2472,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.getElementById('navInventory').classList.toggle('active', page === 'inventory');
       document.getElementById('navTools').classList.toggle('active', page === 'tools');
       document.getElementById('navMountTracker').classList.toggle('active', page === 'mount-tracker');
+      document.getElementById('navStarSeize').classList.toggle('active', page === 'star-seize');
 
       if (page === 'labeler') {
 
@@ -2558,6 +2499,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         if (!toolsLoaded) { document.getElementById('toolsFrame').src = '/tools-optimize'; toolsLoaded = true; }
       } else if (page === 'mount-tracker') {
         if (!mountTrackerLoaded) { document.getElementById('mountTrackerFrame').src = '/mount-tracker'; mountTrackerLoaded = true; }
+      } else if (page === 'star-seize') {
+        if (!starSeizeLoaded) { document.getElementById('starSeizeFrame').src = '/star-seize'; starSeizeLoaded = true; }
       } else {
 
         fetchStatus();
@@ -3367,8 +3310,6 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
                 </select>
                 <button class="btn btn-skip" onclick="carparkRob('${ip}')">加入</button>
               </span>` : ''}
-
-            ${info.backend === 'web_h5' ? `<button class="btn btn-skip" onclick="openStarSeize('${ip}')" title="星據車位(奇星車場)搶佔面板：4槽倒數/選槽/對手/立即+預約狙擊">星據搶佔</button>` : ''}
 
           `;
 
@@ -4445,265 +4386,6 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         _webCloseTs[ip] = Date.now();
         fetch(`/api/web_close/${ip}`, { method: 'POST' }).catch(() => {});
       }
-    }
-
-
-    // ===== 星據車位(奇星車場)搶佔面板 =====
-    // 單一共用 modal,module-level state 依裝置重置(仿 liveView 的 _lvIp)。
-    let _ssIp = null;
-    let _ssPos = 1;
-    let _ssType = 1;          // 1=搶佔(攻) 2=駐守(守)
-    let _ssState = null;      // 最近一次 /state 回應 {serverTime, myServer, slots}
-    let _ssOffset = null;     // serverTime - Date.now()/1000,本地換算伺服器時間用
-    let _ssStateTimer = null; // ~5s refetch /state
-    let _ssTickTimer = null;  // 1s 本地倒數遞減
-    let _ssSnipeTimer = null; // ~3s poll /snipe_status
-
-    function _ssEstServerNow() {
-      // 讀取鐵律:倒數由 free_end - 伺服器時間 驅動,不看視覺 P 盾。
-      if (_ssOffset === null) return null;
-      return Date.now() / 1000 + _ssOffset;
-    }
-
-    function _ssFmtDur(sec) {
-      sec = Math.max(0, Math.floor(sec));
-      const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
-      const p2 = (n) => String(n).padStart(2, '0');
-      return h > 0 ? `${h}:${p2(m)}:${p2(s)}` : `${p2(m)}:${p2(s)}`;
-    }
-
-    function _ssInTruce(estNow) {
-      // 與後端 _SEIZE_JS 同式:hr = floor((st%86400)/3600),休戰 22:00-10:00。
-      const hr = Math.floor(((estNow % 86400) + 86400) % 86400 / 3600);
-      return hr >= 22 || hr < 10;
-    }
-
-    function _ssSlotStatus(slot, estNow) {
-      // NEVER 從「沒有倒數」推 可攻 — 一律靠後端 attackable + free_end。
-      if (!slot.owner) return { t: '空', c: '' };
-      const my = _ssState && _ssState.myServer;
-      if (my && slot.owner === my) return { t: '本服', c: 'is-warn' };
-      const rem = slot.free_end ? (slot.free_end - estNow) : 0;
-      if (rem > 0) return { t: '保護中', c: 'is-off' };
-      if (_ssInTruce(estNow)) return { t: '休戰', c: 'is-warn' };
-      if (slot.attackable === true) return { t: '可攻', c: 'is-on' };
-      return { t: '保護已過(待刷新)', c: '' };   // rem<=0 但後端尚未確認 attackable
-    }
-
-    function _ssRenderSlots() {
-      const wrap = document.getElementById('ssSlots');
-      if (!wrap) return;
-      if (!_ssState || !Array.isArray(_ssState.slots)) return;
-      const estNow = _ssEstServerNow();
-      const cells = _ssState.slots.map((slot) => {
-        const pos = slot.pos;
-        const owner = slot.owner ? `[s${slot.owner}]` : '空';
-        const rem = (estNow !== null && slot.free_end) ? (slot.free_end - estNow) : 0;
-        const cd = rem > 0 ? _ssFmtDur(rem) : '--:--';
-        const st = (estNow !== null) ? _ssSlotStatus(slot, estNow) : { t: '讀取中', c: '' };
-        const sel = pos === _ssPos ? 'border-color:var(--coral);box-shadow:0 0 0 1px var(--coral);' : '';
-        return `
-          <div style="border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;background:var(--tile);${sel}">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:2px;">
-              <strong>槽 ${pos}</strong>
-              <span class="status-pill ${st.c}">${st.t}</span>
-            </div>
-            <div style="font-size:.8em;color:var(--text-secondary);">主 ${owner} · 守 ${slot.defQ || 0}</div>
-            <div style="font-family:var(--mono,monospace);font-size:1.05em;">${cd}</div>
-          </div>`;
-      });
-      wrap.innerHTML = cells.join('');
-    }
-
-    async function _ssFetchState() {
-      if (!_ssIp) return;
-      try {
-        // TODO(my_server): info 物件目前無 server_id 欄;有的話帶 ?my_server=,
-        // 否則省略,後端退化為 owner!=0 && free_end<=serverTime(myServer=null)。
-        const d = await window.UI.apiGet(`/api/star_seize/state/${_ssIp}`);
-        _ssState = d.state || null;
-        if (_ssState && typeof _ssState.serverTime === 'number') {
-          _ssOffset = _ssState.serverTime - Date.now() / 1000;
-        }
-        const note = document.getElementById('ssServerNote');
-        if (note) {
-          note.innerText = _ssState && _ssState.myServer
-            ? `我方 server_id: ${_ssState.myServer}`
-            : '我方 server_id 未知(不比對本服;搶佔改由伺服器端擋)';
-        }
-        _ssRenderSlots();
-      } catch (e) {
-        const wrap = document.getElementById('ssSlots');
-        if (wrap) wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="es-title">讀取失敗</div><div class="es-hint">${(e && e.message) || e}</div></div>`;
-      }
-    }
-
-    function ssSelectPos(pos) {
-      _ssPos = pos;
-      document.querySelectorAll('#ssPosPicker .tab').forEach((t, i) => {
-        t.setAttribute('aria-selected', String(i + 1 === pos));
-      });
-      const op = document.getElementById('ssOppPos');
-      if (op) op.innerText = pos;
-      _ssRenderSlots();
-      ssLoadOpponent();
-    }
-
-    function ssSelectType(t) {
-      _ssType = t;
-      document.querySelectorAll('#ssTypePicker .tab').forEach((el, i) => {
-        el.setAttribute('aria-selected', String(i + 1 === t));
-      });
-      // 預約狙擊 = 解保護瞬間搶攻，只對「搶佔」有意義；駐守無此時間閘 → 停用避免永不開火
-      const snBtn = document.getElementById('ssSnipeBtn');
-      if (snBtn) {
-        snBtn.disabled = (t === 2);
-        snBtn.title = (t === 2) ? '預約狙擊僅適用搶佔（駐守無保護時間閘）' : '';
-      }
-    }
-
-    async function ssLoadOpponent() {
-      if (!_ssIp) return;
-      const el = document.getElementById('ssOpponent');
-      if (el) el.innerHTML = '<div class="skeleton skeleton--text"></div>';
-      try {
-        const d = await window.UI.apiGet(`/api/star_seize/opponent/${_ssIp}?pos=${_ssPos}`);
-        const opp = d.opponent || {};
-        const defs = opp.defenders || [];
-        if (!defs.length) {
-          if (el) el.innerHTML = '<div class="empty-state"><div class="es-hint">此槽無守隊</div></div>';
-          return;
-        }
-        // TODO(opponent-attrs): attrs_kv label 對照待接,先顯示 k:v raw。
-        const rows = defs.map((m) => {
-          const kv = (m.attrs_kv || []).map((e) => `<span class="status-pill" style="font-weight:500;">${e.k}:${e.v}</span>`).join(' ');
-          return `<div style="padding:6px 0;border-bottom:1px solid var(--line);">
-              <div><strong>${m.name || '(無名)'}</strong> [s${m.server || 0}] 順位 #${m.queue_index || 0}</div>
-              <div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">${kv || '<span style="color:var(--text-faint);font-size:.8em;">無屬性</span>'}</div>
-            </div>`;
-        });
-        if (el) el.innerHTML = rows.join('');
-      } catch (e) {
-        if (el) el.innerHTML = `<div class="empty-state"><div class="es-hint">讀取失敗:${(e && e.message) || e}</div></div>`;
-      }
-    }
-
-    async function ssSeize() {
-      if (!_ssIp) return;
-      const ok = await window.UI.confirmDialog({
-        title: `立即${_ssType === 1 ? '搶佔' : '駐守'} 槽 ${_ssPos}?`,
-        body: '會真的參戰、伺服器端驗證後才送(搶佔消耗泊能)。',
-        danger: true, okLabel: '確定送出'
-      });
-      if (!ok) return;
-      try {
-        const d = await window.UI.apiPost(`/api/star_seize/seize/${_ssIp}`, { pos: _ssPos, queue_type: _ssType });
-        const r = d.reply || {};
-        if (r.ok === false) {
-          window.UI.toast(`未送出:${r.msg || r.reason || '拒絕'}`, 'err');
-        } else {
-          window.UI.toast(`已送出(code=${r.code == null ? '?' : r.code}, 順位=${r.queue_index == null ? '?' : r.queue_index})`, 'ok');
-        }
-        _ssFetchState();
-      } catch (e) {
-        window.UI.toast(`失敗:${(e && e.message) || e}`, 'err');
-      }
-    }
-
-    async function ssSnipe() {
-      if (!_ssIp) return;
-      const ok = await window.UI.confirmDialog({
-        title: `預約狙擊 槽 ${_ssPos}(${_ssType === 1 ? '搶佔' : '駐守'})?`,
-        body: '保護結束後自動於伺服器時間送出(頁內自我校正,變回本服自動中止)。需保持瀏覽器開啟。',
-        danger: true, okLabel: '啟動預約'
-      });
-      if (!ok) return;
-      try {
-        const d = await window.UI.apiPost(`/api/star_seize/snipe/${_ssIp}`, { pos: _ssPos, queue_type: _ssType });
-        const s = d.snipe || {};
-        window.UI.toast(s.armed ? `已預約 槽 ${s.pos}` : '預約回應異常', s.armed ? 'ok' : 'err');
-        _ssPollSnipe();
-      } catch (e) {
-        window.UI.toast(`失敗:${(e && e.message) || e}`, 'err');
-      }
-    }
-
-    async function ssSnipeCancel() {
-      if (!_ssIp) return;
-      try {
-        await window.UI.apiPost(`/api/star_seize/snipe_cancel/${_ssIp}`, {});
-        window.UI.toast('已取消預約', 'ok');
-        _ssPollSnipe();
-      } catch (e) {
-        window.UI.toast(`失敗:${(e && e.message) || e}`, 'err');
-      }
-    }
-
-    async function _ssPollSnipe() {
-      if (!_ssIp) return;
-      const el = document.getElementById('ssSnipeStatus');
-      try {
-        const d = await window.UI.apiGet(`/api/star_seize/snipe_status/${_ssIp}`);
-        const s = d.snipe || {};
-        let txt, cls = 'is-warn';
-        if (s.fired) {
-          const code = s.reply ? s.reply.code : null;
-          txt = `狙擊:已開火(code=${code == null ? '?' : code})`;
-          cls = 'is-on';
-        } else if (s.aborted) {
-          txt = `狙擊:已中止(${s.aborted})`;
-          cls = 'is-off';
-        } else if (s.armed) {
-          const rem = (s.remaining != null) ? `,剩餘 ${_ssFmtDur(s.remaining)}` : '';
-          txt = `狙擊:待命中${s.truceWait ? '(休戰暫緩)' : ''}${rem}`;
-        } else {
-          txt = '狙擊:未啟動';
-          cls = '';
-        }
-        if (el) { el.className = `status-pill ${cls}`; el.innerText = txt; }
-      } catch (e) {
-        if (el) { el.className = 'status-pill is-off'; el.innerText = `狙擊狀態讀取失敗:${(e && e.message) || e}`; }
-      }
-    }
-
-    function openStarSeize(ip) {
-      if (!ip) return;
-      _ssIp = ip;
-      _ssPos = 1;
-      _ssType = 1;
-      _ssState = null;
-      _ssOffset = null;
-      const label = document.getElementById('ssDeviceLabel');
-      if (label) label.innerText = ip;
-      const slots = document.getElementById('ssSlots');
-      if (slots) slots.innerHTML = '<div class="skeleton skeleton--block"></div>'.repeat(4);
-      const opp = document.getElementById('ssOpponent');
-      if (opp) opp.innerHTML = '<div class="es-hint">讀取中…</div>';
-      const snStatus = document.getElementById('ssSnipeStatus');
-      if (snStatus) { snStatus.className = 'status-pill'; snStatus.innerText = '狙擊:讀取中…'; }
-      ssSelectPos(1);
-      ssSelectType(1);
-      window.UI.openModal(document.getElementById('starSeizeModal'), { cls: 'active' });
-      _ssFetchState();
-      _ssPollSnipe();
-      // 不狂打伺服器:state 5s refetch、本地 1s tick、狙擊狀態 3s poll。
-      if (_ssStateTimer) clearInterval(_ssStateTimer);
-      if (_ssTickTimer) clearInterval(_ssTickTimer);
-      if (_ssSnipeTimer) clearInterval(_ssSnipeTimer);
-      _ssStateTimer = setInterval(_ssFetchState, 5000);
-      _ssTickTimer = setInterval(_ssRenderSlots, 1000);
-      _ssSnipeTimer = setInterval(_ssPollSnipe, 3000);
-    }
-
-    function closeStarSeize() {
-      const modal = document.getElementById('starSeizeModal');
-      if (modal) window.UI.closeModal(modal);
-      if (_ssStateTimer) { clearInterval(_ssStateTimer); _ssStateTimer = null; }
-      if (_ssTickTimer) { clearInterval(_ssTickTimer); _ssTickTimer = null; }
-      if (_ssSnipeTimer) { clearInterval(_ssSnipeTimer); _ssSnipeTimer = null; }
-      _ssIp = null;
-      _ssState = null;
-      _ssOffset = null;
     }
 
 
