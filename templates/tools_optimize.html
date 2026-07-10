@@ -270,6 +270,18 @@
   </div>
 </div>
 
+<!-- 連線前佔用確認 -->
+<div id="connConfirmModal" class="modal-bg" role="dialog" aria-modal="true" aria-labelledby="connConfirmTitle">
+  <div class="modal">
+    <h2 id="connConfirmTitle">確定要連線嗎？</h2>
+    <p id="connConfirmWhy"></p>
+    <div class="row">
+      <button class="ghost" onclick="connConfirmGo(false)">取消</button>
+      <button class="btn btn--danger" onclick="connConfirmGo(true)">仍要連線</button>
+    </div>
+  </div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const fmt = n => (n==null?'-':Number(n).toLocaleString());
@@ -526,8 +538,35 @@ function hideModal(id){
   else { $(id).classList.remove('show'); }
 }
 
+const OWNER_ZH = { tool:'工具', scheduler:'腳本排程', online_monitor:'上線偵測',
+                   online_check:'上線檢查', mount_tracker:'坐騎追蹤' };
+// 連線前佔用/在線確認：有佔用者或帳號在線 → modal 確認；precheck 失敗 fail-open。
+async function confirmOccupied(d){
+  let why = '';
+  try{
+    const r = await fetch(`/api/ws_session/${encodeURIComponent(d)}/precheck`);
+    const j = await r.json();
+    if(j.lease){ const o=OWNER_ZH[j.lease.owner]||j.lease.owner, l=(j.lease.label&&j.lease.label!==o)?'：'+j.lease.label:''; why = `帳號目前被「${o}${l}」佔用`; }
+    else if(j.account_online === true) why = '帳號目前在線（可能有真人正在遊玩）';
+  }catch(e){ return true; }
+  if(!why) return true;
+  return await new Promise(resolve=>{
+    $('connConfirmWhy').textContent = `${why}，連線會把對方踢下線。`;
+    const m = $('connConfirmModal');
+    m._uiConfirmCancel = ()=>resolve(false);          // Esc = 安全預設（取消）
+    m._resolve = resolve;
+    showModal('connConfirmModal');
+  });
+}
+function connConfirmGo(ok){
+  const m = $('connConfirmModal');
+  hideModal('connConfirmModal');
+  if(m._resolve){ m._resolve(ok); m._resolve = null; }
+}
+
 async function connectSession(){
   const d=dev(); if(!d){ setConn('off'); return false; }
+  if(!(await confirmOccupied(d))){ setConn('off'); return false; }
   setConn('connecting');
   try{
     const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect`,{method:'POST'});
@@ -712,7 +751,7 @@ async function doDrRun(){
   finally{ $('btnDrRun').disabled=false; }
 }
 
-(async function init(){ await loadDevices(); await connectSession(); })();
+(async function init(){ await loadDevices(); /* 2026-07-10：開頁不自動連線，按「連線」才連 */ })();
 </script>
 </body>
 </html>

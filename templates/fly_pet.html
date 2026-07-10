@@ -1660,6 +1660,12 @@ function showNotConnectedHint(kind) {
   var msg = document.getElementById('loadMsg');
   var launchBtn = document.getElementById('launchBtn');
   var initMsg = document.getElementById('initMsg');
+  if (kind === 'ready') {
+    if (msg) { msg.textContent = '瀏覽器已開 — 點「載入」讀取資料'; msg.style.color = 'var(--text2)'; }
+    if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
+    if (initMsg) { initMsg.textContent = '瀏覽器已開 — 點「載入」讀取資料'; initMsg.style.display = ''; }
+    return;
+  }
   if (kind === 'loading') {
     if (msg) { msg.textContent = '瀏覽器已開，遊戲載入中… 請稍候再按「載入」'; msg.style.color = 'var(--text2)'; }
     if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
@@ -1674,7 +1680,7 @@ function showNotConnectedHint(kind) {
 // ---- 開頁靜默偵測: 先問中控台有沒有瀏覽器, 有就載入, 沒有安靜提示, 全程不跳 toast ----
 async function initAutoLoad() {
   var br = await checkBrowserUp();
-  if (br.browser_up) { doLoad({silent: true}); return; }
+  if (br.browser_up) { showNotConnectedHint('ready'); return; }  // 2026-07-10：不自動載入
   showNotConnectedHint('launch');
 }
 

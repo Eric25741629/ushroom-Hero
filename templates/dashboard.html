@@ -508,7 +508,7 @@ h1 {
   white-space: nowrap;
 }
 
-/* account presence (real player online, from online-monitor) */
+/* account presence */
 .acct-presence {
   display: inline-flex;
   align-items: center;
@@ -519,7 +519,10 @@ h1 {
   white-space: nowrap;
 }
 .acct-presence:empty { display: none; }
-.acct-presence.on  { background: var(--mint-wash); color: var(--safe-color); border: 1px solid var(--mint); }
+.acct-presence.bot { background: var(--info-wash); color: var(--sky-deep); border: 1px solid var(--info); }
+.acct-presence.watch { background: transparent; color: var(--text-secondary); border: 1px dashed var(--neutral); }
+.acct-presence.borrowed { background: var(--warn-wash); color: var(--status-warn-text); border: 1px solid var(--warn); }
+.acct-presence.player { background: var(--status-danger-fill); color: #fff; border: 1px solid var(--status-danger-fill); font-weight: 600; }
 .acct-presence.off { background: var(--tile-sunk); color: var(--ink-soft); border: 1px solid var(--line); }
 
 /* settings gear */
@@ -3012,7 +3015,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
                 <div class="device-ip">${ip}</div>
               </div>
               <div style="display:flex;align-items:center;gap:5px;">
-                <span class="acct-presence" id="presence-${ip}" title="偵測器判定此帳號的真人是否在線"></span>
+                <span class="acct-presence" id="presence-${ip}" title="帳號連線歸屬：腳本執行 / 在線觀察 / 被借走 / 玩家在線 / 離線"></span>
                 <span class="status-text" id="status-${ip}">${statusText}</span>
                 <button class="settings-btn" onclick="openSettings('${ip}')" title="設定">⚙</button>
               </div>
@@ -3054,9 +3057,28 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         const presenceEl = document.getElementById(`presence-${ip}`);
         if (presenceEl) {
-          if (info.account_online === true) {
-            presenceEl.textContent = '當前在線';
-            presenceEl.className = 'acct-presence on';
+          const OBSERVER_ZH = { online_monitor: '上線偵測', online_check: '上線檢查', mount_tracker: '坐騎追蹤' };
+          const idleTasks = ['休眠中', '啟動後休眠'];
+          const awake = (statusClass === 'ONLINE' || statusClass === 'DEGRADED' || statusClass === 'PAUSED')
+            && !idleTasks.includes(info.task || '')
+            && (info.task || '') !== '等待真人下線';
+          if (info.lease_owner === 'scheduler') {
+            presenceEl.textContent = '腳本執行';
+            presenceEl.className = 'acct-presence bot';
+          } else if (OBSERVER_ZH[info.lease_owner]) {
+            presenceEl.textContent = `在線觀察（${OBSERVER_ZH[info.lease_owner]}）`;
+            presenceEl.className = 'acct-presence watch';
+          } else if (info.lease_owner === 'tool') {
+            const toolLabel = (info.lease_label && info.lease_label !== '工具') ? `（${info.lease_label}）` : '';
+            presenceEl.textContent = `被借走：工具${toolLabel}`;
+            presenceEl.className = 'acct-presence borrowed';
+          } else if (awake) {
+            // fallback：Phase 5 未登記 / worker 裝置 / H5 瀏覽器階段，bot 醒著就是在跑腳本
+            presenceEl.textContent = '腳本執行';
+            presenceEl.className = 'acct-presence bot';
+          } else if (info.account_online === true) {
+            presenceEl.textContent = '玩家在線';
+            presenceEl.className = 'acct-presence player';
           } else if (info.account_online === false) {
             presenceEl.textContent = '當前離線';
             presenceEl.className = 'acct-presence off';

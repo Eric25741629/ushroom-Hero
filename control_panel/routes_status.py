@@ -455,6 +455,14 @@ def _account_presence():
     return presence
 
 
+def _lease_fields(leases, ip, real_ip):
+    """session_registry lease → /api/status 顯示欄位。key 依序試完整 ip 與 real_ip。"""
+    lease = leases.get(ip) or leases.get(real_ip)
+    if lease is None:
+        return {"lease_owner": None, "lease_label": ""}
+    return {"lease_owner": lease.owner.value, "lease_label": lease.label or ""}
+
+
 @bp.route("/api/status")
 def get_status():
     states = bot_state.get_all_states()
@@ -470,12 +478,18 @@ def get_status():
         (config_manager.get_global_config().get("live_view") or {}).get("enabled", False)
     )
     presence = _account_presence()  # {role_id: online} from online-monitor
+    try:
+        from runtime_services import session_registry
+        leases = session_registry.peek_all()
+    except Exception:
+        leases = {}
     for ip, info in states.items():
         real_ip = ip.split(":")[-1] if ":" in ip else ip
         cfg = config_manager.get_device_config(real_ip)
         info["name"] = cfg.get("name") or real_ip
         rid = _device_role_id(ip)
         info["account_online"] = presence.get(rid) if rid is not None else None
+        info.update(_lease_fields(leases, ip, real_ip))
         info["enabled"] = bool(cfg.get("enabled", True))
         info["is_real_phone"] = cfg.get("is_real_phone", False)
         info["backend"] = cfg.get("backend", "adb")

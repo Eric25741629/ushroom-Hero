@@ -178,6 +178,15 @@ def should_stop_runtime_device_for_sleep(cfg: dict, backend_kind: str) -> bool:
     return stop_mode in {"close", "close_page", "close_browser"}
 
 
+def _release_scheduler_lease(ip: str) -> None:
+    """入睡即釋放 SCHEDULER lease（冪等；未持有/失敗皆不影響睡眠流程）。"""
+    try:
+        from runtime_services import session_registry
+        session_registry.release(ip, session_registry.Owner.SCHEDULER)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def run_sleep_cycle(
     ip: str,
     logger_obj,
@@ -188,6 +197,7 @@ def run_sleep_cycle(
     sleep_reason: str = "常規對齊喚醒",
     enable_dungeon_manager: bool = False,
 ):
+    _release_scheduler_lease(ip)
     cur_ts = time.time()
 
     _cfg = config_manager.get_device_config(ip)

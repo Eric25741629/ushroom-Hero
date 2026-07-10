@@ -408,49 +408,54 @@ def _web_launch_pending(ip: str) -> bool:
         return False
 
 
-# --- dashboard WS session 閘門：喚醒別踢掉 dashboard 純 WS 工具連線 -------------
-# dashboard 的 ws_session（裝飾升級/抽卡/倉庫等純 WS 工具）與本裝置同帳號；喚醒後
-# 的 WS 登入或 H5/APP 啟動都會異地登入把它踢掉，雙方互踢 ping-pong（2026-07-05
-# 7fe98fc6 裝飾升級 job 實錄，見 tasks/todo.md）。好友清單 presence 看不到純 WS
-# session（觀察者閘門 _wait_until_human_offline 擋不住），唯一真相來源是行程內的
-# ws_session registry — 喚醒週期開跑前直接查它、等釋放。sweeper 保證前端關窗或
-# 閒置 >90s 後回收，不會永久卡住喚醒。
+# --- 帳號 session 閘門：session_registry 是唯一真相來源 -----------------------
+# 喚醒週期開跑前取得 SCHEDULER lease；背景借用者可搶回，dashboard 工具則等待釋放。
 _DASHBOARD_WS_POLL_SEC = 15
 
 
-def _dashboard_ws_active(ip: str) -> bool:
-    """間接層（tests monkeypatch 這裡）：dashboard 是否還有本裝置的活躍純 WS 連線。"""
-    try:
-        from control_panel import ws_session
-        return bool(ws_session.is_active(ip))
-    except Exception:  # noqa: BLE001 — registry 讀不到就當沒有，勿卡喚醒
-        return False
+def acquire_scheduler_lease(ip: str, log) -> None:
+    """喚醒週期開跑前取得 SCHEDULER lease（Phase 5，取代舊 wait_for_dashboard_ws_release）。
 
-
-def wait_for_dashboard_ws_release(ip: str, log) -> None:
-    """喚醒週期（WS 階段 / 開瀏覽器）開跑前，等 dashboard 純 WS 連線釋放。
-
-    可中斷：使用者按「開啟網頁」→ 立即放行（開瀏覽器屬明確接管意圖，與
-    _wait_until_human_offline 同語意）。
+    - 背景借用者（上線偵測/檢查/坐騎追蹤）→ preempt 直接搶回（它們 poll preempted 讓位）。
+    - dashboard TOOL（人手動操作）→ 尊重人，15s poll 等待釋放（2026-07-10 使用者定案）。
+    - protected（human_played 裝置）→ 不登記 lease 放行，交由既有觀察者閘門保護。
+    - 使用者按「開啟網頁」→ 立即放行（明確接管意圖，可能未取得 lease）。
     """
+    from runtime_services import session_registry as registry
     waited = 0
-    while _dashboard_ws_active(ip):
-        if _web_launch_pending(ip):
-            log.info("[%s] 偵測到開啟網頁請求，放行 dashboard WS 閘門", ip)
+    while True:
+        result = registry.acquire(ip, registry.Owner.SCHEDULER,
+                                  registry.Channel.WS, label="喚醒週期")
+        if result.ok:
+            if waited:
+                log.info("[%s] 佔用已釋放，取得 SCHEDULER lease（等了約 %ds）", ip, waited)
             return
+        if result.reason == "protected":
+            log.info("[%s] human_played 保護帳號，不登記 SCHEDULER lease", ip)
+            return
+        conflict = result.conflict
+        if conflict is not None and conflict.owner in registry.YIELDING_BORROWERS:
+            result = registry.acquire(ip, registry.Owner.SCHEDULER,
+                                      registry.Channel.WS, label="喚醒週期",
+                                      preempt=True)
+            if result.ok:
+                log.info("[%s] 已搶回被 %s 借用的帳號", ip, conflict.owner.value)
+                return
+        if _web_launch_pending(ip):
+            log.info("[%s] 偵測到開啟網頁請求，放行 SCHEDULER 閘門（未取得 lease）", ip)
+            return
+        holder = conflict.owner.value if conflict is not None else "未知"
         if waited == 0:
-            log.info("[%s] dashboard 純 WS 連線使用中，喚醒週期等待釋放", ip)
+            log.info("[%s] 帳號被 %s 佔用，喚醒週期等待釋放", ip, holder)
         try:
             import bot_state
             bot_state.update_state(
                 ip, task="等待 dashboard 連線釋放",
-                step=f"dashboard 純 WS 工具使用中，{_DASHBOARD_WS_POLL_SEC}s 後重查")
+                step=f"帳號被 {holder} 佔用，{_DASHBOARD_WS_POLL_SEC}s 後重查")
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響等待
-            log.debug("[%s] 等待 dashboard 連線狀態回報失敗", ip, exc_info=True)
+            log.debug("[%s] 等待佔用釋放狀態回報失敗", ip, exc_info=True)
         time.sleep(_DASHBOARD_WS_POLL_SEC)
         waited += _DASHBOARD_WS_POLL_SEC
-    if waited:
-        log.info("[%s] dashboard 連線已釋放，恢復喚醒週期（等了約 %ds）", ip, waited)
 
 
 def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> None:
