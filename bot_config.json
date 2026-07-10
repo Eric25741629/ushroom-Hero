@@ -676,6 +676,7 @@
             "wake_hour_parity": "odd",
             "wake_minute_offset": 5,
             "name": "小寶帳號",
+            "star_seize_my_server": 1467,
             "backend": "web_h5",
             "web_debug_port": 9226,
             "backend_display_id": "",

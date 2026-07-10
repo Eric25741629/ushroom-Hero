@@ -85,6 +85,7 @@ from control_panel import (  # noqa: E402
     routes_live_view,
     routes_mount_tracker,
     routes_pages,
+    routes_star_seize,
     routes_status,
     routes_web_session,
     routes_worker,
@@ -110,6 +111,7 @@ for _mod in (
     routes_dragon_tools,
     routes_relic_sprint,
     routes_dragon_sos,
+    routes_star_seize,
     ws_session,
 ):
     app.register_blueprint(_mod.bp)
