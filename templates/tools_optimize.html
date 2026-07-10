@@ -569,7 +569,7 @@ async function connectSession(){
   if(!(await confirmOccupied(d))){ setConn('off'); return false; }
   setConn('connecting');
   try{
-    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect`,{method:'POST'});
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect?label=工具最佳化`,{method:'POST'});
     const j=await r.json();
     if(j.status==='ok'){ connectedDev=d; setConn('on'); startKeepalive(); resetIdle(); setStatus('已連線（純 WS，免開瀏覽器）'); clearToolEmptyStates(); return true; }
     // INFO-LEAK FIX (C20): the server's raw message can carry a full auth_state

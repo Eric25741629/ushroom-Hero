@@ -3139,8 +3139,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             presenceEl.title = OBSERVER_ZH[info.lease_owner];
             presenceEl.className = 'acct-presence watch';
           } else if (info.lease_owner === 'tool') {
-            const toolLabel = (info.lease_label && info.lease_label !== '工具') ? `（${info.lease_label}）` : '';
-            presenceEl.textContent = `被借走：工具${toolLabel}`;
+            presenceEl.textContent = `被借走：${info.lease_label || '工具'}`;
             presenceEl.className = 'acct-presence borrowed';
           } else if (awake) {
             // fallback：Phase 5 未登記 / worker 裝置 / H5 瀏覽器階段，bot 醒著就是在跑腳本

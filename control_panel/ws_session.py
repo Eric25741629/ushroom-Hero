@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 
 from control_panel.shared.auth import _fly_pet_auth
 from runtime_services import session_registry as registry
@@ -58,7 +58,7 @@ _sweeper_lock = threading.Lock()
 
 # --- 連線管理 API -----------------------------------------------------------
 
-def ensure(device: str, *, owner: Owner = Owner.TOOL,
+def ensure(device: str, *, owner: Owner = Owner.TOOL, label: str = "工具",
            preempt: bool = False, check_wake: bool = False) -> dict:
     """確保 ``device`` 有一條 live 純 WS 連線；沒有就建立。
 
@@ -84,7 +84,7 @@ def ensure(device: str, *, owner: Owner = Owner.TOOL,
             existing.last_seen = time.time()
             # 續租（冪等）避免 lease 過期被 sweeper/搶佔誤收。
             registry.acquire(device, existing.owner, Channel.WS,
-                             label="工具", role_id=existing.role_id)
+                             label=label, role_id=existing.role_id)
             return {"status": "ok", "connected": True, "kicked": False}
 
         # 舊 session 已死/被踢：關連線並釋放它的 lease（恢復 bot loop）。
@@ -107,7 +107,7 @@ def ensure(device: str, *, owner: Owner = Owner.TOOL,
         role_id = int(getattr(creds, "role_id", 0)) or None
 
         # 先取得佔用權（借用型 owner 成功即 pause bot loop）。
-        result = registry.acquire(device, owner, Channel.WS, label="工具",
+        result = registry.acquire(device, owner, Channel.WS, label=label,
                                   role_id=role_id, preempt=preempt,
                                   check_wake=check_wake)
         if (not result.ok and result.conflict is not None
@@ -118,7 +118,7 @@ def ensure(device: str, *, owner: Owner = Owner.TOOL,
             # 不在此列，仍走 conflict。修「監控佔用期間工具被鎖死」。
             logger.info("ws_session ensure 搶佔借用型 %s device=%s",
                         result.conflict.owner.value, device)
-            result = registry.acquire(device, owner, Channel.WS, label="工具",
+            result = registry.acquire(device, owner, Channel.WS, label=label,
                                       role_id=role_id, preempt=True,
                                       check_wake=check_wake)
         if not result.ok:
@@ -347,8 +347,13 @@ def precheck_endpoint(ip: str):
 @bp.route("/api/ws_session/<ip>/connect", methods=["POST"])
 @_fly_pet_auth
 def connect_endpoint(ip: str):
-    """建立 / 復用 ``ip`` 的持久 WS 連線。error→502、conflict→409。"""
-    result = ensure(ip)
+    """建立 / 復用 ``ip`` 的持久 WS 連線。error→502、conflict→409。
+
+    ``?label=`` 由呼叫的工具頁帶入（倉庫 / 工具最佳化等），寫進 lease 供 dashboard
+    「被借走：{label}」與連線前確認 modal 顯示；未帶時預設「工具」。
+    """
+    label = (request.args.get("label") or "工具").strip()[:12] or "工具"
+    result = ensure(ip, label=label)
     status = result.get("status")
     if status == "error":
         return jsonify(result), 502
