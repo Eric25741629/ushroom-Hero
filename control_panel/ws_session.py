@@ -316,6 +316,34 @@ _ensure_sweeper()
 bp = Blueprint("ws_session", __name__)
 
 
+def _precheck_account_online(device: str):
+    """好友 presence 的帳號在線判定（讀不到回 None）。測試 seam。"""
+    try:
+        import config_manager
+        from ws_token.online_monitor import account_online
+        rid = config_manager.get_device_role_id(device)
+        return account_online(int(rid)) if rid is not None else None
+    except Exception:  # noqa: BLE001 — presence 讀取失敗不可擋 precheck
+        return None
+
+
+def precheck(device: str) -> dict:
+    """連線前檢查：帳號是否已被佔用（registry lease）/ 帳號是否在線（好友 presence）。"""
+    lease = registry.peek(device)
+    return {
+        "lease": ({"owner": lease.owner.value, "label": lease.label or ""}
+                  if lease is not None else None),
+        "account_online": _precheck_account_online(device),
+    }
+
+
+@bp.route("/api/ws_session/<ip>/precheck")
+@_fly_pet_auth
+def precheck_endpoint(ip: str):
+    """工具頁連線前的佔用/在線確認資料。"""
+    return jsonify(precheck(ip))
+
+
 @bp.route("/api/ws_session/<ip>/connect", methods=["POST"])
 @_fly_pet_auth
 def connect_endpoint(ip: str):
