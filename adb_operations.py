@@ -3,6 +3,7 @@ ADB 操作模組
 整合常用的 ADB 和 uiautomator2 操作
 """
 import subprocess
+import re
 import shlex
 import time
 import random
@@ -530,6 +531,32 @@ def get_battery_level(device_serial: str, logger: logging.Logger = None) -> int:
         return -1
 
 
+_FOCUS_RE = re.compile(r"mCurrentFocus=Window\{\S+\s+(?:u\d+\s+)?(?P<package>[^\s/]+)/\S+\}")
+
+
+def _current_focus_package(d, logger: logging.Logger = None) -> Union[str, None]:
+    """讀取實際前景視窗的 package（dumpsys window mCurrentFocus）。
+
+    Android 11+（如小米實機）的 `dumpsys window windows` 不再輸出 mCurrentFocus，
+    adbutils app_current() 會 fallback 到 `dumpsys activity top` 取 recents 最後
+    一筆，人在桌面時可能回傳遊戲 package（2026-07-10 fc65396d 誤判實例）。
+    直接 parse `dumpsys window` 才反映螢幕上的前景視窗。
+    無法判定（keyguard/NotificationShade 或 shell 失敗）回 None。
+    """
+    if logger is None:
+        logger = default_logger
+    try:
+        result = d.shell("dumpsys window | grep mCurrentFocus")
+        output = getattr(result, "output", None)
+        if output is None:
+            output = result[0] if isinstance(result, tuple) else str(result)
+        m = _FOCUS_RE.search(output)
+        return m.group("package") if m else None
+    except Exception as e:
+        logger.debug(f"[{getattr(d, 'serial', '?')}] 讀取 mCurrentFocus 失敗: {e}")
+        return None
+
+
 def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
     """
     檢查設備是否已進入桌面（Launcher）
@@ -545,8 +572,10 @@ def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
         logger = default_logger
 
     try:
-        current_app = d.app_current()
-        package = current_app.get('package', '')
+        package = _current_focus_package(d, logger)
+        if not package:
+            current_app = d.app_current()
+            package = current_app.get('package', '')
 
         # 常見的桌面 Launcher 包名
         launcher_packages = [
@@ -576,7 +605,8 @@ def is_on_launcher(d: u2.Device, logger: logging.Logger = None) -> bool:
         if is_launcher:
             logger.debug(f"[{serial}] 檢測到桌面: {package}")
         else:
-            logger.debug(f"[{serial}] 當前應用不是桌面: {package}")
+            # INFO：誤判排查必需（2026-07-10 fc65396d 事件缺此證據查了半天）
+            logger.info(f"[{serial}] 當前前景不是桌面: {package}")
 
         return is_launcher
     except Exception as e:
