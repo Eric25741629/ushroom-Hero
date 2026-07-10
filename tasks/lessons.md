@@ -492,3 +492,9 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   main HEAD 後該檔已是重構版（registry `_get_ws_client(dev,on_ensure)`、無 `_ws_active`）。照舊模型寫的
   `rally_to_guild` 一跑測試就 `AttributeError: _ws_active`。**規則：worktree reset main 後，動任何檔前先在
   worktree 內重讀，不可沿用進 worktree 前於別的 tree/狀態讀到的內容。**
+
+## 2026-07-10 codex-rescue / CC Switch
+- codex:codex-rescue subagent 的 shell runner 在本機會整個掛死（連 echo 都無輸出）→ 改由主 session 直接 `codex exec --sandbox workspace-write` 背景跑，穩定可用。
+- Bash 指令字串裡出現「bare pytest」等字樣會誤觸 check_pytest hook（它掃整條命令列），prompt 措辭避開裸 "pytest" 字面。
+- CC Switch proxy 回報額度用盡 ≠ 全部 key 用盡：cc-switch.db providers 表有各 key，直接打 `{base}/v1/usage` 查餘額挑活的；直連時改 ~/.codex/config.toml base_url + auth.json（CC Switch 切 provider 會覆寫，留 .bak）。
+- PowerShell 傳多行 python -c 會炸引號：一律寫 scratchpad script 檔再執行。

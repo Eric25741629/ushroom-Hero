@@ -1094,3 +1094,12 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - A1（5556 卡死）已由使用者手動開瀏覽器解除，per-thread watchdog 未做（另議）。
 - 未竟事項：A2 需使用者決定是否給 5558 抓 WS 憑證（human 帳號，見下方注意）；M11 為監控建議無程式碼變更；farm_v2 config 殘餘座標與 CLAUDE.md 更正由文檔 agent 處理。
 - ⚠ 全部變更需重啟 new_main_v2.py 才生效（無 hot-reload）。
+
+## Review — 2026-07-10 在線標示五態 + 工具頁手動連線 (merge 5bb3f9a2)
+- 完成：/api/status lease 注入 + precheck 端點、dashboard 徽章五態、倉庫/工具/飛寵手動連線 + 連線前確認 modal、喚醒 SCHEDULER lease（借用者搶回/TOOL 等待/入睡釋放）。59 tests pass。
+- Deferred minors（final review）：
+  - 裝置 thread 崩潰（未經 run_sleep_cycle）會殘留 SCHEDULER lease，工具連線被拒直到 thread 重生入睡；低機率，之後可考慮 TTL。
+  - acquire_scheduler_lease 在 borrower→TOOL 瞬間切換的微觀 race 下可能 preempt 到 TOOL；視窗極小，接受。
+  - session_registry.py:122 註解仍提舊函式 wait_for_dashboard_ws_release（該檔本批禁改）。
+  - ws_session TOOL label 目前固定「工具」，之後可讓各工具頁傳有意義 label（倉庫/裝飾升級）。
+- 需重啟 new_main_v2.py 生效（Phase 5 + control panel）。
