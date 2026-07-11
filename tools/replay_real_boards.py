@@ -23,11 +23,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from miner.planning.smart_planner import plan_smart
+from miner.final_v1 import plan_final_v1
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 
 # v2 removed 2026-06-05; v5 removed 2026-06-18 (lowest score at real 3.6% density).
-PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4}
+PLANNERS = {"v1": plan_smart, "v3": plan_v3, "v4": plan_v4,
+            "final_v1": plan_final_v1}
 
 SYMBOL_TO_LABEL = {
     ".": "empty",
@@ -88,16 +90,18 @@ def main():
         boards = boards[: args.limit]
     print(f"Replaying {len(boards)} real boards | inv bomb={args.bomb} "
           f"drill={args.drill} shovels={args.shovels}")
-    print("=" * 92)
+    print("=" * 108)
     print(f"{'planner':8s} {'boards':>7s} {'empty':>7s} {'empty%':>7s} "
-          f"{'ms_mean':>8s} {'ms_p99':>8s} {'ms_max':>8s} {'>300ms':>7s}")
-    print("-" * 92)
+          f"{'ms_mean':>8s} {'ms_p95':>8s} {'ms_p99':>8s} {'ms_max':>8s} "
+          f"{'>250ms':>7s} {'>300ms':>7s}")
+    print("-" * 108)
 
     for name in args.planners.split(","):
         fn = PLANNERS[name]
         empty = 0
         times = []
-        over = 0
+        over250 = 0
+        over300 = 0
         for grid in boards:
             board = [row[:] for row in grid]
             t0 = time.perf_counter()
@@ -109,18 +113,21 @@ def main():
                 continue
             dt = (time.perf_counter() - t0) * 1000.0
             times.append(dt)
+            if dt > 250:
+                over250 += 1
             if dt > 300:
-                over += 1
+                over300 += 1
             if not (plan.get("steps") or []):
                 empty += 1
         if not times:
             print(f"{name:8s}  (no boards)")
             continue
         ts = sorted(times)
+        p95 = ts[min(len(ts) - 1, int(len(ts) * 0.95))]
         p99 = ts[min(len(ts) - 1, int(len(ts) * 0.99))]
         print(f"{name:8s} {len(times):7d} {empty:7d} "
               f"{100*empty/len(times):6.2f}% {statistics.mean(times):8.3f} "
-              f"{p99:8.3f} {max(times):8.3f} {over:7d}")
+              f"{p95:8.3f} {p99:8.3f} {max(times):8.3f} {over250:7d} {over300:7d}")
 
 
 if __name__ == "__main__":

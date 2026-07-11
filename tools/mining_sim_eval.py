@@ -45,6 +45,7 @@ from miner.v3.board import (
     promote_after_dig,
 )
 from miner.planning.smart_planner import plan_smart
+from miner.final_v1 import plan_final_v1
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 
@@ -59,6 +60,7 @@ PLANNERS = {
     "v1": _call_smart,
     "v3": plan_v3,
     "v4": plan_v4,
+    "final_v1": plan_final_v1,
 }
 
 ROWS = 7
@@ -106,6 +108,7 @@ class SimStats:
     drills_earned: int = 0
     # Keyed by completed vein size (1..5), not square area -- veins are irregular.
     clusters_completed: Dict[int, int] = field(default_factory=dict)
+    lost_pits: int = 0      # uncollected pit cells scrolled out with their cluster
 
 
 class MiningSim:
@@ -138,6 +141,13 @@ class MiningSim:
     def get_board(self) -> List[List[str]]:
         """Return a deep copy of the visible 7×6 window."""
         return [list(self.tape[self.viewport + i]) for i in range(ROWS)]
+
+    def get_known_board(self, rows: int = 7) -> List[List[str]]:
+        """Read-only copy of the visible window extended with known tape rows
+        below (models the WS 21-row static-terrain reconstruction)."""
+        limit = max(ROWS, min(21, int(rows)))
+        end = min(len(self.tape), self.viewport + limit)
+        return [list(self.tape[index]) for index in range(self.viewport, end)]
 
     def is_over(self) -> bool:
         return all(self.inv[k] <= 0 for k in self.inv)
@@ -423,6 +433,7 @@ class MiningSim:
         for cluster in self.clusters:
             lost = any(r < self.viewport for (r, _) in cluster.cells)
             if lost:
+                self.stats.lost_pits += len(cluster.cells)
                 for pos in cluster.cells:
                     self.cell_to_cluster.pop(pos, None)
             else:
@@ -451,6 +462,7 @@ def play_one_game(
     starting_inv: Optional[Dict[str, int]] = None,
     planner: str = "v4",
     action_budget: Optional[int] = None,
+    known_rows: int = 7,
 ) -> Dict[str, Any]:
     """Play one game with the given planner.
 
@@ -472,8 +484,10 @@ def play_one_game(
     iter_count = 0
     plan_calls = 0
     plan_total_ms = 0.0
+    plan_times_ms: List[float] = []
     empty_plan_count = 0
     fallback_count = 0
+    rejected_count = 0
     actions_taken = 0
     pit_density_samples: List[float] = []
 
@@ -488,12 +502,25 @@ def play_one_game(
         pit_density_samples.append(pit_in_view / (ROWS * COLS))
         plan_calls += 1
         t0 = time.perf_counter()
-        plan = plan_fn(
-            board,
-            shovels=float(sim.inv["pickaxe"]),
-            items={"drill": sim.inv["drill"], "bomb": sim.inv["bomb"]},
-        )
-        plan_total_ms += (time.perf_counter() - t0) * 1000.0
+        if planner == "final_v1":
+            # 21 列已知盤只給 final_v1（比較「WS 已知視野整合」的增益）；
+            # 其他 planner 維持 7 列可見盤 = 生產基準。
+            plan_board = sim.get_known_board(known_rows)
+            plan = plan_fn(
+                plan_board,
+                shovels=float(sim.inv["pickaxe"]),
+                items={"drill": sim.inv["drill"], "bomb": sim.inv["bomb"]},
+                visible_rows=ROWS,
+            )
+        else:
+            plan = plan_fn(
+                board,
+                shovels=float(sim.inv["pickaxe"]),
+                items={"drill": sim.inv["drill"], "bomb": sim.inv["bomb"]},
+            )
+        plan_ms = (time.perf_counter() - t0) * 1000.0
+        plan_total_ms += plan_ms
+        plan_times_ms.append(plan_ms)
 
         steps = plan.get("steps") or []
         if not steps:
@@ -517,6 +544,7 @@ def play_one_game(
         for step in steps:
             res = sim.apply_step(step)
             if not res["ok"]:
+                rejected_count += 1
                 break
             actions_taken += 1
             if action_budget is not None and actions_taken >= action_budget:
@@ -548,8 +576,14 @@ def play_one_game(
         "actions": actions_taken,
         "plan_calls": plan_calls,
         "plan_avg_ms": (plan_total_ms / plan_calls) if plan_calls else 0.0,
+        "plan_times_ms": plan_times_ms,
         "empty_plan": empty_plan_count > 0,
         "fallbacks": fallback_count,
+        "rejected": rejected_count,
+        "lost_pits": sim.stats.lost_pits,
+        "unfinished_clusters": sum(
+            1 for c in sim.clusters if 0 < len(c.cells) < c.total
+        ),
         "clusters": dict(sim.stats.clusters_completed),
         "wasted_partial": wasted_partial,
         "standing_pit_density": (
@@ -566,7 +600,7 @@ def main():
     parser.add_argument("--log-every", type=int, default=0)
     parser.add_argument(
         "--planner",
-        choices=["v1", "v3", "v4"],
+        choices=["v1", "v3", "v4", "final_v1"],
         default="v1",
         help="which planner to evaluate (v1=plan_smart)",
     )
