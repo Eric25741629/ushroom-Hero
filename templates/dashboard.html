@@ -1793,6 +1793,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         <div class="checkbox-group" style="border:none; border-radius:0; margin-top:4px;">
           <label class="checkbox-item"><input type="checkbox" id="chkRealPhone"><b>實機模式（顯示恢復按鈕）</b></label>
           <label class="checkbox-item" title="戰鬥/每日任務都完成後，該裝置改用純 WS，不再喚醒瀏覽器（省資源）。WS 失敗會自動改開瀏覽器。"><input type="checkbox" id="chkSkipBrowserWhenDone">做完客戶端任務後純 WS 掛機（僅「h5＋WS」方案有效）</label>
+          <label class="checkbox-item" title="每次挖礦記錄盤面/動作/庫存到 logs/<裝置>/mining_map/，可用 tools/replay_mining_map.py 回放並重建累積地圖。預設開。"><input type="checkbox" id="chkMiningMapRecord">記錄挖礦地圖（供回放，mining_map_record）</label>
         </div>
 
       </details>
@@ -4439,6 +4440,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         document.getElementById('chkSkipBrowserWhenDone').checked = config.skip_browser_when_all_done === true;
 
+        // 預設開：只有明確 false 才不勾（缺鍵的舊設定視為記錄）。
+        document.getElementById('chkMiningMapRecord').checked = config.mining_map_record !== false;
+
         document.getElementById('editOnlineInterval').value = config.online_check_interval || 5;
 
         document.getElementById('editLampInterval').value = config.lamp_check_interval || 2;
@@ -4623,6 +4627,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
 
         mining_shadow_planner_version: (document.getElementById('editMiningShadowPlanner') || {}).value || '',
+
+        mining_map_record: document.getElementById('chkMiningMapRecord').checked,
 
         wanshen_rounds: parseInt(document.getElementById('editWanshenRounds').value || '8', 10),
 

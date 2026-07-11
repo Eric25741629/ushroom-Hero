@@ -92,6 +92,10 @@ class LogPaths:
         return cls.device_root(device_id) / "action_trace"
 
     @classmethod
+    def mining_map_dir(cls, device_id: str) -> Path:
+        return cls.device_root(device_id) / "mining_map"
+
+    @classmethod
     def system_log(cls, name: str) -> Path:
         return cls.ROOT / "system" / f"{name}.log"
 
@@ -142,6 +146,9 @@ class _ScopedLogPaths:
 
     def action_trace_dir(self, device_id: str) -> Path:
         return self.device_root(device_id) / "action_trace"
+
+    def mining_map_dir(self, device_id: str) -> Path:
+        return self.device_root(device_id) / "mining_map"
 
     def system_log(self, name: str) -> Path:
         return self.ROOT / "system" / f"{name}.log"
