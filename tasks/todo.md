@@ -1116,3 +1116,19 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - [x] T3 驗收完成並 merge main（99c6afdf）：ADB 等鎬池 score +11%、WS 21列 +2.4% 且鏟耗 -49%、
       replay 2618 面 max 172ms 全達標；WS 7列 -3.6%。預設維持 v1，final_v1 建議只給 WS 裝置 opt-in。
       詳見 docs/superpowers/plans/2026-07-11-final-v1-mining-planner.md 尾段。
+
+## 2026-07-12 final_v1 效率大改 + 地圖回放（orchestration plan）
+
+主 session（Fable）只做方向/規劃/審查；實作全派 Opus subagents。
+
+### Stream A：final_v1 綜合效率（pit/eq 與 pits 同時贏 v1）
+- [x] 提案 A（產出分級道具成本 + parity tie-break）— 已實作，30 局快掃**不過**（step 口徑 pits 崩跌 49.3 vs 64.0）
+- [ ] 收 codex 設計討論 + ITEM_LOW_YIELD_COST 響應曲線 + 7/21 列視野診斷
+- [ ] 主 session 定案機制（候選：action-cost 項 / v1 挖掘骨幹+道具覆蓋層 / pull 權重修正）
+- [ ] 派 Opus 實作 + 掃描，離線驗收（WS21 step、ADB plan、replay 延遲）
+- [ ] 驗收通過 → 5556/5560 CDP 實機驗證（使用者指示：離線先過才能實機）
+
+### Stream B：每帳號挖礦地圖完整記錄 + 回放（Task #7）
+- [ ] 主 session 寫 mini-spec（JSONL 格式/路徑/rotation/dashboard 開關）
+- [ ] codex 平行審 spec；Opus 在獨立 worktree（自 67a7f611 分支）實作 recorder + CLI 回放 + 開關
+- [ ] 主 session 審 diff + 複跑測試 → merge
