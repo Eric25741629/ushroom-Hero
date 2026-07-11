@@ -498,3 +498,11 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
 - Bash 指令字串裡出現「bare pytest」等字樣會誤觸 check_pytest hook（它掃整條命令列），prompt 措辭避開裸 "pytest" 字面。
 - CC Switch proxy 回報額度用盡 ≠ 全部 key 用盡：cc-switch.db providers 表有各 key，直接打 `{base}/v1/usage` 查餘額挑活的；直連時改 ~/.codex/config.toml base_url + auth.json（CC Switch 切 provider 會覆寫，留 .bak）。
 - PowerShell 傳多行 python -c 會炸引號：一律寫 scratchpad script 檔再執行。
+
+## 2026-07-12 background session 接手前先查 worktree/branch
+- 症狀：新 background session 看不到前一個 session 的對話，直接平行重做了 harness 對齊，
+  其實成果已在 `.worktrees/final-v1-redesign` branch 上（3 commits）。
+- 規則：接手任何「上次還在做」的任務，先 `git worktree list` + `git log --all --since` 查
+  有無既有 branch/worktree，再翻 `~/.claude/projects/<slug>/*.jsonl` 對話逐字稿確認進度。
+- 規則：評估 planner/演算法前先確認 benchmark 口徑與實機一致（執行模型、預算單位、統計配對），
+  口徑錯的結論一律作廢——2026-07-11 final_v1 gate 失敗即量測失真。

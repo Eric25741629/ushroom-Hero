@@ -1103,3 +1103,16 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
   - session_registry.py:122 註解仍提舊函式 wait_for_dashboard_ws_release（該檔本批禁改）。
   - ws_session TOOL label 目前固定「工具」，之後可讓各工具頁傳有意義 label（倉庫/裝飾升級）。
 - 需重啟 new_main_v2.py 生效（Phase 5 + control panel）。
+
+## Plan — 2026-07-11 final_v1 重設計：模擬測試對齊實機 (background session)
+
+> 起因：final_v1 驗收 gate 失敗（e8c67f47），但量測口徑與實機不符：
+> sim iteration 對 v1 = 整份 plan 爆發執行、對 final_v1 = 單步；time-cap 截斷成 38/26 局
+> 卻用總和統計；實機 WS 其實所有 planner 都是每步重 plan。
+
+- [x] T1 harness 對齊實機（前 session d7926707 已做 exec_mode step/plan + 鎬子歸零終止；
+      本 session 609b0a87 補 run_paired seed 配對 + 每局平均統計）
+- [x] T2 final_v1 重設計（前 session 67c75718/c0f13949 位能場+調權重；本 session 70c8e834 多步輸出）
+- [x] T3 驗收完成並 merge main（99c6afdf）：ADB 等鎬池 score +11%、WS 21列 +2.4% 且鏟耗 -49%、
+      replay 2618 面 max 172ms 全達標；WS 7列 -3.6%。預設維持 v1，final_v1 建議只給 WS 裝置 opt-in。
+      詳見 docs/superpowers/plans/2026-07-11-final-v1-mining-planner.md 尾段。
