@@ -33,7 +33,9 @@ _ENTRY_BUTTONS = ("確定", "進入遊戲", "繼續", "開始", "點擊")
 _ENTRY_MAX_STEPS = 14
 _DEFAULT_ROUNDS = 8           # 每週開局(局)數;一局=爬到第一次失敗→結束本局(使用者 2026-06-29 定案、可調)
 _BATTLE_MAX_STAGES = 80       # 單局安全上限關數;rogue 一局有限(終會失敗或逾時)
-_BATTLE_SETTLE_TRIES = 9      # 每關等結算輪詢次數 (~2s/次 ≈ 18s)
+_STAGE_RESULT_TIMEOUT = 150   # 每關等結果窗總上限(秒);慢速裝置戰鬥 >1min(2026-07-11 手機截圖實證),
+                              # 等待期間見戰鬥中『跳過』鈕即點擊快轉
+_SETTLE_PRE_TRIES = 20        # 結算前收掉殘留戰鬥/結果窗的嘗試上限
 _RUN_MAX_SECONDS = 15 * 60    # 單局戰鬥迴圈上限 15 分鐘(使用者 2026-06-21)
 # 退出/結算座標(540x960 邏輯座標;OCR 會把紅箭頭誤判成 'G' 故用座標)。實測值，必要時 live 微調。
 _EXIT_ARROW_XY = (510, 920)   # 右下紅色離開箭頭(RogueMainView/view/btnClose)
@@ -89,17 +91,37 @@ def _battle_loop(d, max_stages: int = _BATTLE_MAX_STAGES) -> int:
             logger.info("[萬神試煉] 達單局 15 分鐘上限 → 停止 (已 %d 關)", fought)
             break
         if not img_tools.click_str_by_server(d, "開始挑戰"):
+            if img_tools.check_str_in_region(d, "跳過"):
+                # 結果窗逾時後其實還在戰鬥中(2026-07-11 手機 0/8 根因) → 點『跳過』快轉續等
+                logger.info("[萬神試煉] 無『開始挑戰』但仍在戰鬥中 → 點『跳過』續等")
+                img_tools.click_str_by_server(d, "跳過")
+                time.sleep(3.0)
+                continue
+            lost = img_tools.check_str_in_region(d, "失敗")
+            if img_tools.click_str_by_server(d, "點擊"):
+                # 殘留結果窗(結果窗晚出) → 關掉;敗了照樣結束本局,勝了續打
+                time.sleep(1.5)
+                if lost:
+                    logger.info("[萬神試煉] 殘留結果窗偵測到『失敗』→ 本局結束 (已 %d 關)", fought)
+                    break
+                continue
             logger.info("[萬神試煉] 找不到『開始挑戰』→ 本局結束/不能打 (已 %d 關)", fought)
             break
         fought += 1
         logger.info("[萬神試煉] 第 %d 關 開始挑戰", fought)
-        # 戰鬥由 client 自動跑；出現『點擊…關閉』提示即代表結果窗已出(勝敗同一種窗，只差橫幅顏色)
-        for _ in range(_BATTLE_SETTLE_TRIES):
+        # 戰鬥由 client 即時跑(慢速裝置 >1min);戰鬥中見『跳過』即點快轉。
+        # 出現『點擊…關閉』提示即代表結果窗已出(勝敗同一種窗，只差橫幅顏色)
+        stage_start = time.monotonic()
+        while time.monotonic() - stage_start < _STAGE_RESULT_TIMEOUT:
             time.sleep(2.0)
             if img_tools.check_str_in_region(d, "點擊"):
                 break
+            if img_tools.check_str_in_region(d, "跳過"):
+                img_tools.click_str_by_server(d, "跳過")
         else:
-            logger.warning("[萬神試煉] 第 %d 關等結果窗逾時，仍嘗試關閉續判", fought)
+            logger.warning(
+                "[萬神試煉] 第 %d 關 %ds 內未見結果窗，仍嘗試關閉續判", fought, _STAGE_RESULT_TIMEOUT
+            )
         lost = img_tools.check_str_in_region(d, "失敗")  # 失敗過濾器(藍色失敗橫幅)
         img_tools.click_str_by_server(d, "點擊")          # 關掉結果窗(勝敗皆點)
         time.sleep(1.5)
@@ -128,6 +150,17 @@ def _settle_run(d) -> bool:
     是 2026-06-30『沒有正常退出』的根因);無法確認回主面板就回 False,讓上層中止 + 回主頁。
     退出序/等待取自 2026-06-21/06-29 live recon(對話框轉場需 4-5s)。
     """
+    # 保險:結果窗逾時路徑可能殘留 戰鬥畫面/結果窗,先收掉再點紅箭頭(否則對話框開不出來)
+    for _ in range(_SETTLE_PRE_TRIES):
+        if img_tools.check_str_in_region(d, "跳過"):
+            img_tools.click_str_by_server(d, "跳過")
+            time.sleep(2.0)
+            continue
+        if img_tools.check_str_in_region(d, "點擊"):
+            img_tools.click_str_by_server(d, "點擊")
+            time.sleep(1.5)
+            continue
+        break
     d.click(*_EXIT_ARROW_XY)  # 右下紅箭頭(OCR 誤判成 'G'，用座標)
     time.sleep(_DIALOG_WAIT)
     if not img_tools.check_str_in_region(d, "結束本局"):
