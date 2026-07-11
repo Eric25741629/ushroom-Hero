@@ -2177,8 +2177,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     <div class="modal" style="max-width:420px" onclick="event.stopPropagation()">
       <div class="modal-header">新增遊戲帳號</div>
       <div class="form-group">
-        <label>裝置名稱（英數字、底線、連字號）</label>
+        <label>裝置 ID（英數字、底線、連字號）</label>
         <input type="text" id="regDeviceId" class="form-control" placeholder="例如: web-001">
+      </div>
+      <div class="form-group">
+        <label>顯示名稱（可中文，留空同裝置 ID）</label>
+        <input type="text" id="regName" class="form-control" placeholder="例如: 寶兒">
       </div>
       <div class="form-group">
         <label>遊戲網址（留空使用預設）</label>
@@ -3581,6 +3585,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
     function openRegisterModal() {
       document.getElementById('regDeviceId').value = '';
+      document.getElementById('regName').value = '';
       document.getElementById('regWebUrl').value = '';
       const box = document.getElementById('regStatusBox');
       box.style.display = 'none';
@@ -3602,7 +3607,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
     async function registerAccount() {
       const deviceId = document.getElementById('regDeviceId').value.trim();
-      if (!deviceId) { alert('請輸入裝置名稱'); return; }
+      if (!deviceId) { alert('請輸入裝置 ID'); return; }
+      const regName = document.getElementById('regName').value.trim();
       const webUrl = document.getElementById('regWebUrl').value.trim() || '';
       document.getElementById('regSubmitBtn').disabled = true;
       _showRegStatus('送出中...');
@@ -3610,7 +3616,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         const resp = await fetch('/api/devices/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ device_id: deviceId, web_url: webUrl })
+          body: JSON.stringify({ device_id: deviceId, name: regName, web_url: webUrl })
         });
         const result = await resp.json();
         if (!resp.ok) {
