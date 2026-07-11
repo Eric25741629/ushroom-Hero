@@ -115,7 +115,9 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
         tuple(tuple(row) for row in work), state.pickaxes,
         state.bombs - bomb_delta, state.drills - drill_delta,
         SearchUsage(state.usage.shovels, state.usage.bombs + bomb_delta, state.usage.drills + drill_delta),
-        state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + len(changed),
+        # path bonus 以「動作」計，不以「格」計：炸彈開 8 格空地不是 8 倍路徑價值，
+        # 每格計會讓道具靠 path+partial credit 刷分（實測 scarce 盤道具 44 vs v1 27 卻完成更少）
+        state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
         lost, best_dist,
     )
 
@@ -133,6 +135,15 @@ def plan_final_v1(
     started = time.perf_counter()
     config = PlannerConfig(time_budget_ms=float(time_budget_ms))
     work = normalize_board(board)
+    # 大盤（21 列已知地形）自適應縮 beam：單子節點展開成本 ~3x，
+    # 收窄寬度把 p99 壓回預算內，深度不減
+    if len(work) > 10:
+        config = PlannerConfig(
+            max_depth=config.max_depth,
+            beam_width=14,
+            branch_width=8,
+            time_budget_ms=config.time_budget_ms,
+        )
     for row, col in known_pits or ():
         r, c = int(row), int(col)
         if (
@@ -141,7 +152,9 @@ def plan_final_v1(
             and work[r][c] in {"dirt", "rock", "unreachable_dirt", "unreachable_rock"}
         ):
             work[r][c] = "unreachable_pit"
-    deadline = started + config.time_budget_ms / 1000.0
+    # 15% 安全邊際：deadline 檢查粒度 + GC/OS 抖動實測可超時 ~30-80ms，
+    # 提早收手讓回報的 max 仍守住呼叫端的 time_budget_ms
+    deadline = started + (config.time_budget_ms * 0.85) / 1000.0
     valid = set(valid_targets) if valid_targets is not None else None
     clusters = pit_clusters(work)
     # 位能場：距最近礦坑的挖掘成本（無礦時指向底緣 = 最低成本下潛）。

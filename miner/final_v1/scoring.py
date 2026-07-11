@@ -22,11 +22,20 @@ Coordinate = Tuple[int, int]
 PIT_VALUE = 10.0
 CLUSTER_COMPLETION_MULTIPLIER = 2.0
 SHOVEL_COST = 1.0
+# 3.0 為掃描後最優（4.0/5.0 全 regime 總產出掉到 v1 之下）；道具會從完成
+# cluster 回補，過度節省 = 白白少挖
 ITEM_COST = {"bomb": 3.0, "drill": 3.0}
-LOST_PIT_PENALTY = 40.0
+# 略高於單顆礦值：優先收礦，但不為守一顆 row0 礦犧牲 4+ 步進度
+# （40 時實測 scarce 盤 depth 172 vs v1 220，過度保護反而總產出更低）
+LOST_PIT_PENALTY = 12.0
 UNFINISHED_CLUSTER_PENALTY = 4.0
-DESCENT_BONUS = 0.5
+# 每捲動一列的期望收益：3.6% 密度 x 6 col x 礦值 10 ≈ 2.16，取 2.0。
+# 0.5 時搜尋嚴重低估下潛、寧可橫向啃礦（trace: horiz 138 vs v1 32）
+DESCENT_BONUS = 2.0
 PATH_BONUS = 0.25
+# 真實獎勵是「整簇挖完才發」：半挖格只給部分信用維持梯度，完成時跳到全值。
+# 1.0 時規劃器會橫向啃單格就走（拿不到完成獎勵、又犧牲下潛）
+PARTIAL_PIT_CREDIT = 0.3
 PIT_PULL = 0.8  # 每縮短 1 單位挖掘成本距離的獎勵；< SHOVEL_COST，只影響排序不鼓勵空挖
 
 
@@ -97,15 +106,17 @@ def evaluate_state(
 ) -> ScoreBreakdown:
     if clusters is None:
         clusters = pit_clusters(original_board)
-    collected = 0
+    collected_value = 0.0
     completed_bonus = 0.0
     unfinished = 0
     for cluster in clusters:
         remaining = sum(1 for r, c in cluster if r < len(board) and is_pit(board[r][c]))
-        collected += len(cluster) - remaining
+        dug = len(cluster) - remaining
         if remaining == 0:
+            collected_value += len(cluster) * PIT_VALUE
             completed_bonus += len(cluster) * max(0, len(cluster) - 1) * CLUSTER_COMPLETION_MULTIPLIER
-        elif remaining < len(cluster):
+        elif dug:
+            collected_value += dug * PIT_VALUE * PARTIAL_PIT_CREDIT
             unfinished += 1
     if lost_pits is None:
         # 舊介面相容：沒有精確損失數時以原始盤 row0 估計
@@ -115,7 +126,7 @@ def evaluate_state(
         row_zero_lost = int(lost_pits)
     return ScoreBreakdown(
         cluster_gain=completed_bonus,
-        pit_gain=collected * PIT_VALUE,
+        pit_gain=collected_value,
         shovel_cost=usage.shovels * SHOVEL_COST,
         item_cost=(usage.bombs + usage.drills) * ITEM_COST["bomb"],
         lost_pit_penalty=row_zero_lost * LOST_PIT_PENALTY,

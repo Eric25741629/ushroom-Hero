@@ -34,6 +34,8 @@ class PlannerAction:
 
 @dataclass(frozen=True)
 class PlannerConfig:
+    # 6/32/12 實測優於 10/24/8（深而窄反而 stuck+unfin 上升）；
+    # 遠礦視野由位能場（PIT_PULL）補，不靠加深
     max_depth: int = 6
     beam_width: int = 32
     branch_width: int = 12
