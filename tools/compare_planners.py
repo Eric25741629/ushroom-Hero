@@ -18,7 +18,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from mining_sim_eval import PLANNERS, play_one_game
 
 
-def run(planner, runs, seed, max_iter, inv, time_cap_s, known_rows=7):
+def run(planner, runs, seed, max_iter, inv, time_cap_s, known_rows=7,
+        exec_mode="plan"):
     rows = []
     t0 = time.perf_counter()
     for i in range(runs):
@@ -27,6 +28,7 @@ def run(planner, runs, seed, max_iter, inv, time_cap_s, known_rows=7):
         r = play_one_game(
             seed=seed + i, max_iter=max_iter, planner=planner,
             starting_inv=dict(inv), known_rows=known_rows,
+            exec_mode=exec_mode,
         )
         rows.append(r)
     return rows
@@ -98,12 +100,19 @@ def main():
                     help="known board rows fed to final_v1 only (v1/v3/v4 stay on 7)")
     ap.add_argument("--equal-item-weight", type=float, default=3.0,
                     help="item weight in pits/(shovel + w*items)")
+    ap.add_argument("--exec-mode", choices=["plan", "step"], default="plan",
+                    help="plan=整份 plan 連發 (CNN 語意); step=一次一步再重規劃 (WS 語意)")
+    ap.add_argument("--pickaxe", type=int, default=None,
+                    help="starting pickaxes (真實 session ~100-350; 預設 1000)")
     args = ap.parse_args()
 
     inv = ({"pickaxe": 1000, "bomb": 10, "drill": 10} if args.scarce
            else {"pickaxe": 1000, "bomb": 600, "drill": 60})
+    if args.pickaxe is not None:
+        inv["pickaxe"] = args.pickaxe
     print(f"inventory: {inv}  | seeds {args.seed}..{args.seed+args.runs-1} "
-          f"| max_iter={args.max_iter} | known_rows={args.known_rows} (final_v1 only)")
+          f"| max_iter={args.max_iter} | known_rows={args.known_rows} (final_v1 only) "
+          f"| exec_mode={args.exec_mode}")
     print("=" * 150)
     hdr = (f"{'planner':8s} {'n':>3s} {'score':>8s} {'pits':>6s} {'clus':>5s} {'depth':>6s} "
            f"{'cost':>7s} {'pit/sh':>7s} {'pit/it':>7s} {'pit/eq':>7s} "
@@ -113,7 +122,7 @@ def main():
     print("-" * 150)
     for p in args.planners.split(","):
         rows = run(p, args.runs, args.seed, args.max_iter, inv, args.time_cap,
-                   known_rows=args.known_rows)
+                   known_rows=args.known_rows, exec_mode=args.exec_mode)
         a = agg(rows, equal_item_weight=args.equal_item_weight)
         if a is None:
             print(f"{p:8s}  (no runs completed within time cap)")

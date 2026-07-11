@@ -463,6 +463,7 @@ def play_one_game(
     planner: str = "v4",
     action_budget: Optional[int] = None,
     known_rows: int = 7,
+    exec_mode: str = "plan",
 ) -> Dict[str, Any]:
     """Play one game with the given planner.
 
@@ -470,6 +471,13 @@ def play_one_game(
     item uses), modelling the real ~6-minute session wall clock where each
     action costs ~7-8 s (screenshot + classify + execute). ``None`` = uncapped
     (original behaviour, terminates on shovel/item exhaustion or ``max_iter``).
+
+    ``exec_mode`` aligns the sim with the two real runtimes:
+      "plan" — 每次規劃執行整份 plan（CNN/ADB `execute_plan_steps` 語意）。
+      "step" — 每次規劃只執行第一步再重規劃（WS `mine_until_pickaxe_empty`
+               supervised loop 語意；生產 WS 的 v1 也是一次一步）。
+    兩種真實 runtime 都是「鎬子用完就停」（CNN `while count >= 1` / WS
+    `pickaxe_empty`），所以本函式在鎬子歸零時終止，不再等所有道具耗盡。
     """
     plan_fn = PLANNERS[planner]
     rng = random.Random(seed) if seed is not None else random.Random()
@@ -493,6 +501,10 @@ def play_one_game(
 
     while iter_count < max_iter:
         if sim.is_over():
+            break
+        # 真實 runtime 是鎬子綁定：CNN 迴圈 `while count >= 1`、WS 挖到
+        # pickaxe_empty 即停（道具剩著也不會繼續）。
+        if sim.inv["pickaxe"] <= 0:
             break
         if action_budget is not None and actions_taken >= action_budget:
             break
@@ -523,6 +535,8 @@ def play_one_game(
         plan_times_ms.append(plan_ms)
 
         steps = plan.get("steps") or []
+        if exec_mode == "step":
+            steps = steps[:1]
         if not steps:
             # Production-realistic fallback: an empty plan is not fatal live
             # (the bot re-plans). Dig the cheapest reachable frontier cell so

@@ -49,3 +49,20 @@ def test_get_known_board_is_a_readonly_slice_of_the_tape():
     assert len(known[0]) == 6
     known[0][0] = "mutated"
     assert sim.tape[sim.viewport][0] != "mutated"
+
+def test_step_mode_executes_at_most_one_action_per_plan_call():
+    r = mining_sim_eval.play_one_game(
+        seed=5, max_iter=60, planner="v1",
+        starting_inv={"pickaxe": 20, "bomb": 0, "drill": 0},
+        exec_mode="step",
+    )
+    assert r["actions"] <= r["plan_calls"]
+
+
+def test_pickaxe_zero_terminates_immediately_even_with_items_left():
+    r = mining_sim_eval.play_one_game(
+        seed=5, max_iter=50, planner="v1",
+        starting_inv={"pickaxe": 0, "bomb": 50, "drill": 50},
+    )
+    assert r["iters"] == 0
+    assert r["actions"] == 0
