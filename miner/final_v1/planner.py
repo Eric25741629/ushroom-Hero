@@ -171,7 +171,8 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
     changed = [(r, c) for r, c in affected if not is_reachable_air(work[r][c])]
     if not changed:
         return None  # no-op item branch is never free progress
-    # 本次使用實際命中的礦坑格數決定成本分級（bomb 含已知畫面外，見 _affected）
+    # 本次命中礦坑格數供 branch 配額分類（_branch_category）用，不進成本
+    # （bomb 含已知畫面外，見 _affected）
     pits_hit = sum(1 for r, c in changed if is_pit(work[r][c]))
     for r, c in changed:
         open_cell(work, r, c)
