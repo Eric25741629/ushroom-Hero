@@ -726,7 +726,9 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
 
         # --- cluster scan (抱團掃描) or normal grab loop -------------------------
         cs_cfg = cp.parse_cluster_scan(plan_cfg)
-        if grabbing and cs_cfg.enabled and cluster_server_id:
+        # Run 抱團掃描 on ANY in-window park (not only the 09:59 grab): an 8h
+        # auto-collect re-park mid-day should also cluster with same-server cars.
+        if cs_cfg.enabled and cluster_server_id:
             # Poll lots for same-server allies before parking.
             _null, collect = carpark.read_cross_null_and_collect(client)
             parkable_src = collect or _null
@@ -752,16 +754,23 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                 while time_fn() < scan_deadline:
                     scan_round += 1
                     ranked = carpark.scan_lots_same_server(
-                        client, scan_parkable, cluster_server_id, cs_cfg.levels)
+                        client, scan_parkable, cluster_server_id, cs_cfg.levels,
+                        priority_levels=cs_cfg.priority_levels)
+                    # ranked is priority-range-first, so pick the first lot that
+                    # clears min_allies (a priority lot at the threshold beats a
+                    # higher-ally non-priority lot).
+                    pick = next((r for r in ranked
+                                 if r[1] >= cs_cfg.min_allies), None)
                     if ranked:
+                        show = pick or ranked[0]
                         logger.info(
                             "ws_token carpark: %s cluster_scan round %d: "
                             "best 鉑銀%d allies=%d (need>=%d)",
                             device, scan_round,
-                            carpark.silver_ceng_to_level(ranked[0][0].ceng),
-                            ranked[0][1], cs_cfg.min_allies)
-                    if ranked and ranked[0][1] >= cs_cfg.min_allies:
-                        best_lot, best_cnt = ranked[0]
+                            carpark.silver_ceng_to_level(show[0].ceng),
+                            show[1], cs_cfg.min_allies)
+                    if pick is not None:
+                        best_lot, best_cnt = pick
                         detail = carpark.read_lot(
                             client, type=carpark.CROSS_TYPE,
                             master_id=best_lot.master_id, ceng=best_lot.ceng)
@@ -807,13 +816,16 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                                        target=target_n))
                 return out
 
-            # Timeout — fallback: park at fallback_level via auto_select
+            # Timeout — no 抱團 lot within the scan window. Still keep a car
+            # deployed: park via the tiered auto-select, preferring the device's
+            # priority range (不再綁定車位9; falls back to full scan levels).
+            fallback_levels = tuple(cs_cfg.priority_levels or cs_cfg.levels)
             logger.info("ws_token carpark: %s cluster_scan timeout %ds, "
-                        "fallback 鉑銀%d",
-                        device, cs_cfg.duration, cs_cfg.fallback_level)
+                        "fallback prefer 鉑銀%s",
+                        device, cs_cfg.duration, list(fallback_levels))
             res = carpark.auto_select_and_park_many(
                 client, count=need,
-                prefer_levels=(cs_cfg.fallback_level,),
+                prefer_levels=fallback_levels,
                 cluster_server_id=cluster_server_id,
                 cluster_min=cluster_min,
                 allow_low_noncluster=allow_low,
