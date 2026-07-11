@@ -315,3 +315,16 @@ def test_control_button_lock_and_animation_helpers_present():
     assert "btn-pending" in html
     assert "@keyframes btnSpin" in html
     assert "@keyframes btnPulse" in html
+
+def test_dashboard_exposes_final_v1_primary_and_shadow_controls():
+    html = _html()
+    assert '<option value="final_v1">' in html
+    assert 'id="editMiningShadowPlanner"' in html
+    assert "config.mining_shadow_planner_version" in html
+    assert "mining_shadow_planner_version:" in html
+    assert '<option value="">關閉（預設）</option>' in html
+
+
+def test_dashboard_primary_allowlist_includes_final_v1():
+    html = _html()
+    assert "['v1','v3','v4','final_v1'].includes(plannerVer)" in html

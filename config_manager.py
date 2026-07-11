@@ -80,7 +80,8 @@ DEFAULT_DEVICE_CONFIG = {
     "lamp_check_interval": 2,  # 開神燈/點金的間隔時間 (小時)
     "lamp_duration_sec": 300,  # 每次開神燈任務執行的總秒數
     "mining_duration_min": 6,  # 挖礦任務持續時間 (分鐘)
-    "mining_planner_version": "v1",  # v1 / v3 / v4 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
+    "mining_planner_version": "v1",  # v1 / v3 / v4 / final_v1 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
+    "mining_shadow_planner_version": "",  # 空字串=關閉；目前只允許 final_v1（只計算與記錄，不執行）
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "wanshen_rounds": 8,  # 萬神試煉每週開局(局)數;一局=爬到第一次失敗→結束本局→重進(可調 1-50)
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
@@ -228,6 +229,7 @@ class DeviceConfig:
     lamp_duration_sec: int = 300
     mining_duration_min: int = 6
     mining_planner_version: str = "v1"
+    mining_shadow_planner_version: str = ""
     mining_save_samples: bool = False
     wanshen_rounds: int = 8
 
@@ -1153,8 +1155,14 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         )
         current["mining_planner_version"] = _enum_str(
             current.get("mining_planner_version", DEFAULT_DEVICE_CONFIG["mining_planner_version"]),
-            {"v1", "v3", "v4"},
+            {"v1", "v3", "v4", "final_v1"},
             "v1",
+        )
+        current["mining_shadow_planner_version"] = _enum_str(
+            current.get("mining_shadow_planner_version",
+                        DEFAULT_DEVICE_CONFIG["mining_shadow_planner_version"]),
+            {"", "final_v1"},
+            "",
         )
         current["mining_save_samples"] = _to_bool(
             current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
