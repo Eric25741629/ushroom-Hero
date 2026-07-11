@@ -590,6 +590,12 @@ def mine_until_pickaxe_empty(
     limit = max(0, int(max_steps))
     stopped_reason = "max_steps"
 
+    # dug-pit 身分側表：單次挖礦 session 生命週期（此函式每次執行建一個），跨輪記憶
+    # 「先前為活躍礦坑、後續 count==0」的格。WS 21 列重建把已採集礦坑投影成 empty，
+    # 只有把這些格補標回 dug_pit，final_v1 的 pit_clusters 才能在實機保住 cluster 身分。
+    # 僅 final_v1 消費此資訊，故只在 final_v1 分支傳入 plan()（v1 路徑 dug_pit 無作用）。
+    dug_pit_session = mining_adapter.DugPitTracker()
+
     current_board = mining.read_board(client, timeout=timeout)
     _log_board_trace(current_board, inventory, phase="initial", step_index=0, log=_wlog)
     for _idx in range(limit):
@@ -608,6 +614,7 @@ def mine_until_pickaxe_empty(
         _plan_kwargs: Dict[str, Any] = {}
         if is_final_v1:
             _plan_kwargs["planner_version"] = "final_v1"
+            _plan_kwargs["session"] = dug_pit_session
         if shadow_planner_version:
             _plan_kwargs["shadow_planner_version"] = shadow_planner_version
         plan_result = mining_adapter.plan(
