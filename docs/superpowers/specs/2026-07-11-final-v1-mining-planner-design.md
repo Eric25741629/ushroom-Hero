@@ -12,7 +12,7 @@
 - 炸彈與鑽頭使用相同的基礎道具成本，選擇只由實際覆蓋、收礦、開路與漏礦風險決定。
 - 炸彈可以計算已知畫面外收益；鑽頭與鎬子只計算目前畫面內效果。
 - 目標是用較低資源成本完成更多礦坑 cluster，不是單看深度、單格收益或某一種道具利用率。
-- WS 道具現量以 `0x0402` 的 `9800004/9800001/9800009` item push 為準，不使用 `0x0c01.max_num`。
+- WS 道具現量以 `ws_token/mining.py` 的 `InventoryTracker` 為準：登入後先以 `0x0401` 全庫存 snapshot（`seed_from_query`）seed——登入並不會可靠推送 `9800004` 快照（2026-06-16 fc 實測，見 `docs/protocol/MINING_SCHEMA.md`）——之後由 `0x0402` delta push（evt `9800001` 消耗 / `9800009` 獲得 / `9800004` 單件更新）維持。不使用 `0x0c01.max_num`（那是鎬子上限 cap，不是現量）。item id：鎬子 4001 / 鑽頭 4002 / 炸彈 4003。
 
 ## 架構
 
@@ -70,12 +70,12 @@ plan_final_v1(
 
 ## WS 資料流
 
-1. `ws_phase` 讀取裝置的 `mining_planner_version` 與 shadow 設定並傳給 WS mining runner。
+1. `ws_phase` 讀取裝置的 `mining_planner_version` 與 shadow 設定並傳給 WS mining runner。這是新接線：現行 `ws_phase` 只把 `ws_token.mining` 子設定傳給 runner，WS planner 寫死 v1 `plan_smart`（`ws_token/mining_adapter.py`），需把兩個設定值一路串到 `mining_supervised` / `mining_adapter`。
 2. `mining_adapter` 使用 `area_info`、`mine_terrain.terrain_at`、raw blocks、actives 與 `map_pits` 建立已知高盤。
 3. `final_v1` 只允許目前 server-valid frontier/air placement 作為第一步。
 4. 執行一個 `0x0c03` 動作。
 5. 等待目標、影響範圍、baseline 或對應庫存發生可歸因變化。
-6. 從 `InventoryTracker` 重新取得鎬子、炸彈與鑽頭真值，包含 consume 與 gain，再進入下一輪規劃。
+6. 從 `InventoryTracker`（`0x0401` seed + `0x0402` delta）重新取得鎬子、炸彈與鑽頭真值，包含 consume 與 gain，再進入下一輪規劃。
 
 21 列重建不完整時，先退回 7 列 `final_v1`；若 final_v1 無合法步驟，再使用既有 v1 fallback。WS mining 整體失敗時仍保留現行 CNN/Oracle 降級路徑。
 
@@ -96,6 +96,11 @@ plan_final_v1(
 
 全域預設與既有裝置設定均維持 `v1`，不自動切換。
 
+落地點（缺一即設定會被吃掉或救不回）：
+
+- `config_manager.py` 的 `_enum_str` 白名單目前只允許 `{"v1", "v3", "v4"}`（`config_manager.py:1154-1158`），必須加入 `final_v1`，否則設定會被正規化回 `v1`。
+- Dashboard 前端：`templates/dashboard.html` 的 `editMiningPlanner` 下拉需新增 `final_v1` 選項（本專案慣例：任何 opt-in 功能必須有 dashboard 控制項，不可 config-only）。
+
 ### Shadow 規劃器
 
 新增 `mining_shadow_planner_version`：
@@ -103,6 +108,7 @@ plan_final_v1(
 - 預設為空字串，完全不增加規劃工作。
 - 設為 `final_v1` 時，同一盤面額外計算 final_v1，但實際執行仍由 `mining_planner_version` 決定。
 - shadow 失敗或逾時只記錄，不得中斷主流程。
+- 同樣需要 dashboard 控制項（與主規劃器下拉並列），不可 config-only。
 
 ## Telemetry
 
@@ -128,6 +134,7 @@ plan_final_v1(
 - 每步後 tracker 的 consume/gain 會覆蓋本地估計。
 - 目標未變且庫存未變時不得誤判成功。
 - 7 列資料缺失與 shadow 例外能安全降級。
+- `final_v1` 能通過 `config_manager` 正規化 round-trip（不被 `_enum_str` 吃回 `v1`）。
 
 ### 離線 A/B
 
