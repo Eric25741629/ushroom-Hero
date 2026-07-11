@@ -87,6 +87,62 @@ def test_empty_final_v1_result_falls_back_to_v1(monkeypatch):
     assert result["planner_source"] == "v1_fallback"
 
 
+def test_final_v1_called_with_exec_profile_step(monkeypatch):
+    # WS 監督迴圈每步重規劃取第一步 = step 語意；adapter 必須以 exec_profile="step"
+    # 呼叫 plan_final_v1，才會啟用 KPI 對齊的 action_cost。
+    captured = {}
+    monkeypatch.setattr(
+        "miner.final_v1.plan_final_v1",
+        lambda *args, **kwargs: captured.update(kwargs) or {
+            "steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}],
+        },
+    )
+    board = _board(actives=[10103])
+    mining_adapter.plan(board, {"pickaxe": 5}, planner_version="final_v1")
+    assert captured["exec_profile"] == "step"
+
+
+def test_dug_pit_tracker_marks_prior_pit_now_collected(monkeypatch):
+    top = mining_adapter.viewport_top_depth(105)
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+    session = mining_adapter.DugPitTracker()
+
+    # 前輪：某格是活躍礦坑（count>0）。
+    live_pit = _block(top + 2, 3, mining.TERRAIN_PIT, count=1, is_reward=1)
+    session.observe(_board(actives=[live_pit.block_id], blocks=[live_pit]))
+
+    # 本輪：同格已採集（count==0）＋ 一格從未是礦坑的空氣（count==0 dirt）。
+    dug = _block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)
+    never_pit_air = _block(top + 1, 5, mining.TERRAIN_DIRT, count=0)
+    board2 = _board(blocks=[dug, never_pit_air])
+    session.observe(board2)
+
+    projected = mining_adapter.build_final_v1_input(board2, {})
+    session.annotate(projected["board"], top)
+
+    assert projected["board"][2][2] == "dug_pit"   # 曾為礦坑、今空 → dug_pit
+    assert projected["board"][1][4] == "empty"      # 從未是礦坑 → 保持 empty
+
+
+def test_new_session_clears_dug_pit_side_table(monkeypatch):
+    top = mining_adapter.viewport_top_depth(105)
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+
+    # 第一個 session 觀測到 count>0 → count==0 的轉態。
+    s1 = mining_adapter.DugPitTracker()
+    s1.observe(_board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=1, is_reward=1)]))
+    s1.observe(_board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)]))
+
+    # 新 session：面對相同的 count==0 盤面，沒有跨輪記憶 → 不標 dug_pit。
+    s2 = mining_adapter.DugPitTracker()
+    board = _board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)])
+    s2.observe(board)
+    projected = mining_adapter.build_final_v1_input(board, {})
+    s2.annotate(projected["board"], top)
+
+    assert projected["board"][2][2] == "empty"
+
+
 def test_shadow_exception_is_logged_in_result_and_primary_plan_survives(monkeypatch):
     expected_primary_steps = [{"type": "dig", "target": (1, 2), "step_cost": 1}]
 

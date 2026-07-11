@@ -163,6 +163,61 @@ def has_uncollected_row0_pit(mine_board: Any) -> bool:
     return False
 
 
+class DugPitTracker:
+    """跨輪 dug-pit 身分側表；只在單次挖礦 session 內有效（新實例即清空）。
+
+    WS 21 列重建把已採集礦坑（count==0）一律投影成 "empty"（見 ``_block_label``），
+    因此「半挖礦簇」的 cluster 身分在實機會遺失——sim/CNN 盤面有 "dug_pit" 標籤、WS 沒有。
+    本側表以**絕對座標** (depth, col) 記住「曾觀測為活躍礦坑（count>0）、之後變 count==0」
+    的格；``annotate`` 時把重建盤面上仍是空氣標籤的該格改標 "dug_pit"，補回 final_v1
+    ``pit_clusters`` 在「未採集礦坑 ∪ dug_pit」聯集上所需的 cluster 身分。
+
+    絕對座標與 21 列重建同一座標系（depth = viewport_top_depth(baseline) + row），
+    因此捲動改變 baseline 時側表仍對齊：``annotate`` 用當前盤面的 ``top_depth`` 反算 row。
+    容錯優先：座標對不上、欄位缺失一律靜默跳過，絕不影響主流程。
+    """
+
+    def __init__(self) -> None:
+        self._seen_pits: set[tuple[int, int]] = set()  # 曾觀測 count>0 的礦坑絕對座標
+        self._dug_pits: set[tuple[int, int]] = set()   # count>0 → count==0 轉態（已採集）
+
+    def observe(self, mine_board: Any) -> None:
+        """記錄本輪盤面：活躍礦坑進 seen；先前 seen、本輪 count==0 進 dug 側表。"""
+        for blk in getattr(mine_board, "blocks", []) or []:
+            try:
+                depth = int(getattr(blk, "y", 0) or 0)
+                col = int(getattr(blk, "x", 0) or 0) - 1  # x 為 1-indexed
+                count = int(getattr(blk, "count", 0) or 0)
+                config_id = int(getattr(blk, "config_id", 0) or 0)
+                is_reward = int(getattr(blk, "is_reward", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            pos = (depth, col)
+            pit_like = config_id == TERRAIN_PIT or bool(is_reward)
+            if count > 0:
+                if pit_like:
+                    self._seen_pits.add(pos)
+            elif pos in self._seen_pits:
+                # 先前活躍、本輪已採集 → 記入 dug-pit 側表（身分保存用）。
+                self._dug_pits.add(pos)
+
+    def annotate(self, board: List[List[str]], top_depth: int) -> None:
+        """把重建盤面上「側表已記、當前仍為空氣標籤」的格改標 "dug_pit"（就地）。"""
+        try:
+            top = int(top_depth)
+        except (TypeError, ValueError):
+            return
+        for (depth, col) in self._dug_pits:
+            row = depth - top
+            if not (0 <= row < len(board)):
+                continue
+            cells = board[row]
+            if not (0 <= col < len(cells)):
+                continue
+            if cells[col] in _AIR_LABELS:
+                cells[col] = "dug_pit"
+
+
 def _project_board(mine_board: Any) -> tuple[List[List[str]], list[dict], list[dict]]:
     """Project WS board into planner grid and record what the projection drops.
 
@@ -667,12 +722,15 @@ def _run_named_planner(name: str, projected: Dict[str, Any], inventory: Dict[str
     """主/shadow 共用同一份 projected 輸入，確保可比較。"""
     if name == "final_v1":
         import miner.final_v1 as _final_v1  # lazy: keep import cost off module load
+        # WS 監督迴圈每步重規劃、只執行第一步 = step 語意；exec_profile="step"
+        # 開 KPI 對齊的 action_cost（rho_action），使道具/挖步成本與實際單步執行對齊。
         return _final_v1.plan_final_v1(
             projected["board"],
             float(inventory.get("pickaxe", 0)),
             {"bomb": int(inventory.get("bomb", 0)), "drill": int(inventory.get("drill", 0))},
             visible_rows=projected["visible_rows"],
             valid_targets=projected["valid_targets"],
+            exec_profile="step",
         )
     from miner.planning.smart_planner import plan_smart  # lazy
     return plan_smart(
@@ -710,7 +768,8 @@ def _run_shadow_planner(name: str, projected: Dict[str, Any],
 
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
          *, max_depth: Optional[int] = None, planner_version: str = "v1",
-         shadow_planner_version: str = "") -> Dict[str, Any]:
+         shadow_planner_version: str = "",
+         session: Optional["DugPitTracker"] = None) -> Dict[str, Any]:
     """Build the grid, run the planner (v1 A*), and translate steps back to block_ids.
 
     Returns the plan dict augmented with:
@@ -730,6 +789,18 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
     # 主/shadow 共用同一份 projected 輸入（前 7 列 == board_to_grid，v1 不變）。
     # 預設 v1（whole-board A*，sim 3711 vs v4 1649）；`max_depth` 是 v4-only 旋鈕，忽略。
     projected = build_final_v1_input(mine_board, inv)
+
+    # dug-pit 身分側表（跨輪、單 session）：呼叫端傳入 session 時，先觀測本輪轉態，
+    # 再把已採集礦坑（WS 重建為 empty）補標回重建盤面，讓 final_v1 的 pit_clusters
+    # 在「未採集礦坑 ∪ dug_pit」聯集上保住 cluster 身分。純附加、失敗不影響主流程。
+    if session is not None:
+        try:
+            session.observe(mine_board)
+            top_depth = viewport_top_depth(int(getattr(mine_board, "baseline", 0) or 0))
+            session.annotate(projected["board"], top_depth)
+        except Exception:  # pragma: no cover - 容錯：側表異常不得中斷挖礦
+            logger.debug("ws mining dug-pit session annotate skipped", exc_info=True)
+
     grid = [row[:] for row in projected["board"][:GRID_ROWS]]
 
     name = str(planner_version or "v1").strip().lower()
