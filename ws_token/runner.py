@@ -1034,7 +1034,11 @@ def _run_mining(client, tracker: mining.InventoryTracker, *,
                 mining_config: Optional[dict],
                 device: Optional[str] = None,
                 should_abort: Optional[Callable[[], bool]] = None) -> dict:
-    """挖礦 opt-in: 用 0x0402 庫存現量，一步一刷新，鎬子用完即停。"""
+    """挖礦 opt-in: 用 0x0401 seed + 0x0402 庫存現量，一步一刷新，鎬子用完即停。
+
+    planner 預設維持 v1；`planner_version` / `shadow_planner_version` 由 ws_phase
+    自裝置層設定注入 mining 子設定。
+    """
     cfg = mining_config or {}
     return mining_supervised.mine_until_pickaxe_empty(
         client,
@@ -1046,6 +1050,8 @@ def _run_mining(client, tracker: mining.InventoryTracker, *,
         timeout=cfg.get("timeout"),
         max_depth=cfg.get("max_depth"),
         device_id=device,
+        planner_version=str(cfg.get("planner_version") or "v1").strip().lower(),
+        shadow_planner_version=str(cfg.get("shadow_planner_version") or "").strip().lower(),
     )
 
 

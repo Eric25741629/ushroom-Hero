@@ -156,6 +156,46 @@ def test_device_config_skip_browser_when_all_done_defaults_false():
     assert DeviceConfig(skip_browser_when_all_done=True).get("skip_browser_when_all_done") is True
 
 
+def test_final_v1_planner_survives_update_normalization(tmp_path, monkeypatch):
+    """final_v1 必須通過 _enum_str 白名單，不可被正規化吃回 v1。"""
+    import json
+    import config_manager
+
+    path = tmp_path / "bot_config.json"
+    path.write_text(json.dumps({"devices": {"dev": {}}}), encoding="utf-8")
+    monkeypatch.setattr(config_manager, "CONFIG_FILE", str(path))
+    config_manager.update_device_config("dev", {
+        "mining_planner_version": "final_v1",
+        "mining_shadow_planner_version": "final_v1",
+    })
+    saved = json.loads(path.read_text(encoding="utf-8"))["devices"]["dev"]
+    assert saved["mining_planner_version"] == "final_v1"
+    assert saved["mining_shadow_planner_version"] == "final_v1"
+
+
+def test_invalid_planner_values_normalize_to_defaults(tmp_path, monkeypatch):
+    import json
+    import config_manager
+
+    path = tmp_path / "bot_config.json"
+    path.write_text(json.dumps({"devices": {"dev": {}}}), encoding="utf-8")
+    monkeypatch.setattr(config_manager, "CONFIG_FILE", str(path))
+    config_manager.update_device_config("dev", {
+        "mining_planner_version": "v99",
+        "mining_shadow_planner_version": "v4",  # shadow 目前只允許 final_v1
+    })
+    saved = json.loads(path.read_text(encoding="utf-8"))["devices"]["dev"]
+    assert saved["mining_planner_version"] == "v1"
+    assert saved["mining_shadow_planner_version"] == ""
+
+
+def test_shadow_planner_defaults_off():
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+
+    assert DEFAULT_DEVICE_CONFIG["mining_shadow_planner_version"] == ""
+    assert DeviceConfig().mining_shadow_planner_version == ""
+
+
 def test_device_config_all_defaults_match_default_dict():
     """DeviceConfig defaults must match DEFAULT_DEVICE_CONFIG for the fields it covers."""
     from config_manager import DeviceConfig, DEFAULT_DEVICE_CONFIG
@@ -167,7 +207,8 @@ def test_device_config_all_defaults_match_default_dict():
         "web_screenshot_method", "web_reload_after_goto", "enable_farm", "enable_arena", "enable_mining",
         "enable_dungeon", "is_real_phone", "keep_screen_on", "screenshot_debug",
         "online_check_interval_sec", "lamp_check_interval", "lamp_duration_sec",
-        "mining_duration_min", "mining_planner_version", "mining_save_samples",
+        "mining_duration_min", "mining_planner_version", "mining_shadow_planner_version",
+        "mining_save_samples",
         "sleep_min_hours", "sleep_max_hours",
     ]:
         assert cfg.get(key) == DEFAULT_DEVICE_CONFIG[key], (

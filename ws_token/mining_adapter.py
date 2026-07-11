@@ -307,6 +307,91 @@ def board_projection_trace(mine_board: Any) -> Dict[str, Any]:
     }
 
 
+_AIR_LABELS = ("empty", "void", "dug_pit")  # mirror miner.v3.board air set, import-free
+
+# 延伸列（畫面外）一律降級為 unreachable_*：鎬/鑽第一步不可及，僅供炸彈/評分計收益
+_OFFSCREEN_LABEL = {
+    EMPTY: "unreachable_empty",
+    "reachable_pit": "unreachable_pit",
+    "dirt": "unreachable_dirt",
+    "rock": "unreachable_rock",
+}
+
+MAX_KNOWN_ROWS = 21  # area_info 覆蓋 current ±1 area ≈ 21 列
+
+
+def _known_row_count(top_depth: int, area_info: Dict[int, int]) -> int:
+    """靜態地形可完整重建的列數（7..21）；遇第一個缺列即截斷，不猜地形。"""
+    known_rows = GRID_ROWS
+    for row in range(GRID_ROWS, MAX_KNOWN_ROWS):
+        depth = top_depth + row
+        if any(mine_terrain.terrain_at(depth, col, area_info) is None
+               for col in range(GRID_COLS)):
+            break
+        known_rows = row + 1
+    return known_rows
+
+
+def build_final_v1_input(mine_board: Any, inventory: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    """final_v1 規劃輸入：可變高度已知盤 + action-aware server-valid 第一步目標。
+
+    前 7 列直接沿用 ``board_to_grid``（其 reachability/occlusion 行為維持權威）；
+    第 8 列起由靜態模板重建、raw blocks（畫面外未採集礦坑）覆寫，全部標
+    unreachable_*。``valid_targets``：actives 上仍可挖的格 = dig；count==0 的
+    air 格 = bomb/drill 放置點（與 ``_pits_and_air`` 同一 live 驗證規則）。
+    """
+    baseline = int(getattr(mine_board, "baseline", 0) or 0)
+    top_depth = viewport_top_depth(baseline)
+    area_info = dict(getattr(mine_board, "area_info", {}) or {})
+    rows = _known_row_count(top_depth, area_info)
+    projection_mode = "known_terrain" if rows > GRID_ROWS else "visible_only"
+    board = board_to_grid(mine_board)
+
+    for row in range(GRID_ROWS, rows):
+        board.append(["unreachable_dirt"] * GRID_COLS)
+        for col in range(GRID_COLS):
+            terrain = mine_terrain.terrain_at(top_depth + row, col, area_info)
+            if terrain == mine_terrain.AIR:
+                board[row][col] = "unreachable_empty"
+            elif terrain == mine_terrain.STONE:
+                board[row][col] = "unreachable_rock"
+
+    block_by_id = {int(blk.block_id): blk for blk in (getattr(mine_board, "blocks", None) or [])}
+    for blk in block_by_id.values():
+        row, col = int(blk.y) - top_depth, int(blk.x) - 1
+        if GRID_ROWS <= row < rows and 0 <= col < GRID_COLS:
+            label = _block_label(blk.config_id, blk.is_reward, blk.count)
+            board[row][col] = _OFFSCREEN_LABEL.get(label, label)
+
+    valid_targets = set()
+    for block_id in (getattr(mine_board, "actives", None) or []):
+        try:
+            cell_id = int(block_id)
+        except (TypeError, ValueError):
+            continue
+        depth, game_col = divmod(cell_id, 100)
+        row, col = depth - top_depth, game_col - 1
+        blk = block_by_id.get(cell_id)
+        if 0 <= row < GRID_ROWS and 0 <= col < GRID_COLS and (
+                blk is None or int(getattr(blk, "count", 0) or 0) > 0):
+            valid_targets.add(("dig", "pickaxe", row, col))
+    for blk in block_by_id.values():
+        row, col = int(blk.y) - top_depth, int(blk.x) - 1
+        if (0 <= row < GRID_ROWS and 0 <= col < GRID_COLS
+                and int(getattr(blk, "count", 0) or 0) == 0
+                and board[row][col] in _AIR_LABELS):
+            valid_targets.add(("use", "bomb", row, col))
+            valid_targets.add(("use", "drill", row, col))
+
+    return {
+        "board": board,
+        "visible_rows": GRID_ROWS,
+        "valid_targets": valid_targets,
+        "projection_mode": projection_mode,
+        "top_depth": top_depth,
+    }
+
+
 def grid_pos_to_block_id(baseline: int, row: int, col: int) -> int:
     """Inverse of the grid mapping: (row, col) -> WS block_id.
 
@@ -578,8 +663,54 @@ def prop_step_for_pit(board: Any, inventory: Optional[Dict[str, int]], *,
     return combo[0] if combo else None
 
 
+def _run_named_planner(name: str, projected: Dict[str, Any], inventory: Dict[str, int]) -> Dict[str, Any]:
+    """主/shadow 共用同一份 projected 輸入，確保可比較。"""
+    if name == "final_v1":
+        import miner.final_v1 as _final_v1  # lazy: keep import cost off module load
+        return _final_v1.plan_final_v1(
+            projected["board"],
+            float(inventory.get("pickaxe", 0)),
+            {"bomb": int(inventory.get("bomb", 0)), "drill": int(inventory.get("drill", 0))},
+            visible_rows=projected["visible_rows"],
+            valid_targets=projected["valid_targets"],
+        )
+    from miner.planning.smart_planner import plan_smart  # lazy
+    return plan_smart(
+        projected["board"][:GRID_ROWS],
+        shovels=float(inventory.get("pickaxe", 0)),
+        items={
+            "bomb": int(inventory.get("bomb", 0)),
+            "drill": int(inventory.get("drill", 0)),
+        },
+    )
+
+
+def _run_shadow_planner(name: str, projected: Dict[str, Any],
+                        inventory: Dict[str, int]) -> Dict[str, Any]:
+    """Shadow 只計算與記錄，失敗/逾時不得影響主流程。"""
+    import time as _time
+    started = _time.perf_counter()
+    try:
+        result = _run_named_planner(name, projected, inventory)
+        return {
+            "ok": True,
+            "planner": name,
+            "first_step": (result.get("steps") or [None])[0],
+            "score_breakdown": result.get("score_breakdown"),
+            "elapsed_ms": (_time.perf_counter() - started) * 1000.0,
+            "budget_hit": result.get("budget_hit", False),
+        }
+    except Exception as exc:
+        logger.warning("ws mining shadow planner %s failed: %s", name, exc)
+        return {
+            "ok": False, "planner": name, "error": str(exc),
+            "elapsed_ms": (_time.perf_counter() - started) * 1000.0,
+        }
+
+
 def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
-         *, max_depth: Optional[int] = None) -> Dict[str, Any]:
+         *, max_depth: Optional[int] = None, planner_version: str = "v1",
+         shadow_planner_version: str = "") -> Dict[str, Any]:
     """Build the grid, run the planner (v1 A*), and translate steps back to block_ids.
 
     Returns the plan dict augmented with:
@@ -591,21 +722,36 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
         not trigger hold_floor.
       ``grid``: the raw 7×6 planner grid, used by the fallback in _select_dig_step.
     """
-    from miner.planning.smart_planner import plan_smart  # lazy: keep import cost off module load
     from miner.v3.board import floor7_open
     from miner.v3.actions import apply_dig, apply_bomb, apply_drill
 
-    grid = board_to_grid(mine_board)
-    inv = inventory or {}
-    shovels = float(inv.get("pickaxe", 0))
-    items = {"drill": int(inv.get("drill", 0)), "bomb": int(inv.get("bomb", 0))}
+    inv = dict(inventory or {})
 
-    # WS path uses v1 (whole-board A*) — highest score/shovel-efficiency on the
-    # canonical sim (v1 3711 vs v4 1649). v1 used to return an EMPTY plan once
-    # pits were gone + floor7 open (why WS previously used v4); that's fixed by
-    # smart_planner's descent-dig fallback, so v1 now keeps emitting a no_pit
-    # progress dig like v4 did. `max_depth` is a v4-only DFS knob — ignored here.
-    result = plan_smart(grid, shovels=shovels, items=items)
+    # 主/shadow 共用同一份 projected 輸入（前 7 列 == board_to_grid，v1 不變）。
+    # 預設 v1（whole-board A*，sim 3711 vs v4 1649）；`max_depth` 是 v4-only 旋鈕，忽略。
+    projected = build_final_v1_input(mine_board, inv)
+    grid = [row[:] for row in projected["board"][:GRID_ROWS]]
+
+    name = str(planner_version or "v1").strip().lower()
+    planner_source = "planner"
+    if name == "final_v1":
+        try:
+            result = _run_named_planner("final_v1", projected, inv)
+        except Exception as exc:
+            logger.warning("ws mining final_v1 planner failed, fallback to v1: %s", exc)
+            result = None
+        if not result or not result.get("steps"):
+            result = _run_named_planner("v1", projected, inv)
+            planner_source = "v1_fallback"
+    else:
+        name = "v1"
+        result = _run_named_planner("v1", projected, inv)
+    result["planner_name"] = name
+    result["planner_source"] = planner_source
+
+    shadow_name = str(shadow_planner_version or "").strip().lower()
+    if shadow_name:
+        result["shadow"] = _run_shadow_planner(shadow_name, projected, inv)
 
     baseline = int(getattr(mine_board, "baseline", 0) or 0)
     ws_steps: List[Dict[str, Any]] = []

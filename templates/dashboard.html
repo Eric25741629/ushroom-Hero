@@ -1758,6 +1758,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
               <option value="v4">v4（3-step bounded，道具稀缺感知）</option>
 
+              <option value="final_v1">final_v1（cluster／資源效率，實驗）</option>
+
+            </select>
+
+          </div>
+
+          <div style="grid-column:span 2;">
+
+            <label style="font-size:0.8em;">挖礦 Shadow 規劃器（只計算與記錄，不執行）</label>
+
+            <select id="editMiningShadowPlanner" class="form-control">
+
+              <option value="">關閉（預設）</option>
+
+              <option value="final_v1">final_v1（影子評估）</option>
+
             </select>
 
           </div>
@@ -4443,7 +4459,17 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           const plannerVer = String(config.mining_planner_version || 'v1').toLowerCase();
 
-          plannerSelect.value = ['v1','v3','v4'].includes(plannerVer) ? plannerVer : 'v1';
+          plannerSelect.value = ['v1','v3','v4','final_v1'].includes(plannerVer) ? plannerVer : 'v1';
+
+        }
+
+        const shadowPlannerSelect = document.getElementById('editMiningShadowPlanner');
+
+        if (shadowPlannerSelect) {
+
+          const shadowVer = String(config.mining_shadow_planner_version || '').toLowerCase();
+
+          shadowPlannerSelect.value = shadowVer === 'final_v1' ? 'final_v1' : '';
 
         }
 
@@ -4595,6 +4621,8 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         sleep_max_hours: parseFloat(document.getElementById('editSleepMaxHours').value || '1'),
 
         mining_planner_version: (document.getElementById('editMiningPlanner') || {}).value || 'v1',
+
+        mining_shadow_planner_version: (document.getElementById('editMiningShadowPlanner') || {}).value || '',
 
         wanshen_rounds: parseInt(document.getElementById('editWanshenRounds').value || '8', 10),
 

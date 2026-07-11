@@ -588,6 +588,15 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _mining = device_cfg.get("ws_token_mining")
         if _mining is not None:
             cfg = {**cfg, "mining": _mining}
+    # 裝置層主/shadow planner 設定注入 mining 子設定（copy-on-write：DeviceConfig
+    # 與巢狀 dict 可能被 cache，不可就地改）。預設 v1 / shadow 關閉。
+    _mining_cfg = dict(cfg.get("mining") or {})
+    if _mining_cfg:
+        _mining_cfg["planner_version"] = str(
+            device_cfg.get("mining_planner_version", "v1") or "v1").strip().lower()
+        _mining_cfg["shadow_planner_version"] = str(
+            device_cfg.get("mining_shadow_planner_version", "") or "").strip().lower()
+        cfg = {**cfg, "mining": _mining_cfg}
     # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
     # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
     # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。
