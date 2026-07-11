@@ -1705,4 +1705,13 @@ If verification exposes a defect, return to the task that owns that file, add a 
 - 優於 v1：`pits/shovel` 0.4 vs 0.3；lost_pits 0 vs 18；半挖 cluster 1 vs 7；stuck/rejected 均 0。
 - 已知比較偏差：sim 以 iteration 計數，final_v1 每輪只出一步（rolling horizon），同 max_iter 下動作數天然較少；加上 time-cap 只完成 38/26 局。省鏟與漏礦保護是真實優勢，總產出差距部分是量測口徑造成——若要重新評估，應以 action_budget 對齊而非 max_iter。
 
+真實盤面 replay（`tools/replay_real_boards.py --glob "logs/*/miner.2026*.log"`，2618 面實機盤）：
+
+| planner | boards | empty% | ms_mean | p95 | p99 | max | >250ms |
+|---|---|---|---|---|---|---|---|
+| v1 | 2618 | 0.00% | 2.2 | 3.6 | 17.5 | 111.3 | 0 |
+| final_v1 | 2618 | 0.00% | 48.7 | 112.4 | 169.5 | 258.9 | 4 |
+
+真實盤面上 final_v1 空 plan 率 0%、p99 169ms 符合門檻；max 258.9ms 僅 4/2618 面微幅超過（sim 的 325ms 峰值來自 21 列大盤）。延遲面接近達標，主要缺口仍是總產出/綜合效率。
+
 **處置（依計畫規則，不調門檻）**：實作與 shadow 模式保留；`mining_planner_version` 全域與各裝置維持 v1；建議先在單台 WS 裝置開 `mining_shadow_planner_version=final_v1` 收集 telemetry，之後再議。
