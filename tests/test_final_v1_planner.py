@@ -92,3 +92,70 @@ def test_row_zero_pit_is_collected_before_scroll_progress():
     board[6][2] = "dirt"
     result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
     assert result["steps"][0]["target"] == (0, 1)
+
+
+def test_scroll_after_collecting_row0_pit_is_not_penalized():
+    """漏礦懲罰只算捲動當下 row0 仍未採集的礦：先收礦再捲動 = 0 損失。"""
+    from miner.final_v1.planner import _State, _apply
+    from miner.final_v1.types import PlannerAction, SearchUsage
+
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][1] = "reachable_pit"
+    for r in range(6):
+        board[r][2] = "empty"
+    board[6][2] = "dirt"
+    initial = _State(tuple(tuple(r) for r in board), 10.0, 0, 0,
+                     SearchUsage(), tuple(), False, 0)
+
+    collected = _apply(initial, PlannerAction("dig", "pickaxe", 0, 1), 7)
+    then_scrolled = _apply(collected, PlannerAction("dig", "pickaxe", 6, 2), 7)
+    assert then_scrolled.scrolled is True
+    assert then_scrolled.lost_pits == 0
+
+    scrolled_without_collect = _apply(initial, PlannerAction("dig", "pickaxe", 6, 2), 7)
+    assert scrolled_without_collect.scrolled is True
+    assert scrolled_without_collect.lost_pits == 1
+
+
+def test_digging_steers_toward_known_below_viewport_pit():
+    """位能導向：已知畫面外礦坑在 col4，第一步應沿 col4 往下挖，而非亂逛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(21)]
+    board[0][4] = "empty"
+    board[10][4] = "unreachable_pit"
+    result = plan_final_v1(board, 30, {"bomb": 0, "drill": 0}, visible_rows=7)
+    assert result["steps"][0]["target"] == (1, 4)
+
+
+def test_no_pit_board_steers_downward_not_sideways():
+    """無礦盤面：以最低成本往下推進（開 floor7），不做水平閒逛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    result = plan_final_v1(board, 30, {"bomb": 0, "drill": 0})
+    assert result["steps"][0]["target"] == (1, 0)
+
+
+def test_plan_returns_the_full_search_path_not_just_first_step():
+    """多步輸出：ADB 後端整批執行需要完整路徑，不能每步付一次截圖成本。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
+    assert len(result["steps"]) > 1
+    assert result["preview_steps"] == result["steps"]
+
+
+def test_step_costs_reflect_the_cell_state_when_each_step_executes():
+    """第 N 步的 step_cost 必須是該步當下格材質的成本（rock=更貴）。"""
+    from miner.v3.actions import dig_cost
+    # 全 rock 盤只留 col0 一條 dirt 通道、途中 (2,0) 是 rock：最省路徑
+    # 沿 col0 下挖，rock 那步的 step_cost 必須反映 rock 而非初始盤面推算
+    board = [["unreachable_rock"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    for r in range(1, 7):
+        board[r][0] = "unreachable_dirt"
+    board[2][0] = "unreachable_rock"
+    result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
+    steps = result["steps"]
+    assert len(steps) >= 2
+    by_target = {tuple(s["target"]): s["step_cost"] for s in steps}
+    assert by_target[(1, 0)] == float(dig_cost("dirt"))
+    assert by_target.get((2, 0), float(dig_cost("rock"))) == float(dig_cost("rock"))

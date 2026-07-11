@@ -34,6 +34,8 @@ class PlannerAction:
 
 @dataclass(frozen=True)
 class PlannerConfig:
+    # 6/32/12 實測優於 10/24/8（深而窄反而 stuck+unfin 上升）；
+    # 遠礦視野由位能場（PIT_PULL）補，不靠加深
     max_depth: int = 6
     beam_width: int = 32
     branch_width: int = 12
@@ -57,11 +59,13 @@ class ScoreBreakdown:
     unfinished_cluster_penalty: float = 0.0
     descent_bonus: float = 0.0
     path_bonus: float = 0.0
+    pull_bonus: float = 0.0
 
     @property
     def total(self) -> float:
         return (
             self.cluster_gain + self.pit_gain + self.descent_bonus + self.path_bonus
+            + self.pull_bonus
             - self.shovel_cost - self.item_cost
             - self.lost_pit_penalty - self.unfinished_cluster_penalty
         )
