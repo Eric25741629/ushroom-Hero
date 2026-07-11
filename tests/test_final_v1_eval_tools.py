@@ -66,3 +66,28 @@ def test_pickaxe_zero_terminates_immediately_even_with_items_left():
     )
     assert r["iters"] == 0
     assert r["actions"] == 0
+
+
+def test_aggregate_normalizes_counters_per_game():
+    def _row(clusters, lost):
+        return {
+            "stats": type("S", (), {
+                "score": 10, "pits": 4, "depth": 2, "cost": 2,
+                "bombs_used": 1, "drills_used": 0,
+                "clusters_completed": dict(clusters),
+            })(),
+            "plan_times_ms": [10.0],
+            "fallbacks": 0, "actions": 2, "empty_plan": False,
+            "rejected": 0, "lost_pits": lost, "unfinished_clusters": 0,
+        }
+    result = compare_planners.agg([_row({1: 2}, 4), _row({1: 4}, 0)])
+    assert result["clusters"] == 3.0  # (2+4)/2 局，每局平均
+    assert result["lost_pits"] == 2.0  # (4+0)/2 局
+
+
+def test_run_paired_keeps_all_planners_on_the_same_seed_set():
+    rows = compare_planners.run_paired(
+        ["v1", "v4"], 2, 5, 30, {"pickaxe": 15, "bomb": 0, "drill": 0},
+        time_cap_s=600.0,
+    )
+    assert len(rows["v1"]) == len(rows["v4"]) == 2
