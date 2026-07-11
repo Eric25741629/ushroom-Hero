@@ -57,11 +57,13 @@ class ScoreBreakdown:
     unfinished_cluster_penalty: float = 0.0
     descent_bonus: float = 0.0
     path_bonus: float = 0.0
+    pull_bonus: float = 0.0
 
     @property
     def total(self) -> float:
         return (
             self.cluster_gain + self.pit_gain + self.descent_bonus + self.path_bonus
+            + self.pull_bonus
             - self.shovel_cost - self.item_cost
             - self.lost_pit_penalty - self.unfinished_cluster_penalty
         )

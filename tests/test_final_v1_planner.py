@@ -92,3 +92,43 @@ def test_row_zero_pit_is_collected_before_scroll_progress():
     board[6][2] = "dirt"
     result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
     assert result["steps"][0]["target"] == (0, 1)
+
+
+def test_scroll_after_collecting_row0_pit_is_not_penalized():
+    """漏礦懲罰只算捲動當下 row0 仍未採集的礦：先收礦再捲動 = 0 損失。"""
+    from miner.final_v1.planner import _State, _apply
+    from miner.final_v1.types import PlannerAction, SearchUsage
+
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][1] = "reachable_pit"
+    for r in range(6):
+        board[r][2] = "empty"
+    board[6][2] = "dirt"
+    initial = _State(tuple(tuple(r) for r in board), 10.0, 0, 0,
+                     SearchUsage(), tuple(), False, 0)
+
+    collected = _apply(initial, PlannerAction("dig", "pickaxe", 0, 1), 7)
+    then_scrolled = _apply(collected, PlannerAction("dig", "pickaxe", 6, 2), 7)
+    assert then_scrolled.scrolled is True
+    assert then_scrolled.lost_pits == 0
+
+    scrolled_without_collect = _apply(initial, PlannerAction("dig", "pickaxe", 6, 2), 7)
+    assert scrolled_without_collect.scrolled is True
+    assert scrolled_without_collect.lost_pits == 1
+
+
+def test_digging_steers_toward_known_below_viewport_pit():
+    """位能導向：已知畫面外礦坑在 col4，第一步應沿 col4 往下挖，而非亂逛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(21)]
+    board[0][4] = "empty"
+    board[10][4] = "unreachable_pit"
+    result = plan_final_v1(board, 30, {"bomb": 0, "drill": 0}, visible_rows=7)
+    assert result["steps"][0]["target"] == (1, 4)
+
+
+def test_no_pit_board_steers_downward_not_sideways():
+    """無礦盤面：以最低成本往下推進（開 floor7），不做水平閒逛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    result = plan_final_v1(board, 30, {"bomb": 0, "drill": 0})
+    assert result["steps"][0]["target"] == (1, 0)

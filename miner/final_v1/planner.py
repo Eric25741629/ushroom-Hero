@@ -19,8 +19,10 @@ from miner.v3.board import (
     open_cell,
     promote_after_dig,
 )
-from miner.final_v1.scoring import evaluate_state, pit_clusters
+from miner.final_v1.scoring import evaluate_state, pit_clusters, pit_potential
 from miner.final_v1.types import ActionKey, PlannerAction, PlannerConfig, SearchUsage
+
+_INF = float("inf")
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,8 @@ class _State:
     path: Tuple[PlannerAction, ...]
     scrolled: bool = False
     opened_path_cells: int = 0
+    lost_pits: int = 0          # 捲動當下 row0 仍未採集的礦（精確歸因，可跨多次捲動累計）
+    best_dist: float = _INF     # 已挖開格中最小的位能（距最近礦坑的挖掘成本）
 
 
 def _candidate_actions(board, pickaxes, bombs, drills, visible_rows) -> List[PlannerAction]:
@@ -65,7 +69,14 @@ def _affected(action: PlannerAction, board, visible_rows) -> Set[Tuple[int, int]
     return {(action.row, action.col)}
 
 
-def _apply(state: _State, action: PlannerAction, visible_rows: int) -> Optional[_State]:
+def _lost_row0_pits(work: List[List[str]]) -> int:
+    """捲動當下 row0 仍未採集的礦坑數（is_pit 標籤 = 尚未挖開）。"""
+    from miner.v3.board import is_pit
+    return sum(1 for cell in work[0] if is_pit(cell))
+
+
+def _apply(state: _State, action: PlannerAction, visible_rows: int,
+           dist: Optional[Dict[Tuple[int, int], float]] = None) -> Optional[_State]:
     work = [list(row) for row in state.board]
     visible = work[:visible_rows]
     before_scroll_open = floor7_open(visible)
@@ -75,10 +86,15 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int) -> Optional[
             return None
         apply_dig(work, (action.row, action.col))
         scrolled = (not before_scroll_open) and floor7_open(work[:visible_rows])
+        lost = state.lost_pits + (_lost_row0_pits(work) if scrolled else 0)
+        best_dist = state.best_dist
+        if dist is not None:
+            best_dist = min(best_dist, dist.get((action.row, action.col), _INF))
         return _State(
             tuple(tuple(row) for row in work), state.pickaxes - cost, state.bombs, state.drills,
             SearchUsage(state.usage.shovels + cost, state.usage.bombs, state.usage.drills),
             state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
+            lost, best_dist,
         )
     affected = _affected(action, work, visible_rows)
     changed = [(r, c) for r, c in affected if not is_reachable_air(work[r][c])]
@@ -88,6 +104,11 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int) -> Optional[
         open_cell(work, r, c)
     promote_after_dig(work, changed)
     scrolled = (not before_scroll_open) and floor7_open(work[:visible_rows])
+    lost = state.lost_pits + (_lost_row0_pits(work) if scrolled else 0)
+    best_dist = state.best_dist
+    if dist is not None:
+        for pos in changed:
+            best_dist = min(best_dist, dist.get(pos, _INF))
     bomb_delta = 1 if action.item == "bomb" else 0
     drill_delta = 1 if action.item == "drill" else 0
     return _State(
@@ -95,6 +116,7 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int) -> Optional[
         state.bombs - bomb_delta, state.drills - drill_delta,
         SearchUsage(state.usage.shovels, state.usage.bombs + bomb_delta, state.usage.drills + drill_delta),
         state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + len(changed),
+        lost, best_dist,
     )
 
 
@@ -122,6 +144,21 @@ def plan_final_v1(
     deadline = started + config.time_budget_ms / 1000.0
     valid = set(valid_targets) if valid_targets is not None else None
     clusters = pit_clusters(work)
+    # 位能場：距最近礦坑的挖掘成本（無礦時指向底緣 = 最低成本下潛）。
+    # baseline = 根盤面可挖前緣的最小位能；挖到更低位能的格 = 朝礦實質推進。
+    dist = pit_potential(work)
+    baseline = _INF
+    for r in range(min(int(visible_rows), len(work))):
+        for c in range(len(work[r])):
+            if is_frontier_diggable(work, r, c):
+                d = dist.get((r, c), _INF)
+                if d < baseline:
+                    baseline = d
+
+    def _pull_progress(best_dist: float) -> float:
+        if baseline == _INF or best_dist == _INF:
+            return 0.0
+        return max(0.0, baseline - best_dist)
     initial = _State(
         tuple(tuple(row) for row in work), float(shovels),
         int((items or {}).get("bomb", 0)), int((items or {}).get("drill", 0)),
@@ -153,8 +190,13 @@ def plan_final_v1(
             if not state.path and valid is not None:
                 actions = [action for action in actions if action.key in valid]
             ranked = []
-            for action in actions:
-                child = _apply(state, action, visible_rows)
+            for action_index, action in enumerate(actions):
+                # 細粒度 deadline：單一狀態展開也可能數十 ms（21 列大盤），
+                # 只在 state 邊界檢查會超時數十 ms（實測 max 325ms 根因）
+                if (action_index & 7) == 0 and time.perf_counter() >= deadline:
+                    budget_hit = True
+                    break
+                child = _apply(state, action, visible_rows, dist)
                 if child is None:
                     continue
                 score = evaluate_state(
@@ -163,6 +205,8 @@ def plan_final_v1(
                     descent_rows=1 if child.scrolled else 0,
                     opened_path_cells=child.opened_path_cells,
                     clusters=clusters,
+                    lost_pits=child.lost_pits,
+                    pull_progress=_pull_progress(child.best_dist),
                 )
                 ranked.append((score.total, action.row, action.col, child, score))
             ranked.sort(key=lambda row: (-row[0], row[1], row[2]))
@@ -175,6 +219,8 @@ def plan_final_v1(
                 next_states.append((score.total, child, score))
                 if best_score is None or score.total > best_score.total:
                     best, best_score = child, score
+            if budget_hit:
+                break
         if budget_hit or not next_states:
             break
         next_states.sort(key=lambda row: (-row[0], row[1].path[0].row, row[1].path[0].col))
