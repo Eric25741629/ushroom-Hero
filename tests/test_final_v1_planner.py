@@ -86,6 +86,19 @@ def test_equal_effect_bomb_and_drill_receive_equal_objective_value():
     assert bomb["score_breakdown"]["item_cost"] == drill["score_breakdown"]["item_cost"]
 
 
+def test_single_item_unit_price_is_profile_specific():
+    """單次道具影子價依 exec_profile：plan=3.0、step=3.6（搜尋內部排序用，
+    KPI 對外兌換率仍是 3）。單一 valid_target 強制 bomb，計 1 次使用。"""
+    board = [["empty"] * 6 for _ in range(7)]
+    board[1][2] = "reachable_pit"
+    plan = plan_final_v1(board, 0, {"bomb": 1, "drill": 0},
+                         valid_targets={("use", "bomb", 0, 2)}, exec_profile="plan")
+    step = plan_final_v1(board, 0, {"bomb": 1, "drill": 0},
+                         valid_targets={("use", "bomb", 0, 2)}, exec_profile="step")
+    assert plan["score_breakdown"]["item_cost"] == 3.0
+    assert step["score_breakdown"]["item_cost"] == 3.6
+
+
 def test_row_zero_pit_is_collected_before_scroll_progress():
     board = _board()
     board[0][1] = "reachable_pit"
@@ -141,6 +154,91 @@ def test_plan_returns_the_full_search_path_not_just_first_step():
     result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
     assert len(result["steps"]) > 1
     assert result["preview_steps"] == result["steps"]
+
+
+def test_no_pit_board_item_use_is_economics_governed_not_hard_blocked():
+    """分級成本廢除後不再硬擋 0 礦道具：無礦盤面改由「3eq 成本 vs 純挖」的經濟性
+    決定（step 另加 action_cost），道具只在能以 <純挖成本 開出捲動點時才被選用。
+    關鍵不變式：沒有道具時必回退純挖、沿最省路徑逐格下潛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    # 有道具：兩種 profile 都必須回合法計畫（不再 no-op / 不再被分級成本硬殺）
+    for profile in ("plan", "step"):
+        result = plan_final_v1([row[:] for row in board], 50, {"bomb": 5, "drill": 5},
+                               exec_profile=profile)
+        assert result["steps"]
+        first = result["steps"][0]
+        # 僅有 (0,0) 為可達空地：任何道具放置點都在該處，且必實質開出下潛/捲動，
+        # 不會做 0 礦又無推進的水平閒逛
+        if first["type"] == "use":
+            assert first["target"] == (0, 0)
+    # 無道具 fallback 不受影響：純挖、第一步沿最省路徑往下（1,0）
+    no_items = plan_final_v1([row[:] for row in board], 50, {"bomb": 0, "drill": 0})
+    assert all(step["type"] == "dig" for step in no_items["steps"])
+    assert no_items["steps"][0]["target"] == (1, 0)
+
+
+def test_bomb_hitting_multiple_pits_through_rock_still_beats_digging():
+    """高收益道具使用必須保留：一發命中 2 礦 + 破 rock（逐挖 1+2+1=4 鏟 >
+    bomb 3.0），不能被分級成本誤殺。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][2] = "empty"
+    board[1][1] = "unreachable_pit"
+    board[1][2] = "unreachable_rock"
+    board[1][3] = "unreachable_pit"
+    result = plan_final_v1(board, 50, {"bomb": 1, "drill": 0})
+    first = result["steps"][0]
+    assert first["type"] == "use"
+    assert first["item"] == "bomb"
+
+
+def test_step_profile_charges_action_cost_but_keeps_pit_steering():
+    """step profile 開 KPI 對齊：分數含「離下一簇距離」懲罰(action_cost>0)；
+    plan/ADB profile rho=0 不受影響。兩者導向不變（都沿 col4 往下逼近已知深礦）。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(21)]
+    board[0][4] = "empty"
+    board[10][4] = "unreachable_pit"
+    plan = plan_final_v1([r[:] for r in board], 30, {"bomb": 0, "drill": 0},
+                         visible_rows=7, exec_profile="plan")
+    step = plan_final_v1([r[:] for r in board], 30, {"bomb": 0, "drill": 0},
+                         visible_rows=7, exec_profile="step")
+    assert plan["score_breakdown"]["action_cost"] == 0.0
+    assert step["score_breakdown"]["action_cost"] > 0.0
+    assert plan["steps"][0]["target"] == (1, 4) == step["steps"][0]["target"]
+
+
+def test_branch_quota_keeps_low_scored_bridge_item_from_being_cut():
+    """branch 配額：0 礦但朝礦推進的 bridge 道具即使分數墊底也保留固定名額，
+    不被高分挖步在第一層擠光（deep bridge 收益要 4-6 層才體現）；名額不足回流給挖步。"""
+    from miner.final_v1.planner import _select_branch
+    from miner.final_v1.types import PlannerConfig
+
+    cfg = PlannerConfig(branch_width=4, quota_pit_item=1, quota_bridge_item=1)
+    ranked = [(100 - i, 0, i, 0, None, None, "dig") for i in range(6)]
+    ranked.append((1.0, 0, 9, 1, None, None, "bridge_item"))  # 分數墊底
+    selected = _select_branch(ranked, cfg)
+    categories = [row[6] for row in selected]
+    assert len(selected) == cfg.branch_width
+    assert "bridge_item" in categories       # 配額保留
+    assert categories.count("dig") == 3       # 其餘給最高分挖步
+
+
+def test_equal_effect_tie_break_is_coordinate_stable_not_item_fixed():
+    """效果完全相同時以座標（parity）決定道具，不得固定偏好 bomb；且可重現。"""
+    def _first_item(col):
+        board = [["empty"] * 6 for _ in range(7)]
+        board[1][col] = "reachable_pit"
+        result = plan_final_v1(
+            board, 0, {"bomb": 1, "drill": 1},
+            valid_targets={("use", "bomb", 0, col), ("use", "drill", 0, col)},
+        )
+        return result["steps"][0]["item"]
+
+    even = _first_item(2)  # row+col = 2
+    odd = _first_item(3)   # row+col = 3
+    assert {even, odd} == {"bomb", "drill"}
+    assert _first_item(2) == even
+    assert _first_item(3) == odd
 
 
 def test_step_costs_reflect_the_cell_state_when_each_step_executes():

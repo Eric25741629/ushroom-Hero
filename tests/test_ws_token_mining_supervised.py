@@ -756,3 +756,55 @@ def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     assert "block_id=16239104" in text
     assert "confirmation=confirmed_by_board_change" in text
     assert "refresh_attempts=2" in text
+
+
+def test_final_v1_session_marks_collected_pit_as_dug_pit_next_round(monkeypatch):
+    """跨兩輪同一 session：第一輪某格是活躍礦坑（count>0），第二輪已採集（count==0）。
+    第二輪 planner 收到的重建盤面該格應為 "dug_pit"（身分經 side table 跨輪保存），
+    而第一輪仍是活躍礦坑標籤。驗證 mine_until_pickaxe_empty 有把 DugPitTracker 接進
+    plan()（final_v1 分支），否則第二輪只會看到 WS 投影的 "empty"。"""
+    top = mining_supervised.mining_adapter.viewport_top_depth(162391)  # 162386
+    pit_id = (top + 2) * 100 + 3      # depth top+2, x=3 → grid (row2, col2)
+    frontier = (top + 6) * 100 + 1    # 可挖前緣，供每輪產生一個 dig 步
+
+    live_pit = _block(pit_id, 3, top + 2, config_id=mining_supervised.mining.TERRAIN_PIT,
+                      count=1, is_reward=1)
+    dug_pit = _block(pit_id, 3, top + 2, config_id=mining_supervised.mining.TERRAIN_PIT,
+                     count=0, is_reward=1)
+    board1 = _board(actives=[frontier], blocks=[live_pit])
+    board2 = _board(actives=[frontier], blocks=[dug_pit])
+
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {GOODS_PICKAXE: 5}  # has_item(4001) → 走 final_v1 authoritative 路徑
+
+    captured_boards = []
+
+    def fake_named(name, projected, inventory):
+        # 記錄「planner 實際收到的重建盤面」（session.annotate 已在此之前套用）。
+        captured_boards.append([row[:] for row in projected["board"]])
+        return {"steps": [{"type": "dig", "pos": (6, 0), "step_cost": 1}]}
+
+    monkeypatch.setattr(mining_supervised.mining_adapter, "_run_named_planner", fake_named)
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: board1)
+
+    def fake_execute(client, step, **kwargs):
+        return {
+            "step": dict(step),
+            "goods_id": GOODS_PICKAXE,
+            "block_id": step["block_id"],
+            "hits": 1,
+            "confirmed": True,
+            "confirmation": "confirmed_by_board_change",
+            "after_board": board2,  # 第一輪後盤面推進到已採集的 board2
+        }
+
+    monkeypatch.setattr(mining_supervised, "execute_plan_step", fake_execute)
+
+    mining_supervised.mine_until_pickaxe_empty(
+        object(), tracker, max_steps=2, planner_version="final_v1",
+    )
+
+    assert len(captured_boards) == 2
+    assert captured_boards[0][2][2] == "reachable_pit"  # 第一輪：活躍礦坑
+    assert captured_boards[1][2][2] == "dug_pit"        # 第二輪：身分跨輪保存

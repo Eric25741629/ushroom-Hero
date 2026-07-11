@@ -1117,6 +1117,22 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
       replay 2618 面 max 172ms 全達標；WS 7列 -3.6%。預設維持 v1，final_v1 建議只給 WS 裝置 opt-in。
       詳見 docs/superpowers/plans/2026-07-11-final-v1-mining-planner.md 尾段。
 
+## 2026-07-12 final_v1 效率大改 + 地圖回放（orchestration plan）
+
+主 session（Fable）只做方向/規劃/審查；實作全派 Opus subagents。
+
+### Stream A：final_v1 綜合效率（pit/eq 與 pits 同時贏 v1）— 完成
+- [x] 提案 A（產出分級道具成本 + parity tie-break）— 30 局快掃**不過**（step 口徑 pits 崩跌 49.3 vs 64.0），淘汰
+- [x] 收 codex 設計討論 + ITEM_LOW_YIELD_COST 響應曲線 + 7/21 列視野診斷
+- [x] 定案機制：真實 3eq 計價 + KPI action_cost + branch 配額 + cluster 身分保存 + profile 影子價(step3.6/plan3.0)
+- [x] Opus 實作 + 掃描，離線驗收：WS21 pits +22%/pit·eq 0.205、ADB pits +141%/0.200，bootstrap CI 下界 >0，延遲達標
+- [x] 5556/5560 CDP 實機驗證：CNN 辨識 vs 畫面一致；動態閉環 final_v1 決策→遊戲WS執行→盤面精準變化+礦坑導向實證
+
+### Stream B：每帳號挖礦地圖完整記錄 + 回放（Task #7）— 完成
+- [x] mini-spec（JSONL 格式/路徑/rotation/dashboard 開關）
+- [x] Opus 在獨立 worktree（自 67a7f611 分支）實作 recorder + CLI 回放 + 開關，測試綠
+- [x] 主 session 審 diff + 複跑測試 → 待 merge
+
 ---
 
 ## 跨界停車抱團掃描調整 (2026-07-12)
@@ -1137,3 +1153,4 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
       需 live 抓封包確認遊戲能否在 8h auto-collect 前提前收回並重停。確認可行後再實作 30 分複查 + 移車。
 
 備註：無 hot-reload — 改了 ws_token/runner.py 等模組後，正在跑的 bot 需重啟 new_main_v2.py 才生效。
+>>>>>>> main

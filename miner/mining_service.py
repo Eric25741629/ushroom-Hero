@@ -797,6 +797,9 @@ def run(
         print_plan_result(miner_logger, plan_title, plan, board)
         deadline = start_time + max_duration_seconds
         _check_force_sleep(ip)
+        # 動作前 authoritative inventory 快照（telemetry 用；spec Telemetry 段要求
+        # CNN/ADB 路徑與 WS 同水準記錄執行確認/拒絕原因/前後庫存）
+        inv_before = {"pickaxe": count, **items_available}
         try:
             exec_result = execute_plan_steps(
                 d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline
@@ -812,6 +815,12 @@ def run(
             else:
                 blocked_action_signatures.add(action_signature)
                 miner_logger.warning(f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}")
+            miner_logger.info(
+                "[MiningTelemetry] planner=%s exec=rejected reason=no_board_change "
+                "step=%s item=%s inv_before=%s inv_after=%s"
+                % (planner_version, action_signature, exc.item_type or "-",
+                   inv_before, {"pickaxe": count, **items_available})
+            )
             continue
         except OutOfItemError as exc:
             count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
@@ -822,10 +831,25 @@ def run(
                 f"[MiningService] live item check failed for {exc.item_type}: "
                 f"count={exc.live_count}; blacklist for current mining run"
             )
+            miner_logger.info(
+                "[MiningTelemetry] planner=%s exec=rejected reason=out_of_item "
+                "item=%s live_count=%s inv_before=%s inv_after=%s"
+                % (planner_version, exc.item_type, exc.live_count,
+                   inv_before, {"pickaxe": count, **items_available})
+            )
             continue
 
         # Plan executed cleanly — credit shovels / items consumed.
         count = _apply_partial(exec_result, count, items_available, miner_logger)
+        miner_logger.info(
+            "[MiningTelemetry] planner=%s exec=ok steps_planned=%d steps_completed=%s "
+            "terminated=%s shovels_used=%s bombs_used=%s drills_used=%s "
+            "inv_before=%s inv_after=%s"
+            % (planner_version, len(plan["steps"]), exec_result.steps_completed,
+               exec_result.terminated_reason or "-", exec_result.shovels_used,
+               exec_result.bombs_used, exec_result.drills_used,
+               inv_before, {"pickaxe": count, **items_available})
+        )
 
         # Identical-state deadlock guard: if executing a non-empty plan left
         # the board unchanged for too many iterations in a row, abort instead
