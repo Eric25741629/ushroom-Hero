@@ -374,6 +374,11 @@ _OFFSCREEN_LABEL = {
 
 MAX_KNOWN_ROWS = 21  # area_info 覆蓋 current ±1 area ≈ 21 列
 
+# final_v1 只在「已知盤面夠深」時才勝過 v1：離線 step 口徑證實 21 列時 final_v1
+# 大勝(pits +60%)，但只剩 7 列視野(21 列重建失敗/不完整)時反輸 v1
+# (pit/eq 0.152 vs 0.183、pits 60.4 vs 64.7)。低於此列數的盤面該輪改走 v1。
+_FINAL_V1_MIN_ROWS = 10
+
 
 def _known_row_count(top_depth: int, area_info: Dict[int, int]) -> int:
     """靜態地形可完整重建的列數（7..21）；遇第一個缺列即截斷，不猜地形。"""
@@ -805,7 +810,15 @@ def plan(mine_board: Any, inventory: Optional[Dict[str, int]] = None,
 
     name = str(planner_version or "v1").strip().lower()
     planner_source = "planner"
-    if name == "final_v1":
+    known_rows = len(projected["board"])
+    if name == "final_v1" and known_rows < _FINAL_V1_MIN_ROWS:
+        # 21 列重建失敗/不完整（只剩 ~7 列視野）時 final_v1 效率輸 v1
+        # (離線 step 口徑: pit/eq 0.152 vs 0.183、pits 60.4 vs 64.7)，該輪改走 v1；
+        # 21 列時 final_v1 大勝(pits +60%)。planner_source 標記供 telemetry 辨識。
+        result = _run_named_planner("v1", projected, inv)
+        planner_source = "v1_7row_fallback"
+        name = "v1"
+    elif name == "final_v1":
         try:
             result = _run_named_planner("final_v1", projected, inv)
         except Exception as exc:

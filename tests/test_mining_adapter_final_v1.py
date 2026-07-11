@@ -45,6 +45,8 @@ def test_valid_targets_distinguish_pickaxe_frontier_from_item_air_placement():
 
 
 def test_plan_final_v1_maps_only_legal_first_step_to_ws_block_id(monkeypatch):
+    # 完整 21 列重建（terrain_at 全覆蓋）→ 走 final_v1；7 列不完整盤另有 v1 短路測試。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
     captured = {}
     monkeypatch.setattr(
         "miner.final_v1.plan_final_v1",
@@ -73,6 +75,8 @@ def test_incomplete_known_projection_degrades_to_seven_rows(monkeypatch):
 
 
 def test_empty_final_v1_result_falls_back_to_v1(monkeypatch):
+    # 完整 21 列盤：final_v1 有跑但回空步 → 走 v1_fallback（有別於 7 列短路）。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
     calls = []
 
     def fake_named(name, projected, inventory):
@@ -87,9 +91,50 @@ def test_empty_final_v1_result_falls_back_to_v1(monkeypatch):
     assert result["planner_source"] == "v1_fallback"
 
 
+def test_incomplete_rebuild_routes_final_v1_through_v1(monkeypatch):
+    # 只剩 7 列視野（21 列重建失敗）→ 該輪根本不叫 final_v1，直接走 v1 並標
+    # planner_source="v1_7row_fallback" 供 telemetry 辨識。
+    monkeypatch.setattr(
+        mining_adapter.mine_terrain, "terrain_at",
+        lambda depth, col, info: None,  # 無任何延伸列 → 盤面固定 7 列
+    )
+    calls = []
+
+    def fake_named(name, projected, inventory):
+        calls.append(name)
+        assert len(projected["board"]) == 7
+        return {"steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}]}
+
+    monkeypatch.setattr(mining_adapter, "_run_named_planner", fake_named)
+    result = mining_adapter.plan(_board(actives=[10103]), {"pickaxe": 5},
+                                 planner_version="final_v1")
+    assert calls == ["v1"]  # final_v1 從未被呼叫
+    assert result["planner_source"] == "v1_7row_fallback"
+    assert result["planner_name"] == "v1"
+
+
+def test_full_21row_rebuild_runs_final_v1(monkeypatch):
+    # 完整 21 列重建 → 照常走 final_v1（planner_source="planner"）。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+    calls = []
+
+    def fake_named(name, projected, inventory):
+        calls.append(name)
+        assert len(projected["board"]) == 21
+        return {"steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}]}
+
+    monkeypatch.setattr(mining_adapter, "_run_named_planner", fake_named)
+    result = mining_adapter.plan(_board(actives=[10103]), {"pickaxe": 5},
+                                 planner_version="final_v1")
+    assert calls == ["final_v1"]
+    assert result["planner_source"] == "planner"
+    assert result["planner_name"] == "final_v1"
+
+
 def test_final_v1_called_with_exec_profile_step(monkeypatch):
     # WS 監督迴圈每步重規劃取第一步 = step 語意；adapter 必須以 exec_profile="step"
-    # 呼叫 plan_final_v1，才會啟用 KPI 對齊的 action_cost。
+    # 呼叫 plan_final_v1，才會啟用 KPI 對齊的 action_cost。需完整 21 列盤才走 final_v1。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
     captured = {}
     monkeypatch.setattr(
         "miner.final_v1.plan_final_v1",
