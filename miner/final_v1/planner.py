@@ -1,7 +1,9 @@
 """final_v1 bounded beam search.
 
-重用 v3 board/actions 力學與 core.mechanics footprint；只輸出第一步，
-執行後由 runtime 取新盤面重規劃。捲動點結束深搜（不猜下一個 viewport）。
+重用 v3 board/actions 力學與 core.mechanics footprint；輸出完整最佳路徑
+（至捲動點為止）：ADB 後端整批執行、攤平每步截圖+分類成本（與 v1 同等
+待遇），WS supervised 迴圈本來就每步重規劃、只取第一步。捲動點結束深搜
+（不猜下一個 viewport）。
 """
 from __future__ import annotations
 
@@ -37,6 +39,9 @@ class _State:
     opened_path_cells: int = 0
     lost_pits: int = 0          # 捲動當下 row0 仍未採集的礦（精確歸因，可跨多次捲動累計）
     best_dist: float = _INF     # 已挖開格中最小的位能（距最近礦坑的挖掘成本）
+    # 逐步成本（dig=當下格材質成本、道具=1.0）：emit 多步 plan 時直接取用，
+    # 不能用初始盤面回推第 N 步的 dig_cost（材質可能已被前面步驟改變）
+    path_costs: Tuple[float, ...] = tuple()
 
 
 def _candidate_actions(board, pickaxes, bombs, drills, visible_rows) -> List[PlannerAction]:
@@ -94,7 +99,7 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
             tuple(tuple(row) for row in work), state.pickaxes - cost, state.bombs, state.drills,
             SearchUsage(state.usage.shovels + cost, state.usage.bombs, state.usage.drills),
             state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
-            lost, best_dist,
+            lost, best_dist, state.path_costs + (cost,),
         )
     affected = _affected(action, work, visible_rows)
     changed = [(r, c) for r, c in affected if not is_reachable_air(work[r][c])]
@@ -118,7 +123,7 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
         # path bonus 以「動作」計，不以「格」計：炸彈開 8 格空地不是 8 倍路徑價值，
         # 每格計會讓道具靠 path+partial credit 刷分（實測 scarce 盤道具 44 vs v1 27 卻完成更少）
         state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
-        lost, best_dist,
+        lost, best_dist, state.path_costs + (1.0,),
     )
 
 
@@ -244,16 +249,14 @@ def plan_final_v1(
         best = initial
         best_score = evaluate_state(work, work, initial.usage, clusters=clusters)
     elapsed_ms = (time.perf_counter() - started) * 1000.0
-    first = best.path[:1]
     steps = [
-        action.to_step(1.0 if action.kind == "use" else float(dig_cost(work[action.row][action.col])))
-        for action in first
+        action.to_step(cost) for action, cost in zip(best.path, best.path_costs)
     ]
     return {
         "ok": True,
         "message": "final_v1 plan" if steps else "final_v1 no legal step",
         "steps": steps,
-        "preview_steps": [action.to_step(1.0) for action in best.path],
+        "preview_steps": steps,
         "score_breakdown": best_score.to_dict(),
         "objective_score": best_score.total,
         "elapsed_ms": elapsed_ms,

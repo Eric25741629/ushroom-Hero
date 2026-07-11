@@ -132,3 +132,30 @@ def test_no_pit_board_steers_downward_not_sideways():
     board[0][0] = "empty"
     result = plan_final_v1(board, 30, {"bomb": 0, "drill": 0})
     assert result["steps"][0]["target"] == (1, 0)
+
+
+def test_plan_returns_the_full_search_path_not_just_first_step():
+    """多步輸出：ADB 後端整批執行需要完整路徑，不能每步付一次截圖成本。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
+    assert len(result["steps"]) > 1
+    assert result["preview_steps"] == result["steps"]
+
+
+def test_step_costs_reflect_the_cell_state_when_each_step_executes():
+    """第 N 步的 step_cost 必須是該步當下格材質的成本（rock=更貴）。"""
+    from miner.v3.actions import dig_cost
+    # 全 rock 盤只留 col0 一條 dirt 通道、途中 (2,0) 是 rock：最省路徑
+    # 沿 col0 下挖，rock 那步的 step_cost 必須反映 rock 而非初始盤面推算
+    board = [["unreachable_rock"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    for r in range(1, 7):
+        board[r][0] = "unreachable_dirt"
+    board[2][0] = "unreachable_rock"
+    result = plan_final_v1(board, 50, {"bomb": 0, "drill": 0})
+    steps = result["steps"]
+    assert len(steps) >= 2
+    by_target = {tuple(s["target"]): s["step_cost"] for s in steps}
+    assert by_target[(1, 0)] == float(dig_cost("dirt"))
+    assert by_target.get((2, 0), float(dig_cost("rock"))) == float(dig_cost("rock"))
