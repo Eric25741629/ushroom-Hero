@@ -54,6 +54,41 @@ def _board_signature(board: Any) -> tuple:
     )
 
 
+def _board_confirmation(before: Any, after: Any, step: Dict[str, Any]) -> Optional[str]:
+    """歸因盤面變化：baseline_changed / target_changed / footprint_changed，無變化 None。"""
+    if _board_signature(after) == _board_signature(before):
+        return None
+    if int(getattr(after, "baseline", 0) or 0) != int(getattr(before, "baseline", 0) or 0):
+        return "baseline_changed"
+    bid = int(step.get("block_id") or 0)
+
+    def _target_sig(board: Any):
+        for blk in getattr(board, "blocks", []) or []:
+            if int(getattr(blk, "block_id", 0) or 0) == bid:
+                return (int(getattr(blk, "count", 0) or 0),
+                        int(getattr(blk, "config_id", 0) or 0))
+        return None
+
+    if _target_sig(before) != _target_sig(after):
+        return "target_changed"
+    return "footprint_changed"
+
+
+def _inventory_from_tracker(tracker: "mining.InventoryTracker",
+                            fallback: Dict[str, int]) -> Dict[str, int]:
+    """以 tracker（0x0401 seed + 0x0402 delta）覆蓋本地估計；未見過的 item 保留 fallback。"""
+    names = {
+        "pickaxe": mining.GOODS_PICKAXE,
+        "drill": mining.GOODS_DRILL,
+        "bomb": mining.GOODS_BOMB,
+    }
+    merged = dict(fallback)
+    for name, item_id in names.items():
+        if tracker.has_item(item_id):
+            merged[name] = int(tracker.counts[item_id])
+    return merged
+
+
 def _planned_pickaxe_hits(step: Dict[str, Any], goods_id: int) -> int:
     if goods_id == mining.GOODS_PICKAXE and step.get("type") == "dig":
         return max(1, int(math.ceil(float(step.get("step_cost") or 1))))
@@ -109,19 +144,32 @@ def _log_board_trace(board: Any, inventory: Dict[str, int], *,
 
 def _log_plan_trace(plan_result: Dict[str, Any], inventory: Dict[str, int],
                     *, step_index: int,
-                    log: Optional[logging.Logger] = None) -> None:
+                    log: Optional[logging.Logger] = None,
+                    planner_version: str = "v1",
+                    shadow_planner_version: str = "") -> None:
     _log = log or logger
     if not _log.isEnabledFor(logging.INFO):
         return
     steps = list(plan_result.get("ws_steps", []))
     _log.info(
-        "ws_mining plan step=%s inventory=%s message=%r steps=%s hold_floor=%s first_step=%s",
+        "ws_mining plan step=%s inventory=%s message=%r steps=%s hold_floor=%s first_step=%s "
+        "primary_planner=%s shadow_planner=%s planner_source=%s score_breakdown=%s "
+        "elapsed_ms=%s search_depth=%s explored_nodes=%s budget_hit=%s shadow=%s",
         step_index,
         dict(inventory),
         plan_result.get("message"),
         len(steps),
         plan_result.get("hold_floor"),
         steps[0] if steps else None,
+        plan_result.get("planner_name", planner_version),
+        shadow_planner_version,
+        plan_result.get("planner_source", "planner"),
+        plan_result.get("score_breakdown"),
+        plan_result.get("elapsed_ms"),
+        plan_result.get("search_depth"),
+        plan_result.get("explored_nodes"),
+        plan_result.get("budget_hit"),
+        plan_result.get("shadow"),
     )
 
 
@@ -133,7 +181,8 @@ def _log_execute_trace(item: Dict[str, Any], *, step_index: int,
         return
     _log.info(
         "ws_mining execute step=%s goods_id=%s block_id=%s confirmed=%s "
-        "confirmation=%s refresh_attempts=%s inventory_after=%s error=%s",
+        "confirmation=%s refresh_attempts=%s inventory_after=%s error=%s "
+        "tracker_inventory_after=%s rejection_reason=%s",
         step_index,
         item.get("goods_id"),
         item.get("block_id"),
@@ -142,6 +191,8 @@ def _log_execute_trace(item: Dict[str, Any], *, step_index: int,
         item.get("refresh_attempts"),
         dict(inventory),
         item.get("error"),
+        item.get("inventory_after"),
+        None if item.get("confirmed") else item.get("confirmation"),
     )
 
 
@@ -184,6 +235,8 @@ def execute_plan_step(
     confirm_by_refresh: bool = True,
     refresh_timeout: float = 6.0,
     refresh_interval: float = 0.75,
+    before_inventory: Optional[Dict[str, int]] = None,
+    inventory_reader: Optional[Callable[[], Dict[str, int]]] = None,
 ) -> Dict[str, Any]:
     """Execute one planned WS step via send-only ``home_mine_use_goods``.
 
@@ -208,6 +261,7 @@ def execute_plan_step(
     confirmation = "sent_unconfirmed"
     error = None
     refresh_attempts = 0
+    inventory_after: Optional[Dict[str, int]] = None
     if confirm_by_refresh:
         deadline = time.monotonic() + max(0.0, float(refresh_timeout))
         while True:
@@ -218,11 +272,27 @@ def execute_plan_step(
                 confirmation = "refresh_failed"
                 error = f"{type(exc).__name__}: {exc}"
                 break
-            if _board_signature(after_board) != _board_signature(before_board):
-                confirmed = True
-                confirmation = "confirmed_by_board_change"
-                break
-            confirmation = "unconfirmed_no_board_change"
+            board_conf = _board_confirmation(before_board, after_board, step)
+            if inventory_reader is None:
+                # legacy 語意不變：只看盤面 signature
+                if board_conf:
+                    confirmed = True
+                    confirmation = "confirmed_by_board_change"
+                    break
+                confirmation = "unconfirmed_no_board_change"
+            else:
+                # inventory-aware：盤面歸因（target/footprint/baseline）優先，
+                # 盤面快照延遲時可用庫存變化歸因成功；兩者皆無 = unchanged。
+                if board_conf:
+                    confirmed = True
+                    confirmation = board_conf
+                    break
+                inventory_after = inventory_reader()
+                if before_inventory is not None and inventory_after != before_inventory:
+                    confirmed = True
+                    confirmation = "inventory_changed"
+                    break
+                confirmation = "unchanged"
             if time.monotonic() >= deadline:
                 break
             if refresh_interval > 0:
@@ -240,6 +310,7 @@ def execute_plan_step(
         "confirmation": confirmation,
         "error": error,
         "refresh_attempts": refresh_attempts,
+        "inventory_after": inventory_after,
     }
 
 
@@ -470,6 +541,8 @@ def mine_until_pickaxe_empty(
     max_depth: Optional[int] = None,
     should_abort: Optional[Callable[[], bool]] = None,
     device_id: Optional[str] = None,
+    planner_version: str = "v1",
+    shadow_planner_version: str = "",
 ) -> Dict[str, Any]:
     """Re-plan and execute one confirmed dig at a time until pickaxes reach 0.
 
@@ -495,10 +568,21 @@ def mine_until_pickaxe_empty(
     # Undug terrain is reconstructed deterministically inside mining_adapter via
     # mine_terrain.terrain_at(depth, col, area_info) — no per-device learning,
     # no cache, no CNN. The board's own area_info indexes configMine_template.
+    is_final_v1 = str(planner_version or "v1").strip().lower() == "final_v1"
     seen = tracker.has_item(mining.GOODS_PICKAXE)
+    if is_final_v1 and not seen:
+        # final_v1 只信 authoritative inventory（0x0401 seed + 0x0402 delta）；
+        # 沒看過 4001 現量就不猜、不 seed，直接 skip（保留 ADB/v1 後備）。
+        return {
+            "initial_inventory": tracker.as_props(),
+            "final_inventory": tracker.as_props(),
+            "plans": [], "candidate_steps": [], "executed": [],
+            "stopped_reason": "inventory_unknown",
+            "skipped": "pickaxe 4001 missing from authoritative inventory",
+        }
     inventory = dict(tracker.as_props())
     if not seen:
-        inventory["pickaxe"] = _SEED_UNKNOWN_PICKAXE
+        inventory["pickaxe"] = _SEED_UNKNOWN_PICKAXE  # v1 相容路徑限定
     initial_inventory = dict(inventory)
     plans: list[Dict[str, Any]] = []
     candidate_steps: list[Dict[str, Any]] = []
@@ -517,13 +601,25 @@ def mine_until_pickaxe_empty(
             stopped_reason = "pickaxe_empty"
             break
 
+        if is_final_v1:
+            # 每輪規劃前以 authoritative tracker 覆蓋本地估計（consume + gain）
+            inventory = _inventory_from_tracker(tracker, inventory)
+        # planner kwargs 只在非預設時傳遞，維持既有 v1 呼叫簽名（與測試 fake）不變
+        _plan_kwargs: Dict[str, Any] = {}
+        if is_final_v1:
+            _plan_kwargs["planner_version"] = "final_v1"
+        if shadow_planner_version:
+            _plan_kwargs["shadow_planner_version"] = shadow_planner_version
         plan_result = mining_adapter.plan(
             current_board,
             inventory,
             max_depth=max_depth,
+            **_plan_kwargs,
         )
         plans.append(plan_result)
-        _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog)
+        _log_plan_trace(plan_result, inventory, step_index=_idx, log=_wlog,
+                        planner_version=planner_version,
+                        shadow_planner_version=shadow_planner_version)
 
         # 同一盤面內逐個候選嘗試：被伺服器拒挖（unconfirmed、版面不變）的目標只
         # 加入本盤黑名單後改試下一個可達格，不再因「第一步失敗」就中止整輪挖礦。
@@ -549,6 +645,12 @@ def mine_until_pickaxe_empty(
                 break
             candidate_steps.append(step)
             tried_any = True
+            _exec_kwargs: Dict[str, Any] = {}
+            if is_final_v1:
+                # 庫存變化也可歸因確認（盤面快照延遲時）
+                _exec_kwargs["before_inventory"] = dict(inventory)
+                _exec_kwargs["inventory_reader"] = (
+                    lambda: _inventory_from_tracker(tracker, inventory))
             item = execute_plan_step(
                 client,
                 step,
@@ -556,6 +658,7 @@ def mine_until_pickaxe_empty(
                 allow_drill=allow_drill,
                 timeout=timeout,
                 before_board=current_board,
+                **_exec_kwargs,
             )
             executed.append(item)
             if item.get("confirmed"):
@@ -575,6 +678,9 @@ def mine_until_pickaxe_empty(
             int(item["goods_id"]),
             int(item.get("hits") or 1),
         )
+        if is_final_v1:
+            # authoritative 覆蓋：本地扣抵只是估計，tracker 的 consume/gain 才是真值
+            inventory = _inventory_from_tracker(tracker, inventory)
         # Adopt the authoritative remaining count the moment the first consume
         # push lands (only relevant when we started from a seed).
         if not seen and tracker.has_item(mining.GOODS_PICKAXE):

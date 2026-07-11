@@ -616,6 +616,102 @@ def test_mine_no_skipped_when_pickaxe_empty(monkeypatch):
     assert "skipped" not in result
 
 
+def test_final_v1_skips_when_pickaxe_was_never_seeded(monkeypatch):
+    tracker = mining_supervised.mining.InventoryTracker()
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda *args, **kwargs: _board())
+    result = mining_supervised.mine_until_pickaxe_empty(
+        object(), tracker, planner_version="final_v1", max_steps=1,
+    )
+    assert result["stopped_reason"] == "inventory_unknown"
+    assert result["executed"] == []
+
+
+def test_authoritative_tracker_replaces_local_consume_and_gain_after_each_step(monkeypatch):
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts.update({4001: 4, 4002: 2, 4003: 1})
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda *args, **kwargs: _board(actives=[10101]))
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", lambda *args, **kwargs: {
+        "ws_steps": [{"type": "dig", "block_id": 10101}], "hold_floor": False, "grid": [],
+    })
+
+    def execute(*args, **kwargs):
+        tracker.counts.update({4001: 3, 4002: 3, 4003: 1})
+        return {"confirmed": True, "goods_id": 4001, "block_id": 10101,
+                "hits": 1, "confirmation": "confirmed_by_board_change",
+                "after_board": _board()}
+
+    monkeypatch.setattr(mining_supervised, "execute_plan_step", execute)
+    result = mining_supervised.mine_until_pickaxe_empty(
+        object(), tracker, planner_version="final_v1", max_steps=1)
+    assert result["final_inventory"] == {"pickaxe": 3, "drill": 3, "bomb": 1}
+
+
+def test_inventory_change_can_confirm_even_when_target_snapshot_is_delayed(monkeypatch):
+    before = {"pickaxe": 4, "drill": 1, "bomb": 1}
+    reads = iter([before, {"pickaxe": 3, "drill": 1, "bomb": 1}])
+    monkeypatch.setattr(mining_supervised.mining, "send_dig",
+                        lambda client, goods_id, block_id: None)
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: _board())
+    item = mining_supervised.execute_plan_step(
+        object(), {"type": "dig", "block_id": 10101}, before_board=_board(),
+        before_inventory=before, inventory_reader=lambda: next(reads),
+        refresh_timeout=5.0, refresh_interval=0,
+    )
+    assert item["confirmed"] is True
+    assert item["confirmation"] == "inventory_changed"
+
+
+def test_unchanged_target_footprint_baseline_and_inventory_is_not_success(monkeypatch):
+    monkeypatch.setattr(mining_supervised.mining, "send_dig",
+                        lambda client, goods_id, block_id: None)
+    monkeypatch.setattr(mining_supervised.mining, "read_board",
+                        lambda client, timeout=None: _board())
+    item = mining_supervised.execute_plan_step(
+        object(), {"type": "dig", "block_id": 10101}, before_board=_board(),
+        before_inventory={"pickaxe": 4, "drill": 1, "bomb": 1},
+        inventory_reader=lambda: {"pickaxe": 4, "drill": 1, "bomb": 1},
+        refresh_timeout=0,
+    )
+    assert item["confirmed"] is False
+    assert item["confirmation"] == "unchanged"
+
+
+def test_board_confirmation_distinguishes_target_and_baseline(monkeypatch):
+    before = _board(actives=[10101], blocks=[_block(10101, 1, 101, count=1)])
+    target_dug = _board(actives=[10101], blocks=[_block(10101, 1, 101, count=0)])
+    scrolled = _board(baseline=162392, actives=[10101],
+                      blocks=[_block(10101, 1, 101, count=1)])
+    step = {"type": "dig", "block_id": 10101}
+    assert mining_supervised._board_confirmation(before, target_dug, step) == "target_changed"
+    assert mining_supervised._board_confirmation(before, scrolled, step) == "baseline_changed"
+    assert mining_supervised._board_confirmation(before, _board(actives=[10101],
+                                                                blocks=[_block(10101, 1, 101, count=1)]),
+                                                 step) is None
+
+
+def test_runner_forwards_planner_settings(monkeypatch):
+    from ws_token import runner as runner_mod
+
+    captured = {}
+
+    def fake_mine(client, tracker, **kwargs):
+        captured.update(kwargs)
+        return {"executed": []}
+
+    monkeypatch.setattr(runner_mod.mining_supervised,
+                        "mine_until_pickaxe_empty", fake_mine)
+    tracker = mining_supervised.mining.InventoryTracker()
+    runner_mod._run_mining(object(), tracker, mining_config={
+        "enabled": True, "planner_version": "FINAL_V1",
+        "shadow_planner_version": "final_v1",
+    })
+    assert captured["planner_version"] == "final_v1"
+    assert captured["shadow_planner_version"] == "final_v1"
+
+
 def test_mine_until_pickaxe_empty_logs_executed_step(monkeypatch, caplog):
     tracker = mining_supervised.mining.InventoryTracker()
     tracker.counts = {GOODS_PICKAXE: 1}

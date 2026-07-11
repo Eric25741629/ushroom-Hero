@@ -104,6 +104,40 @@ def test_mining_done_result_skips_oracle(monkeypatch):
     assert "挖礦/Oracle" in ws_phase.run_ws_phase("dev")
 
 
+def test_ws_phase_injects_device_planners_into_mining_config(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(
+        config_manager, "get_device_config",
+        lambda ip: type("C", (), {"get": lambda self, k, d=None: {
+            "ws_token": {"enabled": True, "bootstrap_token": False,
+                         "mining": {"enabled": True, "allow_bomb": True}},
+            "backend": "adb",
+            "mining_planner_version": "final_v1",
+            "mining_shadow_planner_version": "final_v1",
+        }.get(k, d)})())
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda _ip, cfg, progress=None, **_kw: captured.update(cfg) or _report({}))
+    ws_phase.run_ws_phase("dev")
+    assert captured["mining"] == {
+        "enabled": True,
+        "allow_bomb": True,
+        "planner_version": "final_v1",
+        "shadow_planner_version": "final_v1",
+    }
+
+
+def test_ws_phase_defaults_primary_to_v1_and_shadow_to_empty(monkeypatch):
+    captured = {}
+    _cfg(monkeypatch, {"enabled": True, "mining": {"enabled": True}})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda _ip, cfg, progress=None, **_kw: captured.update(cfg) or _report({}))
+    ws_phase.run_ws_phase("dev")
+    assert captured["mining"]["planner_version"] == "v1"
+    assert captured["mining"]["shadow_planner_version"] == ""
+
+
 def test_run_device_passes_mining_config(monkeypatch):
     captured = {}
 
@@ -734,7 +768,9 @@ def test_run_ws_phase_folds_device_level_mining_config(monkeypatch):
 
     monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
     ws_phase.run_ws_phase("dev")
-    assert seen.get("mining") == mining_cfg
+    # planner_version/shadow_planner_version 由裝置層設定注入（未設 → 預設值）
+    assert seen.get("mining") == {**mining_cfg, "planner_version": "v1",
+                                  "shadow_planner_version": ""}
 
 
 def test_run_ws_phase_nested_mining_config_overrides_device_level(monkeypatch):
@@ -755,7 +791,8 @@ def test_run_ws_phase_nested_mining_config_overrides_device_level(monkeypatch):
 
     monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
     ws_phase.run_ws_phase("dev")
-    assert seen.get("mining") == nested
+    assert seen.get("mining") == {**nested, "planner_version": "v1",
+                                  "shadow_planner_version": ""}
 
 
 # --- 農場買種徽章偵測 _farm_seed_bought（farm buy 407 ok → 寫 farm_seed_purchase）--
