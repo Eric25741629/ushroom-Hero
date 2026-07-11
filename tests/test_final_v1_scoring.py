@@ -1,22 +1,61 @@
-"""final_v1 scoring contract: equal item cost, cluster priority, row-loss, descent."""
-from miner.final_v1.scoring import ITEM_COST, evaluate_state
+"""final_v1 scoring contract: flat item cost, cluster identity, action_cost, row-loss."""
+from miner.final_v1.scoring import (
+    ITEM_COST,
+    SHOVEL_COST,
+    evaluate_state,
+    item_use_cost,
+    pit_clusters,
+)
 from miner.final_v1.types import SearchUsage
 
 
-def test_bomb_and_drill_have_the_same_base_cost():
-    assert ITEM_COST["bomb"] == ITEM_COST["drill"]
+def test_item_cost_is_flat_three_shovels_for_both_items():
+    """道具一律按 KPI 真實兌換率計價 = 3 鏟；分級成本已廢除，bomb/drill 同價、
+    與命中礦坑數無關（deep bridge 收益改由 action_cost/branch quota 呈現）。"""
+    assert ITEM_COST == 3.0 * SHOVEL_COST
+    assert item_use_cost("bomb") == item_use_cost("drill") == ITEM_COST
 
 
-def test_item_cost_tiers_penalize_low_yield_use():
-    """道具成本依「該次使用實際命中的礦坑格數」分級：
-    0 礦（純挖掘用途）>> 1 礦 >= 2+ 礦（基礎成本）。兩種道具同價。"""
-    from miner.final_v1.scoring import item_use_cost
+def test_action_cost_penalizes_distance_to_next_cluster_only_under_positive_rho():
+    """action_cost = rho * PIT_VALUE * (best_dist + 最近簇剩餘格)；rho=0（plan/ADB）
+    恆為 0 不改排名，rho>0（step）才對「離下一簇越遠」加懲罰。"""
+    board = [["empty"] * 6 for _ in range(3)]
+    board[2][0] = "reachable_pit"
+    clusters = pit_clusters(board)
+    plan = evaluate_state(board, board, SearchUsage(), clusters=clusters,
+                          best_dist=2.0, best_cluster=0, rho_action=0.0)
+    step = evaluate_state(board, board, SearchUsage(), clusters=clusters,
+                          best_dist=2.0, best_cluster=0, rho_action=0.15)
+    assert plan.action_cost == 0.0
+    assert step.action_cost > 0.0
+    # best_dist == inf（尚未挖到任何格）時無資訊，不罰
+    unknown = evaluate_state(board, board, SearchUsage(), clusters=clusters,
+                             best_dist=float("inf"), best_cluster=-1, rho_action=0.15)
+    assert unknown.action_cost == 0.0
 
-    assert item_use_cost("bomb", 0) > item_use_cost("bomb", 1) >= item_use_cost("bomb", 2)
-    assert item_use_cost("bomb", 2) == ITEM_COST["bomb"]
-    assert item_use_cost("bomb", 5) == ITEM_COST["bomb"]
-    for hits in (0, 1, 2, 4):
-        assert item_use_cost("bomb", hits) == item_use_cost("drill", hits)
+
+def test_dug_pit_preserves_cluster_identity_and_blocks_false_completion():
+    """半挖簇的中間格變 dug_pit 後不得被重分群：連通分量在 pit∪dug_pit 聯集上算，
+    完成判定要求整簇無未挖 pit，避免半挖就誤發完成獎勵。"""
+    # 一條 1x3 直簇，中間 (1,1) 已挖成 dug_pit，兩端仍是未挖 pit
+    board = [["empty"] * 3 for _ in range(4)]
+    board[0][1] = "reachable_pit"
+    board[1][1] = "dug_pit"
+    board[2][1] = "reachable_pit"
+    clusters = pit_clusters(board)
+    assert len(clusters) == 1
+    assert clusters[0] == frozenset({(0, 1), (1, 1), (2, 1)})
+    # 仍有 2 未挖 pit → 未完成，不得發完成獎勵
+    partial = evaluate_state(board, board, SearchUsage(), clusters=clusters)
+    assert partial.cluster_gain == 0.0
+    assert partial.unfinished_cluster_penalty > 0.0
+    # 端點都挖掉 → 整簇完成，完成獎勵以整簇尺寸 3 計
+    done = [row[:] for row in board]
+    done[0][1] = "dug_pit"
+    done[2][1] = "dug_pit"
+    finished = evaluate_state(board, done, SearchUsage(), clusters=clusters)
+    assert finished.cluster_gain > 0.0
+    assert finished.unfinished_cluster_penalty == 0.0
 
 
 def test_evaluate_state_charges_accumulated_item_cost_units():
