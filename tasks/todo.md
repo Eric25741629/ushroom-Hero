@@ -1116,3 +1116,24 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - [x] T3 驗收完成並 merge main（99c6afdf）：ADB 等鎬池 score +11%、WS 21列 +2.4% 且鏟耗 -49%、
       replay 2618 面 max 172ms 全達標；WS 7列 -3.6%。預設維持 v1，final_v1 建議只給 WS 裝置 opt-in。
       詳見 docs/superpowers/plans/2026-07-11-final-v1-mining-planner.md 尾段。
+
+---
+
+## 跨界停車抱團掃描調整 (2026-07-12)
+
+需求（使用者確認）：不再綁定車位9；掃全 1-30；手機fc(adb-fc65396d)+小寶(7fe98fc6) 優先 1-15，
+三台模擬器(5554/5556/5560) 優先 15-30；每5秒一輪、上限5分鐘；找到 ≥2 台同服即停；停到就停掃。
+
+- [x] carpark_plan.ClusterScanConfig 加 `priority_levels`；`parse_cluster_scan` 解析（含空預設）
+- [x] carpark.scan_lots_same_server 加 `priority_levels`：排序 priority-range 優先（rank0），組內 count desc / ceng asc
+- [x] runner._run_carpark：cluster_scan gate 從「僅 09:59 grab」放寬為「任一開窗內停車皆掃」；
+      傳 priority_levels；改挑「第一個達 min_allies」的 lot（非只看 ranked[0]）；
+      timeout fallback prefer_levels 用 priority range（不再綁車位9）
+- [x] bot_config.json：5 台啟用裝置設 cluster_scan（min_allies=2、levels 1-30、priority 依組、dur300/int5），
+      silver_levels 同步改成 priority range（避免 cluster_server_id 缺席時仍綁 9/10）
+- [x] tests/test_carpark_cluster_scan.py：priority 排序 + parse priority_levels（11 passed）
+- [ ] **DEFER（待 recon）**：使用者要「停 30 分鐘後複查，若該車位同服車數(含我)≤5 就移動到能抱團且有空位的車位」。
+      協議 dump 沒有「提前收回/移動已停跨界車」的指令（CARPARK_PROTO_SCHEMA 只有 park，無 unpark/move）。
+      需 live 抓封包確認遊戲能否在 8h auto-collect 前提前收回並重停。確認可行後再實作 30 分複查 + 移車。
+
+備註：無 hot-reload — 改了 ws_token/runner.py 等模組後，正在跑的 bot 需重啟 new_main_v2.py 才生效。

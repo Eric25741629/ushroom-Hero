@@ -47,6 +47,22 @@ def test_parse_custom_values():
     assert cs.fallback_level == 7
 
 
+def test_parse_priority_levels():
+    cfg = {"cluster_scan": {
+        "enabled": True, "levels": list(range(1, 31)),
+        "priority_levels": list(range(1, 16)), "min_allies": 2,
+    }}
+    cs = parse_cluster_scan(cfg)
+    assert cs.levels == tuple(range(1, 31))
+    assert cs.priority_levels == tuple(range(1, 16))
+    assert cs.min_allies == 2
+
+
+def test_parse_priority_levels_defaults_empty():
+    cs = parse_cluster_scan({"cluster_scan": {"enabled": True}})
+    assert cs.priority_levels == ()
+
+
 # --- scan_lots_same_server ---------------------------------------------------
 
 def _lot(level: int, null_num: int = 5) -> NullSpace:
@@ -106,6 +122,48 @@ def test_scan_sorts_by_count_desc_then_ceng_asc(monkeypatch):
     assert ranked[1][1] == 5
     assert ranked[1][0].ceng == silver_level_to_ceng(9)
     assert ranked[2][1] == 2
+
+
+def test_scan_priority_levels_rank_first(monkeypatch):
+    # 鉑銀12 (priority) has only 2 allies; 鉑銀20 (non-priority) has 5.
+    # priority_levels must win: 鉑銀12 ranks first despite fewer allies.
+    lots = [_lot(12), _lot(20)]
+    details = {
+        _lot(12).master_id: _make_detail(12, 1467, 2),
+        _lot(20).master_id: _make_detail(20, 1467, 5),
+    }
+
+    def fake_read_lot(client, *, type, master_id, ceng, timeout=None):
+        return details[master_id]
+
+    import ws_token.carpark as cp_mod
+    monkeypatch.setattr(cp_mod, "read_lot", fake_read_lot)
+
+    ranked = scan_lots_same_server(None, lots, 1467, (12, 20),
+                                   priority_levels=(11, 12, 13, 14, 15))
+    assert ranked[0][0].ceng == silver_level_to_ceng(12)
+    assert ranked[0][1] == 2
+    assert ranked[1][0].ceng == silver_level_to_ceng(20)
+
+
+def test_scan_priority_group_ordered_by_count(monkeypatch):
+    # Two priority lots: higher ally count first within the priority group.
+    lots = [_lot(3), _lot(6)]
+    details = {
+        _lot(3).master_id: _make_detail(3, 1467, 2),
+        _lot(6).master_id: _make_detail(6, 1467, 4),
+    }
+
+    def fake_read_lot(client, *, type, master_id, ceng, timeout=None):
+        return details[master_id]
+
+    import ws_token.carpark as cp_mod
+    monkeypatch.setattr(cp_mod, "read_lot", fake_read_lot)
+
+    ranked = scan_lots_same_server(None, lots, 1467, (3, 6),
+                                   priority_levels=(1, 2, 3, 4, 5, 6))
+    assert ranked[0][0].ceng == silver_level_to_ceng(6)  # 4 allies
+    assert ranked[1][0].ceng == silver_level_to_ceng(3)  # 2 allies
 
 
 def test_scan_skips_levels_not_in_filter(monkeypatch):
