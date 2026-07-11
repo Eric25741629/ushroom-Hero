@@ -59,3 +59,40 @@ def test_shadow_disabled_returns_none_and_enabled_computes(monkeypatch):
     assert shadow["ok"] is True
     assert shadow["planner"] == "final_v1"
     assert shadow["first_step"] == {"type": "dig", "target": (1, 2)}
+
+
+def test_known_board_reaches_final_v1_but_valid_targets_stay_visible(monkeypatch):
+    captured = {}
+
+    def fake_plan(board, **kwargs):
+        captured["rows"] = len(board)
+        captured.update(kwargs)
+        return {"steps": [{"type": "dig", "target": (1, 2)}], "score_breakdown": {"total": 1}}
+
+    monkeypatch.setattr(service, "plan_final_v1", fake_plan)
+    board = _board()
+    known = [list(r) for r in board] + [["unreachable_dirt"] * 6 for _ in range(14)]
+    plan, _ = service._dispatch_planner(
+        board, 20, {}, set(), "final_v1", _LOGGER, known_board=known,
+    )
+    assert captured["rows"] == 21
+    assert captured["valid_targets"]
+    assert all(key[2] < 7 for key in captured["valid_targets"])
+    assert plan["steps"]
+
+
+def test_shadow_uses_known_board_when_available(monkeypatch):
+    captured = {}
+
+    def fake_plan(board, **kwargs):
+        captured["rows"] = len(board)
+        return {"steps": [{"type": "dig", "target": (1, 2)}],
+                "score_breakdown": {"total": 1.0}, "budget_hit": False}
+
+    monkeypatch.setattr(service, "plan_final_v1", fake_plan)
+    board = _board()
+    known = [list(r) for r in board] + [["unreachable_dirt"] * 6 for _ in range(3)]
+    shadow = service._compute_shadow_plan(board, 20, {}, set(), "final_v1", _LOGGER,
+                                          known_board=known)
+    assert shadow["ok"] is True
+    assert captured["rows"] == 10

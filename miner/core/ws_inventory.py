@@ -14,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 from ws_token import codec
 
 CMD_INVENTORY_QUERY = 0x0401
+CMD_MINE_BOARD = 0x0C01
 GOODS_PICKAXE = 4001
 GOODS_DRILL = 4002
 GOODS_BOMB = 4003
@@ -80,3 +81,34 @@ def read_ws_prop_counts(
         "drill": counts.get("drill", 0),
         "bomb": counts.get("bomb", 0),
     }
+
+
+def read_ws_below_rows(
+    d: Any,
+    *,
+    timeout_sec: float = 5.0,
+    _api_factory: Optional[Callable[[Any], Any]] = None,
+) -> list:
+    """視窗下方已知地形列（第 8 列起，unreachable_* 標籤）；不可用回 []。
+
+    web_h5 限定：抓 WS 0x0c01 原始盤面，重用 ws_token 的靜態地形重建
+    （``mining_adapter.build_final_v1_input``，含畫面外未採集礦坑覆寫），
+    回傳其已知盤第 8 列起，供 final_v1 規劃拼在 CNN 7 列視野之後。
+    adb（無 WS 可用）、頁面未就緒、RPC 失敗、地形模板缺列（visible_only）
+    一律回 []，caller 維持純 7 列。
+    """
+    page = _web_page(d)
+    if page is None:
+        return []
+    factory = _api_factory
+    if factory is None:
+        from utils.web_game_api import WebGameAPI  # lazy: web_h5 only
+        factory = WebGameAPI
+    try:
+        raw = factory(page).call_raw(CMD_MINE_BOARD, b"", timeout_sec=timeout_sec)
+        from ws_token import mining as ws_mining  # lazy: avoid adb import cost
+        from ws_token import mining_adapter
+        known = mining_adapter.build_final_v1_input(ws_mining.parse_board(bytes(raw)))
+        return [list(row) for row in known["board"][7:]]
+    except Exception:
+        return []

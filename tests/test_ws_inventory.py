@@ -93,3 +93,56 @@ def test_ws_error_returns_none():
 
     dev = _Dev(_Inner("web_h5", _Page(b"x")))
     assert wsi.read_ws_prop_counts(dev, _api_factory=_BoomApi) is None
+
+
+# --- read_ws_below_rows (final_v1 下方已知地形, web_h5 限定) -----------------
+
+def _fake_known(monkeypatch, rows):
+    import ws_token.mining as ws_mining
+    import ws_token.mining_adapter as adapter
+    monkeypatch.setattr(ws_mining, "parse_board", lambda body: "SENTINEL_BOARD")
+    monkeypatch.setattr(
+        adapter, "build_final_v1_input",
+        lambda mb, inventory=None: {"board": [["unreachable_dirt"] * 6 for _ in range(rows)]},
+    )
+
+
+class _BoardApi:
+    def __init__(self, page):
+        pass
+
+    def call_raw(self, cmd_id, body, timeout_sec=5.0, net_wait_ms=5000):
+        assert cmd_id == 0x0C01
+        assert body == b""
+        return b"\x00"
+
+
+def test_below_rows_adb_returns_empty():
+    dev = _Dev(_Inner("adb", _Page(b"")))
+    assert wsi.read_ws_below_rows(dev, _api_factory=_BoardApi) == []
+
+
+def test_below_rows_web_h5_returns_extension_rows(monkeypatch):
+    _fake_known(monkeypatch, 21)
+    dev = _Dev(_Inner("web_h5", _Page(b"")))
+    rows = wsi.read_ws_below_rows(dev, _api_factory=_BoardApi)
+    assert len(rows) == 14
+    assert all(len(r) == 6 for r in rows)
+
+
+def test_below_rows_visible_only_projection_returns_empty(monkeypatch):
+    _fake_known(monkeypatch, 7)
+    dev = _Dev(_Inner("web_h5", _Page(b"")))
+    assert wsi.read_ws_below_rows(dev, _api_factory=_BoardApi) == []
+
+
+def test_below_rows_ws_error_returns_empty():
+    class _BoomApi:
+        def __init__(self, page):
+            pass
+
+        def call_raw(self, *a, **k):
+            raise RuntimeError("net down")
+
+    dev = _Dev(_Inner("web_h5", _Page(b"")))
+    assert wsi.read_ws_below_rows(dev, _api_factory=_BoomApi) == []

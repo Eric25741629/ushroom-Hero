@@ -23,7 +23,7 @@ from miner.planning.executor import (
 from miner.core.config import DEFAULT_CLASSES, HIT_TABLE
 from miner.depth_tracker import DepthTracker
 from miner.core.ocr_utils import check_pickaxe_count, check_drill_num, check_boom_num
-from miner.core.ws_inventory import read_ws_prop_counts
+from miner.core.ws_inventory import read_ws_below_rows, read_ws_prop_counts
 from miner.planning.item_planner import find_tool_candidate
 from miner.planning.planner import (
     base_label,
@@ -347,14 +347,18 @@ def _compute_shadow_plan(
     blocked_actions: Set[Tuple[Any, ...]],
     shadow_version: str,
     miner_logger,
+    known_board: Optional[List[List[str]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Shadow 只計算與記錄；任何失敗不得中斷挖礦主流程。"""
     if shadow_version != "final_v1":
         return None
     started = time.perf_counter()
     try:
+        # valid_targets 只來自可見 7 列（executor 可點擊範圍）；
+        # known_board 只擴充規劃視野（web_h5 由 WS 重建下方地形）
         valid = _cnn_valid_targets(board) - _blocked_action_keys(blocked_actions)
-        result = plan_final_v1(board, shovels=shovels, items=items,
+        result = plan_final_v1(known_board if known_board is not None else board,
+                               shovels=shovels, items=items,
                                visible_rows=7, valid_targets=valid)
         return {
             "ok": True,
@@ -381,13 +385,17 @@ def _dispatch_planner(
     miner_logger,
     depth: Optional[int] = None,
     device: Optional[str] = None,
+    known_board: Optional[List[List[str]]] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Route to the correct planner version and return (plan, plan_title)."""
     if planner_version == "final_v1":
         plan = None
         try:
+            # valid_targets 只來自可見 7 列；known_board（web_h5 WS 下方地形）
+            # 只擴充規劃視野，v1/v3/v4 與 fallback 一律維持 7 列
             valid_targets = _cnn_valid_targets(board) - _blocked_action_keys(blocked_actions)
-            plan = plan_final_v1(board, shovels=shovels, items=items,
+            plan = plan_final_v1(known_board if known_board is not None else board,
+                                 shovels=shovels, items=items,
                                  visible_rows=7, valid_targets=valid_targets)
         except Exception as exc:
             miner_logger.warning("[MiningService] final_v1 planner failed, fallback to v1: %s", exc)
@@ -701,15 +709,26 @@ def run(
         last_board_signature = state_signature
 
         current_items = items_available.copy() if USE_ITEMS else {"drill": 0, "bomb": 0}
+        # web_h5：由 WS 0x0c01 重建視窗下方已知地形，餵給 final_v1（主或 shadow）。
+        # adb 拿不到下方狀況，read_ws_below_rows 回 [] → 維持純 7 列 CNN 視野。
+        known_board: Optional[List[List[str]]] = None
+        if "final_v1" in (planner_version, shadow_version):
+            below_rows = read_ws_below_rows(d)
+            if below_rows:
+                known_board = [list(row) for row in board] + below_rows
+                miner_logger.info(
+                    f"[MiningService] WS 已知地形擴充 7+{len(below_rows)} 列 (web_h5)"
+                )
         plan_started_at = time.perf_counter()
         plan, plan_title = _dispatch_planner(
             board, count, current_items, blocked_action_signatures, planner_version, miner_logger,
-            depth=depth_tracker.depth, device=ip,
+            depth=depth_tracker.depth, device=ip, known_board=known_board,
         )
         plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
         # Shadow：同一盤面/庫存快照額外計算，只記錄不執行；失敗只留 log。
         shadow_payload = _compute_shadow_plan(
             board, count, current_items, blocked_action_signatures, shadow_version, miner_logger,
+            known_board=known_board,
         )
         if shadow_payload is not None:
             plan["shadow"] = shadow_payload
