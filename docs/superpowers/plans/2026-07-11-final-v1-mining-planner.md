@@ -1774,3 +1774,37 @@ ADB 口徑（exec_mode=plan 整批執行，鎬池 350 雙方花完）：
   炸彈庫存充裕的帳號（5554 有 930）可長期跑，庫存低的帳號建議留在 v1。
 - **處置**：merge 回 main（使用者 2026-07-12 指示）；`mining_planner_version` 預設維持 v1，
   final_v1 為 per-device opt-in——建議只在 WS 路徑（21 列地形知識可用）且炸彈庫存充裕的裝置啟用。
+
+---
+
+## 效率重構驗收（2026-07-12 第二輪，branch worktree-final-v1-efficiency）
+
+> 使用者要求「最低代價挖最多礦」且 pit/eq 必須也贏 v1。與 codex 設計討論後定案機制
+> （提案 A 分級成本被 codex 批判並經 30 局數據淘汰——0-pit bridge 分支在 beam 第一層
+> 被殺、產出崩跌 49.3 vs 64.0）：
+>
+> 1. sim 炸彈畫面外力學修正（world 座標 footprint，對齊 planner；舊 sim 全部 21 列評估失真）
+> 2. 道具按真實 eq 計價 + 依 profile 影子價（plan=3.0 / step=3.6，40 tune-seed 掃描定案）
+> 3. KPI 對齊 action_cost（rho_action=0.15，記在「完成下一簇剩餘動作下界」，只 step profile）
+> 4. branch 配額（pit_item/bridge_item 各 2 名額，防深層收益分支早死）
+> 5. cluster 身分保存（pit∪dug_pit 連通分量；WS 由 DugPitTracker side table 補標）
+> 6. WS 7 列重建失敗 → 該輪退 v1（v1_7row_fallback）
+> 7. tie-break：dig 優先、bomb/drill 座標 parity（可重現、不硬編偏好）
+
+### 最終驗收（全新 seed 831..930 x100 配對，與篩選/調參 seed 池分離；bootstrap 10k）
+
+| 口徑 | planner | pits | pit/eq | items/局 | lost | rej | stuck |
+|---|---|---|---|---|---|---|---|
+| WS21 step | v1 | 65.0 | 0.1836 | ~34 | 43 | 0 | 0 |
+| WS21 step | **final_v1** | **79.5 (+22%)** | **0.2046** | 93.3 | **0** | 0 | 0 |
+| ADB plan | v1 | 92.2 | 0.1857 | ~49 | 55 | 321 | 0 |
+| ADB plan | **final_v1** | **222.2 (+141%)** | **0.2000** | 253.5 | **7** | **0** | 0 |
+
+- 配對差 95% CI：WS21 pits +12.9↑ / pit/eq [+0.0170,+0.0251]；ADB pits +126.5↑ / [+0.0109,+0.0179]。
+- 延遲（獨立串行 replay，2294 面實機盤）：final_v1 空 plan 0%、p99 66.9ms、max 168.5ms、零次 >250ms。
+- **GATE: PASS（兩口徑產出與 pit/eq 同時嚴格贏 v1，無 stuck/rejected 增加，延遲達標）**
+
+### 已知依賴與風險（實機驗證項目）
+
+- sim 大幅收益依賴「炸彈可作用於已知畫面外格」領域規則（spec 已確認）；實機以 WS push 驗證。
+- WS 道具用量 ~93/局（淨耗 ~60-70/局）：炸彈庫存低的帳號長期會退化為挖掘模式（搜尋依庫存自我調節）。
