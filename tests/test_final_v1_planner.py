@@ -86,6 +86,19 @@ def test_equal_effect_bomb_and_drill_receive_equal_objective_value():
     assert bomb["score_breakdown"]["item_cost"] == drill["score_breakdown"]["item_cost"]
 
 
+def test_single_item_unit_price_is_profile_specific():
+    """單次道具影子價依 exec_profile：plan=3.0、step=3.6（搜尋內部排序用，
+    KPI 對外兌換率仍是 3）。單一 valid_target 強制 bomb，計 1 次使用。"""
+    board = [["empty"] * 6 for _ in range(7)]
+    board[1][2] = "reachable_pit"
+    plan = plan_final_v1(board, 0, {"bomb": 1, "drill": 0},
+                         valid_targets={("use", "bomb", 0, 2)}, exec_profile="plan")
+    step = plan_final_v1(board, 0, {"bomb": 1, "drill": 0},
+                         valid_targets={("use", "bomb", 0, 2)}, exec_profile="step")
+    assert plan["score_breakdown"]["item_cost"] == 3.0
+    assert step["score_breakdown"]["item_cost"] == 3.6
+
+
 def test_row_zero_pit_is_collected_before_scroll_progress():
     board = _board()
     board[0][1] = "reachable_pit"

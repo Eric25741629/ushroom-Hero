@@ -23,6 +23,8 @@ from miner.v3.board import (
     promote_after_dig,
 )
 from miner.final_v1.scoring import (
+    ITEM_COST_PLAN,
+    ITEM_COST_STEP,
     RHO_ACTION_PLAN,
     RHO_ACTION_STEP,
     evaluate_state,
@@ -139,7 +141,8 @@ def _lost_row0_pits(work: List[List[str]]) -> int:
 
 def _apply(state: _State, action: PlannerAction, visible_rows: int,
            dist: Optional[Dict[Tuple[int, int], float]] = None,
-           source: Optional[Dict[Tuple[int, int], int]] = None) -> Optional[_State]:
+           source: Optional[Dict[Tuple[int, int], int]] = None,
+           item_cost: float = ITEM_COST_PLAN) -> Optional[_State]:
     work = [list(row) for row in state.board]
     visible = work[:visible_rows]
     before_scroll_open = floor7_open(visible)
@@ -192,7 +195,7 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
             state.usage.shovels,
             state.usage.bombs + bomb_delta,
             state.usage.drills + drill_delta,
-            state.usage.item_cost_units + item_use_cost(action.item),
+            state.usage.item_cost_units + item_use_cost(action.item, item_cost),
         ),
         # path bonus 以「動作」計，不以「格」計：炸彈開 8 格空地不是 8 倍路徑價值，
         # 每格計會讓道具靠 path+partial credit 刷分（實測 scarce 盤道具 44 vs v1 27 卻完成更少）
@@ -213,9 +216,11 @@ def plan_final_v1(
     exec_profile: str = "plan",
 ) -> Dict:
     started = time.perf_counter()
-    # step（WS 每步重規劃取第一步）= 開 KPI 對齊的 action_cost；
-    # plan（ADB 整批路徑）rho=0，維持既有排名不受影響
-    rho_action = RHO_ACTION_STEP if exec_profile == "step" else RHO_ACTION_PLAN
+    # step（WS 每步重規劃取第一步）= 開 KPI 對齊的 action_cost + 較高道具影子價(3.6)；
+    # plan（ADB 整批路徑）rho=0、影子價 3.0，維持既有排名不受影響
+    is_step = exec_profile == "step"
+    rho_action = RHO_ACTION_STEP if is_step else RHO_ACTION_PLAN
+    item_cost = ITEM_COST_STEP if is_step else ITEM_COST_PLAN
     config = PlannerConfig(time_budget_ms=float(time_budget_ms))
     work = normalize_board(board)
     # 大盤（21 列已知地形）自適應縮 beam：單子節點展開成本 ~3x，
@@ -293,7 +298,7 @@ def plan_final_v1(
                 if (action_index & 7) == 0 and time.perf_counter() >= deadline:
                     budget_hit = True
                     break
-                child = _apply(state, action, visible_rows, dist, source)
+                child = _apply(state, action, visible_rows, dist, source, item_cost)
                 if child is None:
                     continue
                 score = evaluate_state(

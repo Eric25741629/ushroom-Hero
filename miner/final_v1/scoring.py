@@ -22,10 +22,15 @@ Coordinate = Tuple[int, int]
 PIT_VALUE = 10.0
 CLUSTER_COMPLETION_MULTIPLIER = 2.0
 SHOVEL_COST = 1.0
-# 道具一律按 KPI 真實兌換率計價：KPI = pits/(shovel + 3*items)，故每次使用固定
-# = 3 鏟（分級成本已廢除——「命中幾礦」不等於「對 KPI 的邊際貢獻」，deep bridge
-# 的收益要靠 action_cost/branch quota 呈現，而非在第一層用分級成本殺掉）。
-ITEM_COST = 3.0 * SHOVEL_COST
+# 道具搜尋內部「影子價」，依 exec_profile 分開（分級成本已廢除——「命中幾礦」不等於
+# 「對 KPI 的邊際貢獻」，deep bridge 收益靠 action_cost/branch quota 呈現）。KPI 對外
+# 兌換率仍是 3，這兩個值只是搜尋內部排序用，經 40 tune-seed 掃描定案：
+#   plan（ADB 整批路徑）3.0 最優：223.4 pits / 0.202 eff vs v1 91.6 / 0.185
+#   step（WS 每步重規劃取第一步）3.6 才產出+效率雙贏：80.6 / 0.205 vs v1 65.7 / 0.185
+ITEM_COST_PLAN = 3.0 * SHOVEL_COST
+ITEM_COST_STEP = 3.6 * SHOVEL_COST
+# 對外預設 alias = plan 值（維持模組常數供掃描 monkeypatch / 舊呼叫端相容）
+ITEM_COST = ITEM_COST_PLAN
 # KPI 對齊：完成「下一簇」的動作數下界懲罰係數（單位 pit/action，J 內乘 PIT_VALUE）。
 # step profile（WS 每步重規劃、只取第一步）用 RHO_ACTION_STEP 讓「離下一簇更近」的
 # 分支勝出；plan/ADB profile（整批路徑）用 RHO_ACTION_PLAN=0 不改既有排名。
@@ -33,9 +38,10 @@ RHO_ACTION_STEP = 0.15
 RHO_ACTION_PLAN = 0.0
 
 
-def item_use_cost(item: str) -> float:
-    """單次道具使用的評分成本 = 3 鏟（KPI 真實兌換率；bomb/drill 同價）。"""
-    return ITEM_COST
+def item_use_cost(item: str, unit_cost: float = ITEM_COST) -> float:
+    """單次道具的搜尋內部影子價（bomb/drill 同價）；unit_cost 依 exec_profile 選定
+    （plan=ITEM_COST_PLAN 3.0 / step=ITEM_COST_STEP 3.6）。對外 KPI 兌換率仍是 3。"""
+    return unit_cost
 # 略高於單顆礦值：優先收礦，但不為守一顆 row0 礦犧牲 4+ 步進度
 # （40 時實測 scarce 盤 depth 172 vs v1 220，過度保護反而總產出更低）
 LOST_PIT_PENALTY = 12.0

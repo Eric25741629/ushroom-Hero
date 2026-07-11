@@ -1,6 +1,8 @@
 """final_v1 scoring contract: flat item cost, cluster identity, action_cost, row-loss."""
 from miner.final_v1.scoring import (
     ITEM_COST,
+    ITEM_COST_PLAN,
+    ITEM_COST_STEP,
     SHOVEL_COST,
     evaluate_state,
     item_use_cost,
@@ -9,11 +11,15 @@ from miner.final_v1.scoring import (
 from miner.final_v1.types import SearchUsage
 
 
-def test_item_cost_is_flat_three_shovels_for_both_items():
-    """道具一律按 KPI 真實兌換率計價 = 3 鏟；分級成本已廢除，bomb/drill 同價、
-    與命中礦坑數無關（deep bridge 收益改由 action_cost/branch quota 呈現）。"""
-    assert ITEM_COST == 3.0 * SHOVEL_COST
-    assert item_use_cost("bomb") == item_use_cost("drill") == ITEM_COST
+def test_item_shadow_price_splits_by_profile_but_items_stay_equal():
+    """道具搜尋內部影子價依 exec_profile 分開（掃描定案）：plan=3 鏟、step=3.6 鏟；
+    分級成本已廢除、與命中礦數無關，且同一 profile 下 bomb/drill 恆同價。
+    對外 alias ITEM_COST = plan 值（掃描 monkeypatch / 舊呼叫端相容）。"""
+    assert ITEM_COST_PLAN == 3.0 * SHOVEL_COST
+    assert ITEM_COST_STEP == 3.6 * SHOVEL_COST
+    assert ITEM_COST == ITEM_COST_PLAN
+    for unit in (ITEM_COST_PLAN, ITEM_COST_STEP):
+        assert item_use_cost("bomb", unit) == item_use_cost("drill", unit) == unit
 
 
 def test_action_cost_penalizes_distance_to_next_cluster_only_under_positive_rho():
