@@ -14,6 +14,34 @@ Usage:
     python tools/mining_sim_eval.py --runs 20
     python tools/mining_sim_eval.py --runs 100 --seed 42
     python tools/mining_sim_eval.py --runs 1 --log-every 10  # trace one game
+
+Bomb off-screen physics (2026-07-12):
+    The game's bomb (3x3 + cross) can affect KNOWN cells below the 7-row
+    viewport; drill/pickaxe are viewport-bounded. `_do_bomb` therefore applies
+    its footprint in WORLD coordinates (viewport row r -> world row viewport+r),
+    opening/collecting below-viewport tape cells, so it matches the planner's
+    `miner/final_v1/planner._affected()`. Drill stays screen-only. Before this,
+    the sim clamped bombs to 7 rows while the 21-row planner counted the deeper
+    hits -> every 21-row evaluation was corrupted by prediction!=execution.
+
+Board-label semantics for a DUG (collected) pit (investigated 2026-07-12,
+recorded for later cluster-identity work; planner NOT changed here):
+    - sim: `open_cell` writes a collected pit as label "dug_pit" (distinct from
+      generic air "empty"; both are air/`is_air`, neither is `is_pit`). Undug
+      pits sit in the tape as "unreachable_pit" (promoted to "reachable_pit"
+      once a neighbour opens). So `get_board()`/`get_known_board()` CAN tell a
+      dug pit ("dug_pit") apart from air that was never a pit ("empty").
+    - CNN/ADB runtime: `miner.core.config.DEFAULT_CLASSES` has BOTH "dug_pit"
+      and "empty" as separate classes, so the classifier CAN in principle label
+      a collected pit as "dug_pit" (imperfect in practice per
+      miner/check_dataset_usage.md, but the label exists).
+    - WS runtime (`ws_token/mining_adapter._block_label`): a collected pit has
+      block count==0 and is projected as plain "empty" -- NEVER "dug_pit". So
+      the WS 21-row reconstruction CANNOT distinguish a dug pit from generic
+      air; only undug pits (count>0) carry a pit label
+      (reachable_pit / offscreen unreachable_pit). Consequence for any future
+      cluster-identity preservation: sim + CNN can remember "this air used to be
+      a cluster pit"; WS cannot (it loses that identity to "empty").
 """
 from __future__ import annotations
 
@@ -29,9 +57,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+from miner.core.mechanics import get_bomb_affected_cells
 from miner.v3.actions import (
     dig_cost,
-    get_bomb_targets,
     get_drill_targets,
 )
 from miner.v3.board import (
@@ -340,15 +368,24 @@ class MiningSim:
         self.inv["bomb"] -= 1
         self.stats.digs += 1
         self.stats.bombs_used += 1
-        affected, _ = get_bomb_targets(r, c, ROWS, COLS)
+        # 炸彈以 WORLD 座標套用 footprint：viewport row r → world row viewport+r，
+        # 3x3+十字可延伸至 viewport 下方的 tape 列（真實遊戲炸彈作用於已知畫面外格；
+        # 這與 planner _affected() 對 bomb 計入畫面外命中一致）。rows 上限取 tape
+        # 尾端 = viewport 相對可及列數，footprint 只到 r+2，正常盤面必存在。
+        max_rel = len(self.tape) - self.viewport
+        affected = get_bomb_affected_cells(r, c, max_rel, COLS)
+        max_tr = max((tr for tr, _ in affected), default=r)
+        win_rows = max(ROWS, max_tr + 1)
+        # 視窗含 viewport 內外列，皆為 tape row 參照 → 開挖/promote 直接寫回 world
+        work = [self.tape[self.viewport + i] for i in range(win_rows)]
         pit_hits = [
             (self.viewport + tr, tc)
             for (tr, tc) in affected
-            if is_pit(view[tr][tc])
+            if is_pit(work[tr][tc])
         ]
         for (tr, tc) in affected:
-            open_cell(view, tr, tc)
-        promote_after_dig(view, affected)
+            open_cell(work, tr, tc)
+        promote_after_dig(work, affected)
         if pit_hits:
             self._on_pit_dug(pit_hits)
         return self._post_action()
