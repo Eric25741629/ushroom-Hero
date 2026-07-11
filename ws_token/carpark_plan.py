@@ -181,10 +181,17 @@ DEFAULT_CLUSTER_SCAN_FALLBACK = 9       # park 鉑銀9 if no cluster found
 
 @dataclass(frozen=True)
 class ClusterScanConfig:
-    """Per-device 抱團掃描: at grab time, poll lots for same-server allies before
-    parking.  Disabled by default; enable per device in carpark_plan.cluster_scan."""
+    """Per-device 抱團掃描: when parking in an open cross window, poll lots for
+    same-server allies before committing.  Disabled by default; enable per device
+    in carpark_plan.cluster_scan.
+
+    ``priority_levels`` is a subset of ``levels`` scanned with preference — among
+    lots meeting ``min_allies`` the priority-range ones are parked first (e.g.
+    手機fc/小寶 prefer 鉑銀1-15, 模擬器 prefer 15-30).  Empty = no preference.
+    """
     enabled: bool = False
     levels: tuple[int, ...] = DEFAULT_CLUSTER_SCAN_LEVELS
+    priority_levels: tuple[int, ...] = ()
     duration: int = DEFAULT_CLUSTER_SCAN_DURATION
     interval: int = DEFAULT_CLUSTER_SCAN_INTERVAL
     min_allies: int = DEFAULT_CLUSTER_SCAN_MIN_ALLIES
@@ -200,9 +207,12 @@ def parse_cluster_scan(cfg: dict | None) -> ClusterScanConfig:
         levels = tuple(int(v) for v in levels)
     else:
         levels = DEFAULT_CLUSTER_SCAN_LEVELS
+    prio = cs.get("priority_levels")
+    prio = tuple(int(v) for v in prio) if isinstance(prio, (list, tuple)) else ()
     return ClusterScanConfig(
         enabled=True,
         levels=levels,
+        priority_levels=prio,
         duration=_pos_int(cs.get("duration"), DEFAULT_CLUSTER_SCAN_DURATION),
         interval=_pos_int(cs.get("interval"), DEFAULT_CLUSTER_SCAN_INTERVAL),
         min_allies=_pos_int(cs.get("min_allies"), DEFAULT_CLUSTER_SCAN_MIN_ALLIES),
