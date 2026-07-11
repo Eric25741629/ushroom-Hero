@@ -1166,7 +1166,9 @@
             },
             "web_reload_after_goto": false,
             "dragon_realm_enabled": true,
-            "wanshen_rounds": 8
+            "wanshen_rounds": 8,
+            "web_debug_port": 9227,
+            "mining_shadow_planner_version": ""
         },
         "web-002": {
             "name": "暴哥",
@@ -1308,7 +1310,9 @@
             },
             "online_check_interval": 5,
             "dragon_realm_enabled": true,
-            "wanshen_rounds": 8
+            "wanshen_rounds": 8,
+            "web_debug_port": 9228,
+            "mining_shadow_planner_version": ""
         }
     },
     "global": {
