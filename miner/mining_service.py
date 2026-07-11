@@ -31,6 +31,7 @@ from miner.planning.planner import (
     is_empty as is_air,
 )
 from miner.planning.smart_planner import plan_smart
+from miner.final_v1 import plan_final_v1
 from miner.v3.planner import plan_v3
 from miner.v4.planner import plan_v4
 from miner.rl.rl_recorder import RLRecorder
@@ -307,6 +308,70 @@ def _count_planned_item_uses(steps: List[Dict[str, Any]]) -> Dict[str, int]:
     return planned
 
 
+def _cnn_valid_targets(board: List[List[str]]) -> Set[Tuple[Any, ...]]:
+    """Action-aware keys for every executor-accepted visible dig / item placement."""
+    from miner.v3.board import is_frontier_diggable, is_reachable_air
+    targets: Set[Tuple[Any, ...]] = set()
+    for r in range(len(board)):
+        for c in range(len(board[r])):
+            if is_frontier_diggable(board, r, c):
+                targets.add(("dig", "pickaxe", r, c))
+            if is_reachable_air(board[r][c]):
+                targets.add(("use", "bomb", r, c))
+                targets.add(("use", "drill", r, c))
+    return targets
+
+
+def _blocked_action_keys(blocked_actions: Set[Tuple[Any, ...]]) -> Set[Tuple[Any, ...]]:
+    """Convert existing blocked signatures (type,item,pos,target,action) to ActionKey."""
+    keys: Set[Tuple[Any, ...]] = set()
+    for sig in blocked_actions:
+        kind = sig[0] if len(sig) > 0 else None
+        item = sig[1] if len(sig) > 1 else None
+        pos = None
+        for cand in sig[2:4]:
+            if isinstance(cand, (tuple, list)) and len(cand) == 2:
+                pos = cand
+                break
+        if kind not in ("dig", "use") or pos is None:
+            continue
+        item_name = str(item) if (kind == "use" and item) else "pickaxe"
+        keys.add((kind, item_name, int(pos[0]), int(pos[1])))
+    return keys
+
+
+def _compute_shadow_plan(
+    board: List[List[str]],
+    shovels: float,
+    items: Dict[str, int],
+    blocked_actions: Set[Tuple[Any, ...]],
+    shadow_version: str,
+    miner_logger,
+) -> Optional[Dict[str, Any]]:
+    """Shadow 只計算與記錄；任何失敗不得中斷挖礦主流程。"""
+    if shadow_version != "final_v1":
+        return None
+    started = time.perf_counter()
+    try:
+        valid = _cnn_valid_targets(board) - _blocked_action_keys(blocked_actions)
+        result = plan_final_v1(board, shovels=shovels, items=items,
+                               visible_rows=7, valid_targets=valid)
+        return {
+            "ok": True,
+            "planner": "final_v1",
+            "first_step": (result.get("steps") or [None])[0],
+            "score_breakdown": result.get("score_breakdown"),
+            "elapsed_ms": (time.perf_counter() - started) * 1000.0,
+            "budget_hit": result.get("budget_hit", False),
+        }
+    except Exception as exc:  # shadow must never interrupt mining
+        miner_logger.warning("[MiningService] shadow planner final_v1 failed: %s", exc)
+        return {
+            "ok": False, "planner": "final_v1", "error": str(exc),
+            "elapsed_ms": (time.perf_counter() - started) * 1000.0,
+        }
+
+
 def _dispatch_planner(
     board: List[List[str]],
     shovels: float,
@@ -318,6 +383,25 @@ def _dispatch_planner(
     device: Optional[str] = None,
 ) -> Tuple[Dict[str, Any], str]:
     """Route to the correct planner version and return (plan, plan_title)."""
+    if planner_version == "final_v1":
+        plan = None
+        try:
+            valid_targets = _cnn_valid_targets(board) - _blocked_action_keys(blocked_actions)
+            plan = plan_final_v1(board, shovels=shovels, items=items,
+                                 visible_rows=7, valid_targets=valid_targets)
+        except Exception as exc:
+            miner_logger.warning("[MiningService] final_v1 planner failed, fallback to v1: %s", exc)
+        if plan is not None and plan.get("steps"):
+            plan["planner_name"] = "final_v1"
+            plan["planner_source"] = "planner"
+            return plan, "Final V1 規劃 (bounded beam)"
+        fallback, _title = _dispatch_planner(
+            board, shovels, items, blocked_actions, "v1", miner_logger,
+            depth=depth, device=device,
+        )
+        fallback["planner_name"] = "final_v1"
+        fallback["planner_source"] = "v1_fallback"
+        return fallback, "Final V1 規劃 (v1 fallback)"
     if planner_version == "v4":
         plan = plan_v4(board, shovels=shovels, items=items, blocked_actions={sig[:3] for sig in blocked_actions})
         return plan, "V4 規劃 (Miner V4, 3-step bounded)"
@@ -345,7 +429,10 @@ def _log_planner_stats(
     miner_logger,
     depth: Optional[int] = None,
 ) -> None:
-    if planner_version not in {"v3", "v4"}:
+    shadow = plan.get("shadow")
+    if shadow is not None:
+        miner_logger.info(f"[MiningService] shadow_plan={shadow}")
+    if planner_version not in {"v3", "v4", "final_v1"}:
         return
     depth_str = "?" if depth is None else str(depth)
     miner_logger.info(
@@ -471,9 +558,12 @@ def run(
     # v4 is a bounded 3-step DFS. v5 (priors-driven) and v2 were removed.
     # Override per-device with `mining_planner_version` in config.
     planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
+    shadow_version = str(device_cfg.get("mining_shadow_planner_version", "")).strip().lower()
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
-    if planner_version not in {"v1", "v3", "v4"}:
+    if planner_version not in {"v1", "v3", "v4", "final_v1"}:
         planner_version = "v1"
+    if shadow_version not in {"", "final_v1"}:
+        shadow_version = ""
 
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
@@ -617,6 +707,12 @@ def run(
             depth=depth_tracker.depth, device=ip,
         )
         plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
+        # Shadow：同一盤面/庫存快照額外計算，只記錄不執行；失敗只留 log。
+        shadow_payload = _compute_shadow_plan(
+            board, count, current_items, blocked_action_signatures, shadow_version, miner_logger,
+        )
+        if shadow_payload is not None:
+            plan["shadow"] = shadow_payload
         _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger, depth_tracker.depth)
 
         _check_force_sleep(ip)
