@@ -560,6 +560,10 @@ def play_one_game(
                 shovels=float(sim.inv["pickaxe"]),
                 items={"drill": sim.inv["drill"], "bomb": sim.inv["bomb"]},
                 visible_rows=ROWS,
+                # step 模式讓 planner 用 RHO_ACTION_STEP 對齊 KPI（WS 每步重規劃
+                # 只取一步）；plan 模式維持整批執行的成本語意。exec_mode 已是
+                # "plan"|"step"，直接映射到 planner 的 exec_profile。
+                exec_profile=exec_mode,
             )
         else:
             plan = plan_fn(

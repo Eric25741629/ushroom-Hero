@@ -164,3 +164,21 @@ def test_bomb_opened_below_cell_is_consistent_after_scroll():
     board = sim.get_board()
     for i in range(mining_sim_eval.ROWS):
         assert board[i] == sim.tape[sim.viewport + i]
+
+
+def test_final_v1_receives_exec_profile_matching_exec_mode(monkeypatch):
+    # step mode must forward exec_profile="step" so the planner's RHO_ACTION_STEP
+    # KPI alignment is actually exercised (was hard-wired to plan/rho=0 before).
+    seen = []
+
+    def _spy(board, **kwargs):
+        seen.append(kwargs.get("exec_profile"))
+        return {"steps": []}
+
+    monkeypatch.setitem(mining_sim_eval.PLANNERS, "final_v1", _spy)
+    mining_sim_eval.play_one_game(
+        seed=1, max_iter=3, planner="final_v1",
+        starting_inv={"pickaxe": 10, "bomb": 0, "drill": 0},
+        exec_mode="step",
+    )
+    assert seen and all(p == "step" for p in seen)
