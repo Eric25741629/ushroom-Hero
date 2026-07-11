@@ -48,8 +48,10 @@ def evaluate_state(
     scrolled: bool = False,
     descent_rows: int = 0,
     opened_path_cells: int = 0,
+    clusters: List[FrozenSet[Coordinate]] = None,
 ) -> ScoreBreakdown:
-    clusters = pit_clusters(original_board)
+    if clusters is None:
+        clusters = pit_clusters(original_board)
     collected = 0
     completed_bonus = 0.0
     unfinished = 0
