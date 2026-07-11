@@ -87,7 +87,7 @@ def render_round(event: Dict[str, Any], index: int) -> str:
     lines: List[str] = []
     depth = event.get("depth", "?")
     flag = " (uncertain)" if event.get("uncertain") else ""
-    lines.append(f"── round #{index}  depth={depth}{flag} ──")
+    lines.append(f"== round #{index}  depth={depth}{flag} ==")
     exec_info = event.get("exec")
     if exec_info is not None:
         lines.append(f"exec: {exec_info}")

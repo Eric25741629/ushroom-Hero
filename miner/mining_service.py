@@ -37,6 +37,7 @@ from miner.v4.planner import plan_v4
 from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
+from utils.mining_map_recorder import MiningMapRecorder
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 from tools import click_white
 
@@ -632,6 +633,35 @@ def run(
     depth_tracker = DepthTracker()
     prev_board: Optional[List[List[str]]] = None
 
+    # 每帳號挖礦地圖記錄（session JSONL + 累積 global_map）。for_device 讀
+    # mining_map_record（預設開），停用時完全不建檔；所有呼叫 fail-safe。
+    map_recorder = MiningMapRecorder.for_device(ip, str(device_cfg.get("backend", "adb")))
+    map_recorder.start(
+        planner=planner_version,
+        depth_base=depth_tracker.depth,
+        inv={"pickaxe": count, **items_available},
+    )
+
+    def _exec_counts(res) -> Dict[str, int]:
+        return {
+            "shovels": int(getattr(res, "shovels_used", 0) or 0),
+            "bombs": int(getattr(res, "bombs_used", 0) or 0),
+            "drills": int(getattr(res, "drills_used", 0) or 0),
+        }
+
+    def _record_map_round(steps, exec_dict) -> None:
+        # 讀 loop 內即時 locals（board/known_board/count/...）。recorder 內部已吞例外。
+        below = known_board[len(board):] if known_board else None
+        map_recorder.round(
+            depth=depth_tracker.depth,
+            uncertain=depth_tracker.last_uncertain,
+            board=board,
+            below=below,
+            steps=steps,
+            exec=exec_dict,
+            inv={"pickaxe": count, **items_available},
+        )
+
     iterations = 0
     consecutive_empty_plans = 0
     identical_board_count = 0
@@ -739,6 +769,7 @@ def run(
         if not plan.get("ok"):
             miner_logger.warning(f"[Mining] 規劃失敗: {plan.get('message', '未知錯誤')}")
             miner_logger.warning(f"  剩餘寶箱: {plan.get('remaining_pits', '?')}, 底層開啟: {plan.get('floor7_open', '?')}")
+            _record_map_round([], {"ok": False, "reason": "plan_failed"})
             consecutive_empty_plans += 1
             if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
                 miner_logger.warning(
@@ -749,6 +780,7 @@ def run(
 
         if not plan.get("steps"):
             _diagnose_empty_plan(board, plan, miner_logger)
+            _record_map_round([], {"ok": False, "reason": "no_steps"})
             # If reachable pits remain but the planner can't collect them
             # (blacklisted / sealed-pocket reachable), don't just count toward
             # abort — scroll past them so mining continues productively.
@@ -821,6 +853,10 @@ def run(
                 % (planner_version, action_signature, exc.item_type or "-",
                    inv_before, {"pickaxe": count, **items_available})
             )
+            _record_map_round(
+                plan.get("steps", []),
+                {"ok": False, "reason": "no_board_change", **_exec_counts(exc.partial_result)},
+            )
             continue
         except OutOfItemError as exc:
             count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
@@ -837,6 +873,10 @@ def run(
                 % (planner_version, exc.item_type, exc.live_count,
                    inv_before, {"pickaxe": count, **items_available})
             )
+            _record_map_round(
+                plan.get("steps", []),
+                {"ok": False, "reason": "out_of_item", **_exec_counts(exc.partial_result)},
+            )
             continue
 
         # Plan executed cleanly — credit shovels / items consumed.
@@ -849,6 +889,11 @@ def run(
                exec_result.terminated_reason or "-", exec_result.shovels_used,
                exec_result.bombs_used, exec_result.drills_used,
                inv_before, {"pickaxe": count, **items_available})
+        )
+        _record_map_round(
+            plan["steps"],
+            {"ok": True, "reason": exec_result.terminated_reason or "ok",
+             **_exec_counts(exec_result)},
         )
 
         # Identical-state deadlock guard: if executing a non-empty plan left
@@ -864,6 +909,8 @@ def run(
                 f"判定死結，中止挖礦迴圈"
             )
             break
+
+    map_recorder.end()
 
     if rl_recorder:
         rl_recorder.flush()
