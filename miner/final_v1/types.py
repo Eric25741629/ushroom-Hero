@@ -47,6 +47,9 @@ class SearchUsage:
     shovels: float = 0.0
     bombs: int = 0
     drills: int = 0
+    # 逐次使用的加權成本累計（依該次命中礦坑格數分級，見 scoring.item_use_cost）；
+    # 不能事後用「顆數 x 固定價」回推，因為每次使用的分級可能不同
+    item_cost_units: float = 0.0
 
 
 @dataclass(frozen=True)

@@ -7,6 +7,26 @@ def test_bomb_and_drill_have_the_same_base_cost():
     assert ITEM_COST["bomb"] == ITEM_COST["drill"]
 
 
+def test_item_cost_tiers_penalize_low_yield_use():
+    """道具成本依「該次使用實際命中的礦坑格數」分級：
+    0 礦（純挖掘用途）>> 1 礦 >= 2+ 礦（基礎成本）。兩種道具同價。"""
+    from miner.final_v1.scoring import item_use_cost
+
+    assert item_use_cost("bomb", 0) > item_use_cost("bomb", 1) >= item_use_cost("bomb", 2)
+    assert item_use_cost("bomb", 2) == ITEM_COST["bomb"]
+    assert item_use_cost("bomb", 5) == ITEM_COST["bomb"]
+    for hits in (0, 1, 2, 4):
+        assert item_use_cost("bomb", hits) == item_use_cost("drill", hits)
+
+
+def test_evaluate_state_charges_accumulated_item_cost_units():
+    """item_cost 來自逐次使用累計的加權單位，不再用「顆數 x 固定價」。"""
+    board = [["empty"] * 6]
+    usage = SearchUsage(shovels=0.0, bombs=2, drills=0, item_cost_units=15.0)
+    breakdown = evaluate_state(board, board, usage)
+    assert breakdown.item_cost == 15.0
+
+
 def test_completed_cluster_beats_equal_number_of_scattered_pits():
     original = [
         ["empty", "empty", "empty", "empty", "empty", "empty"],

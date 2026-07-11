@@ -143,6 +143,47 @@ def test_plan_returns_the_full_search_path_not_just_first_step():
     assert result["preview_steps"] == result["steps"]
 
 
+def test_no_pit_board_never_spends_items_on_excavation():
+    """無礦盤面道具命中 0 礦 = 純挖掘用途，成本分級後必須全用鎬子下潛。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][0] = "empty"
+    result = plan_final_v1(board, 50, {"bomb": 5, "drill": 5})
+    assert result["steps"]
+    assert all(step["type"] == "dig" for step in result["steps"])
+
+
+def test_bomb_hitting_multiple_pits_through_rock_still_beats_digging():
+    """高收益道具使用必須保留：一發命中 2 礦 + 破 rock（逐挖 1+2+1=4 鏟 >
+    bomb 3.0），不能被分級成本誤殺。"""
+    board = [["unreachable_dirt"] * 6 for _ in range(7)]
+    board[0][2] = "empty"
+    board[1][1] = "unreachable_pit"
+    board[1][2] = "unreachable_rock"
+    board[1][3] = "unreachable_pit"
+    result = plan_final_v1(board, 50, {"bomb": 1, "drill": 0})
+    first = result["steps"][0]
+    assert first["type"] == "use"
+    assert first["item"] == "bomb"
+
+
+def test_equal_effect_tie_break_is_coordinate_stable_not_item_fixed():
+    """效果完全相同時以座標（parity）決定道具，不得固定偏好 bomb；且可重現。"""
+    def _first_item(col):
+        board = [["empty"] * 6 for _ in range(7)]
+        board[1][col] = "reachable_pit"
+        result = plan_final_v1(
+            board, 0, {"bomb": 1, "drill": 1},
+            valid_targets={("use", "bomb", 0, col), ("use", "drill", 0, col)},
+        )
+        return result["steps"][0]["item"]
+
+    even = _first_item(2)  # row+col = 2
+    odd = _first_item(3)   # row+col = 3
+    assert {even, odd} == {"bomb", "drill"}
+    assert _first_item(2) == even
+    assert _first_item(3) == odd
+
+
 def test_step_costs_reflect_the_cell_state_when_each_step_executes():
     """第 N 步的 step_cost 必須是該步當下格材質的成本（rock=更貴）。"""
     from miner.v3.actions import dig_cost

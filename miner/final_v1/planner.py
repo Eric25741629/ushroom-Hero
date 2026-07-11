@@ -16,12 +16,18 @@ from miner.v3.actions import apply_dig, dig_cost
 from miner.v3.board import (
     floor7_open,
     is_frontier_diggable,
+    is_pit,
     is_reachable_air,
     normalize_board,
     open_cell,
     promote_after_dig,
 )
-from miner.final_v1.scoring import evaluate_state, pit_clusters, pit_potential
+from miner.final_v1.scoring import (
+    evaluate_state,
+    item_use_cost,
+    pit_clusters,
+    pit_potential,
+)
 from miner.final_v1.types import ActionKey, PlannerAction, PlannerConfig, SearchUsage
 
 _INF = float("inf")
@@ -61,6 +67,16 @@ def _candidate_actions(board, pickaxes, bombs, drills, visible_rows) -> List[Pla
     return actions
 
 
+def _tie_rank(action: PlannerAction) -> int:
+    """同分排序的道具決勝：不得固定偏好任一道具（spec），以座標 parity
+    決定 bomb/drill 先後 —— 決策可重現、長期用量 ~50/50 不偏耗單一道具。
+    dig 排最前（同分時省道具）。"""
+    if action.kind == "dig":
+        return 0
+    preferred = "bomb" if (action.row + action.col) % 2 == 0 else "drill"
+    return 1 if action.item == preferred else 2
+
+
 def _affected(action: PlannerAction, board, visible_rows) -> Set[Tuple[int, int]]:
     rows, cols = len(board), len(board[0])
     if action.item == "bomb":
@@ -97,7 +113,8 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
             best_dist = min(best_dist, dist.get((action.row, action.col), _INF))
         return _State(
             tuple(tuple(row) for row in work), state.pickaxes - cost, state.bombs, state.drills,
-            SearchUsage(state.usage.shovels + cost, state.usage.bombs, state.usage.drills),
+            SearchUsage(state.usage.shovels + cost, state.usage.bombs, state.usage.drills,
+                        state.usage.item_cost_units),
             state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
             lost, best_dist, state.path_costs + (cost,),
         )
@@ -105,6 +122,8 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
     changed = [(r, c) for r, c in affected if not is_reachable_air(work[r][c])]
     if not changed:
         return None  # no-op item branch is never free progress
+    # 本次使用實際命中的礦坑格數決定成本分級（bomb 含已知畫面外，見 _affected）
+    pits_hit = sum(1 for r, c in changed if is_pit(work[r][c]))
     for r, c in changed:
         open_cell(work, r, c)
     promote_after_dig(work, changed)
@@ -119,7 +138,12 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
     return _State(
         tuple(tuple(row) for row in work), state.pickaxes,
         state.bombs - bomb_delta, state.drills - drill_delta,
-        SearchUsage(state.usage.shovels, state.usage.bombs + bomb_delta, state.usage.drills + drill_delta),
+        SearchUsage(
+            state.usage.shovels,
+            state.usage.bombs + bomb_delta,
+            state.usage.drills + drill_delta,
+            state.usage.item_cost_units + item_use_cost(action.item, pits_hit),
+        ),
         # path bonus 以「動作」計，不以「格」計：炸彈開 8 格空地不是 8 倍路徑價值，
         # 每格計會讓道具靠 path+partial credit 刷分（實測 scarce 盤道具 44 vs v1 27 卻完成更少）
         state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
@@ -226,9 +250,11 @@ def plan_final_v1(
                     lost_pits=child.lost_pits,
                     pull_progress=_pull_progress(child.best_dist),
                 )
-                ranked.append((score.total, action.row, action.col, child, score))
-            ranked.sort(key=lambda row: (-row[0], row[1], row[2]))
-            for _total, _row, _col, child, score in ranked[: config.branch_width]:
+                ranked.append(
+                    (score.total, action.row, action.col, _tie_rank(action), child, score)
+                )
+            ranked.sort(key=lambda row: (-row[0], row[1], row[2], row[3]))
+            for _total, _row, _col, _rank, child, score in ranked[: config.branch_width]:
                 expanded += 1
                 signature = (child.board, child.bombs, child.drills, round(child.pickaxes, 3))
                 if dominance.get(signature, float("-inf")) >= score.total:
@@ -241,7 +267,9 @@ def plan_final_v1(
                 break
         if budget_hit or not next_states:
             break
-        next_states.sort(key=lambda row: (-row[0], row[1].path[0].row, row[1].path[0].col))
+        next_states.sort(key=lambda row: (
+            -row[0], row[1].path[0].row, row[1].path[0].col, _tie_rank(row[1].path[0]),
+        ))
         beam = [row[1] for row in next_states[: config.beam_width]]
         reached_depth = depth + 1
 

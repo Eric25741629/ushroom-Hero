@@ -25,6 +25,21 @@ SHOVEL_COST = 1.0
 # 3.0 為掃描後最優（4.0/5.0 全 regime 總產出掉到 v1 之下）；道具會從完成
 # cluster 回補，過度節省 = 白白少挖
 ITEM_COST = {"bomb": 3.0, "drill": 3.0}
+# 產出分級道具成本：統一 3.0 時 beam 會把道具當便宜挖掘機（一發開 ~10 格 vs
+# 逐格 1 鏟），實測 WS21 每局 ~88 個道具大半是 0 礦覆蓋的純挖掘用途，綜合效率
+# pit/(sh+3*item) 反輸 v1。命中 >=2 礦維持基礎價（高收益使用不受影響）、
+# 1 礦維持基礎價、0 礦重罰 —— 挖掘交還給鎬子 + 位能導向。
+ITEM_SINGLE_PIT_COST = 3.0
+ITEM_LOW_YIELD_COST = 12.0
+
+
+def item_use_cost(item: str, pits_hit: int) -> float:
+    """單次道具使用的評分成本，依實際命中的礦坑格數分級（bomb/drill 同價）。"""
+    if pits_hit >= 2:
+        return ITEM_COST[item]
+    if pits_hit == 1:
+        return ITEM_SINGLE_PIT_COST
+    return ITEM_LOW_YIELD_COST
 # 略高於單顆礦值：優先收礦，但不為守一顆 row0 礦犧牲 4+ 步進度
 # （40 時實測 scarce 盤 depth 172 vs v1 220，過度保護反而總產出更低）
 LOST_PIT_PENALTY = 12.0
@@ -128,7 +143,7 @@ def evaluate_state(
         cluster_gain=completed_bonus,
         pit_gain=collected_value,
         shovel_cost=usage.shovels * SHOVEL_COST,
-        item_cost=(usage.bombs + usage.drills) * ITEM_COST["bomb"],
+        item_cost=usage.item_cost_units,
         lost_pit_penalty=row_zero_lost * LOST_PIT_PENALTY,
         unfinished_cluster_penalty=unfinished * UNFINISHED_CLUSTER_PENALTY,
         descent_bonus=descent_rows * DESCENT_BONUS,
