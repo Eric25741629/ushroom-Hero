@@ -1153,4 +1153,16 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
       需 live 抓封包確認遊戲能否在 8h auto-collect 前提前收回並重停。確認可行後再實作 30 分複查 + 移車。
 
 備註：無 hot-reload — 改了 ws_token/runner.py 等模組後，正在跑的 bot 需重啟 new_main_v2.py 才生效。
->>>>>>> main
+
+## Dashboard 加載變慢 — /api/status OCR health 探測卡 2 秒 (2026-07-12)
+
+根因：主 OCR server `100.64.0.5:5001` 掛掉，`check_ocr_server()` 每次同步逐台探測
+（timeout=2s、死的排第一），dashboard 每 2 秒輪詢 /api/status → 每次輪詢都卡 2s+。
+備援 100.64.0.7 實測 3ms 就回。
+
+- [x] `check_ocr_server` 加 30s TTL 快取（`_OCR_HEALTH_CACHE`）
+- [x] 記住上次成功 server（`_OCR_LAST_GOOD`）優先探測；health timeout 2s → 0.5s
+- [x] tests/test_ocr_health_cache.py（3 tests）+ test_presence_lease_fields 迴歸，8 passed
+- [x] merge 到 main（849539f1），worktree/branch 已清（目錄殼被 NAS 同步佔住，可稍後手刪）
+
+備註：無 hot-reload — 正在跑的 control panel 要重啟 new_main_v2.py 才吃到新程式碼。
