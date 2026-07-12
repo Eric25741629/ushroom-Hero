@@ -35,8 +35,27 @@ def init_ws(sock_instance):
     sock = sock_instance
 
 
+# /api/status 每 2 秒被 dashboard 輪詢；health 探測若逐台同步等 timeout，
+# 死掉的主 server 會讓「每一次」輪詢都卡住（實測 2s+）。TTL 快取 + 記住
+# 上次成功的 server 優先探測 + 短 timeout，把 stall 壓到只剩快取過期那次。
+_OCR_HEALTH_CACHE = {"ok": False, "expires_at": 0.0}
+_OCR_HEALTH_TTL_SEC = 30.0
+_OCR_HEALTH_TIMEOUT_SEC = 0.5
+_OCR_LAST_GOOD = {"base": None}
+
+
 def check_ocr_server():
     """Check OCR server health based on current OCR config (main/backup/auto)."""
+    now = time.time()
+    if now < _OCR_HEALTH_CACHE["expires_at"]:
+        return _OCR_HEALTH_CACHE["ok"]
+    ok = _probe_ocr_servers()
+    _OCR_HEALTH_CACHE["ok"] = ok
+    _OCR_HEALTH_CACHE["expires_at"] = now + _OCR_HEALTH_TTL_SEC
+    return ok
+
+
+def _probe_ocr_servers():
     try:
         ocr_cfg = config_manager.get_ocr_config()
         mode = str(ocr_cfg.get("server_mode", "main")).strip().lower()
@@ -60,10 +79,18 @@ def check_ocr_server():
             if s not in priority:
                 priority.append(s)
 
+        last_good = _OCR_LAST_GOOD["base"]
+        if last_good in priority:
+            priority.remove(last_good)
+            priority.insert(0, last_good)
+
         for base in priority:
             try:
-                response = requests.get(f"{base}/health", timeout=2)
+                response = requests.get(
+                    f"{base}/health", timeout=_OCR_HEALTH_TIMEOUT_SEC
+                )
                 if response.status_code == 200:
+                    _OCR_LAST_GOOD["base"] = base
                     return True
             except Exception:
                 continue
