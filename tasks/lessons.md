@@ -513,3 +513,12 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   先把完整脈絡丟給 codex 取得獨立意見，主 session 彙整兩方觀點後才實作；
   已寫的碼視為「提案 A」，不因沉沒成本偏袒。機械性小修（typo、接線、測試補齊）不必。
 - 呼叫方式照 2026-07-10 教訓：主 session 直接 `codex exec` 背景跑（subagent shell 會掛死）。
+
+## 2026-07-12 實機驗證：用頁面自己的連線，別另開 WS
+- 驗證 web_h5 帳號的挖礦/遊戲邏輯，CDP attach 後走**頁面既有 WS 連線**（mouse.click 礦格 → 遊戲
+  自己送 0x0c03），不要另開 WSGameClient——同帳號雙登互踢，且 login ticket 常過期 33 天+。
+- 辨識盤面用 CNN 分類器（>99%，分割畫面），別自己讀 cocos 場景樹：BlockRoot 只有 7 列地形，
+  藍水晶是 reward 獨立節點不在 BlockRoot，自己重建會漏 pit。細節見 memory
+  [[reference-live-mining-verification-via-cdp]]。
+- 大改動 merge 前務必先在 worktree 內 `git merge main` 解衝突，讓淨 diff 只剩自己的變動再送 review；
+  worktree base 落後主樹時，直接 diff main..HEAD 會混入他人 commit 的反向差異，誤導 reviewer。
