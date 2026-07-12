@@ -17,6 +17,7 @@ from ws_token import mining, mining_adapter
 from ws_token.abort import WSRunAborted
 from ws_token.client import WSGameClient
 from ws_token.creds import load_creds
+from utils.mining_map_recorder import MiningMapRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -565,6 +566,49 @@ def mine_until_pickaxe_empty(
         except Exception:
             pass
 
+    # 每帳號挖礦地圖記錄（純 WS 路徑：21 列已知盤 + WS baseline authoritative depth）。
+    map_recorder = MiningMapRecorder.for_device(device_id, "ws") if device_id else None
+
+    def _map_snapshot(board_obj):
+        """回傳 (depth, visible_7列, below_列或None)；失敗回 None（不得中斷挖礦）。"""
+        try:
+            trace = mining_adapter.board_projection_trace(board_obj)
+            visible = trace["grid"]
+            depth = int(trace["top_depth"])
+            below = None
+            try:
+                full = mining_adapter.build_final_v1_input(board_obj)["board"]
+                if len(full) > len(visible):
+                    below = full[len(visible):]
+            except Exception:
+                below = None
+            return depth, visible, below
+        except Exception:
+            return None
+
+    def _record_ws_round(board_obj, plan_result, item, tried_any):
+        if map_recorder is None or not map_recorder.enabled:
+            return
+        snap = _map_snapshot(board_obj)
+        if snap is None:
+            return
+        depth, visible, below = snap
+        confirmed = bool(item and item.get("confirmed"))
+        goods = int(item["goods_id"]) if (item and item.get("goods_id") is not None) else None
+        reason = (item.get("confirmation") if item
+                  else ("unconfirmed" if tried_any else "no_steps"))
+        exec_dict = {
+            "ok": confirmed,
+            "reason": reason,
+            "shovels": 1 if confirmed and goods == mining.GOODS_PICKAXE else 0,
+            "bombs": 1 if confirmed and goods == mining.GOODS_BOMB else 0,
+            "drills": 1 if confirmed and goods == mining.GOODS_DRILL else 0,
+        }
+        steps = [item["step"]] if item else list(plan_result.get("ws_steps", []))[:1]
+        # WS depth 由 baseline 決定，authoritative → 不 uncertain。
+        map_recorder.round(depth=depth, uncertain=False, board=visible, below=below,
+                           steps=steps, exec=exec_dict, inv=dict(inventory))
+
     # Undug terrain is reconstructed deterministically inside mining_adapter via
     # mine_terrain.terrain_at(depth, col, area_info) — no per-device learning,
     # no cache, no CNN. The board's own area_info indexes configMine_template.
@@ -598,6 +642,8 @@ def mine_until_pickaxe_empty(
 
     current_board = mining.read_board(client, timeout=timeout)
     _log_board_trace(current_board, inventory, phase="initial", step_index=0, log=_wlog)
+    if map_recorder is not None:
+        map_recorder.start(planner=planner_version, inv=dict(inventory))
     for _idx in range(limit):
         # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
         # 續做時讀當前 board 接續，不會重複。
@@ -674,6 +720,8 @@ def mine_until_pickaxe_empty(
             rejected.add(int(step["block_id"]))
             item = None
 
+        _record_ws_round(current_board, plan_result, item, tried_any)
+
         if item is None:
             # 本盤所有可挖候選都試過仍無 confirmed dig。完全沒挖步=no_steps，
             # 有送過但都被拒=unconfirmed（兩者都讓 confirmed_digs==0 標 skipped）。
@@ -720,6 +768,9 @@ def mine_until_pickaxe_empty(
         initial_inventory.get("drill"), inventory.get("drill"),
         initial_inventory.get("bomb"), inventory.get("bomb"),
     )
+
+    if map_recorder is not None:
+        map_recorder.end(totals={"stopped": stopped_reason, "digs": len(executed)})
 
     result: Dict[str, Any] = {
         "initial_inventory": initial_inventory,

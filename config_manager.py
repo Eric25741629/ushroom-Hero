@@ -83,6 +83,7 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_planner_version": "v1",  # v1 / v3 / v4 / final_v1 (v1 default — A*, most shovel-efficient at real 3.6% density; v5/v2 removed)
     "mining_shadow_planner_version": "",  # 空字串=關閉；目前只允許 final_v1（只計算與記錄，不執行）
     "mining_save_samples": False,  # save low-confidence mining cell samples
+    "mining_map_record": True,  # 記錄每帳號挖礦地圖(session JSONL + 累積 global_map) 供回放；預設開
     "wanshen_rounds": 8,  # 萬神試煉每週開局(局)數;一局=爬到第一次失敗→結束本局→重進(可調 1-50)
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
@@ -231,6 +232,7 @@ class DeviceConfig:
     mining_planner_version: str = "v1"
     mining_shadow_planner_version: str = ""
     mining_save_samples: bool = False
+    mining_map_record: bool = True
     wanshen_rounds: int = 8
 
     # Sleep schedule
@@ -1167,6 +1169,10 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["mining_save_samples"] = _to_bool(
             current.get("mining_save_samples", DEFAULT_DEVICE_CONFIG["mining_save_samples"]),
             DEFAULT_DEVICE_CONFIG["mining_save_samples"],
+        )
+        current["mining_map_record"] = _to_bool(
+            current.get("mining_map_record", DEFAULT_DEVICE_CONFIG["mining_map_record"]),
+            DEFAULT_DEVICE_CONFIG["mining_map_record"],
         )
         current["wanshen_rounds"] = _clamp_int(
             current.get("wanshen_rounds"), 1, 50, DEFAULT_DEVICE_CONFIG["wanshen_rounds"]
