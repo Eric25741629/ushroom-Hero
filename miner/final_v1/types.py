@@ -40,6 +40,10 @@ class PlannerConfig:
     beam_width: int = 32
     branch_width: int = 12
     time_budget_ms: float = 250.0
+    # branch 配額：命中礦道具 / 0 礦但朝礦推進(bridge)道具各保留固定名額，
+    # 避免深層才體現收益的 bridge 分支在第一層被高分挖步擠掉（各池不足時名額回流給挖步）
+    quota_pit_item: int = 2
+    quota_bridge_item: int = 2
 
 
 @dataclass(frozen=True)
@@ -47,8 +51,8 @@ class SearchUsage:
     shovels: float = 0.0
     bombs: int = 0
     drills: int = 0
-    # 逐次使用的加權成本累計（依該次命中礦坑格數分級，見 scoring.item_use_cost）；
-    # 不能事後用「顆數 x 固定價」回推，因為每次使用的分級可能不同
+    # 逐次道具影子價累計（bomb/drill 同價，依 exec_profile 選 plan=3.0 / step=3.6，
+    # 見 scoring.item_use_cost）
     item_cost_units: float = 0.0
 
 
@@ -63,6 +67,9 @@ class ScoreBreakdown:
     descent_bonus: float = 0.0
     path_bonus: float = 0.0
     pull_bonus: float = 0.0
+    # KPI 對齊：完成「下一簇」的剩餘動作數下界懲罰（best_dist + 最近簇剩餘格數）；
+    # step profile rho>0 才生效，plan/ADB profile rho=0 時恆為 0
+    action_cost: float = 0.0
 
     @property
     def total(self) -> float:
@@ -71,6 +78,7 @@ class ScoreBreakdown:
             + self.pull_bonus
             - self.shovel_cost - self.item_cost
             - self.lost_pit_penalty - self.unfinished_cluster_penalty
+            - self.action_cost
         )
 
     def to_dict(self) -> dict:

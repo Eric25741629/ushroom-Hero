@@ -1774,3 +1774,67 @@ ADB 口徑（exec_mode=plan 整批執行，鎬池 350 雙方花完）：
   炸彈庫存充裕的帳號（5554 有 930）可長期跑，庫存低的帳號建議留在 v1。
 - **處置**：merge 回 main（使用者 2026-07-12 指示）；`mining_planner_version` 預設維持 v1，
   final_v1 為 per-device opt-in——建議只在 WS 路徑（21 列地形知識可用）且炸彈庫存充裕的裝置啟用。
+
+---
+
+## 效率重構驗收（2026-07-12 第二輪，branch worktree-final-v1-efficiency）
+
+> 使用者要求「最低代價挖最多礦」且 pit/eq 必須也贏 v1。與 codex 設計討論後定案機制
+> （提案 A 分級成本被 codex 批判並經 30 局數據淘汰——0-pit bridge 分支在 beam 第一層
+> 被殺、產出崩跌 49.3 vs 64.0）：
+>
+> 1. sim 炸彈畫面外力學修正（world 座標 footprint，對齊 planner；舊 sim 全部 21 列評估失真）
+> 2. 道具按真實 eq 計價 + 依 profile 影子價（plan=3.0 / step=3.6，40 tune-seed 掃描定案）
+> 3. KPI 對齊 action_cost（rho_action=0.15，記在「完成下一簇剩餘動作下界」，只 step profile）
+> 4. branch 配額（pit_item/bridge_item 各 2 名額，防深層收益分支早死）
+> 5. cluster 身分保存（pit∪dug_pit 連通分量；WS 由 DugPitTracker side table 補標）
+> 6. WS 7 列重建失敗 → 該輪退 v1（v1_7row_fallback）
+> 7. tie-break：dig 優先、bomb/drill 座標 parity（可重現、不硬編偏好）
+
+### 最終驗收（全新 seed 831..930 x100 配對，與篩選/調參 seed 池分離；bootstrap 10k）
+
+| 口徑 | planner | pits | pit/eq | items/局 | lost | rej | stuck |
+|---|---|---|---|---|---|---|---|
+| WS21 step | v1 | 65.0 | 0.1836 | ~34 | 43 | 0 | 0 |
+| WS21 step | **final_v1** | **79.5 (+22%)** | **0.2046** | 93.3 | **0** | 0 | 0 |
+| ADB plan | v1 | 92.2 | 0.1857 | ~49 | 55 | 321 | 0 |
+| ADB plan | **final_v1** | **222.2 (+141%)** | **0.2000** | 253.5 | **7** | **0** | 0 |
+
+- 配對差 95% CI：WS21 pits +12.9↑ / pit/eq [+0.0170,+0.0251]；ADB pits +126.5↑ / [+0.0109,+0.0179]。
+- 延遲（獨立串行 replay，2294 面實機盤）：final_v1 空 plan 0%、p99 66.9ms、max 168.5ms、零次 >250ms。
+- **GATE: PASS（兩口徑產出與 pit/eq 同時嚴格贏 v1，無 stuck/rejected 增加，延遲達標）**
+
+### 已知依賴與風險（實機驗證項目）
+
+- sim 大幅收益依賴「炸彈可作用於已知畫面外格」領域規則（spec 已確認）；實機以 WS push 驗證。
+- WS 道具用量 ~93/局（淨耗 ~60-70/局）：炸彈庫存低的帳號長期會退化為挖掘模式（搜尋依庫存自我調節）。
+
+### 實機驗證（2026-07-12，CDP 唯讀，emulator-5556 / 5560）
+
+方法：CDP attach 兩台 web_h5 遊戲頁（port 9223/9225），截圖 540x960，用 bot 的 CNN 分類器
+（>99%，分割畫面）分類 → 對照畫面 → 餵 final_v1。純唯讀（不點擊、不送 WS、不消耗資源）。
+
+- **畫面辨識一致性 PASS**：CNN 分類盤面與畫面截圖高度一致。兩台共 4 個藍色礦洞/水晶
+  （5556 中央 1、5560 頂部發光礦洞 2 + 右側水晶 1）全部精準命中為 `dug_pit`；地形（dirt 牆／
+  rock 塊／已挖空氣）逐格吻合，無低信心格。
+- **藍水晶語意澄清**：藍水晶是 cocos `ScrollView/.../reward` 獨立節點（已挖開礦洞的待收獎勵），
+  非地形 pit；CNN 標 `dug_pit` 正確。cocos 渲染層 `BlockRoot` 確認為 7 列（row 0-6），
+  畫面外 21 列靠靜態模板重建——遊戲客戶端與 bot 同理，畫面只渲染中間 7 列。
+- **final_v1 決策合理**：兩台當前盤面均無未挖 `reachable_pit`，planner 正確選擇往下推進
+  （plan/step 皆 dig 底列觸發捲動）；穩態延遲 1.6-1.9ms。
+- **未涵蓋（靜態）**：當前兩台盤面無未挖礦坑——見下方動態驗證補完。
+
+### 動態驗證（2026-07-12，閉環，emulator-5556 / 5560）
+
+方法（不踢頁面）：用**遊戲自己的 WS 連線**執行 final_v1 決策，非另開 WSGameClient。每步：
+CDP 截圖 → CNN 分類盤面 → `plan_final_v1` 決策目標格 → `page.mouse.click` 點該礦格
+（座標與 CNN GRID_CFG 對齊）→ 遊戲送自己的 `0x0c03` 挖礦 → 觀察 WS ring + 重新截圖分類比對。
+
+- **閉環 PASS（5556 連跑 6 步）**：每步 final_v1 決策 → 點擊 → 遊戲送 `sendMessage:0x0c03`
+  + 收 `0x0402`（庫存扣減）→ 盤面精準變化。單挖步 `rock→one_hit_rock→dirt`（多血挖掘）
+  逐格追蹤正確；底列 dig 觸發捲動推進（新列進場）符合設計。穩態決策延遲 3-5ms。
+- **礦坑導向實證（5560）**：step3 dig 捲動後畫面外礦坑進入視野（CNN 識別 `unreachable_pit`），
+  step4 final_v1 決策即從 `dig` 切換為 `use`（道具）——礦坑導向核心邏輯在真實盤面驗證成立
+  （道具 UI 操作腳本未實作，故驗證停於「決策已切換」；planner 行為正確）。
+- **不踢頁面確認**：全程用頁面既有連線（`sendMessage:0x0c03`），manual hold 頁面未斷線。
+- **畫面 = log 一致**：CNN 分類（bot 辨識）與遊戲畫面在靜態 + 6 步動態演變中逐格吻合。

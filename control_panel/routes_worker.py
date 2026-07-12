@@ -186,17 +186,34 @@ def register_device():
         if not re.match(r'^[A-Za-z0-9_\-\.]+$', device_id):
             return jsonify({"status": "error", "message": "device_id 只能包含英數字、底線、連字號、點"}), 400
 
+        # 顯示名稱允許任意文字（含中文）；裝置 ID 因用於檔案路徑/URL 維持英數字。
+        name = str(data.get("name", "")).strip() or device_id
         web_url = str(data.get("web_url", "")).strip() or "https://mushroomh5.acenetgame.com/"
 
         # 新裝置一律以「停用」建立:登入瀏覽器開著時若掃描器又開一條掛機 thread，
         # 兩個 Playwright session 會互搶。使用者登入完、把設定填好後，再到儀表板
         # 卡片手動「啟用」才會被掃描啟動。
-        config_manager.update_device_config(device_id, {
-            "name": device_id,
+        new_settings = {
+            "name": name,
             "backend": "web_h5",
             "web_url": web_url,
             "enabled": False,
-        })
+        }
+        # 自動分配 CDP port（live view / WS 工具都依賴 web_debug_port）；
+        # 重複註冊已有 port 的裝置則保留原值。
+        devices = config_manager.load_config().get("devices", {})
+        if not devices.get(device_id, {}).get("web_debug_port"):
+            used = set()
+            for dev in devices.values():
+                try:
+                    used.add(int(dev.get("web_debug_port") or 0))
+                except (TypeError, ValueError):
+                    pass
+            port = 9223
+            while port in used:
+                port += 1
+            new_settings["web_debug_port"] = port
+        config_manager.update_device_config(device_id, new_settings)
 
         with _cpa._web_login_lock:
             state = _cpa._normalize_web_login_state(device_id)

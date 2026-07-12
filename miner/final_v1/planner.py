@@ -23,6 +23,10 @@ from miner.v3.board import (
     promote_after_dig,
 )
 from miner.final_v1.scoring import (
+    ITEM_COST_PLAN,
+    ITEM_COST_STEP,
+    RHO_ACTION_PLAN,
+    RHO_ACTION_STEP,
     evaluate_state,
     item_use_cost,
     pit_clusters,
@@ -48,6 +52,8 @@ class _State:
     # 逐步成本（dig=當下格材質成本、道具=1.0）：emit 多步 plan 時直接取用，
     # 不能用初始盤面回推第 N 步的 dig_cost（材質可能已被前面步驟改變）
     path_costs: Tuple[float, ...] = tuple()
+    best_cluster: int = -1      # best_dist 對應礦源所屬 cluster 索引（-1=無礦/虛擬底緣源）
+    last_item_pits: int = 0     # 本步若為道具，實際命中的礦坑格數（branch 分類用）
 
 
 def _candidate_actions(board, pickaxes, bombs, drills, visible_rows) -> List[PlannerAction]:
@@ -68,13 +74,50 @@ def _candidate_actions(board, pickaxes, bombs, drills, visible_rows) -> List[Pla
 
 
 def _tie_rank(action: PlannerAction) -> int:
-    """同分排序的道具決勝：不得固定偏好任一道具（spec），以座標 parity
-    決定 bomb/drill 先後 —— 決策可重現、長期用量 ~50/50 不偏耗單一道具。
+    """同分排序的道具決勝：以座標 parity 決定 bomb/drill 先後 —— 決策可重現、
+    避免固定工具優先（不保證全局無偏或精確 50/50，只是不硬編某一道具在前）。
     dig 排最前（同分時省道具）。"""
     if action.kind == "dig":
         return 0
     preferred = "bomb" if (action.row + action.col) % 2 == 0 else "drill"
     return 1 if action.item == preferred else 2
+
+
+def _branch_category(action: PlannerAction, child: _State, parent: _State) -> str:
+    """branch 配額分類：dig / pit_item（命中>=1 礦）/ bridge_item（0 礦但降低了與
+    最近礦源/底緣的距離 = 朝礦推進）/ other（0 礦且無推進 = 純浪費，不保留名額）。"""
+    if action.kind == "dig":
+        return "dig"
+    if child.last_item_pits >= 1:
+        return "pit_item"
+    if child.best_dist < parent.best_dist:
+        return "bridge_item"
+    return "other"
+
+
+def _select_branch(ranked: List[tuple], config: PlannerConfig) -> List[tuple]:
+    """配額制裁切：命中礦道具、bridge 道具各保留固定名額（防深層才回收的 bridge
+    分支被高分挖步在第一層擠光），其餘名額按分數給挖步/溢出道具；池不足名額回流。
+    ranked 已按分數（best-first）排序，category 為第 7 欄。"""
+    pit_slots = config.quota_pit_item
+    bridge_slots = config.quota_bridge_item
+    chosen: List[int] = []
+    leftover: List[int] = []
+    for i, row in enumerate(ranked):
+        category = row[6]
+        if category == "pit_item" and pit_slots > 0:
+            chosen.append(i)
+            pit_slots -= 1
+        elif category == "bridge_item" and bridge_slots > 0:
+            chosen.append(i)
+            bridge_slots -= 1
+        else:
+            leftover.append(i)
+    remaining = config.branch_width - len(chosen)
+    if remaining > 0:
+        chosen.extend(leftover[:remaining])
+    chosen.sort()
+    return [ranked[i] for i in chosen]
 
 
 def _affected(action: PlannerAction, board, visible_rows) -> Set[Tuple[int, int]]:
@@ -97,7 +140,9 @@ def _lost_row0_pits(work: List[List[str]]) -> int:
 
 
 def _apply(state: _State, action: PlannerAction, visible_rows: int,
-           dist: Optional[Dict[Tuple[int, int], float]] = None) -> Optional[_State]:
+           dist: Optional[Dict[Tuple[int, int], float]] = None,
+           source: Optional[Dict[Tuple[int, int], int]] = None,
+           item_cost: float = ITEM_COST_PLAN) -> Optional[_State]:
     work = [list(row) for row in state.board]
     visible = work[:visible_rows]
     before_scroll_open = floor7_open(visible)
@@ -109,20 +154,25 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
         scrolled = (not before_scroll_open) and floor7_open(work[:visible_rows])
         lost = state.lost_pits + (_lost_row0_pits(work) if scrolled else 0)
         best_dist = state.best_dist
+        best_cluster = state.best_cluster
         if dist is not None:
-            best_dist = min(best_dist, dist.get((action.row, action.col), _INF))
+            d = dist.get((action.row, action.col), _INF)
+            if d < best_dist:
+                best_dist = d
+                best_cluster = source.get((action.row, action.col), -1) if source is not None else -1
         return _State(
             tuple(tuple(row) for row in work), state.pickaxes - cost, state.bombs, state.drills,
             SearchUsage(state.usage.shovels + cost, state.usage.bombs, state.usage.drills,
                         state.usage.item_cost_units),
             state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
-            lost, best_dist, state.path_costs + (cost,),
+            lost, best_dist, state.path_costs + (cost,), best_cluster, 0,
         )
     affected = _affected(action, work, visible_rows)
     changed = [(r, c) for r, c in affected if not is_reachable_air(work[r][c])]
     if not changed:
         return None  # no-op item branch is never free progress
-    # 本次使用實際命中的礦坑格數決定成本分級（bomb 含已知畫面外，見 _affected）
+    # 本次命中礦坑格數供 branch 配額分類（_branch_category）用，不進成本
+    # （bomb 含已知畫面外，見 _affected）
     pits_hit = sum(1 for r, c in changed if is_pit(work[r][c]))
     for r, c in changed:
         open_cell(work, r, c)
@@ -130,9 +180,13 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
     scrolled = (not before_scroll_open) and floor7_open(work[:visible_rows])
     lost = state.lost_pits + (_lost_row0_pits(work) if scrolled else 0)
     best_dist = state.best_dist
+    best_cluster = state.best_cluster
     if dist is not None:
         for pos in changed:
-            best_dist = min(best_dist, dist.get(pos, _INF))
+            d = dist.get(pos, _INF)
+            if d < best_dist:
+                best_dist = d
+                best_cluster = source.get(pos, -1) if source is not None else -1
     bomb_delta = 1 if action.item == "bomb" else 0
     drill_delta = 1 if action.item == "drill" else 0
     return _State(
@@ -142,12 +196,12 @@ def _apply(state: _State, action: PlannerAction, visible_rows: int,
             state.usage.shovels,
             state.usage.bombs + bomb_delta,
             state.usage.drills + drill_delta,
-            state.usage.item_cost_units + item_use_cost(action.item, pits_hit),
+            state.usage.item_cost_units + item_use_cost(action.item, item_cost),
         ),
         # path bonus 以「動作」計，不以「格」計：炸彈開 8 格空地不是 8 倍路徑價值，
         # 每格計會讓道具靠 path+partial credit 刷分（實測 scarce 盤道具 44 vs v1 27 卻完成更少）
         state.path + (action,), state.scrolled or scrolled, state.opened_path_cells + 1,
-        lost, best_dist, state.path_costs + (1.0,),
+        lost, best_dist, state.path_costs + (1.0,), best_cluster, pits_hit,
     )
 
 
@@ -160,8 +214,14 @@ def plan_final_v1(
     known_pits=None,
     valid_targets: Optional[Collection[ActionKey]] = None,
     time_budget_ms: float = 250.0,
+    exec_profile: str = "plan",
 ) -> Dict:
     started = time.perf_counter()
+    # step（WS 每步重規劃取第一步）= 開 KPI 對齊的 action_cost + 較高道具影子價(3.6)；
+    # plan（ADB 整批路徑）rho=0、影子價 3.0，維持既有排名不受影響
+    is_step = exec_profile == "step"
+    rho_action = RHO_ACTION_STEP if is_step else RHO_ACTION_PLAN
+    item_cost = ITEM_COST_STEP if is_step else ITEM_COST_PLAN
     config = PlannerConfig(time_budget_ms=float(time_budget_ms))
     work = normalize_board(board)
     # 大盤（21 列已知地形）自適應縮 beam：單子節點展開成本 ~3x，
@@ -188,7 +248,8 @@ def plan_final_v1(
     clusters = pit_clusters(work)
     # 位能場：距最近礦坑的挖掘成本（無礦時指向底緣 = 最低成本下潛）。
     # baseline = 根盤面可挖前緣的最小位能；挖到更低位能的格 = 朝礦實質推進。
-    dist = pit_potential(work)
+    # source[cell] = 該格最近礦源所屬 cluster 索引（action_cost 用；附掛在同一次 Dijkstra）。
+    dist, source = pit_potential(work, clusters)
     baseline = _INF
     for r in range(min(int(visible_rows), len(work))):
         for c in range(len(work[r])):
@@ -238,7 +299,7 @@ def plan_final_v1(
                 if (action_index & 7) == 0 and time.perf_counter() >= deadline:
                     budget_hit = True
                     break
-                child = _apply(state, action, visible_rows, dist)
+                child = _apply(state, action, visible_rows, dist, source, item_cost)
                 if child is None:
                     continue
                 score = evaluate_state(
@@ -249,12 +310,16 @@ def plan_final_v1(
                     clusters=clusters,
                     lost_pits=child.lost_pits,
                     pull_progress=_pull_progress(child.best_dist),
+                    best_dist=child.best_dist,
+                    best_cluster=child.best_cluster,
+                    rho_action=rho_action,
                 )
                 ranked.append(
-                    (score.total, action.row, action.col, _tie_rank(action), child, score)
+                    (score.total, action.row, action.col, _tie_rank(action), child, score,
+                     _branch_category(action, child, state))
                 )
             ranked.sort(key=lambda row: (-row[0], row[1], row[2], row[3]))
-            for _total, _row, _col, _rank, child, score in ranked[: config.branch_width]:
+            for _total, _row, _col, _rank, child, score, _cat in _select_branch(ranked, config):
                 expanded += 1
                 signature = (child.board, child.bombs, child.drills, round(child.pickaxes, 3))
                 if dominance.get(signature, float("-inf")) >= score.total:

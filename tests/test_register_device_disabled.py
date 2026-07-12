@@ -38,12 +38,12 @@ def _stub_module(name, **attrs):
     return mod
 
 
-def test_register_device_creates_disabled(tmp_path, monkeypatch):
+def _make_client(tmp_path, monkeypatch, devices=None):
     cpa = _load_control_panel_app()
 
     cfg_path = tmp_path / "bot_config.json"
     cfg_path.write_text(
-        json.dumps({"devices": {}, "global": {"mode": "master"}}, ensure_ascii=False),
+        json.dumps({"devices": devices or {}, "global": {"mode": "master"}}, ensure_ascii=False),
         encoding="utf-8",
     )
     monkeypatch.setattr(config_manager, "CONFIG_FILE", str(cfg_path))
@@ -59,6 +59,11 @@ def test_register_device_creates_disabled(tmp_path, monkeypatch):
     with client.session_transaction() as sess:
         sess["dash_user"] = "boss"
         sess["dash_admin"] = True
+    return client, cfg_path
+
+
+def test_register_device_creates_disabled(tmp_path, monkeypatch):
+    client, cfg_path = _make_client(tmp_path, monkeypatch)
     resp = client.post(
         "/api/devices/register",
         json={"device_id": "web-new", "web_url": "https://example.com/"},
@@ -69,3 +74,33 @@ def test_register_device_creates_disabled(tmp_path, monkeypatch):
     dev = raw["devices"]["web-new"]
     assert dev["backend"] == "web_h5"
     assert dev["enabled"] is False  # disabled until the user enables it
+    assert dev["name"] == "web-new"  # no display name given → fall back to id
+    assert dev["web_debug_port"] == 9223  # auto-assigned CDP port
+
+
+def test_register_device_chinese_name_and_next_free_port(tmp_path, monkeypatch):
+    devices = {
+        "emulator-5554": {"backend": "web_h5", "web_debug_port": 9230},
+        "emulator-5556": {"backend": "web_h5", "web_debug_port": 9223},
+    }
+    client, cfg_path = _make_client(tmp_path, monkeypatch, devices=devices)
+    resp = client.post(
+        "/api/devices/register",
+        json={"device_id": "web-003", "name": "寶兒", "web_url": ""},
+    )
+    assert resp.status_code == 200
+
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    dev = raw["devices"]["web-003"]
+    assert dev["name"] == "寶兒"  # Chinese display name accepted
+    assert dev["web_debug_port"] == 9224  # skips used 9223; 9230 stays untouched
+
+
+def test_register_existing_device_keeps_port(tmp_path, monkeypatch):
+    devices = {"web-001": {"backend": "web_h5", "web_debug_port": 9227}}
+    client, cfg_path = _make_client(tmp_path, monkeypatch, devices=devices)
+    resp = client.post("/api/devices/register", json={"device_id": "web-001"})
+    assert resp.status_code == 200
+
+    raw = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert raw["devices"]["web-001"]["web_debug_port"] == 9227

@@ -1107,14 +1107,21 @@ def scan_lots_same_server(
     server_id: int,
     levels: tuple[int, ...],
     *,
+    priority_levels: tuple[int, ...] = (),
     timeout: float | None = None,
 ) -> list[tuple[NullSpace, int]]:
     """Scan silver lots at ``levels`` and count same-server occupants.
 
-    Returns [(lot, same_count)] sorted by count DESC then ceng ASC (lower number
-    first among ties). Only lots present in ``lots`` with matching ceng are probed.
+    Returns [(lot, same_count)] ordered so that lots whose ceng is in
+    ``priority_levels`` come FIRST (rank 0), then the rest (rank 1); within each
+    rank by count DESC then ceng ASC (lower number first among ties). With no
+    ``priority_levels`` this degrades to the plain count-desc/ceng-asc order.
+    The caller picks the first entry meeting its ally threshold, so a priority
+    lot that clears the threshold wins over a higher-ally non-priority lot.
+    Only lots present in ``lots`` with matching ceng are probed.
     """
     target_cengs = {silver_level_to_ceng(lv) for lv in levels}
+    prio_cengs = {silver_level_to_ceng(lv) for lv in priority_levels}
     candidates = [lot for lot in lots if lot.ceng in target_cengs and lot.null_num > 0]
     results: list[tuple[NullSpace, int]] = []
     for lot in sorted(candidates, key=lambda l: l.ceng):
@@ -1125,7 +1132,8 @@ def scan_lots_same_server(
             results.append((lot, cnt))
         except Exception:  # noqa: BLE001
             logger.debug("scan_lots: read_lot %s failed", lot.master_id, exc_info=True)
-    results.sort(key=lambda x: (-x[1], x[0].ceng))
+    results.sort(key=lambda x: (0 if x[0].ceng in prio_cengs else 1,
+                                -x[1], x[0].ceng))
     return results
 
 

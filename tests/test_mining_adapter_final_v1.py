@@ -45,6 +45,8 @@ def test_valid_targets_distinguish_pickaxe_frontier_from_item_air_placement():
 
 
 def test_plan_final_v1_maps_only_legal_first_step_to_ws_block_id(monkeypatch):
+    # 完整 21 列重建（terrain_at 全覆蓋）→ 走 final_v1；7 列不完整盤另有 v1 短路測試。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
     captured = {}
     monkeypatch.setattr(
         "miner.final_v1.plan_final_v1",
@@ -73,6 +75,8 @@ def test_incomplete_known_projection_degrades_to_seven_rows(monkeypatch):
 
 
 def test_empty_final_v1_result_falls_back_to_v1(monkeypatch):
+    # 完整 21 列盤：final_v1 有跑但回空步 → 走 v1_fallback（有別於 7 列短路）。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
     calls = []
 
     def fake_named(name, projected, inventory):
@@ -85,6 +89,103 @@ def test_empty_final_v1_result_falls_back_to_v1(monkeypatch):
     result = mining_adapter.plan(_board(), {"pickaxe": 5}, planner_version="final_v1")
     assert calls == ["final_v1", "v1"]
     assert result["planner_source"] == "v1_fallback"
+
+
+def test_incomplete_rebuild_routes_final_v1_through_v1(monkeypatch):
+    # 只剩 7 列視野（21 列重建失敗）→ 該輪根本不叫 final_v1，直接走 v1 並標
+    # planner_source="v1_7row_fallback" 供 telemetry 辨識。
+    monkeypatch.setattr(
+        mining_adapter.mine_terrain, "terrain_at",
+        lambda depth, col, info: None,  # 無任何延伸列 → 盤面固定 7 列
+    )
+    calls = []
+
+    def fake_named(name, projected, inventory):
+        calls.append(name)
+        assert len(projected["board"]) == 7
+        return {"steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}]}
+
+    monkeypatch.setattr(mining_adapter, "_run_named_planner", fake_named)
+    result = mining_adapter.plan(_board(actives=[10103]), {"pickaxe": 5},
+                                 planner_version="final_v1")
+    assert calls == ["v1"]  # final_v1 從未被呼叫
+    assert result["planner_source"] == "v1_7row_fallback"
+    assert result["planner_name"] == "v1"
+
+
+def test_full_21row_rebuild_runs_final_v1(monkeypatch):
+    # 完整 21 列重建 → 照常走 final_v1（planner_source="planner"）。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+    calls = []
+
+    def fake_named(name, projected, inventory):
+        calls.append(name)
+        assert len(projected["board"]) == 21
+        return {"steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}]}
+
+    monkeypatch.setattr(mining_adapter, "_run_named_planner", fake_named)
+    result = mining_adapter.plan(_board(actives=[10103]), {"pickaxe": 5},
+                                 planner_version="final_v1")
+    assert calls == ["final_v1"]
+    assert result["planner_source"] == "planner"
+    assert result["planner_name"] == "final_v1"
+
+
+def test_final_v1_called_with_exec_profile_step(monkeypatch):
+    # WS 監督迴圈每步重規劃取第一步 = step 語意；adapter 必須以 exec_profile="step"
+    # 呼叫 plan_final_v1，才會啟用 KPI 對齊的 action_cost。需完整 21 列盤才走 final_v1。
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+    captured = {}
+    monkeypatch.setattr(
+        "miner.final_v1.plan_final_v1",
+        lambda *args, **kwargs: captured.update(kwargs) or {
+            "steps": [{"type": "dig", "target": (1, 2), "step_cost": 1}],
+        },
+    )
+    board = _board(actives=[10103])
+    mining_adapter.plan(board, {"pickaxe": 5}, planner_version="final_v1")
+    assert captured["exec_profile"] == "step"
+
+
+def test_dug_pit_tracker_marks_prior_pit_now_collected(monkeypatch):
+    top = mining_adapter.viewport_top_depth(105)
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+    session = mining_adapter.DugPitTracker()
+
+    # 前輪：某格是活躍礦坑（count>0）。
+    live_pit = _block(top + 2, 3, mining.TERRAIN_PIT, count=1, is_reward=1)
+    session.observe(_board(actives=[live_pit.block_id], blocks=[live_pit]))
+
+    # 本輪：同格已採集（count==0）＋ 一格從未是礦坑的空氣（count==0 dirt）。
+    dug = _block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)
+    never_pit_air = _block(top + 1, 5, mining.TERRAIN_DIRT, count=0)
+    board2 = _board(blocks=[dug, never_pit_air])
+    session.observe(board2)
+
+    projected = mining_adapter.build_final_v1_input(board2, {})
+    session.annotate(projected["board"], top)
+
+    assert projected["board"][2][2] == "dug_pit"   # 曾為礦坑、今空 → dug_pit
+    assert projected["board"][1][4] == "empty"      # 從未是礦坑 → 保持 empty
+
+
+def test_new_session_clears_dug_pit_side_table(monkeypatch):
+    top = mining_adapter.viewport_top_depth(105)
+    monkeypatch.setattr(mining_adapter.mine_terrain, "terrain_at", lambda d, c, info: 201)
+
+    # 第一個 session 觀測到 count>0 → count==0 的轉態。
+    s1 = mining_adapter.DugPitTracker()
+    s1.observe(_board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=1, is_reward=1)]))
+    s1.observe(_board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)]))
+
+    # 新 session：面對相同的 count==0 盤面，沒有跨輪記憶 → 不標 dug_pit。
+    s2 = mining_adapter.DugPitTracker()
+    board = _board(blocks=[_block(top + 2, 3, mining.TERRAIN_PIT, count=0, is_reward=1)])
+    s2.observe(board)
+    projected = mining_adapter.build_final_v1_input(board, {})
+    s2.annotate(projected["board"], top)
+
+    assert projected["board"][2][2] == "empty"
 
 
 def test_shadow_exception_is_logged_in_result_and_primary_plan_survives(monkeypatch):
