@@ -24,9 +24,12 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional, Sequence
 
 from ws_token import codec
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
+
+CMD_ERR = 0x0201        # error.error_info_s2c — 續費被拒時的回應通道
+RENEW_TIMEOUT = 8.0     # 續費回應探測上限（可能完全無回應，勿用預設長 timeout）
 
 # --- cmd ids (module 73; c2s and s2c share the same id) ---------------------
 CMD_INFO = 18692                  # worker_common_farm_housekeeper_info
@@ -222,6 +225,14 @@ def _parse_kv_list(entry: bytes) -> tuple[int, dict[int, int]]:
 
 # --- state / activity -------------------------------------------------------
 
+def _error_code(body: bytes) -> int:
+    """error.error_info_s2c {error_code#1}; 0 if unparseable."""
+    try:
+        return int(codec.walk_dict(body).get(1) or 0)
+    except Exception:
+        return 0
+
+
 def read_info(client: WSGameClient, *, timeout: Optional[float] = None) -> HousekeeperInfo:
     """Read housekeeper service-expiry state (info 18692, empty request body)."""
     return parse_info(client.call(CMD_INFO, b"", timeout=timeout))
@@ -253,8 +264,18 @@ def ensure_active(
         logger.info("ws_token steward: service %s expired, renew=False -> skip", service_id)
         return False
     logger.info("ws_token steward: renewing service %s (day_num=%d)", service_id, RENEW_DAY_NUM)
-    client.call(CMD_BUY_SERVICE,
-                build_buy_service_body(RENEW_DAY_NUM, service_id), timeout=timeout)
+    # 續費回應不是 18693 echo：成功回 info(18692)、被拒走 0x0201、也可能無回應
+    # （live 2026-07-12 手機：只等 18693 → timeout → 購物+副本整包沒跑）。
+    try:
+        rc, rb = client.call_for(
+            CMD_BUY_SERVICE, build_buy_service_body(RENEW_DAY_NUM, service_id),
+            expect_cmds=(CMD_BUY_SERVICE, CMD_INFO, CMD_ERR),
+            timeout=timeout if timeout is not None else RENEW_TIMEOUT)
+        if rc == CMD_ERR:
+            logger.warning("ws_token steward: renew service %s rejected code=%s",
+                           service_id, _error_code(rb))
+    except WSTimeoutError:
+        logger.warning("ws_token steward: renew service %s no response", service_id)
     info = read_info(client, timeout=timeout)
     return is_active(info, service_id, serv_time=serv_time)
 
