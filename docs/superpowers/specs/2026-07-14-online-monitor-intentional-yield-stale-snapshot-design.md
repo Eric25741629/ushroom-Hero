@@ -36,9 +36,15 @@
 
 ### 2.2 清除規則
 
-成功建立新的 detector 連線後，立即清除讓路標記。其他非 `no_idle_detector` 的斷線/失敗路徑也清除標記，確保舊的安全窗口不會跨越新的連線生命週期或被錯誤沿用。
+讓路標記只在下列情況清除：
 
-重連清除後，閘門立刻恢復現有 60 秒新鮮度規則；即使原讓路快照仍在 10 分鐘內，也不得再由例外路徑採信。
+- 成功建立新的 detector 連線；
+- monitor 停止；
+- monitor thread 發生未預期例外並離開。
+
+成功連線是唯一會開始新連線生命週期、後續可產生新鮮快照的路徑。重連清除後，閘門立刻恢復現有 60 秒新鮮度規則；即使原讓路快照仍在 10 分鐘內，也不得再由例外路徑採信。`poll_friends` 若之後失敗，標記也早已在成功連線時清除，不需要另設 poll-failure 清除點。
+
+registry acquire 衝突與 `_connect` 失敗都沒有建立新連線或改變最後可信快照，因此既不建立、也不清除既有標記；標記自然由 600 秒上限失效。這避免 monitor 在讓路盲區中的重試失敗意外縮短安全窗口。
 
 ### 2.3 閘門專用 presence 查詢
 
@@ -93,10 +99,12 @@ connect 成功 → 清除 intentional-yield → gate-only 查詢不再接受舊�
 2. `no_idle_detector` 標記存在、timestamp 相符、快照在 10 分鐘內且目標明確 offline → 閘門查詢回 `False`。
 3. 同樣條件但超過 10 分鐘 → `None`。
 4. 讓路快照顯示 online → `None`。
-5. 無標記，或斷線原因是 preempt/poll/connect failure → `None`。
-6. 標記 timestamp 與目前 snapshot 不相符 → `None`。
-7. 設定讓路標記後成功重連 → 標記清除；超過 60 秒的舊快照重新回到 `None`。
-8. `_wait_until_human_offline()` 收到符合條件的 `False` 時不 sleep、立即放行。
+5. preempt、poll failure、connect failure 在原本無標記時均不得建立標記。
+6. 已存在的讓路標記不因 registry acquire 衝突或 `_connect` 失敗而清除，10 分鐘內的 stale-offline 仍可被閘門採信。
+7. 標記 timestamp 與目前 snapshot 不相符 → `None`。
+8. 設定讓路標記後成功重連 → 標記清除；超過 60 秒的舊快照重新回到 `None`。
+9. monitor 停止或 thread 例外 → 標記清除。
+10. `_wait_until_human_offline()` 收到符合條件的 `False` 時不 sleep、立即放行。
 
 TDD 順序：先加入能重現 7/13 情境且在現況失敗的測試，確認 RED；再做最小實作，確認目標測試 GREEN；最後執行相關 monitor/gate 測試與指定檔案的 `py_compile`。
 
