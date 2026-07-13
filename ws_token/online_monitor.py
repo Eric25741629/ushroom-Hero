@@ -59,6 +59,12 @@ class Snapshot:
     entries: tuple[StatusEntry, ...] = ()
 
 
+@dataclass(frozen=True)
+class _IntentionalYield:
+    reason: str
+    snapshot_timestamp: float
+
+
 def discover_role_map(auth_dir: Path = AUTH_DIR,
                       protected_role_ids: frozenset = frozenset()) -> Dict[int, str]:
     """Read all creds files + bot_config online_check_target_pid -> {role_id: device}.
@@ -136,7 +142,21 @@ class OnlineMonitor:
         self._role_map: Dict[int, str] = {}
         self._wake = threading.Event()
         self._active_detector: Optional[str] = None  # currently-connected detector
+        self._intentional_yield: Optional[_IntentionalYield] = None
         self._last_switch_event: Optional[dict] = None  # {frm, to, ts} for display
+
+    def _mark_no_idle_yield(self) -> None:
+        """鎖定 no-idle 讓路前最後一份 snapshot；無 snapshot 時不建立窗口。"""
+        with self._lock:
+            if self._snapshot is not None:
+                self._intentional_yield = _IntentionalYield(
+                    reason="no_idle_detector",
+                    snapshot_timestamp=float(self._snapshot.timestamp),
+                )
+
+    def _clear_intentional_yield(self) -> None:
+        with self._lock:
+            self._intentional_yield = None
 
     def _set_active(self, detector: Optional[str]) -> None:
         """Record the active detector; log + remember the transition if it changed.
@@ -145,6 +165,8 @@ class OnlineMonitor:
         Drives the dashboard's switch trace ("上次切換: X→Y"). No-op when unchanged.
         """
         with self._lock:
+            if detector is not None:
+                self._intentional_yield = None
             prev = self._active_detector
             if prev == detector:
                 return
@@ -173,6 +195,39 @@ class OnlineMonitor:
         with self._lock:
             return self._snapshot
 
+    def account_online_for_wake_gate(
+            self, role_id: int, *, max_age_sec: float = 60.0,
+            yielded_offline_max_age_sec: float = 600.0,
+            now: Optional[float] = None) -> Optional[bool]:
+        """喚醒閘門專用：只接受 no-idle 讓路窗口內的 stale-offline。"""
+        t = time.time() if now is None else now
+        with self._lock:
+            snap = self._snapshot
+            active = self._active_detector
+            marker = self._intentional_yield
+            if snap is None:
+                return None
+            snap_ts = float(snap.timestamp)
+            fresh = (t - snap_ts) <= max_age_sec
+            yielded_stale_offline = (
+                not fresh
+                and active is None
+                and marker is not None
+                and marker.reason == "no_idle_detector"
+                and marker.snapshot_timestamp == snap_ts
+                and (t - marker.snapshot_timestamp)
+                <= yielded_offline_max_age_sec
+            )
+            for entry in snap.entries:
+                if int(entry.role_id) != int(role_id):
+                    continue
+                if fresh:
+                    return bool(entry.online)
+                if yielded_stale_offline and not entry.online:
+                    return False
+                return None
+            return None
+
     @property
     def ready(self) -> bool:
         """True once at least one snapshot has been collected."""
@@ -190,6 +245,7 @@ class OnlineMonitor:
 
     def stop(self) -> None:
         self._running = False
+        self._clear_intentional_yield()
         self._wake.set()
 
     def poll_now(self) -> None:
@@ -441,6 +497,7 @@ class OnlineMonitor:
                         logger.info(
                             "online-monitor: no idle detector; disconnecting %s",
                             current)
+                        self._mark_no_idle_yield()
                         self._close(client)
                         self._release_detector(current)
                         client, current = None, None
@@ -526,6 +583,7 @@ class OnlineMonitor:
             if client is not None:
                 self._close(client)
             self._release_detector(current)
+            self._clear_intentional_yield()
             self._set_active(None)
 
 
@@ -596,6 +654,22 @@ def account_online(role_id: int, *, max_age_sec: float = 60.0,
         if int(e.role_id) == int(role_id):
             return bool(e.online)
     return None
+
+
+def account_online_for_wake_gate(
+        role_id: int, *, max_age_sec: float = 60.0,
+        yielded_offline_max_age_sec: float = 600.0,
+        now: Optional[float] = None) -> Optional[bool]:
+    """只供登入前真人離線閘門使用的 presence 查詢。"""
+    mon = _monitor
+    if mon is None:
+        return None
+    return mon.account_online_for_wake_gate(
+        role_id,
+        max_age_sec=max_age_sec,
+        yielded_offline_max_age_sec=yielded_offline_max_age_sec,
+        now=now,
+    )
 
 
 def get_last_switch() -> Optional[dict]:
