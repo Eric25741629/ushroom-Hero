@@ -2,7 +2,8 @@
 from flask import Blueprint, jsonify, request
 
 import config_manager
-from control_panel.shared.auth import require_admin
+from control_panel.shared.auth import require_admin, require_device_access
+from game_actions import special_wanshen
 
 bp = Blueprint("config", __name__)
 
@@ -40,6 +41,36 @@ def set_device_conf(ip):
         return jsonify({"status": "ok"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@bp.route("/api/special_wanshen/<ip>", methods=["GET", "POST"])
+def special_wanshen_config(ip):
+    """讀寫萬神專用排程開關；只有明確標記的帳號可使用。"""
+    require_device_access(ip)
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    cfg = config_manager.get_device_config(real_ip)
+    if not cfg.get("special_wanshen_account", False):
+        return jsonify({
+            "status": "error",
+            "message": "此帳號不是萬神專用帳號",
+        }), 403
+
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        if not isinstance(payload.get("enabled"), bool):
+            return jsonify({
+                "status": "error",
+                "message": "enabled 必須是布林值",
+            }), 400
+        enabled = payload["enabled"]
+        update = {"special_wanshen_enabled": enabled}
+        if enabled:
+            # 專用腳本開啟時，同時確保裝置執行緒會被掃描器啟動。
+            update["enabled"] = True
+        config_manager.update_device_config(real_ip, update)
+        cfg = config_manager.get_device_config(real_ip)
+
+    return jsonify(special_wanshen.get_status(real_ip, cfg=cfg))
 
 
 @bp.route("/api/ocr_config", methods=["GET"])

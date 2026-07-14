@@ -18,6 +18,7 @@ import config_manager
 import json_manager
 import new_cnn.cnn_model as cnn_model_module
 from control_panel.shared.auth import filter_visible_states, require_device_access
+from game_actions import special_wanshen
 from game_state.detector import stage_by_str
 
 logger = logging.getLogger(__name__)
@@ -490,6 +491,29 @@ def _lease_fields(leases, ip, real_ip):
     return {"lease_owner": lease.owner.value, "lease_label": lease.label or ""}
 
 
+def _special_wanshen_fields(real_ip, cfg):
+    """把萬神專用狀態轉成 dashboard 欄位；一般帳號不讀取記錄檔。"""
+    account = bool(cfg.get("special_wanshen_account", False))
+    if not account:
+        return {
+            "special_wanshen_account": False,
+            "special_wanshen_enabled": False,
+            "special_wanshen_rounds": int(cfg.get("special_wanshen_rounds", 10) or 10),
+            "special_wanshen_attempted_today": False,
+            "special_wanshen_completed_this_week": False,
+            "special_wanshen_next_attempt_at": None,
+        }
+    status = special_wanshen.get_status(real_ip, cfg=cfg)
+    return {
+        "special_wanshen_account": True,
+        "special_wanshen_enabled": status["enabled"],
+        "special_wanshen_rounds": status["rounds"],
+        "special_wanshen_attempted_today": status["attempted_today"],
+        "special_wanshen_completed_this_week": status["completed_this_week"],
+        "special_wanshen_next_attempt_at": status["next_attempt_at"],
+    }
+
+
 @bp.route("/api/status")
 def get_status():
     states = bot_state.get_all_states()
@@ -525,6 +549,7 @@ def get_status():
             ((cfg.get("ws_token") or {}).get("carpark_plan") or {}).get("enabled"))
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
         info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
+        info.update(_special_wanshen_fields(real_ip, cfg))
         info["live_view_available"] = bool(
             live_view_enabled
             and info["backend"] == "web_h5"
@@ -557,6 +582,7 @@ def get_status():
             "logs": [],
             "live_view_available": False,
         }
+        states[dev_id].update(_special_wanshen_fields(dev_id, dcfg or {}))
 
     # 出口統一過濾：非管理員只看得到自己可見的裝置（含上面 disabled 回填）。
     states = filter_visible_states(states)
