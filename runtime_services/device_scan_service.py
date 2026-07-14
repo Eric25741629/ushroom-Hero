@@ -26,6 +26,16 @@ _adb_last_seen: dict[str, float] = {}
 _adb_absence_offlined: set[str] = set()
 
 
+def _special_wanshen_start_allowed(ip: str, cfg) -> bool:
+    """萬神專用模式只在一次性排程到期時建立 thread。"""
+    if not (bool(cfg.get("special_wanshen_account", False))
+            and bool(cfg.get("special_wanshen_enabled", False))):
+        return True
+    from game_actions import special_wanshen
+
+    return bool(special_wanshen.get_status(ip, cfg=cfg)["due"])
+
+
 def _apply_adb_absence_rule(adb_present: set, running_threads: dict, logger_obj, now: Optional[float] = None, exempt: Optional[set] = None):
     """掉線超過 1 小時 → set_offline；回到清單 → 恢復 ONLINE / 解除重啟封鎖。
 
@@ -389,6 +399,9 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
                 # start-decision point (web devices are also pre-filtered out of
                 # current_devices by get_web_backend_devices).
                 if not config_manager.is_device_enabled(ip):
+                    continue
+                device_cfg = config_manager.get_device_config(ip)
+                if not _special_wanshen_start_allowed(ip, device_cfg):
                     continue
 
                 offline_since = bot_state.get_offline_since(ip)

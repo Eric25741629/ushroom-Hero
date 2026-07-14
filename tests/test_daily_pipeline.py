@@ -286,18 +286,24 @@ def test_daily_context_can_be_instantiated(pipeline_mod):
     assert hasattr(ctx, "clf")
 
 
-def test_special_account_routes_before_general_pipeline(monkeypatch, pipeline_mod):
+def test_wanshen_mode_requires_main_page_then_runs_claimed(monkeypatch, pipeline_mod):
     ctx = _build_ctx(pipeline_mod, "web-001")
+    ctx.special_wanshen_claimed = True
     calls = []
     monkeypatch.setattr(
         pipeline_mod.config_manager,
         "get_device_config",
-        lambda ip: {"special_wanshen_account": True},
+        lambda ip: {
+            "special_wanshen_account": True,
+            "special_wanshen_enabled": True,
+        },
     )
     monkeypatch.setattr(
-        pipeline_mod.special_wanshen,
-        "run_if_due",
-        lambda *args, **kwargs: calls.append("special"),
+        pipeline_mod, "get_stage_with_check", lambda *args, **kwargs: "主頁面"
+    )
+    monkeypatch.setattr(
+        pipeline_mod.special_wanshen, "run_claimed",
+        lambda *args, **kwargs: calls.append("special"), raising=False,
     )
     monkeypatch.setattr(
         pipeline_mod,
@@ -308,6 +314,47 @@ def test_special_account_routes_before_general_pipeline(monkeypatch, pipeline_mo
     pipeline_mod.run(ctx)
 
     assert calls == ["special"]
+
+
+def test_wanshen_mode_does_not_fight_from_unknown_page(monkeypatch, pipeline_mod):
+    ctx = _build_ctx(pipeline_mod, "web-001")
+    ctx.special_wanshen_claimed = True
+    calls = []
+    monkeypatch.setattr(
+        pipeline_mod.config_manager, "get_device_config",
+        lambda ip: {
+            "special_wanshen_account": True,
+            "special_wanshen_enabled": True,
+        },
+    )
+    monkeypatch.setattr(
+        pipeline_mod, "get_stage_with_check", lambda *args, **kwargs: "未知"
+    )
+    monkeypatch.setattr(
+        pipeline_mod.special_wanshen, "run_claimed",
+        lambda *args, **kwargs: calls.append("special"), raising=False,
+    )
+
+    pipeline_mod.run(ctx)
+
+    assert calls == []
+
+
+def test_full_mode_routes_to_general_pipeline(monkeypatch, pipeline_mod):
+    ctx = _build_ctx(pipeline_mod, "web-001")
+    calls = []
+    monkeypatch.setattr(
+        pipeline_mod.config_manager, "get_device_config",
+        lambda ip: {
+            "special_wanshen_account": True,
+            "special_wanshen_enabled": False,
+        },
+    )
+    monkeypatch.setattr(pipeline_mod, "_run_tasks", lambda arg: calls.append("general"))
+
+    pipeline_mod.run(ctx)
+
+    assert calls == ["general"]
     assert hasattr(ctx, "rl_recorder")
     assert hasattr(ctx, "current_time")
     assert hasattr(ctx, "wheel_manager")

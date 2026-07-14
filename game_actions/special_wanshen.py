@@ -166,7 +166,24 @@ def get_status(
     }
 
 
-def run_if_due(
+def claim_if_due(
+    ip: str,
+    *,
+    cfg: Any = None,
+    now: Optional[datetime.datetime] = None,
+    manager: Any = None,
+) -> bool:
+    """到期時先登記本日嘗試；後續即使啟動失敗，同日也不會再排程。"""
+    cfg = cfg or config_manager.get_device_config(ip)
+    local = _taipei_now(now)
+    manager = manager or JsonDataManager(ip)
+    if not get_status(ip, cfg=cfg, now=local, manager=manager)["due"]:
+        return False
+    manager.record_timestamp(ATTEMPT_RECORD)
+    return True
+
+
+def run_claimed(
     d: Any,
     ip: str,
     *,
@@ -175,16 +192,11 @@ def run_if_due(
     manager: Any = None,
     fight_fn: Optional[Callable[..., bool]] = None,
 ) -> dict:
-    """時間到時只嘗試一次；成功才標記本週完成，失敗順延至下一個有效日。"""
+    """執行已預先 claim 的一次性工作；此函式不再寫入嘗試記錄。"""
     cfg = cfg or config_manager.get_device_config(ip)
     local = _taipei_now(now)
     manager = manager or JsonDataManager(ip)
     status = get_status(ip, cfg=cfg, now=local, manager=manager)
-    if not status["due"]:
-        return status
-
-    # 先落盤再進戰鬥，避免程序中斷後同一天重複入場。
-    manager.record_timestamp(ATTEMPT_RECORD)
     bot_state.update_state(ip, task="萬神試煉", step="萬神專用模式執行中")
     succeeded = False
     try:
@@ -205,3 +217,23 @@ def run_if_due(
         logger.warning("[%s] 萬神專用流程未完成，今日不再重試", ip)
 
     return get_status(ip, cfg=cfg, now=local, manager=manager)
+
+
+def run_if_due(
+    d: Any,
+    ip: str,
+    *,
+    cfg: Any = None,
+    now: Optional[datetime.datetime] = None,
+    manager: Any = None,
+    fight_fn: Optional[Callable[..., bool]] = None,
+) -> dict:
+    """相容入口：先 claim，再執行一次。"""
+    cfg = cfg or config_manager.get_device_config(ip)
+    local = _taipei_now(now)
+    manager = manager or JsonDataManager(ip)
+    if not claim_if_due(ip, cfg=cfg, now=local, manager=manager):
+        return get_status(ip, cfg=cfg, now=local, manager=manager)
+    return run_claimed(
+        d, ip, cfg=cfg, now=local, manager=manager, fight_fn=fight_fn
+    )

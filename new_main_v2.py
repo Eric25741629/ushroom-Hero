@@ -91,7 +91,7 @@ from runtime_services.ws_fallback_service import (
     run_ws_fallback_wait_round,
     should_ws_fallback,
 )
-from game_actions import daily_pipeline
+from game_actions import daily_pipeline, special_wanshen
 from game_actions.ws_phase import run_ws_phase, acquire_scheduler_lease
 from game_actions.browser_skip import should_skip_browser
 
@@ -105,7 +105,8 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     # 放在 enabled 檢查前：未啟用 WS 的裝置接著開 H5/APP 一樣需要登記。
     acquire_scheduler_lease(ip, logger_obj)
     device_cfg = config_manager.get_device_config(ip)
-    if device_cfg.get("special_wanshen_account", False):
+    if (device_cfg.get("special_wanshen_account", False)
+            and device_cfg.get("special_wanshen_enabled", False)):
         return frozenset()
     ws_cfg = device_cfg.get("ws_token") or {}
     if not ws_cfg.get("enabled", False):
@@ -155,6 +156,11 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
     # 的 merge 點完成——這裡讀到的值已是推導後結果，直接取用即可。
     # enable_dungeon_manager 本身保留原樣，繼續餵給 sleep/ws-fallback 路徑。
     cfg = config_manager.get_device_config(ip)
+    special_wanshen_one_shot = (
+        bool(cfg.get("special_wanshen_account", False))
+        and bool(cfg.get("special_wanshen_enabled", False))
+    )
+    special_wanshen_claimed = False
     enable_hellgate = bool(cfg.get("enable_hellgate", True))
     enable_wanshen = bool(cfg.get("enable_wanshen", True))
     enable_cloud_battle = bool(cfg.get("enable_cloud_battle", True))
@@ -173,6 +179,14 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         # 設定當前線程的 logger
         set_thread_logger(device_logger)
         backend_kind = str(config_manager.get_device_config(ip).get("backend", "adb")).strip().lower()
+
+        # 萬神專屬模式是一次性排程，不共用一般裝置的常駐喚醒迴圈。
+        # 先登記今日已嘗試，再初始化瀏覽器；即使登入或啟動失敗，也不會當天重跑。
+        if special_wanshen_one_shot:
+            special_wanshen_claimed = special_wanshen.claim_if_due(ip, cfg=cfg)
+            if not special_wanshen_claimed:
+                device_logger.info(f"[{ip}] 萬神一次性排程目前不需執行，結束執行緒")
+                return
 
         _handle_startup_sleep(ip, device_logger)
 
@@ -200,6 +214,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 force_sleep_now = True
                 device_logger.warning(f"[{ip}] 初始化期間收到強制休眠，暫停啟動並進入休眠: {e}")
                 stop_runtime_device_for_sleep(d_orig, ip, backend_kind, device_logger)
+                if special_wanshen_one_shot:
+                    device_logger.info(f"[{ip}] 萬神一次性排程不進入通用休眠")
+                    return
                 _, _, wake_up_time = run_sleep_cycle(
                     ip,
                     device_logger,
@@ -284,6 +301,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                             logger.info(f"[{ip}] 收到關閉瀏覽器請求，已關閉無頭瀏覽器（裝置續跑，下次喚醒自動重開）")
                         except Exception as close_err:
                             logger.warning(f"[{ip}] 關閉瀏覽器失敗: {close_err}")
+                    if special_wanshen_one_shot:
+                        logger.info(f"[{ip}] 萬神一次性排程收到關閉瀏覽器請求，結束執行緒")
+                        return
                     continue
                 if handle_pending_web_launch(ip, d, backend_kind, logger):
                     continue
@@ -494,7 +514,14 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     mission_manager=mission_manager,
                     family_manager=family_manager,
                     ws_done=ws_done,
+                    special_wanshen_claimed=special_wanshen_claimed,
                 ))
+                if special_wanshen_one_shot:
+                    device_logger.info(f"[{ip}] 萬神一次性排程結束，關閉執行緒")
+                    stop_runtime_device_for_sleep(d, ip, backend_kind, device_logger)
+                    if backend_kind == "web_h5":
+                        bot_state.set_web_browser_open(ip, False)
+                    return
             except WakeLoopInterrupted as e:
                 # A manual web-launch request arrived mid-flow (typically a
                 # live-view takeover, which pauses the device then requests the
@@ -561,6 +588,12 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 # 不需要額外處理，後續代碼會處理釋放鎖和休眠
 
             end = time.time()
+            if special_wanshen_one_shot:
+                device_logger.info(f"[{ip}] 萬神一次性排程不進入通用休眠")
+                stop_runtime_device_for_sleep(d, ip, backend_kind, device_logger)
+                if backend_kind == "web_h5":
+                    bot_state.set_web_browser_open(ip, False)
+                return
             if (not skip_phone_cleanup) and ('fc65396d' in ip or '192.168' in ip):
                 reset_screen_settings(ip, logger=logger)
                 time.sleep(1)

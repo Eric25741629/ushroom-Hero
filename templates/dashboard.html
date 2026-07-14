@@ -1222,6 +1222,12 @@ select.form-control {
 .wake-block .wake-text{display:flex;flex-direction:column;min-width:0;}
 .wake-block .wake-text .label{display:block;margin-bottom:2px;}
 .wake-block .wake-num{font-family:var(--mono);font-feature-settings:"tnum" 1;font-weight:700;font-size:18px;color:var(--coral-deep);line-height:1.15;white-space:nowrap;}
+.card.special-wanshen-off .wake-block,
+.card.special-wanshen-off .info-grid,
+.card.special-wanshen-off .carpark-detail,
+.card.special-wanshen-off .progress-container,
+.card.special-wanshen-off .log-box{display:none!important;}
+.card.special-wanshen-scheduled .wake-block{display:none!important;}
 
 /* ---- task-category horizontal tabs (進階設定 內) ---- */
 .ws-plan-hint{font-size:.78em;color:#9a6b00;background:#fff7e0;border:1px solid #f0e3c5;border-radius:8px;padding:6px 9px;margin:6px 0;}
@@ -3026,6 +3032,17 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         const info = bots[ip];
 
+        const specialWanshen = info.special_wanshen_account === true;
+        const specialMode = specialWanshen
+          ? (info.special_wanshen_mode || (info.special_wanshen_enabled ? 'wanshen' : 'off'))
+          : null;
+        const specialWanshenActive = specialMode === 'wanshen';
+        const specialFullActive = specialMode === 'full';
+        const specialCardClass = specialWanshen
+          ? (specialMode === 'off' ? ' special-wanshen-off'
+            : (specialMode === 'wanshen' ? ' special-wanshen-scheduled' : ''))
+          : '';
+
         const isPaused = !!info.paused;
 
         const isDisabled = info.enabled === false;
@@ -3063,7 +3080,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           card.dataset.ip = ip;
 
-          card.className = `card ${statusClass}`;
+          card.className = `card ${statusClass}${specialCardClass}`;
 
           card.innerHTML = `
             <div class="card-header">
@@ -3107,7 +3124,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
 
-        card.className = `card ${statusClass}`;
+        card.className = `card ${statusClass}${specialCardClass}`;
 
         updateText(`title-${ip}`, info.name || ip);
 
@@ -3240,12 +3257,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (info.carpark_plan_enabled) fetchCarpark(ip, info.last_update).then(d => renderCarpark(ip, d));
 
-        const specialWanshen = info.special_wanshen_account === true;
         const specialWanshenDone = info.special_wanshen_completed_this_week === true;
         const pc = document.getElementById(`progress-${ip}`);
-        if (specialWanshen) {
+        if (specialWanshenActive) {
           const specialProgress = `<span class="task-badge ${specialWanshenDone ? 'done' : ''}">${specialWanshenDone ? '✅ 萬神試煉・本週已完成，不再執行' : '⏳ 萬神試煉'}</span>`;
           if (pc.innerHTML !== specialProgress) pc.innerHTML = specialProgress;
+        } else if (specialWanshen && specialMode === 'off') {
+          if (pc.innerHTML !== '') pc.innerHTML = '';
         } else {
           fetchProgress(ip, info.last_update).then(progress => {
             if (!progress) return;
@@ -3292,7 +3310,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${info.special_wanshen_enabled}-${specialWanshenDone}-force`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${specialMode}-${specialWanshenDone}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
@@ -3300,17 +3318,32 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           if (specialWanshen) {
 
-            const idleWebBtn = isDisabled
-              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
-              : (webOpen
-                  ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
+            const fullScriptBtn = specialFullActive
+              ? `<button class="btn btn-wanshen-on" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 啟用完整腳本・已啟用</button>`
+              : `<button class="btn btn-wanshen-off" onclick="setSpecialWanshenMode('${ip}', 'full')">× 啟用完整腳本・未啟用</button>`;
+            const idleWebBtn = webOpen
+              ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
+              : (isDisabled
+                  ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
                   : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
-            const wanshenBtn = specialWanshenDone
-              ? `<button class="btn btn-wanshen-done" disabled>✓ 本週已完成，不再執行</button>`
-              : (info.special_wanshen_enabled
-                  ? `<button class="btn btn-wanshen-on" onclick="toggleSpecialWanshen('${ip}', false)">✓ 跑萬神試煉・已啟用</button>`
-                  : `<button class="btn btn-wanshen-off" onclick="toggleSpecialWanshen('${ip}', true)">× 跑萬神試煉・未啟用</button>`);
-            actionBar.innerHTML = `${idleWebBtn}${wanshenBtn}`;
+            const wanshenBtn = specialWanshenActive
+              ? `<button class="btn btn-wanshen-on" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 跑萬神試煉・已啟用</button>`
+              : (specialWanshenDone
+                  ? `<button class="btn btn-wanshen-done" disabled>✓ 本週已完成，不再執行</button>`
+                  : `<button class="btn btn-wanshen-off" onclick="setSpecialWanshenMode('${ip}', 'wanshen')">× 跑萬神試煉・未啟用</button>`);
+            const specialExceptionControls = specialMode !== 'off' ? `
+              ${isPaused
+                ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">恢復</button>`
+                : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">暫停</button>`}
+              ${showWebLaunch
+                ? (webOpen
+                    ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
+                    : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
+                : ''}
+              ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
+              <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
+            ` : '';
+            actionBar.innerHTML = `${fullScriptBtn}${idleWebBtn}${wanshenBtn}${specialExceptionControls}`;
 
           } else if (isDisabled) {
 
@@ -4046,16 +4079,17 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       }
     }
 
-    async function toggleSpecialWanshen(ip, enabled) {
+    async function setSpecialWanshenMode(ip, mode) {
       try {
-        const resp = await fetch(`/api/special_wanshen/${ip}`, {
+        const resp = await fetch(`/api/special_wanshen_mode/${ip}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ enabled })
+          body: JSON.stringify({ mode })
         });
         const result = await resp.json().catch(() => ({}));
-        if (!resp.ok) throw new Error(result.message || '萬神專用開關更新失敗');
-        window.UI.toast(enabled ? '萬神試煉已啟用' : '萬神試煉已停用', 'ok');
+        if (!resp.ok) throw new Error(result.message || '專用腳本模式更新失敗');
+        const labels = { off: '專用腳本已停用', full: '完整腳本已啟用', wanshen: '萬神試煉已啟用' };
+        window.UI.toast(labels[mode] || '腳本模式已更新', 'ok');
         await fetchStatus();
       } catch (e) {
         window.UI.toast('錯誤：' + e, 'err');

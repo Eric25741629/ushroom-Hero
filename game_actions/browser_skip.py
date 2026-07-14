@@ -30,7 +30,8 @@ def should_skip_browser(
         import config_manager
 
         cfg = config_manager.get_device_config(ip)
-        if bool(cfg.get("special_wanshen_account", False)):
+        if (bool(cfg.get("special_wanshen_account", False))
+                and bool(cfg.get("special_wanshen_enabled", False))):
             return False
         if str(cfg.get("backend", "")).strip().lower() != "web_h5":
             return False

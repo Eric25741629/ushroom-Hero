@@ -200,3 +200,22 @@ def test_existing_attempt_or_completion_prevents_another_fight(record_name):
 
     assert calls == []
     assert result["due"] is False
+
+
+def test_claim_records_attempt_before_browser_start_and_rejects_second_claim():
+    now = datetime.datetime(2026, 7, 10, 3, 0, tzinfo=TAIPEI)
+    manager = FakeManager(now)
+    cfg = {
+        "enabled": True,
+        "special_wanshen_account": True,
+        "special_wanshen_enabled": True,
+        "special_wanshen_rounds": 10,
+    }
+
+    assert special_wanshen.claim_if_due(
+        "web-001", cfg=cfg, now=now, manager=manager
+    ) is True
+    assert manager.recorded == [special_wanshen.ATTEMPT_RECORD]
+    assert special_wanshen.claim_if_due(
+        "web-001", cfg=cfg, now=now, manager=manager
+    ) is False

@@ -49,13 +49,45 @@ def test_special_wanshen_dashboard_controls_exist():
     assert "跑萬神試煉・未啟用" in html
     assert "跑萬神試煉・已啟用" in html
     assert "本週已完成，不再執行" in html
-    assert "/api/special_wanshen/" in html
+    assert "/api/special_wanshen_mode/" in html
     assert "special_wanshen_account" in html
     assert "special_wanshen_completed_this_week" in html
     assert "manual_hold_until_closed: false" in html
     assert ".btn-wanshen-off" in html
     assert ".btn-wanshen-on" in html
     assert ".btn-wanshen-done" in html
+
+
+def test_special_wanshen_card_has_three_mutually_exclusive_modes():
+    html = _html()
+
+    assert "special_wanshen_mode" in html
+    assert "啟用完整腳本" in html
+    assert "開啟網頁掛機" in html
+    assert "跑萬神試煉" in html
+    assert "setSpecialWanshenMode('${ip}', 'full')" in html
+    assert "setSpecialWanshenMode('${ip}', 'wanshen')" in html
+    assert "/api/special_wanshen_mode/" in html
+
+
+def test_special_wanshen_active_modes_keep_exception_controls():
+    html = _html()
+
+    assert "specialExceptionControls" in html
+    assert "deviceControl('${ip}','pause')" in html
+    assert "launchWebPage('${ip}')" in html
+    assert "openLiveView('${ip}')" in html
+    assert "skipSleep('${ip}')" in html
+
+
+def test_special_wanshen_off_card_is_compact_and_schedule_hides_countdown():
+    html = _html()
+
+    assert ".card.special-wanshen-off .wake-block" in html
+    assert ".card.special-wanshen-off .info-grid" in html
+    assert ".card.special-wanshen-off .progress-container" in html
+    assert ".card.special-wanshen-off .log-box" in html
+    assert ".card.special-wanshen-scheduled .wake-block" in html
 
 
 def test_disabled_web_device_opens_web_via_login_worker():

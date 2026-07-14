@@ -116,6 +116,7 @@ class DailyContext:
     enable_cloud_battle: bool = True
     enable_biweekly: bool = True
     ws_done: frozenset = frozenset()  # WS 階段已完成的任務名（ws_phase 對照表輸出）
+    special_wanshen_claimed: bool = False
 
 
 def run(ctx: DailyContext) -> None:
@@ -130,8 +131,26 @@ def run(ctx: DailyContext) -> None:
     respawn → immediate re-run with no sleep).
     """
     cfg = config_manager.get_device_config(ctx.ip)
-    if cfg.get("special_wanshen_account", False):
-        special_wanshen.run_if_due(ctx.d, ctx.ip, cfg=cfg)
+    special_active = bool(cfg.get("special_wanshen_account", False)) and bool(
+        cfg.get("special_wanshen_enabled", False)
+    )
+    if special_active:
+        if not ctx.special_wanshen_claimed:
+            return
+        stage = get_stage_with_check(ctx.d, ctx.ip, ctx.Cnn_model)
+        if stage != "主頁面":
+            logger.warning(
+                "[%s] 萬神專用排程未在主頁面（%s），本日不再嘗試",
+                ctx.ip,
+                stage,
+            )
+            bot_state.update_state(
+                ctx.ip, task="萬神試煉", step="未到達主頁面，順延下一個有效日"
+            )
+            return
+        special_wanshen.run_claimed(
+            ctx.d, ctx.ip, cfg=cfg, fight_fn=new_battle.fight_test
+        )
         return
 
     try:
