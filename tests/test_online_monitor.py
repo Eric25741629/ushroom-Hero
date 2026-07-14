@@ -213,6 +213,43 @@ def test_last_switch_records_transition():
     assert mon.last_switch["ts"] == 160.0
 
 
+def _seed_yield_snapshot(mon, *, ts=1000.0, online=False):
+    with mon._lock:
+        mon._snapshot = om.Snapshot(
+            "emulator-5554", ts,
+            (om.StatusEntry(123, "phone", online, None),),
+        )
+    mon._mark_no_idle_yield()
+
+
+def test_mark_no_idle_yield_locks_current_snapshot_timestamp():
+    mon = om.OnlineMonitor()
+    _seed_yield_snapshot(mon, ts=1000.0)
+    assert mon._intentional_yield == om._IntentionalYield(
+        reason="no_idle_detector", snapshot_timestamp=1000.0)
+
+
+def test_set_active_none_preserves_existing_yield_marker():
+    mon = om.OnlineMonitor()
+    _seed_yield_snapshot(mon)
+    mon._set_active(None)
+    assert mon._intentional_yield is not None
+
+
+def test_successful_connection_state_clears_yield_marker():
+    mon = om.OnlineMonitor()
+    _seed_yield_snapshot(mon)
+    mon._set_active("emulator-5556")
+    assert mon._intentional_yield is None
+
+
+def test_stop_clears_yield_marker():
+    mon = om.OnlineMonitor()
+    _seed_yield_snapshot(mon)
+    mon.stop()
+    assert mon._intentional_yield is None
+
+
 def test_switch_cooldown_blocks_rapid_reconnect():
     clock = {"t": 1_000_000.0}
     mon = om.OnlineMonitor(switch_cooldown_sec=300.0, now=lambda: clock["t"])
@@ -428,3 +465,170 @@ def test_scheduler_preempt_yields_and_releases():
     # monitor 讓位後 release 自己的 lease 是冪等 no-op(owner 已不符)。
     mon._release_detector("emulator-5554")
     assert reg.peek("emulator-5554").owner is Owner.SCHEDULER
+
+
+# --- no-idle intentional-yield 生命周期 -------------------------------------
+
+class _LoopClient:
+    def close(self):
+        pass
+
+
+def _ok_acquire(*args, **kwargs):
+    return reg.AcquireResult(ok=True)
+
+
+def test_loop_marks_only_live_no_idle_disconnect(monkeypatch):
+    mon = om.OnlineMonitor(now=lambda: 1000.0)
+    mon._running = True
+    desired = iter(["emulator-5554", None])
+    monkeypatch.setattr(mon, "_select_detector", lambda *a: next(desired))
+    monkeypatch.setattr(reg, "acquire", _ok_acquire)
+    monkeypatch.setattr(mon, "_connect", lambda dev: _LoopClient())
+    monkeypatch.setattr(mon, "_release_detector", lambda dev: None)
+    monkeypatch.setattr(
+        om, "poll_friends",
+        lambda client, threshold: [
+            om.StatusEntry(123, "phone", False, None)],
+    )
+    marked = []
+    original = mon._mark_no_idle_yield
+
+    def _mark():
+        original()
+        marked.append(mon._intentional_yield.snapshot_timestamp)
+
+    monkeypatch.setattr(mon, "_mark_no_idle_yield", _mark)
+    sleeps = {"count": 0}
+
+    def _sleep():
+        sleeps["count"] += 1
+        if sleeps["count"] == 2:
+            mon._running = False
+
+    monkeypatch.setattr(mon, "_sleep", _sleep)
+    mon._loop()
+    assert marked == [1000.0]
+
+
+@pytest.mark.parametrize("failure", ["acquire", "connect"])
+def test_retry_failure_preserves_existing_yield_until_loop_exit(
+        monkeypatch, failure):
+    mon = om.OnlineMonitor(now=lambda: 1100.0)
+    with mon._lock:
+        mon._snapshot = om.Snapshot(
+            "emulator-5554", 1000.0,
+            (om.StatusEntry(123, "phone", False, None),),
+        )
+    mon._mark_no_idle_yield()
+    mon._running = True
+    monkeypatch.setattr(mon, "_select_detector",
+                        lambda *a: "emulator-5556")
+    monkeypatch.setattr(mon, "_release_detector", lambda dev: None)
+    if failure == "acquire":
+        monkeypatch.setattr(
+            reg, "acquire",
+            lambda *a, **k: reg.AcquireResult(ok=False, reason="busy"))
+    else:
+        monkeypatch.setattr(reg, "acquire", _ok_acquire)
+        monkeypatch.setattr(mon, "_connect", lambda dev: None)
+    marked = []
+    monkeypatch.setattr(mon, "_mark_no_idle_yield",
+                        lambda: marked.append(True))
+    observed = []
+
+    def _sleep():
+        observed.append(mon._intentional_yield)
+        mon._running = False
+
+    monkeypatch.setattr(mon, "_sleep", _sleep)
+    mon._loop()
+    assert marked == []
+    assert observed[0].snapshot_timestamp == 1000.0
+    assert mon._intentional_yield is None  # thread finally 清除
+
+
+def test_poll_failure_does_not_establish_yield(monkeypatch):
+    mon = om.OnlineMonitor()
+    mon._running = True
+    monkeypatch.setattr(mon, "_select_detector",
+                        lambda *a: "emulator-5554")
+    monkeypatch.setattr(reg, "acquire", _ok_acquire)
+    monkeypatch.setattr(mon, "_connect", lambda dev: _LoopClient())
+    monkeypatch.setattr(mon, "_release_detector", lambda dev: None)
+    marked = []
+    monkeypatch.setattr(mon, "_mark_no_idle_yield",
+                        lambda: marked.append(True))
+
+    def _poll(*args):
+        mon._running = False
+        raise RuntimeError("poll failed")
+
+    monkeypatch.setattr(om, "poll_friends", _poll)
+    mon._loop()
+    assert marked == []
+    assert mon._intentional_yield is None
+
+
+def test_preempt_does_not_establish_yield(monkeypatch):
+    mon = om.OnlineMonitor(now=lambda: 1000.0)
+    mon._running = True
+    preempted = iter([False, True])
+    monkeypatch.setattr(mon, "_preempted",
+                        lambda current: next(preempted))
+    monkeypatch.setattr(mon, "_select_detector",
+                        lambda *a: "emulator-5554")
+    monkeypatch.setattr(reg, "acquire", _ok_acquire)
+    monkeypatch.setattr(mon, "_connect", lambda dev: _LoopClient())
+    monkeypatch.setattr(mon, "_release_detector", lambda dev: None)
+    monkeypatch.setattr(om, "poll_friends", lambda *a: [])
+    marked = []
+    monkeypatch.setattr(mon, "_mark_no_idle_yield",
+                        lambda: marked.append(True))
+    sleeps = {"count": 0}
+
+    def _sleep():
+        sleeps["count"] += 1
+        if sleeps["count"] == 2:
+            mon._running = False
+
+    monkeypatch.setattr(mon, "_sleep", _sleep)
+    mon._loop()
+    assert marked == []
+
+
+def test_successful_reconnect_clears_yield_before_next_poll(monkeypatch):
+    mon = om.OnlineMonitor(now=lambda: 1100.0)
+    with mon._lock:
+        mon._snapshot = om.Snapshot("emulator-5554", 1000.0, ())
+    mon._mark_no_idle_yield()
+    mon._running = True
+    monkeypatch.setattr(mon, "_select_detector",
+                        lambda *a: "emulator-5556")
+    monkeypatch.setattr(reg, "acquire", _ok_acquire)
+    monkeypatch.setattr(mon, "_connect", lambda dev: _LoopClient())
+    monkeypatch.setattr(mon, "_release_detector", lambda dev: None)
+    monkeypatch.setattr(om, "poll_friends", lambda *a: [])
+    observed = []
+
+    def _sleep():
+        observed.append(mon._intentional_yield)
+        mon._running = False
+
+    monkeypatch.setattr(mon, "_sleep", _sleep)
+    mon._loop()
+    assert observed == [None]
+
+
+def test_loop_exception_clears_existing_yield(monkeypatch):
+    mon = om.OnlineMonitor()
+    with mon._lock:
+        mon._snapshot = om.Snapshot("emulator-5554", 1000.0, ())
+    mon._mark_no_idle_yield()
+    mon._running = True
+    monkeypatch.setattr(
+        mon, "_select_detector",
+        lambda *a: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    mon._loop()
+    assert mon._intentional_yield is None

@@ -185,6 +185,100 @@ def test_account_online_unknown_when_no_snapshot(monkeypatch):
     assert online_monitor.account_online(123, now=1030.0) is None
 
 
+def _monitor_state(monkeypatch, *, snap, active=None, yield_ts=None):
+    mon = online_monitor.OnlineMonitor()
+    with mon._lock:
+        mon._snapshot = snap
+        mon._active_detector = active
+        mon._intentional_yield = (
+            online_monitor._IntentionalYield(
+                reason="no_idle_detector", snapshot_timestamp=yield_ts)
+            if yield_ts is not None else None
+        )
+    monkeypatch.setattr(online_monitor, "_monitor", mon)
+    return mon
+
+
+def test_wake_gate_uses_normal_fresh_snapshot(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, True), (456, False)]),
+        active="emulator-5554",
+    )
+    assert online_monitor.account_online_for_wake_gate(123, now=1030.0) is True
+    assert online_monitor.account_online_for_wake_gate(456, now=1030.0) is False
+
+
+def test_wake_gate_accepts_recent_no_idle_stale_offline(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(456, False)]),
+        active=None,
+        yield_ts=1000.0,
+    )
+    assert online_monitor.account_online_for_wake_gate(456, now=1599.0) is False
+
+
+def test_wake_gate_rejects_expired_no_idle_snapshot(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(456, False)]),
+        active=None,
+        yield_ts=1000.0,
+    )
+    assert online_monitor.account_online_for_wake_gate(456, now=1600.1) is None
+
+
+def test_wake_gate_never_accepts_stale_online(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, True)]),
+        active=None,
+        yield_ts=1000.0,
+    )
+    assert online_monitor.account_online_for_wake_gate(123, now=1100.0) is None
+
+
+def test_wake_gate_requires_matching_yield_snapshot(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1001.0, [(456, False)]),
+        active=None,
+        yield_ts=1000.0,
+    )
+    assert online_monitor.account_online_for_wake_gate(456, now=1100.0) is None
+
+
+def test_wake_gate_requires_monitor_to_remain_disconnected(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(456, False)]),
+        active="emulator-5556",
+        yield_ts=1000.0,
+    )
+    assert online_monitor.account_online_for_wake_gate(456, now=1100.0) is None
+
+
+def test_wake_gate_rejects_stale_offline_without_yield_marker(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(456, False)]),
+        active=None,
+        yield_ts=None,
+    )
+    assert online_monitor.account_online_for_wake_gate(456, now=1100.0) is None
+
+
+def test_ws_phase_account_lookup_uses_wake_gate_policy(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        online_monitor, "account_online_for_wake_gate",
+        lambda rid: calls.append(rid) or False,
+    )
+    assert ws_phase._account_online(123) is False
+    assert calls == [123]
+
+
 # --- control_panel.ws_session.is_active ---------------------------------------
 
 

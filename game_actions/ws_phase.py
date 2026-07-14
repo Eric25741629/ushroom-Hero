@@ -382,10 +382,10 @@ def _account_role_id(ip: str):
 
 
 def _account_online(role_id):
-    """間接層（tests monkeypatch 這裡）：觀察者快照看到的 online；看不到回 None。"""
+    """間接層：喚醒閘門可採信 no-idle 讓路前 10 分鐘內的明確離線快照。"""
     try:
-        from ws_token.online_monitor import account_online
-        return account_online(role_id)
+        from ws_token.online_monitor import account_online_for_wake_gate
+        return account_online_for_wake_gate(role_id)
     except Exception:  # noqa: BLE001 — 讀快照失敗 → None（視為可能在線）
         return None
 
