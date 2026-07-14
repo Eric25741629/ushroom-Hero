@@ -43,6 +43,21 @@ def test_dashboard_has_device_enable_toggle():
     assert "toggleDeviceEnabled" in html
 
 
+def test_special_wanshen_dashboard_controls_exist():
+    html = _html()
+
+    assert "跑萬神試煉・未啟用" in html
+    assert "跑萬神試煉・已啟用" in html
+    assert "本週已完成，不再執行" in html
+    assert "/api/special_wanshen/" in html
+    assert "special_wanshen_account" in html
+    assert "special_wanshen_completed_this_week" in html
+    assert "manual_hold_until_closed: false" in html
+    assert ".btn-wanshen-off" in html
+    assert ".btn-wanshen-on" in html
+    assert ".btn-wanshen-done" in html
+
+
 def test_disabled_web_device_opens_web_via_login_worker():
     """A disabled web_h5 device must still be able to open the browser for
     login/setup before it is enabled.

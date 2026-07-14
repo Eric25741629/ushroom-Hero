@@ -734,6 +734,31 @@ h1 {
 }
 .btn:focus-visible { outline: 2px solid var(--coral-rim); outline-offset: 2px; }
 
+.btn-wanshen-off,
+.btn-wanshen-on,
+.btn-wanshen-done {
+  flex: 0 1 auto;
+  min-height: 38px;
+  padding: 7px 11px;
+  font-size: 0.72em;
+}
+.btn-wanshen-off {
+  background: var(--tile-sunk);
+  color: var(--ink-soft);
+  border-color: var(--line-strong);
+}
+.btn-wanshen-on {
+  background: var(--mint-wash);
+  color: var(--mint-deep);
+  border-color: var(--mint-rim);
+}
+.btn-wanshen-done {
+  background: var(--mint-deep);
+  color: #fff;
+  border-color: var(--mint-deep);
+  cursor: default;
+}
+
 /* tonal variants */
 .btn-pause {
   background: linear-gradient(135deg, var(--amber-wash), #f9f0d6);
@@ -3215,23 +3240,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (info.carpark_plan_enabled) fetchCarpark(ip, info.last_update).then(d => renderCarpark(ip, d));
 
-        fetchProgress(ip, info.last_update).then(progress => {
-
-          if (!progress) return;
-
-          const pc = document.getElementById(`progress-${ip}`);
-
-          let html = '';
-
-          for (const [name, done] of Object.entries(progress)) {
-
-            html += `<span class="task-badge ${done ? 'done' : ''}">${done ? '✅' : '⏳'} ${name}</span>`;
-
-          }
-
-          if (pc.innerHTML !== html) pc.innerHTML = html;
-
-        });
+        const specialWanshen = info.special_wanshen_account === true;
+        const specialWanshenDone = info.special_wanshen_completed_this_week === true;
+        const pc = document.getElementById(`progress-${ip}`);
+        if (specialWanshen) {
+          const specialProgress = `<span class="task-badge ${specialWanshenDone ? 'done' : ''}">${specialWanshenDone ? '✅ 萬神試煉・本週已完成，不再執行' : '⏳ 萬神試煉'}</span>`;
+          if (pc.innerHTML !== specialProgress) pc.innerHTML = specialProgress;
+        } else {
+          fetchProgress(ip, info.last_update).then(progress => {
+            if (!progress) return;
+            let html = '';
+            for (const [name, done] of Object.entries(progress)) {
+              html += `<span class="task-badge ${done ? 'done' : ''}">${done ? '✅' : '⏳'} ${name}</span>`;
+            }
+            if (pc.innerHTML !== html) pc.innerHTML = html;
+          });
+        }
 
 
 
@@ -3268,13 +3292,27 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-force`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${info.special_wanshen_enabled}-${specialWanshenDone}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
           card.dataset.actionKey = actionKey;
 
-          if (isDisabled) {
+          if (specialWanshen) {
+
+            const idleWebBtn = isDisabled
+              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
+              : (webOpen
+                  ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
+                  : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
+            const wanshenBtn = specialWanshenDone
+              ? `<button class="btn btn-wanshen-done" disabled>✓ 本週已完成，不再執行</button>`
+              : (info.special_wanshen_enabled
+                  ? `<button class="btn btn-wanshen-on" onclick="toggleSpecialWanshen('${ip}', false)">✓ 跑萬神試煉・已啟用</button>`
+                  : `<button class="btn btn-wanshen-off" onclick="toggleSpecialWanshen('${ip}', true)">× 跑萬神試煉・未啟用</button>`);
+            actionBar.innerHTML = `${idleWebBtn}${wanshenBtn}`;
+
+          } else if (isDisabled) {
 
             // 停用的裝置 (新註冊後尚未啟用) 預設只提供「啟用掛機」入口，避免在登入/設定
             // 還沒完成時就被掃描器開起來。web_h5 裝置額外給「開啟網頁(登入/設定)」，走
@@ -3840,7 +3878,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       }
     }
 
-    async function launchWebPage(ip) {
+    async function launchWebPage(ip, specialIdle = false) {
 
       if (!ip || webBtnLocked(ip)) return;
 
@@ -3861,7 +3899,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           headers: { 'Content-Type': 'application/json' },
 
-          body: JSON.stringify({})
+          body: JSON.stringify(specialIdle ? { manual_hold_until_closed: false } : {})
 
         });
 
@@ -4005,6 +4043,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       } catch (e) {
         el.textContent = '';
         _relicDateFetchedFor = null;
+      }
+    }
+
+    async function toggleSpecialWanshen(ip, enabled) {
+      try {
+        const resp = await fetch(`/api/special_wanshen/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.message || '萬神專用開關更新失敗');
+        window.UI.toast(enabled ? '萬神試煉已啟用' : '萬神試煉已停用', 'ok');
+        await fetchStatus();
+      } catch (e) {
+        window.UI.toast('錯誤：' + e, 'err');
       }
     }
     function renderTaskTabs() {
