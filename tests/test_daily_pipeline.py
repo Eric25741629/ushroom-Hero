@@ -284,6 +284,30 @@ def test_daily_context_can_be_instantiated(pipeline_mod):
     assert hasattr(ctx, "d")
     assert hasattr(ctx, "Cnn_model")
     assert hasattr(ctx, "clf")
+
+
+def test_special_account_routes_before_general_pipeline(monkeypatch, pipeline_mod):
+    ctx = _build_ctx(pipeline_mod, "web-001")
+    calls = []
+    monkeypatch.setattr(
+        pipeline_mod.config_manager,
+        "get_device_config",
+        lambda ip: {"special_wanshen_account": True},
+    )
+    monkeypatch.setattr(
+        pipeline_mod.special_wanshen,
+        "run_if_due",
+        lambda *args, **kwargs: calls.append("special"),
+    )
+    monkeypatch.setattr(
+        pipeline_mod,
+        "_run_tasks",
+        lambda daily_ctx: calls.append("general"),
+    )
+
+    pipeline_mod.run(ctx)
+
+    assert calls == ["special"]
     assert hasattr(ctx, "rl_recorder")
     assert hasattr(ctx, "current_time")
     assert hasattr(ctx, "wheel_manager")

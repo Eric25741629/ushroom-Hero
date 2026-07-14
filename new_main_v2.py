@@ -104,7 +104,10 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     # 先取得 SCHEDULER lease：搶回背景借用者、等待 dashboard 工具釋放。
     # 放在 enabled 檢查前：未啟用 WS 的裝置接著開 H5/APP 一樣需要登記。
     acquire_scheduler_lease(ip, logger_obj)
-    ws_cfg = config_manager.get_device_config(ip).get("ws_token") or {}
+    device_cfg = config_manager.get_device_config(ip)
+    if device_cfg.get("special_wanshen_account", False):
+        return frozenset()
+    ws_cfg = device_cfg.get("ws_token") or {}
     if not ws_cfg.get("enabled", False):
         return frozenset()
     try:

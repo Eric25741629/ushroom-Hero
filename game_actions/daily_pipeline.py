@@ -53,6 +53,7 @@ from game_actions.reward_manager import reward
 from game_actions.skill_manager import switch_skill
 from game_actions.stage_guard import _run_at_main_page, get_stage_with_check
 from game_actions import task_due
+from game_actions import special_wanshen
 from runtime_services.device_runtime_service import ForceSleepRequested
 from json_manager import (
     is_record_expired,
@@ -128,6 +129,11 @@ def run(ctx: DailyContext) -> None:
     as 「未預期錯誤」 and tore the device thread down → set_offline + scanner
     respawn → immediate re-run with no sleep).
     """
+    cfg = config_manager.get_device_config(ctx.ip)
+    if cfg.get("special_wanshen_account", False):
+        special_wanshen.run_if_due(ctx.d, ctx.ip, cfg=cfg)
+        return
+
     try:
         _run_tasks(ctx)
     except _ConsecutiveMismatchAbort as exc:
