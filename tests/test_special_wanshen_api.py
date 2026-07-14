@@ -108,6 +108,37 @@ def test_non_special_device_is_rejected(client):
     assert response.status_code == 403
 
 
+@pytest.mark.parametrize(("mode", "main_enabled", "special_enabled"), [
+    ("off", False, False),
+    ("full", True, False),
+    ("wanshen", True, True),
+])
+def test_script_mode_is_persisted_atomically(
+    client, mode, main_enabled, special_enabled
+):
+    response = client.post(
+        "/api/special_wanshen_mode/web-001", json={"mode": mode}
+    )
+
+    assert response.status_code == 200
+    cfg = config_manager.get_device_config("web-001")
+    assert cfg.get("enabled") is main_enabled
+    assert cfg.get("special_wanshen_enabled") is special_enabled
+    assert response.get_json()["mode"] == mode
+
+
+def test_script_mode_rejects_invalid_or_normal_device(client):
+    invalid = client.post(
+        "/api/special_wanshen_mode/web-001", json={"mode": "invalid"}
+    )
+    normal = client.post(
+        "/api/special_wanshen_mode/normal", json={"mode": "full"}
+    )
+
+    assert invalid.status_code == 400
+    assert normal.status_code == 403
+
+
 def test_status_includes_special_fields_for_running_and_disabled_cards(client):
     response = client.get("/api/status")
 
@@ -119,3 +150,5 @@ def test_status_includes_special_fields_for_running_and_disabled_cards(client):
         assert bots[ip]["special_wanshen_rounds"] == 10
         assert bots[ip]["special_wanshen_attempted_today"] is False
         assert bots[ip]["special_wanshen_completed_this_week"] is False
+    assert bots["web-001"]["special_wanshen_mode"] == "full"
+    assert bots["web-002"]["special_wanshen_mode"] == "off"

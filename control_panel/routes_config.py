@@ -63,14 +63,33 @@ def special_wanshen_config(ip):
                 "message": "enabled 必須是布林值",
             }), 400
         enabled = payload["enabled"]
-        update = {"special_wanshen_enabled": enabled}
-        if enabled:
-            # 專用腳本開啟時，同時確保裝置執行緒會被掃描器啟動。
-            update["enabled"] = True
+        update = special_wanshen.mode_settings("wanshen" if enabled else "off")
         config_manager.update_device_config(real_ip, update)
         cfg = config_manager.get_device_config(real_ip)
 
     return jsonify(special_wanshen.get_status(real_ip, cfg=cfg))
+
+
+@bp.route("/api/special_wanshen_mode/<ip>", methods=["POST"])
+def set_special_wanshen_mode(ip):
+    """一次寫入完整腳本／萬神專屬互斥模式。"""
+    require_device_access(ip)
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    cfg = config_manager.get_device_config(real_ip)
+    if not cfg.get("special_wanshen_account", False):
+        return jsonify({
+            "status": "error",
+            "message": "此帳號不是萬神專用帳號",
+        }), 403
+    try:
+        settings = special_wanshen.mode_settings(
+            (request.get_json(silent=True) or {}).get("mode")
+        )
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    config_manager.update_device_config(real_ip, settings)
+    updated = config_manager.get_device_config(real_ip)
+    return jsonify(special_wanshen.get_status(real_ip, cfg=updated))
 
 
 @bp.route("/api/ocr_config", methods=["GET"])

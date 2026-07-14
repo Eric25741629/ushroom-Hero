@@ -502,6 +502,7 @@ def _special_wanshen_fields(real_ip, cfg):
             "special_wanshen_attempted_today": False,
             "special_wanshen_completed_this_week": False,
             "special_wanshen_next_attempt_at": None,
+            "special_wanshen_mode": "off",
         }
     status = special_wanshen.get_status(real_ip, cfg=cfg)
     return {
@@ -511,6 +512,7 @@ def _special_wanshen_fields(real_ip, cfg):
         "special_wanshen_attempted_today": status["attempted_today"],
         "special_wanshen_completed_this_week": status["completed_this_week"],
         "special_wanshen_next_attempt_at": status["next_attempt_at"],
+        "special_wanshen_mode": status["mode"],
     }
 
 

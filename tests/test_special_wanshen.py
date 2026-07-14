@@ -27,6 +27,32 @@ class FakeManager:
         }
 
 
+@pytest.mark.parametrize(("cfg", "expected"), [
+    ({"enabled": False, "special_wanshen_enabled": False}, "off"),
+    ({"enabled": True, "special_wanshen_enabled": False}, "full"),
+    ({"enabled": True, "special_wanshen_enabled": True}, "wanshen"),
+])
+def test_get_mode_derives_mutually_exclusive_state(cfg, expected):
+    assert special_wanshen.get_mode(cfg) == expected
+
+
+def test_mode_settings_write_both_flags_atomically():
+    assert special_wanshen.mode_settings("off") == {
+        "enabled": False,
+        "special_wanshen_enabled": False,
+    }
+    assert special_wanshen.mode_settings("full") == {
+        "enabled": True,
+        "special_wanshen_enabled": False,
+    }
+    assert special_wanshen.mode_settings("wanshen") == {
+        "enabled": True,
+        "special_wanshen_enabled": True,
+    }
+    with pytest.raises(ValueError):
+        special_wanshen.mode_settings("invalid")
+
+
 def test_special_wanshen_config_defaults():
     cfg = config_manager.DeviceConfig.from_dict({})
 

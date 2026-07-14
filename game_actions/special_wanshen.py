@@ -16,6 +16,29 @@ logger = logging.getLogger(__name__)
 ATTEMPT_RECORD = "萬神專用_嘗試"
 COMPLETE_RECORD = "萬神專用_完成"
 TAIPEI = datetime.timezone(datetime.timedelta(hours=8))
+MODE_OFF = "off"
+MODE_FULL = "full"
+MODE_WANSHEN = "wanshen"
+_MODE_SETTINGS = {
+    MODE_OFF: {"enabled": False, "special_wanshen_enabled": False},
+    MODE_FULL: {"enabled": True, "special_wanshen_enabled": False},
+    MODE_WANSHEN: {"enabled": True, "special_wanshen_enabled": True},
+}
+
+
+def get_mode(cfg: Any) -> str:
+    if bool(cfg.get("enabled", True)):
+        if bool(cfg.get("special_wanshen_enabled", False)):
+            return MODE_WANSHEN
+        return MODE_FULL
+    return MODE_OFF
+
+
+def mode_settings(mode: str) -> dict:
+    normalized = str(mode or "").strip().lower()
+    if normalized not in _MODE_SETTINGS:
+        raise ValueError("mode 必須是 off、full 或 wanshen")
+    return dict(_MODE_SETTINGS[normalized])
 
 
 def _taipei_now(now: Optional[datetime.datetime] = None) -> datetime.datetime:
@@ -126,6 +149,7 @@ def get_status(
         completed_this_week=completed_this_week,
     )
     return {
+        "mode": get_mode(cfg),
         "account": account,
         "enabled": enabled,
         "rounds": rounds,
