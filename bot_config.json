@@ -1375,7 +1375,10 @@
         },
         "web-001": {
             "name": "寶兒",
-            "enabled": false,
+            "enabled": true,
+            "special_wanshen_account": true,
+            "special_wanshen_enabled": false,
+            "special_wanshen_rounds": 10,
             "backend": "web_h5",
             "backend_display_id": "",
             "web_url": "https://mushroomh5.acenetgame.com/",
@@ -1518,7 +1521,10 @@
         },
         "web-002": {
             "name": "暴哥",
-            "enabled": false,
+            "enabled": true,
+            "special_wanshen_account": true,
+            "special_wanshen_enabled": false,
+            "special_wanshen_rounds": 10,
             "backend": "web_h5",
             "backend_display_id": "",
             "use_ws_runner": false,

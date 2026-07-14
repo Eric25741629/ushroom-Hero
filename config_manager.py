@@ -85,6 +85,9 @@ DEFAULT_DEVICE_CONFIG = {
     "mining_save_samples": False,  # save low-confidence mining cell samples
     "mining_map_record": True,  # 記錄每帳號挖礦地圖(session JSONL + 累積 global_map) 供回放；預設開
     "wanshen_rounds": 8,  # 萬神試煉每週開局(局)數;一局=爬到第一次失敗→結束本局→重進(可調 1-50)
+    "special_wanshen_account": False,  # 寶兒/暴哥專用：只允許萬神排程，不跑一般腳本
+    "special_wanshen_enabled": False,  # 萬神專用排程獨立開關
+    "special_wanshen_rounds": 10,  # 積分判斷完成前暫定每次 10 局
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
@@ -234,6 +237,9 @@ class DeviceConfig:
     mining_save_samples: bool = False
     mining_map_record: bool = True
     wanshen_rounds: int = 8
+    special_wanshen_account: bool = False
+    special_wanshen_enabled: bool = False
+    special_wanshen_rounds: int = 10
 
     # Sleep schedule
     sleep_min_hours: float = 1.0
@@ -1176,6 +1182,20 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         )
         current["wanshen_rounds"] = _clamp_int(
             current.get("wanshen_rounds"), 1, 50, DEFAULT_DEVICE_CONFIG["wanshen_rounds"]
+        )
+        current["special_wanshen_account"] = _to_bool(
+            current.get("special_wanshen_account"),
+            DEFAULT_DEVICE_CONFIG["special_wanshen_account"],
+        )
+        current["special_wanshen_enabled"] = _to_bool(
+            current.get("special_wanshen_enabled"),
+            DEFAULT_DEVICE_CONFIG["special_wanshen_enabled"],
+        )
+        current["special_wanshen_rounds"] = _clamp_int(
+            current.get("special_wanshen_rounds"),
+            1,
+            50,
+            DEFAULT_DEVICE_CONFIG["special_wanshen_rounds"],
         )
         _sleep_min = _clamp_float(
             current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
