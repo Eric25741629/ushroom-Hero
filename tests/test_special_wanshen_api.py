@@ -9,15 +9,12 @@ import config_manager
 
 detector_stub = types.ModuleType("game_state.detector")
 detector_stub.stage_by_str = lambda d, ocr, img: "unknown"
+detector_stub.get_stage = lambda *args, **kwargs: "unknown"
 sys.modules.setdefault("game_state.detector", detector_stub)
 
 cnn_stub = types.ModuleType("new_cnn.cnn_model")
 cnn_stub.load_cnn_model = lambda path: None
 sys.modules.setdefault("new_cnn.cnn_model", cnn_stub)
-
-adb_stub = types.ModuleType("adb_operations")
-adb_stub.run_adb = lambda *args, **kwargs: ""
-sys.modules.setdefault("adb_operations", adb_stub)
 
 from control_panel import routes_status
 from game_actions import special_wanshen

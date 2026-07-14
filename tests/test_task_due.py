@@ -39,29 +39,41 @@ def _stub_rank_events(monkeypatch, is_open=True):
 
 
 def _stub_periodic(monkeypatch, should):
+    import game_actions
+
     mod = types.ModuleType("game_actions.periodic_tasks")
     mod.should_execute_mushroom_arena = lambda ip: (should, False)
     monkeypatch.setitem(sys.modules, "game_actions.periodic_tasks", mod)
+    monkeypatch.setattr(game_actions, "periodic_tasks", mod, raising=False)
 
 
 def _stub_statue(monkeypatch, should):
+    import game_actions
+
     mod = types.ModuleType("game_actions.statue_weekly")
     mod._should_execute_for_ip = lambda ip, today=None: should
     monkeypatch.setitem(sys.modules, "game_actions.statue_weekly", mod)
+    monkeypatch.setattr(game_actions, "statue_weekly", mod, raising=False)
 
 
 def _stub_dragon(monkeypatch, due):
     """task_due 委派 dragon_realm_scheduler._is_due；此處只需注入其回傳。"""
+    import game_actions
+
     mod = types.ModuleType("game_actions.dragon_realm_scheduler")
     mod._is_due = lambda ip, now=None: due
     monkeypatch.setitem(sys.modules, "game_actions.dragon_realm_scheduler", mod)
+    monkeypatch.setattr(game_actions, "dragon_realm_scheduler", mod, raising=False)
 
 
 def _stub_fannaoxiao(monkeypatch, due):
     """task_due 委派 fannaoxiao_scheduler._is_due；此處只需注入其回傳。"""
+    import game_actions
+
     mod = types.ModuleType("game_actions.fannaoxiao_scheduler")
     mod._is_due = lambda ip: due
     monkeypatch.setitem(sys.modules, "game_actions.fannaoxiao_scheduler", mod)
+    monkeypatch.setattr(game_actions, "fannaoxiao_scheduler", mod, raising=False)
 
 
 def _stub_ladder_store(monkeypatch, store):
