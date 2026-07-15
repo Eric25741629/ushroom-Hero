@@ -6,6 +6,7 @@ background thread tracked by the shared job registry in
 ``/api/carpark/job/<job_id>`` (owned by ``routes_carpark_decorate_tools``).
 """
 import logging
+import time
 
 from flask import Blueprint, jsonify, request
 
@@ -31,6 +32,8 @@ _DRAIN_LADDER = gacha_logic.BUNDLE_LADDER          # (999, 35, 15)
 _BUNDLE_COST = gacha_logic.BUNDLE_COST             # {15:15, 35:30, 999:800}
 _FIXED_COUNTS = tuple(gacha_logic.BUNDLE_COST)     # (15, 35, 999)
 _DRAW_WS_TIMEOUT = 10           # per-draw WS call_for timeout (s)
+_PROBE_TIMEOUT = 10             # 0x0401 + 0x0901 read-only confirmation
+_DRAW_MIN_INTERVAL_S = 1.0      # 5554 live: 707ms dropped, 804ms accepted
 _DRAIN_MAX_ITERS = 8000         # runaway guard for 一鍵抽完 (bundles)
 _DRAW_MAX_BATCHES = 2000        # fixed-mode batch cap
 
@@ -85,12 +88,35 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
             _job_update(jid, status="error", error="WS 連線未就緒")
             return
 
+        try:
+            probe = gacha_logic.read_probe(
+                client, draw_type, timeout=_PROBE_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001 — 讀不到就不可安全付費抽卡
+            logger.warning("gacha 初始狀態讀取失敗 %s: %s", ip, exc)
+            probe = None
+        if probe is None:
+            _job_update(jid, status="error",
+                        error="無法讀取抽券與抽池狀態，未開始抽卡")
+            return
+
         _job_update(jid, phase="drawing", result={
             "type": draw_type, "type_name": type_name, "mode": mode,
             "total": 0, "batches_done": 0, "stopped_reason": None})
         total = 0
         batches_done = 0
         stopped = None
+        last_draw_started = None
+
+        def _paced_draw(cnt: int):
+            """依 request 起點節流；5554 live 證實 1 秒有安全餘裕。"""
+            nonlocal last_draw_started
+            if last_draw_started is not None:
+                wait = (_DRAW_MIN_INTERVAL_S
+                        - (time.monotonic() - last_draw_started))
+                if wait > 0:
+                    time.sleep(wait)
+            last_draw_started = time.monotonic()
+            return _draw_once(client, draw_type, cnt)
 
         def _draw_with_reconnect(cnt: int):
             """One draw; on transport loss reconnect once and retry the SAME
@@ -98,19 +124,19 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
             draw retried = one extra bundle at worst — fine for drain (goal is
             spend-all) and rare enough for fixed."""
             nonlocal client
-            res, err = _draw_once(client, draw_type, cnt)
+            res, err = _paced_draw(cnt)
             if err and _conn_lost(ip, err):
                 _job_log(jid, f"  ⚠ WS 斷線（{err}），重連後重試…")
                 if ws_session.ensure(ip).get("status") == "ok":
                     c2 = ws_session.get_client(ip)
                     if c2 is not None:
                         client = c2
-                        res, err = _draw_once(client, draw_type, cnt)
+                        res, err = _paced_draw(cnt)
             return res, err
 
         if mode == "drain":
             _job_log(jid, f"一鍵抽完（{type_name}）：依券餘額選 999/35/15，抽到不足即止")
-            remaining = None      # learned from each draw's 0x0402 ticket feedback
+            remaining = probe.ticket_count
             fb_idx = 0            # fallback ladder index while remaining unknown
             iters = 0
             while True:
@@ -153,6 +179,10 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                     remaining = int(rem)
                 elif remaining is not None:
                     remaining -= _BUNDLE_COST[rung]
+                probe = gacha_logic.GachaProbe(
+                    ticket_count=remaining,
+                    pool_count=probe.pool_count + rung,
+                )
                 _job_log(jid, f"  {rung} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
                               + (f"，券剩 {remaining:,}）" if remaining is not None else "）"))
                 _set_gacha_progress(jid, total, batches_done)
@@ -170,6 +200,10 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                 stacks = int(res["drawn"])
                 total += count
                 batches_done += 1
+                probe = gacha_logic.GachaProbe(
+                    ticket_count=probe.ticket_count - _BUNDLE_COST[count],
+                    pool_count=probe.pool_count + count,
+                )
                 rem = res.get("remaining")
                 _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
                               + (f"，券剩 {int(rem):,}）" if rem is not None else "）"))

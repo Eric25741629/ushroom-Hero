@@ -18,6 +18,19 @@ class _FakeClient:
     pass
 
 
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
 def _ok(drawn=24):
     return {"ok": True, "drawn": drawn, "remaining": None,
             "rejected": False, "error_code": None}, None
@@ -28,13 +41,22 @@ def _reject(code=6):
             "rejected": True, "error_code": code}, None
 
 
-def _setup(monkeypatch, script, *, get_client_after_reconnect=True):
+def _setup(monkeypatch, script, *, probes=None, clock=None,
+           get_client_after_reconnect=True):
     """Wire fakes: scripted _draw_once + ws_session ensure/get_client."""
-    calls = {"draws": [], "ensure": 0}
+    calls = {"draws": [], "draw_started": [], "ensure": 0}
+    clock = clock or _FakeClock()
+    probe_script = list(probes) if probes is not None else []
 
     def fake_draw_once(client, draw_type, count):
         calls["draws"].append((draw_type, count))
+        calls["draw_started"].append(clock.monotonic())
         return script.pop(0)
+
+    def fake_read_probe(client, draw_type, *, timeout=None):
+        if probe_script:
+            return probe_script.pop(0)
+        return routes.gacha_logic.GachaProbe(10_000_000, 1000)
 
     def fake_ensure(ip):
         calls["ensure"] += 1
@@ -44,9 +66,41 @@ def _setup(monkeypatch, script, *, get_client_after_reconnect=True):
         return _FakeClient() if get_client_after_reconnect else None
 
     monkeypatch.setattr(routes, "_draw_once", fake_draw_once)
+    monkeypatch.setattr(routes.gacha_logic, "read_probe", fake_read_probe)
     monkeypatch.setattr(routes.ws_session, "ensure", fake_ensure)
     monkeypatch.setattr(routes.ws_session, "get_client", fake_get_client)
+    monkeypatch.setattr(routes, "time", clock, raising=False)
     return calls
+
+
+def test_drain_uses_probe_balance_and_stops_before_unaffordable_draw(monkeypatch):
+    calls = _setup(
+        monkeypatch,
+        [_ok()],
+        probes=[routes.gacha_logic.GachaProbe(800, 1000)],
+    )
+    jid = jobs._new_job()
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "drain", 0, 1)
+
+    assert calls["draws"] == [(1, 999)]
+    assert jobs._jobs[jid]["result"]["stopped_reason"] == "exhausted"
+
+
+def test_draw_starts_are_at_least_one_second_apart(monkeypatch):
+    clock = _FakeClock()
+    calls = _setup(
+        monkeypatch,
+        [_ok(), _ok()],
+        probes=[routes.gacha_logic.GachaProbe(1600, 1000)],
+        clock=clock,
+    )
+    jid = jobs._new_job()
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "fixed", 999, 2)
+
+    assert calls["draw_started"] == [0.0, 1.0]
+    assert clock.sleeps == [1.0]
 
 
 def test_drain_reconnects_and_retries_on_conn_lost(monkeypatch):
