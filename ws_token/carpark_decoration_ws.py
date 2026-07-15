@@ -315,6 +315,8 @@ def read_state(client: WSGameClient, *, timeout: float = 10.0) -> tuple[dict | N
 # for the reply, then fall back to ground-truth re-reads (6913 buy counts /
 # 12801 levels) instead of trusting the frame.
 _REPLY_WAIT_S = 8.0
+# 所有會花費資源的車位封包，請求起點至少相隔一秒。
+_SPEND_GAP_S = 1.0
 # The server silently DROPS a skin_up arriving too soon after the previous one
 # (live: ~1s gaps dropped, 10s gaps ok). After an unconfirmed upgrade, wait
 # this long, re-verify (a late landing must not be re-sent), then retry once.
@@ -370,6 +372,27 @@ def _read_bag(client: WSGameClient, timeout: float) -> dict[int, int]:
         return bag
     except Exception:  # noqa: BLE001 — bag read is best-effort
         return {}
+
+
+def _pace_spend_send(client: WSGameClient, *, skin_up: bool = False,
+                     skin_up_gap: float = 0.0) -> None:
+    """等待花費封包的剩餘冷卻，並在實際送出前記錄時間。"""
+    now = time.monotonic()
+    waits = []
+    last_spend = getattr(client, "_last_carpark_spend_ts", None)
+    if last_spend is not None:
+        waits.append(_SPEND_GAP_S - (now - last_spend))
+    if skin_up and skin_up_gap > 0:
+        last_skin_up = getattr(client, "_last_skin_up_ts", None)
+        if last_skin_up is not None:
+            waits.append(skin_up_gap - (now - last_skin_up))
+    wait = max(waits, default=0.0)
+    if wait > 0:
+        time.sleep(wait)
+    sent_at = time.monotonic()
+    client._last_carpark_spend_ts = sent_at
+    if skin_up:
+        client._last_skin_up_ts = sent_at
 
 
 def exec_buy_and_upgrade(
@@ -439,6 +462,7 @@ def exec_buy_and_upgrade(
                         + codec.pb_uint(2, shop_id)
                         + codec.pb_uint(3, qty))
             try:
+                _pace_spend_send(client)
                 cmd, reply = client.call_for(
                     CMD_SHOP_BUY, buy_body,
                     expect_cmds=(CMD_SHOP_BUY, CMD_ERROR),
@@ -480,13 +504,8 @@ def exec_buy_and_upgrade(
             up_msg = json.dumps({"type": 0, "skin_id": int(skin_id)},
                                 separators=(",", ":"))
             up_body = codec.pb_uint(1, CMD_SKIN_UP) + codec.pb_str(2, up_msg)
-            if skin_up_gap > 0:
-                last = getattr(client, "_last_skin_up_ts", None)
-                if last is not None:
-                    wait = skin_up_gap - (time.monotonic() - last)
-                    if wait > 0:
-                        time.sleep(wait)
-            client._last_skin_up_ts = time.monotonic()
+            _pace_spend_send(client, skin_up=True,
+                             skin_up_gap=skin_up_gap)
             try:
                 cmd, reply = client.call_for(
                     CMD_JSON_PROTO, up_body,

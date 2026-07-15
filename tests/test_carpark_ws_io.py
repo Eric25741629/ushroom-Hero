@@ -3,6 +3,8 @@
 Validates that routes_carpark_decorate_tools plumbing correctly carries shop_id,
 plans with the WS-shaped state dict, and delegates exec to the WS module.
 """
+import pytest
+
 import control_panel.routes_carpark_decorate_tools as routes
 from ws_token import carpark_decoration_ws as deco_ws
 from ws_token import codec
@@ -244,6 +246,73 @@ class _FakeExecClient:
         return reply
 
 
+class _FakeClock:
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def monotonic(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+
+
+def test_spend_pacing_waits_between_buy_and_first_upgrade(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(deco_ws.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(deco_ws.time, "sleep", clock.sleep)
+    client = object.__new__(_FakeExecClient)
+
+    deco_ws._pace_spend_send(client)
+    first_send = client._last_carpark_spend_ts
+    clock.now += 0.4
+    deco_ws._pace_spend_send(client, skin_up=True, skin_up_gap=0.0)
+
+    assert clock.sleeps == [pytest.approx(0.6)]
+    assert client._last_carpark_spend_ts - first_send == pytest.approx(1.0)
+    assert client._last_skin_up_ts == client._last_carpark_spend_ts
+
+
+def test_spend_pacing_keeps_longer_skin_up_gap(monkeypatch):
+    clock = _FakeClock()
+    monkeypatch.setattr(deco_ws.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(deco_ws.time, "sleep", clock.sleep)
+    client = object.__new__(_FakeExecClient)
+    client._last_carpark_spend_ts = 0.0
+    client._last_skin_up_ts = 0.0
+    clock.now = 2.0
+
+    deco_ws._pace_spend_send(client, skin_up=True, skin_up_gap=5.0)
+
+    assert clock.sleeps == [pytest.approx(3.0)]
+    assert client._last_carpark_spend_ts == pytest.approx(5.0)
+    assert client._last_skin_up_ts == pytest.approx(5.0)
+
+
+def test_exec_routes_buy_and_upgrade_through_shared_spend_pacer(monkeypatch):
+    paced = []
+    monkeypatch.setattr(
+        deco_ws, "_pace_spend_send",
+        lambda client, *, skin_up=False, skin_up_gap=0.0:
+            paced.append((skin_up, skin_up_gap)))
+    client = _FakeExecClient([
+        ("reply", 12801, _skin_list_body([(40097, 1)])),
+        ("reply", 6913, _buy_info_body({1753: 0})),
+        ("reply", 6914, codec.pb_uint(1, 1753) + codec.pb_uint(2, 1)),
+        ("reply", 12817, _skin_up_ok_body(40097, 2)),
+        ("reply", 12801, _skin_list_body([(40097, 2)])),
+    ])
+
+    res, err = deco_ws.exec_buy_and_upgrade(
+        client, shop_id=1753, skin_id=40097, frags=1,
+        skin_up_gap=5.0)
+
+    assert err is None and res["ok"] is True
+    assert paced == [(False, 0.0), (True, 5.0)]
+
+
 def test_exec_buy_rejected_decodes_error_code():
     client = _FakeExecClient([
         ("reply", 12801, _skin_list_body([(40097, 1)])),   # before level
@@ -414,8 +483,8 @@ def test_exec_skin_up_gap_waits_only_remaining_cooldown(monkeypatch):
         "send timestamp must be re-stamped for the next step"
 
 
-def test_exec_skin_up_gap_first_send_no_wait(monkeypatch):
-    """No previous skin_up on this connection: send immediately, no sleep."""
+def test_exec_first_upgrade_waits_after_fragment_buy(monkeypatch):
+    """第一個升星也要和剛完成的碎片購買至少相隔一秒。"""
     slept = []
     monkeypatch.setattr(deco_ws.time, "sleep", lambda s: slept.append(s))
     client = _FakeExecClient([
@@ -429,7 +498,8 @@ def test_exec_skin_up_gap_first_send_no_wait(monkeypatch):
         client, shop_id=1753, skin_id=40097, frags=1, skin_up_gap=5.0)
     assert err is None
     assert res["ok"] is True
-    assert not slept
+    assert len(slept) == 1
+    assert 0.5 < slept[0] <= 1.0
     assert hasattr(client, "_last_skin_up_ts")
 
 
