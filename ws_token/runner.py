@@ -620,7 +620,8 @@ def _run_statue(
 def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                  plan_cfg: Optional[dict] = None, device: str = "",
                  state_dir=None, now=None, sleep_fn=None, time_fn=None,
-                 cluster_server_id: Optional[int] = None) -> dict:
+                 cluster_server_id: Optional[int] = None,
+                 decision_log=None) -> dict:
     """停車 (只停不收) — plan 模式 (current-parked + 8h 重停 + 09:59 搶位) 或 legacy.
 
     Plan 模式 (``plan_cfg.enabled``; 2026-06-13 手機fc 方案):
@@ -657,6 +658,17 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
         levels = tuple(int(v) for v in (plan_cfg.get("silver_levels") or
                                         carpark.SILVER_PREFERRED_LEVELS))
         kw = {"state_dir": state_dir} if state_dir is not None else {}
+
+        def _decision(event: str, **fields) -> None:
+            detail = " ".join(
+                [f"event={event}"] + [f"{key}={value}" for key, value in fields.items()])
+            logger.info("ws_token carpark: %s %s", device, detail)
+            if decision_log is not None:
+                try:
+                    decision_log(detail)
+                except Exception:  # noqa: BLE001 — 日誌失敗不可影響停車
+                    logger.debug("ws_token carpark: decision callback failed",
+                                 exc_info=True)
 
         # 倉庫收益每輪先領 — 免費已賺收益，與窗口無關。
         collect: dict | None = None
@@ -718,6 +730,8 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
         need = max(0, target_n - current)
         out = {"window": win.name, "target": target_n, "current": current,
                "collect": collect, "grab": grabbing}
+        _decision("context", window=win.name, target=target_n, current=current,
+                  need=need, server_id=cluster_server_id)
 
         if need <= 0:
             out["skipped"] = f"already {current}/{target_n} cross parked"
@@ -728,16 +742,24 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
         cs_cfg = cp.parse_cluster_scan(plan_cfg)
         # Run 抱團掃描 on ANY in-window park (not only the 09:59 grab): an 8h
         # auto-collect re-park mid-day should also cluster with same-server cars.
-        if cs_cfg.enabled and cluster_server_id:
-            # Poll lots for same-server allies before parking.
-            _null, collect = carpark.read_cross_null_and_collect(client)
-            parkable_src = collect or _null
+        if cs_cfg.enabled:
+            _decision("config", min_allies=cs_cfg.min_allies,
+                      excluded=list(cs_cfg.excluded_levels),
+                      levels=list(cs_cfg.levels),
+                      priority=list(cs_cfg.priority_levels),
+                      duration=cs_cfg.duration, interval=cs_cfg.interval)
+            if not cluster_server_id:
+                res = {"parked_count": 0, "requested": need,
+                       "reason": "strict_cluster_server_id_missing",
+                       "results": [], "scan_rounds": 0}
+                _decision("refused", reason=res["reason"])
+                out["cross"] = res
+                out.update(_store_next(parked, window_name=win.name,
+                                       target=target_n))
+                return out
+
             today_parked = carpark._load_today_parked_master_ids(
                 device, **({} if state_dir is None else {"state_dir": state_dir}))
-            scan_parkable = [lot for lot in parkable_src
-                             if lot.null_num > 0 and carpark.is_silver_ceng(lot.ceng)
-                             and lot.master_id not in today_parked]
-
             mounts = carpark.read_my_mounts(client)
             quality_m = [m for m in mounts
                          if carpark.MOUNT_QUALITY.get(m.mount_id, 7)
@@ -745,96 +767,108 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
             if quality_m:
                 mounts = quality_m
             mount_id = mounts[0].mount_id if mounts else None
+            if mount_id is None:
+                res = {"parked_count": 0, "requested": need,
+                       "reason": "strict_cluster_no_mount",
+                       "results": [], "scan_rounds": 0}
+                _decision("refused", reason=res["reason"])
+                out["cross"] = res
+                out.update(_store_next(parked, window_name=win.name,
+                                       target=target_n))
+                return out
 
             scan_deadline = time_fn() + cs_cfg.duration
             cluster_found = False
             scan_round = 0
+            last_audit = {}
 
-            if mount_id and scan_parkable:
-                while time_fn() < scan_deadline:
-                    scan_round += 1
-                    ranked = carpark.scan_lots_same_server(
-                        client, scan_parkable, cluster_server_id, cs_cfg.levels,
-                        priority_levels=cs_cfg.priority_levels)
+            while time_fn() < scan_deadline:
+                scan_round += 1
+                _null, _collect = carpark.read_cross_null_and_collect(client)
+                scan_parkable, last_audit = carpark.prepare_cluster_scan_candidates(
+                    _null, _collect, excluded_levels=cs_cfg.excluded_levels,
+                    today_parked=today_parked)
+                _decision("candidates", round=scan_round,
+                          source_null=last_audit["source_null"],
+                          source_collect=last_audit["source_collect"],
+                          merged=last_audit["merged"], kept=len(scan_parkable),
+                          removed_full=last_audit["removed_full"],
+                          removed_non_silver=last_audit["removed_non_silver"],
+                          excluded=last_audit["excluded_levels"],
+                          removed_today=last_audit["removed_today"])
+                ranked = carpark.scan_lots_same_server(
+                    client, scan_parkable, cluster_server_id, cs_cfg.levels,
+                    priority_levels=cs_cfg.priority_levels,
+                    decision_log=lambda msg: _decision(
+                        "scan", round=scan_round, detail=msg))
                     # ranked is priority-range-first, so pick the first lot that
                     # clears min_allies (a priority lot at the threshold beats a
                     # higher-ally non-priority lot).
-                    pick = next((r for r in ranked
-                                 if r[1] >= cs_cfg.min_allies), None)
-                    if ranked:
-                        show = pick or ranked[0]
-                        logger.info(
-                            "ws_token carpark: %s cluster_scan round %d: "
-                            "best 鉑銀%d allies=%d (need>=%d)",
-                            device, scan_round,
-                            carpark.silver_ceng_to_level(show[0].ceng),
-                            show[1], cs_cfg.min_allies)
-                    if pick is not None:
-                        best_lot, best_cnt = pick
-                        detail = carpark.read_lot(
-                            client, type=carpark.CROSS_TYPE,
-                            master_id=best_lot.master_id, ceng=best_lot.ceng)
-                        pos = detail.first_free_cross_pos()
-                        if pos is not None:
-                            result = carpark.park_into_cross(
-                                client, target_id=best_lot.master_id,
-                                pos=pos, mount_id=mount_id)
-                            if result.success:
-                                carpark._record_park_today(
-                                    device, best_lot.master_id,
-                                    **({}
-                                       if state_dir is None
-                                       else {"state_dir": state_dir}))
-                                lv = carpark.silver_ceng_to_level(best_lot.ceng)
-                                logger.info(
-                                    "ws_token carpark: %s cluster_scan parked "
-                                    "鉑銀%d pos=%d allies=%d rounds=%d",
-                                    device, lv, pos, best_cnt, scan_round)
-                                out["cross"] = {
-                                    "parked_count": 1,
-                                    "reason": "cluster_scan",
-                                    "level": lv, "allies": best_cnt,
-                                    "scan_rounds": scan_round,
-                                    "results": [{
-                                        "target_id": best_lot.master_id,
-                                        "pos": pos, "mount_id": mount_id,
-                                        "success": True}]}
-                                cluster_found = True
-                                break
-                    sleep_fn(cs_cfg.interval)
-                    _null, collect = carpark.read_cross_null_and_collect(client)
-                    parkable_src = collect or _null
-                    scan_parkable = [
-                        lot for lot in parkable_src
-                        if lot.null_num > 0 and carpark.is_silver_ceng(lot.ceng)
-                        and lot.master_id not in today_parked]
+                pick = next((r for r in ranked if r[1] >= cs_cfg.min_allies), None)
+                _decision("round_result", round=scan_round,
+                          ranked=[(carpark.silver_ceng_to_level(l.ceng),
+                                   l.master_id, count) for l, count in ranked],
+                          qualified=bool(pick))
+                if pick is not None:
+                    best_lot, scanned_cnt = pick
+                    detail = carpark.read_lot(
+                        client, type=carpark.CROSS_TYPE,
+                        master_id=best_lot.master_id, ceng=best_lot.ceng)
+                    latest_cnt = carpark.count_same_server(detail, cluster_server_id)
+                    pos = detail.first_free_cross_pos()
+                    _decision("revalidate", round=scan_round,
+                              level=carpark.silver_ceng_to_level(best_lot.ceng),
+                              master_id=best_lot.master_id,
+                              scanned_allies=scanned_cnt, allies=latest_cnt,
+                              pos=pos, qualified=(latest_cnt >= cs_cfg.min_allies
+                                                 and pos is not None))
+                    if latest_cnt >= cs_cfg.min_allies and pos is not None:
+                        result = carpark.park_into_cross(
+                            client, target_id=best_lot.master_id,
+                            pos=pos, mount_id=mount_id)
+                        _decision("park_result", round=scan_round,
+                                  level=carpark.silver_ceng_to_level(best_lot.ceng),
+                                  master_id=best_lot.master_id, pos=pos,
+                                  mount_id=mount_id, success=result.success,
+                                  error_code=result.error_code)
+                        if result.success:
+                            carpark._record_park_today(
+                                device, best_lot.master_id,
+                                **({} if state_dir is None
+                                   else {"state_dir": state_dir}))
+                            lv = carpark.silver_ceng_to_level(best_lot.ceng)
+                            out["cross"] = {
+                                "parked_count": 1, "requested": need,
+                                "reason": "cluster_scan",
+                                "level": lv, "target_id": best_lot.master_id,
+                                "allies": latest_cnt, "scan_rounds": scan_round,
+                                "results": [{
+                                    "target_id": best_lot.master_id,
+                                    "pos": pos, "mount_id": mount_id,
+                                    "success": True}]}
+                            cluster_found = True
+                            break
+                sleep_fn(cs_cfg.interval)
 
             if cluster_found:
                 parked = carpark.read_parked_cross(client)
                 out["current"] = len(parked)
                 out.update(_store_next(parked, window_name=win.name,
                                        target=target_n))
+                _decision("summary", parked_count=1, reason="cluster_scan",
+                          scan_rounds=scan_round,
+                          next_repark_ts=out.get("next_repark_ts"))
                 return out
 
-            # Timeout — no 抱團 lot within the scan window. Still keep a car
-            # deployed: park via the tiered auto-select, preferring the device's
-            # priority range (不再綁定車位9; falls back to full scan levels).
-            fallback_levels = tuple(cs_cfg.priority_levels or cs_cfg.levels)
-            logger.info("ws_token carpark: %s cluster_scan timeout %ds, "
-                        "fallback prefer 鉑銀%s",
-                        device, cs_cfg.duration, list(fallback_levels))
-            res = carpark.auto_select_and_park_many(
-                client, count=need,
-                prefer_levels=fallback_levels,
-                cluster_server_id=cluster_server_id,
-                cluster_min=cluster_min,
-                allow_low_noncluster=allow_low,
-                device=device, state_dir=state_dir)
-            out["cross"] = {**res, "cluster_scan_timeout": True}
-            parked = carpark.read_parked_cross(client)
-            out["current"] = len(parked)
+            res = {"parked_count": 0, "requested": need,
+                   "reason": "strict_cluster_not_found", "results": [],
+                   "scan_rounds": scan_round, "audit": last_audit}
+            out["cross"] = res
             out.update(_store_next(parked, window_name=win.name,
                                    target=target_n))
+            _decision("summary", parked_count=0, reason=res["reason"],
+                      scan_rounds=scan_round,
+                      next_repark_ts=out.get("next_repark_ts"))
             return out
 
         # Normal grab loop (cluster_scan disabled or non-grab wake)
@@ -1532,7 +1566,9 @@ def run_device(device: str, *, spend: bool = False,
                                    device=device, state_dir=carpark_state_dir,
                                    now=carpark_now,
                                    cluster_server_id=int(
-                                       login.get("server_id") or 0) or None))
+                                       login.get("server_id") or 0) or None,
+                                   decision_log=lambda detail: _notify(
+                                       "carpark", "progress", detail)))
         _step("main_tasks",
               lambda: _run_main_tasks(client, collector))
         _step("league_solo", lambda: _run_league_solo(client))

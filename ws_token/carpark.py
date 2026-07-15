@@ -1108,6 +1108,7 @@ def scan_lots_same_server(
     levels: tuple[int, ...],
     *,
     priority_levels: tuple[int, ...] = (),
+    decision_log=None,
     timeout: float | None = None,
 ) -> list[tuple[NullSpace, int]]:
     """Scan silver lots at ``levels`` and count same-server occupants.
@@ -1130,11 +1131,65 @@ def scan_lots_same_server(
                               ceng=lot.ceng, timeout=timeout)
             cnt = count_same_server(detail, server_id)
             results.append((lot, cnt))
-        except Exception:  # noqa: BLE001
+            if decision_log is not None:
+                decision_log(
+                    f"candidate level={silver_ceng_to_level(lot.ceng)} "
+                    f"master_id={lot.master_id} null_num={lot.null_num} "
+                    f"allies={cnt} read=ok")
+        except Exception as exc:  # noqa: BLE001
             logger.debug("scan_lots: read_lot %s failed", lot.master_id, exc_info=True)
+            if decision_log is not None:
+                decision_log(
+                    f"candidate level={silver_ceng_to_level(lot.ceng)} "
+                    f"master_id={lot.master_id} read=error error={exc!r}")
     results.sort(key=lambda x: (0 if x[0].ceng in prio_cengs else 1,
                                 -x[1], x[0].ceng))
     return results
+
+
+def prepare_cluster_scan_candidates(
+    null_lots: list[NullSpace],
+    collect_lots: list[NullSpace],
+    *,
+    excluded_levels: tuple[int, ...] = (1, 2, 3),
+    today_parked: set[int] | None = None,
+) -> tuple[list[NullSpace], dict]:
+    """合併抱團掃描來源並套用嚴格候選過濾，回傳可稽核摘要。"""
+    today = set(today_parked or ())
+    merged: dict[int, NullSpace] = {}
+    for lot in list(null_lots or ()) + list(collect_lots or ()):
+        current = merged.get(lot.master_id)
+        if current is None or lot.null_num > current.null_num:
+            merged[lot.master_id] = lot
+
+    excluded = set(excluded_levels)
+    audit = {
+        "source_null": len(null_lots or ()),
+        "source_collect": len(collect_lots or ()),
+        "merged": len(merged),
+        "removed_full": 0,
+        "removed_non_silver": 0,
+        "excluded_levels": [],
+        "removed_today": [],
+    }
+    candidates: list[NullSpace] = []
+    for lot in sorted(merged.values(), key=lambda item: item.ceng):
+        if lot.null_num <= 0:
+            audit["removed_full"] += 1
+            continue
+        if not is_silver_ceng(lot.ceng):
+            audit["removed_non_silver"] += 1
+            continue
+        level = silver_ceng_to_level(lot.ceng)
+        if level in excluded:
+            audit["excluded_levels"].append(level)
+            continue
+        if lot.master_id in today:
+            audit["removed_today"].append({
+                "level": level, "master_id": lot.master_id})
+            continue
+        candidates.append(lot)
+    return candidates, audit
 
 
 def _as_int(v) -> int:

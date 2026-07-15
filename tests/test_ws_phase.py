@@ -1,4 +1,5 @@
 """game_actions.ws_phase — WS-first 階段與 RunReport→pipeline skip-set 對照。"""
+import logging
 import sys
 import types
 from pathlib import Path
@@ -213,6 +214,19 @@ def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
     assert callable(progress)
     progress("lamp", "progress", "12/34")
     assert ("dev", "WS 開神燈 (12/34)") in steps
+
+
+def test_carpark_progress_uses_decision_log_label(caplog):
+    """停車稽核事件要進裝置 log，且不能被誤標為開神燈。"""
+    caplog.set_level(logging.INFO)
+    step = ws_phase._log_ws_progress(
+        ws_phase.logger, "dev", "carpark", "progress",
+        "event=context device=dev window=day",
+    )
+
+    assert step == "WS 停車決策 (event=context device=dev window=day)"
+    assert "WS 停車決策: event=context device=dev window=day" in caplog.text
+    assert "WS 開神燈進度" not in caplog.text
 
 
 def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):

@@ -99,12 +99,34 @@ def test_default_carpark_plan_disabled_with_day_night_quota():
     assert plan["day"] == {"window": ["10:00", "22:00"], "cross": 1}
     assert plan["night"] == {"window": ["22:00", "10:00"], "cross": 0}
     # 搶位分層 + 每秒重試預設 (2026-06-15)
-    assert plan["cluster_min"] == 3
+    assert plan["cluster_min"] == 5
     assert plan["grab_window_seconds"] == 60
     assert plan["grab_poll_seconds"] == 1.0
     assert plan["grab_attempts"] == 8
-    assert plan["allow_low_noncluster"] is True
+    assert plan["allow_low_noncluster"] is False
     assert config_manager.DEFAULT_DEVICE_CONFIG["ws_token"]["carpark_auto"] is False
+
+
+def test_merge_carpark_plan_preserves_strict_cluster_scan():
+    merged = config_manager._merge_ws_token_phase_config({
+        "carpark_plan": {
+            "enabled": True,
+            "cluster_scan": {
+                "enabled": True,
+                "levels": [1, 2, 3, 4, 9],
+                "priority_levels": [1, 4, 9],
+                "excluded_levels": [2],
+                "min_allies": 2,
+            },
+        },
+    })["carpark_plan"]
+
+    scan = merged["cluster_scan"]
+    assert scan["enabled"] is True
+    assert scan["levels"] == [4, 9]
+    assert scan["priority_levels"] == [4, 9]
+    assert scan["excluded_levels"] == [1, 2, 3]
+    assert scan["min_allies"] == 5
 
 
 def test_merge_carpark_plan_sanitizes_malformed_input():
@@ -114,7 +136,7 @@ def test_merge_carpark_plan_sanitizes_malformed_input():
             "day": {"window": ["8am", "20:00"], "cross": 99},
             "night": "garbage",
             "silver_levels": [0, 9, "x", 31],
-            "cluster_min": -5,            # non-positive -> default 3
+            "cluster_min": -5,            # non-positive -> strict default 5
             "grab_window_seconds": "x",   # unparsable -> default 60
             "grab_poll_seconds": 0,       # non-positive -> default 1.0
             "grab_attempts": 0,           # non-positive -> default 8
@@ -128,7 +150,7 @@ def test_merge_carpark_plan_sanitizes_malformed_input():
     assert plan["day"]["cross"] == 10                   # clamped to 0..10
     assert plan["night"] == {"window": ["22:00", "10:00"], "cross": 0}
     assert plan["silver_levels"] == [9]                 # only valid 1..30 ints
-    assert plan["cluster_min"] == 3
+    assert plan["cluster_min"] == 5
     assert plan["grab_window_seconds"] == 60
     assert plan["grab_poll_seconds"] == 1.0
     assert plan["grab_attempts"] == 8

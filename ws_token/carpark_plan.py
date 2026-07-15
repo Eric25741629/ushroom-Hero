@@ -46,8 +46,8 @@ DEFAULT_REPARK_MARGIN_SECONDS = 30      # wake 30s after expiry (car is freed)
 DEFAULT_GRAB_ATTEMPTS = 8               # safety upper bound on grab retry rounds
 DEFAULT_GRAB_POLL_SECONDS = 1.0         # spacing between grab retries (every ~1s)
 DEFAULT_GRAB_WINDOW_SECONDS = 60        # keep retrying until open + this (10:01)
-DEFAULT_CLUSTER_MIN = 3                 # 同服占用 >= this counts as 抱團 (低區 gate)
-DEFAULT_ALLOW_LOW_NONCLUSTER = True     # last resort: park 鉑銀1-8 非抱團空位
+DEFAULT_CLUSTER_MIN = 5                 # 停入前已有同服 >= 5 才算抱團（不含自己）
+DEFAULT_ALLOW_LOW_NONCLUSTER = False    # 嚴格抱團：找不到合格車位就不下車
 
 
 @dataclass(frozen=True)
@@ -159,7 +159,8 @@ def grab_window_seconds(cfg: dict | None) -> int:
 
 def cluster_min(cfg: dict | None) -> int:
     """同服占用達此數才算抱團 (高獎勵低編號區 鉑銀1-8 的停車門檻)。"""
-    return _pos_int((cfg or {}).get("cluster_min"), DEFAULT_CLUSTER_MIN)
+    return max(DEFAULT_CLUSTER_MIN,
+               _pos_int((cfg or {}).get("cluster_min"), DEFAULT_CLUSTER_MIN))
 
 
 def allow_low_noncluster(cfg: dict | None) -> bool:
@@ -172,10 +173,11 @@ def allow_low_noncluster(cfg: dict | None) -> bool:
 
 # --- cluster scan (抱團掃描) ---------------------------------------------------
 
-DEFAULT_CLUSTER_SCAN_LEVELS = tuple(range(1, 11))  # 鉑銀1-10
+DEFAULT_CLUSTER_SCAN_EXCLUDED_LEVELS = (1, 2, 3)
+DEFAULT_CLUSTER_SCAN_LEVELS = tuple(range(4, 11))  # 鉑銀4-10；1/2/3 永久排除
 DEFAULT_CLUSTER_SCAN_DURATION = 300     # 5 minutes
 DEFAULT_CLUSTER_SCAN_INTERVAL = 5       # poll every 5 seconds
-DEFAULT_CLUSTER_SCAN_MIN_ALLIES = 3     # >= 3 same-server = cluster
+DEFAULT_CLUSTER_SCAN_MIN_ALLIES = 5     # 停入前已有 >= 5 位同服（不含自己）
 DEFAULT_CLUSTER_SCAN_FALLBACK = 9       # park 鉑銀9 if no cluster found
 
 
@@ -192,6 +194,7 @@ class ClusterScanConfig:
     enabled: bool = False
     levels: tuple[int, ...] = DEFAULT_CLUSTER_SCAN_LEVELS
     priority_levels: tuple[int, ...] = ()
+    excluded_levels: tuple[int, ...] = DEFAULT_CLUSTER_SCAN_EXCLUDED_LEVELS
     duration: int = DEFAULT_CLUSTER_SCAN_DURATION
     interval: int = DEFAULT_CLUSTER_SCAN_INTERVAL
     min_allies: int = DEFAULT_CLUSTER_SCAN_MIN_ALLIES
@@ -202,20 +205,45 @@ def parse_cluster_scan(cfg: dict | None) -> ClusterScanConfig:
     cs = (cfg or {}).get("cluster_scan")
     if not isinstance(cs, dict) or not cs.get("enabled"):
         return ClusterScanConfig()
+    raw_excluded = cs.get("excluded_levels")
+    excluded = set(DEFAULT_CLUSTER_SCAN_EXCLUDED_LEVELS)
+    if isinstance(raw_excluded, (list, tuple)):
+        for value in raw_excluded:
+            try:
+                level = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= level <= 30:
+                excluded.add(level)
+
+    def _levels(value, default=()):
+        source = value if isinstance(value, (list, tuple)) else default
+        out = []
+        for item in source:
+            try:
+                level = int(item)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= level <= 30 and level not in excluded and level not in out:
+                out.append(level)
+        return tuple(out)
+
     levels = cs.get("levels")
     if isinstance(levels, (list, tuple)):
-        levels = tuple(int(v) for v in levels)
+        levels = _levels(levels)
     else:
-        levels = DEFAULT_CLUSTER_SCAN_LEVELS
-    prio = cs.get("priority_levels")
-    prio = tuple(int(v) for v in prio) if isinstance(prio, (list, tuple)) else ()
+        levels = _levels(DEFAULT_CLUSTER_SCAN_LEVELS)
+    prio = _levels(cs.get("priority_levels"))
     return ClusterScanConfig(
         enabled=True,
         levels=levels,
         priority_levels=prio,
+        excluded_levels=tuple(sorted(excluded)),
         duration=_pos_int(cs.get("duration"), DEFAULT_CLUSTER_SCAN_DURATION),
         interval=_pos_int(cs.get("interval"), DEFAULT_CLUSTER_SCAN_INTERVAL),
-        min_allies=_pos_int(cs.get("min_allies"), DEFAULT_CLUSTER_SCAN_MIN_ALLIES),
+        min_allies=max(
+            DEFAULT_CLUSTER_SCAN_MIN_ALLIES,
+            _pos_int(cs.get("min_allies"), DEFAULT_CLUSTER_SCAN_MIN_ALLIES)),
         fallback_level=_pos_int(cs.get("fallback_level"), DEFAULT_CLUSTER_SCAN_FALLBACK),
     )
 

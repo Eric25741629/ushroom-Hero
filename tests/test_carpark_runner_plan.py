@@ -17,10 +17,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import pytest  # noqa: E402
+from types import SimpleNamespace
 
 from ws_token import runner  # noqa: E402
 from ws_token import state as ws_state  # noqa: E402
 from ws_token.carpark import Mount, ParkingInfo  # noqa: E402
+from ws_token.carpark import (  # noqa: E402
+    NullSpace, CarParkLot, Space, CROSS_TYPE, silver_level_to_ceng,
+)
 
 PLAN = {
     "enabled": True,
@@ -36,7 +40,7 @@ GAP = datetime(2026, 6, 13, 13, 0)   # in window for PLAN; use a gap plan below
 CLIENT = object()
 
 
-def _call(count=1, csid=None, cmin=3, allow=True):
+def _call(count=1, csid=None, cmin=5, allow=False):
     """Expected recorded auto_select_and_park_many call (default plan kwargs)."""
     return {"count": count, "prefer_levels": (9, 10),
             "cluster_server_id": csid, "cluster_min": cmin,
@@ -293,7 +297,122 @@ def test_plan_forwards_cluster_min_and_allow_low(monkeypatch, tmp_path):
     plan = dict(PLAN, cluster_min=4, allow_low_noncluster=False)
     runner._run_carpark(CLIENT, target=None, plan_cfg=plan, device="dev1",
                         state_dir=tmp_path, now=NOON, cluster_server_id=1467)
-    assert calls == [_call(csid=1467, cmin=4, allow=False)]
+    assert calls == [_call(csid=1467, cmin=5, allow=False)]
+
+
+# --- 嚴格抱團：已有 5 位同服才停；不 fallback -----------------------------
+
+def _strict_plan(duration=2):
+    return dict(PLAN, cluster_min=5, allow_low_noncluster=False,
+                cluster_scan={
+                    "enabled": True, "levels": [4], "priority_levels": [4],
+                    "excluded_levels": [1, 2, 3], "duration": duration,
+                    "interval": 1, "min_allies": 5,
+                })
+
+
+def _strict_lot(level=4):
+    return NullSpace(park_type=CROSS_TYPE,
+                     master_id=1001001000 + silver_level_to_ceng(level),
+                     null_num=3, ceng=silver_level_to_ceng(level))
+
+
+def _strict_detail(lot, allies):
+    spaces = tuple(
+        Space(pos=i + 1, role_id=100 + i, occupied=True, attrs={1: 1467})
+        for i in range(allies)
+    )
+    return CarParkLot(type=CROSS_TYPE, master_id=lot.master_id,
+                      ceng=lot.ceng, spaces=spaces)
+
+
+def _stub_strict_sources(monkeypatch, lot, allies):
+    monkeypatch.setattr(runner.carpark, "read_cross_null_and_collect",
+                        lambda client: ([lot], []))
+    monkeypatch.setattr(runner.carpark, "read_my_mounts",
+                        lambda client: [Mount(mount_id=8, car_lev=1,
+                                              parking=False)])
+    def fake_scan(*args, **kwargs):
+        callback = kwargs.get("decision_log")
+        if callback:
+            callback(f"level=9 master_id={lot.master_id} allies={allies}")
+        return [(lot, allies)]
+
+    monkeypatch.setattr(runner.carpark, "scan_lots_same_server", fake_scan)
+
+
+def test_strict_cluster_five_existing_allies_parks(monkeypatch, tmp_path):
+    lot = _strict_lot()
+    _stub_strict_sources(monkeypatch, lot, allies=5)
+    monkeypatch.setattr(runner.carpark, "read_lot",
+                        lambda *a, **k: _strict_detail(lot, 5))
+    parked_calls = []
+    monkeypatch.setattr(
+        runner.carpark, "park_into_cross",
+        lambda *a, **k: parked_calls.append(k) or
+        SimpleNamespace(success=True, error_code=None))
+    _stub_reads(monkeypatch, [[], [_parked(NOON)]])
+    events = []
+    out = runner._run_carpark(
+        CLIENT, target=None, plan_cfg=_strict_plan(), device="dev1",
+        state_dir=tmp_path, now=NOON, cluster_server_id=1467,
+        decision_log=events.append)
+    assert out["cross"]["reason"] == "cluster_scan"
+    assert out["cross"]["allies"] == 5
+    assert len(parked_calls) == 1
+    assert any("allies=5" in event for event in events)
+    for event_name in (
+            "context", "config", "candidates", "scan", "round_result",
+            "revalidate", "park_result", "summary"):
+        assert any(f"event={event_name}" in event for event in events)
+
+
+def test_strict_cluster_four_allies_times_out_without_fallback(monkeypatch,
+                                                               tmp_path):
+    lot = _strict_lot()
+    _stub_strict_sources(monkeypatch, lot, allies=4)
+    monkeypatch.setattr(
+        runner.carpark, "auto_select_and_park_many",
+        lambda *a, **k: pytest.fail("strict mode must not use normal fallback"))
+    _stub_reads(monkeypatch, [[]])
+    clock = {"t": 0.0}
+    out = runner._run_carpark(
+        CLIENT, target=None, plan_cfg=_strict_plan(duration=2), device="dev1",
+        state_dir=tmp_path, now=NOON, cluster_server_id=1467,
+        time_fn=lambda: clock["t"],
+        sleep_fn=lambda seconds: clock.__setitem__("t", clock["t"] + seconds))
+    assert out["cross"]["reason"] == "strict_cluster_not_found"
+    assert out["cross"]["parked_count"] == 0
+
+
+def test_strict_cluster_missing_server_id_never_falls_back(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner.carpark, "auto_select_and_park_many",
+        lambda *a, **k: pytest.fail("missing server id must not park"))
+    _stub_reads(monkeypatch, [[]])
+    out = runner._run_carpark(
+        CLIENT, target=None, plan_cfg=_strict_plan(), device="dev1",
+        state_dir=tmp_path, now=NOON, cluster_server_id=None)
+    assert out["cross"]["reason"] == "strict_cluster_server_id_missing"
+
+
+def test_strict_cluster_revalidates_five_allies_before_parking(monkeypatch,
+                                                               tmp_path):
+    lot = _strict_lot()
+    _stub_strict_sources(monkeypatch, lot, allies=5)
+    monkeypatch.setattr(runner.carpark, "read_lot",
+                        lambda *a, **k: _strict_detail(lot, 4))
+    monkeypatch.setattr(
+        runner.carpark, "park_into_cross",
+        lambda *a, **k: pytest.fail("revalidation dropped below five"))
+    _stub_reads(monkeypatch, [[]])
+    clock = {"t": 0.0}
+    out = runner._run_carpark(
+        CLIENT, target=None, plan_cfg=_strict_plan(duration=1), device="dev1",
+        state_dir=tmp_path, now=NOON, cluster_server_id=1467,
+        time_fn=lambda: clock["t"],
+        sleep_fn=lambda seconds: clock.__setitem__("t", clock["t"] + seconds))
+    assert out["cross"]["reason"] == "strict_cluster_not_found"
 
 
 # --- legacy paths unchanged when plan off ------------------------------------
@@ -316,6 +435,7 @@ def test_legacy_no_flags_still_skips():
 
 def test_run_device_forwards_carpark_plan(monkeypatch, tmp_path):
     captured = {}
+    progress_events = []
 
     def fake_run_carpark(client, **kw):
         captured.update(kw)
@@ -344,9 +464,14 @@ def test_run_device_forwards_carpark_plan(monkeypatch, tmp_path):
 
     rep = runner.run_device("devX", carpark_plan=PLAN,
                             carpark_state_dir=tmp_path, carpark_now=NOON,
-                            workshop_rotate=False, couple_gifts=False)
+                            workshop_rotate=False, couple_gifts=False,
+                            progress=lambda *args: progress_events.append(args))
     assert rep.login_ok
     assert captured["plan_cfg"] == PLAN
     assert captured["device"] == "devX"
     assert captured["now"] == NOON
     assert captured["state_dir"] == tmp_path
+    assert callable(captured["decision_log"])
+    captured["decision_log"]("event=context device=devX")
+    assert progress_events[-1] == (
+        "carpark", "progress", "event=context device=devX")

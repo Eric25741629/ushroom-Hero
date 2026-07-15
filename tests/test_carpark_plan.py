@@ -100,10 +100,10 @@ def test_grab_getters_defaults():
     # poll default raised 0.3 -> 1.0 for the every-second grab retry
     assert grab_poll_seconds({}) == DEFAULT_GRAB_POLL_SECONDS == 1.0
     assert grab_window_seconds({}) == DEFAULT_GRAB_WINDOW_SECONDS == 60
-    assert cluster_min({}) == DEFAULT_CLUSTER_MIN == 3
+    assert cluster_min({}) == DEFAULT_CLUSTER_MIN == 5
     assert grab_attempts({}) == 8
     # last-resort: park low non-cluster slots by default (user 2026-06-15)
-    assert allow_low_noncluster({}) is True
+    assert allow_low_noncluster({}) is False
 
 
 def test_grab_getters_overrides():
@@ -123,7 +123,7 @@ def test_grab_getters_sanitize_bad_values():
            "cluster_min": "x", "grab_attempts": 0}
     assert grab_poll_seconds(bad) == 1.0
     assert grab_window_seconds(bad) == 60
-    assert cluster_min(bad) == 3
+    assert cluster_min(bad) == 5
     assert grab_attempts(bad) == 8
     # allow_low_noncluster coerces truthy/falsey config values to bool
     assert allow_low_noncluster({"allow_low_noncluster": 0}) is False

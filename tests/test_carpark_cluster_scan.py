@@ -2,11 +2,36 @@
 carpark.scan_lots_same_server."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from ws_token.carpark_plan import ClusterScanConfig, parse_cluster_scan
 from ws_token.carpark import (
     NullSpace, CarParkLot, Space, scan_lots_same_server,
-    silver_level_to_ceng, CROSS_TYPE,
+    silver_level_to_ceng, silver_ceng_to_level, CROSS_TYPE,
 )
+import ws_token.carpark as carpark_mod
+
+
+def test_enabled_device_plans_use_strict_five_and_exclude_123():
+    config = json.loads(
+        (Path(__file__).resolve().parents[1] / "bot_config.json")
+        .read_text(encoding="utf-8-sig"))
+    enabled = []
+    for device, raw in config["devices"].items():
+        plan = (raw.get("ws_token") or {}).get("carpark_plan") or {}
+        if not plan.get("enabled"):
+            continue
+        enabled.append(device)
+        scan = parse_cluster_scan(plan)
+        assert plan["cluster_min"] == 5
+        assert plan["allow_low_noncluster"] is False
+        assert scan.enabled
+        assert scan.min_allies == 5
+        assert {1, 2, 3}.isdisjoint(scan.levels)
+        assert {1, 2, 3}.issubset(scan.excluded_levels)
+
+    assert len(enabled) == 5
 
 
 # --- parse_cluster_scan -----------------------------------------------------
@@ -26,10 +51,11 @@ def test_parse_enabled_defaults():
     cfg = {"cluster_scan": {"enabled": True}}
     cs = parse_cluster_scan(cfg)
     assert cs.enabled
-    assert cs.levels == tuple(range(1, 11))
+    assert cs.levels == tuple(range(4, 11))
+    assert cs.excluded_levels == (1, 2, 3)
     assert cs.duration == 300
     assert cs.interval == 5
-    assert cs.min_allies == 3
+    assert cs.min_allies == 5
     assert cs.fallback_level == 9
 
 
@@ -43,7 +69,7 @@ def test_parse_custom_values():
     assert cs.levels == (4, 7, 9)
     assert cs.duration == 120
     assert cs.interval == 10
-    assert cs.min_allies == 2
+    assert cs.min_allies == 5
     assert cs.fallback_level == 7
 
 
@@ -53,14 +79,27 @@ def test_parse_priority_levels():
         "priority_levels": list(range(1, 16)), "min_allies": 2,
     }}
     cs = parse_cluster_scan(cfg)
-    assert cs.levels == tuple(range(1, 31))
-    assert cs.priority_levels == tuple(range(1, 16))
-    assert cs.min_allies == 2
+    assert cs.levels == tuple(range(4, 31))
+    assert cs.priority_levels == tuple(range(4, 16))
+    assert cs.min_allies == 5
+    assert cs.excluded_levels == (1, 2, 3)
 
 
 def test_parse_priority_levels_defaults_empty():
     cs = parse_cluster_scan({"cluster_scan": {"enabled": True}})
     assert cs.priority_levels == ()
+
+
+def test_parse_excluded_levels_always_keeps_required_1_2_3():
+    cs = parse_cluster_scan({"cluster_scan": {
+        "enabled": True,
+        "levels": [1, 2, 3, 4, 5],
+        "priority_levels": [1, 4, 5],
+        "excluded_levels": [2, 9, "bad"],
+    }})
+    assert cs.excluded_levels == (1, 2, 3, 9)
+    assert cs.levels == (4, 5)
+    assert cs.priority_levels == (4, 5)
 
 
 # --- scan_lots_same_server ---------------------------------------------------
@@ -187,3 +226,33 @@ def test_scan_skips_levels_not_in_filter(monkeypatch):
 def test_scan_empty_when_no_lots():
     ranked = scan_lots_same_server(None, [], 1467, (1, 2, 3))
     assert ranked == []
+
+
+def test_prepare_candidates_merges_sources_and_excludes_1_2_3():
+    null_lots = [_lot(1), _lot(2), _lot(3), _lot(4), _lot(5)]
+    collect_lots = [_lot(4, null_num=2)]
+    candidates, audit = carpark_mod.prepare_cluster_scan_candidates(
+        null_lots, collect_lots,
+        excluded_levels=(1, 2, 3), today_parked=set(),
+    )
+    assert [silver_ceng_to_level(lot.ceng) for lot in candidates] == [4, 5]
+    assert len({lot.master_id for lot in candidates}) == 2
+    assert audit["source_null"] == 5
+    assert audit["source_collect"] == 1
+    assert audit["merged"] == 5
+    assert audit["excluded_levels"] == [1, 2, 3]
+
+
+def test_prepare_candidates_records_full_non_silver_and_today_filters():
+    non_silver = NullSpace(park_type=CROSS_TYPE, master_id=77,
+                           null_num=1, ceng=999)
+    candidates, audit = carpark_mod.prepare_cluster_scan_candidates(
+        [_lot(4, null_num=0), _lot(5), non_silver], [],
+        excluded_levels=(1, 2, 3), today_parked={_lot(5).master_id},
+    )
+    assert candidates == []
+    assert audit["removed_full"] == 1
+    assert audit["removed_non_silver"] == 1
+    assert audit["removed_today"] == [{
+        "level": 5, "master_id": _lot(5).master_id,
+    }]

@@ -112,11 +112,11 @@ DEFAULT_DEVICE_CONFIG = {
             "day":   {"window": ["10:00", "22:00"], "cross": 1},
             "night": {"window": ["22:00", "10:00"], "cross": 0},
             # 搶位分層 + 10:00 每秒重試（2026-06-15）
-            "cluster_min": 3,            # 同服占用 >= 此值算抱團（高獎勵低編號區門檻）
+            "cluster_min": 5,            # 停入前已有同服 >= 5 才算抱團（不含自己）
             "grab_window_seconds": 60,   # 開窗後持續搶位到 開窗+此秒（10:01）
             "grab_poll_seconds": 1.0,    # 搶位每輪間隔（每秒重試）
             "grab_attempts": 8,          # 搶位重試輪數安全上限
-            "allow_low_noncluster": True,  # 最後手段：停鉑銀1-8 非抱團空位（不空手）
+            "allow_low_noncluster": False, # 嚴格抱團：找不到合格車位就不下車
         },
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
@@ -573,6 +573,18 @@ def _merge_carpark_plan(v: Any, default: dict) -> dict:
     out["grab_poll_seconds"] = _cp.grab_poll_seconds(v)
     out["grab_attempts"] = _cp.grab_attempts(v)
     out["allow_low_noncluster"] = _cp.allow_low_noncluster(v)
+    if isinstance(v.get("cluster_scan"), dict):
+        scan = _cp.parse_cluster_scan(v)
+        out["cluster_scan"] = {
+            "enabled": scan.enabled,
+            "levels": list(scan.levels),
+            "priority_levels": list(scan.priority_levels),
+            "excluded_levels": list(scan.excluded_levels),
+            "duration": scan.duration,
+            "interval": scan.interval,
+            "min_allies": scan.min_allies,
+            "fallback_level": scan.fallback_level,
+        }
     return out
 
 

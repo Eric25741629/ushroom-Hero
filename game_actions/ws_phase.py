@@ -205,6 +205,31 @@ def _ws_task_label(name: str) -> str:
     return _WS_TASK_LABELS.get(name, name)
 
 
+def _log_ws_progress(log, ip: str, name: str, status: str,
+                     detail: str = "") -> str:
+    """格式化任務進度並寫入裝置 logger；回傳 dashboard step。"""
+    label = _ws_task_label(name)
+    if status == "start":
+        step = f"WS 任務執行中: {label}"
+        log.info("[%s] WS 任務開始: %s", ip, label)
+    elif status == "ok":
+        step = f"WS 任務完成: {label}"
+        if detail:
+            log.info("[%s] WS 任務完成: %s（%s）", ip, label, detail)
+        else:
+            log.info("[%s] WS 任務完成: %s", ip, label)
+    elif status == "progress" and name == "carpark":
+        step = f"WS 停車決策 ({detail})"
+        log.info("[%s] WS 停車決策: %s", ip, detail)
+    elif status == "progress":
+        step = f"WS 開神燈 ({detail})"
+        log.info("[%s] WS 開神燈進度: %s", ip, detail)
+    else:
+        step = f"WS 任務失敗: {label}"
+        log.warning("[%s] WS 任務失敗: %s (%s)", ip, label, detail)
+    return step
+
+
 def _substantive_done(report) -> set[str]:
     """本輪「真的做了事」的任務名：在 tasks 且非 ``{"skipped": ...}`` dict。
 
@@ -633,22 +658,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
 
     def _progress(name: str, status: str, detail: str = "") -> None:
         """逐任務回報 dashboard step + 裝置 log（runner 端已保證不會炸 run）。"""
-        label = _ws_task_label(name)
-        if status == "start":
-            step = f"WS 任務執行中: {label}"
-            log.info("[%s] WS 任務開始: %s", ip, label)
-        elif status == "ok":
-            step = f"WS 任務完成: {label}"
-            if detail:
-                log.info("[%s] WS 任務完成: %s（%s）", ip, label, detail)
-            else:
-                log.info("[%s] WS 任務完成: %s", ip, label)
-        elif status == "progress":
-            step = f"WS 開神燈 ({detail})"
-            log.info("[%s] WS 開神燈進度: %s", ip, detail)
-        else:
-            step = f"WS 任務失敗: {label}"
-            log.warning("[%s] WS 任務失敗: %s (%s)", ip, label, detail)
+        step = _log_ws_progress(log, ip, name, status, detail)
         try:
             import bot_state
             bot_state.update_state(ip, task="WS 階段", step=step)
