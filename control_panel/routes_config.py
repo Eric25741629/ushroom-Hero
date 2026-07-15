@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 import config_manager
 from control_panel.shared.auth import require_admin, require_device_access
 from game_actions import special_wanshen
+from utils import battle_speed
 
 bp = Blueprint("config", __name__)
 
@@ -90,6 +91,42 @@ def set_special_wanshen_mode(ip):
     config_manager.update_device_config(real_ip, settings)
     updated = config_manager.get_device_config(real_ip)
     return jsonify(special_wanshen.get_status(real_ip, cfg=updated))
+
+
+@bp.route("/api/battle_speed/<ip>", methods=["POST"])
+def set_battle_speed(ip):
+    """設定 web_h5 戰鬥加速倍率（1=關閉；官方廣告 2x 同管線）。
+
+    只對 web_h5 裝置有意義（adb 走不同管線），非 web_h5 一律 403。倍率由
+    `coerce_battle_speed_scale` 夾在 1~10；`update_device_config` 亦會再夾一次
+    （config_manager 1143-1146），這裡只為回傳值再夾一次。
+    """
+    require_device_access(ip)
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    cfg = config_manager.get_device_config(real_ip)
+    if cfg.get("backend") != "web_h5":
+        return jsonify({
+            "status": "error",
+            "message": "戰鬥加速僅適用於 web_h5 裝置",
+        }), 403
+
+    payload = request.get_json(silent=True) or {}
+    if "scale" not in payload:
+        return jsonify({"status": "error", "message": "缺少 scale"}), 400
+    try:
+        raw_scale = float(payload["scale"])
+    except (TypeError, ValueError):
+        return jsonify({"status": "error", "message": "scale 必須是數字"}), 400
+
+    scale = battle_speed.coerce_battle_speed_scale(raw_scale)
+    config_manager.update_device_config(real_ip, {"battle_speed_scale": scale})
+    updated = config_manager.get_device_config(real_ip)
+    return jsonify({
+        "status": "ok",
+        "battle_speed_scale": battle_speed.coerce_battle_speed_scale(
+            updated.get("battle_speed_scale", scale)
+        ),
+    })
 
 
 @bp.route("/api/ocr_config", methods=["GET"])
