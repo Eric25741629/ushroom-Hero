@@ -14,6 +14,7 @@ import ws_token.carpark as carpark_mod
 
 
 def test_enabled_device_plans_use_strict_five_and_exclude_123():
+    assert carpark_mod.DEFAULT_CLUSTER_MIN == 5
     config = json.loads(
         (Path(__file__).resolve().parents[1] / "bot_config.json")
         .read_text(encoding="utf-8-sig"))

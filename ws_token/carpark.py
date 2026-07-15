@@ -86,7 +86,7 @@ SILVER_PREFERRED_LEVELS = (9, 10)  # user policy 2026-06-13: 鉑銀9/10 first
 # (最後手段)。preferred 不在低/中/高任何一層 (9/10 介於低與中之間)。
 SILVER_LOW_MAX_LEVEL = 8      # 高獎勵低編號區 鉑銀1..8 (需同服抱團才停)
 SILVER_MID_MAX_LEVEL = 20     # 中編號區 鉑銀11..20 (扣掉 preferred 9/10)
-DEFAULT_CLUSTER_MIN = 3       # 同服占用 >= this 算抱團
+DEFAULT_CLUSTER_MIN = 5       # 停入前已有同服 >= 5 才算抱團（不含自己）
 DEFAULT_ALLOW_LOW_NONCLUSTER = True  # 最後手段：停低編號非抱團空位 (使用者拍板)
 
 # reward_buff rate filter (probe 2026-06-15: field#8 keys 1..4 are daily totals;
