@@ -44,32 +44,45 @@ def _reject(code=6):
 def _setup(monkeypatch, script, *, probes=None, clock=None,
            get_client_after_reconnect=True):
     """Wire fakes: scripted _draw_once + ws_session ensure/get_client."""
-    calls = {"draws": [], "draw_started": [], "ensure": 0}
+    calls = {"draws": [], "draw_started": [], "ensure": 0, "disconnect": 0,
+             "order": [], "draw_clients": []}
     clock = clock or _FakeClock()
     probe_script = list(probes) if probes is not None else []
+    reconnected_client = _FakeClient()
 
     def fake_draw_once(client, draw_type, count):
         calls["draws"].append((draw_type, count))
         calls["draw_started"].append(clock.monotonic())
+        calls["draw_clients"].append(client)
+        calls["order"].append("draw")
         return script.pop(0)
 
     def fake_read_probe(client, draw_type, *, timeout=None):
+        calls["order"].append("probe")
         if probe_script:
             return probe_script.pop(0)
         return routes.gacha_logic.GachaProbe(10_000_000, 1000)
 
     def fake_ensure(ip):
         calls["ensure"] += 1
+        calls["order"].append("ensure")
         return {"status": "ok", "connected": True}
 
+    def fake_disconnect(ip):
+        calls["disconnect"] += 1
+        calls["order"].append("disconnect")
+        return {"status": "ok"}
+
     def fake_get_client(ip):
-        return _FakeClient() if get_client_after_reconnect else None
+        return reconnected_client if get_client_after_reconnect else None
 
     monkeypatch.setattr(routes, "_draw_once", fake_draw_once)
     monkeypatch.setattr(routes.gacha_logic, "read_probe", fake_read_probe)
     monkeypatch.setattr(routes.ws_session, "ensure", fake_ensure)
+    monkeypatch.setattr(routes.ws_session, "disconnect", fake_disconnect)
     monkeypatch.setattr(routes.ws_session, "get_client", fake_get_client)
     monkeypatch.setattr(routes, "time", clock, raising=False)
+    calls["reconnected_client"] = reconnected_client
     return calls
 
 
@@ -177,7 +190,10 @@ def test_timeout_confirmed_landed_counts_without_retry(monkeypatch):
 
     job = jobs._jobs[jid]
     assert calls["draws"] == [(1, 999)]
-    assert calls["ensure"] == 0
+    # timeout must force-reconnect (drop old socket) before probing, even when
+    # the draw landed — a late 0x0902 reply otherwise misroutes to a later waiter.
+    assert calls["disconnect"] == 1
+    assert calls["ensure"] == 1
     assert job["result"]["total"] == 999
     assert job["result"]["stopped_reason"] is None
     assert any("狀態探測確認成功" in line for line in job["log"])
@@ -198,7 +214,9 @@ def test_timeout_confirmed_not_landed_retries_once(monkeypatch):
 
     job = jobs._jobs[jid]
     assert calls["draws"] == [(1, 999), (1, 999)]
-    assert calls["draw_started"] == [0.0, 1.0]
+    assert calls["draw_started"] == [0.0, 1.0]  # reconnect adds no clock time
+    assert calls["disconnect"] == 1
+    assert calls["ensure"] == 1
     assert job["result"]["total"] == 999
     assert job["result"]["stopped_reason"] is None
     assert any("安全重試一次" in line for line in job["log"])
@@ -219,6 +237,42 @@ def test_timeout_conflicting_probe_stops_unconfirmed(monkeypatch):
 
     job = jobs._jobs[jid]
     assert calls["draws"] == [(1, 999)]
+    assert calls["disconnect"] == 1
+    assert calls["ensure"] == 1
     assert job["status"] == "done"
     assert job["result"]["stopped_reason"] == "unconfirmed"
     assert job["result"]["total"] == 0
+
+
+def test_timeout_disconnects_before_probe_and_retries_on_new_client(monkeypatch):
+    """逾時後,必須先斷開舊連線並重連,才讀券數/重送。
+
+    這是修好與 buggy 的分水嶺:舊行為在同一條 socket 上直接探針/重送,遲到的
+    0x0902 回包會錯配給下一抽的 waiter(client.py 只用 cmd 關聯);強制重連丟棄
+    舊 socket 後,遲到回包無處錯配。
+    """
+    calls = _setup(
+        monkeypatch,
+        [(None, "WSTimeoutError: no response for cmd=2306"), _ok()],
+        probes=[
+            routes.gacha_logic.GachaProbe(800, 1000),   # initial
+            routes.gacha_logic.GachaProbe(800, 1000),   # confirm: not landed
+        ],
+    )
+    jid = jobs._new_job()
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "fixed", 999, 1)
+
+    job = jobs._jobs[jid]
+    # order: initial probe, timed-out draw, THEN disconnect before confirm probe,
+    # then ensure, confirm probe, then the retry draw.
+    assert calls["order"] == [
+        "probe", "draw", "disconnect", "ensure", "probe", "draw"]
+    # the disconnect must precede both the confirm probe and the retry draw.
+    d_idx = calls["order"].index("disconnect")
+    assert d_idx < calls["order"].index("ensure")
+    assert "probe" in calls["order"][d_idx:]
+    # retry draw runs on the reconnected client, not the original.
+    assert calls["draw_clients"][1] is calls["reconnected_client"]
+    assert job["result"]["total"] == 999
+    assert job["result"]["stopped_reason"] is None
