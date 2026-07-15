@@ -142,18 +142,25 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
             if not conn_lost and not is_timeout:
                 return res, err
 
+            # conn_lost 與 timeout 都在探針/重送前先重連，讓這一抽的遲到回包無處
+            # 錯配。client.py 的 reader 只用 cmd（0x0902）關聯 waiter、不看 send-id，
+            # 若本抽已落地、回包遲到，會被之後任一抽的 waiter 錯領 → 兩抽都真扣券
+            # 只記一抽。conn_lost 時連線已死，ensure 直接開新 transport；timeout 時
+            # 連線可能仍活著（ws_session.ensure 對 is_running 的 client 會原樣回傳，
+            # 不會重連），故必須先 disconnect 丟棄舊 socket 再 ensure。
             if conn_lost:
                 _job_log(jid, f"  ⚠ WS 斷線（{err}），重連後確認狀態…")
-                if ws_session.ensure(ip).get("status") != "ok":
-                    _job_log(jid, "  狀態無法確認，停止")
-                    return None, "unconfirmed"
-                reconnected = ws_session.get_client(ip)
-                if reconnected is None:
-                    _job_log(jid, "  狀態無法確認，停止")
-                    return None, "unconfirmed"
-                client = reconnected
             else:
-                _job_log(jid, "  伺服器無回應，讀取券數與抽池狀態…")
+                _job_log(jid, f"  伺服器無回應（{err}），強制重連後讀取券數與抽池狀態…")
+                ws_session.disconnect(ip)
+            if ws_session.ensure(ip).get("status") != "ok":
+                _job_log(jid, "  狀態無法確認，停止")
+                return None, "unconfirmed"
+            reconnected = ws_session.get_client(ip)
+            if reconnected is None:
+                _job_log(jid, "  狀態無法確認，停止")
+                return None, "unconfirmed"
+            client = reconnected
 
             after = _probe_now()
             if after is None:
