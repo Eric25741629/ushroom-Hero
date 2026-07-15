@@ -375,3 +375,26 @@ def test_dashboard_exposes_final_v1_primary_and_shadow_controls():
 def test_dashboard_primary_allowlist_includes_final_v1():
     html = _html()
     assert "['v1','v3','v4','final_v1'].includes(plannerVer)" in html
+
+
+def test_battle_speed_card_control_exists_and_is_wired():
+    """web_h5 戰鬥加速倍率必須有卡片控制項，接 /api/battle_speed 並持久化。
+
+    Regression guard: battle_speed_scale 曾只有 config、沒有 dashboard 前端控制，
+    違反「任何 opt-in 功能開關必須有 dashboard 控制」。
+    """
+    html = _html()
+    # per-device select rendered only for web_h5 cards
+    assert "id=\"battle-speed-${ip}\"" in html
+    assert "info.backend === 'web_h5'" in html
+    assert ">1x（關閉）</option>" in html
+    assert ">2x</option>" in html
+    assert ">4x</option>" in html
+    # wired to the dedicated endpoint + change handler
+    assert "setBattleSpeed('${ip}', this.value)" in html
+    assert "/api/battle_speed/${ip}" in html
+    assert "async function setBattleSpeed" in html
+    # value is re-synced from status on each poll (not reset mid-change)
+    assert "info.battle_speed_scale" in html
+    assert "function battleSpeedOption" in html
+    assert "document.activeElement !== bsSel" in html
