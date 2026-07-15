@@ -1373,7 +1373,7 @@
         },
         "web-001": {
             "name": "寶兒",
-            "enabled": true,
+            "enabled": false,
             "special_wanshen_account": true,
             "special_wanshen_enabled": false,
             "special_wanshen_rounds": 10,
@@ -1519,7 +1519,7 @@
         },
         "web-002": {
             "name": "暴哥",
-            "enabled": true,
+            "enabled": false,
             "special_wanshen_account": true,
             "special_wanshen_enabled": false,
             "special_wanshen_rounds": 10,
