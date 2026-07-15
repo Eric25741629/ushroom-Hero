@@ -216,6 +216,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 stop_runtime_device_for_sleep(d_orig, ip, backend_kind, device_logger)
                 if special_wanshen_one_shot:
                     device_logger.info(f"[{ip}] 萬神一次性排程不進入通用休眠")
+                    if backend_kind == "web_h5":
+                        bot_state.set_web_browser_open(ip, False)
                     return
                 _, _, wake_up_time = run_sleep_cycle(
                     ip,
