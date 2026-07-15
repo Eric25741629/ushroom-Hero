@@ -132,17 +132,19 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true,
+                    "allow_low_noncluster": false,
                     "cluster_scan": {
                         "enabled": true,
-                        "levels": [
+                        "excluded_levels": [
                             1,
                             2,
-                            3,
+                            3
+                        ],
+                        "levels": [
                             4,
                             5,
                             6,
@@ -191,7 +193,7 @@
                         ],
                         "duration": 300,
                         "interval": 5,
-                        "min_allies": 2
+                        "min_allies": 5
                     }
                 },
                 "couple_gifts": true,
@@ -377,17 +379,19 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true,
+                    "allow_low_noncluster": false,
                     "cluster_scan": {
                         "enabled": true,
-                        "levels": [
+                        "excluded_levels": [
                             1,
                             2,
-                            3,
+                            3
+                        ],
+                        "levels": [
                             4,
                             5,
                             6,
@@ -436,7 +440,7 @@
                         ],
                         "duration": 300,
                         "interval": 5,
-                        "min_allies": 2
+                        "min_allies": 5
                     }
                 },
                 "couple_gifts": true,
@@ -579,11 +583,11 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true
+                    "allow_low_noncluster": false
                 },
                 "couple_gifts": true,
                 "forge_ring": false,
@@ -755,17 +759,19 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true,
+                    "allow_low_noncluster": false,
                     "cluster_scan": {
                         "enabled": true,
-                        "levels": [
+                        "excluded_levels": [
                             1,
                             2,
-                            3,
+                            3
+                        ],
+                        "levels": [
                             4,
                             5,
                             6,
@@ -814,7 +820,7 @@
                         ],
                         "duration": 300,
                         "interval": 5,
-                        "min_allies": 2
+                        "min_allies": 5
                     }
                 },
                 "couple_gifts": true,
@@ -960,9 +966,6 @@
                 "carpark_plan": {
                     "enabled": true,
                     "silver_levels": [
-                        1,
-                        2,
-                        3,
                         4,
                         5,
                         6,
@@ -990,17 +993,19 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true,
+                    "allow_low_noncluster": false,
                     "cluster_scan": {
                         "enabled": true,
-                        "levels": [
+                        "excluded_levels": [
                             1,
                             2,
-                            3,
+                            3
+                        ],
+                        "levels": [
                             4,
                             5,
                             6,
@@ -1030,9 +1035,6 @@
                             30
                         ],
                         "priority_levels": [
-                            1,
-                            2,
-                            3,
                             4,
                             5,
                             6,
@@ -1048,7 +1050,7 @@
                         ],
                         "duration": 300,
                         "interval": 5,
-                        "min_allies": 2
+                        "min_allies": 5
                     }
                 },
                 "couple_gifts": true,
@@ -1205,9 +1207,6 @@
                 "carpark_plan": {
                     "enabled": true,
                     "silver_levels": [
-                        1,
-                        2,
-                        3,
                         4,
                         5,
                         6,
@@ -1235,17 +1234,19 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true,
+                    "allow_low_noncluster": false,
                     "cluster_scan": {
                         "enabled": true,
-                        "levels": [
+                        "excluded_levels": [
                             1,
                             2,
-                            3,
+                            3
+                        ],
+                        "levels": [
                             4,
                             5,
                             6,
@@ -1275,9 +1276,6 @@
                             30
                         ],
                         "priority_levels": [
-                            1,
-                            2,
-                            3,
                             4,
                             5,
                             6,
@@ -1293,7 +1291,7 @@
                         ],
                         "duration": 300,
                         "interval": 5,
-                        "min_allies": 2
+                        "min_allies": 5
                     }
                 },
                 "couple_gifts": true,
@@ -1458,11 +1456,11 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true
+                    "allow_low_noncluster": false
                 },
                 "couple_gifts": true,
                 "forge_ring": false,
@@ -1605,11 +1603,11 @@
                         ],
                         "cross": 0
                     },
-                    "cluster_min": 3,
+                    "cluster_min": 5,
                     "grab_window_seconds": 60,
                     "grab_poll_seconds": 1.0,
                     "grab_attempts": 8,
-                    "allow_low_noncluster": true
+                    "allow_low_noncluster": false
                 },
                 "couple_gifts": true,
                 "forge_ring": false,
