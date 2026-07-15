@@ -3110,6 +3110,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
               <span class="label">目前步驟</span><span id="step-${ip}">${info.step || '--'}</span>
               <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">更新 <span id="time-${ip}">${formatTime(info.last_update)}</span> · 截圖 <span id="sst-${ip}">--</span></span>
               <span style="grid-column:span 2; font-size:0.8em; color:var(--text-secondary);">後端：<span id="backend-${ip}">${(info.backend || 'adb') + (info.ws_enabled ? ' +WS' : '')}</span></span>
+              ${info.backend === 'web_h5' ? `<span class="label">戰鬥加速</span><span><select id="battle-speed-${ip}" class="form-control" style="width:auto; height:auto; padding:2px 26px 2px 8px; font-size:0.8em;" title="web_h5 戰鬥倍速（1=關閉；官方廣告 2x 同管線）" onchange="setBattleSpeed('${ip}', this.value)"><option value="1">1x（關閉）</option><option value="2">2x</option><option value="4">4x</option></select></span>` : ''}
               ${info.carpark_plan_enabled ? `<span class="label">🅿 車位</span><span id="carpark-${ip}" style="cursor:pointer;" onclick="toggleCarparkDetail('${ip}')" title="點擊展開各車 start_time 校準">--</span>` : ''}
             </div>
             ${info.carpark_plan_enabled ? `<div class="carpark-detail" id="carpark-detail-${ip}" style="display:none; font-size:0.75em; color:var(--text-secondary); padding:4px 8px; line-height:1.5;"></div>` : ''}
@@ -3166,6 +3167,11 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         updateText(`backend-${ip}`, (info.backend || 'adb') + (info.ws_enabled ? ' +WS' : ''));
 
         updateText(`web-stop-${ip}`, info.web_stop_mode || 'keep_page');
+
+        const bsSel = document.getElementById(`battle-speed-${ip}`);
+        if (bsSel && document.activeElement !== bsSel) {
+          bsSel.value = battleSpeedOption(info.battle_speed_scale);
+        }
 
         updateText(`task-${ip}`, info.task || '--');
 
@@ -4076,6 +4082,32 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       } catch (e) {
         el.textContent = '';
         _relicDateFetchedFor = null;
+      }
+    }
+
+    // Bucket an arbitrary coerced scale (1~10 float) into the three options the
+    // card offers. Non-1/2/4 values (rare; only writable via raw config) snap to
+    // the nearest offered tier so the <select> always shows a real option.
+    function battleSpeedOption(scale) {
+      const s = Number(scale) || 4;
+      return s >= 3 ? '4' : (s >= 1.5 ? '2' : '1');
+    }
+
+    async function setBattleSpeed(ip, scale) {
+      try {
+        const resp = await fetch(`/api/battle_speed/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scale: Number(scale) })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok) throw new Error(result.message || '戰鬥加速更新失敗');
+        const n = Number(result.battle_speed_scale);
+        window.UI.toast(`戰鬥加速已設為 ${n}x`, 'ok');
+        const sel = document.getElementById(`battle-speed-${ip}`);
+        if (sel) sel.value = battleSpeedOption(n);
+      } catch (e) {
+        window.UI.toast('錯誤：' + e, 'err');
       }
     }
 

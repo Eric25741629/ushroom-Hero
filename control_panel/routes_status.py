@@ -20,6 +20,7 @@ import new_cnn.cnn_model as cnn_model_module
 from control_panel.shared.auth import filter_visible_states, require_device_access
 from game_actions import special_wanshen
 from game_state.detector import stage_by_str
+from utils import battle_speed
 
 logger = logging.getLogger(__name__)
 
@@ -551,6 +552,9 @@ def get_status():
             ((cfg.get("ws_token") or {}).get("carpark_plan") or {}).get("enabled"))
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
         info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
+        info["battle_speed_scale"] = battle_speed.coerce_battle_speed_scale(
+            cfg.get("battle_speed_scale", 4)
+        )
         info.update(_special_wanshen_fields(real_ip, cfg))
         info["live_view_available"] = bool(
             live_view_enabled
@@ -583,6 +587,9 @@ def get_status():
             "step": "登入並設定完成後,按「啟用掛機」才會開始",
             "logs": [],
             "live_view_available": False,
+            "battle_speed_scale": battle_speed.coerce_battle_speed_scale(
+                (dcfg or {}).get("battle_speed_scale", 4)
+            ),
         }
         states[dev_id].update(_special_wanshen_fields(dev_id, dcfg or {}))
 
