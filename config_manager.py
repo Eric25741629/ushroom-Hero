@@ -53,6 +53,7 @@ DEFAULT_DEVICE_CONFIG = {
     "web_screenshot_method": "playwright",  # playwright / canvas_capture
     "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
     "web_reload_after_goto": False,  # True=goto 成功後再 reload；預設關閉以加快 H5 載入
+    "battle_speed_scale": 4,  # web_h5 戰鬥加速倍率（官方廣告 2x 同管線；1=關閉）
     "enable_farm": True,  # 啟用農場
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
@@ -203,6 +204,7 @@ class DeviceConfig:
     web_screenshot_method: str = "playwright"
     web_screenshot_jpeg_quality: Optional[int] = None
     web_reload_after_goto: bool = False
+    battle_speed_scale: float = 4  # web_h5 battle timeScale (1=off, official ad path is 2)
 
     # Feature flags
     enable_farm: bool = True
@@ -1137,6 +1139,11 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         current["web_reload_after_goto"] = _to_bool(
             current.get("web_reload_after_goto", False), False
         )
+        try:
+            _bss = float(current.get("battle_speed_scale", DEFAULT_DEVICE_CONFIG["battle_speed_scale"]))
+        except (TypeError, ValueError):
+            _bss = float(DEFAULT_DEVICE_CONFIG["battle_speed_scale"])
+        current["battle_speed_scale"] = max(1.0, min(10.0, _bss if _bss > 0 else 1.0))
         current["web_viewport_width"] = _clamp_int(
             current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
         )

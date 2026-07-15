@@ -11,6 +11,7 @@ from PIL import Image
 from utils.action_tracker import ActionTraceRecorder
 from utils.ws_listener import WSFrameTracker
 from utils.web_profile_paths import resolve_profile_dir, resolve_state_file
+from utils.battle_speed import ensure_battle_speed_on_device
 from runtime_services.device_runtime_service import ForceSleepRequested, WakeLoopInterrupted
 
 logger = logging.getLogger(__name__)
@@ -778,6 +779,18 @@ class PlaywrightGameDevice:
                 f"[{self.device_id}] web_h5 backend did not find selector: {self.canvas_selector}"
             )
 
+        # Official battle 2x uses chapterDataCache.speed_scale → timeScale.
+        # Keep configured scale (default 4) without watching ads.
+        try:
+            st = ensure_battle_speed_on_device(self)
+            if st:
+                self.logger.info(
+                    f"[{self.device_id}] battle_speed: {st} "
+                    f"(scale={self.cfg.get('battle_speed_scale', 4)})"
+                )
+        except Exception as e:
+            self.logger.debug(f"[{self.device_id}] battle_speed install skipped: {e}")
+
         if state_file:
             try:
                 self._context.storage_state(path=state_file)
@@ -1154,6 +1167,11 @@ class PlaywrightGameDevice:
             # calling it again right after was redundant and added extra canvas-check
             # overhead on every screenshot.
             self._ensure_browser_session("screenshot")
+            # Re-arm battle speed if page reloaded (idempotent).
+            try:
+                ensure_battle_speed_on_device(self)
+            except Exception:
+                pass
             try:
                 # 根據設定的截圖方法選擇實現
                 if self.screenshot_method == "canvas_capture":
