@@ -196,3 +196,9 @@ python miner/scripts/debug_with_image.py <screenshot.jpg>
 3. **UTF-8 BOM**: 檔案可能含 BOM，讀取時需處理
 4. **執行緒管理**: `_running_threads` 追蹤所有裝置執行緒
 5. **緊急退出**: `Ctrl+C` 會呼叫 `shutdown_web_devices()`
+
+---
+
+## 預設交付流程
+
+- 功能或修復在隔離分支完成並通過目標驗證後，預設本機合併回 `main`、在 `main` 重跑驗證，再清理功能分支與工作樹；除非使用者另有指定，不必再次詢問合併方式。
