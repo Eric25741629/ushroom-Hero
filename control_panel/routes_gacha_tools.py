@@ -118,21 +118,66 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
             last_draw_started = time.monotonic()
             return _draw_once(client, draw_type, cnt)
 
-        def _draw_with_reconnect(cnt: int):
-            """One draw; on transport loss reconnect once and retry the SAME
-            bundle (mirrors the decoration executor). A landed-but-reply-lost
-            draw retried = one extra bundle at worst — fine for drain (goal is
-            spend-all) and rare enough for fixed."""
-            nonlocal client
+        def _probe_now():
+            try:
+                return gacha_logic.read_probe(
+                    client, draw_type, timeout=_PROBE_TIMEOUT)
+            except Exception:  # noqa: BLE001 — ambiguity must stop, never guess
+                logger.warning("gacha 狀態探測失敗 %s", ip, exc_info=True)
+                return None
+
+        def _draw_with_reconnect(cnt: int, *, allow_retry: bool = True):
+            """抽一次；錯誤後用券數 + pool count 判定是否落地。
+
+            只有兩項都證明沒有落地時才重送一次，避免 reply 遺失造成重複扣券。
+            """
+            nonlocal client, probe
+            before = probe
             res, err = _paced_draw(cnt)
-            if err and _conn_lost(ip, err):
-                _job_log(jid, f"  ⚠ WS 斷線（{err}），重連後重試…")
-                if ws_session.ensure(ip).get("status") == "ok":
-                    c2 = ws_session.get_client(ip)
-                    if c2 is not None:
-                        client = c2
-                        res, err = _paced_draw(cnt)
-            return res, err
+            if not err:
+                return res, None
+
+            conn_lost = _conn_lost(ip, err)
+            is_timeout = "WSTimeoutError" in err
+            if not conn_lost and not is_timeout:
+                return res, err
+
+            if conn_lost:
+                _job_log(jid, f"  ⚠ WS 斷線（{err}），重連後確認狀態…")
+                if ws_session.ensure(ip).get("status") != "ok":
+                    _job_log(jid, "  狀態無法確認，停止")
+                    return None, "unconfirmed"
+                reconnected = ws_session.get_client(ip)
+                if reconnected is None:
+                    _job_log(jid, "  狀態無法確認，停止")
+                    return None, "unconfirmed"
+                client = reconnected
+            else:
+                _job_log(jid, "  伺服器無回應，讀取券數與抽池狀態…")
+
+            after = _probe_now()
+            if after is None:
+                _job_log(jid, "  狀態無法確認，停止")
+                return None, "unconfirmed"
+            state = gacha_logic.compare_probe(before, after, cnt)
+            if state == "landed":
+                probe = after
+                _job_log(jid, f"  {cnt} 抽：狀態探測確認成功")
+                return {
+                    "ok": True,
+                    "drawn": 0,
+                    "remaining": after.ticket_count,
+                    "rejected": False,
+                    "error_code": None,
+                    "confirmed_by_probe": True,
+                }, None
+            if state != "not_landed" or not allow_retry:
+                _job_log(jid, "  狀態無法確認，停止")
+                return None, "unconfirmed"
+
+            probe = after
+            _job_log(jid, f"  {cnt} 抽：伺服器未執行，安全重試一次")
+            return _draw_with_reconnect(cnt, allow_retry=False)
 
         if mode == "drain":
             _job_log(jid, f"一鍵抽完（{type_name}）：依券餘額選 999/35/15，抽到不足即止")
@@ -156,11 +201,15 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                     rung = _DRAIN_LADDER[fb_idx]
                 res, err = _draw_with_reconnect(rung)
                 if err or not res or res.get("err"):
-                    stopped = f"error:{err or (res or {}).get('err')}"
-                    _job_log(jid, f"  {rung} 抽：傳輸錯誤（{stopped}）")
+                    raw_error = err or (res or {}).get("err")
+                    stopped = ("unconfirmed" if raw_error == "unconfirmed"
+                               else f"error:{raw_error}")
+                    _job_log(jid, f"  {rung} 抽：停止（{stopped}）")
                     logger.warning("gacha drain %s 中止: %s", ip, stopped)
                     break
-                if res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
+                confirmed = bool(res.get("confirmed_by_probe"))
+                if (res.get("rejected") or not res.get("ok")
+                        or (int(res.get("drawn", 0)) <= 0 and not confirmed)):
                     reason = (f"reject code={res.get('error_code')}"
                               if res.get("rejected") else "drawn=0")
                     _job_log(jid, f"  {rung} 抽：停（{reason}）→ 換下一階")
@@ -174,39 +223,46 @@ def _run_gacha_job(jid: str, ip: str, draw_type: int, mode: str,
                 stacks = int(res["drawn"])
                 total += rung
                 batches_done += 1
-                rem = res.get("remaining")
-                if rem is not None:
-                    remaining = int(rem)
-                elif remaining is not None:
-                    remaining -= _BUNDLE_COST[rung]
-                probe = gacha_logic.GachaProbe(
-                    ticket_count=remaining,
-                    pool_count=probe.pool_count + rung,
-                )
-                _job_log(jid, f"  {rung} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
-                              + (f"，券剩 {remaining:,}）" if remaining is not None else "）"))
+                if confirmed:
+                    remaining = probe.ticket_count
+                    detail = "狀態探測確認"
+                else:
+                    remaining = probe.ticket_count - _BUNDLE_COST[rung]
+                    probe = gacha_logic.GachaProbe(
+                        ticket_count=remaining,
+                        pool_count=probe.pool_count + rung,
+                    )
+                    detail = f"{stacks} 疊獎勵"
+                _job_log(jid, f"  {rung} 抽 → 成功（{detail}，累計 {total} 抽"
+                              + f"，券剩 {remaining:,}）")
                 _set_gacha_progress(jid, total, batches_done)
         else:  # fixed: count × batches
             _job_log(jid, f"指定抽（{type_name}）：{count} 抽 × {batches} 批…")
             for b in range(batches):
                 res, err = _draw_with_reconnect(count)
-                if err or not res or res.get("rejected") or not res.get("ok") or int(res.get("drawn", 0)) <= 0:
+                confirmed = bool(res and res.get("confirmed_by_probe"))
+                if (err or not res or res.get("rejected") or not res.get("ok")
+                        or (int(res.get("drawn", 0)) <= 0 and not confirmed)):
                     reason = (f"reject code={res.get('error_code')}" if (res and res.get("rejected"))
                               else (res or {}).get("err") if res else err)
-                    stopped = f"stopped:{reason or 'drawn=0'}"
+                    stopped = ("unconfirmed" if reason == "unconfirmed"
+                               else f"stopped:{reason or 'drawn=0'}")
                     _job_log(jid, f"  第 {b + 1} 批：停（{reason or 'drawn=0'}）")
                     logger.warning("gacha fixed %s 中止: %s", ip, stopped)
                     break
                 stacks = int(res["drawn"])
                 total += count
                 batches_done += 1
-                probe = gacha_logic.GachaProbe(
-                    ticket_count=probe.ticket_count - _BUNDLE_COST[count],
-                    pool_count=probe.pool_count + count,
-                )
-                rem = res.get("remaining")
-                _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → 成功（{stacks} 疊獎勵，累計 {total} 抽"
-                              + (f"，券剩 {int(rem):,}）" if rem is not None else "）"))
+                if confirmed:
+                    detail = "狀態探測確認"
+                else:
+                    probe = gacha_logic.GachaProbe(
+                        ticket_count=probe.ticket_count - _BUNDLE_COST[count],
+                        pool_count=probe.pool_count + count,
+                    )
+                    detail = f"{stacks} 疊獎勵"
+                _job_log(jid, f"  [{b + 1}/{batches}] {count} 抽 → 成功（{detail}，累計 {total} 抽"
+                              + f"，券剩 {probe.ticket_count:,}）")
                 _set_gacha_progress(jid, total, batches_done)
 
         _job_update(jid, status="done", phase="done", result={

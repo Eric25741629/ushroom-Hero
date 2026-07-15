@@ -107,11 +107,9 @@ def test_drain_reconnects_and_retries_on_conn_lost(monkeypatch):
     script = [
         (None, _CONN_ERR),   # 999 draw: transport dies
         _ok(),               # retry after reconnect: lands
-        _reject(),           # next 999: insufficient -> step down
-        _reject(),           # 35 rejected
-        _reject(),           # 15 rejected -> exhausted
     ]
-    calls = _setup(monkeypatch, script)
+    probe = routes.gacha_logic.GachaProbe(800, 1000)
+    calls = _setup(monkeypatch, script, probes=[probe, probe])
     jid = jobs._new_job()
     routes._run_gacha_job(jid, "emulator-5554", 1, "drain", 0, 1)
     job = jobs._jobs[jid]
@@ -128,13 +126,14 @@ def test_drain_conn_lost_twice_stops_cleanly(monkeypatch):
         (None, _CONN_ERR),   # draw dies
         (None, _CONN_ERR),   # retry dies too -> stop, no infinite loop
     ]
-    calls = _setup(monkeypatch, script)
+    probe = routes.gacha_logic.GachaProbe(800, 1000)
+    calls = _setup(monkeypatch, script, probes=[probe, probe, probe])
     jid = jobs._new_job()
     routes._run_gacha_job(jid, "emulator-5554", 1, "drain", 0, 1)
     job = jobs._jobs[jid]
     assert job["status"] == "done"
-    assert calls["ensure"] == 1
-    assert job["result"]["stopped_reason"].startswith("error:")
+    assert calls["ensure"] == 2  # retry socket也失敗，需再重連只讀 probe 判定
+    assert job["result"]["stopped_reason"] == "unconfirmed"
     assert job["result"]["total"] == 0
 
 
@@ -144,7 +143,14 @@ def test_fixed_mode_reconnects_and_counts_draws(monkeypatch):
         (None, _CONN_ERR),   # batch 2: transport dies
         _ok(),               # retry lands
     ]
-    calls = _setup(monkeypatch, script)
+    calls = _setup(
+        monkeypatch,
+        script,
+        probes=[
+            routes.gacha_logic.GachaProbe(1600, 1000),
+            routes.gacha_logic.GachaProbe(800, 1999),
+        ],
+    )
     jid = jobs._new_job()
     routes._run_gacha_job(jid, "emulator-5554", 2, "fixed", 999, 2)
     job = jobs._jobs[jid]
@@ -156,14 +162,63 @@ def test_fixed_mode_reconnects_and_counts_draws(monkeypatch):
     assert res["batches_done"] == 2
 
 
-def test_non_conn_transport_error_stops_without_reconnect(monkeypatch):
-    script = [
-        (None, "WSTimeoutError: no response for cmd=2306"),
-    ]
-    calls = _setup(monkeypatch, script)
+def test_timeout_confirmed_landed_counts_without_retry(monkeypatch):
+    calls = _setup(
+        monkeypatch,
+        [(None, "WSTimeoutError: no response for cmd=2306")],
+        probes=[
+            routes.gacha_logic.GachaProbe(800, 1000),
+            routes.gacha_logic.GachaProbe(0, 1999),
+        ],
+    )
     jid = jobs._new_job()
-    routes._run_gacha_job(jid, "emulator-5554", 1, "drain", 0, 1)
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "fixed", 999, 1)
+
     job = jobs._jobs[jid]
+    assert calls["draws"] == [(1, 999)]
+    assert calls["ensure"] == 0
+    assert job["result"]["total"] == 999
+    assert job["result"]["stopped_reason"] is None
+    assert any("狀態探測確認成功" in line for line in job["log"])
+
+
+def test_timeout_confirmed_not_landed_retries_once(monkeypatch):
+    calls = _setup(
+        monkeypatch,
+        [(None, "WSTimeoutError: no response for cmd=2306"), _ok()],
+        probes=[
+            routes.gacha_logic.GachaProbe(800, 1000),
+            routes.gacha_logic.GachaProbe(800, 1000),
+        ],
+    )
+    jid = jobs._new_job()
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "fixed", 999, 1)
+
+    job = jobs._jobs[jid]
+    assert calls["draws"] == [(1, 999), (1, 999)]
+    assert calls["draw_started"] == [0.0, 1.0]
+    assert job["result"]["total"] == 999
+    assert job["result"]["stopped_reason"] is None
+    assert any("安全重試一次" in line for line in job["log"])
+
+
+def test_timeout_conflicting_probe_stops_unconfirmed(monkeypatch):
+    calls = _setup(
+        monkeypatch,
+        [(None, "WSTimeoutError: no response for cmd=2306")],
+        probes=[
+            routes.gacha_logic.GachaProbe(800, 1000),
+            routes.gacha_logic.GachaProbe(0, 1000),
+        ],
+    )
+    jid = jobs._new_job()
+
+    routes._run_gacha_job(jid, "emulator-5554", 1, "fixed", 999, 1)
+
+    job = jobs._jobs[jid]
+    assert calls["draws"] == [(1, 999)]
     assert job["status"] == "done"
-    assert calls["ensure"] == 0, "a plain timeout must not trigger reconnect"
-    assert job["result"]["stopped_reason"].startswith("error:")
+    assert job["result"]["stopped_reason"] == "unconfirmed"
+    assert job["result"]["total"] == 0
