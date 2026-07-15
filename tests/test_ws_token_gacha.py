@@ -49,6 +49,77 @@ def test_largest_affordable_ladder():
     assert gacha.largest_affordable(14) is None
 
 
+# --- authoritative ticket / pool probes -----------------------------------
+
+def _bag_reply(*pairs):
+    return b"".join(
+        codec.pb_msg(1, codec.pb_uint(1, iid) + codec.pb_uint(3, count))
+        for iid, count in pairs
+    )
+
+
+def _draw_info_reply(*pools):
+    return b"".join(
+        codec.pb_msg(
+            1,
+            codec.pb_uint(1, pool_id)
+            + codec.pb_uint(2, level)
+            + codec.pb_uint(3, count),
+        )
+        for pool_id, level, count in pools
+    )
+
+
+class ProbeClient:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.calls = []
+
+    def call_for(self, cmd, body, *, expect_cmds, timeout=None):
+        self.calls.append((cmd, body, tuple(expect_cmds), timeout))
+        return self.replies.pop(0)
+
+
+def test_read_probe_returns_ticket_and_pool_count():
+    client = ProbeClient([
+        (gacha.CMD_INVENTORY_QUERY,
+         _bag_reply((1012, 375651), (1013, 374148))),
+        (gacha.CMD_DRAW_INFO,
+         _draw_info_reply((1, 15, 488834), (2, 20, 429926))),
+    ])
+
+    probe = gacha.read_probe(client, gacha.DRAW_TYPE_SKILL, timeout=4)
+
+    assert probe == gacha.GachaProbe(ticket_count=375651, pool_count=488834)
+    assert client.calls == [
+        (gacha.CMD_INVENTORY_QUERY, b"", (gacha.CMD_INVENTORY_QUERY,), 4),
+        (gacha.CMD_DRAW_INFO, b"", (gacha.CMD_DRAW_INFO,), 4),
+    ]
+
+
+def test_read_probe_requires_both_authoritative_values():
+    client = ProbeClient([
+        (gacha.CMD_INVENTORY_QUERY, _bag_reply((1013, 10))),
+        (gacha.CMD_DRAW_INFO, _draw_info_reply((2, 20, 100))),
+    ])
+
+    assert gacha.read_probe(client, gacha.DRAW_TYPE_SKILL) is None
+
+
+def test_compare_probe_detects_landed_not_landed_and_conflict():
+    before = gacha.GachaProbe(ticket_count=1000, pool_count=5000)
+
+    assert gacha.compare_probe(
+        before, gacha.GachaProbe(ticket_count=200, pool_count=5999), 999
+    ) == "landed"
+    assert gacha.compare_probe(
+        before, gacha.GachaProbe(ticket_count=1000, pool_count=5000), 999
+    ) == "not_landed"
+    assert gacha.compare_probe(
+        before, gacha.GachaProbe(ticket_count=200, pool_count=5000), 999
+    ) == "conflict"
+
+
 # --- scripted client ---------------------------------------------------------
 
 class FakeClient:

@@ -31,6 +31,8 @@ from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
+CMD_INVENTORY_QUERY = 0x0401  # 1025  full bag snapshot
+CMD_DRAW_INFO = 0x0901 # 2305  draw pool level/count snapshot
 CMD_DRAW = 0x0902      # 2306  c2s {type,count} -> s2c {items} | 0x0201
 CMD_FREE_DRAW = 0x1602 # 5634  c2s {slot#1, flag#3=1} -> server push 0x0902 | 0x0201
 CMD_ERROR = 0x0201     # error.error_info_s2c { error_code#1 }
@@ -71,6 +73,57 @@ def largest_affordable(remaining: int) -> Optional[int]:
         if remaining >= BUNDLE_COST[cnt]:
             return cnt
     return None
+
+
+@dataclass(frozen=True)
+class GachaProbe:
+    """抽卡前後的權威狀態，用來判斷 timeout 請求是否實際落地。"""
+
+    ticket_count: int
+    pool_count: int
+
+
+def _parse_probe_value(body: bytes, key: int) -> int | None:
+    """解析 repeated field#1 中指定 id 的 field#3 數值。"""
+    for fnum, val in codec.walk(body):
+        if fnum != 1 or not isinstance(val, (bytes, bytearray)):
+            continue
+        data = codec.walk_dict(bytes(val))
+        if data.get(1) == key and isinstance(data.get(3), int):
+            return int(data[3])
+    return None
+
+
+def read_probe(client: WSGameClient, draw_type: int, *,
+               timeout: float | None = None) -> GachaProbe | None:
+    """讀取抽券現量與對應抽池累計 count；任一缺失即回 ``None``。"""
+    ticket_id = TICKET_ITEM.get(draw_type)
+    if ticket_id is None:
+        return None
+    bag_cmd, bag = client.call_for(
+        CMD_INVENTORY_QUERY, b"",
+        expect_cmds=(CMD_INVENTORY_QUERY,), timeout=timeout)
+    info_cmd, info = client.call_for(
+        CMD_DRAW_INFO, b"",
+        expect_cmds=(CMD_DRAW_INFO,), timeout=timeout)
+    if bag_cmd != CMD_INVENTORY_QUERY or info_cmd != CMD_DRAW_INFO:
+        return None
+    tickets = _parse_probe_value(bag, ticket_id)
+    pool_count = _parse_probe_value(info, draw_type)
+    if tickets is None or pool_count is None:
+        return None
+    return GachaProbe(ticket_count=tickets, pool_count=pool_count)
+
+
+def compare_probe(before: GachaProbe, after: GachaProbe, count: int) -> str:
+    """比較 mutation 前後狀態：``landed`` / ``not_landed`` / ``conflict``。"""
+    ticket_delta = before.ticket_count - after.ticket_count
+    pool_delta = after.pool_count - before.pool_count
+    if ticket_delta == BUNDLE_COST[count] and pool_delta == count:
+        return "landed"
+    if ticket_delta == 0 and pool_delta == 0:
+        return "not_landed"
+    return "conflict"
 
 
 def build_draw_body(draw_type: int, count: int) -> bytes:
