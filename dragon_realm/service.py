@@ -19,11 +19,19 @@ from dragon_realm.state import DragonState
 logger = logging.getLogger(__name__)
 
 
+def _resolve_role_id(dev, detected_role_id: int = 0) -> int:
+    """優先採用設定，沒有設定時回退到 captured creds 的 role id。"""
+    configured = int(dev.get("dragon_realm_role_id", 0) or 0)
+    return configured or int(detected_role_id or 0)
+
+
 @dataclass(frozen=True)
 class LoopLimits:
     max_actions: int = 200          # 動作預算（含探索）
     max_wait_iters: int = 30        # 連續 WAIT 上限 -> dead-loop
     wait_sleep_sec: float = 3.0     # WAIT 時的輪詢間隔
+    action_sleep_sec: float = 1.0   # 每個 action 後等 s2c 推播更新 __drCache
+    max_frozen: int = 6             # 連續 action 間 state 全同 -> dead-loop
     sleep_fn: Optional[Callable[[float], None]] = None
 
 
@@ -38,6 +46,8 @@ def run_loop(client, config, prefs: Prefs, limits: LoopLimits) -> LoopReport:
     sleep = limits.sleep_fn or (lambda s: __import__("time").sleep(s))
     report = LoopReport()
     consecutive_wait = 0
+    last_sig = None
+    frozen = 0
     while True:
         state = client.read_state()
         action = decide(state, config, prefs)
@@ -56,11 +66,23 @@ def run_loop(client, config, prefs: Prefs, limits: LoopLimits) -> LoopReport:
             continue
 
         consecutive_wait = 0
+        # 連續 action 間 state 完全沒動 = 我們送的 choice 對這事件無效
+        # （live 2026-07-16：二層寶箱 eid=12 被誤送 ADVANCE，3 秒燒完 200 預算）。
+        sig = (state.ceng, state.hp, state.event_id, state.event_uid)
+        if sig == last_sig:
+            frozen += 1
+            if frozen >= limits.max_frozen:
+                report.stop_reason = "deadloop"
+                return report
+        else:
+            frozen = 0
+        last_sig = sig
         client.dispatch(action)
         report.actions += 1
         if report.actions >= limits.max_actions:
             report.stop_reason = "budget_exhausted"
             return report
+        sleep(limits.action_sleep_sec)
 
 
 def run(ip: str, d) -> LoopReport:
@@ -76,11 +98,16 @@ def run(ip: str, d) -> LoopReport:
     from utils.screenshot_helpers import save_error_screenshot
 
     dev = config_manager.get_device_config(ip)
-    my_role_id = int(dev.get("dragon_realm_role_id", 0))
+    try:
+        detected_role_id = int(config_manager.get_device_role_id(ip) or 0)
+    except Exception:  # noqa: BLE001 — role id 讀不到時維持安全略過領獎
+        detected_role_id = 0
+    my_role_id = _resolve_role_id(dev, detected_role_id)
     prefs = Prefs(
         my_role_id=my_role_id,
         assist_teammates=bool(dev.get("dragon_realm_assist", True)),
-        auto_open_box=bool(dev.get("dragon_realm_open_box", True)),
+        # 預設不開箱：開箱耗秘銀龍鑰，政策同 WS 路徑（寶箱一律 DETOUR 進背包）。
+        auto_open_box=bool(dev.get("dragon_realm_open_box", False)),
     )
 
     client = DragonClient(page, my_role_id)

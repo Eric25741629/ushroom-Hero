@@ -104,6 +104,12 @@ def test_assist_skipped_when_no_help_hp():
     a = decide(_state(help_hp=0, hp=30, event_list=(teammate,)), Cfg, PREFS)
     assert a.kind == C.A_EXPLORE
 
+def test_assist_skips_completed_teammate_event():
+    from dragon_realm.state import DragonEvent
+    teammate = DragonEvent(888, 5002, C.PVE, 2, 0, is_mine=False, status=1)
+    a = decide(_state(help_hp=10, event_list=(teammate,)), Cfg, PREFS)
+    assert a.kind == C.A_EXPLORE
+
 def test_receive_help_reward_when_available():
     a = decide(_state(help_events=(321,)), Cfg, PREFS)
     assert a.kind == C.A_RECEIVE_HELP and a.event_id == 321

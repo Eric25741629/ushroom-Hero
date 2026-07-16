@@ -85,6 +85,23 @@ def test_rescue_pending_only_helps_pending_events():
     assert result["targets"][0]["role_id"] == 999
 
 
+def test_rescue_pending_also_helps_attack_events_with_non_one_status():
+    """進攻求助的狀態可能是 2；前端規則是 status != 1 才可協助。"""
+    before = _help_list(
+        [_event(200, 7, 777, 2), _event(201, 5, 888, 1)], help_hp=2
+    )
+    after = _help_list([], help_hp=1)
+    client = _FakeClient([before, after])
+
+    result = dragon_sos.rescue_pending(client)
+
+    assert client.sent == [
+        (dragon_sos.CMD_PROVIDE_HELP, codec.pb_uint(1, 777) + codec.pb_uint(2, 7))
+    ]
+    assert result["attempted"] == 1
+    assert result["targets"][0]["event_id"] == 7
+
+
 def test_rescue_pending_no_pending_sends_nothing():
     body = _help_list([_event(101, 5, 888, 1)], help_hp=2)  # only a done event
     client = _FakeClient([body, body])
@@ -104,6 +121,25 @@ def test_rescue_pending_empty_list_sends_nothing():
 
     assert client.sent == []
     assert result["attempted"] == 0
+
+
+def test_claim_help_rewards_only_claims_own_completed_event():
+    before = _help_list(
+        [_event(200, 7, 777, 1), _event(201, 8, 888, 1), _event(202, 9, 777, 0)],
+        help_hp=1,
+    )
+    after = _help_list(
+        [_event(201, 8, 888, 1), _event(202, 9, 777, 0)], help_hp=1
+    )
+    client = _FakeClient([before, after])
+
+    result = dragon_sos.claim_help_rewards(client, my_role_id=777)
+
+    assert client.sent == [
+        (dragon_sos.CMD_RECEIVE_HELP, codec.pb_uint(1, 7))
+    ]
+    assert result["claimed"] == 1
+    assert result["remaining"] == 0
 
 
 # --- rescue_via_ws (ws_session wiring) --------------------------------------

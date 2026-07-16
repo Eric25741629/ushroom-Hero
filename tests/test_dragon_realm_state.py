@@ -47,6 +47,19 @@ def test_event_list_marks_mine_vs_teammate():
     assert s.event_list[0].uid == 1
 
 
+def test_help_events_only_include_own_completed_events():
+    raw = _raw(event_list=[
+        {"role_id": 777, "event_id": 321, "id": 1, "status": 1},
+        {"role_id": 888, "event_id": 322, "id": 2, "status": 1},
+        {"role_id": 777, "event_id": 323, "id": 3, "status": 0},
+    ])
+
+    s = DragonState.from_raw(raw, my_role_id=777)
+
+    assert s.help_events == (321,)
+    assert [e.status for e in s.event_list] == [1, 1, 0]
+
+
 def test_bag_lookup_helper():
     s = DragonState.from_raw(_raw(bag={1518: 3}), my_role_id=777)
     assert s.bag_count(1518) == 3

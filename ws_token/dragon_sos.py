@@ -6,8 +6,9 @@ Dashboard 按 SOS 時，指定的協助號用既有的持久純 WS 連線（``co
 協議 2026-06-26 live-verified（CDP 抓 cmd id + 純 WS 實測救援成功，使用者手機確認）：
 - ``help_event_list`` 0x4F15：c2s body 空；s2c = {event_list: repeated #1, help_hp:u32 #2}
 - ``p_dragon_realm_event`` = {id:u64 #1, event_id:u32 #2, role_id:u64 #3, status:u32 #4, data #5}
-  status==0 = pending（尚未有人協助）
+  前端可協助判斷是 status!=1；進攻求助可能是 status=2，不能只判 status==0
 - ``provide_help`` 0x4F14 = {help_target:u64 #1, event_id:u32 #2}；fire-and-forget，重讀確認
+- ``receive_help_event`` 0x4F17 = {event_id:u32 #1}；只領我方 status==1，重讀確認
 
 ``rescue_pending`` 吃任意 client（``call``/``send`` 介面）故可單測；``rescue_via_ws`` 接
 ``ws_session``（預設真模組，測試注入 fake）。
@@ -24,8 +25,9 @@ logger = logging.getLogger(__name__)
 
 CMD_HELP_LIST = 0x4F15      # help_event_list_c2s/s2c（同 cmd 回應）
 CMD_PROVIDE_HELP = 0x4F14   # provide_help_c2s
+CMD_RECEIVE_HELP = 0x4F17   # receive_help_event_c2s
 
-_STATUS_PENDING = 0         # p_dragon_realm_event.status：0=待協助
+_STATUS_DONE = 1            # 前端 eventHelpRed：status==1 是已完成/可領協助獎勵
 _F_EVENT_LIST = 1           # help_event_list_s2c.event_list（repeated）
 _F_HELP_HP = 2              # help_event_list_s2c.help_hp
 # p_dragon_realm_event 欄位
@@ -61,14 +63,15 @@ def read_help_list(client) -> tuple[list[dict], int]:
 
 def _is_pending(ev: dict) -> bool:
     return (
-        ev.get("status") == _STATUS_PENDING
+        # 前端不是只判 status==0，而是判 status != 1；進攻求助可能回 status=2。
+        ev.get("status") != _STATUS_DONE
         and bool(ev.get("role_id"))
         and bool(ev.get("event_id"))
     )
 
 
 def rescue_pending(client) -> dict[str, Any]:
-    """讀清單 → 對每個 pending 求助送 provide_help → 重讀確認。
+    """讀清單 → 對每個可協助求助送 provide_help → 重讀確認。
 
     provide_help 是 fire-and-forget（無同 cmd 回應），故靠重讀清單確認剩餘量。
     """
@@ -87,6 +90,39 @@ def rescue_pending(client) -> dict[str, Any]:
     return {
         "attempted": len(pending),
         "targets": pending,
+        "remaining": len(remaining),
+        "help_hp_before": help_hp_before,
+        "help_hp_after": help_hp_after,
+    }
+
+
+def claim_help_rewards(client, my_role_id: int) -> dict[str, Any]:
+    """領取本帳號已完成的協助事件，並用重讀清單確認。"""
+    events, help_hp_before = read_help_list(client)
+    claimable = [
+        ev for ev in events
+        if ev.get("role_id") == int(my_role_id)
+        and ev.get("event_id")
+        and ev.get("status") == _STATUS_DONE
+    ]
+
+    for ev in claimable:
+        body = codec.pb_uint(1, int(ev["event_id"]))
+        client.send(CMD_RECEIVE_HELP, body)
+        logger.info("[dragon_sos] receive_help event_id=%s role_id=%s",
+                    ev["event_id"], ev["role_id"])
+        time.sleep(_PROVIDE_PACE_SEC)
+
+    after, help_hp_after = read_help_list(client)
+    remaining = [
+        ev for ev in after
+        if ev.get("role_id") == int(my_role_id)
+        and ev.get("event_id")
+        and ev.get("status") == _STATUS_DONE
+    ]
+    return {
+        "attempted": len(claimable),
+        "claimed": max(0, len(claimable) - len(remaining)),
         "remaining": len(remaining),
         "help_hp_before": help_hp_before,
         "help_hp_after": help_hp_after,

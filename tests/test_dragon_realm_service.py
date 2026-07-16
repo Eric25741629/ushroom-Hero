@@ -1,4 +1,4 @@
-from dragon_realm.service import run_loop, LoopLimits
+from dragon_realm.service import run_loop, LoopLimits, _resolve_role_id
 from dragon_realm.planner import Action, Prefs
 from dragon_realm.state import DragonState
 from dragon_realm import constants as C
@@ -37,6 +37,11 @@ class Cfg:
 
 
 PREFS = Prefs(my_role_id=1)
+
+
+def test_resolve_role_id_falls_back_to_captured_credentials():
+    assert _resolve_role_id({}, detected_role_id=89555436834913) == 89555436834913
+    assert _resolve_role_id({"dragon_realm_role_id": 777}, detected_role_id=888) == 777
 
 
 def test_loop_stops_on_out_of_stamina():

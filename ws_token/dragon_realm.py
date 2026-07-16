@@ -54,9 +54,10 @@ TIER3_KEYS = 2
 
 # 寶箱類事件的 event_id：DETOUR(繼續探索)跳過、不開箱、不耗秘銀龍鑰；箱子進背包。
 # 其餘非戰鬥事件（山洞探索報告等）一律 ADVANCE(1) 才能結束、繼續流程。
-# LIVE 實證：山洞(eid=14) 客戶端關閉報告送 0x4F12{1:1}=ADVANCE；秘銀龍骸箱=eid 11。
-# ponytail: CHEST_EIDS 目前只含 live 確認的 11；CDP 全流程驗證若出現其他寶箱階 id 再補。
-CHEST_EIDS = {11}
+# LIVE 實證：山洞(eid=14) 客戶端關閉報告送 0x4F12{1:1}=ADVANCE；秘銀龍骸箱=eid 11；
+# 2026-07-16 live：二層寶箱 eid=12/13 也存在（只認 11 導致 ADVANCE 開箱被拒 deadloop）。
+# 未知非戰鬥 eid 一律走 DETOUR 優先 + 凍住才 ADVANCE 的 fallback（見 run()），不再靠列舉。
+CHEST_EIDS = {11, 12, 13}
 
 
 def _choice_body(choice: int, event_uid: int = 0) -> bytes:
@@ -132,6 +133,7 @@ def run(client: WSGameClient, tracker: InventoryTracker,
     actions = 0
     last_sig = None
     stuck = 0
+    detoured_euid = None  # 未知非戰鬥事件已試過 DETOUR 的 euid（無效才升級 ADVANCE）
     while actions < max_actions:
         info = _read_info(client)
         ceng, hp, eid, euid, ed = (
@@ -195,9 +197,13 @@ def run(client: WSGameClient, tracker: InventoryTracker,
         elif eid in CHEST_EIDS:
             # 寶箱：「繼續探索」(DETOUR)，永不開箱、不消耗秘銀龍鑰；箱子進背包。
             choice = CHOICE_DETOUR
+        elif (eid, euid) != detoured_euid:
+            # 未知非戰鬥事件：先試 DETOUR（對寶箱安全，不會誤開箱耗鑰）。
+            choice = CHOICE_DETOUR
+            detoured_euid = (eid, euid)
         else:
-            # 山洞探索報告等其餘非戰鬥事件：ADVANCE(1) 才會結束事件、繼續流程。
-            # LIVE 實證：DETOUR 對山洞無效會 deadloop（卡住並擋住進樓）。
+            # DETOUR 無效（同一事件還在）→ 山洞類，ADVANCE(1) 才會結束事件。
+            # LIVE 實證：DETOUR 對山洞(eid=14)無效會 deadloop（卡住並擋住進樓）。
             choice = CHOICE_ADVANCE
         client.send(CMD_CHOICE, _choice_body(choice))
 

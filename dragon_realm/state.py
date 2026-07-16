@@ -20,6 +20,7 @@ class DragonEvent:
     uid: int
     back_kill_time: int
     is_mine: bool
+    status: int = 0
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,12 @@ class DragonState:
                 uid=int(e.get("id") or 0),
                 back_kill_time=int(e.get("back_kill_time") or 0),
                 is_mine=(rid == my_role_id),
+                status=int(e.get("status") or 0),
             ))
+        help_events = tuple(
+            e.event_id for e in events
+            if e.is_mine and e.status == 1 and e.event_id
+        )
         return DragonState(
             activity_open=bool(raw.get("activity_open", False)),
             ceng=int(raw.get("ceng", 1)),
@@ -69,6 +75,6 @@ class DragonState:
             is_ask_help=bool(data.get(C.K_IS_ASK_HELP, 0)),
             back_kill_time=int(data.get(C.K_BACK_KILL_TIME, 0)),
             event_list=tuple(events),
-            help_events=tuple(int(x) for x in (raw.get("help_events") or [])),
+            help_events=help_events,
             bag={int(k): int(v) for k, v in (raw.get("bag") or {}).items()},
         )

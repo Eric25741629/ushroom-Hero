@@ -78,7 +78,7 @@ def decide(state: DragonState, config, prefs: Prefs) -> Action:
     # 2. 協助隊友（有 help_hp 時）
     if prefs.assist_teammates and state.help_hp > 0:
         for ev in state.event_list:
-            if (not ev.is_mine) and ev.event_id:
+            if (not ev.is_mine) and ev.status != 1 and ev.event_id:
                 return Action.provide_help(ev.role_id, ev.event_id)
 
     # 3. 領取協助獎勵

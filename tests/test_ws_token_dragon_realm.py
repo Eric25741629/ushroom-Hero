@@ -100,20 +100,23 @@ def test_run_aborts_on_stuck_cave_instead_of_budget_exhausted():
     assert len(client.sent) < 20
 
 
-def test_noncombat_noncave_event_uses_advance():
-    """非戰鬥、非寶箱事件（山洞探索報告等，eid 不在 CHEST_EIDS）送 ADVANCE(1)、
-    event_uid=0。
+def test_unknown_noncombat_event_detour_first_then_advance():
+    """未知非戰鬥 eid（不在 CHEST_EIDS）：先 DETOUR（寶箱安全，不會誤開箱耗鑰），
+    同一事件凍住不動才升級 ADVANCE(1) 結束山洞類事件。
 
-    LIVE 實證：山洞(eid=14) 客戶端關閉報告送 0x4F12{1:1}=ADVANCE；DETOUR 對山洞
-    無效會凍結 deadloop、並擋住 enter_ceng 進樓。eid=15 同屬非寶箱非戰鬥。
+    LIVE 實證 2026-07-16：二層寶箱 eid=12/13 不在舊 CHEST_EIDS={11}，被直接
+    ADVANCE 開箱遭 server 拒絕而 deadloop。山洞(eid=14) 則相反：DETOUR 無效、
+    只吃 ADVANCE。fallback 順序 DETOUR->ADVANCE 兩者都能收斂。
     """
     client = StuckClient(_info_body(1, 29, 15, 20015000000))
 
-    dragon_realm.run(client, InventoryTracker(), pace=0, max_actions=1)
+    dragon_realm.run(client, InventoryTracker(), pace=0, max_actions=2)
 
-    choice_cmd, choice_body = client.sent[0]
-    assert choice_cmd == dragon_realm.CMD_CHOICE
-    assert codec.walk_dict(choice_body) == {1: dragon_realm.CHOICE_ADVANCE, 2: 0}
+    assert [codec.walk_dict(b) for c, b in client.sent
+            if c == dragon_realm.CMD_CHOICE] == [
+        {1: dragon_realm.CHOICE_DETOUR, 2: 0},
+        {1: dragon_realm.CHOICE_ADVANCE, 2: 0},
+    ]
 
 
 def test_chest_event_uses_detour_not_open():

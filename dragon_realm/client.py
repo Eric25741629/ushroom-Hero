@@ -69,7 +69,8 @@ _READ_JS = r"""
   if (info.event_id) {
     if (ed[1] || ed[6]) et = 1;       // K_PVE_HP or K_MAX_HP -> monster (PVE)
     else if (ed[2] !== undefined) et = 4;  // K_TRAP_TIME -> trap
-    else et = 5;                       // fallback: buff/cave/box -> advance
+    else if ([11, 12, 13].includes(info.event_id)) et = 3;  // chest (live 2026-07-16: 12/13 二層寶箱)
+    else et = 5;                       // fallback: buff/cave -> advance
   }
   const raw = {
     activity_open: !!(info.ceng || info.hp != null),
@@ -84,8 +85,10 @@ _READ_JS = r"""
     event_list: (cache.eventList || []).map(e => ({
       role_id: e.role_id, event_id: e.event_id, id: e.id || e.uid,
       event_type: e.event_type, back_kill_time: e.back_kill_time || 0,
+      status: e.status || 0,
     })),
-    help_events: (cache.eventList || []).filter(e => e.event_id).map(e => e.event_id),
+    // DragonState 依 role_id/status 過濾我方可領獎事件；這裡不再把隊友事件全塞進去。
+    help_events: [],
     bag: (() => {
       const bm = window.__drBag;
       if (!bm) return {};
