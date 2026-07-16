@@ -693,9 +693,30 @@ h1 {
    13. ACTION BAR + BUTTONS
    ============================================================ */
 .action-bar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 7px;
+  /* 固定 2 欄等寬 grid：短鍵成對排列、等高，不再 flex:1 亂擠換行。
+     中文標籤 + nowrap 在最窄卡片(~276px 內寬)下 3 欄會溢出，2 欄每格 ~134px 剛好容納
+     最長的內嵌標籤(如 🆘 SOS 救援 / 遠端畫面)。長標籤 / 主要鍵用 .btn--span 佔整列。 */
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+/* grid 子項預設撐滿所屬格 → 等寬等高。清掉舊 flex 版遺留的固定寬度
+   (.btn-recover{width:72px} 被 SOS / 恢復畫面 共用，在 grid 裡會變窄)。
+   flex:* 在 grid 子項會被忽略，故只需覆寫 width / min-width。 */
+.action-bar > .btn { width: auto; min-width: 0; }
+/* 長標籤 / 主要鍵佔整列，標籤永遠不被擠壓 */
+.action-bar > .btn--span,
+.action-bar > .carpark-rob-group { grid-column: 1 / -1; }
+/* 強制休眠 = 破壞性鍵：保持在 2 欄格內(不 span，避免奇數前置在 grid 留空格)，
+   以較實的 rose 邊框 + 內圈細節與例行控制區隔。刻意不降飽和，以免與 disabled 的
+   opacity:.5 撞視覺；rose 保持全飽和。搭配 🌙 圖示加速辨識。 */
+.action-bar > .btn--danger-key {
+  border-color: var(--rose-rim);
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--rose) 22%, transparent), var(--sh-1);
+}
+.action-bar > .btn--danger-key:hover {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--rose) 30%, transparent), var(--sh-2);
 }
 
 .btn {
@@ -3325,22 +3346,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           if (specialWanshen) {
 
             const fullScriptBtn = specialFullActive
-              ? `<button class="btn btn-wanshen-on" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 啟用完整腳本・已啟用</button>`
-              : `<button class="btn btn-wanshen-off" onclick="setSpecialWanshenMode('${ip}', 'full')">× 啟用完整腳本・未啟用</button>`;
+              ? `<button class="btn btn-wanshen-on btn--span" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 啟用完整腳本・已啟用</button>`
+              : `<button class="btn btn-wanshen-off btn--span" onclick="setSpecialWanshenMode('${ip}', 'full')">× 啟用完整腳本・未啟用</button>`;
             const idleWebBtn = webOpen
-              ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
+              ? `<button class="btn btn-force btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
               : (isDisabled
-                  ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
-                  : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
+                  ? `<button class="btn btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
+                  : `<button class="btn btn-skip btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
             const wanshenBtn = specialWanshenActive
-              ? `<button class="btn btn-wanshen-on" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 跑萬神試煉・已啟用</button>`
+              ? `<button class="btn btn-wanshen-on btn--span" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 跑萬神試煉・已啟用</button>`
               : (specialWanshenDone
-                  ? `<button class="btn btn-wanshen-done" disabled>✓ 本週已完成，不再執行</button>`
-                  : `<button class="btn btn-wanshen-off" onclick="setSpecialWanshenMode('${ip}', 'wanshen')">× 跑萬神試煉・未啟用</button>`);
+                  ? `<button class="btn btn-wanshen-done btn--span" disabled>✓ 本週已完成，不再執行</button>`
+                  : `<button class="btn btn-wanshen-off btn--span" onclick="setSpecialWanshenMode('${ip}', 'wanshen')">× 跑萬神試煉・未啟用</button>`);
             const specialExceptionControls = specialMode !== 'off' ? `
               ${isPaused
-                ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">恢復</button>`
-                : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">暫停</button>`}
+                ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">▶ 恢復</button>`
+                : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">⏸ 暫停</button>`}
               ${showWebLaunch
                 ? (webOpen
                     ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
@@ -3359,13 +3380,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             // 能先登入並填好設定再啟用。一般卡片的「開啟網頁」走 /api/web_launch 信箱，
             // 需要運行中的 thread 消費；停用裝置沒有 thread → 那條路按了不會有反應。
             const webSetupBtn = info.backend === 'web_h5'
-              ? `<button class="btn btn-skip" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
+              ? `<button class="btn btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
               : '';
             actionBar.innerHTML = `
 
               ${webSetupBtn}
 
-              <button class="btn btn-resume" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用腳本掛機(會運行所有腳本，非長時間在線)</button>
+              <button class="btn btn-resume btn--span" onclick="toggleDeviceEnabled('${ip}', true)">✅ 啟用腳本掛機(會運行所有腳本，非長時間在線)</button>
 
             `;
 
@@ -3375,14 +3396,14 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
             ${isPaused
 
-              ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">恢復</button>`
+              ? `<button class="btn btn-resume${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','resume')">▶ 恢復</button>`
 
-              : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">暫停</button>`
+              : `<button class="btn btn-pause${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','pause')">⏸ 暫停</button>`
 
             }
 
-            ${(showWebLaunch && _dragonOpen)
-              ? `<button class="btn btn-recover" onclick="dragonSos('${ip}')" title="龍骸：用此號純 WS 上線，自動協助所有 pending 求助隊友（會踢掉此號瀏覽器）">🆘 SOS 救援</button>`
+            ${_dragonOpen
+              ? `<button class="btn btn-recover" onclick="dragonSos('${ip}')" title="龍骸：用此號純 WS 上線，自動協助所有 pending 求助隊友（web_h5 會踢掉此號瀏覽器；adb 手機純 WS 上線）">🆘 SOS 救援</button>`
               : ''}
 
             ${showWebLaunch
@@ -3395,7 +3416,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
             <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
 
-            <button class="btn btn-force${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','force_sleep')">強制休眠</button>
+            <button class="btn btn-force btn--danger-key${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','force_sleep')">🌙 強制休眠</button>
 
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
