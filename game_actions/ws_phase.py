@@ -483,8 +483,11 @@ def acquire_scheduler_lease(ip: str, log) -> None:
         waited += _DASHBOARD_WS_POLL_SEC
 
 
-def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> None:
+def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> bool:
     """擋在自己的 WS 登入前，直到觀察者確認帳號離線才放行（所有裝置共用）。
+
+    回傳：``True`` = 被使用者強制中斷（強制休眠 / 暫停），呼叫端應放棄本輪 WS（不登入）；
+          ``False`` = 可安全往下走 WS 登入（帳號已離線 / 無 creds / 本機即偵測器 / 開網頁覆寫）。
 
     ``_account_online`` 回：
       - ``False``（確認離線）→ 放行。
@@ -497,25 +500,38 @@ def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> Non
       - 解不出 roleId（無 creds）→ 直接放行（本來就登不進、踢不了人）。
       - **本裝置正是當前在線偵測器** → 直接放行：monitor 正以本帳號連線＝不可能有真人
         （真人登入早把 monitor 踢了），登入只會踢掉 monitor，monitor 自會交接。
-    可中斷：使用者按「開啟網頁」→ 立即放行（web_h5 manual override，符合
-    feedback-open-browser-always-responsive）。
+    可中斷：
+      - 使用者按「開啟網頁」→ 立即放行（web_h5 manual override，符合
+        feedback-open-browser-always-responsive）。
+      - 使用者按「強制休眠」/「暫停」→ 立即打斷等待、回 True（使用者 2026-07-16 指定：
+        force 操作不管真人在不在線，通通斷線）。修「human_played 手機按強制休眠卡在
+        等待真人下線」。
     """
     rid = _account_role_id(ip)
     if rid is None:
-        return
+        return False
     if _current_detector() == ip:
-        return
+        return False
     undetermined_polls = 0
     waited = 0
     while True:
+        # 使用者強制中斷最優先：強制休眠 / 暫停 一律打斷等待，不再管真人在不在線。
+        # 回 True 讓呼叫端放棄本輪 WS（強制休眠信號留給主迴圈轉睡眠）。
+        try:
+            import bot_state
+            if bot_state.has_pending_force_sleep(ip) or bot_state.is_paused(ip):
+                log.info("[%s] 強制休眠/暫停中斷等待真人下線，放棄本輪 WS", ip)
+                return True
+        except Exception:  # noqa: BLE001 — 讀狀態失敗不影響等待迴圈
+            log.debug("[%s] 檢查強制休眠/暫停失敗", ip, exc_info=True)
         if _web_launch_pending(ip):
             log.info("[%s] 偵測到開啟網頁請求，放行 WS 在線閘門", ip)
-            return
+            return False
         online = _account_online(rid)
         if online is False:
             if waited:
                 log.info("[%s] 帳號已離線，恢復腳本（等了約 %ds）", ip, waited)
-            return
+            return False
         if online is None and not human_played:
             undetermined_polls += 1
             if undetermined_polls > _UNDETERMINED_MAX_POLLS:
@@ -625,8 +641,10 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
     # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
     # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。
-    _wait_until_human_offline(
-        ip, log, human_played=bool(device_cfg.get("human_played")))
+    if _wait_until_human_offline(
+            ip, log, human_played=bool(device_cfg.get("human_played"))):
+        # 強制休眠 / 暫停中斷：不登入 WS，直接放棄本輪（force_sleep 信號留給主迴圈轉睡眠）。
+        return frozenset()
 
     backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
     can_bootstrap = _should_bootstrap(backend_kind, cfg)

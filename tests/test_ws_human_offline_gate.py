@@ -48,6 +48,39 @@ def test_wait_returns_immediately_when_offline(monkeypatch):
     assert slept == []  # 確認離線 → 不等待
 
 
+def test_wait_breaks_on_force_sleep_even_if_human_online(monkeypatch):
+    """使用者按強制休眠 → 打斷「等待真人下線」、回 True，不再無限等（2026-07-16）。"""
+    monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
+    monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: True)  # 真人一直在線
+    slept = []
+    monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("bot_state.has_pending_force_sleep", lambda ip: True)
+    monkeypatch.setattr("bot_state.is_paused", lambda ip: False)
+
+    aborted = ws_phase._wait_until_human_offline("dev", ws_phase.logger,
+                                                 human_played=True)
+    assert aborted is True   # 中斷 → 呼叫端放棄本輪 WS
+    assert slept == []       # 立即打斷，不進等待迴圈
+
+
+def test_wait_breaks_on_pause_even_if_human_online(monkeypatch):
+    """使用者暫停 → 同樣打斷等待真人下線、回 True。"""
+    monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
+    monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: True)
+    slept = []
+    monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("bot_state.has_pending_force_sleep", lambda ip: False)
+    monkeypatch.setattr("bot_state.is_paused", lambda ip: True)
+
+    assert ws_phase._wait_until_human_offline("dev", ws_phase.logger,
+                                              human_played=True) is True
+    assert slept == []
+
+
 def test_wait_loops_until_human_goes_offline(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
