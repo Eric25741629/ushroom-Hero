@@ -1210,17 +1210,34 @@ def _run_relic_sprint(client, tracker: mining.InventoryTracker, *, enabled: bool
         client, tracker, target_spend=target_spend, enabled=True)
 
 
-def _run_dragon_realm(client, tracker: mining.InventoryTracker) -> dict:
+def _run_dragon_realm(client, tracker: mining.InventoryTracker, *,
+                      device: str) -> dict:
     """龍骸聖域 pure-WS: explore + collect keys + tier transition.
-    Triweekly gate (Wed/Thu/Fri 10-22) checked here; skip outside window."""
-    from game_actions.dragon_realm_scheduler import _is_dragon_week, _within_open_window
+
+    Triweekly gate (Wed/Thu/Fri 10-22) checked here; skip outside window.
+
+    本活動週期完成標記（cycle-bound）：到達三樓門後真人自己上三樓、bot 門前不
+    再花體力，本週期已無事可做；若不標記完成，之後每輪 WS 都會重跑並 deadloop
+    空轉。故：
+      - reached_tier_three_gate → 標記完成，本活動週期後續 WS 跳過（下一週期自動重跑）。
+      - out_of_stamina → 不標記（龍骸每 7 分 +1 體力，下一輪 WS 要能繼續花體力）。
+      - deadloop / budget_exhausted → 不標記（失敗症狀 / 步數上限，都要能重跑）。
+    """
+    from game_actions.dragon_realm_scheduler import (
+        _is_dragon_week, _within_open_window, _cycle_completed, _mark_done,
+    )
     import datetime
     now = datetime.datetime.now()
     if not _is_dragon_week(now.date()):
         return {"skipped": "not dragon week"}
     if not _within_open_window(now):
         return {"skipped": "outside 10-22 window"}
+    if _cycle_completed(device, now):
+        logger.info("ws_token runner: %s 龍骸本活動週期已到三樓門，跳過", device)
+        return {"skipped": "already reached tier-3 gate this cycle"}
     reason = dragon_realm.run(client, tracker)
+    if reason == "reached_tier_three_gate":
+        _mark_done(device)
     return {"stop_reason": reason, "keys": tracker.counts.get(dragon_realm.KEY_ITEM, 0)}
 
 
@@ -1583,7 +1600,8 @@ def run_device(device: str, *, spend: bool = False,
                                   forge_ring=forge_ring, device=device))
         if dragon_realm_enabled:
             _step("dragon_realm",
-                  lambda: _run_dragon_realm(client, inventory_tracker))
+                  lambda: _run_dragon_realm(client, inventory_tracker,
+                                            device=device))
         if xwar_idle_enabled:
             _step("xwar_idle",
                   lambda: _run_xwar_idle(client, device=device))

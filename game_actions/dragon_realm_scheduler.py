@@ -55,6 +55,53 @@ def _mark_done(ip: str) -> None:
     time_recording(ip, name=_RECORD_KEY)
 
 
+def _record_date(record: dict) -> datetime.date | None:
+    """從 time record 取出日期：優先 timestamp（epoch），退回 date 字串。"""
+    ts = record.get("timestamp")
+    if ts:
+        try:
+            return datetime.datetime.fromtimestamp(float(ts)).date()
+        except (TypeError, ValueError, OSError, OverflowError):
+            pass
+    date_str = record.get("date")
+    if date_str:
+        try:
+            return datetime.datetime.strptime(str(date_str), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return None
+
+
+def _cycle_completed(ip: str, now: datetime.datetime | None = None) -> bool:
+    """本次活動週期是否已完成龍骸（到達三樓門）。
+
+    供 WS 路徑（ws_token.runner._run_dragon_realm）用：到達三樓門後真人接手上
+    三樓、bot 門前不再花體力，本活動週期已無事可做，須跳過後續每輪 WS 以免
+    deadloop 空轉。
+
+    完成標記重用 ADB/H5 路徑同一份 ``_RECORD_KEY`` timestamp（單一儲存來源，
+    共用同一個 TimeRecordDataManager 記錄）。因龍骸只在活動週的週三四五開放、
+    每個 21 天週期只有一個活動週，同一活動週共用同一個「週一」錨點；只要完成
+    標記時間落在與 *now* 相同的活動週（同週一），即視為本週期已完成；下一活動
+    週在 21 天後（不同週一），標記自動失效 → 自動重跑。
+
+    註：``_RECORD_KEY`` 也被 ``run_dragon_realm_if_due`` 的 20h ``_is_due`` 節流
+    寫入（ADB/H5 路徑，含 out_of_stamina），兩路徑刻意共用同一 key（同帳號完成
+    即完成）。目標機 adb-fc65396d 為 adb+ws 且 ADB service.run 直接 not_h5 abort
+    （不在標記集合、不寫 key），只有 WS 路徑會寫，故不受影響。
+    """
+    now = now or datetime.datetime.now()
+    record = return_time(ip, name=_RECORD_KEY)
+    if not record:
+        return False
+    last = _record_date(record)
+    if last is None:
+        return False
+    last_monday = last - datetime.timedelta(days=last.weekday())
+    now_monday = now.date() - datetime.timedelta(days=now.weekday())
+    return last_monday == now_monday
+
+
 def run_dragon_realm_if_due(ip: str, d) -> None:
     config = config_manager.load_config()
     if not use_dragon_realm(ip, config):
