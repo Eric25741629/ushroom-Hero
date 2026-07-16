@@ -137,12 +137,16 @@ def run(ctx: DailyContext) -> None:
     if special_active:
         if not ctx.special_wanshen_claimed:
             return
-        stage = get_stage_with_check(ctx.d, ctx.ip, ctx.Cnn_model)
-        if stage != "主頁面":
+        # 跟一般玩家喚醒相同：復用 handle_game_startup_pages 清公告/未知等彈窗、
+        # back/重啟、主頁面雙確認，避免特殊模式單次讀到「未知」就整天放棄。
+        from adb_operations import start_game_by_icon
+        from game_initialization import handle_game_startup_pages
+
+        if not handle_game_startup_pages(
+            ctx.d, ctx.ip, start_game_fn=start_game_by_icon, reward_fn=reward
+        ):
             logger.warning(
-                "[%s] 萬神專用排程未在主頁面（%s），本日不再嘗試",
-                ctx.ip,
-                stage,
+                "[%s] 萬神專用排程未能進入主頁面，本日不再嘗試", ctx.ip
             )
             bot_state.update_state(
                 ctx.ip, task="萬神試煉", step="未到達主頁面，順延下一個有效日"
