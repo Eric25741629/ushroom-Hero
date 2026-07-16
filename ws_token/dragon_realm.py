@@ -13,6 +13,7 @@ import logging
 import time
 
 from ws_token import codec
+from ws_token import dragon_sos
 from ws_token.client import WSGameClient
 from ws_token.mining import InventoryTracker
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 CMD_INFO = 0x4F01           # c2s {} -> s2c (same cmd) { team_id, ceng, hp, ... }
 CMD_EXPLORE = 0x4F10        # c2s {} -> s2c (DIFFERENT cmd, fire-and-forget)
-CMD_CHOICE = 0x4F12         # c2s { choice#1, event_uid#2 } -> s2c (different cmd)
+CMD_CHOICE = 0x4F12         # c2s { choice#1, optional event_uid#2 } -> s2c (different cmd)
 CMD_ENTER_CENG = 0x4F11     # c2s { ceng#1 } -> s2c (different cmd)
 
 # dragon_realm_info_s2c 真實佈局（LIVE ground truth, dcache_5554.json）：
@@ -51,6 +52,12 @@ STAMINA = (1, 2, 3)  # per-tier stamina cost
 TIER2_KEYS = 1
 TIER3_KEYS = 2
 
+# 寶箱類事件的 event_id：DETOUR(繼續探索)跳過、不開箱、不耗秘銀龍鑰；箱子進背包。
+# 其餘非戰鬥事件（山洞探索報告等）一律 ADVANCE(1) 才能結束、繼續流程。
+# LIVE 實證：山洞(eid=14) 客戶端關閉報告送 0x4F12{1:1}=ADVANCE；秘銀龍骸箱=eid 11。
+# ponytail: CHEST_EIDS 目前只含 live 確認的 11；CDP 全流程驗證若出現其他寶箱階 id 再補。
+CHEST_EIDS = {11}
+
 
 def _choice_body(choice: int, event_uid: int = 0) -> bytes:
     """event_choice c2s body = {choice#1, event_uid#2}.
@@ -71,6 +78,23 @@ def _event_data_map(body: bytes) -> dict:
             if isinstance(k, int):
                 ed[k] = kv.get(2, 0)
     return ed
+
+
+def _claim_rewards_at_boundary(client: WSGameClient) -> None:
+    """純 WS 龍骸流程結束前，盡力領取本帳號協助獎勵。"""
+    creds = getattr(client, "_creds", None)
+    role_id = int(getattr(creds, "role_id", 0) or 0)
+    if not role_id:
+        logger.warning("[dragon_ws] cannot auto-claim help rewards: role_id unavailable")
+        return
+    try:
+        result = dragon_sos.claim_help_rewards(client, role_id)
+        if result["attempted"]:
+            logger.info(
+                "[dragon_ws] auto-claimed help rewards: attempted=%d claimed=%d remaining=%d",
+                result["attempted"], result["claimed"], result["remaining"])
+    except Exception:  # noqa: BLE001 — 領獎失敗不可中止探索結果
+        logger.warning("[dragon_ws] auto-claim help rewards failed", exc_info=True)
 
 
 def _read_info(client: WSGameClient) -> dict:
@@ -125,6 +149,7 @@ def run(client: WSGameClient, tracker: InventoryTracker,
                 logger.warning(
                     "[dragon_ws] dead-loop: state frozen %dx (ceng=%d hp=%d eid=%d), abort",
                     stuck, ceng, hp, eid)
+                _claim_rewards_at_boundary(client)
                 return "deadloop"
         else:
             stuck = 0
@@ -143,6 +168,7 @@ def run(client: WSGameClient, tracker: InventoryTracker,
         # ceng==1 時上面的 tier transition 會先送 enter_ceng(2)，絕不落到這裡。
         if ceng == 2 and keys >= TIER3_KEYS:
             logger.info("[dragon_ws] tier-3 gate (keys=%d), stop", keys)
+            _claim_rewards_at_boundary(client)
             return "reached_tier_three_gate"
 
         # no event -> explore or stop
@@ -150,6 +176,7 @@ def run(client: WSGameClient, tracker: InventoryTracker,
             need = STAMINA[min(ceng - 1, 2)]
             if hp < need:
                 logger.info("[dragon_ws] out of stamina (hp=%d)", hp)
+                _claim_rewards_at_boundary(client)
                 return "out_of_stamina"
             client.send(CMD_EXPLORE, b"")
             time.sleep(pace)
@@ -165,14 +192,18 @@ def run(client: WSGameClient, tracker: InventoryTracker,
             choice = CHOICE_ASK_HELP        # 挑戰型：求助，絕不掙扎
         elif et in ("monster", "trap"):
             choice = CHOICE_ADVANCE         # 前進 / 擊殺
-        else:
-            # 寶箱等非戰鬥事件：一律「繼續探索」（CHOICE_DETOUR），永不開箱、
-            # 不消耗龍鑰；箱子進寶箱背包，流程繼續。對齊 LIVE 黃金樣本。
+        elif eid in CHEST_EIDS:
+            # 寶箱：「繼續探索」(DETOUR)，永不開箱、不消耗秘銀龍鑰；箱子進背包。
             choice = CHOICE_DETOUR
+        else:
+            # 山洞探索報告等其餘非戰鬥事件：ADVANCE(1) 才會結束事件、繼續流程。
+            # LIVE 實證：DETOUR 對山洞無效會 deadloop（卡住並擋住進樓）。
+            choice = CHOICE_ADVANCE
         client.send(CMD_CHOICE, _choice_body(choice))
 
         actions += 1
         logger.debug("[dragon_ws] [%d] c=%d hp=%d eid=%d et=%s", actions, ceng, hp, eid, et)
         time.sleep(pace * 0.5)
 
+    _claim_rewards_at_boundary(client)
     return "budget_exhausted"
