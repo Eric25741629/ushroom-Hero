@@ -69,7 +69,7 @@ _READ_JS = r"""
   if (info.event_id) {
     if (ed[1] || ed[6]) et = 1;       // K_PVE_HP or K_MAX_HP -> monster (PVE)
     else if (ed[2] !== undefined) et = 4;  // K_TRAP_TIME -> trap
-    else if ([11, 12, 13].includes(info.event_id)) et = 3;  // chest (live 2026-07-16: 12/13 二層寶箱)
+    else if ([11, 12, 13].includes(info.event_id)) et = 3;  // chest (live 2026-07-16: 寶箱有多種，各有自己的 eid)
     else et = 5;                       // fallback: buff/cave -> advance
   }
   const raw = {

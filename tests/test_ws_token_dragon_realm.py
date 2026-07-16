@@ -104,9 +104,10 @@ def test_unknown_noncombat_event_detour_first_then_advance():
     """未知非戰鬥 eid（不在 CHEST_EIDS）：先 DETOUR（寶箱安全，不會誤開箱耗鑰），
     同一事件凍住不動才升級 ADVANCE(1) 結束山洞類事件。
 
-    LIVE 實證 2026-07-16：二層寶箱 eid=12/13 不在舊 CHEST_EIDS={11}，被直接
-    ADVANCE 開箱遭 server 拒絕而 deadloop。山洞(eid=14) 則相反：DETOUR 無效、
-    只吃 ADVANCE。fallback 順序 DETOUR->ADVANCE 兩者都能收斂。
+    LIVE 實證 2026-07-16：寶箱不只一種、各有自己的 eid（12/13 不在舊
+    CHEST_EIDS={11}），被直接 ADVANCE 開箱遭 server 拒絕而 deadloop。
+    山洞(eid=14) 則相反：DETOUR 無效、只吃 ADVANCE。
+    fallback 順序 DETOUR->ADVANCE 兩者都能收斂。
     """
     client = StuckClient(_info_body(1, 29, 15, 20015000000))
 

@@ -55,7 +55,8 @@ TIER3_KEYS = 2
 # 寶箱類事件的 event_id：DETOUR(繼續探索)跳過、不開箱、不耗秘銀龍鑰；箱子進背包。
 # 其餘非戰鬥事件（山洞探索報告等）一律 ADVANCE(1) 才能結束、繼續流程。
 # LIVE 實證：山洞(eid=14) 客戶端關閉報告送 0x4F12{1:1}=ADVANCE；秘銀龍骸箱=eid 11；
-# 2026-07-16 live：二層寶箱 eid=12/13 也存在（只認 11 導致 ADVANCE 開箱被拒 deadloop）。
+# 2026-07-16 live：寶箱不只一種，不同種寶箱各有自己的 eid（另見 12/13；
+# 舊版只認 11 導致其他寶箱被 ADVANCE 開箱、遭拒而 deadloop）。
 # 未知非戰鬥 eid 一律走 DETOUR 優先 + 凍住才 ADVANCE 的 fallback（見 run()），不再靠列舉。
 CHEST_EIDS = {11, 12, 13}
 
