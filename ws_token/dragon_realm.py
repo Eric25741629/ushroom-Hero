@@ -23,10 +23,28 @@ CMD_EXPLORE = 0x4F10        # c2s {} -> s2c (DIFFERENT cmd, fire-and-forget)
 CMD_CHOICE = 0x4F12         # c2s { choice#1, event_uid#2 } -> s2c (different cmd)
 CMD_ENTER_CENG = 0x4F11     # c2s { ceng#1 } -> s2c (different cmd)
 
+# dragon_realm_info_s2c 真實佈局（LIVE ground truth, dcache_5554.json）：
+#   field 1=team_id 2=ceng 3=hp 4=next_hp_time 5=help_hp 6=help_counter
+#   field 7=event_id 8=event_data(repeated {k#1,v#2}) 9=ext(repeated {k#1,v#2})
+#   field 10=event_uid
+# 修正前把 field 8 當 event_uid、field 9 當 event_data，導致 ext 的 {k:1,v:0} 被
+# 誤讀成 K_PVE_HP → 寶箱被當小怪送 ADVANCE → server 忽略 → deadloop。
+F_CENG = 2
+F_HP = 3
+F_EVENT_ID = 7
+F_EVENT_DATA = 8
+F_EVENT_UID = 10
+
+# EventData key（當前事件 data 陣列的 k）
 K_PVE_HP = 1
 K_TRAP_TIME = 2
 K_IS_CHALLENGE = 4
 K_MAX_HP = 6
+
+# event_choice c2s 的 choice 值（客戶端逆向，dragon_realm/constants.py 同義）
+CHOICE_ADVANCE = 1   # 前進 / 擊殺
+CHOICE_DETOUR = 2    # 繞路 / 繼續探索（寶箱不開箱走這個）
+CHOICE_ASK_HELP = 3  # 求助（挑戰型事件）
 
 KEY_ITEM = 1527
 STAMINA = (1, 2, 3)  # per-tier stamina cost
@@ -34,17 +52,37 @@ TIER2_KEYS = 1
 TIER3_KEYS = 2
 
 
+def _choice_body(choice: int, event_uid: int = 0) -> bytes:
+    """event_choice c2s body = {choice#1, event_uid#2}.
+
+    LIVE 黃金樣本（frame 8，寶箱 event_id=11 繼續探索）= 08021000 = {1:2, 2:0}。
+    當前事件一律 event_uid=0（再次擊殺/協助等專用流程才帶非 0，本 loop 不走）。
+    """
+    return codec.pb_uint(1, int(choice)) + codec.pb_uint(2, int(event_uid))
+
+
+def _event_data_map(body: bytes) -> dict:
+    """把 repeated field 8（event_data，每筆 {k#1, v#2}）攤平成 {k: v}。"""
+    ed: dict[int, int] = {}
+    for fn, val in codec.walk(body):
+        if fn == F_EVENT_DATA and isinstance(val, (bytes, bytearray)):
+            kv = codec.walk_dict(bytes(val))
+            k = kv.get(1)
+            if isinstance(k, int):
+                ed[k] = kv.get(2, 0)
+    return ed
+
+
 def _read_info(client: WSGameClient) -> dict:
     body = client.call(CMD_INFO, b"")
     d = codec.walk_dict(body)
-    ed_raw = d.get(9, b"")
-    ed = codec.walk_dict(ed_raw) if isinstance(ed_raw, (bytes, bytearray)) else {}
+    euid = d.get(F_EVENT_UID, 0)
     return {
-        "ceng": d.get(2, 1),
-        "hp": d.get(3, 0),
-        "eid": d.get(7, 0),
-        "euid": d.get(8, 0) if isinstance(d.get(8), int) else 0,
-        "ed": ed,
+        "ceng": d.get(F_CENG, 1) if isinstance(d.get(F_CENG), int) else 1,
+        "hp": d.get(F_HP, 0) if isinstance(d.get(F_HP), int) else 0,
+        "eid": d.get(F_EVENT_ID, 0) if isinstance(d.get(F_EVENT_ID), int) else 0,
+        "euid": euid if isinstance(euid, int) else 0,
+        "ed": _event_data_map(body),
     }
 
 
@@ -101,6 +139,8 @@ def run(client: WSGameClient, tracker: InventoryTracker,
             time.sleep(pace)
             continue
 
+        # 只有 server 權威 ceng==2（實際站在 2 樓）且鑰匙足夠才宣告到 3 樓門前。
+        # ceng==1 時上面的 tier transition 會先送 enter_ceng(2)，絕不落到這裡。
         if ceng == 2 and keys >= TIER3_KEYS:
             logger.info("[dragon_ws] tier-3 gate (keys=%d), stop", keys)
             return "reached_tier_three_gate"
@@ -121,13 +161,15 @@ def run(client: WSGameClient, tracker: InventoryTracker,
 
         # handle event
         et = _infer_type(ed)
-        if et == "trap" and ed.get(K_IS_CHALLENGE):
-            client.send(CMD_CHOICE, codec.pb_uint(1, 3))  # ask help
+        if et in ("monster", "trap") and ed.get(K_IS_CHALLENGE):
+            choice = CHOICE_ASK_HELP        # 挑戰型：求助，絕不掙扎
+        elif et in ("monster", "trap"):
+            choice = CHOICE_ADVANCE         # 前進 / 擊殺
         else:
-            body = codec.pb_uint(1, 1)  # advance
-            if euid and isinstance(euid, int):
-                body += codec.pb_uint(2, euid)
-            client.send(CMD_CHOICE, body)
+            # 寶箱等非戰鬥事件：一律「繼續探索」（CHOICE_DETOUR），永不開箱、
+            # 不消耗龍鑰；箱子進寶箱背包，流程繼續。對齊 LIVE 黃金樣本。
+            choice = CHOICE_DETOUR
+        client.send(CMD_CHOICE, _choice_body(choice))
 
         actions += 1
         logger.debug("[dragon_ws] [%d] c=%d hp=%d eid=%d et=%s", actions, ceng, hp, eid, et)
