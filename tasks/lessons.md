@@ -522,3 +522,43 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   [[reference-live-mining-verification-via-cdp]]。
 - 大改動 merge 前務必先在 worktree 內 `git merge main` 解衝突，讓淨 diff 只剩自己的變動再送 review；
   worktree base 落後主樹時，直接 diff main..HEAD 會混入他人 commit 的反向差異，誤導 reviewer。
+
+## 2026-07-12: 「我的手機」= 手機fc (adb-fc65396d)
+- 使用者說「我的手機」時，直接查 adb-fc65396d，不要全裝置掃描。
+- 手機 fc 是使用者本人會拿來用的實體手機；bot 在螢幕熄滅後會接管並持續點擊，使用者拿起手機時會看到「亂點」。wake_up_handler 只在喚醒前尊重人為操作，任務開跑後不讓手。
+
+## 2026-07-16 混雜 WIP 共用檔的單一修正提交 + pytest 環境
+- `bot_config.json` 這類多 session 共改的檔要只提交其中一個修正時，不要動工作區：
+  `git show HEAD:file > tmp` → 對 tmp 做目標修改 → `git hash-object -w tmp` →
+  `git update-index --cacheinfo 100644,<blob>,file` → commit。工作區 WIP 原封不動。
+- 在本 repo 跑 pytest 一律用 `C:\Users\Eric\.conda\envs\mushroom1\python.exe -m pytest`；
+  裸 `python` 可能是別的環境，缺 uiautomator2 會讓 fixture setup 全掛，誤判成程式碼回歸。
+  判斷法：main 上同 command 也掛 → 環境問題，先看 traceback 是不是 ModuleNotFoundError。
+
+## 2026-07-16 live 測試紀律（使用者兩次糾正）
+- live WS 測試必須節流：每個操作間隔 >= 1 秒（sleep 寫死在腳本裡）、單一連線、失敗不 tight-loop 重送。不要給遊戲伺服器添麻煩。
+- 「實際測試」= 證據導向：封包 log 落檔、CDP 截圖、前後 server 狀態 dump 對照，報告引用檔案路徑。推測結果一律標「未驗證」，不准冒充實測。派 subagent 做 live 驗證時要把這兩條寫進 prompt。
+
+## 2026-07-16 worktree 基準節點（使用者糾正）
+- 開 worktree 一律以「最近的本地節點」（當下 main HEAD）為基準，不要用落後的舊節點/遠端節點。
+  本次 isolation worktree fork 在 3fdaa45c（落後 main 兩個 merge），subagent 得自己 reset --hard main 重做。
+- 派 worktree subagent 時，prompt 固定加一句：「開工前先 `git log --oneline -1` 對照主 repo main，
+  若落後就 `git reset --hard main` 再開 branch」。
+
+## 2026-07-16 龍骸事件 choice + 「dashboard 動作失敗先想 stale process」
+- 龍骸事件 choice（LIVE CDP 5554 實證）：山洞探索報告=ADVANCE(1)、寶箱(eid=11 秘銀龍骸箱)=DETOUR(2 不開箱)、
+  小怪(event_data 有 HP)=ADVANCE、挑戰型=ASK_HELP。DETOUR 對山洞無效→deadloop→擋住 enter_ceng 進樓。
+  進樓=0x4F11{1:2}(與 bot 一致)；鑰匙=龍鱗路引 item 1527(消耗後 0x0402 顯示 count-1)確認 KEY_ITEM 正確。
+- dashboard 前端動作回 `SyntaxError: Unexpected token '<' <!DOCTYPE` = 後端回 HTML(通常 500/404)，前端 resp.json() 爆。
+  排查順序：先確認路由有註冊(status GET 通=藍圖在)→再實跑後端函式抓 traceback。本次 disk code 正常，
+  結論是「正在跑的 server 是舊 code」(本專案無 hot-reload，template 每次讀所以新按鈕會出現，但 Python route/邏輯 stale)。
+  凡 dashboard 行為與 disk code 不符 → 先想「要重啟 new_main_v2.py」再懷疑程式。
+
+## 2026-07-16 龍骸寶箱 eid 不只 11 + 「現場卡住先連線再看 log」（使用者兩次催促糾正）
+- 使用者回報「裝置正在卡住」→ 第一動作是連 CDP/WS 看現場活狀態，log 只用來事後補脈絡。
+  本次先讀了 service/planner/log 才連線，被糾正兩次（「別看log 立刻動手」「你太慢了」）。
+- 龍骸寶箱 event_id 每層不同：11(一層秘銀龍骸箱)、12/13(二層，LIVE 2026-07-16)。
+  列舉 eid 必掛（漏了就把寶箱當山洞送 ADVANCE=開箱，server 拒絕→state 凍結→燒光預算）。
+  正解：未知非戰鬥事件一律 DETOUR 優先（對寶箱安全），同一 euid 凍住不動才升級 ADVANCE(山洞類)。
+- dragon_realm/service.run_loop 原本 action 之間無 sleep 也無 frozen 偵測 → 3 秒燒完 200 預算。
+  任何 fire-and-forget live loop 都要有：action 間隔 + state 簽章凍結偵測提早 bail。
