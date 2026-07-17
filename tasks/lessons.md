@@ -563,3 +563,17 @@ RogueView 主面板=有「神樹祝福/結算倒計時」且無「開始挑戰�
   正解：未知非戰鬥事件一律 DETOUR 優先（對寶箱安全），同一 euid 凍住不動才升級 ADVANCE(山洞類)。
 - dragon_realm/service.run_loop 原本 action 之間無 sleep 也無 frozen 偵測 → 3 秒燒完 200 預算。
   任何 fire-and-forget live loop 都要有：action 間隔 + state 簽章凍結偵測提早 bail。
+
+## 2026-07-17 萬神試煉 H5 節點化 + Cocos 狀態判斷別靠「容器 active」
+- 使用者第一次問「為何卡住」，我看 log 就下「正常沒卡」結論，被打臉（他手動點才動）。
+  卡頓/失效類問題：**先連 CDP 實地重現看現場**，log 只證流程活著、不證流程有效。
+- Cocos 狀態判斷不可信「容器 node.active」——`boxTips`(MessageView dialog)、`BattleView`(UIRoot) 常駐 active；
+  txtContent/label 字串**關閉後仍 stale 殘留**。要用「會真正 toggle 的節點」實測驗證：
+  確認窗用 `boxTips.active`(開=true/關=false)、勝敗用 `RogueBattleResultView/nodeWin` vs `nodeDefeat` 的 active。
+- 多 overlay 並存時 classify 優先序要**實機觀察定**，不能憑名字猜：開局獎勵 `RogueRemakeRewardView`(有進入遊戲鈕)
+  會與 `RogueMainView` 並存 → 若先判 STAGE 會對著遮罩亂點；`REMAKE` 必須排在 `STAGE` 前。
+  但純 Block 遮罩(`RogueGoodsGetView`/無按鈕)不阻擋 STAGE，emit 目標鈕可直接繞過。
+- tap-to-close 遮罩的關閉 catcher 是特定子節點(`imgMask`/`Block`)，emit view root 常無效——實測哪個節點才對。
+- H5 操作用 `node.emit('click')` 繞過 z-order/全螢幕 Block(座標 tap 會被吞)；判斷讀 cocos 場景(零截圖)。
+  ADB 無場景樹維持 OCR：同一入口依 `backend_kind=='web_h5'` 分派，H5 例外 fallback。見
+  docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md + battle/rogue_h5.py。
