@@ -192,6 +192,26 @@ def _settle_run(d) -> bool:
     return ok
 
 
+def _fight_rounds_ocr(d, rounds: int) -> tuple[int, bool]:
+    """ADB/OCR 路徑的跑局迴圈(原 fight_test 內嵌邏輯，抽出以便與 H5 node 路徑分派)。
+
+    回傳 (完成局數, 是否中止)。行為與抽出前完全一致。
+    """
+    completed = 0
+    for r in range(rounds):
+        if not _advance_to_stage(d):
+            logger.warning("[萬神試煉] 第 %d/%d 局無法進入關卡視圖 → 停止", r + 1, rounds)
+            return completed, True
+        fought = _battle_loop(d)
+        logger.info("[萬神試煉] 第 %d/%d 局完成 %d 關(打到失敗/逾時)", r + 1, rounds, fought)
+        if not _settle_run(d):
+            logger.warning("[萬神試煉] 第 %d/%d 局結算退出失敗 → 停止", r + 1, rounds)
+            return completed, True
+        completed += 1
+        logger.info("[萬神試煉] 已完成 %d/%d 局", completed, rounds)
+    return completed, False
+
+
 def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     """萬神試煉Beta：進副本 → 入場 → 跑滿 rounds 局(每局打到第一次失敗→結束本局)→ 祕寶閣。
 
@@ -222,20 +242,24 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
             return False
         time.sleep(2)
 
-        completed = 0
-        for r in range(rounds):
-            if not _advance_to_stage(d):
-                logger.warning("[萬神試煉] 第 %d/%d 局無法進入關卡視圖 → 停止", r + 1, rounds)
+        # 依後端分派：web_h5 走 node-emit 路徑(cocos 狀態判斷，繞過遮罩/座標飄移 →
+        # 治好開局遮罩吞點擊的 150s 空燒 + 結算紅箭頭打偏)；adb 維持 OCR。
+        # 副本清單→入場那段兩後端共用上面的 OCR，rogue_h5 從 RogueView 主面板接手。
+        # 見 docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            try:
+                from battle import rogue_h5
+                completed = rogue_h5.run_rounds(page, rounds=rounds)
+            except Exception:
+                logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
+                completed = 0
+            if completed < rounds:
                 aborted = True
-                break
-            fought = _battle_loop(d)
-            logger.info("[萬神試煉] 第 %d/%d 局完成 %d 關(打到失敗/逾時)", r + 1, rounds, fought)
-            if not _settle_run(d):
-                logger.warning("[萬神試煉] 第 %d/%d 局結算退出失敗 → 停止", r + 1, rounds)
+        else:
+            completed, ocr_aborted = _fight_rounds_ocr(d, rounds)
+            if ocr_aborted:
                 aborted = True
-                break
-            completed += 1
-            logger.info("[萬神試煉] 已完成 %d/%d 局", completed, rounds)
 
         try:
             buy_god_everyweek(d)  # 每週祕寶閣購買(週積分由 WS rogue 週五領)
