@@ -99,3 +99,33 @@ def test_parse_cap_bad():
     assert r._parse_cap(None) is None
     assert r._parse_cap("") is None
     assert r._parse_cap("沒有數字") is None
+
+
+class _FakePage:
+    """假 page：emit 一律成功，_read_text 回固定上限字串。"""
+    def __init__(self, limit_text):
+        self.limit_text = limit_text
+        self.states = []
+
+    def evaluate(self, js, arg=None):
+        if js == r._EMIT_JS:
+            return {"found": True}
+        if js == r._READTEXT_JS:
+            return self.limit_text
+        if js == r._STATE_JS:
+            # 若真的進到跑局(不該發生)→回 UNKNOWN 讓它很快 timeout, 測試才不會誤過
+            return {}
+        return {}
+
+
+def test_run_rounds_until_cap_stops_when_capped(monkeypatch):
+    # 已達本周上限(5000/5000) → 不應開跑任何一局, completed=0
+    monkeypatch.setattr(r, "_PACE", 0)
+    page = _FakePage("本周獲取上限： 5000/5000")
+    assert r.run_rounds(page, rounds=5, until_cap=True) == 0
+
+
+def test_read_blessing_cap_via_fake_page(monkeypatch):
+    monkeypatch.setattr(r, "_PACE", 0)
+    page = _FakePage("<b>本周獲取上限： <color=#ca1414>1200<color>/5000</b>")
+    assert r.read_blessing_cap(page) == (1200, 5000)
