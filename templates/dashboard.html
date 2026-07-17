@@ -3337,7 +3337,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${specialMode}-${specialWanshenDone}-force`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${specialMode}-${specialWanshenDone}-${info.wanshen_until_cap}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
@@ -3370,7 +3370,12 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
               ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
               <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
             ` : '';
-            actionBar.innerHTML = `${fullScriptBtn}${idleWebBtn}${wanshenBtn}${specialExceptionControls}`;
+            // 萬神刷到本周獲取上限(僅萬神模式且 H5 有意義；ADB 讀不到會自動退回固定次數)
+            const untilCap = info.wanshen_until_cap === true;
+            const capBtn = (specialWanshenActive && info.backend === 'web_h5')
+              ? `<button class="btn ${untilCap ? 'btn-wanshen-on' : 'btn-wanshen-off'} btn--span" onclick="setWanshenUntilCap('${ip}', ${!untilCap})">${untilCap ? '✓ 萬神刷到本周上限(神樹祝福)' : `× 萬神固定 ${info.special_wanshen_rounds || 10} 局`}</button>`
+              : '';
+            actionBar.innerHTML = `${fullScriptBtn}${idleWebBtn}${wanshenBtn}${capBtn}${specialExceptionControls}`;
 
           } else if (isDisabled) {
 
@@ -4143,6 +4148,22 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         if (!resp.ok) throw new Error(result.message || '專用腳本模式更新失敗');
         const labels = { off: '專用腳本已停用', full: '完整腳本已啟用', wanshen: '萬神試煉已啟用' };
         window.UI.toast(labels[mode] || '腳本模式已更新', 'ok');
+        await fetchStatus();
+      } catch (e) {
+        window.UI.toast('錯誤：' + e, 'err');
+      }
+    }
+    // 萬神刷到本周獲取上限(H5 讀神樹祝福 cur/cap；ADB 無場景樹讀不到→維持固定次數)
+    async function setWanshenUntilCap(ip, on) {
+      try {
+        const resp = await fetch(`/api/config/${ip}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ wanshen_until_cap: !!on })
+        });
+        const result = await resp.json().catch(() => ({}));
+        if (!resp.ok || result.status === 'error') throw new Error(result.message || '更新失敗');
+        window.UI.toast(on ? '萬神：刷到本周上限' : '萬神：固定次數', 'ok');
         await fetchStatus();
       } catch (e) {
         window.UI.toast('錯誤：' + e, 'err');
@@ -5060,10 +5081,15 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           return;
         }
         if (!r.attempted) {
-          window.UI.toast(`SOS：${ip} 目前沒有待協助的求助隊友`, 'info');
+          const skipN = (r.skipped && r.skipped.length) || 0;
+          const why = r.skipped_no_role ? '（my_role_id 未知）'
+            : r.skipped_no_help_hp ? '（help_hp=0）'
+            : skipN ? `（略過 ${skipN} 筆，詳見 log）` : '';
+          window.UI.toast(`SOS：${ip} 目前沒有待協助的求助隊友${why}`, 'info');
         } else {
+          const cleared = (r.cleared != null) ? r.cleared : r.attempted;
           window.UI.toast(
-            `SOS：協助了 ${r.attempted} 個求助，剩餘 ${r.remaining}` +
+            `SOS：送出 ${r.attempted}、清除 ${cleared}、剩餘 ${r.remaining}` +
             `（help_hp ${r.help_hp_before}→${r.help_hp_after}）`,
             r.remaining === 0 ? 'ok' : 'warn');
         }

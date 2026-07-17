@@ -81,3 +81,21 @@ def test_unknown():
     assert r.classify(_blank()) == r.UNKNOWN
     assert r.classify(None) == r.UNKNOWN
     assert r.classify("garbage") == r.UNKNOWN
+
+
+def test_parse_cap_richtext():
+    # 實測 5556/小寶 的 RichText 原字串
+    raw = "<b><color=#544231>本周獲取上限： <color=#ca1414>5000<color>/5000<color></b>"
+    assert r._parse_cap(raw) == (5000, 5000)
+
+
+def test_parse_cap_partial():
+    assert r._parse_cap("本周獲取上限： 1234/5000") == (1234, 5000)
+    # color hex 內的數字不可被誤抓(#544231/#ca1414)
+    assert r._parse_cap("<color=#544231>本周獲取上限： <color=#00ff00>0<color>/5000") == (0, 5000)
+
+
+def test_parse_cap_bad():
+    assert r._parse_cap(None) is None
+    assert r._parse_cap("") is None
+    assert r._parse_cap("沒有數字") is None

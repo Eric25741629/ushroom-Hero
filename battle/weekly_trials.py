@@ -246,15 +246,28 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         # 治好開局遮罩吞點擊的 150s 空燒 + 結算紅箭頭打偏)；adb 維持 OCR。
         # 副本清單→入場那段兩後端共用上面的 OCR，rogue_h5 從 RogueView 主面板接手。
         # 見 docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md
+        cap_reached = False  # until_cap 模式下是否已達本周獲取上限(達標=本週完成)
         page = getattr(d, "_page", None)
         if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
+            until_cap = False
+            try:
+                import config_manager
+                cfg = config_manager.get_device_config(getattr(d, "device_id", "") or "")
+                until_cap = bool(cfg.get("wanshen_until_cap", False))
+            except Exception:
+                pass
             try:
                 from battle import rogue_h5
-                completed = rogue_h5.run_rounds(page, rounds=rounds)
+                completed = rogue_h5.run_rounds(page, rounds=rounds, until_cap=until_cap)
+                if until_cap:
+                    cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
+                    cap_reached = bool(cap and cap[0] >= cap[1])
             except Exception:
                 logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
                 completed = 0
-            if completed < rounds:
+            # until_cap 模式：達本周上限而提早結束(completed<rounds)屬正常，不算 aborted
+            if not until_cap and completed < rounds:
                 aborted = True
         else:
             completed, ocr_aborted = _fight_rounds_ocr(d, rounds)
@@ -266,7 +279,8 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         except Exception:
             logger.exception("[萬神試煉] 祕寶閣購買流程異常")
 
-        done = completed >= rounds
+        # until_cap：達本周上限即算本週完成(即使 completed<rounds)；否則沿用「跑滿 rounds」。
+        done = cap_reached or completed >= rounds
         logger.info("[萬神試煉] 結束：完成 %d/%d 局，跑滿=%s", completed, rounds, done)
         return done
     finally:

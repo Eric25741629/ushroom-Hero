@@ -41,6 +41,10 @@ BTN_ENDTIPS_END = "/UIRoot/NormalView/RogueEndTipsView/btn1"            # 「結
 BTN_RESULT_CLOSE = "/UIRoot/NormalView/RogueBattleResultView/imgMask"   # 結果窗「點擊任意位置關閉」的 catcher(實測 root 無效，須 imgMask)
 BTN_SETTLE_GOODS = "/UIRoot/NormalView/GoodsGetView/Block"              # 結算獎勵「點擊空白處關閉」
 BTN_REPORT_CLOSE = "/UIRoot/NormalView/RogueRecordInfoView/view/btnClose"  # 本局報告 ✕
+# 神樹祝福(RogueScienceView) — 讀「本周獲取上限 cur/cap」，用來決定要刷幾局(取代寫死次數)
+BTN_SCIENCE = "/UIRoot/NormalView/RogueView/view/btnScience"            # 主面板「神樹祝福」
+SCIENCE_LIMIT = "/UIRoot/NormalView/RogueScienceView/content/costTips/limit"  # RichText「本周獲取上限：cur/cap」
+BTN_SCIENCE_CLOSE = "/UIRoot/NormalView/RogueScienceView/content/btnClose"
 
 # --- 時間常數（節點/WS 路徑很快，戰鬥結果 server-authoritative 但 client 有動畫）------
 _PACE = 1.2                 # 每個動作後基本間隔(秒)，避免 tight-loop 打 WS
@@ -184,6 +188,62 @@ def emit(page: Any, path: str) -> bool:
     return True
 
 
+_READTEXT_JS = r"""
+(path) => {
+  const target = '/' + path.split('/').filter(Boolean).join('/');
+  let n = null;
+  const w = (node, pp) => { if (n) return; if (pp === target) { n = node; return; }
+    (node.children||[]).forEach(c => w(c, pp + '/' + (c.name||'?'))); };
+  w(cc.director.getScene(), '');
+  if (!n) return null;
+  const s = (n._components||[]).map(c => c && (c.string ?? c._string)).find(x => typeof x === 'string');
+  return s || null;
+}
+"""
+
+
+def _read_text(page: Any, path: str) -> Optional[str]:
+    try:
+        return page.evaluate(_READTEXT_JS, path)
+    except Exception as e:
+        logger.warning("[rogue_h5] _read_text 例外 %s: %s", path, e)
+        return None
+
+
+def _parse_cap(raw: Optional[str]) -> Optional[tuple[int, int]]:
+    """從 RichText『本周獲取上限： 5000/5000』字串解析 (cur, cap)。純函式(供測試)。
+
+    先去 RichText 標籤——color 內含 #hex 可能有數字(如 #ca1414 的 14/14)，不去會誤抓。
+    """
+    import re
+    if not raw:
+        return None
+    clean = re.sub(r"<[^>]*>", "", raw)
+    m = re.search(r"(\d+)\s*/\s*(\d+)", clean)
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
+def read_blessing_cap(page: Any) -> Optional[tuple[int, int]]:
+    """從 RogueView 主面板讀『神樹祝福 → 本周獲取上限 cur/cap』。回傳 (cur, cap) 或 None。
+
+    會開啟再關閉 RogueScienceView；呼叫時需在主面板(HOME)。用來把「刷幾局」由寫死次數
+    改成「刷到本周上限為止」(見 run_rounds 的 until_cap)。**僅 H5(cocos 場景可讀)**；
+    ADB 無場景樹讀不到，維持固定 rounds。
+    """
+    if not emit(page, BTN_SCIENCE):
+        return None
+    time.sleep(_PACE)
+    raw = _read_text(page, SCIENCE_LIMIT)
+    emit(page, BTN_SCIENCE_CLOSE)
+    time.sleep(_PACE)
+    cap = _parse_cap(raw)
+    if cap is None:
+        logger.warning("[rogue_h5] 讀不到/無法解析本周獲取上限: %r", raw)
+    return cap
+
+
 def _shot(cb: Optional[Callable[[str], None]], tag: str) -> None:
     if cb:
         try:
@@ -301,31 +361,55 @@ def _wait_state(page: Any, targets: set, timeout: float) -> bool:
     return False
 
 
-def run_rounds(page: Any, rounds: int = 8, shot: Optional[Callable] = None) -> int:
-    """從 RogueView 主面板跑滿 rounds 局(每局打到第一次失敗→結束本局)。回傳完成局數。
+def run_rounds(
+    page: Any,
+    rounds: int = 8,
+    shot: Optional[Callable] = None,
+    until_cap: bool = False,
+) -> int:
+    """從 RogueView 主面板跑局(每局打到第一次失敗→結束本局)。回傳完成局數。
+
+    - until_cap=False：跑滿 rounds 局(舊行為)。
+    - until_cap=True：改讀『神樹祝福→本周獲取上限 cur/cap』，刷到 cur>=cap(達標) 或
+      上一局無進度(cur 沒增加) 為止；`rounds` 退化成**安全上限**避免無限迴圈。
 
     呼叫前需已在萬神試煉主面板(RogueView)；副本清單→入場的導航仍由 weekly_trials 負責。
     """
     completed = 0
+    last_cur: Optional[int] = None
     for r in range(rounds):
-        logger.info("[rogue_h5] === 第 %d/%d 局 ===", r + 1, rounds)
+        if until_cap:
+            cap = read_blessing_cap(page)          # 在主面板讀(開/關神樹祝福)
+            if cap:
+                cur, mx = cap
+                logger.info("[rogue_h5] 本周獲取上限 %d/%d", cur, mx)
+                if cur >= mx:
+                    logger.info("[rogue_h5] 已達本周上限 → 停止(已完成 %d 局)", completed)
+                    break
+                if last_cur is not None and cur <= last_cur:
+                    logger.info("[rogue_h5] 上一局無進度(%d→%d) → 停止", last_cur, cur)
+                    break
+                last_cur = cur
+            else:
+                logger.warning("[rogue_h5] 讀不到上限 → 退回用 rounds 安全上限續跑")
+        logger.info("[rogue_h5] === 第 %d 局 (安全上限 %d) ===", r + 1, rounds)
         if not advance_to_stage(page, shot):
             logger.warning("[rogue_h5] 第 %d 局 無法進入關卡視圖 → 停止", r + 1)
             break
         fought = battle_loop(page, shot)
-        logger.info("[rogue_h5] 第 %d/%d 局 完成 %d 關", r + 1, rounds, fought)
+        logger.info("[rogue_h5] 第 %d 局 完成 %d 關", r + 1, fought)
         if not settle_run(page, shot):
             logger.warning("[rogue_h5] 第 %d 局 結算退出失敗 → 停止", r + 1)
             break
         completed += 1
-    logger.info("[rogue_h5] 結束：完成 %d/%d 局", completed, rounds)
+    logger.info("[rogue_h5] 結束：完成 %d 局(until_cap=%s)", completed, until_cap)
     return completed
 
 
-def fight(d: Any, rounds: int = 8, shot: Optional[Callable] = None) -> int:
+def fight(d: Any, rounds: int = 8, shot: Optional[Callable] = None, until_cap: bool = False) -> int:
     """weekly_trials 用的薄包裝：由 device 取 playwright page 後跑 run_rounds。"""
     page = getattr(d, "_page", None)
     if page is None:
         logger.warning("[rogue_h5] device 無 _page(非 web_h5 或 session 未起) → 放棄")
         return 0
-    return run_rounds(page, rounds=rounds, shot=shot)
+    return run_rounds(page, rounds=rounds, shot=shot, until_cap=until_cap)
