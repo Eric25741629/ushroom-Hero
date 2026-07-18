@@ -1278,22 +1278,26 @@ select.form-control {
 .task-tab-panel .ws-field-note{font-size:.74em;color:var(--text-faint,var(--color-ink-soft,#6f6657));margin:2px 0 8px 0;}
 textarea.ws-json{font-family:var(--mono,monospace);font-size:.78em;width:100%;resize:vertical;white-space:pre;margin:4px 0;}
 textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:var(--danger-wash,#f8dee4);}
-/* ---- 任務參數浮窗 (taskSettingsModal；疊在裝置設定之上) ---- */
-#taskSettingsModal.modal-overlay{z-index:1100;}
-.modal.task-modal{max-width:780px;width:94%;}
-.task-modal-body{padding:18px 24px 4px;}
+/* ---- 任務參數面板（嵌在裝置設定 modal 內，單 DOM） ---- */
+#configModal .modal.config-modal{max-width:780px;width:94%;}
+#taskSettingsPanel{display:none;padding:0 24px 12px;}
+#taskSettingsPanel.is-open{display:block;}
+#configMainView.is-hidden{display:none;}
+.task-modal-body{padding:4px 0 4px;}
 .settings-crumb{font-size:.78em;font-weight:600;color:var(--color-ink-soft,#6f6657);margin:0 0 8px;letter-spacing:.02em;}
 .settings-crumb b{color:var(--color-ink,#2b2620);font-weight:700;}
-.task-modal .ws-subhead{font-size:.82em;font-weight:800;letter-spacing:.06em;color:var(--status-accent-text,var(--coral-deep,#b54a23));margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--color-line,#ece3d3);}
-.task-modal .ws-subhead:first-child{margin-top:2px;}
-/* 浮窗內字級/間距略放大，較好讀 */
-.task-modal .task-tab-chip{font-size:.9em;padding:6px 15px;}
-.task-modal .task-tab-panel{padding:6px 2px;}
-.task-modal .checkbox-item{font-size:.95em;margin:7px 0;}
-.task-modal .ws-schema-slot .ws-field label,
-.task-modal .task-tab-panel label{font-size:.92em;}
-.task-modal .task-tab-panel .ws-field-note,
-.task-modal .ws-schema-slot .ws-field-note{font-size:.8em;}
+.config-view-toggle{margin:0 24px 16px;}
+.config-view-toggle .settings-help{margin-top:6px;}
+#taskSettingsPanel .ws-subhead{font-size:.82em;font-weight:800;letter-spacing:.06em;color:var(--status-accent-text,var(--coral-deep,#b54a23));margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--color-line,#ece3d3);}
+#taskSettingsPanel .ws-subhead:first-child{margin-top:2px;}
+/* 任務參數面板內字級/間距略放大，較好讀 */
+#taskSettingsPanel .task-tab-chip{font-size:.9em;padding:6px 15px;}
+#taskSettingsPanel .task-tab-panel{padding:6px 2px;}
+#taskSettingsPanel .checkbox-item{font-size:.95em;margin:7px 0;}
+#taskSettingsPanel .ws-schema-slot .ws-field label,
+#taskSettingsPanel .task-tab-panel label{font-size:.92em;}
+#taskSettingsPanel .task-tab-panel .ws-field-note,
+#taskSettingsPanel .ws-schema-slot .ws-field-note{font-size:.8em;}
 .btn.open-task-settings{text-transform:none;letter-spacing:0;font-size:.9em;}
 .settings-help{font-size:0.72em;color:var(--color-ink-soft,#6f6657);margin-top:4px;}
 .settings-status{margin-top:8px;color:var(--color-ink-soft,#6f6657);font-size:0.86em;}
@@ -1385,7 +1389,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       <div class="top-bar-buttons">
         <button class="btn btn-recover" style="padding:5px 14px; width:auto;" onclick="openBugFeedbackModal()">bug反饋</button>
-        <button class="btn btn-skip" style="padding:5px 14px;" onclick="openOcrSettings()">設定 OCR</button>
+        <button class="btn btn--secondary btn-skip" style="padding:5px 14px;" onclick="openOcrSettings()">設定 OCR</button>
 
         <button class="btn btn-pause" style="padding:5px 14px; background:#444;color:#fff;" onclick="refreshDevices()">重啟 ADB</button>
 
@@ -1393,9 +1397,9 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         <button class="btn btn-resume" style="padding:5px 14px;" onclick="globalAction('resume')">全部恢復</button>
 
-        <button class="btn btn-skip" style="padding:5px 14px;" onclick="globalAction('skip')">全部跳過睡眠</button>
+        <button class="btn btn--secondary btn-skip" style="padding:5px 14px;" onclick="globalAction('skip')">全部跳過睡眠</button>
 
-        <button class="btn btn-save" style="padding:5px 14px;" onclick="openRegisterModal()">＋ 新增帳號</button>
+        <button class="btn btn--primary btn-save" style="padding:5px 14px;" onclick="openRegisterModal()">＋ 新增帳號</button>
 
       </div>
 
@@ -1471,11 +1475,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       <div class="action-bar" style="margin-top:8px;">
 
-        <button class="btn btn-save" onclick="saveLabelerConfig()">儲存設定</button>
+        <button class="btn btn--primary btn-save" onclick="saveLabelerConfig()">儲存設定</button>
 
         <button class="btn btn-pause" style="background:#3b4a63;color:#fff;" onclick="checkLabelerConnection()">檢查連線</button>
 
-        <button id="runLabelerBtn" class="btn btn-skip" onclick="runLabelerOnce()">立即執行一次</button>
+        <button id="runLabelerBtn" class="btn btn--secondary btn-skip" onclick="runLabelerOnce()">立即執行一次</button>
 
         <button id="pauseLabelerBtn" class="btn btn-pause" onclick="pauseLabeler()">暫停</button>
 
@@ -1595,13 +1599,13 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
   <div id="configModal" class="modal-overlay">
 
-    <div class="modal">
+    <div class="modal config-modal">
 
       <div class="modal-header">裝置設定</div>
 
       <input type="hidden" id="editIp">
 
-
+      <div id="configMainView">
 
       <div class="form-group">
 
@@ -1904,31 +1908,20 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
 
 
-      <div style="margin:0 24px 16px;">
+      <div class="config-view-toggle">
         <button type="button" class="btn btn--secondary open-task-settings" onclick="openTaskSettings()" style="width:100%;">任務參數 — 各任務細項</button>
         <div class="settings-help">農場／神燈／挖礦／遺物等細項參數。總開關仍在上方「任務開關」。</div>
       </div>
 
-
-
-      <div class="modal-actions">
-
+      <div id="configMainActions" class="modal-actions">
         <button class="btn btn--ghost btn-cancel" onclick="closeModal()">取消</button>
-
         <button class="btn btn--primary btn-save" onclick="saveConfig()">儲存設定</button>
-
       </div>
 
-    </div>
+      </div><!-- /#configMainView -->
 
-  </div>
-
-
-
-  <div id="taskSettingsModal" class="modal-overlay" onclick="if(event.target===this)closeTaskSettings()">
-    <div class="modal task-modal" onclick="event.stopPropagation()">
-      <div class="modal-header">任務參數</div>
-      <div class="task-modal-body">
+      <div id="taskSettingsPanel">
+        <div class="task-modal-body">
         <div class="settings-crumb">裝置設定 › <b>任務參數</b></div>
         <div id="wsPlanHint" class="ws-plan-hint" style="display:none;">目前方案沒有連線（+ws），以下設定先存著不會生效；之後把方案切成含連線的就會啟用。</div>
         <div id="taskTabBar" class="task-tab-bar" role="tablist" aria-label="任務參數分類"></div>
@@ -2050,10 +2043,13 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         </div>
       </div>
-      <div class="modal-actions">
-        <button class="btn btn--primary btn-save" type="button" onclick="closeTaskSettings()">返回裝置設定</button>
+        <div class="modal-actions" style="margin-left:0;margin-right:0;">
+          <button class="btn btn--secondary btn-skip" type="button" onclick="closeTaskSettings()">返回裝置設定</button>
+        </div>
       </div>
+
     </div>
+
   </div>
 
 
@@ -2212,7 +2208,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       <div class="modal-actions">
 
-        <button class="btn btn-cancel" onclick="closeProgramInfoModal()">關閉</button>
+        <button class="btn btn--ghost btn-cancel" onclick="closeProgramInfoModal()">關閉</button>
 
       </div>
 
@@ -2238,8 +2234,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         <input type="text" id="bugReporter" class="form-control" placeholder="可留空">
       </div>
       <div class="modal-actions">
-        <button class="btn btn-cancel" onclick="closeBugFeedbackModal()">取消</button>
-        <button class="btn btn-save" onclick="submitBugFeedback()">送出</button>
+        <button class="btn btn--ghost btn-cancel" onclick="closeBugFeedbackModal()">取消</button>
+        <button class="btn btn--primary btn-save" onclick="submitBugFeedback()">送出</button>
       </div>
     </div>
   </div>
@@ -2261,8 +2257,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       </div>
       <div id="regStatusBox" style="display:none; margin-top:10px; padding:8px; border-radius:6px; background:var(--card-bg); color:var(--text-primary); font-size:0.85em; white-space:pre-wrap;"></div>
       <div class="modal-actions">
-        <button class="btn btn-cancel" onclick="closeRegisterModal()">取消</button>
-        <button id="regSubmitBtn" class="btn btn-save" onclick="registerAccount()">建立並開啟登入</button>
+        <button class="btn btn--ghost btn-cancel" onclick="closeRegisterModal()">取消</button>
+        <button id="regSubmitBtn" class="btn btn--primary btn-save" onclick="registerAccount()">建立並開啟登入</button>
       </div>
     </div>
   </div>
@@ -2284,7 +2280,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
   <script>
 
     // ponytail: deferred — the ~30 inline fetch()→window.UI.apiPost and ~25
-    // alert()→window.UI.toast migrations. Behavior-preserving churn with
+    // window.UI.toast(, 'info')→window.UI.toast migrations. Behavior-preserving churn with
     // regression risk on the LIVE control panel; out of scope for this pass.
     // See UI_AUDIT_BASELINE §3.1 (C9) + §5(1c).
 
@@ -2659,7 +2655,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       if (!title || !detail) {
 
-        alert('請先填寫標題與描述');
+        window.UI.toast('請先填寫標題與描述', 'err');
 
         return;
 
@@ -2689,11 +2685,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         closeBugFeedbackModal();
 
-        alert('bug 反饋已送出');
+        window.UI.toast('bug 反饋已送出', 'ok');
 
       } catch (e) {
 
-        alert('送出 bug 反饋失敗: ' + e);
+        window.UI.toast('送出 bug 反饋失敗: ' + e, 'err');
 
       }
 
@@ -2725,7 +2721,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('讀取自動標籤設定失敗: ' + e);
+        window.UI.toast('讀取自動標籤設定失敗: ' + e, 'err');
 
       }
 
@@ -2769,11 +2765,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         if (!resp.ok || result.status === 'error') throw new Error(result.message || 'save failed');
 
-        alert('自動標籤設定已儲存');
+        window.UI.toast('自動標籤設定已儲存', 'ok');
 
       } catch (e) {
 
-        alert('儲存自動標籤設定失敗: ' + e);
+        window.UI.toast('儲存自動標籤設定失敗: ' + e, 'err');
 
       }
 
@@ -2795,7 +2791,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         if (resp.status === 409) {
 
-          alert('自動標籤已在執行中');
+          window.UI.toast('自動標籤已在執行中', 'ok');
 
         }
 
@@ -2803,7 +2799,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('啟動自動標籤失敗: ' + e);
+        window.UI.toast('啟動自動標籤失敗: ' + e, 'err');
 
       }
 
@@ -2917,7 +2913,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('暫停失敗: ' + e);
+        window.UI.toast('暫停失敗: ' + e, 'err');
 
       }
 
@@ -2935,7 +2931,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('繼續失敗: ' + e);
+        window.UI.toast('繼續失敗: ' + e, 'err');
 
       }
 
@@ -2953,7 +2949,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('終止失敗: ' + e);
+        window.UI.toast('終止失敗: ' + e, 'err');
 
       }
 
@@ -2975,7 +2971,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         if (resp.status === 409) {
 
-          alert('訓練已在執行中');
+          window.UI.toast('訓練已在執行中', 'ok');
 
         }
 
@@ -2983,7 +2979,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('啟動訓練失敗: ' + e);
+        window.UI.toast('啟動訓練失敗: ' + e, 'err');
 
       }
 
@@ -3369,8 +3365,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             const idleWebBtn = webOpen
               ? `<button class="btn btn-force btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
               : (isDisabled
-                  ? `<button class="btn btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
-                  : `<button class="btn btn-skip btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
+                  ? `<button class="btn btn--secondary btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
+                  : `<button class="btn btn--secondary btn-skip btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
             const wanshenBtn = specialWanshenActive
               ? `<button class="btn btn-wanshen-on btn--span" onclick="setSpecialWanshenMode('${ip}', 'off')">✓ 跑萬神試煉・已啟用</button>`
               : (specialWanshenDone
@@ -3383,10 +3379,10 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
               ${showWebLaunch
                 ? (webOpen
                     ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
-                    : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
+                    : `<button class="btn btn--secondary btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
                 : ''}
               ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
-              <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
+              <button class="btn btn--secondary btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
             ` : '';
             // 萬神刷到本周獲取上限(僅萬神模式且 H5 有意義；ADB 讀不到會自動退回固定次數)
             const untilCap = info.wanshen_until_cap === true;
@@ -3403,7 +3399,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             // 能先登入並填好設定再啟用。一般卡片的「開啟網頁」走 /api/web_launch 信箱，
             // 需要運行中的 thread 消費；停用裝置沒有 thread → 那條路按了不會有反應。
             const webSetupBtn = info.backend === 'web_h5'
-              ? `<button class="btn btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
+              ? `<button class="btn btn--secondary btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
               : '';
             actionBar.innerHTML = `
 
@@ -3432,12 +3428,12 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             ${showWebLaunch
               ? (webOpen
                   ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
-                  : `<button class="btn btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
+                  : `<button class="btn btn--secondary btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
               : ''}
 
             ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
 
-            <button class="btn btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
+            <button class="btn btn--secondary btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
 
             <button class="btn btn-force btn--danger-key${ctrlBtnLocked(ip) ? ' btn-locked btn-pending' : ''}" data-ctrlbtn="${ip}"${ctrlBtnLocked(ip) ? ' disabled' : ''} onclick="deviceControl('${ip}','force_sleep')">🌙 強制休眠</button>
 
@@ -3450,7 +3446,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
                   <option value="1">搶佔</option>
                   <option value="2">駐守</option>
                 </select>
-                <button class="btn btn-skip" onclick="carparkRob('${ip}')">加入</button>
+                <button class="btn btn--secondary btn-skip" onclick="carparkRob('${ip}')">加入</button>
               </span>` : ''}
 
           `;
@@ -3729,7 +3725,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
     async function registerAccount() {
       const deviceId = document.getElementById('regDeviceId').value.trim();
-      if (!deviceId) { alert('請輸入裝置 ID'); return; }
+      if (!deviceId) { window.UI.toast('請輸入裝置 ID', 'err'); return; }
       const regName = document.getElementById('regName').value.trim();
       const webUrl = document.getElementById('regWebUrl').value.trim() || '';
       document.getElementById('regSubmitBtn').disabled = true;
@@ -3797,7 +3793,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         if (!resp.ok || result.status === 'error') {
 
-          alert('切換啟用狀態失敗: ' + (result.message || resp.status));
+          window.UI.toast('切換啟用狀態失敗: ' + (result.message || resp.status), 'err');
 
           return;
 
@@ -3807,7 +3803,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
       } catch (e) {
 
-        alert('切換啟用狀態失敗: ' + e.message);
+        window.UI.toast('切換啟用狀態失敗: ' + e.message, 'err');
 
       }
 
@@ -3893,7 +3889,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       const typeEl = document.getElementById(`carparkRobType-${ip}`);
       const pos = parseInt(posEl && posEl.value, 10);
       const queue_type = parseInt(typeEl && typeEl.value, 10);
-      if (!Number.isInteger(pos) || pos < 1) { alert('請填正確的 pos'); return; }
+      if (!Number.isInteger(pos) || pos < 1) { window.UI.toast('請填正確的 pos', 'err'); return; }
       const label = queue_type === 2 ? '駐守' : '搶佔';
       if (!confirm(`確定送出 加入${label} pos=${pos}？（會真的參戰、用掉當日次數）`)) return;
       try {
@@ -4272,24 +4268,29 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       _taskTabsRendered = true;
       activateTaskTab(WS_TASK_TABS[0][0]);
     }
-    // 任務參數浮窗開/關。欄位 id 不變，留在 DOM 裡，故關閉浮窗不影響存檔
-    // (saveConfig 仍讀得到各欄位)。開啟時依目前「方案」select 重算 +ws 提示。
+    // 任務參數面板：在同一 configModal 內切換主表單 / 任務參數（單 DOM，欄位 id 不變）。
     function openTaskSettings() {
-      const m = document.getElementById('taskSettingsModal');
-      if (!m) return;
-      _relicDateFetchedFor = null;  // allow one fresh relic-date read per open
+      const panel = document.getElementById('taskSettingsPanel');
+      const main = document.getElementById('configMainView');
+      const header = document.querySelector('#configModal .modal-header');
+      if (!panel || !main) return;
+      _relicDateFetchedFor = null;
       renderTaskTabs();
       updateTaskTabCounts();
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
       if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
-      window.UI.openModal(m, { cls: 'active' });
+      main.classList.add('is-hidden');
+      panel.classList.add('is-open');
+      if (header) header.textContent = '任務參數';
     }
     function closeTaskSettings() {
-      const m = document.getElementById('taskSettingsModal');
-      // Only pop the stack if it is actually open (config's closeModal() also
-      // calls this unconditionally; closing a non-open overlay would mis-pop).
-      if (m && m.classList.contains('active')) window.UI.closeModal(m);
+      const panel = document.getElementById('taskSettingsPanel');
+      const main = document.getElementById('configMainView');
+      const header = document.querySelector('#configModal .modal-header');
+      if (panel) panel.classList.remove('is-open');
+      if (main) main.classList.remove('is-hidden');
+      if (header) header.textContent = '裝置設定';
     }
     // ---- 特殊頁籤(農場/看廣告)：欄位非單一 ws_token key，bespoke load/collect ----
     function _numOrNull(id) {
@@ -4778,6 +4779,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         pollWebLoginStatus(ip);
 
+        // 每次開啟都回到主表單（避免上次停在任務參數）
+        closeTaskSettings();
         window.UI.openModal('configModal', { cls: 'active' });
 
       } catch (e) {
@@ -5185,11 +5188,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         await fetch('/api/refresh_devices', { method: 'POST' });
 
-        alert('已重啟 ADB 並觸發刷新，請等待 5-10 秒');
+        window.UI.toast('已重啟 ADB 並觸發刷新，請等待 5-10 秒', 'ok');
 
       } catch (e) {
 
-        alert('刷新失敗: ' + e);
+        window.UI.toast('刷新失敗: ' + e, 'err');
 
       }
 

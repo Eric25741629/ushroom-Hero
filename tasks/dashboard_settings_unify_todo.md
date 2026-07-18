@@ -16,12 +16,17 @@
 - [x] task-tab / hint 色票走 tokens
 - [x] 契約測試 `tests/test_dashboard_settings_ia.py`（31 含 ui_library 全過）
 
+## P2（本批）
+- [x] 雙 modal → 單 DOM：`#taskSettingsPanel` 嵌進 `#configModal`，view 切換
+- [x] 卡片/工具列 `btn-skip/save/cancel` 全量雙掛 `btn--*`
+- [x] dashboard runtime `alert(` → `UI.toast`（0 殘留）
+- [x] 契約測試擴充（單 DOM / 無 bare alert / dual-mount）
+
 ## 不做（YAGNI）
 - 不拆 partials / 不改後端 schema
-- 不合併 taskSettings 進單一 DOM（先做層級清晰；結構合併另開）
 - 不整頁重寫 fly_pet / inventory
 
 ## Review
-- 改動檔：`templates/dashboard.html`（設定 modal IA / 按鈕 / toast / tokens）
-- 驗證：`python -m pytest tests/test_dashboard_settings_ia.py tests/test_ui_library.py -q` → 31 passed
-- 殘留：雙 modal 結構仍在（已有麵包屑+返回）；卡片上其他 `btn-skip` 未全量遷移；全域 ~20 處非設定 alert 仍待後續
+- 改動檔：`templates/dashboard.html`、`tests/test_dashboard_settings_ia.py`
+- 驗證：`python -m pytest tests/test_dashboard_settings_ia.py tests/test_ui_library.py -q` → 34 passed
+- 殘留：CSS 仍保留 legacy `.btn-save` 別名（相容字串模板）；其他子頁 alert 不在本批
