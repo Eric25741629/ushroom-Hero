@@ -56,8 +56,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 import json_manager
 from ws_token import (
-    ad_reward, carpark, couple, dragon_realm, dungeon, farm, gacha, guild,
-    idle_reward, kungfu_store, league_solo, main_tasks, mining,
+    ad_reward, arena_fight, carpark, couple, dragon_realm, dungeon, farm, gacha,
+    guild, idle_reward, kungfu_store, league_solo, main_tasks, mining,
     mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
     secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
     xwar_idle,
@@ -84,8 +84,8 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
-    "rogue", "statue", "guild", "steward", "relic", "relic_sprint", "gacha",
-    "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
+    "rogue", "arena", "statue", "guild", "steward", "relic", "relic_sprint",
+    "gacha", "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
     "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
     "main_tasks_late")
 
@@ -515,6 +515,45 @@ def _run_dungeon(client, *, sweeps: Sequence[Sequence[int]]) -> dict:
             "success": r.success, "rewards": r.rewards, "error_code": r.error_code,
         })
     return {"sweeps": results}
+
+
+def _run_arena(client, *, arena_config: Optional[dict], should_abort=None) -> dict:
+    """競技場 pure WS：``arena_battle_mode=pure_ws`` 時執行。
+
+    arena_config::
+      {
+        "enabled": bool,
+        "fights": 3,
+        "gap_sec": 7,
+        "b_mode": "ephemeral",   # ephemeral=全新無 profile；cdp=既有 CDP
+        "cdp_port": 0,           # b_mode=cdp 時
+        "game_url": "...",
+        "headless": True,
+      }
+    """
+    cfg = arena_config or {}
+    if not cfg.get("enabled"):
+        return {"skipped": "arena pure_ws disabled"}
+    b_mode = str(cfg.get("b_mode") or "ephemeral").strip().lower()
+    prefer_ephemeral = b_mode != "cdp"
+    cdp = cfg.get("cdp_port")
+    if not prefer_ephemeral and not cdp:
+        return {"skipped": "no B cdp_port", "success": False}
+    report = arena_fight.run_with_b(
+        client,
+        fights=int(cfg.get("fights") or arena_fight.DEFAULT_FIGHTS),
+        gap_sec=float(cfg.get("gap_sec") or 7),
+        should_abort=should_abort,
+        prefer_ephemeral=prefer_ephemeral,
+        cdp_port=int(cdp) if cdp else None,
+        game_url=cfg.get("game_url"),
+        headless=bool(cfg.get("headless", True)),
+        ready_timeout_sec=float(cfg.get("ready_timeout_sec") or 90),
+    )
+    out = report.as_dict()
+    if not report.success:
+        raise RuntimeError(report.error or f"arena pure_ws incomplete fought={report.fought}")
+    return out
 
 
 def _run_rogue(client, *, device: str, state_dir=None, now=None) -> dict:
@@ -1375,15 +1414,16 @@ def run_device(device: str, *, spend: bool = False,
                ad_reward_config_ids: Optional[Iterable[int]] = None,
                gacha_config: Optional[dict] = None,
                secret_jewel_config: Optional[dict] = None,
-               mining_config: Optional[dict] = None,
-               sea_config: Optional[dict] = None,
-               dragon_realm_enabled: bool = True,
-               xwar_idle_enabled: bool = False,
-               statue_amount: int = 7000,
-               progress=None,
-               should_abort: Optional[Callable[[], bool]] = None,
-               skip_tasks: Optional[Iterable[str]] = None,
-               only_tasks: Optional[Iterable[str]] = None) -> RunReport:
+                mining_config: Optional[dict] = None,
+                sea_config: Optional[dict] = None,
+                arena_config: Optional[dict] = None,
+                dragon_realm_enabled: bool = True,
+                xwar_idle_enabled: bool = False,
+                statue_amount: int = 7000,
+                progress=None,
+                should_abort: Optional[Callable[[], bool]] = None,
+                skip_tasks: Optional[Iterable[str]] = None,
+                only_tasks: Optional[Iterable[str]] = None) -> RunReport:
     """Run every ws_token daily task for ``device`` over one logged-in client.
 
     Builds a single WSGameClient (with a TaskCollector mounted as push_handler
@@ -1614,6 +1654,10 @@ def run_device(device: str, *, spend: bool = False,
                   inventory_tracker=inventory_tracker, device=device))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
+        if arena_config and arena_config.get("enabled"):
+            _step("arena",
+                  lambda: _run_arena(client, arena_config=arena_config,
+                                     should_abort=should_abort))
         _step("statue", lambda: _run_statue(client, device=device, amount=statue_amount))
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",

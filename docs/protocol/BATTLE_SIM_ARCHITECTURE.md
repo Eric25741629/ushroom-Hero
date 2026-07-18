@@ -45,9 +45,24 @@ B: xxx_result_c2s { vid, winner }
 | 模式 | ChapterType | chapterId | start | result | 工具 |
 |------|-------------|-----------|-------|--------|------|
 | 切磋 RoleSolo | 12 | 120001 | `solo.solo_start` 0x2401 | `{vid,winner}` 0x2402 | `tools/solo_battle_sim.py` |
-| 競技場 Arena | 5 | 50001 | `arena.arena_combat` 0x1403 | `{vid,wid}` 0x1404 | `tools/arena_battle_sim.py` |
+| 競技場 Arena | 5 | 50001 | `arena.arena_combat` 0x1403 | `{vid,wid}` 0x1404 | `tools/arena_battle_sim.py` / `battle_calc.pure_ws_arena` |
+| 萬神 rogue | 37 | 50001 | `rogue_main_combat` 0x4c04 | `{result,precent}` 0x4c05 | 小寶 CDP 9226 live 2026-07-17 |
 
 兩邊都 live 驗證：**重跑 N 次 deterministic，且與官方 result/is_win 一致**。
+
+### pure WS + B 算（競技場，2026-07-17 小寶 live）
+
+```
+A pure WS: arena_combat_c2s → body(seed+atk+def raw protobuf)
+B 全新瀏覽器（無 profile）: decode + BattleMainServer → wid
+A pure WS: arena_result_c2s {vid, wid} → server is_win / score_change
+```
+
+- **B 預設 ephemeral**：`chromium.launch` / Chrome channel，**不帶 user_data_dir、不登入**
+- 同帳 pure WS 會踢實戰 H5；B 是另一個乾淨 process，互不干擾
+- 可改 `global.battle_calc.mode=cdp` 連既有 CDP（需登入過的頁）
+- 裝置開關：`arena_battle_mode=pure_ws`，`arena_fight_gap_sec≥7`
+- 手動：`python -m battle_calc.pure_ws_arena --device 7fe98fc6 --fights 3`
 
 ## Runtime 需求
 
@@ -98,24 +113,24 @@ python tools/arena_battle_sim.py replay last_arena_combat.json --port 9230
 - bot 預設 4x：`utils/battle_speed.py`，設定鍵 `battle_speed_scale`（1=關，上限 10）
 - 掛載點：`device_wrapper` 開頁後 + 每次 screenshot 冪等 re-arm
 
-## 下次規劃：A 打 / B 算 / A 回（待設計）
+## A 打 / B 算 / A 回（進行中）
 
-目標：實戰帳號 **A** 只負責開打與回傳；**B** 專職當計算機（任意已載入 H5，可新號）。
+實戰帳號 **A** 開打與回傳；**B** 專職計算機（任意已載入 H5，可免洗 / 可被踢線後的同帳頁）。
 
 ```
-A: start_c2s → 收到 seed/vid/atk/def（整包）
-A → B: 整包 payload（不可只傳 role id）
+A: start_c2s → 收到 seed/vid/atk/def（整包 raw 或 decoded）
+A → B: combat body bytes 或 decoded payload（不可只傳 role id）
 B: BattleMainServer 算出 winner
-B → A: winner
-A: result_c2s { vid, winner }
+B → A: winner / result / precent
+A: result_c2s
 ```
 
-待決：
+| 狀態 | 說明 |
+|------|------|
+| 競技場 pure_ws | ✅ 小寶 live + 已接 bot：`ws_token.arena_fight` / runner task `arena` / dashboard `pure_ws` |
+| 競技場 local_sim | ✅ H5 攔截 + 本頁 sim |
+| 萬神 local_sim | ✅ 小寶 live 5 次 deterministic 對齊官方 |
+| remote_calc HTTP | 骨架 `battle_calc.server`；需常駐免洗 B |
+| dashboard | `arena_battle_mode` + `arena_fight_gap_sec`（≥7） |
 
-1. **傳輸通道**：本機 queue / HTTP / Redis / 共用檔案
-2. **B 池**：單機固定 CDP port vs 多 worker 註冊
-3. **適用模式**：先切磋 + 競技場；地獄之門另走 timeScale，不進此池
-4. **超時 / 失敗**：B 掛了 A 是否 fallback 本機算、是否仍送 result
-5. **安全**：payload 不含登入 cookie；B 不算完不讓 A 瞎報 winner
-
-驗收：同一 seed 在 A 本機算 vs B 遠端算 winner 一致；A 送 result 後 server `is_win` 對齊。
+模組：`battle_calc/`、`ws_token/arena.py`、`game_actions/arena_battle.py`。

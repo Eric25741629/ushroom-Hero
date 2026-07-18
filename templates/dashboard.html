@@ -1881,6 +1881,19 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           <label class="checkbox-item"><input type="checkbox" id="chkFarm">農場</label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkArena">競技場</label>
+          <label class="checkbox-item" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            競技場戰鬥路徑
+            <select id="selArenaBattleMode" class="form-control" style="width:auto;height:auto;padding:2px 8px;font-size:0.9em" title="animation=等動畫；local_sim=本頁秒算；pure_ws=純WS開戰+B頁計算；remote_calc=遠端B">
+              <option value="animation">動畫（預設）</option>
+              <option value="local_sim">本機秒算（H5）</option>
+              <option value="pure_ws">純 WS + B 計算</option>
+              <option value="remote_calc">遠端 B 計算</option>
+            </select>
+          </label>
+          <label class="checkbox-item" style="display:flex;align-items:center;gap:6px">
+            競技場間隔(秒)≥7
+            <input type="number" id="editArenaFightGap" min="7" max="120" step="1" value="7" class="form-control" style="width:4.5em;height:auto;padding:2px 6px">
+          </label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkMining">挖礦</label>
 
@@ -4649,6 +4662,16 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         document.getElementById('chkFarm').checked = config.enable_farm !== false;
 
         document.getElementById('chkArena').checked = config.enable_arena !== false;
+        {
+          const m = String(config.arena_battle_mode || 'animation').toLowerCase();
+          const sel = document.getElementById('selArenaBattleMode');
+          if (sel) sel.value = ['animation','local_sim','pure_ws','remote_calc'].includes(m) ? m : 'animation';
+          const gapEl = document.getElementById('editArenaFightGap');
+          if (gapEl) {
+            const g = Number(config.arena_fight_gap_sec);
+            gapEl.value = (Number.isFinite(g) && g >= 7) ? String(Math.min(120, Math.floor(g))) : '7';
+          }
+        }
 
         document.getElementById('chkMining').checked = config.enable_mining !== false;
 
@@ -4822,6 +4845,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         enable_farm: document.getElementById('chkFarm').checked,
 
         enable_arena: document.getElementById('chkArena').checked,
+        arena_battle_mode: (document.getElementById('selArenaBattleMode') || {}).value || 'animation',
+        arena_fight_gap_sec: Math.max(7, parseInt((document.getElementById('editArenaFightGap') || {}).value || '7', 10) || 7),
 
         enable_mining: document.getElementById('chkMining').checked,
 

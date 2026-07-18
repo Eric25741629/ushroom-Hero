@@ -80,6 +80,7 @@ _PROTECT_WAIT_SEC_DEFAULT = 60.0
 _KICK_COOLDOWN_SEC = 1800.0
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
+    "arena": "競技場",
 }
 
 
@@ -305,6 +306,37 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     mining_config = cfg.get("ws_token_mining") or None
     sea_config = _ws_nested.get("sea_season") or None
     only_tasks = _ws_nested.get("only_tasks") or None
+    # 競技場 pure_ws：B 預設 ephemeral 全新瀏覽器（無 profile）
+    arena_config = None
+    try:
+        from battle_calc.config import (
+            coerce_arena_gap_sec,
+            coerce_battle_mode,
+            get_battle_calc_global,
+        )
+        from ws_token.arena_fight import resolve_b_cdp_port
+
+        _amode = coerce_battle_mode(cfg.get("arena_battle_mode", "animation"))
+        if bool(cfg.get("enable_arena", True)) and _amode == "pure_ws":
+            _bc = get_battle_calc_global()
+            _b_mode = str(_bc.get("mode") or "ephemeral").strip().lower()
+            _calc = _bc.get("cdp_port") if _bc.get("enabled") else None
+            _b = resolve_b_cdp_port(
+                device_cdp=cfg.get("web_debug_port"), calc_cdp=_calc
+            )
+            if _b_mode != "cdp" or _b:
+                arena_config = {
+                    "enabled": True,
+                    "fights": 3,
+                    "gap_sec": coerce_arena_gap_sec(cfg.get("arena_fight_gap_sec", 7)),
+                    "b_mode": _b_mode if _b_mode in ("ephemeral", "cdp") else "ephemeral",
+                    "cdp_port": _b,
+                    "game_url": _bc.get("game_url"),
+                    "headless": bool(_bc.get("headless", True)),
+                    "ready_timeout_sec": float(_bc.get("ready_timeout_sec") or 90),
+                }
+    except Exception:  # noqa: BLE001
+        logger_obj.debug("[%s] arena pure_ws config inject failed", ip, exc_info=True)
     # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
     try:
         lamp_percent = max(0.0, float(_ws_nested.get("lamp_percent", 0) or 0))
@@ -337,6 +369,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     # 跨服戰閒置獎勵預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
     if xwar_idle_enabled:
         extra_kwargs["xwar_idle_enabled"] = True
+    if arena_config is not None:
+        extra_kwargs["arena_config"] = arena_config
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
     def _should_abort() -> bool:

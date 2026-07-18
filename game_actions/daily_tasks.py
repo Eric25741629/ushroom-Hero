@@ -74,54 +74,20 @@ def daily_acceleration(d, ip, Cnn_model=None):
 def click_arena_challenges(d, ip):
     """
     執行競技場每日挑戰任務
-    
-    Args:
-        d: uiautomator2 device 物件
-        ip: 設備 IP
+
+    路徑由 device config ``arena_battle_mode`` 決定：
+    animation / local_sim / remote_calc / pure_ws；兩場間隔 ``arena_fight_gap_sec``（≥7s）。
     """
     should_execute = is_due("競技場挑戰", ip)
 
     if should_execute:
         logger.info(f"[{ip}] 執行競技場每日挑戰")
         try:
-            # 進入競技場
-            img_tools.click_str_by_server(d, '競技場', shift_y=-20, x_range=(0, 160))
-            time.sleep(0.5)
-            img_tools.click_str_by_server(d, '挑戰', wait_timeout=5, y_range=(789, 855))
-            
-            # 執行 3 次挑戰
-            for i in range(3):
-                logger.info(f"[{ip}] 競技場挑戰 {i+1}/3")
-                img_tools.click_str_by_server(d, '挑戰', y_range=(592, 674), wait_timeout=5)  # 從下面的挑戰開始點
-                
-                # 等待戰鬥完成(超過15秒點擊跳過)
-                start_time = time.time()
-                while True:
-                    time.sleep(1)
-                    check_str = img_tools.wait_for_any_text(d, ['勝利', '對決', '跳過'], y_range=(100, 800), timeout=3)
-                    if check_str == '跳過':
-                        time.sleep(1)
-                    elif check_str in ['勝利', '對決']:
-                        logger.info(f"[{ip}] 挑戰 {i+1} 完成")
-                        break
-                    
-                    # 超時保護(最多等待 60 秒)
-                    if time.time() - start_time > 60:
-                        logger.warning(f"[{ip}] 挑戰 {i+1} 超時，強制結束")
-                        break
-                        
-                time.sleep(2)
-            
-            # 刷新對手並返回
-            img_tools.click_str_by_server(d, '刷新', y_range=(711, 782), shift_y=60)
-            time.sleep(1)
-            img_tools.click_str_by_server(d, '記錄', y_range=(831, 865), x_range=(437, 521), shift_y=60, wait_timeout=5)
-            time.sleep(1)
-            
-            # 記錄完成
+            from game_actions.arena_battle import run_arena_challenges
+
+            run_arena_challenges(d, ip)
             time_recording(ip, name="arena_challenges")
             logger.info(f"[{ip}] 競技場每日挑戰完成")
-            
         except Exception as e:
             logger.error(f"[{ip}] 競技場挑戰執行失敗: {e}")
     else:

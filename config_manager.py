@@ -54,6 +54,11 @@ DEFAULT_DEVICE_CONFIG = {
     "web_screenshot_jpeg_quality": None,  # None=PNG(無損,預設); 1..100=改用 JPEG 擷取(較快較小)
     "web_reload_after_goto": False,  # True=goto 成功後再 reload；預設關閉以加快 H5 載入
     "battle_speed_scale": 4,  # web_h5 戰鬥加速倍率（官方廣告 2x 同管線；1=關閉）
+    # 競技場戰鬥路徑: animation=等動畫; local_sim=本頁 BattleMainServer;
+    # remote_calc=B 免洗頁秒算; pure_ws=純 WS 開戰+B 算+WS 回報
+    "arena_battle_mode": "animation",
+    "arena_fight_gap_sec": 7,  # 競技場兩場間隔下限（秒，硬下限 7）
+    "wanshen_battle_mode": "animation",  # 萬神關卡：animation / local_sim / remote_calc
     "enable_farm": True,  # 啟用農場
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
@@ -206,6 +211,9 @@ class DeviceConfig:
     web_screenshot_jpeg_quality: Optional[int] = None
     web_reload_after_goto: bool = False
     battle_speed_scale: float = 4  # web_h5 battle timeScale (1=off, official ad path is 2)
+    arena_battle_mode: str = "animation"
+    arena_fight_gap_sec: float = 7
+    wanshen_battle_mode: str = "animation"
 
     # Feature flags
     enable_farm: bool = True
@@ -1146,6 +1154,26 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         except (TypeError, ValueError):
             _bss = float(DEFAULT_DEVICE_CONFIG["battle_speed_scale"])
         current["battle_speed_scale"] = max(1.0, min(10.0, _bss if _bss > 0 else 1.0))
+        try:
+            from battle_calc.config import (
+                coerce_arena_gap_sec,
+                coerce_battle_mode,
+                coerce_wanshen_battle_mode,
+            )
+
+            current["arena_battle_mode"] = coerce_battle_mode(
+                current.get("arena_battle_mode", DEFAULT_DEVICE_CONFIG["arena_battle_mode"])
+            )
+            current["arena_fight_gap_sec"] = coerce_arena_gap_sec(
+                current.get("arena_fight_gap_sec", DEFAULT_DEVICE_CONFIG["arena_fight_gap_sec"])
+            )
+            current["wanshen_battle_mode"] = coerce_wanshen_battle_mode(
+                current.get("wanshen_battle_mode", DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"])
+            )
+        except Exception:
+            current["arena_battle_mode"] = "animation"
+            current["arena_fight_gap_sec"] = 7.0
+            current["wanshen_battle_mode"] = "animation"
         current["web_viewport_width"] = _clamp_int(
             current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
         )

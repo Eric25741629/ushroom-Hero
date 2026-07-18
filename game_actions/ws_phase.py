@@ -33,6 +33,7 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "mining": ("挖礦/Oracle",),
     "gacha": ("抽技能夥伴",),
     "sea_season": ("航海任務 (Sea)",),
+    "arena": ("競技場挑戰",),
 }
 
 # pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
@@ -45,6 +46,7 @@ SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
     "家族任務": ("donate_family",),
     "挖礦/Oracle": ("挖礦",),
     "萬神試煉": ("萬神試煉",),
+    "競技場挑戰": ("arena_challenges",),
 }
 
 
@@ -373,6 +375,7 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         secret_jewel_config=cfg.get("secret_jewel") or None,
         mining_config=cfg.get("mining") or None,
         sea_config=cfg.get("sea_season") or None,
+        arena_config=cfg.get("arena") or None,
         dragon_realm_enabled=bool(cfg.get("dragon_realm_enabled", True)),
         xwar_idle_enabled=bool(cfg.get("xwar_idle", False)),
         should_abort=should_abort,
@@ -638,6 +641,47 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _mining_cfg["shadow_planner_version"] = str(
             device_cfg.get("mining_shadow_planner_version", "") or "").strip().lower()
         cfg = {**cfg, "mining": _mining_cfg}
+    # 競技場 pure_ws：裝置層 arena_battle_mode → cfg.arena（B 預設 ephemeral 全新瀏覽器）
+    try:
+        from battle_calc.config import (
+            coerce_arena_gap_sec,
+            coerce_battle_mode,
+            get_battle_calc_global,
+        )
+        from ws_token.arena_fight import resolve_b_cdp_port
+
+        _mode = coerce_battle_mode(device_cfg.get("arena_battle_mode", "animation"))
+        _enable = bool(device_cfg.get("enable_arena", True)) and _mode == "pure_ws"
+        _bc = get_battle_calc_global()
+        _b_mode = str(_bc.get("mode") or "ephemeral").strip().lower()
+        _calc_cdp = _bc.get("cdp_port") if _bc.get("enabled") else None
+        _b_port = resolve_b_cdp_port(
+            device_cdp=device_cfg.get("web_debug_port"),
+            calc_cdp=_calc_cdp,
+        )
+        # ephemeral 不需既有 CDP；cdp 模式才要求 port
+        _can = _enable and (_b_mode != "cdp" or bool(_b_port))
+        cfg = {
+            **cfg,
+            "arena": {
+                "enabled": _can,
+                "fights": 3,
+                "gap_sec": coerce_arena_gap_sec(device_cfg.get("arena_fight_gap_sec", 7)),
+                "b_mode": _b_mode if _b_mode in ("ephemeral", "cdp") else "ephemeral",
+                "cdp_port": _b_port,
+                "game_url": _bc.get("game_url"),
+                "headless": bool(_bc.get("headless", True)),
+                "ready_timeout_sec": float(_bc.get("ready_timeout_sec") or 90),
+                "mode": _mode,
+            },
+        }
+        if _enable and not _can:
+            log.warning(
+                "[%s] arena pure_ws 已選但 b_mode=cdp 且無 CDP port → 跳過",
+                ip,
+            )
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 注入 arena pure_ws 設定失敗", ip, exc_info=True)
     # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
     # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
     # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。

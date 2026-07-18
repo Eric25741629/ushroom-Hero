@@ -6,6 +6,116 @@
 
 ---
 
+## 🚧 2026-07-17 A 打 / B 算：競技場 + 萬神試煉（免洗帳號當計算機）
+
+### 背景與已驗證事實
+
+- 架構文件：`docs/protocol/BATTLE_SIM_ARCHITECTURE.md`
+- 命名（本專案定案）：**A = 實戰帳號**（start + 回 result）；**B = 計算機**（任意已載入同網址 H5，免洗號即可）
+- 已 live 驗證：
+  - 競技場 Arena：`ChapterType=5`，`chapterId=50001`，`arena_combat` → `BattleMainServer` → `{vid,wid}`（`tools/arena_battle_sim.py`）
+  - 萬神 rogue：`ChapterType=37`，`chapterId=50001`，`rogue_main_combat` → `BattleMainServer` → `{result,precent}`（小寶 CDP 9226，2026-07-17：5 次重算全同且對齊官方 result、server `is_win=1`）
+- 官方 client **本來就先 headless 秒算再播動畫**；A/B 是把「算」拆到 B 帳，A 可跳過長動畫等待
+- **不可**只傳 role id；必須傳 start s2c 整包（seed + atk/def 完整單位資料）
+- B 不算完 → A **禁止**瞎報 winner（server 會驗算）
+- 地獄之門不進本池（走 timeScale）
+
+### 目標
+
+為 **競技場戰鬥**、**萬神試煉** 各加一條可選 A/B 路徑：A 本帳開打，B 用「相同 `mushroomh5` 網址的免洗帳號」算勝負，A 回報 result；失敗可 fallback 本機/原動畫路徑。
+
+### 設計定案（實作前鎖定，有異議再開討論）
+
+| 項目 | 定案 |
+|------|------|
+| 角色 | A=實戰 device；B=固定免洗 H5（可 headless） |
+| B 連線 | 本機常駐 CDP port（config：`battle_calc.cdp_port` / `web_debug_port`） |
+| 傳輸 | 本機 HTTP 小服務（A → POST payload → B 回 result）；同機 queue 亦可，首版用 HTTP 好測 |
+| 序列化 | payload JSON：**需可跨頁還原**（protobuf 物件不能直接丟；在 A 端 hook 時抽可填 `BattleDataFill` 的欄位，或在 B 端用同一頁的 structured clone 協議） |
+| 模式表 | `arena` / `rogue`（萬神 main combat）；切磋可後加 |
+| 開關 | per-device `battle_calc.enabled` + 模式白名單；**dashboard 必有開關**（專案鐵則） |
+| fallback | B 逾時/掛掉 → A 本機 `BattleMainServer`（H5）或維持現有點擊等動畫路徑 |
+| 不做 | 純 Python 重寫引擎；地獄之門；偽造未經驗算的 result；ADB 當 B（無 JS 引擎） |
+
+### Checklist
+
+#### 0. Spec / 文件
+- [ ] `docs/superpowers/specs/2026-07-17-battle-calc-ab-design.md`：A/B 契約、payload schema、逾時、fallback、設定鍵、不做清單
+- [ ] 更新 `docs/protocol/BATTLE_SIM_ARCHITECTURE.md`：補萬神 live 驗證列；「下次規劃」改為進行中並對齊 A 打 / B 算命名
+- [ ] 補 rogue 一列到「已驗證模式」表（ChapterType 37 / result 欄位 / 小寶 9226 日期）
+
+#### 1. 共用核心：`battle_calc/`（B 端 + 協定）
+- [ ] `battle_calc/schema.py`：`BattleCalcRequest` / `BattleCalcResponse`（mode, seed, chapterType, chapterId, atk/def blob, vid?, 回傳 result/wid/precent + ms + error）
+- [ ] `battle_calc/modes.py`：mode 註冊表
+  - `arena`: ch=5, id=50001, fill 第三參 `Arena`, 輸出 `{vid, wid}`
+  - `rogue`: ch=37, id=50001, fill 第三參 `Rogue`（**必傳**，否則 `configChapter_type` null → pve crash）, 輸出 `{result, precent}`；`atk_data[0]`/`def_data[0]`
+- [ ] `battle_calc/b_runtime.py`：連 B 的 CDP → 預載 `BattleMainServer`/`BattleDataFill` → `simulate(payload)` → 回結果；支援 N 次 deterministic 自檢
+- [ ] `battle_calc/server.py`：本機 HTTP（例 `127.0.0.1:18765`）`POST /v1/simulate` + `GET /health`；單 worker 佇列避免 B 頁 JS 併發踩踏
+- [ ] `battle_calc/client.py`：A 側 `simulate(mode, payload, timeout=…)` → HTTP；失敗 raise 明確錯誤
+- [ ] 單元測試：schema round-trip；modes 參數表；client mock server；server 拒未知 mode
+
+#### 2. B 帳號（免洗計算機）落地
+- [ ] config：`global.battle_calc`（或 host_settings 覆寫）
+  - `enabled` / `base_url` / `cdp_port` / `web_url`（預設同 `mushroomh5.acenetgame.com`）
+  - `profile_dir`（獨立 playwright profile，免洗號登入態）
+  - `headless` 預設 true
+  - `timeout_ms` / `fallback`: `local_sim` | `animation` | `abort`
+- [ ] 啟動：master 或獨立小行程 `python -m battle_calc.worker` 掛起 B 瀏覽器 + HTTP
+- [ ] 文件：如何用免洗號登入一次、之後 headless 複用 state
+- [ ] health：B 未登入/無 `netManager`/`System.import` 失敗時 `/health` 報 not_ready
+
+#### 3. 競技場 A 路徑
+- [ ] 釐清現有 `click_arena_challenges`（OCR 點 3 次）→ 可注入點：收到 `arena_combat_s2c` 後攔截官方自動 result，改走 B
+- [ ] H5 路徑優先：hook `arena.arena_combat_s2c` → 組 payload → `battle_calc.client` → `arena_result_c2s {vid, wid}` → 關結算 UI
+- [ ] 需抑制/搶在官方 `PvpControl.on_arena_combat_s2c` 送 result 之前（或讓官方算完但跳過動畫；首版以「攔截 send 或提前 result + 跳過 BattleHub」為驗收）
+- [ ] fallback：B 失敗 → 本機 CDP 同頁 `BattleMainServer`（A 自己當算）→ 仍失敗才走原動畫
+- [ ] 測試：mock combat payload → 回 wid 契約；enabled=false 不碰原流程
+- [ ] live：小寶或 5554 開 A/B，打 1 場競技場，對齊 server `is_win`
+
+#### 4. 萬神試煉 A 路徑
+- [ ] `battle/rogue_h5.py` / `weekly_trials.py`：每關 `開始挑戰` 後
+  - hook `rogue.rogue_main_combat_s2c` → B 算 → 送 `rogue_main_result_c2s {result, precent}`
+  - 跳過/縮短等結果窗與「跳過」動畫輪詢（仍要關 `RogueBattleResultView`）
+- [ ] 注意：官方 `RogueControl` **同步**秒算後立刻 `send result`；攔截策略與競技場共用「A 端 result 閘道」
+- [ ] ADB 萬神：無 JS → 不能 A 本機 sim；僅當 A 是 web_h5 或 A 另開 H5 session 時啟用；否則維持 OCR 路徑
+- [ ] 測試：rogue payload fixture → result/precent；until_cap/局數邏輯不變
+- [ ] live：小寶萬神 1 關 A/B，5 次 seed 重放 deterministic + server 接受
+
+#### 5. 設定 / Dashboard
+- [ ] `config_manager` 預設 + clamp + host_settings 覆寫
+- [ ] dashboard：裝置卡或全域「戰鬥遠端計算」開關（啟用/停用、B 健康狀態、fallback 顯示）
+- [ ] 僅 web_h5 或「本機可 CDP」裝置顯示可用；B not_ready 時灰掉並提示
+
+#### 6. 觀測與安全
+- [ ] log：`logs/battle_calc.log` — mode/seed/ms/result/fallback 原因（**不寫 cookie**）
+- [ ] payload 落檔可選 debug（`logs/battle_calc/payloads/`，預設關）
+- [ ] 逾時：B > timeout → fallback；連續 N 次失敗 → 本輪 disable A/B 並告警
+- [ ] 確認 B 免洗號與 A **不同 role**，避免同帳互踢
+
+#### 7. 驗收
+- [ ] 同 seed：B 算 == A 本機算 == 官方 result
+- [ ] 競技場 3 場、萬神 3 關：server code=0，進度正常
+- [ ] B 進程 kill：自動 fallback，任務不卡死
+- [ ] 開關 off：行為與現網完全一致
+- [ ] 目標測試（勿裸 pytest）：`tests/test_battle_calc_*.py` + 相關 arena/wanshen 回歸
+- [ ] runtime 改動後提醒重啟 `new_main_v2.py` / battle_calc worker
+
+### 建議實作順序
+
+1. Spec + schema + B runtime + HTTP（可先用現有小寶當 A、另開免洗 B）
+2. 競技場 A 接線（流程短、既有 sim 工具完整）
+3. 萬神 A 接線（局內多關、結果窗/結算 UI 較多）
+4. Dashboard + fallback 硬化 + live 驗收
+
+### 風險
+
+- **攔截官方 result 時序**：listener 順序；可能要 wrap `netManager.send` 擋重複 result
+- **payload 跨頁**：JSON 化後 `BattleDataFill` 欄位是否齊（live 要用 fixture 驗）
+- **B 單點**：多 A 併發需 queue；首版單 B 足夠
+- **ADB A**：不能本地 sim，只能 B 或維持動畫
+
+---
+
 ## 🚧 2026-07-09 工具 WS 斷線根因：在線監控與工具搶帳號（registry TOOL 無法搶佔借用者）
 
 根因（live 事證 logs/system/online_monitor.log + logs/emulator-5554/main.log）：
@@ -294,8 +404,9 @@ subagent 重新稽核後的新發現，已用 grep 逐項驗證零呼叫者才�
 
 協議（2026-06-26 live-verified，5554 CDP 抓 + 純 WS 實測救援成功，使用者手機確認）：
 - `help_event_list_c2s/s2c = 0x4F15 (20245)`；c2s body 空；s2c = {event_list: repeated p_dragon_realm_event #1, help_hp:u32 #2}
-- `p_dragon_realm_event = {id:u64 #1, event_id:u32 #2, role_id:u64 #3, status:u32 #4(0=pending), data:repeated #5}`
+- `p_dragon_realm_event = {id:u64 #1, event_id:u32 #2, role_id:u64 #3, status:u32 #4, data:repeated #5}`；協助可用 `status!=1`，我方可領獎為 `status==1`
 - `provide_help_c2s = 0x4F14 (20244) = {help_target:u64 #1, event_id:u32 #2}`；fire-and-forget，重讀清單確認
+- `receive_help_event_c2s = 0x4F17 (20247) = {event_id:u32 #1}`；只送我方 `status==1`，重讀清單確認
 - 重用 `control_panel/ws_session`（ensure→get_client→disconnect；內建暫停 bot/踢線/sweeper）
 - `codec.walk()` 保留 repeated（多事件）；`walk_dict` last-wins 只能解單欄
 
@@ -305,6 +416,7 @@ subagent 重新稽核後的新發現，已用 grep 逐項驗證零呼叫者才�
 - [x] `control_panel/routes_dragon_sos.py`：`POST /api/dragon_sos/<ip>` + `GET /api/dragon_sos/status`；註冊進 control_panel_app
 - [x] `templates/dashboard.html`：每 web_h5 列加 SOS 鈕（status.open 才顯示）+ 點擊 POST + toast
 - [x] `read_help_list` 對真實 0x4F15 s2c 驗證（help_hp=2 正確、空清單不 crash）
+- [x] 純 WS + H5 自動領取我方協助獎勵：`status==1`、role_id 過濾、0x4F17 領取、重讀確認；相關測試與設計規格已補
 - [ ] 重啟 control panel live 驗證整顆按鈕（協議+解析器+provide_help 皆已實證；剩 dashboard plumbing。龍骸窗口今晚 22:00 關，下次約 3 週後）
 
 ---
@@ -1166,3 +1278,33 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - [x] merge 到 main（849539f1），worktree/branch 已清（目錄殼被 NAS 同步佔住，可稍後手刪）
 
 備註：無 hot-reload — 正在跑的 control panel 要重啟 new_main_v2.py 才吃到新程式碼。
+
+## 🚧 2026-07-18 在線檢查納入寶兒/暴走（真人帳號在線偵測）
+
+### 目標
+讓「在線檢查」能檢查寶兒(web-001)/暴走(web-002)——兩者都要：
+- **閘門式**：bot 開瀏覽器前先確認真人在不在線，在線就不啟動（不踢真人）。
+- **監控式**：dashboard 能看到這兩個真人帳號是否在線。
+
+### 已驗證事實（2026-07-18，5554 純讀取擷取，零操作）
+- 寶兒 = `寶兒࿐` roleId **89562953024526**，家族「ღ雪夜城༄」；**是 5554 好友**（friend-list 可解）。
+- 暴走 = `꧁爆走天使꧂` roleId **89559731802158**，家族「羽皇居」guild_id **89538256961538**（15級/81人）；**非 5554 好友**，但 guild-member 查詢已驗證可解（實測 is_online=True，真人在玩）。
+- 機制：`check_via_ws`（`ws_online_checker.py`）先 `friend_presence`（好友列表），None 再 `is_role_online_in_guild`（家族成員 is_online）。guild_id 來源 = checker 的 `online_check_guild_id`（`online_check_service._guild_for`）。
+- requester 閘門：裝置設 `online_check_target_pid` → `web_session_service` 走 checker gate，真人在線就擋 web 啟動。
+- monitor 快照只讀好友列表（`OnlineMonitor.poll_friends`）→ 寶兒(好友)會進快照，暴走(非好友)不會。
+
+### Phase 1（純改 config，零程式碼，低風險）— 閘門式
+- [ ] web-001 加 `online_check_target_pid: 89562953024526`
+- [ ] web-002 加 `online_check_target_pid: 89559731802158`
+- [ ] checker 裝置（5554/5556/5560）加 `online_check_guild_id: 89538256961538`（羽皇居）→ 解暴走；寶兒由 5554 好友列表解
+- [ ] 驗證：`python tools/verify_online_check_ws.py 89559731802158 emulator-5554`（暴走→ONLINE）、`... 89562953024526 emulator-5554`（寶兒）
+- 註：寶兒跨家族(雪夜城)，目前只靠 5554 好友解；若要更 robust 可另取雪夜城 guild_id 指派給另一 checker（可選硬化，非必須）
+
+### Phase 2（小改程式碼）— 監控式 dashboard 顯示
+- [ ] `OnlineMonitor` 增設「額外家族目標」輪詢：對設定的 (guild_id, role_id) 每輪讀 guild members，把命中的成員以 StatusEntry(online→last_login_ts=0) 併入快照
+- [ ] 暴走(羽皇居)注入快照 → dashboard 顯示 + gate fast-path(`_check_monitor_snapshot`) 也能命中，省掉每次 WS 登入；寶兒已在好友快照內
+- [ ] 加測試（AAA，不連真裝置）
+
+### 前置需求 / 風險
+- 無 hot-reload：改 config 後正在跑的 bot 要重啟 new_main_v2.py 才生效。
+- 嚴禁登入寶兒/暴走本身（真人使用中）；所有偵測走 checker 帳號的好友/家族查詢。
