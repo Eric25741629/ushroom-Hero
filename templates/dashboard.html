@@ -791,7 +791,10 @@ h1 {
   color: var(--mint-deep);
   border-color: var(--mint-rim);
 }
-.btn-skip {
+/* legacy 別名 + lib BEM：dashboard inline .btn 在 cascade 後載入，
+   必須在此同時定義 .btn--*，否則 lib 的 primary 色會被 .btn{color:ink} 蓋掉 */
+.btn-skip,
+.btn.btn--secondary {
   background: var(--tile-sunk);
   color: var(--ink-soft);
   border-color: var(--line-strong);
@@ -808,19 +811,23 @@ h1 {
   color: var(--rose-deep);
   border-color: #f0bcc8;
 }
-.btn-cancel {
+.btn-cancel,
+.btn.btn--ghost {
   background: transparent;
   color: var(--ink-soft);
   border-color: var(--line-strong);
   box-shadow: none;
 }
-.btn-cancel:hover { background: var(--tile-sunk); }
-.btn-save {
-  background: linear-gradient(135deg, var(--coral), var(--coral-deep));
+.btn-cancel:hover,
+.btn.btn--ghost:hover { background: var(--tile-sunk); }
+.btn-save,
+.btn.btn--primary {
+  background: linear-gradient(135deg, var(--color-accent-strong, var(--coral)), var(--color-accent-deep, var(--coral-deep)));
   color: #fff8f3;
   border-color: transparent;
 }
-.btn-save:hover { filter: brightness(1.08); }
+.btn-save:hover,
+.btn.btn--primary:hover { filter: brightness(1.08); }
 
 /* ---- disabled / locked / pending states (LOAD-BEARING) ---- */
 .btn-locked, .btn:disabled {
@@ -1250,31 +1257,36 @@ select.form-control {
 .card.special-wanshen-off .log-box{display:none!important;}
 .card.special-wanshen-scheduled .wake-block{display:none!important;}
 
-/* ---- task-category horizontal tabs (進階設定 內) ---- */
-.ws-plan-hint{font-size:.78em;color:#9a6b00;background:#fff7e0;border:1px solid #f0e3c5;border-radius:8px;padding:6px 9px;margin:6px 0;}
-.task-tab-bar{display:flex;gap:6px;overflow-x:auto;padding:6px 2px;margin-bottom:8px;border-bottom:1px solid #eee;scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
+/* ---- task-category horizontal tabs（任務參數 內） ---- */
+.ws-plan-hint{font-size:.78em;color:var(--status-warn-text,#8a6210);background:var(--warn-wash,#f7eccf);border:1px solid var(--warn-rim,#e0b75a);border-radius:8px;padding:6px 9px;margin:6px 0;}
+.task-tab-bar{display:flex;gap:6px;overflow-x:auto;padding:6px 2px;margin-bottom:8px;border-bottom:1px solid var(--color-line,#ece3d3);scrollbar-width:thin;-webkit-overflow-scrolling:touch;}
 .task-tab-bar::-webkit-scrollbar{height:5px;}
-.task-tab-bar::-webkit-scrollbar-thumb{background:#d9cdb4;border-radius:3px;}
-.task-tab-chip{flex:0 0 auto;cursor:pointer;border:1px solid #e2d8c2;background:#faf6ee;color:#6b5a3a;border-radius:999px;padding:5px 13px;font-size:.82em;white-space:nowrap;transition:background .12s,color .12s,border-color .12s;}
-.task-tab-chip:hover{background:#f1e8d6;}
-.task-tab-chip.active{background:var(--coral-deep,#e07a5f);color:#fff;border-color:var(--coral-deep,#e07a5f);font-weight:600;}
+.task-tab-bar::-webkit-scrollbar-thumb{background:var(--color-line-strong,#ddd2bd);border-radius:3px;}
+.task-tab-chip{flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;cursor:pointer;border:1px solid var(--line-accessible,var(--color-line-strong,#ddd2bd));background:var(--color-surface-2,#faf6ee);color:var(--color-ink-soft,#6f6657);border-radius:999px;padding:5px 13px;font-size:.82em;white-space:nowrap;transition:background .12s,color .12s,border-color .12s;}
+.task-tab-chip:hover{background:var(--color-paper-2,#efe8db);}
+.task-tab-chip.active{background:var(--color-accent-deep,var(--coral-deep,#a8421f));color:#fff;border-color:var(--color-accent-deep,var(--coral-deep,#a8421f));font-weight:600;}
+.task-tab-count{display:inline-flex;align-items:center;justify-content:center;min-width:1.25em;height:1.25em;padding:0 5px;border-radius:999px;font-size:.78em;font-weight:700;line-height:1;background:var(--color-accent-wash,#fbe6dc);color:var(--status-accent-text,#b54a23);}
+.task-tab-chip.active .task-tab-count{background:rgba(255,255,255,.22);color:#fff;}
+.task-tab-count[hidden]{display:none!important;}
 .task-tab-panel{display:none;padding:4px 2px;}
 .task-tab-panel.active{display:block;}
 .ws-schema-slot .ws-field{margin:6px 0;}
 .ws-schema-slot .ws-field.ws-field-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-.ws-schema-slot .ws-field label{font-size:.85em;color:#555;}
+.ws-schema-slot .ws-field label{font-size:.85em;color:var(--color-ink-soft,#6f6657);}
 .ws-schema-slot .ws-field input[type=number]{width:120px;}
-.ws-schema-slot .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
-.task-tab-panel .ws-field-note{font-size:.74em;color:#999;margin:2px 0 8px 0;}
+.ws-schema-slot .ws-field-note{font-size:.74em;color:var(--text-faint,var(--color-ink-soft,#6f6657));margin:2px 0 8px 0;}
+.task-tab-panel .ws-field-note{font-size:.74em;color:var(--text-faint,var(--color-ink-soft,#6f6657));margin:2px 0 8px 0;}
 textarea.ws-json{font-family:var(--mono,monospace);font-size:.78em;width:100%;resize:vertical;white-space:pre;margin:4px 0;}
-textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
-/* ---- 進階設定獨立浮窗 (taskSettingsModal) ---- */
+textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:var(--danger-wash,#f8dee4);}
+/* ---- 任務參數浮窗 (taskSettingsModal；疊在裝置設定之上) ---- */
 #taskSettingsModal.modal-overlay{z-index:1100;}
 .modal.task-modal{max-width:780px;width:94%;}
 .task-modal-body{padding:18px 24px 4px;}
-.task-modal .ws-subhead{font-size:.82em;font-weight:800;letter-spacing:.06em;color:var(--coral-deep,#c75a3f);margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid #efe6d4;}
+.settings-crumb{font-size:.78em;font-weight:600;color:var(--color-ink-soft,#6f6657);margin:0 0 8px;letter-spacing:.02em;}
+.settings-crumb b{color:var(--color-ink,#2b2620);font-weight:700;}
+.task-modal .ws-subhead{font-size:.82em;font-weight:800;letter-spacing:.06em;color:var(--status-accent-text,var(--coral-deep,#b54a23));margin:14px 0 4px;padding-bottom:3px;border-bottom:1px solid var(--color-line,#ece3d3);}
 .task-modal .ws-subhead:first-child{margin-top:2px;}
-/* 卡片放大一階：浮窗內字級/間距比原本進階設定大一些，較好讀 */
+/* 浮窗內字級/間距略放大，較好讀 */
 .task-modal .task-tab-chip{font-size:.9em;padding:6px 15px;}
 .task-modal .task-tab-panel{padding:6px 2px;}
 .task-modal .checkbox-item{font-size:.95em;margin:7px 0;}
@@ -1283,6 +1295,10 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 .task-modal .task-tab-panel .ws-field-note,
 .task-modal .ws-schema-slot .ws-field-note{font-size:.8em;}
 .btn.open-task-settings{text-transform:none;letter-spacing:0;font-size:.9em;}
+.settings-help{font-size:0.72em;color:var(--color-ink-soft,#6f6657);margin-top:4px;}
+.settings-status{margin-top:8px;color:var(--color-ink-soft,#6f6657);font-size:0.86em;}
+.web-advanced > summary{cursor:pointer;font-weight:700;color:var(--color-ink,#2b2620);}
+.web-advanced .web-advanced > summary{font-size:0.8em;font-weight:600;color:var(--color-ink-soft,#6f6657);}
 #navAdmin{position:relative;}
 .admin-pending-badge{position:absolute;top:2px;right:2px;background:var(--danger-fill);color:#fff;min-width:16px;padding:0 4px;border-radius:8px;font-size:.7em;line-height:16px;text-align:center;}
   </style>
@@ -1628,13 +1644,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       <details class="web-advanced" style="margin-bottom:16px;">
 
-        <summary>進階設定</summary>
+        <summary>開發者選項</summary>
 
       <div id="webBackendGroup" class="form-group" style="display:none;">
 
         <label>Web H5 設定</label>
 
-        <div class="checkbox-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="checkbox-group grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 
           <!-- 登入網址：固定值，預設隱藏；保留 input 供啟動/儲存讀取 -->
           <div style="grid-column:span 2; display:none;">
@@ -1647,13 +1663,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <div>
 
-            <label style="font-size:0.8em;">跨服車位泊銀等級（總開關在上方「任務開關」的「跨服停車」）</label>
+            <label style="font-size:0.8em;">跨服車位泊銀等級（總開關在「任務開關」的「跨服停車」）</label>
 
             <select id="editCarparkTier" class="form-control" style="margin-top:4px;">
               <option value="silver">鉑銀（silver）— 唯一已驗證</option>
             </select>
 
-            <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">勾選後會自動把 experimental_cocos_navigation 設為 true（scheduler gating 前置條件）。其他 carpark 欄位（avoid_lots / 白夜總數 / cluster / prefer_back）保留 JSON 既有值。</div>
+            <div class="settings-help">勾選後會自動把 experimental_cocos_navigation 設為 true（scheduler gating 前置條件）。其他 carpark 欄位（avoid_lots / 白夜總數 / cluster / prefer_back）保留 JSON 既有值。</div>
 
           </div>
 
@@ -1681,9 +1697,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         <details class="web-advanced" style="margin-top:8px;">
 
-          <summary style="cursor:pointer; font-size:0.8em; color:#9fb3c8;">進階設定（很少需要調整）</summary>
+          <summary>罕見選項（很少需要調整）</summary>
 
-          <div class="checkbox-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+          <div class="checkbox-group grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
 
             <div>
               <label style="font-size:0.8em;">Canvas Selector</label>
@@ -1698,7 +1714,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
             <div>
               <label style="font-size:0.8em;">Profile 目錄</label>
               <input type="text" id="editWebProfileDir" class="form-control" placeholder="playwright_profile/{device_id}">
-              <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">留空或填共用根目錄時，系統會自動依裝置分出獨立 cookies 資料夾</div>
+              <div class="settings-help">留空或填共用根目錄時，系統會自動依裝置分出獨立 cookies 資料夾</div>
             </div>
 
             <div>
@@ -1721,7 +1737,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
                 <option value="playwright">Playwright（預設）</option>
                 <option value="canvas_capture">Canvas Capture</option>
               </select>
-              <div style="font-size:0.72em; color:#8ea6c8; margin-top:4px;">Canvas Capture 適用於某些 Playwright 截圖異常的情境</div>
+              <div class="settings-help">Canvas Capture 適用於某些 Playwright 截圖異常的情境</div>
             </div>
 
           </div>
@@ -1730,15 +1746,15 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         <div class="action-bar" style="margin-top:10px;">
 
-          <button class="btn btn-skip" type="button" onclick="startWebLogin()">在中控開啟手動登入</button>
+          <button class="btn btn--secondary btn-skip" type="button" onclick="startWebLogin()">在中控開啟手動登入</button>
 
-          <button class="btn btn-skip" type="button" onclick="backupWebState()">備份 Cookies</button>
+          <button class="btn btn--secondary btn-skip" type="button" onclick="backupWebState()">備份 Cookies</button>
 
         </div>
 
-        <div id="webLoginStatusText" style="margin-top:8px; color:#9fb3c8; font-size:0.86em;">尚未啟動網頁登入</div>
+        <div id="webLoginStatusText" class="settings-status">尚未啟動網頁登入</div>
 
-        <div style="margin-top:4px; color:#7f97b6; font-size:0.78em;">預設會沿用舊 cookies/state；若沒有舊檔才會建立新的。</div>
+        <div class="settings-help">預設會沿用舊 cookies/state；若沒有舊檔才會建立新的。</div>
 
       </div>
 
@@ -1748,7 +1764,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         <label>執行時間參數</label>
 
-        <div class="checkbox-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+        <div class="checkbox-group grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
 
           <div>
 
@@ -1889,16 +1905,17 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
 
       <div style="margin:0 24px 16px;">
-        <button type="button" class="btn open-task-settings" onclick="openTaskSettings()" style="width:100%;">⚙ 進階設定 — 各任務細項</button>
+        <button type="button" class="btn btn--secondary open-task-settings" onclick="openTaskSettings()" style="width:100%;">任務參數 — 各任務細項</button>
+        <div class="settings-help">農場／神燈／挖礦／遺物等細項參數。總開關仍在上方「任務開關」。</div>
       </div>
 
 
 
       <div class="modal-actions">
 
-        <button class="btn btn-cancel" onclick="closeModal()">取消</button>
+        <button class="btn btn--ghost btn-cancel" onclick="closeModal()">取消</button>
 
-        <button class="btn btn-save" onclick="saveConfig()">儲存設定</button>
+        <button class="btn btn--primary btn-save" onclick="saveConfig()">儲存設定</button>
 
       </div>
 
@@ -1910,34 +1927,35 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
   <div id="taskSettingsModal" class="modal-overlay" onclick="if(event.target===this)closeTaskSettings()">
     <div class="modal task-modal" onclick="event.stopPropagation()">
-      <div class="modal-header">進階設定 — 各任務細項</div>
+      <div class="modal-header">任務參數</div>
       <div class="task-modal-body">
+        <div class="settings-crumb">裝置設定 › <b>任務參數</b></div>
         <div id="wsPlanHint" class="ws-plan-hint" style="display:none;">目前方案沒有連線（+ws），以下設定先存著不會生效；之後把方案切成含連線的就會啟用。</div>
-        <div id="taskTabBar" class="task-tab-bar" role="tablist" aria-label="進階設定分類"></div>
+        <div id="taskTabBar" class="task-tab-bar" role="tablist" aria-label="任務參數分類"></div>
         <div class="task-tab-panels">
 
           <div class="task-tab-panel" data-tab="farm">
             <!-- 農場總開關已移到外層「任務開關」；chkWsFarm 降為隱藏 slave，存檔前由 chkFarm 鏡射。 -->
             <input type="checkbox" id="chkWsFarm" style="display:none" aria-hidden="true">
-            <div class="ws-field-note">農場總開關在上方「任務開關」；以下為細項參數。</div>
+            <div class="ws-field-note">農場總開關在「任務開關」；以下為細項參數。</div>
             <label class="checkbox-item"><input type="checkbox" id="chkFarmBuy407" onchange="onFarmBuyToggle()">莊園每日買 種子(407)</label>
             <div class="ws-field ws-field-row" id="rowFarmBuy407"><label>種子(407) 目標數</label><input type="number" id="inpFarmBuy407" class="form-control" min="0" step="1" placeholder="4"></div>
             <label class="checkbox-item"><input type="checkbox" id="chkFarmBuy408" onchange="onFarmBuyToggle()">莊園每日買 肥料(408)</label>
             <div class="ws-field ws-field-row" id="rowFarmBuy408"><label>肥料(408) 目標數</label><input type="number" id="inpFarmBuy408" class="form-control" min="0" step="1" placeholder="4"></div>
             <label class="checkbox-item"><input type="checkbox" id="chkAdSeed">看廣告拿種子（每日免費領，免看真實廣告；獨立於上方開關）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkHarvestCycle">每週豐收卡循環（停打工→施肥→收成→買卡→種特級→恢復打工）</label>
-            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
+            <div class="grid-2" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin:2px 0 4px 22px;">
               <div><label style="font-size:0.84em;">豐收卡張數</label><input type="number" id="inpHcNumCards" class="form-control" min="1" step="1" placeholder="3"></div>
               <div><label style="font-size:0.84em;">肥料 id</label><input type="number" id="inpHcFert" class="form-control" min="0" step="1" placeholder="111"></div>
             </div>
-            <details style="margin-top:4px;"><summary style="font-size:0.84em;color:#888;">進階（手動指定種植/打工，需填 id）</summary>
+            <details style="margin-top:4px;"><summary class="settings-help" style="cursor:pointer;">更多參數（手動指定種植/打工，需填 id）</summary>
               <div class="ws-field ws-field-row"><label>種植 seed_id（空＝不手動種）</label><input type="number" id="inpFarmSeedId" class="form-control" min="0" step="1"></div>
               <div class="ws-field ws-field-row"><label>打工隊伍 team_cfg_id（空＝不打工）</label><input type="number" id="inpFarmTeamCfg" class="form-control" min="0" step="1"></div>
             </details>
           </div>
 
           <div class="task-tab-panel" data-tab="lamp">
-            <div class="ws-field-note">神燈總開關在上方「任務開關」；以下為細項參數。</div>
+            <div class="ws-field-note">神燈總開關在「任務開關」；以下為細項參數。</div>
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin:4px 0 4px 22px;">
               <div>
                 <label style="font-size:0.84em;">開到剩百分之幾 %（0＝不依百分比）</label>
@@ -1958,7 +1976,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           <div class="task-tab-panel" data-tab="mining">
             <!-- 挖礦總開關已移到外層「任務開關」；chkWsMining 降為隱藏 slave，存檔前由 chkMining 鏡射（WS 挖礦仍受 +ws 方案 gate）。 -->
             <input type="checkbox" id="chkWsMining" style="display:none" aria-hidden="true">
-            <div class="ws-field-note">挖礦總開關在上方「任務開關」；WS 挖礦需含連線的方案才生效。以下為細項參數。</div>
+            <div class="ws-field-note">挖礦總開關在「任務開關」；WS 挖礦需含連線的方案才生效。以下為細項參數。</div>
             <div class="ws-schema-slot" data-slot="mining"></div>
           </div>
 
@@ -1969,7 +1987,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           </div>
 
           <div class="task-tab-panel" data-tab="adreward">
-            <div class="ws-field-note">看廣告獎勵總開關在上方「任務開關」；以下為細項參數。</div>
+            <div class="ws-field-note">看廣告獎勵總開關在「任務開關」；以下為細項參數。</div>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem12">商城鑽石（每日免費）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkAdGem14">浮動鑽石（每日免費）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkAdPick1">挖礦鎬子（每日免費，需開挖礦）</label>
@@ -1980,18 +1998,18 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
           <div class="task-tab-panel" data-tab="carpark">
             <div class="ws-schema-slot" data-slot="carpark"></div>
-            <label for="txtCarparkPlan" style="font-size:.9em;color:#555;">跨服停車：去別的伺服器找空車位停進去賺收益。下方是進階參數（白天/晚上時段、泊銀等級、搶位設定），用 JSON 填，留空＝沿用現有不改。</label>
+            <label for="txtCarparkPlan" class="settings-help" style="display:block;margin-bottom:4px;">跨服停車：去別的伺服器找空車位停進去賺收益。下方是進階參數（白天/晚上時段、泊銀等級、搶位設定），用 JSON 填，留空＝沿用現有不改。</label>
             <textarea id="txtCarparkPlan" class="form-control ws-json" rows="8" spellcheck="false"></textarea>
           </div>
 
           <div class="task-tab-panel" data-tab="dungeon">
-            <label for="txtDungeonSweeps" style="font-size:.85em;color:#555;">副本掃蕩 dungeon_sweeps（JSON：[[type,id,num],...]；深淵 type2 / 萬神 type23，只掃蕩不自動打）</label>
+            <label for="txtDungeonSweeps" class="settings-help" style="display:block;margin-bottom:4px;">副本掃蕩 dungeon_sweeps（JSON：[[type,id,num],...]；深淵 type2 / 萬神 type23，只掃蕩不自動打）</label>
             <textarea id="txtDungeonSweeps" class="form-control ws-json" rows="5" spellcheck="false"></textarea>
             <div class="ws-field-note">留空＝不改（保留既有）；要清除請填 []。</div>
           </div>
 
           <div class="task-tab-panel" data-tab="sea">
-            <div class="ws-field-note">航海總開關在上方「任務開關」；以下為細項參數。</div>
+            <div class="ws-field-note">航海總開關在「任務開關」；以下為細項參數。</div>
             <div class="ws-field ws-field-row"><label>每日攻擊次數上限</label><input type="number" id="inpSeaAttackMax" class="form-control" min="0" step="1" placeholder="4"></div>
             <label class="checkbox-item"><input type="checkbox" id="chkSeaDispatch">自動派遣艦隊（dispatch）</label>
             <label class="checkbox-item"><input type="checkbox" id="chkSeaRepair">自動維修（repair）</label>
@@ -2033,7 +2051,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         </div>
       </div>
       <div class="modal-actions">
-        <button class="btn btn-save" onclick="closeTaskSettings()">完成</button>
+        <button class="btn btn--primary btn-save" type="button" onclick="closeTaskSettings()">返回裝置設定</button>
       </div>
     </div>
   </div>
@@ -2144,9 +2162,9 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       <div class="modal-actions">
 
-        <button class="btn btn-cancel" onclick="closeOcrModal()">取消</button>
+        <button class="btn btn--ghost btn-cancel" onclick="closeOcrModal()">取消</button>
 
-        <button class="btn btn-save" onclick="saveOcrConfig()">儲存 OCR 設定</button>
+        <button class="btn btn--primary btn-save" onclick="saveOcrConfig()">儲存 OCR 設定</button>
 
       </div>
 
@@ -3113,7 +3131,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
               <div style="display:flex;align-items:center;gap:5px;">
                 <span class="acct-presence" id="presence-${ip}" title="帳號連線歸屬：腳本執行 / 在線觀察 / 被借走 / 玩家在線 / 離線"></span>
                 <span class="status-text" id="status-${ip}">${statusText}</span>
-                <button class="settings-btn" onclick="openSettings('${ip}')" title="設定">⚙</button>
+                <button class="settings-btn" onclick="openSettings('${ip}')" title="裝置設定" aria-label="裝置設定">⚙</button>
               </div>
             </div>
             <div class="wake-block">
@@ -3599,7 +3617,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       if (!payload.web_url) {
 
-        alert('請先填寫 Web 登入網址');
+        window.UI.toast('請先填寫 Web 登入網址', 'err');
 
         return;
 
@@ -3623,11 +3641,11 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (resp.status === 409) {
 
-          alert('網頁登入流程已在執行中');
+          window.UI.toast('網頁登入流程已在執行中', 'info');
 
         } else {
 
-          alert('已啟動手動登入流程（優先沿用舊 cookies/state，並自動先做備份）。');
+          window.UI.toast('已啟動手動登入流程（優先沿用舊 cookies/state，並自動先做備份）', 'ok');
 
         }
 
@@ -3635,7 +3653,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       } catch (e) {
 
-        alert('啟動網頁登入失敗: ' + e);
+        window.UI.toast('啟動網頁登入失敗: ' + e, 'err');
 
       }
 
@@ -3671,13 +3689,13 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (!resp.ok || result.status === 'error') throw new Error(result.message || 'backup failed');
 
-        alert(`備份完成\n來源: ${result.state_file}\n備份: ${result.backup_file}`);
+        window.UI.toast('備份完成：' + (result.backup_file || result.state_file || 'ok'), 'ok');
 
         await pollWebLoginStatus(ip);
 
       } catch (e) {
 
-        alert('備份 cookies/state 失敗: ' + e);
+        window.UI.toast('備份 cookies/state 失敗: ' + e, 'err');
 
       }
 
@@ -4004,7 +4022,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
     let _existingWsToken = {};
     let _existingWsTokenMining = {};
 
-    // ---- 進階設定：任務類別橫向頁籤 ----------------------------------------
+    // ---- 任務參數：任務類別橫向頁籤 ----------------------------------------
     // 既有 7 個 WS 控制項(chkWsOpenLamp/inpWsLampPercent/inpWsLampMinKeep/chkWsMining/
     // chkWsKungfuGuess/chkWsFarm/chkWsOfflineFallback)的 HTML 已搬進對應頁籤但 id 不變,
     // 其 load/save 仍由既有 JS 處理。以下只負責「之前藏在 json 沒 UI」的欄位。
@@ -4076,6 +4094,33 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       document.querySelectorAll('.task-tab-panel').forEach(p =>
         p.classList.toggle('active', p.dataset.tab === id));
       if (id === 'relic') loadRelicSprintDate();
+      updateTaskTabCounts();
+    }
+    // 各 tab 勾選數 → chip 右側 badge，一眼看出哪些分類有開細項
+    function updateTaskTabCounts() {
+      document.querySelectorAll('.task-tab-panel[data-tab]').forEach(panel => {
+        const id = panel.dataset.tab;
+        const chip = document.querySelector('#taskTabBar .task-tab-chip[data-tab="' + id + '"]');
+        if (!chip) return;
+        const n = panel.querySelectorAll(
+          'input[type="checkbox"]:checked:not([aria-hidden="true"]):not([style*="display:none"])'
+        ).length;
+        let badge = chip.querySelector('.task-tab-count');
+        if (n > 0) {
+          if (!badge) {
+            badge = document.createElement('span');
+            badge.className = 'task-tab-count';
+            badge.setAttribute('aria-label', '已啟用 ' + n + ' 項');
+            chip.appendChild(badge);
+          }
+          badge.textContent = String(n);
+          badge.hidden = false;
+          badge.setAttribute('aria-label', '已啟用 ' + n + ' 項');
+        } else if (badge) {
+          badge.hidden = true;
+          badge.textContent = '';
+        }
+      });
     }
     // 遺物頁籤：即時讀「本期活動結束日」(純 WS calendar 6576 → /api/relic_sprint/plan)。
     // 每次開浮窗只抓一次/裝置(切回頁籤不重抓)；未登入工具 session(401)時給軟提示。
@@ -4192,6 +4237,16 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         window.UI.keyboardable(chip, () => activateTaskTab(id));
         bar.appendChild(chip);
       });
+      // 勾選變更時即時更新 badge（委派在 panels 容器）
+      const panels = document.querySelector('.task-tab-panels');
+      if (panels && !panels.dataset.countBound) {
+        panels.dataset.countBound = '1';
+        panels.addEventListener('change', (ev) => {
+          if (ev.target && ev.target.matches && ev.target.matches('input[type="checkbox"]')) {
+            updateTaskTabCounts();
+          }
+        });
+      }
       WS_EXTRA_FIELDS.forEach(f => {
         const slot = document.querySelector('.ws-schema-slot[data-slot="' + f.slot + '"]');
         if (!slot) return;
@@ -4217,13 +4272,14 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       _taskTabsRendered = true;
       activateTaskTab(WS_TASK_TABS[0][0]);
     }
-    // 進階設定獨立浮窗開/關。欄位 id 不變，留在 DOM 裡，故關閉浮窗不影響存檔
+    // 任務參數浮窗開/關。欄位 id 不變，留在 DOM 裡，故關閉浮窗不影響存檔
     // (saveConfig 仍讀得到各欄位)。開啟時依目前「方案」select 重算 +ws 提示。
     function openTaskSettings() {
       const m = document.getElementById('taskSettingsModal');
       if (!m) return;
       _relicDateFetchedFor = null;  // allow one fresh relic-date read per open
       renderTaskTabs();
+      updateTaskTabCounts();
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
       if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
@@ -4392,6 +4448,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
       const plan = (document.getElementById('editBackend') || {}).value || 'adb';
       const hint = document.getElementById('wsPlanHint');
       if (hint) hint.style.display = isWsPlanSelected(plan) ? 'none' : 'block';
+      updateTaskTabCounts();
     }
     // 把頁籤新欄位寫回 payload.ws_token(全部 ws_token.* 路徑)。必須在
     // payload.ws_token 主體(Object.assign)建好之後呼叫,只覆寫各自的 key。
@@ -4684,7 +4741,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
         document.getElementById('chkWsOfflineFallback').checked = _existingWsToken.offline_fallback === true;
         document.getElementById('chkDragonRealm').checked = config.dragon_realm_enabled !== false;
 
-        // 進階設定任務頁籤：載入 25+ 個展開欄位(挖礦params/遺物/郵件/大亨/伴侶/連線…)
+        // 任務參數頁籤：載入 25+ 個展開欄位(挖礦params/遺物/郵件/大亨/伴侶/連線…)
         loadTaskTabs(config);
 
         document.getElementById('editWebUrl').value = config.web_url || '';
@@ -4725,7 +4782,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       } catch (e) {
 
-        alert('讀取裝置設定失敗: ' + e);
+        window.UI.toast('讀取裝置設定失敗: ' + e, 'err');
 
       }
 
@@ -4900,7 +4957,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
           existingWsMining,
           { enabled: wsMiningEnabled }),
       });
-      // 進階設定任務頁籤：把展開欄位寫回 payload.ws_token(在主體 Object.assign 後,只覆寫各自 key)。
+      // 任務參數頁籤：把展開欄位寫回 payload.ws_token(在主體 Object.assign 後,只覆寫各自 key)。
       collectTaskTabs(payload);
 
       try {
@@ -4919,13 +4976,15 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (!resp.ok || result.status === 'error') throw new Error(result.message || 'save failed');
 
+        window.UI.toast('裝置設定已儲存', 'ok');
+
         closeModal();
 
         fetchStatus();
 
       } catch (e) {
 
-        alert('儲存裝置設定失敗: ' + e);
+        window.UI.toast('儲存裝置設定失敗: ' + e, 'err');
 
       }
 
@@ -4979,7 +5038,7 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
       } catch (e) {
 
-        alert('讀取 OCR 設定失敗: ' + e);
+        window.UI.toast('讀取 OCR 設定失敗: ' + e, 'err');
 
       }
 
@@ -5027,13 +5086,15 @@ textarea.ws-json.ws-json-bad{border-color:#e07a5f;background:#fff3f0;}
 
         if (!resp.ok || result.status === 'error') throw new Error(result.message || 'save failed');
 
+        window.UI.toast('OCR 設定已儲存', 'ok');
+
         closeOcrModal();
 
         fetchStatus();
 
       } catch (e) {
 
-        alert('儲存 OCR 設定失敗: ' + e);
+        window.UI.toast('儲存 OCR 設定失敗: ' + e, 'err');
 
       }
 
