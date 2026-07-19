@@ -1293,12 +1293,13 @@ web_h5 裝置在賞金之路開放時，自動打地圖上的 monster NPC（虛�
 - requester 閘門：裝置設 `online_check_target_pid` → `web_session_service` 走 checker gate，真人在線就擋 web 啟動。
 - monitor 快照只讀好友列表（`OnlineMonitor.poll_friends`）→ 寶兒(好友)會進快照，暴走(非好友)不會。
 
-### Phase 1（純改 config，零程式碼，低風險）— 閘門式
-- [ ] web-001 加 `online_check_target_pid: 89562953024526`
-- [ ] web-002 加 `online_check_target_pid: 89559731802158`
-- [ ] checker 裝置（5554/5556/5560）加 `online_check_guild_id: 89538256961538`（羽皇居）→ 解暴走；寶兒由 5554 好友列表解
-- [ ] 驗證：`python tools/verify_online_check_ws.py 89559731802158 emulator-5554`（暴走→ONLINE）、`... 89562953024526 emulator-5554`（寶兒）
-- 註：寶兒跨家族(雪夜城)，目前只靠 5554 好友解；若要更 robust 可另取雪夜城 guild_id 指派給另一 checker（可選硬化，非必須）
+### Phase 1（純改 config，零程式碼，低風險）— 閘門式 ✅ 2026-07-19 完成
+- [x] web-001 加 `online_check_target_pid: 89562953024526`
+- [x] web-002 加 `online_check_target_pid: 89559731802158`
+- [x] checker 裝置（5554/5556/5560）加 `online_check_guild_id: 89538256961538`（羽皇居）→ 解暴走；寶兒由 5554 好友列表解
+- [x] 驗證（`tools/verify_online_check_ws.py`，checker=5554）：暴走 89559731802158 → **True ONLINE**（guild fallback）；寶兒 89562953024526 → **False OFFLINE**（friend）。兩路徑皆通。
+- 註：寶兒跨家族(雪夜城)，目前只靠 5554 好友解（使用者選不硬化）；解不到時保守回 None＝不放行，安全。
+- ⚠ 無 hot-reload：正在跑的 bot 需重啟 new_main_v2.py 才吃到新 config。
 
 ### Phase 2（小改程式碼）— 監控式 dashboard 顯示
 - [ ] `OnlineMonitor` 增設「額外家族目標」輪詢：對設定的 (guild_id, role_id) 每輪讀 guild members，把命中的成員以 StatusEntry(online→last_login_ts=0) 併入快照
