@@ -188,15 +188,6 @@ def emit(page: Any, path: str) -> bool:
     return True
 
 
-_OPEN_VIEW_JS = r"""
-(name) => {
-  const um = window.uiMgr;
-  if (!um || typeof um.openView !== 'function') return 'no uiMgr.openView';
-  try { um.openView(name); return ''; } catch (e) { return String(e); }
-}
-"""
-
-
 def open_home(page: Any, timeout: float = 8.0) -> bool:
     """直接開 RogueView(萬神試煉主面板)，跳過『副本』清單捲動 + OCR 找入口。
 
@@ -204,21 +195,9 @@ def open_home(page: Any, timeout: float = 8.0) -> bool:
     OCR 路徑因副本清單變長(萬神試煉被推到第 5 頁)整批失效，H5 改走這條；
     ADB 沒有 uiMgr，仍走 OCR。
     """
-    try:
-        err = page.evaluate(_OPEN_VIEW_JS, "RogueView")
-    except Exception as e:
-        logger.warning("[rogue_h5] openView 例外: %s", e)
-        return False
-    if err:
-        logger.warning("[rogue_h5] openView 失敗: %s", err)
-        return False
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        if read_state(page).get("rogueView"):
-            return True
-        time.sleep(0.3)
-    logger.warning("[rogue_h5] openView 後 RogueView 未 active")
-    return False
+    from utils.cocos_view import open_view
+
+    return open_view(page, "RogueView", timeout=timeout)
 
 
 _READTEXT_JS = r"""

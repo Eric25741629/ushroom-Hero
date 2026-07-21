@@ -5,9 +5,22 @@ import time
 
 import img_tools
 from json_manager import return_time, time_recording
+from utils.cocos_view import open_view, web_page
+
+# 雲纏天梯試煉的 cocos 主面板（double_ladder / module 64，見 ws_token/ladder_reward.py）。
+# 2026-07-21 於 5554 live 驗證：uiMgr.openView 直開後可見「每週獎勵/結算倒計時/戰友設置」。
+LADDER_VIEW = "DoubleChapterMainView"
 
 
 def into_cloud(d):
+    """進雲纏天梯主面板。web_h5 直開 view；adb 走原本的副本清單捲動 + OCR。"""
+    page = web_page(d)
+    if page is not None:
+        if not open_view(page, LADDER_VIEW):
+            return False
+        img_tools.click_str_by_server(d, '結算獎勵')
+        return True
+
     img_tools.click_str_by_server(d, '副本', y_range=(870, 973))
     time.sleep(2)
     for _ in range(3):

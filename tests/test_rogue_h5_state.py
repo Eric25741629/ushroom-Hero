@@ -132,24 +132,27 @@ def test_read_blessing_cap_via_fake_page(monkeypatch):
 
 
 class _OpenViewPage:
-    """假 page：第一次 evaluate 是 openView，之後都是 read_state。"""
+    """假 page：依 JS 內容分派 openView / active 檢查（對應 utils.cocos_view）。
 
-    def __init__(self, *, open_err="", rogue_after=True):
+    未呼叫 openView 前一律回報「沒開」，才能驗證 open_home 真的去開了 view。
+    """
+
+    def __init__(self, *, open_err="", opens_ok=True):
         self.open_err = open_err
-        self.rogue_after = rogue_after
-        self.calls = []
+        self.opens_ok = opens_ok
+        self.opened = []
 
     def evaluate(self, js, arg=None):
-        self.calls.append(arg)
-        if arg == "RogueView":
+        if "openView" in js and "activeInHierarchy" not in js:
+            self.opened.append(arg)
             return self.open_err
-        return _blank(rogueView=self.rogue_after)
+        return bool(self.opened) and self.opens_ok and not self.open_err
 
 
 def test_open_home_jumps_without_dungeon_list():
     page = _OpenViewPage()
     assert r.open_home(page) is True
-    assert page.calls[0] == "RogueView"  # 直接開 view，沒有捲清單
+    assert page.opened == ["RogueView"]  # 直接開 view，沒有捲清單
 
 
 def test_open_home_fails_when_uimgr_missing():
@@ -158,5 +161,14 @@ def test_open_home_fails_when_uimgr_missing():
 
 
 def test_open_home_fails_when_view_never_activates():
-    page = _OpenViewPage(rogue_after=False)
+    page = _OpenViewPage(opens_ok=False)
     assert r.open_home(page, timeout=0.5) is False
+
+
+def test_open_view_skips_when_already_open():
+    from utils import cocos_view
+
+    page = _OpenViewPage()
+    page.opened.append("pre")  # 假裝已經開著
+    assert cocos_view.open_view(page, "DoubleChapterMainView") is True
+    assert page.opened == ["pre"]  # 沒有重複 openView
