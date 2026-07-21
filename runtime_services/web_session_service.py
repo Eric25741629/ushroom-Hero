@@ -32,6 +32,10 @@ def mark_login_conflict_sleep(ip: str, sleep_sec: int = LOGIN_CONFLICT_SLEEP_SEC
 # 讓「開啟網頁」/ force-sleep 最慢 ~0.5s 就能中斷，而非卡滿整段 timeout。
 _GATE_RESULT_POLL_SEC = 0.5
 
+# 互檢 gate 的總等待上限。超過就放棄本輪喚醒（不是無限等 checker 空閒），
+# 避免排程在幾小時後才啟動、落在原本不該執行的時段。
+GATE_MAX_WAIT_SEC = 30 * 60
+
 
 def _web_launch_release_requested(ip: str, logger_obj, checker_ip: str) -> bool:
     """放行互檢 gate：使用者按「開啟瀏覽器」是最高優先的手動介入，絕不能卡在
@@ -80,7 +84,9 @@ def wait_for_checker_gate_before_start(
     ip: str,
     logger_obj,
     checker_ip: str = "emulator-5554",
+    max_wait_sec: float = GATE_MAX_WAIT_SEC,
 ) -> None:
+    deadline = time.time() + max(0.0, float(max_wait_sec))
     while True:
         if bot_state.check_force_sleep(ip):
             logger_obj.warning(f"[{ip}] force sleep requested while waiting for {checker_ip} online-check")
@@ -120,6 +126,16 @@ def wait_for_checker_gate_before_start(
         if not is_busy:
             logger_obj.info(f"[{ip}] {checker_ip} is free, continue web_h5 startup")
             return
+
+        # 2026-07-21：checker 長時間忙碌時這裡曾卡 16 小時（web-002 03:00 claim 萬神
+        # 排程 → 19:06 才拿到 gate → 在錯誤時段開瀏覽器）。逾時就放棄本輪喚醒，
+        # 讓 caller 進休眠/結束執行緒，下次喚醒重新檢查時間窗口。
+        if time.time() >= deadline:
+            logger_obj.warning(
+                f"[{ip}] {checker_ip} online-check gate 等待逾時 "
+                f"({int(max_wait_sec)}s)，放棄本輪喚醒"
+            )
+            raise ForceSleepRequested(f"[{ip}] checker gate timeout")
 
         wait_sec = int(config_manager.get_device_config(ip).get("online_check_interval_sec", 30))
         wait_sec = max(1, wait_sec)

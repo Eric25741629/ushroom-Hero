@@ -132,6 +132,19 @@ def test_gate_force_sleep_during_result_wait_propagates(monkeypatch):
         svc.wait_for_checker_gate_before_start("emulator-5558", _Logger(), checker_ip="emulator-5554")
 
 
+def test_gate_times_out_instead_of_waiting_forever(monkeypatch):
+    """checker 永遠忙碌 → 逾時放棄本輪，不再無限重試（2026-07-21 卡 16h 事故）。"""
+    state = _FakeState(results=[{"status": "done", "result_busy": True}] * 10)
+    _install(monkeypatch, state, interval_sec=1)
+
+    with pytest.raises(svc.ForceSleepRequested):
+        svc.wait_for_checker_gate_before_start(
+            "emulator-5558", _Logger(), checker_ip="emulator-5554", max_wait_sec=0
+        )
+
+    assert state.submit_calls == 1  # 至少完整試過一次才放棄
+
+
 def test_initialize_skips_ws_phase_when_web_launch_arrives_during_gate(monkeypatch):
     """gate 期間進來的 web launch 要讓後續 WS pre-phase 被跳過、瀏覽器立即開。"""
     cfg = {
