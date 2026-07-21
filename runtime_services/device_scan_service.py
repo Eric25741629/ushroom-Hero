@@ -26,6 +26,77 @@ _adb_last_seen: dict[str, float] = {}
 _adb_absence_offlined: set[str] = set()
 
 
+# --- 卡死暫停守望(stuck-pause watchdog)------------------------------------
+# 裝置被借去當背景用途時 set_pause(True);owner thread 死掉或長時間不讓位就會卡在
+# 暫停、重啟前不再醒來(見 online_monitor._loop try/finally 的歷史註解:5554 曾永久
+# paused)。掛在既有掃描迴圈上,依「暫停來源」分三類門檻自動救援:
+#   1. 線上監控 detector(ONLINE_MONITOR):把睡著的裝置當 detector 是正常長期工作,
+#      傷害只在該醒卻醒不來 → 寬鬆,軟 2h / 硬 3h(對齊現有 3h dead-device 門檻)
+#   2. 其他腳本借用(ONLINE_CHECK / MOUNT_TRACKER / TOOL):應短暫 → 軟 30m / 硬 45m
+#   3. 手動暫停 / live-view(無 registry lease)→ 24h 保底
+# 軟門檻:設 lease.preempted 請 owner 自己收線讓位(乾淨,先關 client 再 release,
+#        無孤兒 session);硬門檻:owner 沒反應(thread 死/wedge)→ 強制 release
+#        (連帶 set_pause(False))。借用型計時用 lease.acquired_at(monitor 不續租,
+#        acquired_at 即本次持有起始);手動用 bot_state.paused_since。
+_MONITOR_STUCK_SOFT_SEC = 2 * 3600
+_MONITOR_STUCK_HARD_SEC = 3 * 3600
+_BORROW_STUCK_SOFT_SEC = 30 * 60
+_BORROW_STUCK_HARD_SEC = 45 * 60
+_MANUAL_STUCK_RESUME_SEC = 24 * 3600
+
+
+def _sweep_stuck_pauses(logger_obj, now: Optional[float] = None) -> None:
+    """自動救援卡死的暫停(見上方註解)。任何例外都吞掉,絕不弄垮掃描迴圈。"""
+    if now is None:
+        now = time.time()
+    try:
+        from runtime_services import session_registry as registry
+        from runtime_services.session_registry import Owner
+    except Exception:  # noqa: BLE001 — registry import 失敗不可弄垮掃描
+        return
+    try:
+        states = bot_state.get_all_states()
+    except Exception:  # noqa: BLE001
+        return
+
+    for ip, st in states.items():
+        try:
+            if not st.get("paused") or not bot_state.is_local_device(ip):
+                continue
+            lease = registry.peek(ip)
+            if lease is None:
+                # 手動暫停 / live-view:無借用 lease → 24h 保底 resume。
+                since = bot_state.get_paused_since(ip)
+                if since is not None and (now - since) >= _MANUAL_STUCK_RESUME_SEC:
+                    bot_state.set_pause(ip, False)
+                    logger_obj.warning(
+                        f"[Watchdog] [{ip}] 手動暫停超過 "
+                        f"{_MANUAL_STUCK_RESUME_SEC // 3600}h,自動恢復")
+                continue
+            if lease.owner is Owner.SCHEDULER:
+                continue  # 排程自身不會 pause,略過
+            # 借用型:依 owner 選監控/其他兩組門檻,計時用 lease.acquired_at。
+            if lease.owner is Owner.ONLINE_MONITOR:
+                soft, hard = _MONITOR_STUCK_SOFT_SEC, _MONITOR_STUCK_HARD_SEC
+                label = "線上監控"
+            else:
+                soft, hard = _BORROW_STUCK_SOFT_SEC, _BORROW_STUCK_HARD_SEC
+                label = lease.owner.value
+            age = now - float(lease.acquired_at)
+            if age >= hard:
+                registry.release(ip, lease.owner)
+                logger_obj.warning(
+                    f"[Watchdog] [{ip}] {label} 借用暫停卡 {age / 60:.0f} 分"
+                    f"(>={hard // 60}m 硬門檻),強制釋放恢復")
+            elif age >= soft:
+                lease.preempted.set()
+                logger_obj.info(
+                    f"[Watchdog] [{ip}] {label} 借用暫停卡 {age / 60:.0f} 分"
+                    f"(>={soft // 60}m 軟門檻),請 owner 讓位")
+        except Exception as exc:  # noqa: BLE001 — 單台失敗不可中斷整輪
+            logger_obj.warning(f"[Watchdog] stuck-pause sweep {ip} 失敗: {exc}")
+
+
 def _special_wanshen_start_allowed(ip: str, cfg) -> bool:
     """萬神專用模式只在一次性排程到期時建立 thread。"""
     if not (bool(cfg.get("special_wanshen_account", False))
@@ -424,3 +495,6 @@ def scan_and_start_devices(main_fn, running_threads: dict, cnn_model, oracle_cnn
                 )
                 t.start()
                 running_threads[ip] = t
+
+    # 卡死暫停守望:自動救援被借用/手動暫停卡太久的本機裝置(不弄垮掃描迴圈)。
+    _sweep_stuck_pauses(logger_obj)

@@ -65,6 +65,11 @@ _ws_h5_handoff_ok: Dict[str, bool] = {}
 # 控制信號 (暫停/恢復)
 _pause_events: Dict[str, threading.Event] = {}
 
+# 每台裝置「進入暫停」的起始 epoch;resume 時清除。供 device_scan_service 的卡死
+# 暫停守望判斷手動暫停(無 registry lease 那類)是否超過保底門檻。借用型暫停的
+# 計時另用 lease.acquired_at,不看這裡。
+_paused_since: Dict[str, float] = {}
+
 # 全域鎖，用於操作 _states 字典本身 (例如新增/刪除 key)
 _global_lock = threading.Lock()
 
@@ -331,10 +336,17 @@ def set_pause(ip: str, paused: bool):
     # paused is now derived from the pause Event in get_all_states() (single
     # source of truth for local devices) — no stored bool write here.
     if paused:
+        with _global_lock:
+            # 由「執行中」首次轉入暫停才記起始時間;已在暫停中重複呼叫不刷新,
+            # 否則守望的 24h 保底永遠歸零、救不回卡死的手動暫停。
+            if _pause_events[ip].is_set():
+                _paused_since[ip] = time.time()
         _pause_events[ip].clear() # 設為 False，觸發 wait
         logger.info(f"[BotState] 已發送暫停信號給 {ip}")
     else:
         _pause_events[ip].set()   # 設為 True，解除 wait
+        with _global_lock:
+            _paused_since.pop(ip, None)
         logger.info(f"[BotState] 已發送恢復信號給 {ip}")
 
 
@@ -353,6 +365,16 @@ def is_paused(ip: str) -> bool:
     with _global_lock:
         event = _pause_events.get(ip)
     return event is not None and not event.is_set()
+
+
+def get_paused_since(ip: str) -> Optional[float]:
+    """回傳裝置進入暫停的起始 epoch;未暫停或無紀錄回 None。
+
+    僅用於卡死暫停守望的「手動暫停 24h 保底」計時。借用型暫停不看這裡
+    (改用 lease.acquired_at,更準且不受重複 set_pause 影響)。
+    """
+    with _global_lock:
+        return _paused_since.get(ip)
 
 
 def record_screenshot_time(ip: str, duration_ms: float) -> None:
@@ -1038,6 +1060,7 @@ def clear_offline_devices():
             _signals.pop(ip, None)
             _wake_overrides.pop(ip, None)
             _screenshot_windows.pop(ip, None)
+            _paused_since.pop(ip, None)
             _locks.pop(ip, None)
 
 
@@ -1076,6 +1099,7 @@ def sweep_stale_states(mark_offline_after_sec: float = 20.0, remove_remote_after
                 with _global_lock:
                     _signals.pop(ip, None)
                     _wake_overrides.pop(ip, None)
+                    _paused_since.pop(ip, None)
                     _locks.pop(ip, None)
 
 
