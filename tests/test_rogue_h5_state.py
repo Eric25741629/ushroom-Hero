@@ -129,3 +129,34 @@ def test_read_blessing_cap_via_fake_page(monkeypatch):
     monkeypatch.setattr(r, "_PACE", 0)
     page = _FakePage("<b>本周獲取上限： <color=#ca1414>1200<color>/5000</b>")
     assert r.read_blessing_cap(page) == (1200, 5000)
+
+
+class _OpenViewPage:
+    """假 page：第一次 evaluate 是 openView，之後都是 read_state。"""
+
+    def __init__(self, *, open_err="", rogue_after=True):
+        self.open_err = open_err
+        self.rogue_after = rogue_after
+        self.calls = []
+
+    def evaluate(self, js, arg=None):
+        self.calls.append(arg)
+        if arg == "RogueView":
+            return self.open_err
+        return _blank(rogueView=self.rogue_after)
+
+
+def test_open_home_jumps_without_dungeon_list():
+    page = _OpenViewPage()
+    assert r.open_home(page) is True
+    assert page.calls[0] == "RogueView"  # 直接開 view，沒有捲清單
+
+
+def test_open_home_fails_when_uimgr_missing():
+    page = _OpenViewPage(open_err="no uiMgr.openView")
+    assert r.open_home(page) is False
+
+
+def test_open_home_fails_when_view_never_activates():
+    page = _OpenViewPage(rogue_after=False)
+    assert r.open_home(page, timeout=0.5) is False

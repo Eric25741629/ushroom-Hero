@@ -26,6 +26,8 @@ from .store import buy_god_everyweek
 
 # 副本清單『萬神試煉』文字 → 該列『入場』鈕的偏移 (實測 540x960：文字中心+(277,75)≈入場鈕)
 _ENTER_SHIFT = (277, 75)
+# 副本清單找『萬神試煉』時最多捲幾次（每次 300px）。清單會隨版本變長，見下方註解。
+_ENTRY_SCROLL_TRIES = 10
 # 進場確認窗輪點優先序：確定(確認窗蓋在按鈕上→最先點) > 進入遊戲 > 繼續 > 開始 > 點擊(獎勵 toast)。
 # 注意：每步先檢查『開始挑戰』(已到關卡視圖)才點；且『開始挑戰』含『開始』，故不可把開始排在偵測前。
 # 確認窗「是否確認開啟新一局試煉」掛在 TopView/MessageView，OCR 看得到「確定」(不分 cocos 層)。
@@ -218,37 +220,49 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     回傳是否「跑滿 rounds 局」,供排程決定要不要寫本週記錄(跑滿才算完成;否則下次重試)。
     rounds 由 device config `wanshen_rounds` 帶入(預設 8);傳小值供測試。
     """
-    logger.info("[萬神試煉] 開始：點『副本』(目標 %d 局)", rounds)
-    img_tools.click_str_by_server(d, "副本")
-    time.sleep(2)
+    page = getattr(d, "_page", None)
+    is_web = getattr(d, "backend_kind", None) == "web_h5" and page is not None
     # rogue 結算 / 秘寶閣面板不會自動回主頁；不主動返回的話，本輪後續任務
     # (雲端戰鬥/好友禮物/開神燈/轉盤金幣) 會全部因「不在主頁面」被跳過。
     # 進『副本』後一律在收尾返回主頁（成功與中止路徑皆然）。
     aborted = False  # 入場/進場/結算失敗 → 收尾除 _recover_to_home 外再強制導回主頁
     try:
-        # 副本清單找『萬神試煉』(Beta)：命中文字+偏移=該列入場鈕；找不到就上滑捲動再試
-        entered = False
-        for _ in range(4):
-            if img_tools.click_str_by_server(
-                d, "萬神試煉", shift_x=_ENTER_SHIFT[0], shift_y=_ENTER_SHIFT[1]
-            ):
-                entered = True
-                break
-            d.swipe(239, 600, 239, 300, 0.2)
-            time.sleep(1)
-        if not entered:
-            logger.warning("[萬神試煉] 副本清單找不到『萬神試煉』入口 → 中止(未挑戰)")
-            aborted = True
-            return False
-        time.sleep(2)
+        if is_web:
+            # web_h5：直接開 RogueView，不碰副本清單。OCR 捲清單找入口在 2026-07-21
+            # 因清單變長（萬神試煉被推到第 5 頁 > 原本 4 次捲動）整批失效。
+            logger.info("[萬神試煉] 開始：直開 RogueView(目標 %d 局)", rounds)
+            from . import rogue_h5
+
+            if not rogue_h5.open_home(page):
+                logger.warning("[萬神試煉] 直開 RogueView 失敗 → 中止(未挑戰)")
+                aborted = True
+                return False
+        else:
+            logger.info("[萬神試煉] 開始：點『副本』(目標 %d 局)", rounds)
+            img_tools.click_str_by_server(d, "副本")
+            time.sleep(2)
+            # 副本清單找『萬神試煉』(Beta)：命中文字+偏移=該列入場鈕；找不到就上滑捲動再試
+            entered = False
+            for _ in range(_ENTRY_SCROLL_TRIES):
+                if img_tools.click_str_by_server(
+                    d, "萬神試煉", shift_x=_ENTER_SHIFT[0], shift_y=_ENTER_SHIFT[1]
+                ):
+                    entered = True
+                    break
+                d.swipe(239, 600, 239, 300, 0.2)
+                time.sleep(1)
+            if not entered:
+                logger.warning("[萬神試煉] 副本清單找不到『萬神試煉』入口 → 中止(未挑戰)")
+                aborted = True
+                return False
+            time.sleep(2)
 
         # 依後端分派：web_h5 走 node-emit 路徑(cocos 狀態判斷，繞過遮罩/座標飄移 →
         # 治好開局遮罩吞點擊的 150s 空燒 + 結算紅箭頭打偏)；adb 維持 OCR。
-        # 副本清單→入場那段兩後端共用上面的 OCR，rogue_h5 從 RogueView 主面板接手。
+        # 入場也已分家：web_h5 直開 RogueView(上面)，adb 才捲副本清單 OCR。
         # 見 docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md
         cap_reached = False  # until_cap 模式下是否已達本周獲取上限(達標=本週完成)
-        page = getattr(d, "_page", None)
-        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+        if is_web:
             # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
             until_cap = False
             try:
