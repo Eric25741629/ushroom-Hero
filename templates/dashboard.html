@@ -1910,9 +1910,10 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           <label class="checkbox-item"><input type="checkbox" id="chkWanshen">萬神試煉</label>
           <label class="checkbox-item" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             萬神關卡戰鬥路徑
-            <select id="selWanshenBattleMode" class="form-control" style="width:auto;height:auto;padding:2px 8px;font-size:0.9em" title="animation=等動畫；local_sim=本頁秒算（H5 only）；remote_calc=遠端B計算">
+            <select id="selWanshenBattleMode" class="form-control" style="width:auto;height:auto;padding:2px 8px;font-size:0.9em" title="animation=等動畫；local_sim=本頁秒算（H5 only）；pure_ws=純WS開局/打關/結局+B頁計算；remote_calc=遠端B計算">
               <option value="animation">動畫（預設）</option>
               <option value="local_sim">本機秒算（H5）</option>
+              <option value="pure_ws">純 WS + B 計算</option>
               <option value="remote_calc">遠端 B 計算</option>
             </select>
           </label>
@@ -4691,7 +4692,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         {
           const wm = String(config.wanshen_battle_mode || 'animation').toLowerCase();
           const wsel = document.getElementById('selWanshenBattleMode');
-          if (wsel) wsel.value = ['animation','local_sim','remote_calc'].includes(wm) ? wm : 'animation';
+          if (wsel) wsel.value = ['animation','local_sim','pure_ws','remote_calc'].includes(wm) ? wm : 'animation';
         }
 
         document.getElementById('chkCloudBattle').checked = config.enable_cloud_battle !== false;

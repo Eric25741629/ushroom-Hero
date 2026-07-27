@@ -19,9 +19,11 @@ def test_coerce_battle_mode_accepts_pure_ws():
     assert coerce_battle_mode("nope") == "animation"
 
 
-def test_coerce_wanshen_rejects_pure_ws():
-    assert coerce_wanshen_battle_mode("pure_ws") == "animation"
+def test_coerce_wanshen_accepts_pure_ws():
+    # Layer 2 AB separation (2026-07-28): pure_ws 正式開放給萬神試煉。
+    assert coerce_wanshen_battle_mode("pure_ws") == "pure_ws"
     assert coerce_wanshen_battle_mode("local_sim") == "local_sim"
+    assert coerce_wanshen_battle_mode("nope") == "animation"
 
 
 def test_arena_gap_min_7():

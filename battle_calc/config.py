@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 ARENA_MODES = ("animation", "local_sim", "remote_calc", "pure_ws")
-WANSHEN_MODES = ("animation", "local_sim", "remote_calc")
+WANSHEN_MODES = ("animation", "local_sim", "remote_calc", "pure_ws")
 MIN_ARENA_GAP_SEC = 7.0
 DEFAULT_ARENA_GAP_SEC = 7.0
 
