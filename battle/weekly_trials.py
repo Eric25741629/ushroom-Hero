@@ -265,15 +265,28 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         if is_web:
             # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
             until_cap = False
+            wanshen_mode = "animation"
             try:
                 import config_manager
                 cfg = config_manager.get_device_config(getattr(d, "device_id", "") or "")
                 until_cap = bool(cfg.get("wanshen_until_cap", False))
+                # wanshen_battle_mode：animation / local_sim / remote_calc（不含 pure_ws，
+                # 未通過 coerce_wanshen_battle_mode 的值退回 animation，config_manager 已保護）
+                from battle_calc.config import coerce_wanshen_battle_mode
+                wanshen_mode = coerce_wanshen_battle_mode(
+                    cfg.get("wanshen_battle_mode", "animation")
+                )
             except Exception:
                 pass
             try:
                 from battle import rogue_h5
-                completed = rogue_h5.run_rounds(page, rounds=rounds, until_cap=until_cap)
+                completed = rogue_h5.run_rounds(
+                    page,
+                    rounds=rounds,
+                    until_cap=until_cap,
+                    mode=wanshen_mode,
+                    ip=str(getattr(d, "device_id", "") or ""),
+                )
                 if until_cap:
                     cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
                     cap_reached = bool(cap and cap[0] >= cap[1])
