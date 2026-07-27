@@ -43,6 +43,18 @@ CMD_COMBAT  = 0x4C04   # rogue_main_combat_c2s {} → s2c {code#1,seed#?,atk_dat
 CMD_RESULT  = 0x4C05   # rogue_main_result_c2s {result#1,precent#2}
 CMD_STATUS  = 0x4C20   # rogue_status_c2s {} → s2c {status#1}（1=有進行中 run）
 
+# 開新局必經的「開局獎勵(重造)」步驟 —— live 實測 2026-07-17(5556 node-emit)：
+# UI 對應 RogueRemakeRewardView「進入遊戲」btnEnter → 確認窗「是否確認進入本次萬神
+# 試煉」→確定。enter(0x4C02) 只是「開啟新一局」，combat 前還必須送這一組才能真正
+# 進場；缺這兩步時 enter 後直接 combat 會被 server 拒（"server error 2"，2026-07-28
+# live 於 7fe98fc6 重現三次才定位到本因）。
+# 數值未在 ROGUE_PROTO_SCHEMA.json 的 cmd_ids 表列出（該表序列止於 19491），但 schema
+# nested 區塊有 rogue_start_reward_info/refresh/confirm 三型定義；19492/19494 取自
+# docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md §3.1 live 實抓 TX。
+CMD_START_REWARD_INFO    = 19492  # 0x4C24 rogue_start_reward_info_c2s {} → s2c {base_reward_list,drop_reward_list,refresh_times,cost_list}
+CMD_START_REWARD_REFRESH = 19493  # 0x4C25 rogue_start_reward_refresh_c2s {pos_list}（不用，跳過）
+CMD_START_REWARD_CONFIRM = 19494  # 0x4C26 rogue_start_reward_confirm_c2s {} → s2c {reward_list}
+
 
 @dataclass(frozen=True)
 class WeekRewardResult:
@@ -169,6 +181,17 @@ class RogueOver:
     fields: dict = field(compare=False, default_factory=dict)
 
 
+@dataclass(frozen=True)
+class RogueStartReward:
+    """rogue_start_reward_info_s2c / rogue_start_reward_confirm_s2c 共用解析結果。
+
+    兩者依 schema 皆無 code 欄位，任何非 error 回覆即成功。
+    """
+    success: bool
+    error: str | None = None
+    fields: dict = field(compare=False, default_factory=dict)
+
+
 # ─── body builders ───────────────────────────────────────────────────────────
 
 def build_enter_c2s(return_type: int = 1) -> bytes:
@@ -191,11 +214,15 @@ def build_result_c2s(result: int, precent: int) -> bytes:
 # ─── parsers ─────────────────────────────────────────────────────────────────
 
 def parse_info(body: bytes) -> RogueInfo:
+    """rogue_info_s2c 依 ROGUE_PROTO_SCHEMA.json：id#1, point#2, end_time#3,
+    score#4, get_list#5, rank#6, attr_list#7, ext_list#8。
+    舊版誤把 field1/2 當 point/score（實際是 id/point），2026-07-27 修正。
+    """
     d = codec.walk_dict(body)
     return RogueInfo(
         success=True,
-        point=int(d.get(1) or 0),
-        score=int(d.get(2) or 0),
+        point=int(d.get(2) or 0),
+        score=int(d.get(4) or 0),
         fields=d,
     )
 
@@ -207,16 +234,18 @@ def parse_status(body: bytes) -> RogueStatus:
 
 
 def parse_enter(cmd: int, body: bytes) -> RogueEnter:
+    """rogue_main_enter_s2c 依 ROGUE_PROTO_SCHEMA.json 沒有 code 欄位：
+    field 1 = other_info(p_other_role_info 訊息)、2/3 = skill_list/my_list、
+    4 = level、5/6 = ext_list/reward_list。任何 CMD_ENTER 回覆即成功
+    （同 rogue_week_reward_s2c 模式：無 code，有回覆=成功）。
+    """
     if cmd == CMD_ERROR:
         ec = codec.walk_dict(body).get(1)
         return RogueEnter(success=False, error=f"server error {ec}")
     if cmd != CMD_ENTER:
         return RogueEnter(success=False, error=f"unexpected cmd 0x{cmd:04x}")
     d = codec.walk_dict(body)
-    code = int(d.get(1) or 0)
-    if code not in (0,):
-        return RogueEnter(success=False, code=code, error=f"enter code={code}", fields=d)
-    return RogueEnter(success=True, code=code, fields=d)
+    return RogueEnter(success=True, fields=d)
 
 
 def parse_combat(cmd: int, body: bytes) -> RogueCombat:
@@ -246,15 +275,29 @@ def parse_result_ack(cmd: int, body: bytes) -> RogueResultAck:
 
 
 def parse_over(cmd: int, body: bytes) -> RogueOver:
+    """rogue_main_over_s2c 依 schema 沒有 code 欄位：field 1 = rogue_report(訊息)、
+    2 = reward_list。任何 CMD_OVER 回覆即成功（同 parse_enter）。
+    """
     if cmd == CMD_ERROR:
         ec = codec.walk_dict(body).get(1)
         return RogueOver(success=False, error=f"server error {ec}")
     if cmd != CMD_OVER:
         return RogueOver(success=False, error=f"unexpected cmd 0x{cmd:04x}")
     d = codec.walk_dict(body)
-    code = int(d.get(1) or 0)
-    # over 允許非零 code（無進行中 run 時 server 可能回非零）
-    return RogueOver(success=True, code=code, fields=d)
+    return RogueOver(success=True, fields=d)
+
+
+def parse_start_reward(cmd: int, body: bytes, *, expect_cmd: int) -> RogueStartReward:
+    """rogue_start_reward_info_s2c / rogue_start_reward_confirm_s2c 共用解析。
+
+    兩者依 schema 皆無 code 欄位，任何非 error 回覆即成功。
+    """
+    if cmd == CMD_ERROR:
+        ec = codec.walk_dict(body).get(1)
+        return RogueStartReward(success=False, error=f"server error {ec}")
+    if cmd != expect_cmd:
+        return RogueStartReward(success=False, error=f"unexpected cmd 0x{cmd:04x}")
+    return RogueStartReward(success=True, fields=codec.walk_dict(body))
 
 
 # ─── send helpers ─────────────────────────────────────────────────────────────
@@ -282,6 +325,36 @@ def enter_run(
         timeout=timeout,
     )
     return parse_enter(cmd, body)
+
+
+def fetch_start_reward_info(
+    client: WSGameClient,
+    *,
+    timeout: float | None = None,
+) -> RogueStartReward:
+    """rogue_start_reward_info_c2s（開局獎勵資訊，UI: RogueRemakeRewardView）。"""
+    cmd, body = client.call_for(
+        CMD_START_REWARD_INFO,
+        b"",
+        expect_cmds=(CMD_START_REWARD_INFO, CMD_ERROR),
+        timeout=timeout,
+    )
+    return parse_start_reward(cmd, body, expect_cmd=CMD_START_REWARD_INFO)
+
+
+def confirm_start_reward(
+    client: WSGameClient,
+    *,
+    timeout: float | None = None,
+) -> RogueStartReward:
+    """rogue_start_reward_confirm_c2s（確認進入本次萬神試煉，enter 後、combat 前必經）。"""
+    cmd, body = client.call_for(
+        CMD_START_REWARD_CONFIRM,
+        b"",
+        expect_cmds=(CMD_START_REWARD_CONFIRM, CMD_ERROR),
+        timeout=timeout,
+    )
+    return parse_start_reward(cmd, body, expect_cmd=CMD_START_REWARD_CONFIRM)
 
 
 def start_combat(

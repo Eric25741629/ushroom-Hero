@@ -202,33 +202,51 @@ def run_rogue_run(
     """
     report = RogueFightReport(success=False)
 
-    # 1. 查狀態：是否有進行中的 run
+    # 1. 查狀態（純 telemetry）：rogue_status_s2c 只有 field1 status，語意未經
+    # server 文件證實。
     try:
         status = rogue_mod.fetch_status(client)
         logger.info("rogue pure_ws status: has_active_run=%s raw=%s",
                     status.has_active_run, status.raw_status)
     except Exception as e:
-        report.error = f"fetch_status failed: {e}"
+        logger.warning("rogue pure_ws: fetch_status failed (non-fatal): %s", e)
+
+    # 2. 開新局（rogue_main_enter_s2c 依 schema 無 code 欄位，任何非
+    # error 回覆即成功 —— 見 ws_token/rogue.py parse_enter）。
+    logger.info("rogue pure_ws: enter run (return_type=1)")
+    try:
+        enter = rogue_mod.enter_run(client, return_type=1)
+        if not enter.success:
+            report.error = f"enter failed: {enter.error}"
+            return report
+        logger.info("rogue pure_ws: enter ok code=%s fields=%s",
+                    enter.code, {k: v for k, v in enter.fields.items()
+                                 if not isinstance(v, (bytes, bytearray))})
+    except Exception as e:
+        report.error = f"enter exception: {e}"
         return report
 
-    # 2. 若無進行中 run，先 enter
-    if not status.has_active_run:
-        logger.info("rogue pure_ws: enter new run (return_type=1)")
-        try:
-            enter = rogue_mod.enter_run(client, return_type=1)
-            if not enter.success:
-                report.error = f"enter failed: {enter.error}"
-                return report
-            logger.info("rogue pure_ws: enter ok code=%s fields=%s",
-                        enter.code, {k: v for k, v in enter.fields.items()
-                                     if not isinstance(v, (bytes, bytearray))})
-        except Exception as e:
-            report.error = f"enter exception: {e}"
+    # 3. 開局獎勵(重造)確認 — combat 前必經，先前遺漏是 "server error 2" 根因。
+    # UI 對應 RogueRemakeRewardView「進入遊戲」→確認窗「是否確認進入本次萬神試煉」；
+    # live 實測(2026-07-17 5556 node-emit)這一步送 rogue_start_reward_info(0x4C24)+
+    # rogue_start_reward_confirm(0x4C26)，缺這步直接打 combat 會被 server 拒絕。
+    # 見 docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md §3.1/§6.1。
+    logger.info("rogue pure_ws: start_reward info+confirm")
+    try:
+        info = rogue_mod.fetch_start_reward_info(client)
+        if not info.success:
+            report.error = f"start_reward_info failed: {info.error}"
             return report
-    else:
-        logger.info("rogue pure_ws: active run found, skip enter → direct combat")
+        confirm = rogue_mod.confirm_start_reward(client)
+        if not confirm.success:
+            report.error = f"start_reward_confirm failed: {confirm.error}"
+            return report
+        logger.info("rogue pure_ws: start_reward ok")
+    except Exception as e:
+        report.error = f"start_reward exception: {e}"
+        return report
 
-    # 3. 打關迴圈
+    # 4. 打關迴圈
     last_t = 0.0
     for i in range(max(1, min(_MAX_STAGES, stages))):
         if should_abort and should_abort():

@@ -78,12 +78,75 @@ def test_parse_result_ack_success():
     assert out.success is True
 
 
-def test_parse_over_accepts_nonzero_code():
-    # over 允許非零 code（無進行中 run 時 server 可能回非零），仍算 success。
+def test_parse_over_success_ignores_body_fields():
+    # rogue_main_over_s2c 依 schema 沒有 code 欄位（field1=rogue_report 訊息）；
+    # 任何非 error 的 CMD_OVER 回覆都算成功，body 內容不影響結果。
     body = codec.pb_uint(1, 3)
     out = rogue_mod.parse_over(rogue_mod.CMD_OVER, body)
     assert out.success is True
-    assert out.code == 3
+    assert out.code == 0
+
+
+def test_parse_start_reward_info_success():
+    body = codec.pb_uint(3, 2)  # refresh_times#3
+    out = rogue_mod.parse_start_reward(
+        rogue_mod.CMD_START_REWARD_INFO, body,
+        expect_cmd=rogue_mod.CMD_START_REWARD_INFO,
+    )
+    assert out.success is True
+    assert out.fields.get(3) == 2
+
+
+def test_parse_start_reward_confirm_success():
+    body = b""  # 實測空 body 也算成功（無 code 欄位）
+    out = rogue_mod.parse_start_reward(
+        rogue_mod.CMD_START_REWARD_CONFIRM, body,
+        expect_cmd=rogue_mod.CMD_START_REWARD_CONFIRM,
+    )
+    assert out.success is True
+
+
+def test_parse_start_reward_server_error():
+    body = codec.pb_uint(1, 2)
+    out = rogue_mod.parse_start_reward(
+        rogue_mod.CMD_ERROR, body,
+        expect_cmd=rogue_mod.CMD_START_REWARD_CONFIRM,
+    )
+    assert out.success is False
+    assert "server error" in out.error
+
+
+def test_parse_start_reward_unexpected_cmd():
+    out = rogue_mod.parse_start_reward(
+        rogue_mod.CMD_ENTER, b"",
+        expect_cmd=rogue_mod.CMD_START_REWARD_INFO,
+    )
+    assert out.success is False
+    assert "unexpected cmd" in out.error
+
+
+def test_fetch_start_reward_info_sends_correct_cmd():
+    client = MagicMock()
+    client.call_for.return_value = (rogue_mod.CMD_START_REWARD_INFO, b"")
+    out = rogue_mod.fetch_start_reward_info(client)
+    assert out.success is True
+    client.call_for.assert_called_once_with(
+        rogue_mod.CMD_START_REWARD_INFO, b"",
+        expect_cmds=(rogue_mod.CMD_START_REWARD_INFO, rogue_mod.CMD_ERROR),
+        timeout=None,
+    )
+
+
+def test_confirm_start_reward_sends_correct_cmd():
+    client = MagicMock()
+    client.call_for.return_value = (rogue_mod.CMD_START_REWARD_CONFIRM, b"")
+    out = rogue_mod.confirm_start_reward(client)
+    assert out.success is True
+    client.call_for.assert_called_once_with(
+        rogue_mod.CMD_START_REWARD_CONFIRM, b"",
+        expect_cmds=(rogue_mod.CMD_START_REWARD_CONFIRM, rogue_mod.CMD_ERROR),
+        timeout=None,
+    )
 
 
 # ─── fight_once ──────────────────────────────────────────────────────────────
@@ -196,6 +259,10 @@ def _mock_run_client(*, has_active_run, sim_results):
     def call_for(cmd, body=b"", *, expect_cmds, timeout=None):
         if cmd == rogue_mod.CMD_ENTER:
             return (rogue_mod.CMD_ENTER, enter_body)
+        if cmd == rogue_mod.CMD_START_REWARD_INFO:
+            return (rogue_mod.CMD_START_REWARD_INFO, b"")
+        if cmd == rogue_mod.CMD_START_REWARD_CONFIRM:
+            return (rogue_mod.CMD_START_REWARD_CONFIRM, b"")
         if cmd == rogue_mod.CMD_COMBAT:
             return (rogue_mod.CMD_COMBAT, b"\x08\x00")
         if cmd == rogue_mod.CMD_RESULT:
@@ -209,7 +276,9 @@ def _mock_run_client(*, has_active_run, sim_results):
     return client
 
 
-def test_run_rogue_run_skips_enter_when_active_run():
+def test_run_rogue_run_always_enters_even_when_active_run():
+    # live 測試證實 status.raw==1 時跳過 enter 會讓 combat 回 server error 2；
+    # 故現在無論 status 為何，每局一律先呼叫 enter。
     client = _mock_run_client(has_active_run=True, sim_results=[0, 1])
     sims = iter([
         {"ok": True, "result": 0, "precent": 0, "ms": 1.0},
@@ -223,11 +292,10 @@ def test_run_rogue_run_skips_enter_when_active_run():
     assert report.success is True
     assert report.stages_fought == 2
     assert report.stages_won == 1
-    # enter 不應被呼叫（status 顯示已有進行中 run）
     enter_calls = [
         c for c in client.call_for.call_args_list if c.args[0] == rogue_mod.CMD_ENTER
     ]
-    assert enter_calls == []
+    assert len(enter_calls) == 1
 
 
 def test_run_rogue_run_enters_when_no_active_run():
@@ -271,6 +339,12 @@ def test_run_rogue_run_calls_over_even_after_combat_failure():
     client.call_for.side_effect = None
 
     def call_for(cmd, body=b"", *, expect_cmds, timeout=None):
+        if cmd == rogue_mod.CMD_ENTER:
+            return (rogue_mod.CMD_ENTER, codec.pb_uint(1, 0))
+        if cmd == rogue_mod.CMD_START_REWARD_INFO:
+            return (rogue_mod.CMD_START_REWARD_INFO, b"")
+        if cmd == rogue_mod.CMD_START_REWARD_CONFIRM:
+            return (rogue_mod.CMD_START_REWARD_CONFIRM, b"")
         if cmd == rogue_mod.CMD_COMBAT:
             return (rogue_mod.CMD_ERROR, codec.pb_uint(1, 9))
         if cmd == rogue_mod.CMD_OVER:
