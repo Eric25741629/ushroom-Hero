@@ -214,6 +214,58 @@ def _fight_rounds_ocr(d, rounds: int) -> tuple[int, bool]:
     return completed, False
 
 
+def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
+    """萬神試煉 pure WS：純協議打完 N 局 + B 頁秒算(預設全新無 profile 瀏覽器)。
+
+    對齊 game_actions/arena_battle.py 的 `_run_pure_ws_fights`。回傳
+    `ws_token.rogue_fight.RogueFightReport`；連線/B 頁開啟失敗回 None(呼叫端 fallback animation)。
+    """
+    try:
+        from battle_calc.config import get_battle_calc_global
+        from ws_token.arena_fight import resolve_b_cdp_port
+        from ws_token.client import WSGameClient
+        from ws_token.creds import load_creds
+        from ws_token import rogue_fight as rf
+
+        bc = get_battle_calc_global()
+        b_mode = str(bc.get("mode") or "ephemeral").strip().lower()
+        prefer_ephemeral = b_mode != "cdp"
+        cdp = resolve_b_cdp_port(
+            device_cdp=(cfg or {}).get("web_debug_port"),
+            calc_cdp=bc.get("cdp_port") if bc.get("enabled") else None,
+        )
+        if not prefer_ephemeral and not cdp:
+            logger.warning("[萬神試煉][%s] pure_ws b_mode=cdp 但無 CDP port", ip)
+            return None
+        creds = load_creds(ip)
+        client = WSGameClient(creds)
+        client.connect()
+        try:
+            report = rf.run_with_b(
+                client,
+                rounds=rounds,
+                prefer_ephemeral=prefer_ephemeral,
+                cdp_port=cdp,
+                game_url=bc.get("game_url"),
+                headless=bool(bc.get("headless", True)),
+                ready_timeout_sec=float(bc.get("ready_timeout_sec") or 90),
+            )
+            logger.info(
+                "[萬神試煉][%s] pure_ws success=%s rounds=%d/%d fought=%d won=%d err=%s",
+                ip, report.success, report.rounds_completed, rounds,
+                report.stages_fought, report.stages_won, report.error,
+            )
+            return report
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+    except Exception:
+        logger.exception("[萬神試煉][%s] pure_ws 失敗", ip)
+        return None
+
+
 def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     """萬神試煉Beta：進副本 → 入場 → 跑滿 rounds 局(每局打到第一次失敗→結束本局)→ 祕寶閣。
 
@@ -266,36 +318,59 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
             # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
             until_cap = False
             wanshen_mode = "animation"
+            cfg: dict = {}
             try:
                 import config_manager
                 cfg = config_manager.get_device_config(getattr(d, "device_id", "") or "")
                 until_cap = bool(cfg.get("wanshen_until_cap", False))
-                # wanshen_battle_mode：animation / local_sim / remote_calc（不含 pure_ws，
-                # 未通過 coerce_wanshen_battle_mode 的值退回 animation，config_manager 已保護）
+                # wanshen_battle_mode：animation / local_sim / remote_calc / pure_ws。
+                # 未通過 coerce_wanshen_battle_mode 的值退回 animation，config_manager 已保護。
                 from battle_calc.config import coerce_wanshen_battle_mode
                 wanshen_mode = coerce_wanshen_battle_mode(
                     cfg.get("wanshen_battle_mode", "animation")
                 )
             except Exception:
                 pass
-            try:
-                from battle import rogue_h5
-                completed = rogue_h5.run_rounds(
-                    page,
-                    rounds=rounds,
-                    until_cap=until_cap,
-                    mode=wanshen_mode,
-                    ip=str(getattr(d, "device_id", "") or ""),
-                )
-                if until_cap:
-                    cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
-                    cap_reached = bool(cap and cap[0] >= cap[1])
-            except Exception:
-                logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
-                completed = 0
-            # until_cap 模式：達本周上限而提早結束(completed<rounds)屬正常，不算 aborted
-            if not until_cap and completed < rounds:
-                aborted = True
+
+            ip = str(getattr(d, "device_id", "") or "")
+            if wanshen_mode == "pure_ws":
+                # pure_ws 不吃 until_cap（無 UI 可複讀『本周獲取上限』），一律跑滿 rounds。
+                report = _run_pure_ws_wanshen(d, ip, rounds, cfg)
+                if report is not None and report.success:
+                    completed = report.rounds_completed
+                else:
+                    logger.warning(
+                        "[萬神試煉][%s] pure_ws 失敗或未跑滿 → fallback animation 收尾本輪", ip
+                    )
+                    from battle import rogue_h5
+                    try:
+                        completed = rogue_h5.run_rounds(
+                            page, rounds=rounds, until_cap=False, mode="animation", ip=ip,
+                        )
+                    except Exception:
+                        logger.exception("[萬神試煉] pure_ws fallback animation 例外 → 中止本輪")
+                        completed = 0
+                if completed < rounds:
+                    aborted = True
+            else:
+                try:
+                    from battle import rogue_h5
+                    completed = rogue_h5.run_rounds(
+                        page,
+                        rounds=rounds,
+                        until_cap=until_cap,
+                        mode=wanshen_mode,
+                        ip=ip,
+                    )
+                    if until_cap:
+                        cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
+                        cap_reached = bool(cap and cap[0] >= cap[1])
+                except Exception:
+                    logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
+                    completed = 0
+                # until_cap 模式：達本周上限而提早結束(completed<rounds)屬正常，不算 aborted
+                if not until_cap and completed < rounds:
+                    aborted = True
         else:
             completed, ocr_aborted = _fight_rounds_ocr(d, rounds)
             if ocr_aborted:
