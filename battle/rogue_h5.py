@@ -300,9 +300,42 @@ def _wait_result(page: Any) -> str:
     return UNKNOWN
 
 
-def battle_loop(page: Any, shot: Optional[Callable] = None) -> int:
-    """單局：連續 開始挑戰 → 等結果 → 關結果，打到第一次失敗為止。回傳完成關數。"""
+def battle_loop(
+    page: Any,
+    shot: Optional[Callable] = None,
+    mode: str = "animation",
+    ip: str = "",
+) -> int:
+    """單局：連續 開始挑戰 → 等結果 → 關結果，打到第一次失敗為止。回傳完成關數。
+
+    mode="animation"（預設）：emit 開始挑戰 → _wait_result 輪詢最多 _BATTLE_TIMEOUT=90 秒。
+    mode="local_sim"       ：install_hooks → clear_combat → emit 開始挑戰 →
+                             run_sim_path(本頁 BattleMainServer 秒算 + send result) →
+                             由 sim["result"] 判斷勝敗，無需等動畫；
+                             sim 失敗(ok=False)自動 fallback 回 _wait_result。
+                             runner.run_sim_path 的 finally 保證 set_block_result(False)，
+                             所有路徑（含例外）都會解除攔截，不會永久吞官方 result。
+
+    sim["result"] 語意（來源 simulate.py SIM_JS）：
+      0 = 攻方（我方 playerList[1]）勝；非 0（通常 1）= 失敗。
+      和競技場邏輯一致：`wid = (0 === result) ? atk.id : defRole.id`。
+      rogue result_body_from_sim 直接回 {"result": int, "precent": int}。
+      2026-07-17 小寶 CDP 9226 live 5 次驗證：deterministic 且對齊官方 result。
+
+    關結果窗(BTN_RESULT_CLOSE)：local_sim 送完 result 後 client 仍會收 rogue_main_result_s2c
+    並 render RogueBattleResultView；不點關閉會卡住下一關流程。需保留。
+    """
     fought = 0
+
+    # local_sim 預備：install_hooks 只需一次（冪等，重呼叫 JS 直接 return 'already'）
+    if mode == "local_sim":
+        try:
+            from battle_calc.page_hooks import clear_combat, install_hooks
+            from battle_calc.runner import run_sim_path
+        except ImportError as e:
+            logger.warning("[rogue_h5] battle_calc 載入失敗 → fallback animation: %s", e)
+            mode = "animation"
+
     for _ in range(_MAX_STAGES):
         st = state(page)
         if st != STAGE:
@@ -317,6 +350,63 @@ def battle_loop(page: Any, shot: Optional[Callable] = None) -> int:
                 return fought
             time.sleep(_PACE)
             continue
+
+        if mode == "local_sim":
+            # ── local_sim 路徑 ────────────────────────────────────────────
+            # 順序：clear（清掉舊 combat） → emit 開始挑戰 → run_sim_path
+            # install_hooks 在迴圈外已呼叫；clear_first=False 因為 emit 前才 clear 過。
+            # run_sim_path finally 保證 set_block_result(False)，不需外層再清。
+            install_hooks(page)
+            clear_combat(page, "rogue")
+            if not emit(page, BTN_STAGE_START):
+                return fought
+            fought += 1
+            logger.info("[rogue_h5][local_sim] 第 %d 關 開始挑戰", fought)
+            out = run_sim_path(
+                page, "rogue", "local_sim",
+                ip=ip, timeout_s=25.0, clear_first=False,
+            )
+            if out.get("ok"):
+                sim = out.get("sim", {})
+                # result=0 → 攻方（我方）勝；非 0 → 失敗
+                won = int(sim.get("result", 1)) == 0
+                precent = sim.get("precent", 0)
+                ms = sim.get("ms", 0)
+                res = RESULT_WIN if won else RESULT_LOSE
+                logger.info(
+                    "[rogue_h5][local_sim] 第 %d 關 sim ok ms=%.1f result=%s precent=%s",
+                    fought, ms, sim.get("result"), precent,
+                )
+                _shot(shot, f"stage{fought}_{res}")
+                # 客戶端收到 rogue_main_result_s2c 後仍 render RogueBattleResultView；
+                # 必須點關閉才能繼續下一關（2026-07-17 live 驗證，不點則下關 STAGE 不出現）。
+                # sim 很快(<100ms)，result view 渲染需要約 0.4s；先 wait 再 emit，避免找不到節點 warning。
+                time.sleep(0.4)
+                emit(page, BTN_RESULT_CLOSE)
+                time.sleep(_PACE)
+                if not won:
+                    logger.info("[rogue_h5][local_sim] 第 %d 關 失敗 → 本局結束", fought)
+                    return fought
+                continue
+            else:
+                # sim 失敗：block 已由 run_sim_path finally 釋放；fallback _wait_result
+                logger.warning(
+                    "[rogue_h5][local_sim] 第 %d 關 sim 失敗(%s) → fallback animation",
+                    fought, out.get("err"),
+                )
+                # 走 animation 路徑收這關結果
+                res = _wait_result(page)
+                _shot(shot, f"stage{fought}_{res}_fallback")
+                emit(page, BTN_RESULT_CLOSE)
+                time.sleep(_PACE)
+                if res in (RESULT_LOSE, UNKNOWN):
+                    logger.info(
+                        "[rogue_h5][local_sim] fallback 第 %d 關 %s → 本局結束", fought, res
+                    )
+                    return fought
+                continue
+
+        # ── animation 路徑（預設）────────────────────────────────────────
         if not emit(page, BTN_STAGE_START):     # 開始挑戰(穿過 Block)
             return fought
         fought += 1
@@ -378,12 +468,16 @@ def run_rounds(
     rounds: int = 8,
     shot: Optional[Callable] = None,
     until_cap: bool = False,
+    mode: str = "animation",
+    ip: str = "",
 ) -> int:
     """從 RogueView 主面板跑局(每局打到第一次失敗→結束本局)。回傳完成局數。
 
     - until_cap=False：跑滿 rounds 局(舊行為)。
     - until_cap=True：改讀『神樹祝福→本周獲取上限 cur/cap』，刷到 cur>=cap(達標) 或
       上一局無進度(cur 沒增加) 為止；`rounds` 退化成**安全上限**避免無限迴圈。
+    - mode：傳給 battle_loop；"animation"(預設)=等動畫，"local_sim"=本頁秒算，
+      "remote_calc"=遠端B；詳見 battle_loop docstring。
 
     呼叫前需已在萬神試煉主面板(RogueView)；副本清單→入場的導航仍由 weekly_trials 負責。
     """
@@ -408,7 +502,7 @@ def run_rounds(
         if not advance_to_stage(page, shot):
             logger.warning("[rogue_h5] 第 %d 局 無法進入關卡視圖 → 停止", r + 1)
             break
-        fought = battle_loop(page, shot)
+        fought = battle_loop(page, shot, mode=mode, ip=ip)
         logger.info("[rogue_h5] 第 %d 局 完成 %d 關", r + 1, fought)
         if not settle_run(page, shot):
             logger.warning("[rogue_h5] 第 %d 局 結算退出失敗 → 停止", r + 1)
@@ -418,10 +512,21 @@ def run_rounds(
     return completed
 
 
-def fight(d: Any, rounds: int = 8, shot: Optional[Callable] = None, until_cap: bool = False) -> int:
-    """weekly_trials 用的薄包裝：由 device 取 playwright page 後跑 run_rounds。"""
+def fight(
+    d: Any,
+    rounds: int = 8,
+    shot: Optional[Callable] = None,
+    until_cap: bool = False,
+    mode: str = "animation",
+) -> int:
+    """weekly_trials 用的薄包裝：由 device 取 playwright page 後跑 run_rounds。
+
+    mode 傳給 run_rounds → battle_loop；預設 animation（向後兼容）。
+    ip 從 device_id 取，用於 battle_calc 日誌。
+    """
     page = getattr(d, "_page", None)
     if page is None:
         logger.warning("[rogue_h5] device 無 _page(非 web_h5 或 session 未起) → 放棄")
         return 0
-    return run_rounds(page, rounds=rounds, shot=shot, until_cap=until_cap)
+    ip = str(getattr(d, "device_id", "") or "")
+    return run_rounds(page, rounds=rounds, shot=shot, until_cap=until_cap, mode=mode, ip=ip)
