@@ -1166,6 +1166,7 @@
             "mining_duration_min": 6,
             "mining_planner_version": "final_v1",
             "mining_save_samples": false,
+            "wanshen_battle_mode": "pure_ws",
             "statue_weekly": {
                 "enabled": true,
                 "amount": 7000,
