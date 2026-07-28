@@ -303,6 +303,10 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
             relic_sprint_target = _t if _t > 0 else None
         except (TypeError, ValueError):
             relic_sprint_target = None
+    # 坐騎衝刺設定在裝置根層，純 WS 成功後由 runner 寫入週期記錄；只在
+    # 有明確設定時傳入，避免破壞沒有這兩個參數的舊測試 fake。
+    mount_sprint_enabled = cfg.get("enable_mount_sprint", None)
+    mount_sprint_quantity = cfg.get("mount_sprint_quantity", None)
     mining_config = cfg.get("ws_token_mining") or None
     sea_config = _ws_nested.get("sea_season") or None
     only_tasks = _ws_nested.get("only_tasks") or None
@@ -371,6 +375,14 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         extra_kwargs["xwar_idle_enabled"] = True
     if arena_config is not None:
         extra_kwargs["arena_config"] = arena_config
+    if mount_sprint_enabled is not None or mount_sprint_quantity is not None:
+        extra_kwargs["mount_sprint_enabled"] = bool(
+            mount_sprint_enabled if mount_sprint_enabled is not None else True)
+        if mount_sprint_quantity is not None:
+            try:
+                extra_kwargs["mount_sprint_quantity"] = int(mount_sprint_quantity)
+            except (TypeError, ValueError):
+                logger_obj.warning("[%s] mount_sprint_quantity 無效，使用 runner 預設", ip)
     bot_state.update_state(ip, task="WS 任務", step="正在執行 ws_token 每日任務")
 
     def _should_abort() -> bool:

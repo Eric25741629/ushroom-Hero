@@ -60,6 +60,7 @@ from ws_token import (
     guild, idle_reward, kungfu_store, league_solo, main_tasks, mining,
     mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
     secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
+    mount_sprint,
     xwar_idle,
 )
 from ws_token import state as ws_state
@@ -82,7 +83,7 @@ LOGIN_TASK = "login"
 # carpark 排第一：跨界車位要搶（10:00 開窗即被掃空），登入後最先送停車，
 # 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
 TASK_ORDER: tuple[str, ...] = (
-    "carpark", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
+    "carpark", "mount_sprint", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
     "rogue", "arena", "statue", "guild", "steward", "relic", "relic_sprint",
     "gacha", "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
@@ -1301,6 +1302,18 @@ def _run_relic_sprint(client, tracker: mining.InventoryTracker, *, enabled: bool
         client, tracker, target_spend=target_spend, enabled=True)
 
 
+def _run_mount_sprint(client, *, device: str, enabled: bool,
+                      quantity: int, now=None) -> dict:
+    """坐騎衝刺：用 mount_levup 一次送出自訂數量的發條。"""
+    return mount_sprint.run(
+        client,
+        device,
+        enabled=enabled,
+        quantity=quantity,
+        now=now,
+    )
+
+
 def _run_dragon_realm(client, tracker: mining.InventoryTracker, *,
                       device: str) -> dict:
     """龍骸聖域 pure-WS: explore + collect keys + tier transition.
@@ -1409,6 +1422,8 @@ def run_device(device: str, *, spend: bool = False,
                relic_fragment_floor: int = 0,
                relic_sprint_enabled: bool = False,
                relic_sprint_target: int = relic_sprint.SPRINT_TOTAL,
+               mount_sprint_enabled: Optional[bool] = None,
+               mount_sprint_quantity: int = mount_sprint.DEFAULT_QUANTITY,
                tycoon: bool = False,
                tycoon_max_rolls: int = 50,
                ad_reward_config_ids: Optional[Iterable[int]] = None,
@@ -1626,6 +1641,11 @@ def run_device(device: str, *, spend: bool = False,
                                        login.get("server_id") or 0) or None,
                                    decision_log=lambda detail: _notify(
                                        "carpark", "progress", detail)))
+        if mount_sprint_enabled:
+            _step("mount_sprint",
+                  lambda: _run_mount_sprint(
+                      client, device=device, enabled=True,
+                      quantity=mount_sprint_quantity))
         _step("main_tasks",
               lambda: _run_main_tasks(client, collector))
         _step("league_solo", lambda: _run_league_solo(client))

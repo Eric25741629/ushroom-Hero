@@ -1,6 +1,7 @@
 """排行榜活動任務。
 
-目前實作：坐騎衝刺 (記錄名稱 `衝刺-發條`)。
+目前 UI fallback：坐騎衝刺 (記錄名稱 `衝刺-發條`)；WS-first 主路徑見
+`ws_token.mount_sprint`。
 活動每 4 週一次,於活動週的週二~週三 (台灣時間週三 22:00 後結算) 餵養
 「無限時發條」給坐騎衝排名,一個活動週只執行一次 (成功才記錄時間)。
 
@@ -22,6 +23,7 @@ import bot_state
 import config_manager
 import img_tools
 import json_manager
+from ws_token import mount_sprint as ws_mount_sprint
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +38,11 @@ USE_BTN = (270, 575)       # 使用 (btnUse)
 CONFIRM_OK = (371, 556)    # 確定 (MessageView/.../btnEnsure)
 CLOSE_BTN = (270, 896)     # 關閉坐騎頁 (btnClose)
 
-SPRINT_RECORD = "衝刺-發條"
-ALLOWED_WEEKDAYS = [1, 2]   # 週二~週三 (週三 22:00 台灣時間後活動結算)
-SPRINT_CLOSE_WEEKDAY = 2   # 週三
-SPRINT_CLOSE_HOUR = 22     # 22:00 台灣時間後不再執行
-DEFAULT_QUANTITY = 3200
+SPRINT_RECORD = ws_mount_sprint.SPRINT_RECORD
+ALLOWED_WEEKDAYS = list(ws_mount_sprint.ALLOWED_WEEKDAYS)
+SPRINT_CLOSE_WEEKDAY = ws_mount_sprint.SPRINT_CLOSE_WEEKDAY
+SPRINT_CLOSE_HOUR = ws_mount_sprint.SPRINT_CLOSE_HOUR
+DEFAULT_QUANTITY = ws_mount_sprint.DEFAULT_QUANTITY
 
 # web_h5: 設定 ItemUseView 數量框並觸發 commit 事件,讓遊戲更新內部數量。
 _SET_QTY_JS = r"""
@@ -80,13 +82,7 @@ def is_mount_sprint_open(now=None):
     只判斷「窗內」，不含 4 週週期判斷(那是 should_execute_cycle 的事)。
     park_spring 與 dashboard 徽章共用此判定，避免活動結束後徽章繼續顯示。
     """
-    now = now or datetime.datetime.now(_TPE)
-    weekday = now.weekday()  # 0=Mon ... 6=Sun
-    if weekday not in ALLOWED_WEEKDAYS:
-        return False
-    if weekday == SPRINT_CLOSE_WEEKDAY and now.hour >= SPRINT_CLOSE_HOUR:
-        return False
-    return True
+    return ws_mount_sprint.is_open(now)
 
 
 def park_spring(d, ip, now=None):

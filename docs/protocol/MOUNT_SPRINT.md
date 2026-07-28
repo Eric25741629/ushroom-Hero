@@ -1,13 +1,29 @@
 # 坐騎衝刺 (衝刺-發條) 自動化
 
 實測：2026-05-25,emulator-5554 (web_h5/CDP 9230) + 實機 (adb,u2)。
-兩後端遊戲畫面皆為 **540x960**,座標可共用。
-程式：`rank_events.park_spring` → `_run_feed_flow`。測試：`tests/test_rank_events.py`。
+純 WS 實測：2026-07-28,小寶 `7fe98fc6` (web_h5/CDP 9226)。
+目前自動流程由 `ws_token.mount_sprint` 優先送純 WS；原 `rank_events.park_spring`
+保留作 WS 登入失敗/未啟用時的 UI fallback。測試：
+`tests/test_ws_token_mount_sprint.py`、`tests/test_rank_events.py`。
 
 ## 活動
 
 坐騎衝刺每月一次,活動週的週二~週三開放 (台灣時間週三 22:00 後結算,不再執行)。
 期間餵養坐騎「無限時發條」可累積祝福值並衝排名。本任務在活動週只執行一次 (成功才記錄)。
+
+## 純 WS 主路徑
+
+登入後由 `ws_token.runner` 執行 `mount_sprint`，不開頁面、不走座標、不依賴 OCR：
+
+| 方向 | cmd | protobuf |
+|------|-----|----------|
+| c2s | `mount.mount_levup_c2s` `0x1f02` | `type#1=0`, `cost#2=數量` |
+| s2c | `mount.mount_levup_s2c` `0x1f02` | `exp#1` |
+
+`cost` 是一次自訂餵養數量，預設 `3200`。只有收到成功的 `0x1f02` 回應後才寫入
+`衝刺-發條` 週期記錄；伺服器錯誤或 timeout 會保留 UI fallback，不會誤標完成。
+2026-07-28 在 `7fe98fc6` 實測送 `cost=1`：發條 `23206→23205`、經驗
+`578296→578297`，回應成功。
 
 ## 入口
 
@@ -23,7 +39,7 @@
 `mountEquipItem` 是自訂組件 (非 cc.Button)，`emit('click')` **無效**,
 必須用真實點擊 (web: `page.mouse.click`;adb: `d.click`)。
 
-## 流程 (每步 OCR 驗證)
+## UI fallback 流程 (每步 OCR 驗證)
 
 | 步驟 | 座標 | 節點 | OCR 驗證 |
 |------|------|------|----------|
@@ -67,9 +83,9 @@ OCR 常漏字 (「一鍵餵養」→「一鍵餐」、「一鍵#餐」)。驗證
 
 ## 排程
 
-`json_manager.should_execute_cycle(cycle_weeks=4, allowed_weekdays=[1,2,3])`
-以最後一次記錄日期為 anchor,每 4 週的週二~週四觸發,當週成功一次即記錄
-(`is_next_week` 防重跑)。週四 22:00 後視為結算,不再執行。
+`json_manager.should_execute_cycle(cycle_weeks=4, allowed_weekdays=[1,2])`
+以最後一次記錄日期為 anchor,每 4 週的週二~週三觸發,當週成功一次即記錄
+(`is_next_week` 防重跑)。週三 22:00 後視為結算,不再執行。
 
 注意：真實活動是「每月」,4 週週期會慢慢漂移。5554 現有 record 2026-05-05
 → 6/2 (剛好 28 天) 正確觸發。若日後活動日期與 4 週不符,需重新 seed record 日期對齊。
@@ -81,7 +97,7 @@ OCR 常漏字 (「一鍵餵養」→「一鍵餐」、「一鍵#餐」)。驗證
 "enable_mount_sprint": true,
 "mount_sprint_quantity": 3200
 ```
-程式預設 7000 (`rank_events.DEFAULT_QUANTITY`),但實際以 config 為準;5554 於 2026-06-04 調降為 3200。
+程式與設定預設 3200 (`ws_token.mount_sprint.DEFAULT_QUANTITY`),實際以 config 為準。
 
 ## 驗證紀錄 (2026-05-25)
 

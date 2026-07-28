@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # RunReport 任務鍵 → 該鍵成功時 daily_pipeline 可跳過的任務名（無條件部分）。
 WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
+    "mount_sprint": ("坐騎強化",),
     "redpack": ("紅包檢查",),
     "idle_reward": ("點擊寶箱",),
     "guild": ("家族任務",),
@@ -382,6 +383,11 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         skip_tasks=skip_tasks,
         only_tasks=cfg.get("only_tasks") or None,
     )
+    if "mount_sprint_enabled" in cfg:
+        kwargs["mount_sprint_enabled"] = bool(cfg.get("mount_sprint_enabled"))
+    if "mount_sprint_quantity" in cfg:
+        kwargs["mount_sprint_quantity"] = _cfg_int(
+            cfg, "mount_sprint_quantity", 3200)
     # target 只在有值時帶，否則讓 run_device 用其預設（避免 None 覆寫 int 預設）。
     if sprint_on and sprint_target is not None:
         kwargs["relic_sprint_target"] = sprint_target
@@ -632,6 +638,19 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _mining = device_cfg.get("ws_token_mining")
         if _mining is not None:
             cfg = {**cfg, "mining": _mining}
+    # 坐騎衝刺的 legacy 設定仍在裝置根層；WS 階段把它明確折入，讓純 WS
+    # 與舊 UI fallback 使用同一個 enable/quantity 設定。缺欄位的測試/舊設定
+    # 不附加參數，保留原本 run_device 的預設行為。
+    _mount_enabled = device_cfg.get("enable_mount_sprint", None)
+    _mount_quantity = device_cfg.get("mount_sprint_quantity", None)
+    if _mount_enabled is not None or _mount_quantity is not None:
+        cfg = {
+            **cfg,
+            "mount_sprint_enabled": bool(
+                _mount_enabled if _mount_enabled is not None else True),
+        }
+        if _mount_quantity is not None:
+            cfg["mount_sprint_quantity"] = _mount_quantity
     # 裝置層主/shadow planner 設定注入 mining 子設定（copy-on-write：DeviceConfig
     # 與巢狀 dict 可能被 cache，不可就地改）。預設 v1 / shadow 關閉。
     _mining_cfg = dict(cfg.get("mining") or {})

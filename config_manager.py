@@ -63,6 +63,8 @@ DEFAULT_DEVICE_CONFIG = {
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
+    "enable_mount_sprint": True,  # 啟用坐騎衝刺；WS 階段優先用 mount_levup
+    "mount_sprint_quantity": 3200,  # 坐騎衝刺每輪餵養的無限時發條數量
     "enable_dungeon": True,  # 啟用副本(地獄/萬神) — legacy 總開關，向後相容 fallback 用
     "enable_hellgate": True,  # 啟用地獄之門 (granular 副本開關)
     "enable_wanshen": True,  # 啟用萬神試煉 (granular 副本開關)

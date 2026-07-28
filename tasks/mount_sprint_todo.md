@@ -1,8 +1,8 @@
 # 坐騎衝刺 (衝刺-發條) 規範化重寫
 
 ## 背景
-舊 `rank_events.park_spring` 為 ADB 座標版,在 web_h5 (5554) 上無法輸入數量,
-且有多個 bug。改為跨後端 (web_h5 + ADB)、OCR 驗證、設定驅動的版本。
+舊 `rank_events.park_spring` 為座標/OCR 版。現已新增純 WS 主路徑：活動期間先由
+`ws_token.mount_sprint` 送 `mount_levup_c2s`，只有 WS 失敗才降級到原 UI 流程。
 
 ## 已驗證事實 (live, 兩後端皆 540x960)
 | 步驟 | 座標/節點 | 備註 |
@@ -24,6 +24,9 @@
 - 一個活動週只餵一次 (成功才 `time_recording`)
 
 ## TODO — DONE
+- [x] `ws_token/mount_sprint.py` — `0x1f02` 純 WS 餵養、成功回應驗證、週期記錄
+- [x] WS-first runner / phase wiring — 成功後跳過 `坐騎強化` UI 任務，失敗保留 fallback
+- [x] 2026-07-28 `7fe98fc6` live 送 `cost=1` 成功（發條 -1、經驗 +1）
 - [x] tests/test_rank_events.py — 16 tests (排程 gate + flow + 數量輸入),全綠
 - [x] rank_events.py — 重寫 park_spring + helpers (跨後端 + OCR 驗證)
 - [x] bot_config.json — 5554 加 enable_mount_sprint:true / mount_sprint_quantity:3200 (原 7000,2026-06-04 調降)
