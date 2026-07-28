@@ -341,7 +341,7 @@ _DAILY_TASKS_CONFIG = {
     "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4), "event_open": "mount_sprint"},
     "菇菇武道會": {
         "key": "mushroom_arena_daily",
-        "cycle": ("mushroom_arena_cycle_start", 4),
+        "mushroom_arena_week": True,
     },
     "航海": {"key": "sea_last_execution", "sea_week": True, "period": "week"},
     "龍骸聖域": {
@@ -364,6 +364,8 @@ def _compute_daily_progress(manager, device_id, *, today=None, now=None):
     results = {}
     for display_name, config in _DAILY_TASKS_CONFIG.items():
         # 1. gate：未到週期/檔期則隱藏
+        if config.get("mushroom_arena_week") and not json_manager.is_mushroom_arena_week(today):
+            continue
         if "cycle" in config:
             record_name, weeks = config["cycle"]
             should_exec, _ = json_manager._should_execute_cycle(

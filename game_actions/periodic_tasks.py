@@ -1,17 +1,18 @@
-import datetime
 import time
-from json_manager import _should_execute_cycle, time_recording, return_time
+from json_manager import is_mushroom_arena_week, time_recording, return_time
 from utils.logging_utils import logger
 import img_tools
 from tools import click_white
 
-# 週期常數
+# 武道會週期為 3 週；實際活動週由 json_manager.scheduling 的固定日曆錨點判斷。
 MUSHROOM_ARENA_CYCLE_WEEKS = 3
 
 
 def should_execute_mushroom_arena(ip: str) -> tuple:
-    """判斷是否該執行菇菇武道會（每4週執行1週）"""
-    return _should_execute_cycle(ip, "mushroom_arena_cycle_start", cycle_weeks=MUSHROOM_ARENA_CYCLE_WEEKS, logger=logger)
+    """判斷是否該執行菇菇武道會（固定日曆每 3 週開放 1 週）。"""
+    should_execute = is_mushroom_arena_week()
+    logger.info(f"[{ip}] 菇菇武道會: 日曆活動週={should_execute}")
+    return should_execute, False
 
 
 def mushroom_arena(ip, d):

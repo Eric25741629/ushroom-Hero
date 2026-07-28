@@ -103,7 +103,7 @@ def _due_cloud_fighting(ip: str, now: datetime.datetime) -> bool:
 
 
 def _due_mushroom_arena(ip: str, now: datetime.datetime) -> bool:
-    # 對照 game_actions/periodic_tasks.py:44-48（_run_periodic_cycle 的 cycle + daily_limit）
+    # 對照 game_actions/periodic_tasks.py（固定日曆活動週 + daily_limit）
     # lazy import：periodic_tasks 會拉 img_tools/tools 等重模組。
     from game_actions import periodic_tasks
 

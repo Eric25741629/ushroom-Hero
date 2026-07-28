@@ -165,6 +165,21 @@ def _should_execute_cycle(
     return should_execute, False
 
 
+# 菇菇武道會是全服共用的三週檔期，不能用各裝置上次執行日往後推算。
+# 2026-07-27（週一）由多台裝置的本週成功紀錄確認為目前活動週；遊戲改檔期時只需更新此錨點。
+_MUSHROOM_ARENA_ANCHOR_MONDAY = datetime.date(2026, 7, 27)
+_MUSHROOM_ARENA_CYCLE_DAYS = 21
+
+
+def is_mushroom_arena_week(today: Optional[datetime.date] = None) -> bool:
+    """判斷今天是否為菇菇武道會活動週（日曆錨點，每 21 天一週）。"""
+    if today is None:
+        _tpe = datetime.timezone(datetime.timedelta(hours=8))
+        today = datetime.datetime.now(_tpe).date()
+    monday = today - datetime.timedelta(days=today.weekday())
+    return (monday - _MUSHROOM_ARENA_ANCHOR_MONDAY).days % _MUSHROOM_ARENA_CYCLE_DAYS == 0
+
+
 # sea 只在台灣時間此視窗內執行（end 為 exclusive hour，等同 10:00~24:00）。
 # legacy Sea.sea 的中段航海操作本就限制在這個時段，但結尾的盲點返回 tap
 # 不論時段都會跑；若在視窗外被排程呼叫，會跳過中段、結尾 tap 落錯位置，

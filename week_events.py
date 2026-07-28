@@ -35,11 +35,8 @@ def should_execute_sea_with_cooldown(ip: str) -> Tuple[bool, bool]:
 
 
 def should_execute_mushroom_arena(ip: str) -> Tuple[bool, bool]:
-    return json_manager.should_execute_cycle(
-        ip,
-        "mushroom_arena_cycle_start",
-        cycle_weeks=MUSHROOM_ARENA_CYCLE_WEEKS,
-    )
+    # 活動週是全服共用的日曆檔期，不可被各裝置上次執行時間帶偏。
+    return json_manager.is_mushroom_arena_week(), False
 
 
 def mushroom_arena(ip: str, d, logger: Optional[logging.Logger] = None) -> None:
