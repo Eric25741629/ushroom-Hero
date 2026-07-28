@@ -398,3 +398,26 @@ def test_battle_speed_card_control_exists_and_is_wired():
     assert "info.battle_speed_scale" in html
     assert "function battleSpeedOption" in html
     assert "document.activeElement !== bsSel" in html
+
+
+def test_battle_mode_options_explain_themselves_and_hide_h5_only_paths_for_adb():
+    """戰鬥模式要能靠懸停理解，且 ADB 不應顯示只能由 H5 執行的路徑。"""
+    html = _html()
+
+    for select_id in ("selArenaBattleMode", "selWanshenBattleMode"):
+        assert f'id="{select_id}"' in html
+        assert 'onchange="updateBattleModeOptions()"' in html
+
+    # 四個選項都要有可懸停的原生 tooltip；兩個需要目前 H5 頁面的模式要標記出來。
+    for value in ("animation", "local_sim", "pure_ws", "remote_calc"):
+        assert re.search(rf'<option value="{value}"[^>]*title=', html)
+    assert len(re.findall(
+        r'<option value="(?:local_sim|remote_calc)" data-requires-h5="true"',
+        html,
+    )) == 4
+    assert "function updateBattleModeOptions()" in html
+    assert "const isH5 = backend.startsWith('web_h5')" in html
+    assert "option.hidden = !isH5" in html
+    assert "option.disabled = !isH5" in html
+    assert "h5OnlyModes.includes(select.value)" in html
+    assert "updateBattleModeOptions();" in html
