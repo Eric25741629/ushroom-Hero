@@ -49,11 +49,26 @@
 
 ### Live 追加觀察
 
-- [ ] `_board_confirmation()` 的 `footprint_changed` 歸因偏寬：驗證腳本在鏟子已歸零後誤送鎬子時，
+- [x] `_board_confirmation()` 的 `footprint_changed` 歸因偏寬：驗證腳本在鏟子已歸零後誤送鎬子時，
   其他背景盤面變化曾被判 confirmed；production `mine_until_pickaxe_empty()` 有 `pickaxe<=0` 前置閘門，
-  本次正式流程不受影響，但 confirmation API 應要求目標/預期足跡或庫存至少一項可歸因變化。
-- [ ] `_select_dig_step()` 單獨呼叫不檢查鎬子庫存，可能在 `pickaxe=0` 時把 final_v1 的合法道具步
-  覆寫成 dig；production 外層目前會先停，不會送出。建議 helper 自身也做資源防呆，避免其他 caller 誤用。
+  本次正式流程不受影響。已改成只接受 baseline、目標格、道具預期足跡或對應庫存的可歸因變化；
+  dig 的無關盤面變化不再算成功，炸彈保留畫面外足跡、鑽頭限制可視 7 列。
+- [x] `_select_dig_step()` 單獨呼叫不檢查鎬子庫存，可能在 `pickaxe=0` 時把 final_v1 的合法道具步
+  覆寫成 dig。已在 planner steps、一般 fallback、below-pit steering 三個出口加入已知庫存歸零防呆；
+  舊 caller 未傳 inventory 時維持既有相容行為。
+
+### H5 WS 事件化驗證修復
+
+- [x] 新增 `read_ws_mine_board()`，H5 executor 點擊前後直接讀 JavaScript 內 `0x0c01` 盤面；
+  同時用 `0x0401` 現量確認鎬子/鑽頭/炸彈是否實際扣除。
+- [x] H5 挖步只要 WS 可用就不再呼叫 CNN `verify_cell_empty()`，也不會因 CNN 動畫誤判而補點；
+  ADB/WS 不可用才維持 CNN fallback。
+- [x] H5 鏟子計帳改為 authoritative `pickaxe_count_after`，`_apply_partial()` 直接同步 WS 現量，
+  不再把未消耗的補點無條件算成一支鏟子。
+- [x] 第 7 列下樓步也走相同 WS 驗證與庫存計帳，不再無條件視為成功。
+- [x] telemetry 補上 verification events：WS/CNN 來源、confirmation、前後庫存、CNN label/confidence。
+- [x] 驗證：相關 executor/service/final_v1/adapter/純 WS 共 118 passed，目標 `py_compile` 通過。
+- [ ] 合併 `main` 後以 7fe98fc6 CDP 9226 正式 live 驗證。
 
 ---
 

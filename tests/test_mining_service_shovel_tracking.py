@@ -92,7 +92,8 @@ if "config.paths" not in sys.modules:
     sys.modules["config.paths"] = types.SimpleNamespace(DATASET_LOW_CONFIDENCE_DIR_STR="")
 
 
-from miner.mining_service import _reconcile_shovel_count  # noqa: E402
+from miner.mining_service import _apply_partial, _reconcile_shovel_count  # noqa: E402
+from miner.planning.executor import ExecutionResult  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -138,3 +139,13 @@ def test_reconcile_zero_tolerance_strict():
     new, kind = _reconcile_shovel_count(internal=50, ocr=49, tolerance=0)
     assert new == 49
     assert kind == "drift"
+
+
+def test_apply_partial_prefers_authoritative_ws_pickaxe_count():
+    logger = types.SimpleNamespace(info=lambda *_a, **_kw: None)
+    result = ExecutionResult(shovels_used=2, pickaxe_count_after=9)
+    items = {"drill": 3, "bomb": 4}
+
+    count = _apply_partial(result, 12, items, logger)
+
+    assert count == 9

@@ -72,7 +72,45 @@ def _board_confirmation(before: Any, after: Any, step: Dict[str, Any]) -> Option
 
     if _target_sig(before) != _target_sig(after):
         return "target_changed"
-    return "footprint_changed"
+    if step.get("type") != "use":
+        return None
+
+    from miner.core.mechanics import get_drill_affected_cells
+    from ws_token import mining_adapter
+    top = mining_adapter.viewport_top_depth(int(getattr(before, "baseline", 0) or 0))
+    depth, game_col = divmod(bid, 100)
+    row, col = depth - top, game_col - 1
+    if step.get("item") == "bomb":
+        # 炸彈可延伸畫面外，確認足跡使用絕對座標，不套 7 列裁切。
+        footprint_ids = {
+            (depth + dr) * 100 + col + dc + 1
+            for dr, dc in (
+                *((dr, dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1)),
+                (-2, 0), (2, 0), (0, -2), (0, 2),
+            )
+            if 0 <= col + dc < mining_adapter.GRID_COLS
+        }
+    elif step.get("item") == "drill":
+        rel_cells = get_drill_affected_cells(row, col, mining_adapter.GRID_ROWS,
+                                             mining_adapter.GRID_COLS)
+        footprint_ids = {(top + r) * 100 + c + 1 for r, c in rel_cells}
+    else:
+        return None
+
+    def _block_sigs(board: Any):
+        return {
+            int(getattr(blk, "block_id", 0) or 0): (
+                int(getattr(blk, "count", 0) or 0),
+                int(getattr(blk, "config_id", 0) or 0),
+            )
+            for blk in (getattr(board, "blocks", []) or [])
+        }
+
+    before_sigs, after_sigs = _block_sigs(before), _block_sigs(after)
+    if any(before_sigs.get(cell_id) != after_sigs.get(cell_id)
+           for cell_id in footprint_ids):
+        return "footprint_changed"
+    return None
 
 
 def _inventory_from_tracker(tracker: "mining.InventoryTracker",
@@ -278,7 +316,7 @@ def execute_plan_step(
                 # legacy 語意不變：只看盤面 signature
                 if board_conf:
                     confirmed = True
-                    confirmation = "confirmed_by_board_change"
+                    confirmation = board_conf
                     break
                 confirmation = "unconfirmed_no_board_change"
             else:
@@ -436,6 +474,8 @@ def _select_dig_step(
     without it the fallback skips non-pit cells entirely to stay conservative.
     """
     plan_steps = list(plan_steps or ())
+    inventory_known = inventory is not None and "pickaxe" in inventory
+    inventory = inventory or {}
     excl = {int(x) for x in (exclude or ())}
     actives = {int(a) for a in (getattr(board, "actives", None) or [])}
     block_by_id = {int(b.block_id): b for b in (getattr(board, "blocks", None) or [])}
@@ -463,17 +503,24 @@ def _select_dig_step(
             # solid-cell _is_diggable gate (it would reject every valid placement).
             if prop is not None and int(prop["block_id"]) not in excl:
                 return prop
+            if inventory_known and int(inventory.get("pickaxe", 0) or 0) <= 0:
+                return None
             steer = mining_adapter.pit_directed_next(board, exclude=excl)
             if steer is not None and _is_diggable(actives, block_by_id, int(steer)):
                 return {"type": "dig", "block_id": int(steer), "step_cost": 1.0}
 
     for step in plan_steps:
+        if (inventory_known and step.get("type") == "dig"
+                and int(inventory.get("pickaxe", 0) or 0) <= 0):
+            continue
         bid = step.get("block_id")
         if bid is not None and int(bid) not in excl and _is_diggable(actives, block_by_id, int(bid)):
             return step
     if not plan_steps:
         return None
 
+    if inventory_known and int(inventory.get("pickaxe", 0) or 0) <= 0:
+        return None
     cands = [bid for bid in actives if bid not in excl and _is_diggable(actives, block_by_id, bid)]
     if not cands:
         return None

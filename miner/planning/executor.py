@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import cv2
@@ -57,6 +57,8 @@ class ExecutionResult:
     bombs_used: int = 0
     steps_completed: int = 0
     terminated_reason: Optional[str] = None
+    pickaxe_count_after: Optional[int] = None
+    verification_events: List[Dict[str, Any]] = field(default_factory=list)
 
 
 class ItemPlacementError(Exception):
@@ -104,7 +106,7 @@ PLACEABLE_MATERIALS = {"empty", "dug_pit"}
 
 from miner.core.vision_utils import check_points
 from miner.core.ocr_utils import check_drill_num, check_boom_num
-from miner.core.ws_inventory import read_ws_prop_counts
+from miner.core.ws_inventory import read_ws_mine_board, read_ws_prop_counts
 from miner.rl.rl_recorder import RLRecorder
 from tools import click_white
 
@@ -255,6 +257,7 @@ def verify_cell_empty(
     c: int,
     max_retry: int = 3,
     error_threshold: float = 0.9,
+    details: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """重新截圖後確認指定格子是否成功被挖空。
 
@@ -262,6 +265,7 @@ def verify_cell_empty(
     因此這裡接受 base_label in {"empty", "dug_pit"} 都算成功，
     避免挖完礦洞後又多點一次。
     """
+    attempts = []
     for _ in range(max_retry):
         passed, _ = check_points(d.screenshot(format="opencv"))
         if passed:
@@ -271,7 +275,10 @@ def verify_cell_empty(
         board2, confidences2 = clf.classify_board(img2, save_samples=False)
         confidence = confidences2[r][c]
         new_label = base_label(board2[r][c])
+        attempts.append({"label": new_label, "confidence": float(confidence)})
         if new_label in ("empty", "dug_pit"):
+            if details is not None:
+                details.update({"source": "cnn", "attempts": attempts})
             return True
         if confidence < error_threshold:
             # 使用者回饋：信心度低於閾值時，不要點擊空白處，而是儲存錯誤樣本
@@ -280,7 +287,49 @@ def verify_cell_empty(
             # 這裡只需要呼叫，但目前 verify_cell_empty 的 classify_board 參數 save_samples=False)
             # 因此這裡我們選擇忽略點擊空白處的行為。
             continue
+    if details is not None:
+        details.update({"source": "cnn", "attempts": attempts})
     return False
+
+
+def _verify_ws_action(
+    d: DeviceLike,
+    before_board: Any,
+    step: Dict[str, Any],
+    before_inventory: Optional[Dict[str, int]],
+    *,
+    max_retry: int = 4,
+) -> Dict[str, Any]:
+    """以 0x0c01 + 0x0401 驗證 H5 動作，僅接受可歸因變化。"""
+    from ws_token.mining_supervised import _board_confirmation
+
+    after_board = before_board
+    after_inventory = before_inventory
+    confirmation = None
+    for attempt in range(1, max_retry + 1):
+        after_board = read_ws_mine_board(d)
+        after_inventory = read_ws_prop_counts(d)
+        if after_board is not None:
+            confirmation = _board_confirmation(before_board, after_board, step)
+        if confirmation:
+            break
+        item = step.get("item", "pickaxe")
+        key = "pickaxe" if step.get("type") == "dig" else item
+        if (before_inventory is not None and after_inventory is not None
+                and int(after_inventory.get(key, 0)) < int(before_inventory.get(key, 0))):
+            confirmation = f"{key}_inventory_changed"
+            break
+        if attempt < max_retry:
+            time.sleep(0.25)
+    return {
+        "success": bool(confirmation),
+        "source": "ws",
+        "confirmation": confirmation,
+        "attempts": attempt,
+        "inventory_before": before_inventory,
+        "inventory_after": after_inventory,
+        "after_board": after_board,
+    }
 
 
 def execute_plan_steps(
@@ -325,6 +374,8 @@ def execute_plan_steps(
             if step["action"].startswith("use_"):
                 item_type = step["action"].split("_", 1)[1]
                 r, c = step["target"]
+                ws_board_before = read_ws_mine_board(d)
+                ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
                 target_label = board[r][c]
                 if not is_placeable_label(target_label):
                     print(
@@ -363,7 +414,35 @@ def execute_plan_steps(
                     min_wait=0.5,
                 )
                 board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
-                if board_after_use == board:
+                ws_event = None
+                if ws_board_before is not None:
+                    ws_event = _verify_ws_action(
+                        d, ws_board_before, step, ws_inventory_before
+                    )
+                    acc.verification_events.append(ws_event)
+                if ws_event is not None and not ws_event["success"]:
+                    acc.terminated_reason = "no_board_change"
+                    raise NoBoardChangeError(
+                        step=step,
+                        reason=f"{item_type} made no attributable WS change",
+                        item_type=item_type,
+                        board_before=[row[:] for row in board],
+                        board_after=[row[:] for row in board_after_use],
+                        partial_result=acc,
+                    )
+                if ws_event is not None:
+                    after_inv = ws_event["inventory_after"]
+                    if after_inv is not None and ws_inventory_before is not None:
+                        used = max(
+                            0,
+                            int(ws_inventory_before.get(item_type, 0))
+                            - int(after_inv.get(item_type, 0)),
+                        )
+                        if item_type == "drill":
+                            acc.drills_used = used
+                        elif item_type == "bomb":
+                            acc.bombs_used = used
+                if ws_event is None and board_after_use == board:
                     acc.terminated_reason = "no_board_change"
                     raise NoBoardChangeError(
                         step=step,
@@ -408,6 +487,8 @@ def execute_plan_steps(
             step_board_before = [row[:] for row in board]
             cell_events: List[Dict[str, Any]] = []
             for (r, c) in step["dig_list"]:
+                ws_board_before = read_ws_mine_board(d)
+                ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
                 label = board[r][c]
                 hits = required_hits(label)
                 cell_cost = int(enter_cost(label) or 0)
@@ -422,10 +503,9 @@ def execute_plan_steps(
                 }
                 if hits > 0:
                     tap_cell(d, r, c, hits, wait_ms=1000)
-                    # Each click consumes a shovel — record now because the
-                    # game has already debited it even if classify_board
-                    # later disagrees about the result.
-                    acc.shovels_used += cell_cost
+                    if ws_board_before is None:
+                        # ADB 無 authoritative 庫存，維持保守點擊成本估算。
+                        acc.shovels_used += cell_cost
                     if "pit" in label and "dug" not in label:
                         print(f"    [Executor] 挖掘礦洞 ({r},{c})，執行兩次確認點擊 (394, 152)")
                         d.click(394, 152)
@@ -444,15 +524,44 @@ def execute_plan_steps(
                     check_points(d.screenshot(format="opencv"))
 
                 if r < 6:
-                    success = verify_cell_empty(d, clf, r, c, max_retry=2)
-                    if not success:
+                    if ws_board_before is not None:
+                        ws_event = _verify_ws_action(
+                            d, ws_board_before, step, ws_inventory_before
+                        )
+                        acc.verification_events.append(ws_event)
+                        cell_event.update({
+                            "verify_source": "ws",
+                            "confirmation": ws_event["confirmation"],
+                            "inventory_before": ws_event["inventory_before"],
+                            "inventory_after": ws_event["inventory_after"],
+                        })
+                        success = ws_event["success"]
+                        after_inv = ws_event["inventory_after"]
+                        if after_inv is not None:
+                            acc.pickaxe_count_after = int(after_inv.get("pickaxe", 0))
+                            if ws_inventory_before is not None:
+                                acc.shovels_used += max(
+                                    0,
+                                    int(ws_inventory_before.get("pickaxe", 0))
+                                    - acc.pickaxe_count_after,
+                                )
+                    else:
+                        verify_details: Dict[str, Any] = {}
+                        success = verify_cell_empty(
+                            d, clf, r, c, max_retry=2, details=verify_details
+                        )
+                        cell_event.update(verify_details)
+                    if not success and ws_board_before is None:
                         print(f"    驗證未成功，補點一次 ({r},{c})")
                         tap_cell(d, r, c, 1)
                         # The retry click is one extra shovel regardless of
                         # the cell's enter_cost.
                         acc.shovels_used += 1
-                        success = verify_cell_empty(d, clf, r, c, max_retry=1)
+                        success = verify_cell_empty(
+                            d, clf, r, c, max_retry=1, details=cell_event
+                        )
                     cell_event["verify_success"] = success
+                    acc.verification_events.append(dict(cell_event))
                     if not success:
                         print(f"    ⚠️ 挖掘驗證失敗 ({r},{c})，停止執行剩餘步驟")
                         cell_events.append(cell_event)
@@ -494,6 +603,35 @@ def execute_plan_steps(
                         acc.terminated_reason = "verify_fail"
                         return acc
                 else:
+                    if ws_board_before is not None:
+                        ws_event = _verify_ws_action(
+                            d, ws_board_before, step, ws_inventory_before
+                        )
+                        acc.verification_events.append(ws_event)
+                        cell_event.update({
+                            "verify_source": "ws",
+                            "confirmation": ws_event["confirmation"],
+                            "inventory_before": ws_event["inventory_before"],
+                            "inventory_after": ws_event["inventory_after"],
+                            "verify_success": ws_event["success"],
+                        })
+                        after_inv = ws_event["inventory_after"]
+                        if after_inv is not None:
+                            acc.pickaxe_count_after = int(after_inv.get("pickaxe", 0))
+                            if ws_inventory_before is not None:
+                                acc.shovels_used += max(
+                                    0,
+                                    int(ws_inventory_before.get("pickaxe", 0))
+                                    - acc.pickaxe_count_after,
+                                )
+                        if not ws_event["success"]:
+                            acc.terminated_reason = "no_board_change"
+                            raise NoBoardChangeError(
+                                step=step,
+                                reason=f"floor7 dig at ({r},{c}) made no attributable WS change",
+                                board_before=step_board_before,
+                                partial_result=acc,
+                            )
                     print(f"    第七層格子 ({r},{c}) 跳過驗證")
                     print(f"    ⚠️ 觸發下樓，停止執行剩餘路徑，請重新規劃")
                     # Row-6 dig triggers a full scroll + new-row-generation
@@ -510,6 +648,7 @@ def execute_plan_steps(
                     )
                     cell_event["verify_success"] = True
                     cell_events.append(cell_event)
+                    acc.verification_events.append(dict(cell_event))
                     if rl_recorder:
                         rl_recorder.record_transition(
                             {
@@ -529,7 +668,7 @@ def execute_plan_steps(
                     return acc
                 img_after_dig = d.screenshot(format="opencv")
                 board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
-                if board_after_dig == step_board_before:
+                if ws_board_before is None and board_after_dig == step_board_before:
                     acc.terminated_reason = "no_board_change"
                     raise NoBoardChangeError(
                         step=step,
