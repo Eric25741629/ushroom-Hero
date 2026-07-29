@@ -12,7 +12,7 @@ API under test:
     - executes the per-wake 20-task sequence verbatim
     - calls the stage-guard helper (_run_at_main_page) enough times to
       drive the task sequence
-    - emulator-5558 device-cleanup branch: calls switch_skill(d, '騙人用')
+    - emulator-5558 uses H5/CDP to switch 戰士推圖 → 騙人用 without OCR
     - fc65396d device-cleanup branch: calls d.app_start('com.android.chrome')
 """
 from __future__ import annotations
@@ -161,7 +161,7 @@ def fake_all(monkeypatch, pipeline_mod):
         "weekly_dungeon": [],
         "biweekly_dungeon": [],
         "bot_state": [],
-        "switch_skill": [],
+        "switch_skill_h5": [],
         "mismatch": [],
         "app_start": [],
         "app_stop": [],
@@ -213,8 +213,10 @@ def fake_all(monkeypatch, pipeline_mod):
     )
 
     monkeypatch.setattr(
-        pipeline_mod, "switch_skill",
-        lambda d, *args, **kw: calls["switch_skill"].append({"args": args, "kw": kw}),
+        pipeline_mod, "switch_skill_h5",
+        lambda ip, *args, **kw: calls["switch_skill_h5"].append(
+            {"ip": ip, "args": args, "kw": kw}
+        ),
     )
 
     monkeypatch.setattr(
@@ -386,15 +388,14 @@ def test_run_stops_immediately_on_force_sleep_checkpoint(pipeline_mod, monkeypat
 
 
 def test_run_triggers_emulator_5558_cleanup_branch(pipeline_mod, fake_all):
-    """emulator-5558 must receive a switch_skill(d, '騙人用') cleanup call."""
+    """5558 由同一個 H5/CDP session 切戰士推圖，收尾切回騙人用。"""
     ctx = _build_ctx(pipeline_mod, "emulator-5558")
     pipeline_mod.run(ctx)
-    # We expect at least one switch_skill call with '騙人用' as a positional arg.
-    found = any(
-        call["args"] == ("騙人用",)
-        for call in fake_all["switch_skill"]
-    )
-    assert found, f"expected switch_skill(d, '騙人用') call; got {fake_all['switch_skill']}"
+    calls = fake_all["switch_skill_h5"]
+    assert [(call["ip"], call["args"]) for call in calls] == [
+        ("emulator-5558", ("戰士推圖",)),
+        ("emulator-5558", ("騙人用",)),
+    ]
 
 
 def test_run_triggers_fc65396d_chrome_branch(pipeline_mod, fake_all, monkeypatch):

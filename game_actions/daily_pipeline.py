@@ -50,7 +50,7 @@ from game_actions.periodic_tasks import (
     should_execute_mushroom_arena,
 )
 from game_actions.reward_manager import reward
-from game_actions.skill_manager import switch_skill
+from game_actions.skill_manager import switch_skill_h5
 from game_actions.stage_guard import _run_at_main_page, get_stage_with_check
 from game_actions import task_due
 from game_actions import special_wanshen
@@ -237,10 +237,10 @@ def _run_tasks(ctx: DailyContext) -> None:
     run_carpark_check_if_due(d, ip)
     click_white(d)  # dismiss any popup triggered during carpark (e.g. car-attacked notification)
 
-    # Device startup: 5558 啟動切換到「戰士推圖」方案 (cleanup 時切回「騙人用」)
+    # Device startup：5558 透過 CDP 直呼 H5 RoleControl 切方案，不走 OCR。
     _force_sleep_checkpoint()
     if ip == "emulator-5558":
-        switch_skill(d, '戰士推圖')
+        switch_skill_h5(ip, "戰士推圖")
 
     # Task 1: 地獄之門
     _force_sleep_checkpoint()
@@ -532,9 +532,9 @@ def _run_tasks(ctx: DailyContext) -> None:
             step="執行中",
         )
 
-    # Device cleanup
+    # Device cleanup：5558 在同一個 H5 session 內直接切回「騙人用」，再關頁面。
     if ip == "emulator-5558":
-        switch_skill(d, '騙人用')
+        switch_skill_h5(ip, "騙人用")
     if "fc65396d" in ip:
         d.app_start("com.android.chrome")
         time.sleep(2)
