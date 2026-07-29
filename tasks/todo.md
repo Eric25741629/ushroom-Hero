@@ -68,7 +68,11 @@
 - [x] 第 7 列下樓步也走相同 WS 驗證與庫存計帳，不再無條件視為成功。
 - [x] telemetry 補上 verification events：WS/CNN 來源、confirmation、前後庫存、CNN label/confidence。
 - [x] 驗證：相關 executor/service/final_v1/adapter/純 WS 共 118 passed，目標 `py_compile` 通過。
-- [ ] 合併 `main` 後以 7fe98fc6 CDP 9226 正式 live 驗證。
+- [x] H5 動作執行也改為 JavaScript `MysteryControl.reqMineUseGoods()`：鎬子/鑽頭/炸彈不再走像素
+  選道具與點格子；ADB 維持原點擊路徑。首次 live 用舊像素路徑被新 WS 驗證正確拒絕且未扣道具，
+  改成 JS dispatch 後同一 planner `drill -> (row=0,col=4)` 成功：baseline `174436→174437`、
+  鑽頭 `6→5`、confirmation=`baseline_changed`，CNN 未參與成功判定。
+- [x] 合併 `main` 後以 7fe98fc6 CDP 9226 正式 live 驗證；完整相關測試更新為 123 passed。
 
 ---
 

@@ -198,6 +198,41 @@ def test_h5_floor7_dig_accounts_authoritative_inventory(monkeypatch):
     assert result.pickaxe_count_after == 1
 
 
+def test_h5_dispatch_uses_javascript_executor_instead_of_pixel_click(monkeypatch):
+    calls = []
+    dev = _FakeDevice(_blank_frame())
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    before = types.SimpleNamespace(baseline=100)
+
+    class FakeH5Executor:
+        def __init__(self, page):
+            assert page is dev._page
+
+        def use_pickaxe(self, block_id):
+            calls.append(("pickaxe", block_id))
+
+        def use_drill(self, block_id):
+            calls.append(("drill", block_id))
+
+        def use_bomb(self, block_id):
+            calls.append(("bomb", block_id))
+
+    monkeypatch.setattr(
+        "ws_token.mining_h5_executor.H5MiningExecutor", FakeH5Executor
+    )
+
+    dispatched = executor._dispatch_h5_ws_action(
+        dev,
+        before,
+        {"type": "use", "item": "drill", "target": (2, 3)},
+    )
+
+    assert dispatched is True
+    assert calls == [("drill", 9704)]
+    assert dev.clicks == []
+
+
 # ---------------------------------------------------------------------------
 # Empty plan
 # ---------------------------------------------------------------------------

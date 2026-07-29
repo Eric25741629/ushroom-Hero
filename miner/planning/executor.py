@@ -250,6 +250,41 @@ def get_live_item_count(d: DeviceLike, item_type: str) -> int:
     return 0
 
 
+def _dispatch_h5_ws_action(
+    d: DeviceLike,
+    before_board: Any,
+    step: Dict[str, Any],
+    *,
+    hits: int = 1,
+) -> bool:
+    """H5 直接呼叫 JavaScript 挖礦控制器；非 H5/無 page 回 ``False``。"""
+    inner = getattr(d, "_d", d)
+    page = getattr(inner, "_page", None)
+    if page is None:
+        return False
+    from ws_token.mining_h5_executor import H5MiningExecutor
+    from ws_token.mining_adapter import grid_pos_to_block_id
+
+    r, c = step["target"]
+    block_id = int(step.get("block_id") or grid_pos_to_block_id(
+        int(getattr(before_board, "baseline", 0) or 0), r, c
+    ))
+    h5 = H5MiningExecutor(page)
+    if step.get("type") == "use":
+        if step.get("item") == "drill":
+            h5.use_drill(block_id)
+        elif step.get("item") == "bomb":
+            h5.use_bomb(block_id)
+        else:
+            return False
+    else:
+        for index in range(max(1, int(hits))):
+            h5.use_pickaxe(block_id)
+            if index + 1 < hits:
+                time.sleep(0.25)
+    return True
+
+
 def verify_cell_empty(
     d: DeviceLike,
     clf: "ClassifierCNN",
@@ -328,7 +363,6 @@ def _verify_ws_action(
         "attempts": attempt,
         "inventory_before": before_inventory,
         "inventory_after": after_inventory,
-        "after_board": after_board,
     }
 
 
@@ -391,9 +425,13 @@ def execute_plan_steps(
                     )
                     # No item consumed yet — partial accounting unchanged.
                     raise OutOfItemError(item_type, live_count, partial_result=acc)
-                select_item(d, item_type)
                 print(f"  - 於 ({r},{c}) 使用 {item_type}")
-                tap_cell(d, r, c, 1, wait_ms=500)
+                h5_dispatched = _dispatch_h5_ws_action(
+                    d, ws_board_before, step
+                ) if ws_board_before is not None else False
+                if not h5_dispatched:
+                    select_item(d, item_type)
+                    tap_cell(d, r, c, 1, wait_ms=500)
                 # Item is consumed by the game as soon as the click lands —
                 # record it now so an unsuccessful board change (rare, lag /
                 # misclick) still debits the item.
@@ -405,15 +443,18 @@ def execute_plan_steps(
                 # longest animations in the game — explosion + chain shatter
                 # + reward popups. Wait for the frame to settle instead of
                 # a fixed 0.8s sleep.
-                img_after_use = wait_frame_stable(
-                    d,
-                    roi=(200, 960, 0, 540),
-                    poll_interval=0.25,
-                    max_wait=3.0,
-                    diff_threshold=2.0,
-                    min_wait=0.5,
-                )
-                board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
+                if h5_dispatched:
+                    board_after_use = [row[:] for row in board]
+                else:
+                    img_after_use = wait_frame_stable(
+                        d,
+                        roi=(200, 960, 0, 540),
+                        poll_interval=0.25,
+                        max_wait=3.0,
+                        diff_threshold=2.0,
+                        min_wait=0.5,
+                    )
+                    board_after_use, _ = clf.classify_board(img_after_use, save_samples=False)
                 ws_event = None
                 if ws_board_before is not None:
                     ws_event = _verify_ws_action(
@@ -468,7 +509,7 @@ def execute_plan_steps(
                         break
 
                 board[:] = [row[:] for row in board_after_use]
-                if hit_pit:
+                if hit_pit and not h5_dispatched:
                     print(f"    [Executor] 道具 {item_type} 炸到礦洞，執行兩次確認點擊 + 兩次點空白處")
                     d.click(394, 152)
                     time.sleep(0.3)
@@ -502,11 +543,15 @@ def execute_plan_steps(
                     "enter_cost": cell_cost,
                 }
                 if hits > 0:
-                    tap_cell(d, r, c, hits, wait_ms=1000)
+                    h5_dispatched = _dispatch_h5_ws_action(
+                        d, ws_board_before, step, hits=hits
+                    ) if ws_board_before is not None else False
+                    if not h5_dispatched:
+                        tap_cell(d, r, c, hits, wait_ms=1000)
                     if ws_board_before is None:
                         # ADB 無 authoritative 庫存，維持保守點擊成本估算。
                         acc.shovels_used += cell_cost
-                    if "pit" in label and "dug" not in label:
+                    if "pit" in label and "dug" not in label and not h5_dispatched:
                         print(f"    [Executor] 挖掘礦洞 ({r},{c})，執行兩次確認點擊 (394, 152)")
                         d.click(394, 152)
                         time.sleep(0.3)
@@ -521,7 +566,8 @@ def execute_plan_steps(
                             diff_threshold=2.0,
                             min_wait=0.5,
                         )
-                    check_points(d.screenshot(format="opencv"))
+                    if not h5_dispatched:
+                        check_points(d.screenshot(format="opencv"))
 
                 if r < 6:
                     if ws_board_before is not None:
@@ -638,14 +684,15 @@ def execute_plan_steps(
                     # animation — the longest in the whole game. Main loop
                     # will re-screenshot immediately after we return, so wait
                     # for the scroll to land before exiting.
-                    wait_frame_stable(
-                        d,
-                        roi=(200, 960, 0, 540),
-                        poll_interval=0.3,
-                        max_wait=3.5,
-                        diff_threshold=2.0,
-                        min_wait=0.7,
-                    )
+                    if ws_board_before is None:
+                        wait_frame_stable(
+                            d,
+                            roi=(200, 960, 0, 540),
+                            poll_interval=0.3,
+                            max_wait=3.5,
+                            diff_threshold=2.0,
+                            min_wait=0.7,
+                        )
                     cell_event["verify_success"] = True
                     cell_events.append(cell_event)
                     acc.verification_events.append(dict(cell_event))
@@ -666,8 +713,11 @@ def execute_plan_steps(
                     acc.steps_completed += 1
                     acc.terminated_reason = "floor7"
                     return acc
-                img_after_dig = d.screenshot(format="opencv")
-                board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
+                if ws_board_before is None:
+                    img_after_dig = d.screenshot(format="opencv")
+                    board_after_dig, _ = clf.classify_board(img_after_dig, save_samples=False)
+                else:
+                    board_after_dig = [row[:] for row in board]
                 if ws_board_before is None and board_after_dig == step_board_before:
                     acc.terminated_reason = "no_board_change"
                     raise NoBoardChangeError(
