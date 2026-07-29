@@ -126,10 +126,8 @@ def _affected(action: PlannerAction, board, visible_rows) -> Set[Tuple[int, int]
         # 炸彈可計入已知畫面外收益；鑽頭/鎬只算畫面內
         return set(get_bomb_affected_cells(action.row, action.col, rows, cols))
     if action.item == "drill":
-        return {
-            pos for pos in get_drill_affected_cells(action.row, action.col, rows, cols)
-            if pos[0] < visible_rows
-        }
+        drill_rows = min(int(visible_rows), rows)
+        return set(get_drill_affected_cells(action.row, action.col, drill_rows, cols))
     return {(action.row, action.col)}
 
 

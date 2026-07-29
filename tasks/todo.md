@@ -6,6 +6,34 @@
 
 ---
 
+## 🚧 2026-07-29 final_v1 鑽頭可視底列擴散修復
+
+- [x] 從 5558 15:39 紀錄確認：WS 已知地形擴充後，鑽頭左右擴散被算到整張已知盤面底列。
+- [x] 新增 15 列已知盤面、7 列可視區的鑽頭相鄰欄收礦回歸測試。
+- [x] 修正 final_v1 以可視區底列計算鑽頭左右擴散，且不計畫面外鑽頭收益。
+- [x] 執行目標 pytest、py_compile 與 diff 審查。
+
+### Review
+
+- 根因：`_affected()` 把完整 WS 已知盤面的列數傳給鑽頭 mechanics，再截掉畫面外格；因此左右擴散
+  落在已知盤面底列並被截掉。修正後鑽頭 mechanics 直接收到 `min(visible_rows, rows)`。
+- 回歸：15 列盤、可視 7 列、礦在 `(6,3)`、鑽頭放 `(1,2)`，現在可由底列右擴散收礦。
+- 驗證：`test_final_v1_planner.py`、adapter、service 共 39 passed；目標 `py_compile` 通過；
+  `git diff --check` 僅有既有 Windows LF/CRLF 提示。
+
+### 新發現待辦（5558 2026-07-29 15:35-15:40 log）
+
+- [ ] **高優先：修正 web_h5 挖掘驗證來源。** 本輪 13 次 `verify_fail`；action trace 顯示點擊後已有
+  `0x0c03/3075` 回應，但 `verify_cell_empty()` 仍依 CNN 截圖判空，誤判後中止多步 plan。web_h5 應優先用
+  WS 挖礦回應或系統既有 board signature 確認，CNN 只作 fallback；ADB 維持視覺驗證。
+- [ ] **高優先：修正 verify retry 的鏟子計帳。** executor 每次補點都無條件 `shovels_used += 1`，即使目標
+  已挖空、補點未消耗鏟子也會多扣。此輪多次出現內部比 OCR 少 2（`15→OCR 17`、`5→OCR 7`），
+  與一次原點擊加一次補點的假扣款吻合；應以 WS `0x0402` 庫存事件/前後現量確認，ADB 才保守估算。
+- [ ] 補 executor telemetry：每次 `verify_fail` 記錄目標、CNN 前後 label/confidence、WS action ack、
+  retry 前後鏟子現量，區分真點擊失敗、動畫未穩定與分類誤判。
+
+---
+
 ## 🚧 2026-07-17 A 打 / B 算：競技場 + 萬神試煉（免洗帳號當計算機）
 
 ### 背景與已驗證事實

@@ -29,6 +29,22 @@ def test_known_offscreen_pit_can_raise_bomb_value_but_not_drill_or_pickaxe_value
     assert bomb["score_breakdown"]["pit_gain"] > drill["score_breakdown"]["pit_gain"]
 
 
+def test_drill_side_spread_uses_visible_bottom_with_extended_known_board():
+    """WS 擴充盤面不能把鑽頭左右擴散移到畫面外的已知地形底部。"""
+    board = [["empty"] * 6 for _ in range(15)]
+    board[6][3] = "reachable_pit"
+    result = plan_final_v1(
+        board,
+        0,
+        {"bomb": 0, "drill": 1},
+        visible_rows=7,
+        valid_targets={("use", "drill", 1, 2)},
+    )
+
+    assert result["steps"][0]["target"] == (1, 2)
+    assert result["score_breakdown"]["pit_gain"] == 10.0
+
+
 def test_first_step_is_in_action_aware_valid_targets():
     board = _board()
     valid = {("dig", "pickaxe", 1, 2)}
