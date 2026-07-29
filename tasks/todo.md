@@ -43,7 +43,17 @@
   空格不可放道具三項回歸。
 - [x] 驗證：純 WS prop combo、adapter、supervised loop、final_v1、service 共 83 passed；
   目標 `py_compile` 通過；`git diff --check` 僅 Windows LF/CRLF 提示。
-- [ ] 合併 `main` 後用 7fe98fc6 CDP 9226 跑正式 live 驗證。
+- [x] 合併 `main` 後用 7fe98fc6 CDP 9226 跑正式 live 驗證：planner 與 supervised selector
+  都自行選出 `drill -> (row=3,col=4)`；庫存 `7→6`、baseline `174435→174436`，WS 前後盤面確認
+  可視底列 `(row=6,col=3/4/5)` 全部變化，包含右側相鄰欄礦物 `col=5`，證明底列 `1×3` 生效。
+
+### Live 追加觀察
+
+- [ ] `_board_confirmation()` 的 `footprint_changed` 歸因偏寬：驗證腳本在鏟子已歸零後誤送鎬子時，
+  其他背景盤面變化曾被判 confirmed；production `mine_until_pickaxe_empty()` 有 `pickaxe<=0` 前置閘門，
+  本次正式流程不受影響，但 confirmation API 應要求目標/預期足跡或庫存至少一項可歸因變化。
+- [ ] `_select_dig_step()` 單獨呼叫不檢查鎬子庫存，可能在 `pickaxe=0` 時把 final_v1 的合法道具步
+  覆寫成 dig；production 外層目前會先停，不會送出。建議 helper 自身也做資源防呆，避免其他 caller 誤用。
 
 ---
 
