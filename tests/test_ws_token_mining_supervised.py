@@ -77,7 +77,7 @@ def test_step_goods_id_allows_drill_when_explicitly_enabled():
 def test_execute_plan_step_sends_ws_dig_and_confirms_by_refresh(monkeypatch):
     sent = []
     before = _board(actives=[16239104])
-    after = _board(actives=[16239204])
+    after = _board(baseline=162392, actives=[16239204])
 
     def fake_send_dig(client, goods_id, block_id):
         sent.append((client, goods_id, block_id))
@@ -101,7 +101,7 @@ def test_execute_plan_step_sends_ws_dig_and_confirms_by_refresh(monkeypatch):
     assert result["goods_id"] == GOODS_PICKAXE
     assert result["block_id"] == 16239104
     assert result["confirmed"] is True
-    assert result["confirmation"] == "confirmed_by_board_change"
+    assert result["confirmation"] == "baseline_changed"
     assert result["raw_reply"] is None
     assert result["after_board"] is after
 
@@ -109,7 +109,7 @@ def test_execute_plan_step_sends_ws_dig_and_confirms_by_refresh(monkeypatch):
 def test_execute_dig_step_sends_one_pickaxe_then_requires_replan(monkeypatch):
     sent = []
     before = _board(actives=[16239104])
-    after = _board(actives=[16239204])
+    after = _board(baseline=162392, actives=[16239204])
 
     def fake_send_dig(client, goods_id, block_id):
         sent.append((goods_id, block_id))
@@ -130,7 +130,7 @@ def test_execute_dig_step_sends_one_pickaxe_then_requires_replan(monkeypatch):
     assert sent == [(GOODS_PICKAXE, 16239104)]
     assert result["hits"] == 1
     assert result["planned_hits"] == 2
-    assert result["confirmation"] == "confirmed_by_board_change"
+    assert result["confirmation"] == "baseline_changed"
 
 
 def test_execute_plan_step_reports_unconfirmed_when_refresh_has_no_change(monkeypatch):
@@ -165,7 +165,7 @@ def test_execute_plan_step_polls_refresh_until_board_changes(monkeypatch):
     sent = []
     before = _board(actives=[16239104])
     stale = _board(actives=[16239104])
-    after = _board(actives=[16239204])
+    after = _board(baseline=162392, actives=[16239204])
     reads = iter([stale, after])
 
     monkeypatch.setattr(
@@ -189,7 +189,7 @@ def test_execute_plan_step_polls_refresh_until_board_changes(monkeypatch):
 
     assert sent == [(GOODS_PICKAXE, 16239104)]
     assert result["confirmed"] is True
-    assert result["confirmation"] == "confirmed_by_board_change"
+    assert result["confirmation"] == "baseline_changed"
     assert result["refresh_attempts"] == 2
     assert result["after_board"] is after
 
@@ -690,6 +690,74 @@ def test_board_confirmation_distinguishes_target_and_baseline(monkeypatch):
     assert mining_supervised._board_confirmation(before, _board(actives=[10101],
                                                                 blocks=[_block(10101, 1, 101, count=1)]),
                                                  step) is None
+
+
+def test_unrelated_board_change_does_not_confirm_dig():
+    target = _block(10101, 1, 101, count=1)
+    unrelated_before = _block(10102, 2, 101, count=1)
+    unrelated_after = _block(10102, 2, 101, count=0)
+    before = _board(actives=[10101], blocks=[target, unrelated_before])
+    after = _board(actives=[10101], blocks=[target, unrelated_after])
+
+    assert mining_supervised._board_confirmation(
+        before, after, {"type": "dig", "block_id": 10101}
+    ) is None
+
+
+def test_unrelated_board_change_does_not_confirm_drill():
+    target = _block(10101, 1, 101, count=0)
+    unrelated_before = _block(10106, 6, 101, count=1)
+    unrelated_after = _block(10106, 6, 101, count=0)
+    before = _board(actives=[10101], blocks=[target, unrelated_before])
+    after = _board(actives=[10101], blocks=[target, unrelated_after])
+
+    assert mining_supervised._board_confirmation(
+        before, after, {"type": "use", "item": "drill", "block_id": 10101}
+    ) is None
+
+
+def test_select_dig_step_returns_none_when_pickaxe_is_zero():
+    board = _board(actives=[10101], blocks=[_block(10101, 1, 101, count=1)])
+
+    chosen = mining_supervised._select_dig_step(
+        board,
+        [{"type": "dig", "block_id": 10101}],
+        inventory={"pickaxe": 0, "drill": 1, "bomb": 1},
+    )
+
+    assert chosen is None
+
+
+def test_select_dig_step_does_not_use_below_pit_steer_when_pickaxe_is_zero(monkeypatch):
+    board = _board(actives=[10101], blocks=[
+        _block(10101, 1, 101, count=1),
+        _block(10801, 1, 108, config_id=401, count=1, is_reward=1),
+    ])
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter,
+        "map_pits",
+        lambda _board: [{"row": 8, "col": 0}],
+    )
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter,
+        "prop_step_for_pit",
+        lambda *a, **kw: None,
+    )
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter,
+        "pit_directed_next",
+        lambda *a, **kw: 10101,
+    )
+
+    chosen = mining_supervised._select_dig_step(
+        board,
+        [{"type": "dig", "block_id": 10101}],
+        inventory={"pickaxe": 0, "drill": 0, "bomb": 0},
+        allow_drill=True,
+        allow_bomb=True,
+    )
+
+    assert chosen is None
 
 
 def test_runner_forwards_planner_settings(monkeypatch):

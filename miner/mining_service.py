@@ -146,7 +146,13 @@ def _apply_partial(
     """
     if result is None:
         return count
-    if result.shovels_used:
+    if result.pickaxe_count_after is not None:
+        new_count = max(0, int(result.pickaxe_count_after))
+        miner_logger.info(
+            f"[MiningService] WS 同步鏟子現量 {count} -> {new_count}"
+        )
+        count = new_count
+    elif result.shovels_used:
         new_count = max(0, count - int(result.shovels_used))
         miner_logger.info(
             f"[MiningService] 扣減鏟子 {count} -> {new_count} (executor 用掉 {result.shovels_used})"
@@ -647,6 +653,7 @@ def run(
             "shovels": int(getattr(res, "shovels_used", 0) or 0),
             "bombs": int(getattr(res, "bombs_used", 0) or 0),
             "drills": int(getattr(res, "drills_used", 0) or 0),
+            "verification": list(getattr(res, "verification_events", []) or []),
         }
 
     def _record_map_round(steps, exec_dict) -> None:
@@ -884,11 +891,12 @@ def run(
         miner_logger.info(
             "[MiningTelemetry] planner=%s exec=ok steps_planned=%d steps_completed=%s "
             "terminated=%s shovels_used=%s bombs_used=%s drills_used=%s "
-            "inv_before=%s inv_after=%s"
+            "inv_before=%s inv_after=%s verification=%s"
             % (planner_version, len(plan["steps"]), exec_result.steps_completed,
                exec_result.terminated_reason or "-", exec_result.shovels_used,
                exec_result.bombs_used, exec_result.drills_used,
-               inv_before, {"pickaxe": count, **items_available})
+               inv_before, {"pickaxe": count, **items_available},
+               exec_result.verification_events)
         )
         _record_map_round(
             plan["steps"],

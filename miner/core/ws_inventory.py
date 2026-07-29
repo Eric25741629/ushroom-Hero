@@ -112,3 +112,25 @@ def read_ws_below_rows(
         return [list(row) for row in known["board"][7:]]
     except Exception:
         return []
+
+
+def read_ws_mine_board(
+    d: Any,
+    *,
+    timeout_sec: float = 5.0,
+    _api_factory: Optional[Callable[[Any], Any]] = None,
+) -> Optional[Any]:
+    """web_h5 的 authoritative 0x0c01 MineBoard；不可用回 ``None``。"""
+    page = _web_page(d)
+    if page is None:
+        return None
+    factory = _api_factory
+    if factory is None:
+        from utils.web_game_api import WebGameAPI
+        factory = WebGameAPI
+    try:
+        raw = factory(page).call_raw(CMD_MINE_BOARD, b"", timeout_sec=timeout_sec)
+        from ws_token import mining as ws_mining
+        return ws_mining.parse_board(bytes(raw))
+    except Exception:
+        return None

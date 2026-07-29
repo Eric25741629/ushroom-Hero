@@ -65,6 +65,7 @@ class _FakeDevice:
     def __init__(self, frame: np.ndarray):
         self._frame = frame
         self.clicks: List[Any] = []
+        self.backend_kind = "adb"
 
     def screenshot(self, format: str = "opencv"):  # noqa: A002
         return self._frame
@@ -133,6 +134,68 @@ def test_verify_cell_empty_accepts_low_confidence_empty_without_retry_click(monk
 
     assert executor.verify_cell_empty(dev, clf, 3, 3, max_retry=1) is True
     assert dev.clicks == []
+
+
+def test_h5_dig_uses_ws_confirmation_and_inventory_without_cnn_retry(monkeypatch):
+    frame = _blank_frame()
+    dev = _FakeDevice(frame)
+    dev.backend_kind = "web_h5"
+    pre = _empty_board()
+    pre[3][3] = "dirt"
+    clf = _FakeClassifier(pre)  # CNN 故意仍判 dirt
+    _stub_animation(monkeypatch, frame)
+    ws_before = types.SimpleNamespace(baseline=100, actives=[], blocks=[], holes=[], area=1)
+    ws_after = types.SimpleNamespace(baseline=101, actives=[], blocks=[], holes=[], area=1)
+    boards = iter([ws_before, ws_after])
+    inventories = iter([
+        {"pickaxe": 5, "drill": 1, "bomb": 1},
+        {"pickaxe": 4, "drill": 1, "bomb": 1},
+    ])
+    monkeypatch.setattr(executor, "read_ws_mine_board", lambda _d: next(boards))
+    monkeypatch.setattr(executor, "read_ws_prop_counts", lambda _d: next(inventories))
+    monkeypatch.setattr(
+        executor,
+        "verify_cell_empty",
+        lambda *a, **kw: pytest.fail("H5 WS 可用時不應呼叫 CNN verify"),
+    )
+
+    result = execute_plan_steps(dev, clf, pre, [{
+        "type": "dig", "pos": (3, 3), "target": (3, 3),
+        "action": "dig", "dig_list": [(3, 3)], "step_cost": 1.0,
+    }])
+
+    assert result.shovels_used == 1
+    assert result.pickaxe_count_after == 4
+    assert result.terminated_reason is None
+    assert result.verification_events[0]["confirmation"] == "baseline_changed"
+
+
+def test_h5_floor7_dig_accounts_authoritative_inventory(monkeypatch):
+    frame = _blank_frame()
+    dev = _FakeDevice(frame)
+    dev.backend_kind = "web_h5"
+    pre = _empty_board()
+    pre[6][2] = "dirt"
+    clf = _FakeClassifier(_empty_board())
+    _stub_animation(monkeypatch, frame)
+    ws_before = types.SimpleNamespace(baseline=100, actives=[], blocks=[], holes=[], area=1)
+    ws_after = types.SimpleNamespace(baseline=101, actives=[], blocks=[], holes=[], area=1)
+    boards = iter([ws_before, ws_after])
+    inventories = iter([
+        {"pickaxe": 2, "drill": 1, "bomb": 1},
+        {"pickaxe": 1, "drill": 1, "bomb": 1},
+    ])
+    monkeypatch.setattr(executor, "read_ws_mine_board", lambda _d: next(boards))
+    monkeypatch.setattr(executor, "read_ws_prop_counts", lambda _d: next(inventories))
+
+    result = execute_plan_steps(dev, clf, pre, [{
+        "type": "dig", "pos": (6, 2), "target": (6, 2),
+        "action": "dig", "dig_list": [(6, 2)], "step_cost": 1.0,
+    }])
+
+    assert result.terminated_reason == "floor7"
+    assert result.shovels_used == 1
+    assert result.pickaxe_count_after == 1
 
 
 # ---------------------------------------------------------------------------
