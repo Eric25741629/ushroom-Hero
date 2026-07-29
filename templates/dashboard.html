@@ -1255,7 +1255,7 @@ select.form-control {
 .card.special-wanshen-off .carpark-detail,
 .card.special-wanshen-off .progress-container,
 .card.special-wanshen-off .log-box{display:none!important;}
-.card.special-wanshen-scheduled .wake-block{display:none!important;}
+.card.special-wanshen-scheduled .wake-block{background:linear-gradient(135deg,#f0f7ff,#e8f0fd);border-color:#c5d8f5;}
 
 /* ---- task-category horizontal tabs（任務參數 內） ---- */
 .ws-plan-hint{font-size:.78em;color:var(--status-warn-text,#8a6210);background:var(--warn-wash,#f7eccf);border:1px solid var(--warn-rim,#e0b75a);border-radius:8px;padding:6px 9px;margin:6px 0;}
@@ -3308,7 +3308,31 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         }
 
-
+        // 萬神專用模式：覆寫 wake-block 顯示下次執行時間，而非預設喚醒倒數。
+        // CSS 已改為只改背景色（不再 display:none），此處填入有意義的排程資訊。
+        if (specialWanshenActive) {
+          const _wDone = info.special_wanshen_completed_this_week === true;
+          if (wakeEmojiEl) wakeEmojiEl.innerText = _wDone ? '✅' : '⚔️';
+          if (wakeLabelEl) wakeLabelEl.innerText = _wDone ? '本週已完成' : '萬神試煉';
+          const _nextAt = info.special_wanshen_next_attempt_at;
+          if (_nextAt) {
+            const _nd = new Date(_nextAt);
+            const _ds = Math.floor((_nd.getTime() - Date.now()) / 1000);
+            if (_ds <= 60) {
+              countdownEl.innerText = '執行中';
+              countdownEl.style.color = 'var(--safe-color)'; setDial(ip, 1, 'var(--safe-color)');
+            } else {
+              const _mo = _nd.getMonth() + 1, _dy = _nd.getDate();
+              const _hh = String(_nd.getHours()).padStart(2, '0');
+              const _mn = String(_nd.getMinutes()).padStart(2, '0');
+              countdownEl.innerText = `${_mo}/${_dy} ${_hh}:${_mn}`;
+              countdownEl.style.color = 'var(--warn-color)'; setDial(ip, 0.3, 'var(--warn-color)');
+            }
+          } else {
+            countdownEl.innerText = _wDone ? '本週完成' : '執行中';
+            countdownEl.style.color = 'var(--safe-color)'; setDial(ip, 1, 'var(--safe-color)');
+          }
+        }
 
         const logEl = document.getElementById(`log-${ip}`);
 
