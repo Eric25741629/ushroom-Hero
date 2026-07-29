@@ -58,16 +58,16 @@ def test_single_bomb_two_pits_returns_bomb_step():
 # --- 2. bug-fix regression: drill(3) must beat bomb(2) as the first step -------
 
 def test_drill_beats_bomb_when_it_collects_more():
-    # One column (col 1) with 3 pits; a bomb reaches only the top 2 (rows within
-    # +-2 of placement), a drill clears the whole column downward -> 3.
+    # One column (col 1) with 3 pits inside the visible window; a bomb reaches
+    # only the top 2, while a drill clears the visible column downward -> 3.
     #   depth   col1
     #   TOP+2   .air.
     #   TOP+3   pit
     #   TOP+4   pit
     #   ...
-    #   TOP+7   pit   <- out of bomb reach, in drill reach
-    place = _air(TOP + 2, 2)
-    board = _board([place, _pit(TOP + 3, 2), _pit(TOP + 4, 2), _pit(TOP + 7, 2)])
+    #   TOP+6   pit   <- visible bottom, out of bomb reach, in drill reach
+    place = _air(TOP + 1, 2)
+    board = _board([place, _pit(TOP + 2, 2), _pit(TOP + 3, 2), _pit(TOP + 6, 2)])
     combo = _combo(board, {"bomb": 5, "drill": 5})
     # old code returned a bomb (bomb-priority bug); combo compares joint coverage.
     assert combo[0]["item"] == "drill"
@@ -75,27 +75,18 @@ def test_drill_beats_bomb_when_it_collects_more():
 
 # --- 3. greedy first pick != combo-optimal first pick -------------------------
 
-def test_greedy_first_differs_from_combo_first():
-    # Two columns, 2 pits each. A single "straddling" bomb grabs 3 (both tops +
-    # one bottom via the cross), but leaves each column with a lone pit that no
-    # second prop can pick up -> greedy(bomb) total 3. Two drills clear both
-    # columns fully -> total 4, so the combo-optimal FIRST step is a drill, not
-    # the greedy bomb.
-    #        col0        col1
-    # TOP+5  air         air
-    # TOP+6  pit         pit
-    # TOP+7  pit         pit
-    d = TOP + 5
+def test_combo_uses_two_drills_for_separate_columns():
+    # 兩條不相鄰礦柱各 2 格；停用炸彈後，combo 應以兩支鑽頭完整收集。
+    d = TOP + 4
     board = _board([
-        _air(d, 1), _air(d, 2),
+        _air(d, 1), _air(d, 3),
         _pit(d + 1, 1), _pit(d + 2, 1),   # col 0
-        _pit(d + 1, 2), _pit(d + 2, 2),   # col 1
+        _pit(d + 1, 3), _pit(d + 2, 3),   # col 2
     ])
-    combo = _combo(board, {"bomb": 5, "drill": 5})
-    # greedy (single max hit, bomb-priority) would open with a bomb; the joint
-    # optimum opens with the col-0 drill.
+    combo = _combo(board, {"bomb": 0, "drill": 5}, allow_bomb=False)
     assert combo[0]["item"] == "drill" and combo[0]["col"] == 0
-    assert len(combo) >= 2
+    assert len(combo) == 2
+    assert combo[1]["item"] == "drill" and combo[1]["col"] == 2
 
 
 # --- 4. chaining: bomb opens new air that a later drill needs ------------------
@@ -107,15 +98,15 @@ def test_chaining_bomb_then_drill_uses_freed_air():
     #        col1  col2   col3  col4
     # d      .     AIR    .     (freed by bomb cross)
     # d+1    pit   .      pit   .
-    # d+3    .     .      .     pit
-    # d+4    .     .      .     pit
-    d = TOP + 3
+    # d+1    .     .      .     pit
+    # d+2    .     .      .     pit (visible bottom)
+    d = TOP + 4
     board = _board([
         _air(d, 3),                       # col 2, the only initial air
         _pit(d + 1, 2), _pit(d + 1, 4),   # col 1 & col 3, inside bomb 3x3
-        _pit(d + 3, 5), _pit(d + 4, 5),   # col 4, deep -> only a drill reaches
+        _pit(d + 1, 5), _pit(d + 2, 5),   # col 4 -> only the chained drill reaches both
     ])
-    combo = _combo(board, {"bomb": 5, "drill": 5})
+    combo = _combo(board, {"bomb": 1, "drill": 5})
     assert len(combo) == 2
     assert combo[0]["item"] == "bomb"
     assert combo[1]["item"] == "drill" and combo[1]["col"] == 4
@@ -190,3 +181,44 @@ def test_prop_step_for_pit_shape_unchanged():
     assert step["type"] == "use"
     assert step["row"] == (TOP + 5) - ma.viewport_top_depth(BASELINE)
     assert int(step["block_id"]) == place.block_id
+
+
+def test_drill_hits_visible_bottom_adjacent_column():
+    place = _air(TOP + 1, 2)  # col 1
+    board = _board([
+        place,
+        _pit(TOP + 5, 2),  # same column
+        _pit(TOP + 6, 3),  # visible-bottom right spread
+    ])
+
+    combo = _combo(board, {"bomb": 0, "drill": 1}, allow_bomb=False)
+
+    assert combo is not None
+    assert combo[0]["item"] == "drill"
+    assert combo[0]["block_id"] == place.block_id
+
+
+def test_drill_does_not_hit_below_visible_window():
+    place = _air(TOP + 1, 2)
+    board = _board([
+        place,
+        _pit(TOP + 5, 2),
+        _pit(TOP + 7, 2),  # first off-screen row
+    ])
+
+    combo = _combo(board, {"bomb": 0, "drill": 1}, allow_bomb=False)
+
+    assert combo is None
+
+
+def test_prop_placement_cannot_use_offscreen_air():
+    offscreen_air = _air(TOP + 7, 2)
+    board = _board([
+        offscreen_air,
+        _pit(TOP + 8, 2),
+        _pit(TOP + 9, 2),
+    ])
+
+    combo = _combo(board, {"bomb": 0, "drill": 1}, allow_bomb=False)
+
+    assert combo is None
