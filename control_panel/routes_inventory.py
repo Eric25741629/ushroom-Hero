@@ -61,6 +61,7 @@ def _spirit_to_json(s) -> dict:
         "positions": [{
             "pos": p.pos,
             "cur_id": p.cur_id,
+            "quality": config_names.spirit_affix_quality(p.cur_id),
             "reshape_id": p.reshape_id,
             "affixes": _attr_list(p.cur_attrs),
             "reshape": _attr_list(p.reshape_attrs),

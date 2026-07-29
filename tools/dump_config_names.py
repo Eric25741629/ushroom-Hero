@@ -1,6 +1,6 @@
 """Dump 遊戲 config 中文名表 → data/config_names.json（非破壞性，純 WS 唯讀）。
 
-在 emulator-5554 的遊戲 page 注入 JS，把四類中文名表扁平化成 JSON：
+在 emulator-5554 的遊戲 page 注入 JS，把五類靜態資料扁平化成 JSON：
 
   spirit   守護靈 config_id → 中文名
              來源 configSpirit._data[1] (= configLanguage key) → configLanguage._data[1]
@@ -10,6 +10,8 @@
              來源 configArtifact_gemsets.name getter（= _data[1] lang）
   quality  神器附魔石品質 id(3-8) → 品質中文名
              來源 configArtifact_gemquality._data[7] (= configLanguage key)
+  spirit_affix_quality  守護靈詞條 cur_id → 品質色階
+             來源 configSpirit_attrbonus_affix.quality
 
 欄位語義於 2026-06-19 在 5554 live 驗證（見 tools/probe_config_tables.py）。
 
@@ -30,7 +32,7 @@ IP = "emulator-5554"
 OUT_PATH = os.path.join("data", "config_names.json")
 
 
-# 注入 JS：四類表全 dump，鍵一律字串，回傳 {spirit,attr,suit,quality}。
+# 注入 JS：五類表全 dump，鍵一律字串。
 _DUMP_JS = r"""
 (function(){
   function langName(key){
@@ -38,7 +40,7 @@ _DUMP_JS = r"""
       if (o && o._data) return o._data[1]; } catch(e){}
     return null;
   }
-  var out = {spirit:{}, attr:{}, suit:{}, quality:{}};
+  var out = {spirit:{}, attr:{}, suit:{}, quality:{}, spirit_affix_quality:{}};
 
   // --- 守護靈：config_id -> 中文名（_data[1] 是 language key）---------------
   try {
@@ -82,6 +84,17 @@ _DUMP_JS = r"""
     });
   } catch(e){ out.quality_err = String(e); }
 
+  // --- 守護靈詞條：cur_id -> 品質色階（遊戲 UI 以此決定灰/綠/藍/紫/橙/紅）-
+  try {
+    configSpirit_attrbonus_affix.getDatas().forEach(function(e){
+      if (!e || !e._data) return;
+      var id = e._data[0];
+      var quality; try { quality = e.quality; } catch(_){}
+      if (quality === undefined || quality === null) return;
+      out.spirit_affix_quality[String(id)] = Number(quality);
+    });
+  } catch(e){ out.spirit_affix_quality_err = String(e); }
+
   return JSON.stringify(out);
 })()
 """
@@ -101,8 +114,9 @@ def main():
         sys.exit(1)
 
     parsed = json.loads(inner["value"])
-    # 丟掉內嵌的 *_err 鍵，只保留四類乾淨表
-    payload = {k: parsed.get(k, {}) for k in ("spirit", "attr", "suit", "quality")}
+    # 丟掉內嵌的 *_err 鍵，只保留五類乾淨表
+    cats = ("spirit", "attr", "suit", "quality", "spirit_affix_quality")
+    payload = {k: parsed.get(k, {}) for k in cats}
     errs = {k: parsed[k] for k in parsed if k.endswith("_err")}
 
     os.makedirs("data", exist_ok=True)
@@ -110,7 +124,7 @@ def main():
         json.dump(payload, f, ensure_ascii=False, indent=2, sort_keys=True)
 
     print(f"wrote {OUT_PATH}")
-    for cat in ("spirit", "attr", "suit", "quality"):
+    for cat in cats:
         items = list(payload[cat].items())
         sample = ", ".join(f"{k}={v}" for k, v in items[:5])
         print(f"  {cat}: {len(items)} entries  | sample: {sample}")

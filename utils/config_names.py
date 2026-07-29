@@ -8,7 +8,8 @@ JSON 格式（鍵一律字串）::
     {"spirit": {"<cfg>": "中文名"},
      "attr":   {"<id>":  "屬性名"},
      "suit":   {"<id>":  "套裝名"},
-     "quality":{"<q>":   "品質名"}}
+     "quality":{"<q>":   "品質名"},
+     "spirit_affix_quality":{"<cur_id>": <品質色階>}}
 
 查不到一律回原編號的字串，永不拋例外，dashboard 不會因缺名而壞掉。
 """
@@ -65,6 +66,15 @@ def suit_name(suit_id: int | str) -> str:
 def quality_name(quality: int | str) -> str:
     """品質編號 → 中文品質名（普通/稀有/…）。"""
     return _lookup("quality", quality)
+
+
+def spirit_affix_quality(cur_id: int | str) -> int:
+    """守護靈詞條 config id → 品質色階；查不到回 0。"""
+    val = _tables().get("spirit_affix_quality", {}).get(str(cur_id))
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return 0
 
 
 def reload() -> None:

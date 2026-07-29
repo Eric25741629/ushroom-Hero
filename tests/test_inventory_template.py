@@ -60,3 +60,21 @@ def test_inventory_quality_color_vars():
     for q in range(3, 9):
         assert f"--q{q}" in html, f"missing --q{q}"
     assert "QCOLORS" in html
+
+
+def test_inventory_has_multi_select_color_filters():
+    html = _html()
+    assert 'id="spColorFilter"' in html
+    assert 'id="gColorFilter"' in html
+    assert "spiritQualityFilter = new Set()" in html
+    assert "gemQualityFilter = new Set()" in html
+    assert "aria-pressed" in html
+    assert "spiritQualityFilter.has(Number(p.quality))" in html
+    assert "gemQualityFilter.has(Number(g.quality))" in html
+
+
+def test_spirit_affix_chips_use_server_quality_color():
+    html = _html()
+    for quality in range(1, 7):
+        assert f".atag.aq-{quality}" in html
+    assert "const quality = Number(p.quality)||0;" in html

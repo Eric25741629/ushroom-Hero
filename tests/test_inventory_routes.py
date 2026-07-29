@@ -77,6 +77,7 @@ def test_spirit_list_returns_chinese_names(monkeypatch):
     monkeypatch.setattr(ws_spirit, "read_spirit_info", lambda c, **k: inv)
     monkeypatch.setattr(config_names, "spirit_name", lambda c: "格鬥犬")
     monkeypatch.setattr(config_names, "attr_name", lambda a: "攻擊")
+    monkeypatch.setattr(config_names, "spirit_affix_quality", lambda cur_id: 2)
 
     client = cpa.app.test_client(); _login_fly_pet(client)
     resp = client.get("/api/spirit_list/emulator-5554")
@@ -87,6 +88,7 @@ def test_spirit_list_returns_chinese_names(monkeypatch):
     s = data["spirits"][0]
     assert s["name"] == "格鬥犬" and s["lock"] == 1 and s["level"] == 9
     assert s["positions"][0]["affixes"][0]["name"] == "攻擊"
+    assert s["positions"][0]["quality"] == 2
 
 
 # --- gem list：純 WS 讀 + 套裝/品質中文名 + is_equipped --------------------
