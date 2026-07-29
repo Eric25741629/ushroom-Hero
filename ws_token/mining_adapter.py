@@ -575,15 +575,21 @@ def _bomb_blast_cells(depth: int, col: int) -> frozenset:
     return frozenset((d, c) for d, c in cells if 0 <= c < GRID_COLS)
 
 
-def _drill_clear_cells(depth: int, col: int, pits: set) -> set:
+def _drill_clear_cells(depth: int, col: int, pits: set, top_depth: int) -> set:
     """Absolute (depth, col) pit cells a drill placed at (depth,col) clears.
 
-    The drill clears its own column from the placement depth downward — the same
-    counting semantics as the legacy selector (``pc == col and pd >= depth``).
-    Unbounded downward, so it captures below-viewport pits a pickaxe can't reach.
-    Only pit cells are returned (no need to enumerate the whole column).
+    先轉成可視 7 列相對座標並重用共用 mechanics：同欄向下到可視底列，
+    再破壞底列左右各一格。鑽頭不計畫面外收益。
     """
-    return {(pd, pc) for (pd, pc) in pits if pc == col and pd >= depth}
+    row = int(depth) - int(top_depth)
+    if not (0 <= row < GRID_ROWS) or not (0 <= col < GRID_COLS):
+        return set()
+    from miner.core.mechanics import get_drill_affected_cells
+    affected = {
+        (int(top_depth) + r, c)
+        for r, c in get_drill_affected_cells(row, col, GRID_ROWS, GRID_COLS)
+    }
+    return affected & pits
 
 
 def _pits_and_air(board: Any) -> tuple[set, frozenset]:
@@ -602,7 +608,8 @@ def _pits_and_air(board: Any) -> tuple[set, frozenset]:
 
 
 def _prop_candidates(remaining: set, air_set: frozenset, bomb_left: int,
-                     drill_left: int, min_pits: int, top_k: int) -> list:
+                     drill_left: int, min_pits: int, top_k: int,
+                     top_depth: int) -> list:
     """Admissible next props over ``air_set`` against the ``remaining`` pits.
 
     Each candidate MUST clear >= min_pits pits BY ITSELF (a low-yield prop is never
@@ -615,6 +622,8 @@ def _prop_candidates(remaining: set, air_set: frozenset, bomb_left: int,
     """
     cands: list = []
     for (ad, ac) in air_set:
+        if not (top_depth <= ad < top_depth + GRID_ROWS):
+            continue
         if bomb_left > 0:
             blast = _bomb_blast_cells(ad, ac)
             cleared = blast & remaining
@@ -622,7 +631,7 @@ def _prop_candidates(remaining: set, air_set: frozenset, bomb_left: int,
                 cands.append((len(cleared), 0, ad, ac, "bomb",
                               frozenset(cleared), frozenset(blast)))
         if drill_left > 0:
-            cleared = _drill_clear_cells(ad, ac, remaining)
+            cleared = _drill_clear_cells(ad, ac, remaining, top_depth)
             if len(cleared) >= min_pits:
                 fc = frozenset(cleared)
                 cands.append((len(cleared), 1, ad, ac, "drill", fc, fc))
@@ -631,7 +640,8 @@ def _prop_candidates(remaining: set, air_set: frozenset, bomb_left: int,
 
 
 def _search_prop_combo(pits: set, air: frozenset, bomb_inv: int, drill_inv: int,
-                       min_pits: int, max_props: int, top_k: int) -> Optional[list]:
+                       min_pits: int, max_props: int, top_k: int,
+                       top_depth: int) -> Optional[list]:
     """Bounded DFS for the prop sequence maximising joint pit coverage.
 
     Objective (lexicographic, all "smaller is better"): most pits hit, then fewer
@@ -652,7 +662,8 @@ def _search_prop_combo(pits: set, air: frozenset, bomb_inv: int, drill_inv: int,
         if len(seq) >= max_props or not remaining:
             return
         for (hit, _is_drill, ad, ac, item, cleared, freed) in _prop_candidates(
-                remaining, air_set, bomb_left, drill_left, min_pits, top_k):
+                remaining, air_set, bomb_left, drill_left, min_pits, top_k,
+                top_depth):
             seq.append((item, ad, ac))
             _dfs(remaining - cleared, air_set | freed,
                  bomb_left - (item == "bomb"), drill_left - (item == "drill"),
@@ -693,11 +704,11 @@ def prop_combo_for_pits(board: Any, inventory: Optional[Dict[str, int]], *,
     if bomb_inv <= 0 and drill_inv <= 0:
         return None
 
+    top = viewport_top_depth(int(getattr(board, "baseline", 0) or 0))
     seq = _search_prop_combo(pits, air, bomb_inv, drill_inv,
-                             min_pits, max_props, top_k)
+                             min_pits, max_props, top_k, top)
     if not seq:
         return None
-    top = viewport_top_depth(int(getattr(board, "baseline", 0) or 0))
     return [{"type": "use", "item": item, "block_id": ad * 100 + ac + 1,
              "row": ad - top, "col": ac, "step_cost": 2.99}
             for (item, ad, ac) in seq]

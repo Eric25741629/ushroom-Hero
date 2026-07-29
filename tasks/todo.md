@@ -32,6 +32,19 @@
 - [ ] 補 executor telemetry：每次 `verify_fail` 記錄目標、CNN 前後 label/confidence、WS action ack、
   retry 前後鏟子現量，區分真點擊失敗、動畫未穩定與分類誤判。
 
+### 純 WS 路徑補修（使用者指正後）
+
+- [x] 追查 `mining_supervised -> mining_adapter.plan -> final_v1`，確認純 WS 也會執行 final_v1，且
+  `_select_dig_step()` 在 planner 前另有 `prop_step_for_pit()` 快速道具路徑。
+- [x] 修正純 WS `_drill_clear_cells()`：絕對深度轉 7 列相對座標後重用
+  `miner.core.mechanics.get_drill_affected_cells()`，恢復可視底列左右擴散並禁止畫面外收益。
+- [x] 限制純 WS bomb/drill 放置點只能位於可視 7 列；WS 傳來的畫面外 count==0 block 不再當落點。
+- [x] 修正建立在舊錯誤物理上的 combo fixtures；新增底列相鄰欄命中、畫面外同欄不命中、畫面外
+  空格不可放道具三項回歸。
+- [x] 驗證：純 WS prop combo、adapter、supervised loop、final_v1、service 共 83 passed；
+  目標 `py_compile` 通過；`git diff --check` 僅 Windows LF/CRLF 提示。
+- [ ] 合併 `main` 後用 7fe98fc6 CDP 9226 跑正式 live 驗證。
+
 ---
 
 ## 🚧 2026-07-17 A 打 / B 算：競技場 + 萬神試煉（免洗帳號當計算機）

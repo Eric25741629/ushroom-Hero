@@ -1,5 +1,16 @@
 # Lessons learned
 
+## 2026-07-29 修 planner 規則前要先列出所有執行路徑，不能把 UI runtime 當唯一入口
+
+- **問題**：修正 `final_v1._affected()` 的鑽頭可視底列後，我直接宣稱純 WS 工具不會經過該修改，
+  沒先追 `mining_supervised -> mining_adapter.plan -> plan_final_v1`，也漏掉 adapter 前置的
+  `prop_step_for_pit()` 另有一套鑽頭物理。使用者指出「所以你漏修了」才回頭查完整呼叫鏈。
+- **Rule**：修正共用演算法或遊戲物理前，先 grep 所有入口與同名 mechanics，列出 UI/CNN、純 WS、
+  simulator、fallback 四條路徑；每條至少有一個 adapter/入口層回歸測試。不能從工具名稱或印象判定
+  「這條不會經過」，必須用實際呼叫鏈證明。
+- **Rule**：同一遊戲物理出現兩份實作時，優先收斂到共用 helper；若座標系不同，做薄轉換層，
+  不再各自描述一套規則，避免一邊修好、另一邊仍保留舊假設。
+
 ## 2026-06-19 改公開函式時，「只動 N 個檔」的限制要對「被依賴的測試/CLI」例外處理
 
 - **情境**：team lead 指定 workshop 修復「只動 3 個檔，別碰其他檔」。但我移除了 `switch_recipe`/
