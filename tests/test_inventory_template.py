@@ -78,3 +78,20 @@ def test_spirit_affix_chips_use_server_quality_color():
     for quality in range(1, 7):
         assert f".atag.aq-{quality}" in html
     assert "const quality = Number(p.quality)||0;" in html
+
+
+def test_gem_random_affix_color_filter_is_separate_from_stone_quality():
+    html = _html()
+    assert 'id="gAttrColorFilter"' in html
+    assert "const GEM_ATTR_COLORS" in html
+    assert "gemAttrQualityFilter = new Set()" in html
+    assert "gemAttrQualityFilter.has(Number(a.quality))" in html
+    assert "buildColorFilter('gColorFilter', '石頭品質'" in html
+    assert "buildColorFilter('gAttrColorFilter', '詞條顏色'" in html
+
+
+def test_gem_random_affixes_render_with_their_own_color():
+    html = _html()
+    for quality in range(1, 7):
+        assert f".gem-attr.gq-{quality}" in html
+    assert "attrStr(g.rand_attr, true)" in html

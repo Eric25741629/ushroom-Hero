@@ -1,6 +1,6 @@
 """Dump 遊戲 config 中文名表 → data/config_names.json（非破壞性，純 WS 唯讀）。
 
-在 emulator-5554 的遊戲 page 注入 JS，把五類靜態資料扁平化成 JSON：
+在 emulator-5554 的遊戲 page 注入 JS，把六類靜態資料扁平化成 JSON：
 
   spirit   守護靈 config_id → 中文名
              來源 configSpirit._data[1] (= configLanguage key) → configLanguage._data[1]
@@ -12,6 +12,8 @@
              來源 configArtifact_gemquality._data[7] (= configLanguage key)
   spirit_affix_quality  守護靈詞條 cur_id → 品質色階
              來源 configSpirit_attrbonus_affix.quality
+  gem_attr_color_range  神器附魔隨機詞條 attr_id → 顏色數值區間
+             來源 configArtifact_gemattr 最後一階的 color
 
 欄位語義於 2026-06-19 在 5554 live 驗證（見 tools/probe_config_tables.py）。
 
@@ -32,7 +34,7 @@ IP = "emulator-5554"
 OUT_PATH = os.path.join("data", "config_names.json")
 
 
-# 注入 JS：五類表全 dump，鍵一律字串。
+# 注入 JS：六類表全 dump，鍵一律字串。
 _DUMP_JS = r"""
 (function(){
   function langName(key){
@@ -40,7 +42,8 @@ _DUMP_JS = r"""
       if (o && o._data) return o._data[1]; } catch(e){}
     return null;
   }
-  var out = {spirit:{}, attr:{}, suit:{}, quality:{}, spirit_affix_quality:{}};
+  var out = {spirit:{}, attr:{}, suit:{}, quality:{}, spirit_affix_quality:{},
+             gem_attr_color_range:{}};
 
   // --- 守護靈：config_id -> 中文名（_data[1] 是 language key）---------------
   try {
@@ -95,6 +98,25 @@ _DUMP_JS = r"""
     });
   } catch(e){ out.spirit_affix_quality_err = String(e); }
 
+  // --- 神器附魔隨機詞條：attr_id -> 最終顏色區間 [min, max] ---------------
+  // 遊戲 getGemAttrColor() 會把此區間等分六段，依實際詞條值決定顏色。
+  try {
+    var gemAttrIds = {};
+    configArtifact_gemattr.getDatas().forEach(function(e){
+      if (!e) return;
+      var attrId; try { attrId = e.attr_id; } catch(_){}
+      if (attrId !== undefined && attrId !== null) gemAttrIds[String(attrId)] = Number(attrId);
+    });
+    Object.keys(gemAttrIds).forEach(function(key){
+      var rows = configArtifact_gemattr.getDataByList("attr_id", gemAttrIds[key]) || [];
+      var last = rows[rows.length - 1];
+      var range; try { range = last && last.color; } catch(_){}
+      if (range && range.length >= 2) {
+        out.gem_attr_color_range[key] = [Number(range[0]), Number(range[1])];
+      }
+    });
+  } catch(e){ out.gem_attr_color_range_err = String(e); }
+
   return JSON.stringify(out);
 })()
 """
@@ -114,8 +136,9 @@ def main():
         sys.exit(1)
 
     parsed = json.loads(inner["value"])
-    # 丟掉內嵌的 *_err 鍵，只保留五類乾淨表
-    cats = ("spirit", "attr", "suit", "quality", "spirit_affix_quality")
+    # 丟掉內嵌的 *_err 鍵，只保留六類乾淨表
+    cats = ("spirit", "attr", "suit", "quality", "spirit_affix_quality",
+            "gem_attr_color_range")
     payload = {k: parsed.get(k, {}) for k in cats}
     errs = {k: parsed[k] for k in parsed if k.endswith("_err")}
 

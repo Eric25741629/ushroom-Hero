@@ -49,6 +49,13 @@ def _attr_list(pairs: dict[int, int]) -> list[dict]:
             for k, v in pairs.items()]
 
 
+def _gem_rand_attr_list(pairs: dict[int, int]) -> list[dict]:
+    """神器附魔隨機詞條加上遊戲原生顏色色階。"""
+    return [{"attr_id": k, "name": config_names.attr_name(k), "value": v,
+             "quality": config_names.gem_attr_quality(k, v)}
+            for k, v in pairs.items()]
+
+
 # --- 守護靈 -----------------------------------------------------------------
 
 def _spirit_to_json(s) -> dict:
@@ -84,7 +91,7 @@ def _gem_to_json(g, equipped_ids) -> dict:
         "is_lock": 1 if g.is_lock else 0,
         "is_equipped": g.id in equipped_ids,
         "base_attr": _attr_list(g.base_attr),
-        "rand_attr": _attr_list(g.rand_attr),
+        "rand_attr": _gem_rand_attr_list(g.rand_attr),
     }
 
 

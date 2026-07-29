@@ -9,7 +9,8 @@ JSON 格式（鍵一律字串）::
      "attr":   {"<id>":  "屬性名"},
      "suit":   {"<id>":  "套裝名"},
      "quality":{"<q>":   "品質名"},
-     "spirit_affix_quality":{"<cur_id>": <品質色階>}}
+     "spirit_affix_quality":{"<cur_id>": <品質色階>},
+     "gem_attr_color_range":{"<attr_id>": [<min>, <max>]}}
 
 查不到一律回原編號的字串，永不拋例外，dashboard 不會因缺名而壞掉。
 """
@@ -75,6 +76,22 @@ def spirit_affix_quality(cur_id: int | str) -> int:
         return int(val)
     except (TypeError, ValueError):
         return 0
+
+
+def gem_attr_quality(attr_id: int | str, value: int) -> int:
+    """神器附魔隨機詞條 → 顏色色階 1..6；完整鏡像遊戲 getGemAttrColor。"""
+    raw = _tables().get("gem_attr_color_range", {}).get(str(attr_id))
+    if not isinstance(raw, list) or len(raw) < 2:
+        return 0
+    try:
+        low, high, current = int(raw[0]), int(raw[1]), int(value)
+    except (TypeError, ValueError):
+        return 0
+    step = (high - low + 5) // 6  # Math.ceil((high-low)/6)
+    if step <= 0:
+        return 0
+    thresholds = [low + step * n for n in range(1, 6)] + [high]
+    return min(6, 1 + sum(current >= threshold for threshold in thresholds))
 
 
 def reload() -> None:

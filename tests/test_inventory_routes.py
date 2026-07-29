@@ -104,7 +104,7 @@ def test_artifact_gem_list_resolves_names_and_equipped(monkeypatch):
         gems=(
             ws_gem.ArtifactGem(id=100, quality=7, pos=2, suit=104, lv=9, exp=0,
                                is_red=False, is_lock=False, base_attr={1001: 5},
-                               rand_attr={}),
+                               rand_attr={1002: 45}),
             ws_gem.ArtifactGem(id=200, quality=3, pos=4, suit=101, lv=1, exp=0,
                                is_red=False, is_lock=False, base_attr={}, rand_attr={}),
         ),
@@ -113,6 +113,7 @@ def test_artifact_gem_list_resolves_names_and_equipped(monkeypatch):
     monkeypatch.setattr(config_names, "suit_name", lambda s: f"套{s}")
     monkeypatch.setattr(config_names, "quality_name", lambda q: f"品{q}")
     monkeypatch.setattr(config_names, "attr_name", lambda a: f"屬{a}")
+    monkeypatch.setattr(config_names, "gem_attr_quality", lambda attr_id, value: 5)
 
     client = cpa.app.test_client(); _login_fly_pet(client)
     resp = client.get("/api/artifact_gem_list/emulator-5554")
@@ -123,6 +124,8 @@ def test_artifact_gem_list_resolves_names_and_equipped(monkeypatch):
     by_id = {g["id"]: g for g in data["gems"]}
     assert by_id["100"]["is_equipped"] is True and by_id["100"]["suit_name"] == "套104"
     assert by_id["100"]["quality_name"] == "品7"
+    assert by_id["100"]["base_attr"][0].get("quality") is None
+    assert by_id["100"]["rand_attr"][0]["quality"] == 5
     assert by_id["200"]["is_equipped"] is False
 
 

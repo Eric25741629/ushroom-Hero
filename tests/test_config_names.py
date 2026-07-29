@@ -17,6 +17,7 @@ def test_lookup_and_fallback(tmp_path, monkeypatch):
         "suit": {"104": "烈焰咆哮"},
         "quality": {"7": "傳奇"},
         "spirit_affix_quality": {"501": 4},
+        "gem_attr_color_range": {"1001": [100, 700]},
     })
     monkeypatch.setattr(config_names, "_NAMES_PATH", path)
     config_names.reload()
@@ -27,6 +28,10 @@ def test_lookup_and_fallback(tmp_path, monkeypatch):
     assert config_names.quality_name(7) == "傳奇"
     assert config_names.spirit_affix_quality(501) == 4
     assert config_names.spirit_affix_quality(999) == 0
+    assert config_names.gem_attr_quality(1001, 199) == 1
+    assert config_names.gem_attr_quality(1001, 200) == 2
+    assert config_names.gem_attr_quality(1001, 700) == 6
+    assert config_names.gem_attr_quality(999, 700) == 0
     # 缺鍵 -> 回編號字串，不拋例外
     assert config_names.spirit_name(999) == "999"
     assert config_names.attr_name(42) == "42"
