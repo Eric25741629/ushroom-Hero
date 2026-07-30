@@ -511,7 +511,7 @@
     <option value="7fe98fc6">7fe98fc6</option>
   </select>
   <button class="btn btn-primary" id="loadBtn" onclick="doLoad()">載入</button>
-  <button class="btn btn-ghost btn-sm" id="launchBtn" onclick="doLaunch()" style="display:none;">啟動瀏覽器</button>
+  <button class="btn btn-ghost btn-sm" id="launchBtn" onclick="doLaunch()" style="display:none;">連線純 WS</button>
   <span id="loadMsg" style="font-size:0.82em; color:var(--text2);"></span>
   <nav class="topbar-right" aria-label="頁面導覽">
     <a href="/">返回中控面板</a>
@@ -1587,34 +1587,97 @@ function resetGalleryFilters() {
 async function apiGet(url) {
   var r = await fetch(url);
   if (r.status === 401) { window.location.href = '/fly-pet/login'; throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  var d = await r.json();
+  var d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok) throw new Error(d.message || ('HTTP ' + r.status));
   if (d.status !== 'ok') throw new Error(d.message || 'error');
   return d;
 }
 async function apiPost(url, body) {
   var r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
   if (r.status === 401) { window.location.href = '/fly-pet/login'; throw new Error('unauthorized'); }
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  var d = await r.json();
+  var d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok) throw new Error(d.message || ('HTTP ' + r.status));
   if (d.status !== 'ok') throw new Error(d.message || 'error');
   return d;
 }
 
-// ---- 輕量瀏覽器在線偵測 ----
-// 直接問中控台「這台有沒有啟動瀏覽器」(CDP /json/list)，不注入遊戲 JS。
-// 比 fly_pet_check_connection(評估遊戲 WS) 快很多, 且能分辨「沒開瀏覽器」與「已開、遊戲載入中」。
+// ---- 純 WS session ----
+// 飛寵管理直接共用 dashboard 的 WSGameClient，不啟動 Playwright/Chrome。
+var flyPetConnectedDev = null;
+var flyPetKeepaliveTimer = null;
+
 async function checkBrowserUp() {
   try {
-    var r = await fetch('/api/fly_pet_browser_status/' + encodeURIComponent(ip()));
-    if (r.status === 404) return {browser_up: true, _fallback: true};   // 端點不存在 → 不阻擋
+    var r = await fetch('/api/fly_pet_check_connection/' + encodeURIComponent(ip()));
+    if (r.status === 404) return {browser_up: false, connected: false};
     if (r.status === 401) { window.location.href = '/fly-pet/login'; return {browser_up: false}; }
     var d = await r.json();
     if (d.status !== 'ok') return {browser_up: false};
-    return d.data || {};
+    var connected = !!(d.data && d.data.connected);
+    return {browser_up: connected, connected: connected, transport: 'pure_ws'};
   } catch(e) {
-    return {browser_up: true, _fallback: true};   // 偵測失敗 → 不阻擋, 交給實際載入判斷
+    return {browser_up: false, connected: false};
   }
+}
+
+async function flyPetPrecheck() {
+  try {
+    var r = await fetch('/api/ws_session/' + encodeURIComponent(ip()) + '/precheck');
+    if (!r.ok) return true;
+    var d = await r.json();
+    var reason = '';
+    if (d.lease) reason = '帳號目前被「' + (d.lease.label || d.lease.owner || '其他工具') + '」佔用';
+    else if (d.account_online === true) reason = '帳號目前在線，純 WS 登入可能讓原本的遊戲連線離線';
+    return !reason || window.confirm(reason + '。\n仍要切換到飛寵管理嗎？');
+  } catch(e) {
+    return true;
+  }
+}
+
+async function connectFlyPetWs() {
+  if (flyPetConnectedDev === ip()) return true;
+  if (!(await flyPetPrecheck())) return false;
+  var r = await fetch('/api/ws_session/' + encodeURIComponent(ip()) + '/connect?label=' +
+                      encodeURIComponent('飛寵管理'), {method:'POST'});
+  var d = {};
+  try { d = await r.json(); } catch(e) {}
+  if (!r.ok || d.status !== 'ok') {
+    console.warn('fly-pet WS connect failed:', d.message || r.status);
+    throw new Error('純 WS 連線失敗；若憑證已過期，請先刷新登入憑證');
+  }
+  flyPetConnectedDev = ip();
+  startFlyPetKeepalive();
+  return true;
+}
+
+function startFlyPetKeepalive() {
+  if (flyPetKeepaliveTimer) clearInterval(flyPetKeepaliveTimer);
+  flyPetKeepaliveTimer = setInterval(async function() {
+    if (!flyPetConnectedDev) return;
+    try {
+      var r = await fetch('/api/ws_session/' + encodeURIComponent(flyPetConnectedDev) + '/ping', {method:'POST'});
+      var d = await r.json();
+      if (!d.alive || d.kicked) {
+        flyPetConnectedDev = null;
+        clearInterval(flyPetKeepaliveTimer);
+        flyPetKeepaliveTimer = null;
+        showNotConnectedHint('launch');
+      }
+    } catch(e) {}
+  }, 30000);
+}
+
+async function disconnectFlyPetWs() {
+  var dev = flyPetConnectedDev;
+  flyPetConnectedDev = null;
+  if (flyPetKeepaliveTimer) clearInterval(flyPetKeepaliveTimer);
+  flyPetKeepaliveTimer = null;
+  if (!dev) return;
+  try {
+    await fetch('/api/ws_session/' + encodeURIComponent(dev) + '/disconnect', {method:'POST'});
+  } catch(e) {}
 }
 
 async function checkBotRunning() {
@@ -1652,57 +1715,54 @@ async function botRunningGuard(opts) {
   return {blocked: false, bot_running: true, botSt: botSt};
 }
 
-// ---- 未連線溫和提示 (不預設瀏覽器已開) ----
+// ---- 未連線溫和提示 ----
 // 灰字提示, 不跳紅色錯誤。kind:
-//   'launch'  → 沒開瀏覽器: highlight「啟動瀏覽器」按鈕
-//   'loading' → 瀏覽器已開但遊戲還在載入: 不亮啟動按鈕, 提示稍候再載入
+//   'launch'  → 沒有純 WS session
+//   'loading' → 純 WS 正在連線
 function showNotConnectedHint(kind) {
   var msg = document.getElementById('loadMsg');
   var launchBtn = document.getElementById('launchBtn');
   var initMsg = document.getElementById('initMsg');
   if (kind === 'ready') {
-    if (msg) { msg.textContent = '瀏覽器已開 — 點「載入」讀取資料'; msg.style.color = 'var(--text2)'; }
+    if (msg) { msg.textContent = '純 WS 已連線 — 點「載入」讀取資料'; msg.style.color = 'var(--text2)'; }
     if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
-    if (initMsg) { initMsg.textContent = '瀏覽器已開 — 點「載入」讀取資料'; initMsg.style.display = ''; }
+    if (initMsg) { initMsg.textContent = '純 WS 已連線 — 點「載入」讀取資料'; initMsg.style.display = ''; }
     return;
   }
   if (kind === 'loading') {
-    if (msg) { msg.textContent = '瀏覽器已開，遊戲載入中… 請稍候再按「載入」'; msg.style.color = 'var(--text2)'; }
+    if (msg) { msg.textContent = '純 WS 連線中…'; msg.style.color = 'var(--text2)'; }
     if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
-    if (initMsg) { initMsg.textContent = '瀏覽器已開，遊戲載入中…'; initMsg.style.display = ''; }
+    if (initMsg) { initMsg.textContent = '純 WS 連線中…'; initMsg.style.display = ''; }
     return;
   }
-  if (msg) { msg.textContent = '尚未連線，請先「啟動瀏覽器」'; msg.style.color = 'var(--text2)'; }
+  if (msg) { msg.textContent = '尚未連線，點「載入」即可使用純 WS'; msg.style.color = 'var(--text2)'; }
   if (launchBtn) { launchBtn.style.display = 'inline-block'; launchBtn.classList.add('btn-attention'); }
-  if (initMsg) { initMsg.textContent = '尚未連線 — 請先「啟動瀏覽器」，或在遊戲已開時點「載入」'; initMsg.style.display = ''; }
+  if (initMsg) { initMsg.textContent = '不需啟動瀏覽器 — 點「載入」建立純 WS 連線'; initMsg.style.display = ''; }
 }
 
-// ---- 開頁靜默偵測: 先問中控台有沒有瀏覽器, 有就載入, 沒有安靜提示, 全程不跳 toast ----
+// ---- 開頁靜默偵測：不主動登入，避免未經確認踢掉既有遊戲 session ----
 async function initAutoLoad() {
   var br = await checkBrowserUp();
-  if (br.browser_up) { showNotConnectedHint('ready'); return; }  // 2026-07-10：不自動載入
+  if (br.connected) {
+    flyPetConnectedDev = ip();
+    startFlyPetKeepalive();
+    showNotConnectedHint('ready');
+    return;
+  }
   showNotConnectedHint('launch');
 }
 
-// ---- Launch browser ----
+// ---- 手動連線純 WS ----
 async function doLaunch() {
   var btn = document.getElementById('launchBtn');
   setLoading(btn, true);
-  toast('正在啟動瀏覽器...', 'info');
+  toast('正在建立純 WS 連線...', 'info');
   try {
-    var r = await fetch('/api/web_launch/' + encodeURIComponent(ip()), {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({})
-    });
-    var d = await r.json();
-    if (d.status === 'ok') {
-      toast('已發送啟動請求，等待遊戲載入...', 'ok');
-      document.getElementById('loadMsg').textContent = '等待遊戲載入 (約 15-30 秒)...';
-      setTimeout(function() { doLoad(); }, 20000);
-    } else {
-      toast('啟動失敗: ' + (d.message||''), 'err');
+    if (await connectFlyPetWs()) {
+      toast('純 WS 已連線', 'ok');
+      await doLoad({skipConnect:true});
     }
-  } catch(e) { toast('啟動失敗: ' + e.message, 'err'); }
+  } catch(e) { toast(e.message, 'err'); showNotConnectedHint('launch'); }
   finally { setLoading(btn, false); }
 }
 
@@ -1727,13 +1787,8 @@ async function doLoad(opts) {
       msg.textContent = '腳本運行中: ' + (botSt.bot_task || '') + ' - ' + (botSt.bot_step || '');
       msg.style.color = 'var(--warn)';
     }
-    // 輕量門檻: 先問中控台有沒有瀏覽器(不注入遊戲 JS), 沒開就立即溫和提示, 不等 5s 重探
-    var br = await checkBrowserUp();
-    if (!br.browser_up) {
-      showNotConnectedHint('launch');
-      setLoading(btn, false);
-      return;
-    }
+    showNotConnectedHint('loading');
+    if (!opts.skipConnect && !(await connectFlyPetWs())) return;
     msg.textContent = '載入寵物列表...';
     var d = await apiGet('/api/fly_pet_list/' + encodeURIComponent(ip()));
     var pets = d.pets;
@@ -1755,15 +1810,10 @@ async function doLoad(opts) {
     toast('載入 ' + allPets.length + ' 隻飛寵', 'ok');
   } catch(e) {
     var emsg = e.message || '';
-    // 已過 checkBrowserUp 門檻(瀏覽器在線)卻載入失敗 = 遊戲還在載入: 溫和提示稍候, 不跳紅色錯誤
-    if (emsg.indexOf('no CDP target') >= 0 || emsg.indexOf('未載入') >= 0 || emsg.indexOf('IS is not') >= 0) {
-      showNotConnectedHint('loading');
-    } else {
-      msg.textContent = '失敗';
-      msg.style.color = 'var(--danger)';
-      launchBtn.style.display = 'inline-block';
-      toast('載入失敗: ' + emsg, 'err');
-    }
+    msg.textContent = '失敗';
+    msg.style.color = 'var(--danger)';
+    launchBtn.style.display = 'inline-block';
+    toast('載入失敗: ' + emsg, 'err');
   } finally { setLoading(btn, false); }
 }
 
@@ -1934,8 +1984,8 @@ async function discoverMethods() {
   try {
     var d = await apiGet('/api/fly_pet_breed_methods/' + encodeURIComponent(ip()));
     var methods = d.data || [];
-    toast('FlyPetControl: ' + methods.join(', '), 'info');
-    console.log('FlyPetControl methods:', methods);
+    toast('純 WS 飛寵指令: ' + methods.join(', '), 'info');
+    console.log('pure WS fly-pet commands:', methods);
   } catch(e) { toast('探索失敗: ' + e.message, 'err'); }
 }
 
@@ -1989,8 +2039,8 @@ function partnerStateLabel(state, endTime) {
 }
 
 // ---- Partners (搭檔) ----
-// 搭檔 = 繁殖搭檔 (FlyPetDataCache.role_list, 遊戲上限 30), 非好友列表.
-// 每位搭檔的上架飛寵透過 /api/fly_pet_partner (send_66_24 -> RolePetListBack) 取得.
+// 搭檔 = server 的繁殖搭檔清單（遊戲上限 30），不是好友列表。
+// 每位搭檔的上架飛寵透過純 WS cmd 16920 取得。
 async function doLoadAllPartners() {
   var btn = document.getElementById('loadFriendsBtn');
   var prog = document.getElementById('friendsProgress');
@@ -3063,7 +3113,21 @@ document.addEventListener('DOMContentLoaded', function() {
   syncPresetUI();
   updateFVals();
   restoreTab();     // 恢復上次分區 (預設 gallery)
-  initAutoLoad();   // 靜默偵測: 能連就載入, 未連線安靜提示(不預設瀏覽器已開)
+  document.getElementById('devSel').addEventListener('change', async function() {
+    await disconnectFlyPetWs();
+    flypetCatalog = null;
+    document.getElementById('content').style.display = 'none';
+    initAutoLoad();
+  });
+  initAutoLoad();   // 靜默偵測既有純 WS session；不主動登入
+});
+
+// 關頁立刻釋放純 WS lease、恢復 bot loop；server sweeper 是 90 秒安全網。
+window.addEventListener('beforeunload', function() {
+  if (flyPetConnectedDev) {
+    navigator.sendBeacon('/api/ws_session/' +
+      encodeURIComponent(flyPetConnectedDev) + '/disconnect');
+  }
 });
 </script>
 </body>

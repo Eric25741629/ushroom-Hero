@@ -149,7 +149,9 @@ def test_connection_logic_preserved():
     assert "initAutoLoad()" in html
     assert "async function initAutoLoad" in html
     assert "async function checkBrowserUp" in html
-    assert "/api/fly_pet_browser_status/" in html
+    assert "/api/fly_pet_check_connection/" in html
+    assert "connectFlyPetWs()" in html
+    assert "/api/web_launch/" not in html
     assert "function showNotConnectedHint" in html
     assert "showNotConnectedHint('launch')" in html
     assert "showNotConnectedHint('loading')" in html

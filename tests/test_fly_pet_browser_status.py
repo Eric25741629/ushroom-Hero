@@ -1,86 +1,47 @@
-"""輕量瀏覽器在線偵測: /api/fly_pet_browser_status 直接問 CDP /json/list
-(透過 find_game_page_target)，不注入遊戲 JS。讓前端能快速分辨
-「沒開瀏覽器」vs「瀏覽器已開、遊戲載入中」。
-"""
+"""舊 browser_status URL 現在回報純 WS session，供舊前端相容。"""
 import importlib
 import sys
 import types
 
 
-def _import_control_panel_app():
-    adb_stub = types.ModuleType("adb_operations")
-    adb_stub.run_adb = lambda *args, **kwargs: ""
-    sys.modules.setdefault("adb_operations", adb_stub)
-
+def _client(monkeypatch, ws_client):
     sys.modules.setdefault("cv2", types.ModuleType("cv2"))
-
     detector_stub = types.ModuleType("game_state.detector")
     detector_stub.stage_by_str = lambda *args, **kwargs: "unknown"
     sys.modules.setdefault("game_state.detector", detector_stub)
-
     cnn_stub = types.ModuleType("new_cnn.cnn_model")
     cnn_stub.load_cnn_model = lambda path: None
     sys.modules.setdefault("new_cnn.cnn_model", cnn_stub)
-
-    existing = sys.modules.get("control_panel_app")
-    if existing is not None and not hasattr(existing, "app"):
-        del sys.modules["control_panel_app"]
-    return importlib.import_module("control_panel_app")
-
-
-def _login_fly_pet(client):
+    cpa = importlib.import_module("control_panel_app")
+    import control_panel.routes_fly_pet as routes
+    monkeypatch.setattr(routes.ws_session, "get_client", lambda ip: ws_client)
+    client = cpa.app.test_client()
     with client.session_transaction() as sess:
-        sess["fly_pet_auth"] = True
         sess["dash_user"] = "boss"
         sess["dash_admin"] = True
+    return client
 
 
-def _stub_live_view_bridge(monkeypatch, target):
-    stub = types.ModuleType("runtime_services.live_view_bridge")
-    stub.find_game_page_target = lambda *args, **kwargs: target
-    monkeypatch.setitem(sys.modules, "runtime_services.live_view_bridge", stub)
+class _Live:
+    def is_running(self):
+        return True
 
 
-def test_browser_status_up_when_cdp_target_found(monkeypatch):
-    cpa = _import_control_panel_app()
-    monkeypatch.setattr(cpa.config_manager, "get_device_config", lambda ip: {"web_debug_port": 9322})
-    _stub_live_view_bridge(monkeypatch, "ws://127.0.0.1:9322/devtools/page/ABC")
-
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
-    resp = client.get("/api/fly_pet_browser_status/7fe98fc6")
-
-    assert resp.status_code == 200
-    data = resp.get_json()["data"]
-    assert data["browser_up"] is True
-    assert data["debug_port"] == 9322
+def test_compat_status_up_when_pure_ws_connected(monkeypatch):
+    data = _client(monkeypatch, _Live()).get(
+        "/api/fly_pet_browser_status/emulator-5554"
+    ).get_json()["data"]
+    assert data == {
+        "browser_up": True,
+        "connected": True,
+        "transport": "pure_ws",
+    }
 
 
-def test_browser_status_down_when_no_cdp_target(monkeypatch):
-    cpa = _import_control_panel_app()
-    monkeypatch.setattr(cpa.config_manager, "get_device_config", lambda ip: {"web_debug_port": 9322})
-    _stub_live_view_bridge(monkeypatch, None)
-
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
-    resp = client.get("/api/fly_pet_browser_status/7fe98fc6")
-
-    assert resp.status_code == 200
-    data = resp.get_json()["data"]
+def test_compat_status_down_without_pure_ws_session(monkeypatch):
+    data = _client(monkeypatch, None).get(
+        "/api/fly_pet_browser_status/emulator-5554"
+    ).get_json()["data"]
     assert data["browser_up"] is False
-    assert data["debug_port"] == 9322
-
-
-def test_browser_status_no_debug_port_is_not_an_error(monkeypatch):
-    """adb 機 / 未設 web_debug_port: 回 200 + browser_up False, 不視為錯誤。"""
-    cpa = _import_control_panel_app()
-    monkeypatch.setattr(cpa.config_manager, "get_device_config", lambda ip: {})
-
-    client = cpa.app.test_client()
-    _login_fly_pet(client)
-    resp = client.get("/api/fly_pet_browser_status/emulator-5554")
-
-    assert resp.status_code == 200
-    data = resp.get_json()["data"]
-    assert data["browser_up"] is False
-    assert data["no_debug_port"] is True
+    assert data["connected"] is False
+    assert data["transport"] == "pure_ws"
