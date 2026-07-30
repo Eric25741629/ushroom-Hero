@@ -465,12 +465,13 @@ def _run_tasks(ctx: DailyContext) -> None:
     except Exception:
         logger.exception("[%s] 賞金之路 任務異常", ip)
 
-    # Task 14.7: 天梯每週獎勵（每週二一次；H5 only，走頁面 WS 0x4001；無記錄則跳過）
+    # Task 14.7: 天梯每週獎勵（WS 成功後略過；5558 保留 H5）。
     _force_sleep_checkpoint()
-    try:
-        run_ladder_reward_if_due(d, ip)
-    except Exception:
-        logger.exception("[%s] 天梯每週獎勵 任務異常", ip)
+    if not _ws_skip("天梯每週獎勵"):
+        try:
+            run_ladder_reward_if_due(d, ip)
+        except Exception:
+            logger.exception("[%s] 天梯每週獎勵 任務異常", ip)
 
     # Task 15: 萬神試煉
     _force_sleep_checkpoint()
@@ -480,7 +481,7 @@ def _run_tasks(ctx: DailyContext) -> None:
 
     # Task 16: 雲端戰鬥
     _force_sleep_checkpoint()
-    if enable_cloud_battle:
+    if enable_cloud_battle and not _ws_skip("雲端戰鬥"):
         _run_at_main_page(
             d, ip, Cnn_model,
             task_name="雲端戰鬥",

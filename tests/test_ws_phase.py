@@ -699,6 +699,25 @@ def test_run_device_passes_tycoon(monkeypatch):
     assert cap["tycoon_max_rolls"] == 12
 
 
+def test_run_device_passes_weekly_ladder_flags(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device(
+        "emulator-5556",
+        {
+            "enabled": True,
+            "cloud_ladder_enabled": True,
+            "ladder_reward_enabled": True,
+        },
+    )
+    assert cap["cloud_ladder_enabled"] is True
+    assert cap["ladder_reward_enabled"] is True
+
+
+def test_ws_skip_mapping_contains_weekly_ladder_tasks():
+    assert ws_phase.WS_TO_PIPELINE_SKIPS["cloud_ladder"] == ("雲端戰鬥",)
+    assert ws_phase.WS_TO_PIPELINE_SKIPS["ladder_reward"] == ("天梯每週獎勵",)
+
+
 def test_run_device_passes_kungfu_guess(monkeypatch):
     cap = _capture_run_device(monkeypatch)
     ws_phase._run_device("dev", {"enabled": True, "kungfu_guess": True})

@@ -267,6 +267,8 @@ def patched_runner(monkeypatch):
                         mining_config=None,
                         sea_config=None,
                         only_tasks=None,
+                        cloud_ladder_enabled=False,
+                        ladder_reward_enabled=False,
                         progress=None,
                         should_abort=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
@@ -291,7 +293,9 @@ def patched_runner(monkeypatch):
                       "gacha_config": gacha_config,
                       "mining_config": mining_config,
                       "sea_config": sea_config,
-                      "only_tasks": only_tasks})
+                      "only_tasks": only_tasks,
+                      "cloud_ladder_enabled": cloud_ladder_enabled,
+                      "ladder_reward_enabled": ladder_reward_enabled})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -328,8 +332,20 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "gacha_config": None,
                         "mining_config": None,
                         "sea_config": None,
-                        "only_tasks": None}
+                        "only_tasks": None,
+                        "cloud_ladder_enabled": True,
+                        "ladder_reward_enabled": True}
     assert report.login_ok is True
+
+
+def test_run_ws_device_cycle_excludes_5558_weekly_ladder(
+        patched_runner, monkeypatch):
+    svc, calls = patched_runner
+    monkeypatch.setattr(svc, "_protected_player_online", lambda *a, **k: False)
+    cfg = config_manager.DeviceConfig.from_dict({"use_ws_runner": True})
+    svc.run_ws_device_cycle("emulator-5558", cfg, _NullLogger())
+    assert calls[0]["cloud_ladder_enabled"] is False
+    assert calls[0]["ladder_reward_enabled"] is False
 
 
 def test_run_ws_device_cycle_passes_kungfu_guess(patched_runner):
@@ -488,7 +504,9 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
                       relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
                       gacha_config=None,
                       mining_config=None, sea_config=None,
-                      only_tasks=None, progress=None, should_abort=None):
+                      only_tasks=None, cloud_ladder_enabled=False,
+                      ladder_reward_enabled=False,
+                      progress=None, should_abort=None):
         calls.append(ip)
         return types.SimpleNamespace(
             device=ip, login_ok=False, spend=spend, tasks={}, errors={"login": "no ticket"}

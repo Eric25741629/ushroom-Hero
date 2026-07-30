@@ -173,6 +173,22 @@ def patched(monkeypatch):
     # rogue (萬神試煉 本周積分獎勵一鍵領取; free; always runs)
     monkeypatch.setattr(runner.rogue, "claim_week_reward",
                         lambda c, **k: (calls.append(("rogue", "claim_week_reward")) or _RogueOK()))
+    monkeypatch.setattr(
+        runner,
+        "_run_ladder_reward",
+        lambda c, **k: (
+            calls.append(("ladder_reward", "apply"))
+            or {"ok": True, "picks": 25}
+        ),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_run_cloud_ladder",
+        lambda c, **k: (
+            calls.append(("cloud_ladder", "fight"))
+            or {"completed": True, "fights": 2}
+        ),
+    )
 
     # carpark (只停不收; gated on carpark_target)
     monkeypatch.setattr(runner.carpark, "auto_park_cross",
@@ -397,6 +413,42 @@ def test_main_tasks_late_runs_after_mining_lamp(patched, monkeypatch):
     assert starts.index("main_tasks_late") > starts.index("lamp")
     # and the early main_tasks pass still runs first.
     assert starts.index("main_tasks") < starts.index("main_tasks_late")
+
+
+def test_weekly_ladder_uses_ws_except_emulator_5558(patched):
+    calls, _ = patched
+
+    report = run_device(
+        "emulator-5556",
+        cloud_ladder_enabled=True,
+        ladder_reward_enabled=True,
+    )
+
+    assert ("ladder_reward", "apply") in calls
+    assert ("cloud_ladder", "fight") in calls
+    assert report.tasks["ladder_reward"]["ok"] is True
+    assert report.tasks["cloud_ladder"]["completed"] is True
+
+    calls.clear()
+    report_5558 = run_device(
+        "emulator-5558",
+        cloud_ladder_enabled=True,
+        ladder_reward_enabled=True,
+    )
+    assert ("ladder_reward", "apply") not in calls
+    assert ("cloud_ladder", "fight") not in calls
+    assert "ladder_reward" not in report_5558.tasks
+    assert "cloud_ladder" not in report_5558.tasks
+
+
+def test_ladder_reward_send_failure_raises_for_h5_fallback(monkeypatch):
+    monkeypatch.setattr(
+        runner.ladder_reward,
+        "apply_if_due",
+        lambda *a, **k: {"ok": False, "error": "send_failed"},
+    )
+    with pytest.raises(RuntimeError, match="send_failed"):
+        runner._run_ladder_reward(object(), device="dev")
 
 
 def _last_index(seq, val):
@@ -1587,6 +1639,8 @@ def test_task_order_has_home_features_before_lamp():
     assert order.index("lamp") < order.index("main_tasks_late")
     # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
     assert order.index("dungeon") < order.index("rogue") < order.index("guild")
+    assert order.index("rogue") < order.index("ladder_reward")
+    assert order.index("ladder_reward") < order.index("cloud_ladder") < order.index("arena")
     # 競猜商店 (粉鑽 買競猜幣) sits with the shopping/cost group: after steward,
     # before the spirit/workshop/couple/mining/lamp tail.
     assert order.index("steward") < order.index("kungfu_store") < order.index("spirit")

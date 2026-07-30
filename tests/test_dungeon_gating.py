@@ -217,6 +217,21 @@ def test_cloud_battle_skipped_when_disabled(monkeypatch):
     assert not nb.run_weekly_cloud_fighting_single.called
 
 
+def test_cloud_battle_and_ladder_reward_skipped_when_ws_done(monkeypatch):
+    nb = _neutralize(monkeypatch)
+    ctx = dp.DailyContext(
+        d=MagicMock(), ip="emu-test", Cnn_model=object(), clf=object(),
+        rl_recorder=object(), current_time=_tuesday_10_05(),
+        enable_dungeon_manager=True, wheel_manager=MagicMock(),
+        mission_manager=MagicMock(), family_manager=MagicMock(),
+        enable_cloud_battle=True,
+        ws_done=frozenset({"雲端戰鬥", "天梯每週獎勵"}),
+    )
+    dp._run_tasks(ctx)
+    assert not nb.run_weekly_cloud_fighting_single.called
+    assert not dp.run_ladder_reward_if_due.called
+
+
 # --- 萬神試煉 / 雙週：daily_pipeline 只負責把 flag 轉發給排程器 --------------
 
 def test_wanshen_flag_forwarded_to_weekly_dungeon(monkeypatch):

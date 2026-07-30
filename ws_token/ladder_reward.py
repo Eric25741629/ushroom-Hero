@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 CMD_SELECT = 0x4001        # double_ladder_select c2s/s2c
 CMD_ERROR = 0x0201         # error.error_info_s2c {error_code#1}
 TUESDAY = 2                # date.isocalendar() weekday: Mon=1 .. Sun=7
+TEMPLATE_DEVICE = "7fe98fc6"  # 同一選擇 body 已 live 驗證可跨帳號套用
 
 _STORE = Path(__file__).with_name("data") / "ladder_reward.json"
 
@@ -133,8 +134,30 @@ def save_store(store: dict) -> None:
 
 
 def get_body_hex(device: str) -> Optional[str]:
-    rec = load_store().get(device)
+    store = load_store()
+    rec = store.get(device) or store.get(TEMPLATE_DEVICE)
     return rec.get("body_hex") if rec else None
+
+
+def _record_for_device(store: dict, device: str) -> Optional[dict]:
+    """裝置無專屬選擇時沿用 live 驗證過的共用模板。
+
+    0x4001 body 只描述「難度→獎勵索引」，不含 role id；同一 body 已在小寶與
+    5558 兩帳號成功回聲。成功套用後會複製成裝置自己的紀錄與週 marker。
+    """
+    rec = store.get(device)
+    if rec:
+        return dict(rec)
+    template = store.get(TEMPLATE_DEVICE)
+    if not template or not template.get("body_hex"):
+        return None
+    return {
+        "body_hex": template["body_hex"],
+        "picks": template.get("picks"),
+        "captured": template.get("captured"),
+        "source": f"shared template: {TEMPLATE_DEVICE}",
+        "enabled": True,
+    }
 
 
 def record_device(device: str, body_hex: str, *, captured: str,
@@ -171,7 +194,7 @@ def is_due(device: str, today, *, weekday_target: int = TUESDAY) -> tuple[bool, 
     marker, weekday = _marker(today)
     if weekday != weekday_target:
         return False, "not_target_weekday"
-    rec = load_store().get(device)
+    rec = _record_for_device(load_store(), device)
     if not rec:
         return False, "no_record"
     if not rec.get("enabled", True):
@@ -216,7 +239,7 @@ def apply_if_due(device: str, today, *, page=None, client=None,
     where both a ws-phase and the daily pipeline reach this for one device).
     """
     if force:
-        rec = load_store().get(device)
+        rec = _record_for_device(load_store(), device)
         if not rec or not rec.get("body_hex"):
             return {"skipped": "no_body"}
         marker = _marker(today)[0]
@@ -225,7 +248,9 @@ def apply_if_due(device: str, today, *, page=None, client=None,
         if not due:
             return {"skipped": reason}
         marker = reason
-        rec = load_store()[device]
+        rec = _record_for_device(load_store(), device)
+        if not rec:
+            return {"skipped": "no_record"}
 
     body = bytes.fromhex(rec["body_hex"])
     if page is not None:

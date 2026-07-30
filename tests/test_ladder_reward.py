@@ -16,6 +16,34 @@ def tmp_store(tmp_path, monkeypatch):
     monkeypatch.setattr(lr, "_STORE", tmp_path / "ladder_reward.json")
     return tmp_path
 
+
+def test_missing_device_uses_shared_template_on_tuesday(tmp_store):
+    body = lr.encode_picks([(25, 1), (24, 2)])
+    lr.save_store({
+        lr.TEMPLATE_DEVICE: {
+            "body_hex": body.hex(),
+            "enabled": True,
+        },
+    })
+    sent = []
+
+    class Client:
+        def call_for(self, cmd, payload, *, expect_cmds):
+            sent.append((cmd, bytes(payload)))
+            return lr.CMD_SELECT, bytes(payload) + b"\x10\x00"
+
+    result = lr.apply_if_due(
+        "emulator-5556",
+        datetime.date(2026, 7, 28),
+        client=Client(),
+    )
+
+    assert result["ok"] is True
+    assert sent == [(lr.CMD_SELECT, body)]
+    stored = lr.load_store()["emulator-5556"]
+    assert stored["body_hex"] == body.hex()
+    assert stored["last_applied_week"] == "2026-W31"
+
 # 小寶 captured 2026-06-21: 25 picks, difficulties 16-25, echo ended 0x10 0x00.
 XIAOBAO_HEX = (
     "0a04081910010a04081910020a04081910040a04081810010a04081810020a040817"

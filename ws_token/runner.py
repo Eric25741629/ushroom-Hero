@@ -56,9 +56,9 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 
 import json_manager
 from ws_token import (
-    ad_reward, arena_fight, carpark, couple, dragon_realm, dungeon, farm, gacha,
-    guild, idle_reward, kungfu_store, league_solo, main_tasks, mining,
-    mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
+    ad_reward, arena_fight, carpark, cloud_ladder, couple, dragon_realm, dungeon,
+    farm, gacha, guild, idle_reward, kungfu_store, ladder_reward, league_solo,
+    main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
     secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
     xwar_idle,
@@ -85,7 +85,8 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "mount_sprint", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
-    "rogue", "arena", "statue", "guild", "steward", "relic", "relic_sprint",
+    "rogue", "ladder_reward", "cloud_ladder", "arena", "statue", "guild",
+    "steward", "relic", "relic_sprint",
     "gacha", "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
     "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
     "main_tasks_late")
@@ -194,6 +195,32 @@ def _run_redpack(client) -> dict:
     ``{attempted, claimed, results}``.
     """
     return redpack.grab_claimable(client)
+
+
+def _run_ladder_reward(client, *, device: str) -> dict:
+    """每週二以 0x4001 套用天梯獎勵選擇；沒有專屬紀錄時用共用模板。"""
+    import datetime
+
+    tz = datetime.timezone(datetime.timedelta(hours=8))
+    result = ladder_reward.apply_if_due(
+        device,
+        datetime.datetime.now(tz).date(),
+        client=client,
+    )
+    if result.get("ok") is False:
+        raise RuntimeError(result.get("error") or "ladder reward send failed")
+    return result
+
+
+def _run_cloud_ladder(client, *, device: str, should_abort=None,
+                      on_progress=None) -> dict:
+    """每週雲纏天梯：安全站位後，純 WS 逐關即時結算至最高關。"""
+    return cloud_ladder.run_weekly(
+        client,
+        device,
+        should_abort=should_abort,
+        progress=on_progress,
+    )
 
 
 def _run_mail(client, *, device: str, gem_threshold: Optional[int] = None,
@@ -1432,6 +1459,8 @@ def run_device(device: str, *, spend: bool = False,
                 mining_config: Optional[dict] = None,
                 sea_config: Optional[dict] = None,
                 arena_config: Optional[dict] = None,
+                cloud_ladder_enabled: bool = False,
+                ladder_reward_enabled: bool = False,
                 dragon_realm_enabled: bool = True,
                 xwar_idle_enabled: bool = False,
                 statue_amount: int = 7000,
@@ -1674,6 +1703,30 @@ def run_device(device: str, *, spend: bool = False,
                   inventory_tracker=inventory_tracker, device=device))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
         _step("rogue", lambda: _run_rogue(client, device=device))
+        # 5558 保留 H5 挑戰/助戰流程；其他裝置每週挑戰與獎勵皆走同一 WS。
+        if device != cloud_ladder.EXCLUDED_DEVICE:
+            if ladder_reward_enabled:
+                _step(
+                    "ladder_reward",
+                    lambda: _run_ladder_reward(client, device=device),
+                )
+            if cloud_ladder_enabled:
+                def _cloud_progress(fights: int, level: int, max_level: int) -> None:
+                    _notify(
+                        "cloud_ladder",
+                        "progress",
+                        f"{fights} 場，關卡 {level}/{max_level}",
+                    )
+
+                _step(
+                    "cloud_ladder",
+                    lambda: _run_cloud_ladder(
+                        client,
+                        device=device,
+                        should_abort=should_abort,
+                        on_progress=_cloud_progress,
+                    ),
+                )
         if arena_config and arena_config.get("enabled"):
             _step("arena",
                   lambda: _run_arena(client, arena_config=arena_config,

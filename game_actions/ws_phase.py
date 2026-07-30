@@ -35,6 +35,8 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "gacha": ("抽技能夥伴",),
     "sea_season": ("航海任務 (Sea)",),
     "arena": ("競技場挑戰",),
+    "ladder_reward": ("天梯每週獎勵",),
+    "cloud_ladder": ("雲端戰鬥",),
 }
 
 # pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
@@ -200,6 +202,9 @@ _RESUME_TTL_SEC = 30 * 60
 _RESUME_EXEMPT = frozenset({"carpark", "idle_reward"})
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
+    "lamp": "開神燈",
+    "ladder_reward": "天梯每週獎勵",
+    "cloud_ladder": "雲纏天梯",
 }
 
 
@@ -225,8 +230,8 @@ def _log_ws_progress(log, ip: str, name: str, status: str,
         step = f"WS 停車決策 ({detail})"
         log.info("[%s] WS 停車決策: %s", ip, detail)
     elif status == "progress":
-        step = f"WS 開神燈 ({detail})"
-        log.info("[%s] WS 開神燈進度: %s", ip, detail)
+        step = f"WS {label} ({detail})"
+        log.info("[%s] WS %s進度: %s", ip, label, detail)
     else:
         step = f"WS 任務失敗: {label}"
         log.warning("[%s] WS 任務失敗: %s (%s)", ip, label, detail)
@@ -377,6 +382,8 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         mining_config=cfg.get("mining") or None,
         sea_config=cfg.get("sea_season") or None,
         arena_config=cfg.get("arena") or None,
+        cloud_ladder_enabled=bool(cfg.get("cloud_ladder_enabled", True)),
+        ladder_reward_enabled=bool(cfg.get("ladder_reward_enabled", True)),
         dragon_realm_enabled=bool(cfg.get("dragon_realm_enabled", True)),
         xwar_idle_enabled=bool(cfg.get("xwar_idle", False)),
         should_abort=should_abort,
@@ -638,6 +645,16 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _mining = device_cfg.get("ws_token_mining")
         if _mining is not None:
             cfg = {**cfg, "mining": _mining}
+    # 雲纏挑戰沿用裝置層 enable_cloud_battle；5558 明確保留 H5 助戰/挑戰。
+    # 天梯每週獎勵同樣排除 5558，避免同帳 WS 與其特殊 H5 排程互踢。
+    _use_ladder_ws = ip != "emulator-5558"
+    cfg = {
+        **cfg,
+        "cloud_ladder_enabled": (
+            _use_ladder_ws and bool(device_cfg.get("enable_cloud_battle", True))
+        ),
+        "ladder_reward_enabled": _use_ladder_ws,
+    }
     # 坐騎衝刺的 legacy 設定仍在裝置根層；WS 階段把它明確折入，讓純 WS
     # 與舊 UI fallback 使用同一個 enable/quantity 設定。缺欄位的測試/舊設定
     # 不附加參數，保留原本 run_device 的預設行為。
