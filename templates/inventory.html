@@ -360,7 +360,7 @@ function renderSpirit(){
     if (lock!=='all' && String(s.lock)!==lock) return false;
     if (q || spiritQualityFilter.size){
       const hit = (s.positions||[]).some(p => {
-        if (spiritQualityFilter.size && !spiritQualityFilter.has(Number(p.quality))) return false;
+        if (spiritQualityFilter.size && !spiritQualityFilter.has(Number(p.quality)||1)) return false;
         return !q || (p.affixes||[]).some(a => (a.name||'').toLowerCase().includes(q));
       });
       if (!hit) return false;
@@ -379,7 +379,7 @@ function renderSpirit(){
     const card = document.createElement('div');
     card.className = 'card' + (s.lock?' locked':'');
     let aff = (s.positions||[]).map(p => {
-      const quality = Number(p.quality)||0;
+      const quality = Number(p.quality)||1;  // 0 = 未品質升階，顯示為灰
       const chips = (p.affixes||[]).map(a=>`<span class="atag aq-${quality}" title="${a.attr_id} · ${SPIRIT_COLORS[quality]?.label||'未知'}色">${a.name}=${a.value}</span>`).join(' ');
       return `<div class="arow"><span class="apos">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
     }).join('');
