@@ -84,7 +84,6 @@
   <a class="home" href="/">← 回主控台</a>
   <label class="inline">帳號/裝置 <select id="dev" onchange="onDevChange()"></select></label>
   <span id="connState" class="conn off">未連線</span>
-  <button id="connBtn" class="ghost" onclick="toggleConn()">連線</button>
   <span id="status" class="spin"></span>
 </header>
 
@@ -162,6 +161,7 @@
       <label class="inline" id="gBatchWrap" style="display:none">批數
         <input type="number" id="gBatches" value="1" min="1" max="200">
       </label>
+      <button id="btnGLoad" class="ghost" onclick="loadGacha()">載入</button>
       <button id="btnDraw" class="warn" onclick="doDraw()">開始抽（純 WS）</button>
     </div>
     <div class="note">說明：走純 WS 持久連線（免開瀏覽器）直接送抽卡封包 <code>0x0902 {type,count}</code>，不跑動畫/彈窗，故極快。
@@ -264,7 +264,6 @@
     <h2 id="kickModalTitle">連線已斷線</h2>
     <p>偵測到異地登入（同帳號在他處登入），此連線已被伺服器中斷。</p>
     <div class="row">
-      <button onclick="reconnectFromKick()">重新連線</button>
       <button class="ghost" onclick="hideModal('kickModal')">知道了</button>
     </div>
   </div>
@@ -407,6 +406,7 @@ function coinUnknownReason(res){
 
 async function doPlan(){
   if (!dev()){ setStatus('請先選裝置', true); return; }
+  if (!await ensureConnected()){ setStatus('純 WS 連線失敗，無法讀取', true); return; }
   $('btnPlan').disabled = true; $('btnExec').disabled = true;
   // ~30s job: show a skeleton so the panel isn't blank while it reads+computes.
   _show('carparkState', false); _show('carparkSkeleton', true);
@@ -491,7 +491,7 @@ async function doDraw(){
   }
   if (!await confirmDialog({ danger:true, title:'確認抽卡', okLabel:'開始抽',
       body:confirmMsg })) return;
-  if (!await ensureConnected()){ setStatus('未連線，無法抽卡', true); return; }
+  if (connectedDev!==dev()){ setStatus('請先按抽卡區的「載入」', true); return; }
   $('btnDraw').disabled = true; setStatus('抽卡中…（純 WS，請勿關閉本頁）');
   try{
     const r = await fetch(`/api/gacha/draw/${encodeURIComponent(dev())}`, {
@@ -520,10 +520,10 @@ const KEEPALIVE_MS = 30000;
 let connectedDev = null, keepaliveTimer = null, idleTimer = null, idleCdTimer = null;
 
 function setConn(state){
-  const c=$('connState'), b=$('connBtn');
-  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; b.textContent='斷線'; }
-  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; b.textContent='連線'; }
-  else { c.textContent='未連線'; c.className='conn off'; b.textContent='連線'; }
+  const c=$('connState');
+  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; }
+  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; }
+  else { c.textContent='未連線'; c.className='conn off'; }
 }
 // Route idle/kick modals through the shared modal manager (app.js) so they get
 // Esc-to-close, focus move-in (first button), Tab-trap and focus-restore (C1).
@@ -589,13 +589,21 @@ async function disconnectSession(){
   const d=connectedDev||dev(); connectedDev=null; setConn('off');
   try{ await fetch(`/api/ws_session/${encodeURIComponent(d)}/disconnect`,{method:'POST'}); }catch(e){}
 }
-function toggleConn(){ if(connectedDev) disconnectSession(); else connectSession(); }
 async function onDevChange(){
   if(connectedDev && connectedDev!==dev()) await disconnectSession();
-  await connectSession();
+  setConn('off');
+  showDisconnectedStates();
+  setStatus('選好裝置後，按讀取／規劃才會建立純 WS');
 }
 // 動作前確保有連線（抽卡 / 看廣告共用）。回傳是否已連線。
-async function ensureConnected(){ if(connectedDev) return true; return await connectSession(); }
+async function ensureConnected(){ if(connectedDev===dev()) return true; return await connectSession(); }
+
+async function loadGacha(){
+  const btn=$('btnGLoad'); btn.disabled=true;
+  try{
+    if(await ensureConnected()) setStatus('抽卡已載入（純 WS）');
+  }finally{ btn.disabled=false; }
+}
 
 function startKeepalive(){ stopKeepalive(); keepaliveTimer=setInterval(pingOnce, KEEPALIVE_MS); }
 function stopKeepalive(){ if(keepaliveTimer){ clearInterval(keepaliveTimer); keepaliveTimer=null; } }
@@ -609,7 +617,6 @@ async function pingOnce(){
   }catch(e){}
 }
 function onKicked(){ stopKeepalive(); clearIdle(); connectedDev=null; setConn('off'); showModal('kickModal'); }
-function reconnectFromKick(){ hideModal('kickModal'); connectSession(); }
 
 function resetIdle(){ clearIdle(); if(!connectedDev) return; idleTimer=setTimeout(beginIdleCountdown, IDLE_SEC*1000); }
 function clearIdle(){ if(idleTimer){clearTimeout(idleTimer);idleTimer=null;} if(idleCdTimer){clearInterval(idleCdTimer);idleCdTimer=null;} }
@@ -621,7 +628,11 @@ function beginIdleCountdown(){
   idleCdTimer=setInterval(()=>{ left--; $('idleCd').textContent=left;
     if(left<=0){ clearInterval(idleCdTimer); idleCdTimer=null; idleLogoutNow(); } }, 1000);
 }
-function stayConnected(){ hideModal('idleModal'); clearIdle(); if(connectedDev){ resetIdle(); } else { connectSession(); } }
+function stayConnected(){
+  hideModal('idleModal'); clearIdle();
+  if(connectedDev) resetIdle();
+  else setStatus('連線已中斷，請重新按讀取／規劃', true);
+}
 function idleLogoutNow(){ hideModal('idleModal'); disconnectSession(); setStatus('已因閒置自動斷線'); }
 
 let _lastAct=0;
@@ -686,7 +697,7 @@ async function doRsPlan(){
 
 async function doRsExec(){
   if(!RS_PLAN || !RS_PLAN.open){ $('rsMsg').textContent='請先規劃。'; return; }
-  if(!await ensureConnected()){ $('rsMsg').textContent='未連線，無法執行。'; return; }
+  if(connectedDev!==dev()){ $('rsMsg').textContent='連線已中斷，請重新按規劃。'; return; }
   const rem = RS_PLAN.remaining||0;
   if(!await confirmDialog({ danger:true, title:'執行遺物衝刺', okLabel:'確定執行',
       body:`將升級最小等級遺物、約消耗 ${fmt(rem)} 遺物碎片把累計推到 ${fmt(RS_PLAN.total)}，並領取所有可領輪獎。` })) return;
@@ -711,6 +722,7 @@ async function doRsExec(){
 
 /* ===== dragon realm ===== */
 async function doDrRead(){
+  if(!await ensureConnected()){ showToolError('drState','純 WS 連線失敗',doDrRead); return; }
   $('btnDrRead').disabled=true; $('drMsg').textContent='';
   _show('drState',false); _show('drSkeleton',true); _show('drCard',false); _show('drLog',false);
   try{
@@ -751,7 +763,11 @@ async function doDrRun(){
   finally{ $('btnDrRun').disabled=false; }
 }
 
-(async function init(){ await loadDevices(); /* 2026-07-10：開頁不自動連線，按「連線」才連 */ })();
+(async function init(){
+  await loadDevices();
+  showDisconnectedStates();
+  setStatus('按讀取／規劃才會建立純 WS');
+})();
 </script>
 </body>
 </html>

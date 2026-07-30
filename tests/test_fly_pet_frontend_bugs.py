@@ -147,5 +147,6 @@ def test_do_load_warns_via_guard_but_proceeds():
     html = _template_text()
     body = _function_body(html, "async function doLoad", "// ---- Sell ----")
     assert GUARD_NAME in body
-    # doLoad must keep its disconnect early-return logic
-    assert "launchBtn.style.display = 'inline-block';" in body
+    # 失敗後回到「按載入連線」提示，不另外顯示第二顆連線按鈕。
+    assert "showNotConnectedHint('launch');" in body
+    assert "launchBtn" not in body

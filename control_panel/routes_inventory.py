@@ -26,21 +26,14 @@ logger = logging.getLogger(__name__)
 bp = Blueprint("inventory", __name__)
 
 
-# --- 純 WS session 取得（沒有就現場建立，順帶暫停該機 bot loop） --------------
+# --- 純 WS session 取得（只能由前端「讀取」按鈕先建立） ----------------------
 
 def _session_client(ip: str):
-    """取得 ``ip`` 的 live 純 WS client；沒有就嘗試 ensure 一條。回 (client, err)。"""
+    """取得 ``ip`` 的 live 純 WS client；API 本身不得暗中建立連線。"""
     client = ws_session.get_client(ip)
     if client is not None:
         return client, None
-    res = ws_session.ensure(ip)
-    if res.get("status") != "ok":
-        # error / conflict（帳號在線中，含佔用者資訊）都把 ensure 的 message 透出
-        return None, res.get("message", "WS 連線失敗")
-    client = ws_session.get_client(ip)
-    if client is None:
-        return None, "WS 連線未就緒"
-    return client, None
+    return None, "尚未建立純 WS，請先按讀取"
 
 
 def _attr_list(pairs: dict[int, int]) -> list[dict]:

@@ -69,7 +69,7 @@ def test_inventory_has_multi_select_color_filters():
     assert "spiritQualityFilter = new Set()" in html
     assert "gemQualityFilter = new Set()" in html
     assert "aria-pressed" in html
-    assert "spiritQualityFilter.has(Number(p.quality))" in html
+    assert "spiritQualityFilter.has(Number(p.quality)||1)" in html
     assert "gemQualityFilter.has(Number(g.quality))" in html
 
 
@@ -77,7 +77,7 @@ def test_spirit_affix_chips_use_server_quality_color():
     html = _html()
     for quality in range(1, 7):
         assert f".atag.aq-{quality}" in html
-    assert "const quality = Number(p.quality)||0;" in html
+    assert "const quality = Number(p.quality)||1;" in html
 
 
 def test_gem_random_affix_color_filter_is_separate_from_stone_quality():

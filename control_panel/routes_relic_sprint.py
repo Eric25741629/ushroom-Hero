@@ -89,12 +89,7 @@ def _session_client(ip: str):
     """
     client = ws_session.get_client(ip)
     if client is None:
-        res = ws_session.ensure(ip)
-        if res.get("status") != "ok":
-            return None, None, res.get("message", "WS 連線失敗")
-        client = ws_session.get_client(ip)
-        if client is None:
-            return None, None, "WS 連線未就緒"
+        return None, None, "尚未建立純 WS，請先按規劃"
     tracker = _tracker_for(ip)
     try:
         client.set_push_handler(tracker.on_push)

@@ -1996,7 +1996,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           </div>
 
           <div class="task-tab-panel" data-tab="relic">
-            <div id="relicSprintDate" class="ws-field-note"></div>
+            <div id="relicSprintDate" class="ws-field-note">活動日期請到「工具」頁按「規劃」後讀取，這裡不會自動建立 WS。</div>
             <div class="ws-schema-slot" data-slot="relic"></div>
             <div class="ws-field-note">「一口氣平均強化所有遺物」已移到上方「工具」面板手動執行；這裡只保留每週期把碎片衝到目標、領回合獎勵。</div>
           </div>
@@ -4164,7 +4164,6 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       });
       document.querySelectorAll('.task-tab-panel').forEach(p =>
         p.classList.toggle('active', p.dataset.tab === id));
-      if (id === 'relic') loadRelicSprintDate();
       updateTaskTabCounts();
     }
     // 各 tab 勾選數 → chip 右側 badge，一眼看出哪些分類有開細項
@@ -4193,40 +4192,6 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         }
       });
     }
-    // 遺物頁籤：即時讀「本期活動結束日」(純 WS calendar 6576 → /api/relic_sprint/plan)。
-    // 每次開浮窗只抓一次/裝置(切回頁籤不重抓)；未登入工具 session(401)時給軟提示。
-    let _relicDateFetchedFor = null;
-    async function loadRelicSprintDate() {
-      const el = document.getElementById('relicSprintDate');
-      if (!el) return;
-      const ip = (document.getElementById('editIp') || {}).value;
-      if (!ip || _relicDateFetchedFor === ip) return;
-      _relicDateFetchedFor = ip;
-      el.textContent = '本期活動結束日：讀取中…';
-      try {
-        const res = await fetch(`/api/relic_sprint/plan/${ip}`);
-        if (res.status === 401) {
-          el.textContent = '（登入工具頁後才能顯示本期活動結束日）';
-          _relicDateFetchedFor = null;
-          return;
-        }
-        const j = await res.json();
-        const d = (j && j.data) || {};
-        if (!d.open) { el.textContent = '本期目前沒有遺物衝刺活動'; return; }
-        if (d.end_ts) {
-          const ds = new Date(d.end_ts * 1000).toLocaleDateString('zh-TW',
-            { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
-          const days = Math.max(0, Math.ceil((d.end_ts * 1000 - Date.now()) / 86400000));
-          el.textContent = `本期活動結束日：${ds}（約剩 ${days} 天）`;
-        } else {
-          el.textContent = '本期活動進行中（結束日未知）';
-        }
-      } catch (e) {
-        el.textContent = '';
-        _relicDateFetchedFor = null;
-      }
-    }
-
     // Bucket an arbitrary coerced scale (1~10 float) into the three options the
     // card offers. Non-1/2/4 values (rare; only writable via raw config) snap to
     // the nearest offered tier so the <select> always shows a real option.
