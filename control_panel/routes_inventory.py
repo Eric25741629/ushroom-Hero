@@ -59,20 +59,27 @@ def _gem_rand_attr_list(pairs: dict[int, int]) -> list[dict]:
 # --- 守護靈 -----------------------------------------------------------------
 
 def _spirit_to_json(s) -> dict:
+    positions = []
+    for p in s.positions:
+        q = config_names.spirit_affix_quality(p.cur_id)
+        if p.cur_id and not q:
+            logger.warning("spirit_affix_quality miss: spirit=%s pos=%s cur_id=%s",
+                           s.config_id, p.pos, p.cur_id)
+        positions.append({
+            "pos": p.pos,
+            "cur_id": p.cur_id,
+            "quality": q,
+            "reshape_id": p.reshape_id,
+            "affixes": _attr_list(p.cur_attrs),
+            "reshape": _attr_list(p.reshape_attrs),
+        })
     return {
         "id": str(s.id),
         "config_id": s.config_id,
         "name": config_names.spirit_name(s.config_id),
         "level": s.level,
         "lock": 1 if s.is_lock else 0,
-        "positions": [{
-            "pos": p.pos,
-            "cur_id": p.cur_id,
-            "quality": config_names.spirit_affix_quality(p.cur_id),
-            "reshape_id": p.reshape_id,
-            "affixes": _attr_list(p.cur_attrs),
-            "reshape": _attr_list(p.reshape_attrs),
-        } for p in s.positions],
+        "positions": positions,
     }
 
 
