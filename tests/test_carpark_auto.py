@@ -196,6 +196,32 @@ def test_reconcile_returns_to_main_even_when_snapshot_fails(monkeypatch):
     assert called == ["returned"]
 
 
+def test_reconcile_can_skip_h5_warehouse_when_ws_owns_claim(monkeypatch):
+    claimed = []
+    monkeypatch.setattr(carpark_auto, "parking_view_is_open", lambda _page: False)
+    monkeypatch.setattr(
+        carpark_auto,
+        "take_snapshot",
+        lambda _page: CarparkSnapshot(deployed=[]),
+    )
+    monkeypatch.setattr(
+        carpark_auto,
+        "claim_warehouse",
+        lambda _page: claimed.append("claimed") or True,
+    )
+    monkeypatch.setattr(carpark_auto, "_return_parking_to_main", lambda _page: True)
+
+    out = carpark_auto.reconcile(
+        object(),
+        _DEFAULT_CFG,
+        now=_tw(23),
+        claim_warehouse_rewards=False,
+    )
+
+    assert claimed == []
+    assert "claimed warehouse rewards" not in out["actions"]
+
+
 # ──────────────────────────────────────────────────────────────────────
 # park_one_silver — avoid_lots filter
 # ──────────────────────────────────────────────────────────────────────

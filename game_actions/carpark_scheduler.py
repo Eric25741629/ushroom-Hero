@@ -12,6 +12,13 @@ import config_manager
 from utils.logging_utils import logger
 
 
+def _ws_owns_warehouse_claim(cfg: dict) -> bool:
+    """WS 車位計畫啟用時，倉庫收益由 12846 負責領取。"""
+    ws_cfg = cfg.get("ws_token") or {}
+    plan_cfg = ws_cfg.get("carpark_plan") or {}
+    return bool(ws_cfg.get("enabled") and plan_cfg.get("enabled"))
+
+
 def run_carpark_check_if_due(d, ip: str) -> None:
     """Experimental: keep cross-server park deployment aligned to the
     daytime/nighttime targets via cocos UI clicks.
@@ -46,7 +53,11 @@ def run_carpark_check_if_due(d, ip: str) -> None:
         set_recorder(rec)
         pause_guard.bind(ip=ip, page=page)
         try:
-            summary = reconcile(page, carpark_cfg)
+            summary = reconcile(
+                page,
+                carpark_cfg,
+                claim_warehouse_rewards=not _ws_owns_warehouse_claim(cfg),
+            )
         except pause_guard.TaskAborted as exc:
             logger.info(f"[{ip}] 車位檢查 aborted: {exc}")
             return

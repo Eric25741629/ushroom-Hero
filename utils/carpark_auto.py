@@ -929,7 +929,8 @@ def _build_snapshot_summary(s):
     }
 
 
-def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
+def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None, *,
+              claim_warehouse_rewards: bool = True) -> dict:
     """One-shot reconciliation: compare current deployed state vs target,
     take corrective actions, return a summary dict.
 
@@ -994,9 +995,9 @@ def reconcile(page: Any, cfg: dict, now: Optional[datetime] = None) -> dict:
             "time_window": "daytime" if is_daytime_window(now) else "nighttime",
         }
 
-        # Always check warehouse — only thing besides cross park bot manages
-        # (per user 2026-05-20: "只有左下角的倉庫要領 這個沒有自動化")
-        if claim_warehouse(page):
+        # 純 H5 模式仍維持舊行為；WS 車位計畫啟用時由 12846 一鍵領取，
+        # 排程層會傳 False，避免 H5 再次導航到車位倉庫重複領取。
+        if claim_warehouse_rewards and claim_warehouse(page):
             actions.append("claimed warehouse rewards")
 
         # Bot's job per user (2026-05-20 final clarification): auto-park CROSS
