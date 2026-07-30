@@ -222,9 +222,9 @@ def _send_via_page(page, body: bytes) -> bool:
 def _send_via_client(client, body: bytes) -> bool:
     """Send 0x4001 over a pure-WS client. True iff the reply is the echo (not error)."""
     try:
-        reply_cmd, _reply = client.call_for(
+        reply_cmd, reply = client.call_for(
             CMD_SELECT, body, expect_cmds=(CMD_SELECT, CMD_ERROR))
-        return reply_cmd == CMD_SELECT
+        return reply_cmd == CMD_SELECT and len(decode_picks(reply)) > 0
     except Exception as exc:  # noqa: BLE001
         logger.warning("ladder_reward: ws client send failed: %s", exc)
         return False

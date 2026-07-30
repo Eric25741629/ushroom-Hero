@@ -129,3 +129,16 @@ def test_apply_marks_week_and_dedupes(tmp_store):
 def test_apply_no_transport(tmp_store):
     lr.record_device("dev", XIAOBAO_HEX, captured="2026-06-21")
     assert lr.apply_if_due("dev", _tuesday()) == {"skipped": "no_transport"}
+
+
+def test_apply_rejects_empty_ws_echo(tmp_store):
+    lr.record_device("dev", XIAOBAO_HEX, captured="2026-06-21")
+
+    class EmptyEchoClient:
+        def call_for(self, cmd, body, *, expect_cmds):
+            return lr.CMD_SELECT, b"\x10\x00"
+
+    result = lr.apply_if_due("dev", _tuesday(), client=EmptyEchoClient())
+
+    assert result == {"ok": False, "error": "send_failed"}
+    assert "last_applied_week" not in lr.load_store()["dev"]

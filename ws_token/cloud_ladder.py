@@ -4,14 +4,16 @@ Live 5556（2026-07-30）確認：
 
 * ``dungeon_battle_more_start`` 以 ``type=32`` 開戰。
 * 自動戰鬥的官方結算本來就是 ``manual_operators=0`` 且不帶 operators。
-* 收到 start 後可立即送 ``dungeon_battle_result``；server 會以
-  ``dungeon_result_s2c`` 回覆，無須啟動 H5 戰鬥畫面。
+* 不需要啟動 H5 戰鬥畫面，但結算需遵循原生時序；4 倍速 H5 實測從
+  start 到 result 約 4.9 秒，純 WS 等待 5 秒後再送結算。
+* 每一關開戰前都要以該 level 查詢 ``double_chapter_get_level_info``。
 * 2／3／4 號位有關卡即死機制，統一把我方與戰友放在 1／5 號安全位。
 """
 from __future__ import annotations
 
 import datetime
 import logging
+import time
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -40,6 +42,7 @@ EXCLUDED_DEVICE = "emulator-5558"
 SAFE_POSITIONS: tuple[tuple[int, int], ...] = ((1, 1), (5, 2))
 MAX_FIGHTS_PER_RUN = 200
 ERROR_ACTIVITY_CLOSED = 173
+BATTLE_RESULT_DELAY_SECONDS = 5.0
 _TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
@@ -210,11 +213,12 @@ def _positions_body(positions: tuple[tuple[int, int], ...]) -> bytes:
     )
 
 
-def ensure_safe_positions(client, *,
+def ensure_safe_positions(client, level: int, *,
                           timeout: float | None = None) -> tuple[tuple[int, int], ...]:
+    """載入指定關卡的站位，必要時調整到 1／5 號安全位。"""
     cmd, body = client.call_for(
         CMD_LEVEL_INFO,
-        b"",
+        codec.pb_uint(1, level),
         expect_cmds=(CMD_LEVEL_INFO, CMD_ERROR),
         timeout=timeout,
     )
@@ -258,6 +262,9 @@ def fight_once(client, level: int, *, timeout: float | None = None) -> dict:
         raise CloudLadderError(
             f"battle_start level={level} code={code} dungeon_id={dungeon_id}")
 
+    # H5 在 4 倍速下仍會跑約 4.9 秒才送結算。立即結算第一場偶爾會被接受，
+    # 但連續第二場會回 error=19；依原生時序等待後再送 result。
+    time.sleep(BATTLE_RESULT_DELAY_SECONDS)
     result_body = (
         codec.pb_uint(1, TYPE_DOUBLE_LADDER)
         + codec.pb_uint(2, dungeon_id)
@@ -322,7 +329,6 @@ def run_weekly(
         teammate = ensure_teammate(client, state, timeout=timeout)
         if not teammate:
             raise CloudLadderError("no teammate available")
-        ensure_safe_positions(client, timeout=timeout)
 
     fights = 0
     results: list[dict] = []
@@ -333,6 +339,9 @@ def run_weekly(
             raise CloudLadderError(
                 f"max_fights reached: {fights}, level={state.now_level}")
         previous = state.now_level
+        # 原生 H5 每次點「前往挑戰」都會帶當前 level 重讀關卡資料；不可只在
+        # 整輪開始時送一次空 payload，否則下一關仍沿用上一關 server context。
+        ensure_safe_positions(client, previous, timeout=timeout)
         results.append(fight_once(client, previous, timeout=timeout))
         fights += 1
         state = read_state(client, timeout=timeout)

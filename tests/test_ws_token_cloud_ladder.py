@@ -39,6 +39,8 @@ class _ScriptClient:
             return cmd, _dc_info(
                 now_level=self.level, max_level=143, teammate_id=3)
         if cmd == cloud_ladder.CMD_LEVEL_INFO:
+            fields = codec.walk_dict(body)
+            assert fields[1] == self.level
             return cmd, _level_info((1, 1), (5, 2))
         if cmd == cloud_ladder.CMD_BATTLE_START:
             fields = codec.walk_dict(body)
@@ -69,7 +71,9 @@ class _ScriptClient:
 def test_run_weekly_finishes_every_remaining_level(monkeypatch):
     client = _ScriptClient()
     recorded: list[tuple[str, str]] = []
+    sleeps: list[float] = []
     monkeypatch.setattr(cloud_ladder, "is_due", lambda *a, **k: (True, "due"))
+    monkeypatch.setattr(cloud_ladder.time, "sleep", sleeps.append)
     monkeypatch.setattr(
         cloud_ladder.json_manager,
         "time_recording",
@@ -90,6 +94,13 @@ def test_run_weekly_finishes_every_remaining_level(monkeypatch):
     sent = [cmd for cmd, _body, _expect in client.calls]
     assert sent.count(cloud_ladder.CMD_BATTLE_START) == 2
     assert sent.count(cloud_ladder.CMD_BATTLE_RESULT) == 2
+    level_requests = [
+        codec.walk_dict(body)[1]
+        for cmd, body, _expect in client.calls
+        if cmd == cloud_ladder.CMD_LEVEL_INFO
+    ]
+    assert level_requests == [142, 143]
+    assert sleeps == [cloud_ladder.BATTLE_RESULT_DELAY_SECONDS] * 2
 
 
 def test_ensure_safe_positions_moves_roles_to_one_and_five():
@@ -104,9 +115,10 @@ def test_ensure_safe_positions_moves_roles_to_one_and_five():
                 return cmd, codec.pb_uint(1, 0)
             raise AssertionError(cmd)
 
-    out = cloud_ladder.ensure_safe_positions(Client())
+    out = cloud_ladder.ensure_safe_positions(Client(), 145)
 
     assert out == ((1, 1), (5, 2))
+    assert codec.walk_dict(calls[0][1]) == {1: 145}
     changed = codec.walk(calls[-1][1])
     pairs = [
         codec.walk_dict(bytes(value))
@@ -125,6 +137,7 @@ def test_run_weekly_skips_when_not_due(monkeypatch):
 
 def test_old_weekly_marker_does_not_hide_incomplete_server_state(monkeypatch):
     client = _ScriptClient()
+    monkeypatch.setattr(cloud_ladder.time, "sleep", lambda _seconds: None)
     monkeypatch.setattr(
         cloud_ladder, "is_due", lambda *a, **k: (False, "already_this_week"))
     monkeypatch.setattr(

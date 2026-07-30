@@ -40,3 +40,15 @@ H5 從第二場開戰到結算的命令順序、payload 與時間間隔。不要
 - 修正後可從目前關卡一路完成到 `now_level > max_level`，只在完整完成後寫 weekly marker。
 - 補上 error 19、錯誤後狀態已推進、明確 kicked 與多場 pacing 的測試。
 
+## 2026-07-31 Live findings
+
+- 原生 H5 每一關在「前往挑戰」時都會送
+  `double_chapter_get_level_info_c2s {level: 當前關卡}`；舊 WS 僅在整輪開始
+  送一次空 body。
+- 4 倍速 H5 的 `battle_more_start` 到 `battle_result` 實測間隔為 4.899 秒；
+  舊 WS 立即結算，且第一場成功與第二場 error 19 全發生在同一秒。
+- 修正為逐關帶 level 讀取關卡資料並等待 5 秒結算後，手機帳號以純 WS 從
+  140/150 連續完成 11 場至 151/150，`kicked=False`。
+- 另發現剛登入後第一次 entrance-info 曾回 error 173，但同一連線立即重查為
+  `is_open=1`。現有程式會在單次 173 後寫 weekly marker；需另行加入確認機制，
+  避免把登入初始化 race 誤判為活動已關閉。
