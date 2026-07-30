@@ -384,7 +384,7 @@ function renderSpirit(){
     let aff = (s.positions||[]).map(p => {
       const quality = Number(p.quality)||0;
       const chips = (p.affixes||[]).map(a=>`<span class="atag aq-${quality}" title="${a.attr_id} · ${SPIRIT_COLORS[quality]?.label||'未知'}色">${a.name}=${a.value}</span>`).join(' ');
-      return `<div class="arow"><span class="apos">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
+      return `<div class="arow"><span class="apos" title="cur_id=${p.cur_id} q=${quality}">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
     }).join('');
     card.innerHTML = `<div class="top"><span class="nm">${s.name}</span>
         <span>${s.lock?'<span class=lockbadge>鎖</span> ':''}<span class="lvl">Lv${s.level}</span></span></div>
