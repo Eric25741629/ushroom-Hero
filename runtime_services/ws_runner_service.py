@@ -81,6 +81,9 @@ _KICK_COOLDOWN_SEC = 1800.0
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
     "arena": "競技場",
+    "lamp": "開神燈",
+    "ladder_reward": "天梯每週獎勵",
+    "cloud_ladder": "雲纏天梯",
 }
 
 
@@ -359,6 +362,11 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     # 看廣告獎勵預設關 → 不傳此參數 (run_device 走預設 None)，維持既有 wiring 行為；
     # 只有啟用時才附上，避免對沒有 **kwargs 的測試 fake 多傳一個關鍵字。
     extra_kwargs: dict = {}
+    _use_ladder_ws = ip != "emulator-5558"
+    extra_kwargs["cloud_ladder_enabled"] = (
+        _use_ladder_ws and bool(cfg.get("enable_cloud_battle", True))
+    )
+    extra_kwargs["ladder_reward_enabled"] = _use_ladder_ws
     if ad_reward_config_ids is not None:
         extra_kwargs["ad_reward_config_ids"] = ad_reward_config_ids
     # 遺物碎片衝刺預設關 → 不傳這兩個參數 (run_device 走預設 False/SPRINT_TOTAL)，維持既有
@@ -402,8 +410,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
             step = f"WS 任務完成: {label}"
             logger_obj.info(f"[{ip}] ws_token 任務完成: {label}")
         elif status == "progress":
-            step = f"WS 開神燈 ({detail})"
-            logger_obj.info(f"[{ip}] ws_token 開神燈進度: {detail}")
+            step = f"WS {label} ({detail})"
+            logger_obj.info(f"[{ip}] ws_token {label}進度: {detail}")
         else:
             step = f"WS 任務失敗: {label}"
             logger_obj.warning(f"[{ip}] ws_token 任務失敗: {label} ({detail})")
