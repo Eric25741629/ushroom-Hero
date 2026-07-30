@@ -15,6 +15,7 @@ from miner.core.config import DEFAULT_CLASSES, DEFAULT_CNN_MODEL, GRID_CFG
 from miner.core.vision_utils import check_points, to_bgr_np
 from miner.models.simplecnn import SimpleCNN, resize_size
 from utils.torch_runtime import inference_slot
+from utils.usage_tracker import trace_classifier, trace_model_load
 from .types import Board, BoardSnapshot, ConfidenceGrid, ScreenCheckResult
 
 
@@ -24,6 +25,7 @@ def _resolve_device(device: Optional[Union[str, torch.device]]) -> torch.device:
     return torch.device(device) if isinstance(device, str) else device
 
 
+@trace_model_load("mining_board_cnn_v2")
 def load_board_model(
     model_path: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
@@ -76,6 +78,7 @@ class BoardClassifierV2:
             ]
         )
 
+    @trace_classifier("mining_board_cnn_v2")
     def classify_board(
         self,
         image: Union[str, np.ndarray, Image.Image],

@@ -7,6 +7,7 @@ from torchvision import datasets, models
 from typing_extensions import Literal
 
 from utils.torch_runtime import inference_slot
+from utils.usage_tracker import trace_classifier, trace_model_load
 
 ClassName_cnn_model = Literal[
     'announcement',
@@ -35,6 +36,7 @@ def img_loader(image):
     image = image.unsqueeze(0)  # 增加一個維度，batch size為1
     return image
 
+@trace_classifier("legacy_stage_cnn")
 def predict_image(model, image) -> ClassName_cnn_model:
     # 將圖片轉換為Tensor格式
     class_names = [
@@ -80,6 +82,7 @@ class SimpleCNN(nn.Module):
         x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
+@trace_model_load("legacy_stage_cnn")
 def load_cnn_model(model_path, num_classes=10):
     # 載入模型
     # 預設 CPU：此分支目標是降低 GPU 使用量，故不預設 cuda。

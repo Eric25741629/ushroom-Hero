@@ -90,8 +90,9 @@ class ActionTraceRecorder:
         payload: Optional[dict[str, Any]] = None,
         meaning: str = "",
         actor: str = "",
+        caller: Optional[dict[str, Any]] = None,
     ) -> None:
-        caller = self._caller_info()
+        resolved_caller = dict(caller) if caller else self._caller_info()
         evt = {
             "timestamp": dt.datetime.now().isoformat(),
             "device_id": str(device_id),
@@ -99,7 +100,7 @@ class ActionTraceRecorder:
             "source": str(source),
             "meaning": str(meaning or ""),
             "actor": str(actor or ""),
-            "caller": caller,
+            "caller": resolved_caller,
             "thread": {
                 "name": threading.current_thread().name,
                 "id": threading.get_ident(),

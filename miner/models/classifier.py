@@ -14,6 +14,7 @@ from torchvision import transforms
 
 from miner.core.config import DEFAULT_CLASSES, DEFAULT_CNN_MODEL, GRID_CFG
 from utils.torch_runtime import inference_slot
+from utils.usage_tracker import trace_classifier, trace_model_load
 from .simplecnn import SimpleCNN, resize_size
 
 Board = List[List[str]]
@@ -27,6 +28,7 @@ def _resolve_device(device: Optional[Union[str, torch.device]]) -> torch.device:
     return torch.device(device) if isinstance(device, str) else device
 
 
+@trace_model_load("mining_board_cnn_v1")
 def load_cnn_model(
     model_path: Optional[str] = None,
     device: Optional[Union[str, torch.device]] = None,
@@ -96,6 +98,7 @@ class ClassifierCNN:
         print(f"[CNN Classifier] Classes: {self.classes}")
 
     # pylint: disable=too-many-locals
+    @trace_classifier("mining_board_cnn_v1")
     def classify_board(
         self,
         img: Union[str, np.ndarray, Image.Image],

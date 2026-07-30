@@ -11,6 +11,7 @@ import uiautomator2 as u2
 import traceback
 import inspect
 import threading
+from utils.usage_tracker import record_usage
 logger = logging.getLogger(__name__)
 
 
@@ -240,6 +241,7 @@ def _call_ocr_endpoint(
     "OCR pipeline broken" from "OCR ran but found no text".
     """
     caller_file, caller_line, caller_function = _capture_caller_info()
+    started = time.perf_counter()
 
     if verbose:
         logger.debug(f"[OCR調用追蹤] 被調用於: {caller_file}:{caller_line} in {caller_function}()")
@@ -264,6 +266,7 @@ def _call_ocr_endpoint(
         logger.info(f"OCR servers priority (mode={mode}): {servers}")
 
     errors = []
+    attempts = []
     for idx, srv in enumerate(servers):
         try:
             url = f"{srv}{endpoint}"
@@ -275,17 +278,44 @@ def _call_ocr_endpoint(
             if response.status_code == 200:
                 try:
                     _mark_server_recovered(srv)
+                    result = response.json()
+                    attempts.append({"server": srv, "status": "success", "http_status": 200})
                     if verbose:
                         logger.info(f"[{caller_file}:{caller_line}] OCR success from {srv}")
-                    return response.json()
+                    record_usage(
+                        event_type="ocr_request",
+                        component="remote_ocr",
+                        status="success",
+                        elapsed_ms=(time.perf_counter() - started) * 1000,
+                        skip_files={"img_tools.py"},
+                        payload={
+                            "endpoint": endpoint,
+                            "server": srv,
+                            "attempts": attempts,
+                            "result_count": len(result.get("ocr_results", []) or [])
+                            if isinstance(result, dict)
+                            else 0,
+                        },
+                    )
+                    return result
                 except Exception as e_json:
                     err = f"解析 JSON 失敗 from {srv}: {e_json}"
+                    attempts.append(
+                        {"server": srv, "status": "invalid_json", "http_status": 200}
+                    )
                     if verbose:
                         logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
                     errors.append(err)
                     continue
             else:
                 err = f"HTTP {response.status_code} from {srv}"
+                attempts.append(
+                    {
+                        "server": srv,
+                        "status": "http_error",
+                        "http_status": int(response.status_code),
+                    }
+                )
                 if verbose:
                     logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
                 _mark_server_failed(srv)
@@ -301,6 +331,9 @@ def _call_ocr_endpoint(
                 continue
         except Exception as e:
             err = f"HTTP 請求失敗 to {srv}: {e}"
+            attempts.append(
+                {"server": srv, "status": "request_error", "error_type": type(e).__name__}
+            )
             if verbose:
                 logger.warning(f"[{caller_file}:{caller_line} in {caller_function}()] {err}")
             _mark_server_failed(srv)
@@ -313,6 +346,19 @@ def _call_ocr_endpoint(
         logger.error(f"[{caller_file}:{caller_line} in {caller_function}()] 所有 OCR 伺服器失敗: {errors}")
     else:
         logger.error(f"{final_error_label}: all servers failed: {errors}")
+    record_usage(
+        event_type="ocr_request",
+        component="remote_ocr",
+        status="error",
+        elapsed_ms=(time.perf_counter() - started) * 1000,
+        skip_files={"img_tools.py"},
+        payload={
+            "endpoint": endpoint,
+            "server": "",
+            "attempts": attempts,
+            "error_count": len(errors),
+        },
+    )
     raise OCRServerUnavailable(f"{final_error_label}: {errors}")
 
 
