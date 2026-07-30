@@ -56,6 +56,8 @@
   <h1>⚔️ 星據搶佔(奇星車場)</h1>
   <a class="home" href="/">← 回主控台</a>
   <label class="inline">帳號/裝置 <select id="dev" onchange="onDevChange()"></select></label>
+  <button type="button" id="loadBtn" class="btn" onclick="loadPage()">載入</button>
+  <span id="connState" class="status-pill is-off">未連線</span>
   <span id="status" class="spin"></span>
 </header>
 
@@ -128,6 +130,8 @@ let lastState = null;          // 最近一次 /state 回應
 let srvOffset = null;          // serverTime - Date.now()/1000
 let stateTimer = null;         // 5s refetch /state
 let tickTimer = null;          // 1s 本地倒數遞減
+let keepaliveTimer = null;
+let connectedDev = null;
 
 const REASON_ZH = {
   'own-server':'本服車位,不能搶(只能駐守)', 'protected':'保護中,尚未可攻',
@@ -157,13 +161,14 @@ async function loadDevices(){
     const r = await fetch('/api/status'); const j = await r.json();
     const bots = j.bots||{}; const sel = $('dev'); sel.innerHTML='';
     Object.keys(bots).forEach(ip => {
-      // 星據面板走 CDP orchestration,只有 web_h5 裝置可用(後端 _gate 亦強制)。
-      const b = bots[ip]; if (b.backend !== 'web_h5') return;
+      // 星據面板走純 WS，adb+ws 與 web_h5 都可使用。
+      const b = bots[ip]; if (b.backend !== 'web_h5' && !b.ws_enabled) return;
       const o = document.createElement('option');
       o.value = ip; o.textContent = `${b.name||ip} (${ip})`; sel.appendChild(o);
     });
-    if (!sel.options.length){ setStatus('沒有可用的 web_h5 裝置', true); return; }
-    fetchState();
+    if ([...sel.options].some(o=>o.value==='emulator-5554')) sel.value='emulator-5554';
+    if (!sel.options.length){ setStatus('沒有可用的 WS 裝置', true); return; }
+    setStatus('按「載入」才會建立純 WS');
   }catch(e){ setStatus('讀取裝置失敗:'+e, true); }
 }
 
@@ -247,7 +252,7 @@ function selectPos(pos){
   document.querySelectorAll('#posPicker .tab').forEach((t,i)=>t.setAttribute('aria-selected', String(i+1===pos)));
   const op=$('oppPos'); if(op) op.textContent=pos;
   renderSlots();
-  loadOpponent();
+  if(connectedDev===dev()) loadOpponent();
 }
 
 function selectType(t){
@@ -258,7 +263,7 @@ function selectType(t){
 }
 
 async function loadOpponent(){
-  if(!dev()) return;
+  if(!dev() || connectedDev!==dev()) return;
   const el=$('opponent');
   if(el) el.innerHTML='<div class="skeleton skeleton--text"></div>';
   try{
@@ -280,6 +285,7 @@ async function loadOpponent(){
 
 async function doSeize(){
   if(!dev()){ setStatus('請先選裝置', true); return; }
+  if(connectedDev!==dev()){ setStatus('請先按「載入」建立純 WS', true); return; }
   const ok = await window.UI.confirmDialog({
     danger:true, okLabel:'確定送出',
     title: `確認${curType===1?'搶佔':'駐守'}`,
@@ -307,25 +313,86 @@ async function doSeize(){
 }
 
 async function onDevChange(){
+  if(connectedDev) await disconnectSession();
   lastState=null; srvOffset=null;
+  stopTimers();
   $('slots').innerHTML = '<div class="skeleton skeleton--block"></div>'.repeat(4);
-  $('opponent').innerHTML = '<div class="es-hint">選擇槽位後讀取守隊配置(僅顯示,不當開火閘)</div>';
-  await fetchState();
-  loadOpponent();
+  $('opponent').innerHTML = '<div class="es-hint">按「載入」後讀取守隊配置</div>';
+  setConn(false);
+  setStatus('按「載入」才會建立純 WS');
+}
+
+function setConn(on){
+  const el=$('connState');
+  el.textContent=on?'已連線':'未連線';
+  el.className='status-pill '+(on?'is-on':'is-off');
+}
+
+async function connectSession(){
+  const d=dev(); if(!d) return false;
+  try{
+    const pre=await fetch(`/api/ws_session/${encodeURIComponent(d)}/precheck`);
+    const p=await pre.json();
+    let why='';
+    if(p.lease) why=`帳號目前被「${p.lease.label||p.lease.owner||'其他工具'}」佔用`;
+    else if(p.account_online===true) why='帳號目前在線，純 WS 登入可能讓原連線離線';
+    if(why && !window.confirm(why+'。\n仍要載入星據搶佔嗎？')) return false;
+  }catch(e){}
+  setStatus('純 WS 連線中…');
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(d)}/connect?label=${encodeURIComponent('星據搶佔')}`,{method:'POST'});
+    const j=await r.json();
+    if(j.status!=='ok') throw new Error(j.message||'連線失敗');
+    connectedDev=d; setConn(true);
+    keepaliveTimer=setInterval(pingSession,30000);
+    return true;
+  }catch(e){ setConn(false); setStatus('純 WS 連線失敗，請重試',true); return false; }
+}
+
+async function pingSession(){
+  if(!connectedDev) return;
+  try{
+    const r=await fetch(`/api/ws_session/${encodeURIComponent(connectedDev)}/ping`,{method:'POST'});
+    const j=await r.json();
+    if(!j.alive||j.kicked) await disconnectSession();
+  }catch(e){}
+}
+
+async function disconnectSession(){
+  const d=connectedDev; connectedDev=null; setConn(false);
+  if(keepaliveTimer){ clearInterval(keepaliveTimer); keepaliveTimer=null; }
+  if(!d) return;
+  try{ await fetch(`/api/ws_session/${encodeURIComponent(d)}/disconnect`,{method:'POST'}); }catch(e){}
+}
+
+async function loadPage(){
+  $('loadBtn').disabled=true;
+  try{
+    if(connectedDev!==dev() && !(await connectSession())) return;
+    await fetchState();
+    await loadOpponent();
+    stopTimers();
+    stateTimer=setInterval(fetchState,5000);
+    tickTimer=setInterval(renderSlots,1000);
+    setStatus('已載入（純 WS，免開瀏覽器）');
+  }finally{ $('loadBtn').disabled=false; }
 }
 
 function stopTimers(){
   if(stateTimer){ clearInterval(stateTimer); stateTimer=null; }
   if(tickTimer){ clearInterval(tickTimer); tickTimer=null; }
 }
-window.addEventListener('beforeunload', stopTimers);
-window.addEventListener('pagehide', stopTimers);
+function releasePage(){
+  stopTimers();
+  if(keepaliveTimer){ clearInterval(keepaliveTimer); keepaliveTimer=null; }
+  if(connectedDev) navigator.sendBeacon(`/api/ws_session/${encodeURIComponent(connectedDev)}/disconnect`);
+}
+window.addEventListener('beforeunload', releasePage);
+window.addEventListener('pagehide', releasePage);
 
 (async function init(){
   await loadDevices();
-  stopTimers();
-  stateTimer = setInterval(fetchState, 5000);   // 每 5s 從後端重讀校準
-  tickTimer  = setInterval(renderSlots, 1000);  // 本地每秒遞減倒數
+  setConn(false);
 })();
 </script>
 </body>

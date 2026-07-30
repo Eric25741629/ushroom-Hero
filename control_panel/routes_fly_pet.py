@@ -36,23 +36,17 @@ def _device_lock(ip: str) -> threading.RLock:
 
 
 def _session_client(ip: str):
-    """取得 live 純 WS client；沒有就建立並由 registry 暫停該機 bot loop。"""
+    """只取用由前端「載入」建立的純 WS client。"""
     client = ws_session.get_client(ip)
     if client is not None:
         return client, None
-    result = ws_session.ensure(ip, label="飛寵管理")
-    if result.get("status") != "ok":
-        return None, result.get("message", "純 WS 連線失敗")
-    client = ws_session.get_client(ip)
-    if client is None:
-        return None, "純 WS 連線未就緒"
-    return client, None
+    return None, "尚未建立純 WS，請先按載入"
 
 
 def _client_or_response(ip: str):
     client, err = _session_client(ip)
     if err:
-        return None, (jsonify({"status": "error", "message": err}), 502)
+        return None, (jsonify({"status": "error", "message": err}), 409)
     return client, None
 
 

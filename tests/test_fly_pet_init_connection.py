@@ -46,10 +46,11 @@ def test_pure_ws_session_has_keepalive_and_unload_release():
     assert "/disconnect" in html
 
 
-def test_unconnected_hint_is_gentle_and_highlights_connect():
+def test_unconnected_hint_points_to_load_without_second_connect_button():
     body = _fn_body(_t(), "function showNotConnectedHint")
     assert "不需啟動瀏覽器" in body
-    assert "btn-attention" in body
+    assert "launchBtn" not in body
+    assert "點「載入」建立純 WS 連線" in body
     assert "'err'" not in body
 
 

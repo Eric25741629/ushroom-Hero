@@ -124,7 +124,6 @@
       <select id="dev" onchange="onDevChange()"></select>
     </label>
     <span id="connState" class="conn off">未連線</span>
-    <button id="connBtn" class="ghost" onclick="toggleConn()">連線</button>
     <span id="status" class="spin"></span>
   </div>
 </header>
@@ -214,7 +213,6 @@
     <h2 id="kickModalTitle">連線已斷線</h2>
     <p>偵測到異地登入（同帳號在他處登入），此連線已被伺服器中斷。</p>
     <div class="row">
-      <button onclick="reconnectFromKick()">重新連線</button>
       <button class="ghost" onclick="hideModal('kickModal')">知道了</button>
     </div>
   </div>
@@ -307,13 +305,13 @@ function showError(el, hint, retryFn, isTable){
   const b = $(btnId); if(b && typeof retryFn==='function') b.addEventListener('click', retryFn);
 }
 
-/* enable/disable the 讀取 buttons + show idle prompt depending on connState (C10/§5(3c)). */
+/* 讀取按鈕本身就是連線入口；只有連線中的短暫期間停用，避免重複送出。 */
 function syncConnGating(){
-  const on = connState === 'on';
-  ['loadSpiritBtn','loadGemBtn'].forEach(id=>{ const b=$(id); if(b) b.disabled = !on; });
-  if(!on){
-    showEmpty($('spGrid'), '尚未連線此裝置', '點上方「連線」後按「讀取守護靈」');
-    showEmpty($('gBody'), '尚未連線此裝置', '點上方「連線」後按「讀取神器附魔石」', true);
+  const connecting = connState === 'connecting';
+  ['loadSpiritBtn','loadGemBtn'].forEach(id=>{ const b=$(id); if(b) b.disabled = connecting; });
+  if(connState !== 'on'){
+    showEmpty($('spGrid'), '尚未載入此裝置', '按「讀取守護靈」會建立純 WS');
+    showEmpty($('gBody'), '尚未載入此裝置', '按「讀取神器附魔石」會建立純 WS', true);
   }
 }
 
@@ -336,7 +334,7 @@ async function loadDevices(){
 function dev(){ return $('dev').value; }
 
 async function loadSpirit(){
-  if (connState!=='on'){ syncConnGating(); return; }
+  if (!(await ensureConnected())){ syncConnGating(); return; }
   setStatus('讀取守護靈中…');
   showSkeleton($('spGrid'));
   try {
@@ -392,7 +390,7 @@ function renderSpirit(){
 }
 
 async function loadGem(){
-  if (connState!=='on'){ syncConnGating(); return; }
+  if (!(await ensureConnected())){ syncConnGating(); return; }
   setStatus('讀取神器附魔石中…');
   showSkeleton($('gBody'), true);
   try {
@@ -556,10 +554,10 @@ let connectedDev = null, keepaliveTimer = null, idleTimer = null, idleCdTimer = 
 
 function setConn(state){
   connState = state;                   // gate 讀取 buttons + empty prompts (C10)
-  const c=$('connState'), b=$('connBtn');
-  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; b.textContent='斷線'; }
-  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; b.textContent='連線'; }
-  else { c.textContent='未連線'; c.className='conn off'; b.textContent='連線'; }
+  const c=$('connState');
+  if(state==='on'){ c.textContent='已連線'; c.className='conn on'; }
+  else if(state==='connecting'){ c.textContent='連線中…'; c.className='conn'; }
+  else { c.textContent='未連線'; c.className='conn off'; }
   syncConnGating();
 }
 /* idle/kick modals route through the shared modal manager so Esc + focus-trap +
@@ -617,11 +615,13 @@ async function disconnectSession(){
   const d=connectedDev||dev(); connectedDev=null; setConn('off');
   try{ await fetch(`/api/ws_session/${encodeURIComponent(d)}/disconnect`,{method:'POST'}); }catch(e){}
 }
-function toggleConn(){ if(connectedDev) disconnectSession(); else connectSession(); }
 async function onDevChange(){
   if(connectedDev && connectedDev!==dev()) await disconnectSession();
-  await connectSession();
+  SPIRITS = []; GEMS = [];
+  setConn('off');
+  setStatus('選好裝置後，按讀取才會建立純 WS');
 }
+async function ensureConnected(){ if(connectedDev===dev()) return true; return await connectSession(); }
 
 // 心跳保活：順帶讀回 kicked（異地登入）/ alive
 function startKeepalive(){ stopKeepalive(); keepaliveTimer=setInterval(pingOnce, KEEPALIVE_MS); }
@@ -641,7 +641,6 @@ function onKicked(){
   const km=$('kickModal'); if(km) km._uiConfirmCancel=()=>{};
   showModal('kickModal');
 }
-function reconnectFromKick(){ hideModal('kickModal'); connectSession(); }
 
 // 閒置 IDLE_SEC -> 60 秒倒數 -> 自動斷線
 function resetIdle(){ clearIdle(); if(!connectedDev) return; idleTimer=setTimeout(beginIdleCountdown, IDLE_SEC*1000); }
@@ -650,12 +649,16 @@ function beginIdleCountdown(){
   let left=60; $('idleCd').textContent=left;
   // C1: Esc on the idle modal = safe default 「繼續使用」 (keep connection, don't surprise-disconnect).
   // The manager closes the overlay; _uiConfirmCancel then re-arms the idle timer.
-  const im=$('idleModal'); if(im) im._uiConfirmCancel=()=>{ clearIdle(); if(connectedDev) resetIdle(); else connectSession(); };
+  const im=$('idleModal'); if(im) im._uiConfirmCancel=()=>{ clearIdle(); if(connectedDev) resetIdle(); };
   showModal('idleModal');
   idleCdTimer=setInterval(()=>{ left--; $('idleCd').textContent=left;
     if(left<=0){ clearInterval(idleCdTimer); idleCdTimer=null; idleLogoutNow(); } }, 1000);
 }
-function stayConnected(){ hideModal('idleModal'); clearIdle(); if(connectedDev){ resetIdle(); } else { connectSession(); } }
+function stayConnected(){
+  hideModal('idleModal'); clearIdle();
+  if(connectedDev) resetIdle();
+  else setStatus('連線已中斷，請重新按讀取', true);
+}
 function idleLogoutNow(){ hideModal('idleModal'); disconnectSession(); setStatus('已因閒置自動斷線'); }
 
 // 使用者活動重置閒置計時（倒數中不重置，需明確「繼續使用」）；節流 5 秒
@@ -681,7 +684,7 @@ function wireSortableHeaders(){
   initColorFilters();
   syncConnGating();                    // disable 讀取 buttons + show idle prompt until connected
   await loadDevices();
-  // 2026-07-10 使用者定案：開頁不自動連線（避免無感 ticket 登入踢人），按「連線」才連。
+  setStatus('按讀取才會建立純 WS');
 })();
 </script>
 </body>

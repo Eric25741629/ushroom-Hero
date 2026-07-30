@@ -60,7 +60,7 @@
     .btn-ghost:hover { background: var(--surface2); color: var(--text); border-color: var(--border2); }
     .btn-sm { padding: 5px 10px; font-size: 0.8em; min-height: 28px; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-    /* 未連線時 highlight 「啟動瀏覽器」按鈕：accent 邊框 + 柔和呼吸光暈 */
+    /* 未連線提示沿用柔和呼吸光暈，不另外提供連線按鈕。 */
     .btn-attention { border-color: var(--accent); color: var(--accent-h); animation: attentionPulse 1.6s ease-in-out infinite; }
     @keyframes attentionPulse { 0%,100% { box-shadow: 0 0 0 0 var(--accent-soft); } 50% { box-shadow: 0 0 0 4px var(--accent-soft); } }
     .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
@@ -511,7 +511,6 @@
     <option value="7fe98fc6">7fe98fc6</option>
   </select>
   <button class="btn btn-primary" id="loadBtn" onclick="doLoad()">載入</button>
-  <button class="btn btn-ghost btn-sm" id="launchBtn" onclick="doLaunch()" style="display:none;">連線純 WS</button>
   <span id="loadMsg" style="font-size:0.82em; color:var(--text2);"></span>
   <nav class="topbar-right" aria-label="頁面導覽">
     <a href="/">返回中控面板</a>
@@ -1721,22 +1720,18 @@ async function botRunningGuard(opts) {
 //   'loading' → 純 WS 正在連線
 function showNotConnectedHint(kind) {
   var msg = document.getElementById('loadMsg');
-  var launchBtn = document.getElementById('launchBtn');
   var initMsg = document.getElementById('initMsg');
   if (kind === 'ready') {
     if (msg) { msg.textContent = '純 WS 已連線 — 點「載入」讀取資料'; msg.style.color = 'var(--text2)'; }
-    if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
     if (initMsg) { initMsg.textContent = '純 WS 已連線 — 點「載入」讀取資料'; initMsg.style.display = ''; }
     return;
   }
   if (kind === 'loading') {
     if (msg) { msg.textContent = '純 WS 連線中…'; msg.style.color = 'var(--text2)'; }
-    if (launchBtn) { launchBtn.style.display = 'none'; launchBtn.classList.remove('btn-attention'); }
     if (initMsg) { initMsg.textContent = '純 WS 連線中…'; initMsg.style.display = ''; }
     return;
   }
   if (msg) { msg.textContent = '尚未連線，點「載入」即可使用純 WS'; msg.style.color = 'var(--text2)'; }
-  if (launchBtn) { launchBtn.style.display = 'inline-block'; launchBtn.classList.add('btn-attention'); }
   if (initMsg) { initMsg.textContent = '不需啟動瀏覽器 — 點「載入」建立純 WS 連線'; initMsg.style.display = ''; }
 }
 
@@ -1752,31 +1747,14 @@ async function initAutoLoad() {
   showNotConnectedHint('launch');
 }
 
-// ---- 手動連線純 WS ----
-async function doLaunch() {
-  var btn = document.getElementById('launchBtn');
-  setLoading(btn, true);
-  toast('正在建立純 WS 連線...', 'info');
-  try {
-    if (await connectFlyPetWs()) {
-      toast('純 WS 已連線', 'ok');
-      await doLoad({skipConnect:true});
-    }
-  } catch(e) { toast(e.message, 'err'); showNotConnectedHint('launch'); }
-  finally { setLoading(btn, false); }
-}
-
 // ---- Load ----
 async function doLoad(opts) {
   opts = opts || {};
   var btn = document.getElementById('loadBtn');
   var msg = document.getElementById('loadMsg');
-  var launchBtn = document.getElementById('launchBtn');
   setLoading(btn, true);
   msg.textContent = '檢查連線...';
   msg.style.color = '';
-  launchBtn.style.display = 'none';
-  launchBtn.classList.remove('btn-attention');
   document.getElementById('initMsg').style.display = 'none';
   try {
     // 唯讀操作: 只警示,不阻擋(使用者仍須能在腳本運行中查看寵物列表)
@@ -1788,7 +1766,7 @@ async function doLoad(opts) {
       msg.style.color = 'var(--warn)';
     }
     showNotConnectedHint('loading');
-    if (!opts.skipConnect && !(await connectFlyPetWs())) return;
+    if (!(await connectFlyPetWs())) return;
     msg.textContent = '載入寵物列表...';
     var d = await apiGet('/api/fly_pet_list/' + encodeURIComponent(ip()));
     var pets = d.pets;
@@ -1812,7 +1790,7 @@ async function doLoad(opts) {
     var emsg = e.message || '';
     msg.textContent = '失敗';
     msg.style.color = 'var(--danger)';
-    launchBtn.style.display = 'inline-block';
+    showNotConnectedHint('launch');
     toast('載入失敗: ' + emsg, 'err');
   } finally { setLoading(btn, false); }
 }

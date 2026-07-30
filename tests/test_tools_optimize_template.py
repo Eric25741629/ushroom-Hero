@@ -49,17 +49,18 @@ def test_relic_sprint_section_hooks():
     assert 'id="rsRounds"' in html
 
 
-def test_ws_session_connection_ui_mirrors_inventory():
+def test_ws_session_is_created_by_read_actions_only():
     html = _html()
-    # 連線狀態列 + 連線/斷線按鈕
+    # 保留狀態列，但不再提供獨立連線按鈕。
     assert 'id="connState"' in html
-    assert "toggleConn()" in html
+    assert 'id="connBtn"' not in html
+    assert "toggleConn()" not in html
     # 純 WS session 三端點
     assert "/api/ws_session/" in html
     assert "/connect" in html and "/ping" in html and "/disconnect" in html
     # 心跳保活 + 動作前確保連線
     assert "startKeepalive" in html
-    assert "ensureConnected" in html
+    assert "await ensureConnected()" in html
 
 
 def test_idle_and_kick_modals_present():
