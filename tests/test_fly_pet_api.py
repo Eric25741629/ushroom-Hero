@@ -31,29 +31,22 @@ def _login_fly_pet(client):
         sess["dash_admin"] = True
 
 
-def test_fly_pet_hatch_posts_egg_id_array_and_waits_for_egg_list(monkeypatch):
+def test_fly_pet_hatch_uses_pure_ws_egg_command(monkeypatch):
     cpa = _import_control_panel_app()
     client = cpa.app.test_client()
     _login_fly_pet(client)
 
     captured = {}
-
-    def fake_cdp_json_response(ip, expression, await_promise=False, data_key="data"):
-        captured["ip"] = ip
-        captured["expression"] = expression
-        captured["await_promise"] = await_promise
-        captured["data_key"] = data_key
-        return cpa.jsonify({"status": "ok", "data": {"ok": True}})
-
-    monkeypatch.setattr(cpa, "_cdp_json_response", fake_cdp_json_response)
+    import control_panel.routes_fly_pet as routes
+    monkeypatch.setattr(routes, "_session_client", lambda ip: (object(), None))
+    monkeypatch.setattr(
+        routes.ws_fly_pet,
+        "hatch_egg",
+        lambda _client, egg_id: captured.setdefault("egg_id", egg_id) or [88],
+    )
 
     resp = client.post("/api/fly_pet_hatch/7fe98fc6", json={"egg_id": 12345})
 
     assert resp.status_code == 200
-    assert captured["ip"] == "7fe98fc6"
-    assert captured["await_promise"] is True
-    assert "normalEvent.on('EggListBack', handler);" in captured["expression"]
-    assert "normalEvent.off('EggListBack', handler);" in captured["expression"]
-    assert "send_66_3([12345])" in captured["expression"]
-    assert "send_66_29" not in captured["expression"]
-    assert "base_id" not in captured["expression"]
+    assert captured["egg_id"] == 12345
+    assert resp.get_json()["data"]["ok"] is True

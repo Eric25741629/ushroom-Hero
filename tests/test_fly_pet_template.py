@@ -121,18 +121,13 @@ def test_entries_sorted_by_quality_within_row():
 
 
 def test_breed_refresh_and_hatch_use_egg_protocols():
-    """培育基地刷新要同步蛋列表；孵化必須送 egg id 到 send_66_3。
-
-    send_66_29 是改繁殖場名稱，不是孵化。
-    """
+    """培育基地刷新與孵化都必須走純 WS protocol service。"""
     source = _control_panel_text()
 
-    assert "send_66_1()" in source
-    assert "egg_id = data.get(\"egg_id\")" in source
-    assert "egg_ids_js = json.dumps([int(egg_id)])" in source
-    assert "normalEvent.on('EggListBack', handler);" in source
-    assert "send_66_3({egg_ids_js})" in source
-    assert "send_66_29({int(base_id)})" not in source
+    assert "ws_fly_pet.read_breed_snapshot(client)" in source
+    assert "ws_fly_pet.hatch_egg(client, int(egg_id))" in source
+    assert "_cdp_evaluate" not in source
+    assert "FlyPetControl" not in source
 
 
 def test_breed_template_hatches_eggs_by_egg_id():
