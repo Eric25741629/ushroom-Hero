@@ -347,9 +347,6 @@ async function loadSpirit(){
     if (d.error){ setStatus('解析失敗', true); showError($('spGrid'), '資料解析失敗，請重試', loadSpirit); return; }
     SPIRITS = d.spirits||[];
     setStatus(`守護靈 ${SPIRITS.length} 隻（reshape ${d.reshape_times} 次）`);
-    // DEBUG: 顯示 cur_id / quality，確認品質表是否命中
-    const dbg = (SPIRITS[0]?.positions||[]).slice(0,5).map(p=>({pos:p.pos,cur_id:p.cur_id,quality:p.quality}));
-    console.log('[spirit debug] first spirit positions (cur_id→quality):', dbg);
     renderSpirit();
   } catch(e){ setStatus('守護靈讀取錯誤', true); showError($('spGrid'), '連線異常，請重試', loadSpirit); }
 }
@@ -363,7 +360,7 @@ function renderSpirit(){
     if (lock!=='all' && String(s.lock)!==lock) return false;
     if (q || spiritQualityFilter.size){
       const hit = (s.positions||[]).some(p => {
-        if (spiritQualityFilter.size && !spiritQualityFilter.has(Number(p.quality))) return false;
+        if (spiritQualityFilter.size && !spiritQualityFilter.has(Number(p.quality)||1)) return false;
         return !q || (p.affixes||[]).some(a => (a.name||'').toLowerCase().includes(q));
       });
       if (!hit) return false;
@@ -382,9 +379,9 @@ function renderSpirit(){
     const card = document.createElement('div');
     card.className = 'card' + (s.lock?' locked':'');
     let aff = (s.positions||[]).map(p => {
-      const quality = Number(p.quality)||0;
-      const chips = (p.affixes||[]).map(a=>`<span class="atag aq-${quality}" title="${a.attr_id} · ${SPIRIT_COLORS[quality]?.label||'未知'}色">${a.name}=${a.value}</span>`).join(' ');
-      return `<div class="arow"><span class="apos" title="cur_id=${p.cur_id} q=${quality}">pos${p.pos}<span class="sub" style="font-size:10px;margin-left:2px">[${p.cur_id}→${quality}]</span></span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
+      const quality = Number(p.quality)||1;  // 0=未升階 → 灰色(1)；非零值保持原品質
+      const chips = (p.affixes||[]).map(a=>`<span class="atag aq-${quality}" title="pos ${p.pos} · cur_id=${p.cur_id} · ${SPIRIT_COLORS[quality]?.label||'?'}色">${a.name}=${a.value}</span>`).join(' ');
+      return `<div class="arow"><span class="apos">pos${p.pos}</span><span>${chips||'<span class=sub>—</span>'}</span></div>`;
     }).join('');
     card.innerHTML = `<div class="top"><span class="nm">${s.name}</span>
         <span>${s.lock?'<span class=lockbadge>鎖</span> ':''}<span class="lvl">Lv${s.level}</span></span></div>
