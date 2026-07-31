@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 import time
+from enum import Enum
 from typing import Callable, Optional
 
 from ws_token import codec
@@ -26,6 +27,12 @@ CMD_KICKED = 259           # login.kick_s2c (0x103): server push when this accou
                            # is logged in elsewhere (異地登入). Body is {1: reason};
                            # reason 20 = 異地登入. The server closes the socket
                            # right after, so we treat this frame as "kicked".
+# ``is_kicked`` 同時涵蓋 server 明確踢人與 socket 非預期斷線；上層必須用
+# reason 分流，避免一般網路抖動被誤判成異地登入。
+# Stable reason names shared by the runner and hybrid runtime.  The detailed
+# close metadata below keeps the raw cmd-259 payload and transport exception.
+KICK_REASON_EXPLICIT = "explicit_login_conflict"
+KICK_REASON_TRANSPORT_DROP = "transport_drop"
 ACTIVE_NEW = b"\x00"       # SocketClient active message: fresh connect
 ACTIVE_RECONNECT = b"\x01"
 
@@ -38,6 +45,21 @@ _JOIN_TIMEOUT_S = 2.0
 TransportFactory = Callable[[str], Transport]
 PushHandler = Callable[[int, bytes], None]
 KickHandler = Callable[[], None]
+
+
+class WSCloseReason(str, Enum):
+    """WS 連線結束的可判斷原因。"""
+
+    EXPLICIT_LOGIN_CONFLICT = "explicit_login_conflict"
+    TRANSPORT_DROP = "transport_drop"
+    INTENTIONAL_CLOSE = "intentional_close"
+    SESSION_HANDOFF = "session_handoff"
+
+
+def is_explicit_login_conflict(reason: object) -> bool:
+    """判斷 reason 是否確實來自 server 的 cmd 259 異地登入 push。"""
+    value = reason.value if isinstance(reason, WSCloseReason) else reason
+    return value == WSCloseReason.EXPLICIT_LOGIN_CONFLICT.value
 
 
 class WSError(Exception):
@@ -148,6 +170,11 @@ class WSGameClient:
         self._serv_time = 0
         self._connected = False
         self._kicked = False
+        self._close_reason: Optional[WSCloseReason] = None
+        self._close_detail: Optional[str] = None
+        self._kick_reason: Optional[int] = None
+        self._connection_started_at: Optional[float] = None
+        self._closed_at: Optional[float] = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -159,6 +186,11 @@ class WSGameClient:
         """
         self._stop.clear()
         self._kicked = False
+        self._close_reason = None
+        self._close_detail = None
+        self._kick_reason = None
+        self._connection_started_at = time.time()
+        self._closed_at = None
         self._transport = self._factory(self._creds.ws_url)
         self._start_reader()
 
@@ -198,8 +230,12 @@ class WSGameClient:
         self.close()
         return self.connect()
 
-    def close(self) -> None:
+    def close(
+        self,
+        reason: WSCloseReason | str = WSCloseReason.INTENTIONAL_CLOSE,
+    ) -> None:
         """Stop threads and close the transport. Safe to call repeatedly."""
+        self._record_close(reason)
         self._stop.set()
         self._connected = False
         if self._transport is not None:
@@ -222,13 +258,52 @@ class WSGameClient:
         return self._connected and not self._stop.is_set() and not self._kicked
 
     def is_kicked(self) -> bool:
-        """True iff this connection was kicked (異地登入) or dropped unexpectedly.
+        """True iff this connection was kicked or dropped unexpectedly.
 
         Set when a kick push (cmd 259) arrives, or when the reader thread exits
         on a closed/erroring socket WITHOUT a deliberate ``close()`` — i.e. the
         server hung up on us. A clean ``close()`` does NOT set this.
         """
         return self._kicked
+
+    @property
+    def close_reason(self) -> Optional[str]:
+        """Return the first classified close reason as a stable string value."""
+        return self._close_reason.value if self._close_reason is not None else None
+
+    @property
+    def close_detail(self) -> Optional[str]:
+        """Return protocol/transport detail captured with ``close_reason``."""
+        return self._close_detail
+
+    @property
+    def kick_reason(self) -> Optional[int]:
+        """Return the raw cmd-259 reason code, when one was received."""
+        return self._kick_reason
+
+    @property
+    def connection_started_at(self) -> Optional[float]:
+        """Wall-clock timestamp for the current connection attempt."""
+        return self._connection_started_at
+
+    @property
+    def closed_at(self) -> Optional[float]:
+        """Wall-clock timestamp at which the first close reason was recorded."""
+        return self._closed_at
+
+    def get_kick_reason(self) -> Optional[str]:
+        """Return the stable reason for :meth:`is_kicked`, if any.
+
+        ``explicit_cmd_259`` means the server sent the login conflict push;
+        ``transport_drop`` means the reader ended without that push. Keeping
+        this separate from the legacy boolean lets callers choose recovery
+        without treating every broken socket as an account conflict.
+        """
+        if self.close_reason == KICK_REASON_EXPLICIT:
+            return KICK_REASON_EXPLICIT
+        if self.close_reason == KICK_REASON_TRANSPORT_DROP:
+            return KICK_REASON_TRANSPORT_DROP
+        return None
 
     def set_push_handler(self, handler: Optional[PushHandler]) -> None:
         """Install (or clear with None) the callback for unmatched server frames.
@@ -332,8 +407,34 @@ class WSGameClient:
                 if lst and w in lst:
                     lst.remove(w)
 
-    def _mark_kicked(self, *, fire_callback: bool) -> None:
-        """Flip the kicked flag (idempotent) and optionally fire ``on_kick``.
+    def _record_close(
+        self,
+        reason: WSCloseReason | str,
+        detail: Optional[str] = None,
+    ) -> None:
+        """Keep the first close cause; later socket cleanup must not hide it."""
+        if not isinstance(reason, WSCloseReason):
+            try:
+                reason = WSCloseReason(str(reason))
+            except ValueError:
+                reason = WSCloseReason.INTENTIONAL_CLOSE
+        if (self._close_reason is not None
+                and reason != WSCloseReason.EXPLICIT_LOGIN_CONFLICT):
+            return
+        self._close_reason = reason
+        self._close_detail = detail
+        self._closed_at = time.time()
+        logger.info("ws_token close reason=%s detail=%s", reason.value, detail or "")
+
+    def _mark_kicked(
+        self,
+        *,
+        fire_callback: bool,
+        reason: WSCloseReason,
+        detail: Optional[str] = None,
+        kick_reason: Optional[int] = None,
+    ) -> None:
+        """Flip the kicked flag, retain its reason, and optionally fire ``on_kick``.
 
         ``fire_callback`` is True only for the explicit kick push (cmd 259) — a
         bare socket drop sets the flag silently (no callback) so a deliberate
@@ -341,6 +442,9 @@ class WSGameClient:
         """
         already = self._kicked
         self._kicked = True
+        if kick_reason is not None:
+            self._kick_reason = kick_reason
+        self._record_close(reason, detail)
         if fire_callback and not already and self._on_kick is not None:
             try:
                 self._on_kick()
@@ -349,12 +453,21 @@ class WSGameClient:
 
     def _route(self, cmd: int, body: bytes) -> None:
         if cmd == CMD_KICKED:
-            reason = codec.walk_dict(body).get(1)
+            raw_reason = codec.walk_dict(body).get(1)
             logger.warning(
                 "ws_token 異地登入被踢 (cmd=259, reason=%s) — 連線即將被伺服器關閉",
-                reason,
+                raw_reason,
             )
-            self._mark_kicked(fire_callback=True)
+            try:
+                kick_reason = int(raw_reason)
+            except (TypeError, ValueError):
+                kick_reason = None
+            self._mark_kicked(
+                fire_callback=True,
+                reason=WSCloseReason.EXPLICIT_LOGIN_CONFLICT,
+                detail=f"cmd=259 reason={raw_reason}",
+                kick_reason=kick_reason,
+            )
             return
         if cmd == CMD_HEARTBEAT:
             st = codec.walk_dict(body).get(1)
@@ -396,21 +509,32 @@ class WSGameClient:
 
     def _reader_loop(self) -> None:
         buf = bytearray()
+        recv_error: Optional[Exception] = None
         while not self._stop.is_set():
             try:
                 data = self._transport.recv()  # type: ignore[union-attr]
-            except Exception:
+                if not data:
+                    break
+                buf += data
+                for cmd, body in codec.drain_packets(buf):
+                    self._route(cmd, body)
+            except Exception as exc:
+                recv_error = exc
                 break
-            if not data:
-                break
-            buf += data
-            for cmd, body in codec.drain_packets(buf):
-                self._route(cmd, body)
         # Reader exited. If we did NOT ask it to stop, the socket was closed by
         # the server (or errored) — treat that as a kick/interruption too. A
         # deliberate close() sets _stop first, so this stays quiet for shutdown.
         if not self._stop.is_set():
-            self._mark_kicked(fire_callback=False)
+            if recv_error is None:
+                detail = "recv returned EOF"
+            else:
+                detail = (f"recv error {type(recv_error).__name__}: "
+                          f"{recv_error}")
+            self._mark_kicked(
+                fire_callback=False,
+                reason=WSCloseReason.TRANSPORT_DROP,
+                detail=detail,
+            )
 
     def _start_heartbeat(self) -> None:
         self._heartbeat = threading.Thread(

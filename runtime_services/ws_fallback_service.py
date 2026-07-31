@@ -46,6 +46,15 @@ def _load_run_sleep_cycle():
     return run_sleep_cycle
 
 
+def _is_login_conflict_error(exc: BaseException) -> bool:
+    """識別 WS-first 控制訊號，避免被 offline fallback 的保底 catch 吞掉。"""
+    try:
+        from game_actions.stage_guard import LoginConflictError
+    except Exception:  # noqa: BLE001 — 一般 fallback 錯誤維持輕量處理
+        return False
+    return isinstance(exc, LoginConflictError)
+
+
 def ws_fallback_host_allowed(ws_cfg) -> bool:
     """True when THIS host is the one allowed to run the offline WS fallback.
 
@@ -108,6 +117,10 @@ def run_ws_fallback_wait_round(
     try:
         run_ws_phase_fn(ip, logger_obj)
     except Exception as exc:
+        if _is_login_conflict_error(exc):
+            # 異地登入必須回到 new_main 的 30 分鐘 runtime policy；不可照一般
+            # WS 失敗繼續本輪休眠，否則控制訊號會遺失。
+            raise
         logger_obj.warning(f"[{ip}] WS 備援階段未預期錯誤（忽略，照常排程休眠）: {exc}")
 
     try:

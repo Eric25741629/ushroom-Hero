@@ -6,6 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import config_manager
+import pytest
 from game_actions import browser_skip, task_due
 
 
@@ -91,6 +92,41 @@ def test_full_mode_keeps_ws_phase_enabled():
 
     assert result == frozenset({"x"})
     assert "ws" in calls
+
+
+def test_explicit_ws_login_conflict_is_not_swallowed_by_wake_wrapper():
+    class _LoginConflictError(Exception):
+        pass
+
+    calls = []
+
+    def raise_conflict(*args, **kwargs):
+        calls.append("ws")
+        raise _LoginConflictError("cmd=259")
+
+    namespace = {
+        "acquire_scheduler_lease": lambda ip, logger_obj: calls.append("lease"),
+        "config_manager": SimpleNamespace(
+            get_device_config=lambda ip: {
+                "special_wanshen_account": False,
+                "special_wanshen_enabled": False,
+                "ws_token": {"enabled": True},
+            }
+        ),
+        "run_ws_phase": raise_conflict,
+        "bot_state": SimpleNamespace(
+            update_state=lambda *args, **kwargs: calls.append("state"),
+            check_force_sleep=lambda ip: False,
+        ),
+        "LoginConflictError": _LoginConflictError,
+        "ForceSleepRequested": RuntimeError,
+    }
+    run_ws_wake = _load_ws_wake_function(namespace)
+
+    with pytest.raises(_LoginConflictError, match="cmd=259"):
+        run_ws_wake("web-001", logging.getLogger("test"))
+
+    assert calls == ["lease", "state", "ws"]
 
 
 def test_full_mode_uses_normal_browser_skip_policy(monkeypatch):

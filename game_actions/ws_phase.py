@@ -16,6 +16,7 @@ import logging
 import time
 
 import config_manager
+from ws_token.client import KICK_REASON_EXPLICIT, KICK_REASON_TRANSPORT_DROP
 
 logger = logging.getLogger(__name__)
 
@@ -592,10 +593,10 @@ def _adb_reachable(ip: str) -> bool:
 def _should_seed_web_h5(ip: str, backend_kind: str, cfg: dict) -> bool:
     """web_h5 模擬器「缺 capture」時是否該自動冷啟原生 App 撈一次種子。
 
-    Playwright 的頁面回寫（utils.ws_ticket_refresh）只能「刷新既有 capture」、湊不出
-    page 讀不到的 uname/plat，無法種第一份。模擬器多半裝有原生 App，故缺檔 + adb 可達
-    時冷啟撈一次種子，之後交給頁面回寫維持（has_creds 為真 → 不再冷啟）。adb 不可達的
-    純雲端 web 裝置（web-xxx，不在 adb devices）自然被排除，避免每輪空跑 adb_token_login。
+    這是 ADB 可達模擬器的 pre-H5 best-effort 優化；H5 登入後也會從同一頁面的
+    LoginDataCache 建立完整 capture，因此 ADB 不可達或此路徑失敗時，仍應讓
+    _run_device 失敗後自然降級 Playwright。純雲端 web 裝置（web-xxx，不在 adb
+    devices）自然被排除，避免每輪空跑 adb_token_login。
     """
     if backend_kind != "web_h5" or not cfg.get("bootstrap_token", True):
         return False
@@ -766,9 +767,9 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     if can_bootstrap and not _bootstrap_token(ip, log, force=False):
         return frozenset()
 
-    # web_h5 模擬器初次種子（best-effort）：缺 capture + adb 可達才冷啟原生 App 撈一次，
-    # 種完交給 Playwright 頁面回寫維持，之後 has_creds 為真 → 不再冷啟。失敗只 log，往下
-    # 走 → _run_device 的 load_creds 會再失敗 → 自動降級 Playwright（行為同舊）。
+    # web_h5 模擬器的 pre-H5 初次種子（best-effort）：缺 capture + adb 可達才冷啟
+    # 原生 App 撈一次。若失敗只 log，往下走；_run_device 的 load_creds 失敗後仍會
+    # 自動降級 Playwright，成功登入後由 LoginDataCache 回寫完整 capture。
     # ponytail: 缺 App 的 adb 可達 web_h5 會每輪重試（adb_token_login ~2min）；模擬器實務
     # 上都有 App，種一次即止，故不加退避；若日後出現空試 hang 再補「種子嘗試退避」。
     if _should_seed_web_h5(ip, backend_kind, cfg):
@@ -804,6 +805,50 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
                         ip, report.errors.get("login"))
             return frozenset()
+
+    # kicked 不是單一原因：只有 server 明確送出 cmd 259 才是異地登入，
+    # 必須交給主迴圈既有的 LoginConflictError / 30 分鐘冷卻；一般 socket
+    # 斷線則保留 WS-first 的天然降級，讓本輪 H5/ADB 接手，不可誤冷卻。
+    if bool(getattr(report, "kicked", False)):
+        kick_reason = getattr(report, "kick_reason", None)
+        if callable(kick_reason):
+            kick_reason = kick_reason()
+        close_reason = getattr(report, "close_reason", None)
+        if callable(close_reason):
+            close_reason = close_reason()
+        close_detail = getattr(report, "close_detail", None)
+        if callable(close_detail):
+            close_detail = close_detail()
+        # 舊 fake/adapter 可能只提供 close_reason；實際 client 會同時提供
+        # kick_reason，但 fallback 讓診斷與控制訊號不會因欄位缺少而失真。
+        kick_reason = kick_reason or close_reason
+        if kick_reason == KICK_REASON_EXPLICIT:
+            log.warning(
+                "[%s] WS 收到明確 cmd=259 異地登入，停止本輪 hybrid pipeline "
+                "close_detail=%s",
+                ip, close_detail or "",
+            )
+            # 延遲載入，維持 ws_phase 的輕量 import；new_main 已使用同一個類別。
+            from game_actions.stage_guard import LoginConflictError
+            raise LoginConflictError("WS 偵測到異地登錄 (cmd=259)")
+        if kick_reason == KICK_REASON_TRANSPORT_DROP:
+            detail = "WS 傳輸斷線"
+        else:
+            detail = f"WS 連線中斷 (reason={kick_reason or 'unknown'})"
+        log.warning(
+            "[%s] %s，本輪降級 Playwright/ADB，不進異地登入冷卻 "
+            "close_reason=%s close_detail=%s",
+            ip, detail, close_reason or kick_reason or "unknown",
+            close_detail or "",
+        )
+        try:
+            import bot_state
+            bot_state.update_state(
+                ip, task="WS 階段", step=f"{detail}，本輪降級 H5/ADB"
+            )
+        except Exception:  # noqa: BLE001 — dashboard 更新只允許 best-effort
+            log.debug("[%s] WS 斷線降級狀態更新失敗", ip, exc_info=True)
+        return frozenset()
 
     # 走到這裡 report.login_ok 必為真（前面所有 not-login_ok 路徑皆已 return）。
     # 記錄本輪 WS 登入成功訊號供 Phase D1 skip-browser 判斷。best-effort。
@@ -849,9 +894,12 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
 
     # errors 帶原因（dict 而非只列任務名）→ 一行 summary 即可排查，不必往上捲找 WARNING。
     log.info(
-        "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s aborted=%s skip=%s",
+        "[%s] WS 階段完成 (%.1fs): ok=%s errors=%s kicked=%s "
+        "close_reason=%s close_detail=%s aborted=%s skip=%s",
         ip, time.time() - started, list(report.tasks), dict(report.errors),
-        report.kicked, report.aborted, sorted(skips))
+        report.kicked, getattr(report, "close_reason", None),
+        getattr(report, "close_detail", None) or "", report.aborted,
+        sorted(skips))
     if not report.kicked and not report.aborted:
         try:
             import bot_state

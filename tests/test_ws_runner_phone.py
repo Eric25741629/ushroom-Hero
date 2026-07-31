@@ -23,6 +23,10 @@ import types
 import pytest
 
 import config_manager
+from ws_token.client import (  # noqa: E402
+    KICK_REASON_EXPLICIT,
+    KICK_REASON_TRANSPORT_DROP,
+)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -393,6 +397,10 @@ def _ns(**kw):
     kw.setdefault("tasks", {})
     kw.setdefault("errors", {})
     kw.setdefault("kicked", False)
+    kw.setdefault(
+        "kick_reason",
+        KICK_REASON_EXPLICIT if kw["kicked"] else None,
+    )
     return types.SimpleNamespace(**kw)
 
 
@@ -400,6 +408,9 @@ def test_report_kicked_helper(svc):
     assert svc._report_kicked(None) is False
     assert svc._report_kicked(_ns(kicked=False)) is False
     assert svc._report_kicked(_ns(kicked=True)) is True
+    assert svc._report_kicked(
+        _ns(kicked=True, kick_reason=KICK_REASON_TRANSPORT_DROP)
+    ) is False
     # report without a `kicked` attribute is safe (legacy / partial fakes)
     assert svc._report_kicked(types.SimpleNamespace(login_ok=True)) is False
 
@@ -458,6 +469,45 @@ def test_loop_kicked_run_sleeps_cooldown_and_skips_cycle_next_wake(svc, monkeypa
     # ... wake2 (not kicked) went back to the normal aligned window.
     assert sleeps[1]["sleep_policy"] == "aligned_window"
     assert sleeps[1]["forced_wake_ts"] is None
+
+
+def test_loop_transport_drop_does_not_use_kick_cooldown(svc, monkeypatch):
+    """A reader drop is a network recovery case, not an account conflict."""
+    cfg = _cfg()
+
+    monkeypatch.setattr(svc.bot_state, "init_device", lambda ip: None)
+    monkeypatch.setattr(svc.bot_state, "set_offline", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    monkeypatch.setattr(svc.bot_state, "check_force_sleep", lambda ip: False)
+    monkeypatch.setattr(svc.bot_state, "check_pause", lambda ip: None)
+    monkeypatch.setattr(svc.config_manager, "get_device_config", lambda ip: cfg)
+
+    import runtime_services.startup_sleep as ss
+    import runtime_services.sleep_service as sl
+    monkeypatch.setattr(ss, "_handle_startup_sleep", lambda ip, lg: None)
+    monkeypatch.setattr(
+        svc,
+        "run_ws_device_cycle",
+        lambda ip, c, lg: _ns(
+            kicked=True, kick_reason=KICK_REASON_TRANSPORT_DROP
+        ),
+    )
+
+    sleeps = []
+
+    class _Stop(Exception):
+        pass
+
+    def fake_sleep(ip, lg, **k):
+        sleeps.append(k)
+        raise _Stop()
+
+    monkeypatch.setattr(sl, "run_sleep_cycle", fake_sleep)
+
+    svc.run_ws_device_loop("ws-plain", _NullLogger())
+
+    assert sleeps[0]["sleep_policy"] == "aligned_window"
+    assert sleeps[0]["forced_wake_ts"] is None
 
 
 def test_loop_kick_cooldown_applies_to_plain_device(svc, monkeypatch):

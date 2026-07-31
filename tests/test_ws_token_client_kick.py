@@ -19,7 +19,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ws_token import codec  # noqa: E402
-from ws_token.client import CMD_KICKED, WSGameClient  # noqa: E402
+from ws_token.client import (  # noqa: E402
+    CMD_KICKED,
+    KICK_REASON_EXPLICIT,
+    KICK_REASON_TRANSPORT_DROP,
+    WSCloseReason,
+    WSGameClient,
+    is_explicit_login_conflict,
+)
 from tests.fakes.ws_fakes import (  # noqa: E402
     CMD_PETS,
     CREDS,
@@ -62,6 +69,10 @@ def test_kick_push_sets_is_kicked_and_fires_callback_once():
         pass
     try:
         assert _wait_until(client.is_kicked)
+        assert client.close_reason == WSCloseReason.EXPLICIT_LOGIN_CONFLICT.value
+        assert client.close_detail == "cmd=259 reason=20"
+        assert client.kick_reason == 20
+        assert client.get_kick_reason() == KICK_REASON_EXPLICIT
         # callback fired exactly once even though two kick frames arrived
         assert _wait_until(lambda: len(fired) == 1)
         assert fired == [1]
@@ -140,6 +151,9 @@ def test_reader_exit_on_server_close_marks_kicked():
         # the client WITHOUT going through client.close() (so _stop stays clear).
         fake.close()  # reader's recv() now raises -> reader exits
         assert _wait_until(client.is_kicked)
+        assert client.close_reason == WSCloseReason.TRANSPORT_DROP.value
+        assert "ConnectionError" in (client.close_detail or "")
+        assert client.get_kick_reason() == KICK_REASON_TRANSPORT_DROP
     finally:
         client.close()
 
@@ -154,6 +168,7 @@ def test_reader_exit_on_server_close_fires_no_callback():
     try:
         fake.close()
         assert _wait_until(client.is_kicked)
+        assert client.get_kick_reason() == KICK_REASON_TRANSPORT_DROP
         time.sleep(0.05)
         assert fired == []  # only the explicit cmd-259 push fires the callback
     finally:
@@ -169,3 +184,23 @@ def test_deliberate_close_does_not_mark_kicked():
     client.close()
     time.sleep(0.1)
     assert client.is_kicked() is False
+    assert client.close_reason == WSCloseReason.INTENTIONAL_CLOSE.value
+    assert client.get_kick_reason() is None
+
+
+def test_session_handoff_close_has_distinct_reason():
+    """A shared-session lease handoff is intentional, but not a transport drop."""
+    fake = FakeTransport(login_responder())
+    client = WSGameClient(CREDS, transport_factory=factory_for(fake),
+                          heartbeat_enabled=False)
+    client.connect()
+    client.close(reason=WSCloseReason.SESSION_HANDOFF)
+
+    assert client.close_reason == WSCloseReason.SESSION_HANDOFF.value
+    assert client.is_kicked() is False
+
+
+def test_only_cmd_259_is_an_explicit_login_conflict():
+    assert is_explicit_login_conflict(WSCloseReason.EXPLICIT_LOGIN_CONFLICT)
+    assert is_explicit_login_conflict("explicit_login_conflict")
+    assert not is_explicit_login_conflict(WSCloseReason.TRANSPORT_DROP)

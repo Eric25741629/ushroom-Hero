@@ -14,6 +14,10 @@ sys.modules.setdefault("cv2", types.SimpleNamespace())
 
 import config_manager  # noqa: E402
 from game_actions import ws_phase  # noqa: E402
+from ws_token.client import (  # noqa: E402
+    KICK_REASON_EXPLICIT,
+    KICK_REASON_TRANSPORT_DROP,
+)
 from ws_token.runner import RunReport  # noqa: E402
 
 
@@ -26,10 +30,14 @@ def _cfg(monkeypatch, ws, *, backend="adb"):
                                   {"ws_token": merged_ws, "backend": backend}.get(k, d)})())
 
 
-def _report(tasks, errors=None, login_ok=True, *, kicked=False, aborted=False):
+def _report(tasks, errors=None, login_ok=True, *, kicked=False,
+            kick_reason=None, aborted=False, close_reason=None,
+            close_detail=None):
     return RunReport(device="dev", login_ok=login_ok, spend=False,
                      tasks=tasks, errors=errors or {}, kicked=kicked,
-                     aborted=aborted)
+                     kick_reason=kick_reason,
+                     aborted=aborted, close_reason=close_reason,
+                     close_detail=close_detail)
 
 
 @pytest.fixture
@@ -280,6 +288,51 @@ def test_errored_task_not_skipped(monkeypatch):
     assert "紅包檢查" in skips and "開神燈" not in skips
 
 
+def test_explicit_cmd_259_raises_login_conflict_before_h5_handoff(
+    monkeypatch, ws_handoff_cleanup
+):
+    class LoginConflictError(Exception):
+        pass
+
+    stage_guard = types.ModuleType("game_actions.stage_guard")
+    stage_guard.LoginConflictError = LoginConflictError
+    monkeypatch.setitem(sys.modules, "game_actions.stage_guard", stage_guard)
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+    monkeypatch.setattr(
+        ws_phase,
+        "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"redpack": {}}, kicked=True, kick_reason=KICK_REASON_EXPLICIT
+        ),
+    )
+
+    with pytest.raises(LoginConflictError, match="cmd=259"):
+        ws_phase.run_ws_phase("dev")
+
+    # The phase must not publish a successful WS→H5 handoff after a conflict.
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
+def test_transport_drop_falls_back_without_login_conflict_cooldown(
+    monkeypatch, ws_handoff_cleanup
+):
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+    monkeypatch.setattr(
+        ws_phase,
+        "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"redpack": {}}, kicked=True, kick_reason=KICK_REASON_TRANSPORT_DROP
+        ),
+    )
+
+    assert ws_phase.run_ws_phase("dev") == frozenset()
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
 def test_task_self_skipped_not_mapped(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
@@ -362,6 +415,26 @@ def test_interrupted_ws_run_keeps_h5_handoff_unsafe(monkeypatch, report,
     )
     ws_phase.run_ws_phase("dev")
     assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
+def test_ws_phase_summary_preserves_transport_close_reason(monkeypatch, caplog,
+                                                           ws_handoff_cleanup):
+    """The WS-first summary exposes the distinction to the hybrid caller."""
+    _cfg(monkeypatch, {"enabled": True})
+    report = _report(
+        {"redpack": {}},
+        kicked=True,
+        close_reason="transport_drop",
+        close_detail="recv error: socket is already closed",
+    )
+    monkeypatch.setattr(ws_phase, "_run_device",
+                        lambda ip, cfg, progress=None, **_kw: report)
+
+    with caplog.at_level(logging.INFO):
+        ws_phase.run_ws_phase("dev")
+
+    assert "close_reason=transport_drop" in caplog.text
+    assert "socket is already closed" in caplog.text
 
 
 def test_ws_exception_resets_previous_h5_handoff(monkeypatch,

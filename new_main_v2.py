@@ -115,6 +115,10 @@ def _run_ws_phase_for_wake(ip, logger_obj):
         bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
         logger_obj.info(f"[{ip}] WS 階段開始（純 WS，開 H5/APP 前）")
         result = run_ws_phase(ip, logger_obj=logger_obj)
+    except LoginConflictError:
+        # 這是控制訊號，不是 WS 的一般降級錯誤；必須交給 main 的既有
+        # runtime_login_conflict_30m handler，避免繼續開 H5/ADB pipeline。
+        raise
     except Exception as ws_exc:
         logger_obj.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
         result = frozenset()
@@ -124,6 +128,17 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     if bot_state.check_force_sleep(ip):
         raise ForceSleepRequested(f"[{ip}] force sleep requested during ws phase")
     return result
+
+
+def _refresh_h5_ws_credentials(d, ip, logger_obj):
+    """H5 已可操作時，被動回寫同一頁面的 WS credentials。"""
+    try:
+        from utils.ws_ticket_refresh import refresh_from_device
+        return bool(refresh_from_device(d, ip))
+    except Exception as exc:  # noqa: BLE001 — 憑證回寫失敗不可阻斷 Playwright
+        logger_obj.warning("[%s] H5 WS 憑證回寫失敗，保留 Playwright fallback: %s",
+                           ip, exc)
+        return False
 
 
 
@@ -229,6 +244,24 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 )
                 force_sleep_now = False
                 continue
+            except LoginConflictError as e:
+                # WS-first 在初始化 callback 內明確收到 cmd 259 時，瀏覽器尚未
+                # 啟動，直接使用同一個 30 分鐘 runtime policy 後重試初始化。
+                forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC
+                logger.warning(
+                    f"[{ip}] WS 初始化前偵測到異地登錄: {e} | "
+                    f"policy=runtime_login_conflict_30m, "
+                    f"forced_sleep_sec={LOGIN_CONFLICT_SLEEP_SEC}"
+                )
+                run_sleep_cycle(
+                    ip,
+                    device_logger,
+                    forced_wake_ts=forced_wake_ts,
+                    sleep_policy="runtime_login_conflict_30m",
+                    sleep_reason="WS 初始化前偵測異地登錄",
+                    enable_dungeon_manager=enable_dungeon_manager,
+                )
+                continue
             except Exception as e:
                 if backend_kind == "web_h5":
                     device_logger.error(f"[{ip}] web_h5 backend init failed: {e}")
@@ -251,12 +284,30 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     device_logger.warning(
                         f"[{ip}] 手機 ADB 不可達，啟用離線純 WS 備援，跑一輪 WS 後等待回線重試"
                     )
-                    run_ws_fallback_wait_round(
-                        ip,
-                        device_logger,
-                        run_ws_phase_fn=_run_ws_phase_for_wake,
-                        enable_dungeon_manager=enable_dungeon_manager,
-                    )
+                    try:
+                        run_ws_fallback_wait_round(
+                            ip,
+                            device_logger,
+                            run_ws_phase_fn=_run_ws_phase_for_wake,
+                            enable_dungeon_manager=enable_dungeon_manager,
+                        )
+                    except LoginConflictError as conflict:
+                        # fallback helper 不能吞掉控制訊號；此時仍未完成 ADB
+                        # 初始化，直接套同一個 runtime 30 分鐘 cooldown，再重試。
+                        forced_wake_ts = time.time() + LOGIN_CONFLICT_SLEEP_SEC
+                        logger.warning(
+                            f"[{ip}] 離線 WS 備援偵測到異地登錄: {conflict} | "
+                            f"policy=runtime_login_conflict_30m, "
+                            f"forced_sleep_sec={LOGIN_CONFLICT_SLEEP_SEC}"
+                        )
+                        run_sleep_cycle(
+                            ip,
+                            device_logger,
+                            forced_wake_ts=forced_wake_ts,
+                            sleep_policy="runtime_login_conflict_30m",
+                            sleep_reason="離線 WS 備援偵測異地登錄",
+                            enable_dungeon_manager=enable_dungeon_manager,
+                        )
                     continue
                 bot_state.set_offline(ip, reason=f"init failed: {e}")
                 return
@@ -438,6 +489,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         logger.info(f"[{ip}] 偵測到 {stage_check} 彈窗，執行自動領取...")
                         reward(d)
                         time.sleep(2)
+                    if backend_kind == "web_h5":
+                        _refresh_h5_ws_credentials(d, ip, device_logger)
                 else:
                     logger.debug(f"[{ip}] 未確認在遊戲中，準備啟動")
                     bot_state.update_state(ip, task="啟動遊戲", step="正在啟動 APP")
@@ -477,8 +530,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     if result:
                         logger.info(f"[{ip}] 遊戲已進入可操作狀態")
                         if backend_kind == "web_h5":
-                            from utils.ws_ticket_refresh import refresh_from_device
-                            refresh_from_device(d, ip)
+                            _refresh_h5_ws_credentials(d, ip, device_logger)
                         elif backend_kind == "adb":
                             # 即使本裝置 ws_token 未啟用，也順手被動撈一份 ws login
                             # ticket，方便日後切 adb+ws 時已有可用 token。best-effort，

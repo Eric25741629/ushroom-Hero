@@ -29,7 +29,7 @@ from typing import Callable, Dict, List, Optional
 from runtime_services import session_registry as registry
 from runtime_services.session_registry import Channel, Owner
 from ws_token import online_guard
-from ws_token.client import WSGameClient
+from ws_token.client import WSCloseReason, WSGameClient
 from ws_token.creds import load_creds
 
 logger = logging.getLogger(__name__)
@@ -446,7 +446,11 @@ class OnlineMonitor:
     @staticmethod
     def _close(client: WSGameClient) -> None:
         try:
-            client.close()
+            # 真 client 記錄 monitor 讓位；測試替身/舊實作仍走無參數 close。
+            if isinstance(client, WSGameClient):
+                client.close(reason=WSCloseReason.SESSION_HANDOFF)
+            else:
+                client.close()
         except Exception:
             pass
 

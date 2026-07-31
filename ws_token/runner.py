@@ -115,11 +115,14 @@ class RunReport:
     task name (or ``"login"``) to a short error string for whatever failed; a
     successful run has an empty ``errors``.
 
-    ``kicked`` is True iff the connection was kicked mid-run — the account was
-    logged in elsewhere (異地登入, cmd 259) or the server dropped the socket. The
-    in-flight tasks usually fail (connection gone) and land in ``errors``; this
-    flag lets the loop tell "kicked" apart from an ordinary task failure so it
-    can back off (30-min cooldown) instead of hammering.
+    ``kicked`` is the legacy broad interruption flag: True when the connection
+    was kicked mid-run by cmd 259 or when the server dropped the socket. Use
+    ``close_reason`` to distinguish explicit login conflict from transport drop;
+    the in-flight tasks usually fail (connection gone) and land in ``errors``.
+
+    ``close_reason`` is one of ``explicit_login_conflict``, ``transport_drop``,
+    ``intentional_close`` or ``session_handoff`` when the client exposed one.
+    ``close_detail`` retains the cmd-259 reason or transport exception text.
 
     ``aborted`` is True iff the run was stopped early by an external
     ``should_abort`` signal (e.g. a pending「開啟瀏覽器」request). The
@@ -133,12 +136,47 @@ class RunReport:
     tasks: dict[str, Any] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
     kicked: bool = False
+    kick_reason: Optional[str] = None
     aborted: bool = False
+    close_reason: Optional[str] = None
+    close_detail: Optional[str] = None
 
 
 def _make_client(creds, **kwargs) -> WSGameClient:
     """Construct the WSGameClient. Indirected so tests can inject a fake."""
     return WSGameClient(creds, **kwargs)
+
+
+def _client_close_metadata(client) -> tuple[Optional[str], Optional[str]]:
+    """Read optional close metadata without breaking legacy fake clients."""
+    reason = getattr(client, "close_reason", None)
+    detail = getattr(client, "close_detail", None)
+    if callable(reason):
+        reason = reason()
+    if callable(detail):
+        detail = detail()
+    value = getattr(reason, "value", reason)
+    return (str(value) if value is not None else None,
+            str(detail) if detail is not None else None)
+
+def _client_kick_reason(client) -> Optional[str]:
+    """讀取 client 的 kick reason，兼容舊測試 fake 與未升級 client。"""
+    getter = getattr(client, "get_kick_reason", None)
+    value = getter() if callable(getter) else getattr(client, "kick_reason", None)
+    if callable(value):
+        value = value()
+    if value is None:
+        return None
+    enum_value = getattr(value, "value", None)
+    return str(enum_value if enum_value is not None else value)
+
+
+def _client_is_kicked(client) -> bool:
+    """任務邊界檢查連線是否已被踢或非預期斷線。"""
+    try:
+        return bool(client.is_kicked())
+    except Exception:  # noqa: BLE001 — 舊/不完整 fake 可能沒有此方法
+        return False
 
 
 def _load_lamp():
@@ -1605,8 +1643,10 @@ def run_device(device: str, *, spend: bool = False,
         except Exception:  # noqa: BLE001 — close must never mask the login error
             logger.debug("ws_token runner: %s close after login failure raised", device,
                          exc_info=True)
+        close_reason, close_detail = _client_close_metadata(client)
         return RunReport(device=device, login_ok=False, spend=spend,
-                         tasks=tasks, errors={LOGIN_TASK: str(exc)})
+                         tasks=tasks, errors={LOGIN_TASK: str(exc)},
+                         close_reason=close_reason, close_detail=close_detail)
 
     serv_time = int(login.get("serv_time") or creds.login_time or 0)
     role_id_hint = int(login.get("role_id") or creds.role_id or 0)
@@ -1639,6 +1679,9 @@ def run_device(device: str, *, spend: bool = False,
         nonlocal aborted
         if aborted:
             return                       # 已中斷 → 後續任務全部不跑（留 pending）
+        if _client_is_kicked(client):
+            # 明確踢人與傳輸斷線都停止本輪 WS 任務；上層再依 reason 分流。
+            return
         if should_abort is not None and should_abort():
             aborted = True
             _notify(name, "aborted", "pending web launch")
@@ -1807,18 +1850,29 @@ def run_device(device: str, *, spend: bool = False,
         except Exception:  # noqa: BLE001 — defensive: a fake/odd client w/o the method
             kicked = False
         try:
+            kick_reason = _client_kick_reason(client)
+        except Exception:  # noqa: BLE001 — reason is diagnostic, never mask cleanup
+            kick_reason = None
+        try:
             client.close()
         except Exception:  # noqa: BLE001
             logger.debug("ws_token runner: %s close raised", device, exc_info=True)
+        close_reason, close_detail = _client_close_metadata(client)
 
     if kicked:
-        logger.warning("ws_token runner: %s 連線在執行中被踢（異地登入/伺服器斷線）",
-                       device)
+        logger.warning(
+            "ws_token runner: %s 連線中斷 reason=%s kick_reason=%s detail=%s",
+            device, close_reason, kick_reason, close_detail or "",
+        )
     logger.info(
-        "ws_token runner: %s done — %d task(s) ok, %d error(s), kicked=%s aborted=%s",
-        device, len(tasks), len(errors), kicked, aborted)
+        "ws_token runner: %s done — %d task(s) ok, %d error(s), kicked=%s "
+        "kick_reason=%s close_reason=%s aborted=%s",
+        device, len(tasks), len(errors), kicked, kick_reason, close_reason,
+        aborted)
     return RunReport(device=device, login_ok=True, spend=spend,
-                     tasks=tasks, errors=errors, kicked=kicked, aborted=aborted)
+                     tasks=tasks, errors=errors, kicked=kicked,
+                     kick_reason=kick_reason, aborted=aborted,
+                     close_reason=close_reason, close_detail=close_detail)
 
 
 def _ok_summary(result) -> str:

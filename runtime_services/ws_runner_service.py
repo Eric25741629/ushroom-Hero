@@ -34,10 +34,9 @@ Phone-account flow (2026-06-09) — applies ONLY to devices that declare an
      waiting.
 
 Kick cooldown (異地登入) — applies to ALL ws_token devices regardless of the
-phone-account gate. When a run reports it was kicked (the account was logged in
-elsewhere, or the server dropped the socket — surfaced as ``RunReport.kicked``),
-the loop sleeps for :data:`_KICK_COOLDOWN_SEC` (30 min) this wake instead of the
-normal aligned window. The cooldown reuses the existing interruptible sleep
+phone-account gate. Only a run with an explicit ``cmd 259`` reason enters the
+30-minute cooldown; a plain transport drop follows the normal aligned sleep
+and is not treated as an account conflict. The cooldown reuses the existing interruptible sleep
 (``run_sleep_cycle(forced_wake_ts=...)``) so pause / force-sleep / skip still cut
 it short. The next wake's online-protection probe then decides whether to resume
 (online → keep waiting, offline → run). Force-sleep takes priority over cooldown.
@@ -73,10 +72,7 @@ logger = logging.getLogger(__name__)
 # device awake — it just yields a None result and we skip the wake.
 _PROTECT_WAIT_SEC_DEFAULT = 60.0
 
-# Cooldown after a kick (異地登入 / server drop). When a run reports it was kicked
-# we back off for 30 minutes before the next wake instead of immediately
-# reconnecting (which would just race the human who logged in elsewhere). The
-# next wake's online-protection probe then decides whether to resume.
+# 明確 cmd 259 異地登入後冷卻；一般 socket drop 不應誤用這個 policy。
 _KICK_COOLDOWN_SEC = 1800.0
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
@@ -469,14 +465,32 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         )
         bot_state.update_state(ip, task="WS 登入失敗", step=f"errors={list(errors)}")
     else:
-        logger_obj.info(
-            f"[{ip}] ws_token 完成: spend={spend} tasks_ok={list(tasks)} errors={list(errors)}"
-        )
-        bot_state.update_state(
-            ip,
-            task="WS 任務完成",
-            step=f"tasks_ok={list(tasks)} errors={list(errors)}",
-        )
+        if bool(getattr(report, "kicked", False)):
+            reason = getattr(report, "kick_reason", None) or "unknown"
+            from ws_token.client import KICK_REASON_EXPLICIT
+            if reason == KICK_REASON_EXPLICIT:
+                logger_obj.warning(
+                    f"[{ip}] ws_token 明確收到 cmd=259，交由迴圈進入異地登入冷卻"
+                )
+                bot_state.update_state(
+                    ip, task="WS 異地登入", step="cmd=259，準備進入 30 分鐘冷卻"
+                )
+            else:
+                logger_obj.warning(
+                    f"[{ip}] ws_token 連線中斷 (reason={reason})，本輪不進異地登入冷卻"
+                )
+                bot_state.update_state(
+                    ip, task="WS 傳輸中斷", step=f"reason={reason}，照常排程休眠"
+                )
+        else:
+            logger_obj.info(
+                f"[{ip}] ws_token 完成: spend={spend} tasks_ok={list(tasks)} errors={list(errors)}"
+            )
+            bot_state.update_state(
+                ip,
+                task="WS 任務完成",
+                step=f"tasks_ok={list(tasks)} errors={list(errors)}",
+            )
     return report
 
 
@@ -491,13 +505,16 @@ def _is_token_invalid(report: Optional[Any]) -> bool:
 
 
 def _report_kicked(report: Optional[Any]) -> bool:
-    """True iff a run completed and reported it was kicked (異地登入 / drop).
+    """True iff a run explicitly reported the login-conflict push (cmd 259).
 
     A skipped/protected cycle or a swallowed exception returns ``None`` and is
-    NOT a kick. Only an explicit ``report.kicked`` truthy value counts, so this
-    is safe to call on any cycle result.
+    NOT a kick. A transport drop may still set ``report.kicked`` for diagnostics,
+    but it must not trigger the 30-minute account-conflict cooldown.
     """
-    return report is not None and bool(getattr(report, "kicked", False))
+    if report is None or not bool(getattr(report, "kicked", False)):
+        return False
+    from ws_token.client import KICK_REASON_EXPLICIT
+    return getattr(report, "kick_reason", None) == KICK_REASON_EXPLICIT
 
 
 def _kick_cooldown_wake_ts() -> float:

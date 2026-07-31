@@ -171,6 +171,37 @@ def test_round_sleeps_even_when_ws_phase_raises(monkeypatch):
     assert slept == [True]
 
 
+def test_round_propagates_login_conflict_to_runtime_cooldown(monkeypatch):
+    """The offline fallback must not swallow the explicit WS control signal."""
+    svc = _import_service()
+    class LoginConflictError(Exception):
+        pass
+
+    stage_guard = types.ModuleType("game_actions.stage_guard")
+    stage_guard.LoginConflictError = LoginConflictError
+    monkeypatch.setitem(sys.modules, "game_actions.stage_guard", stage_guard)
+
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    slept = []
+    monkeypatch.setattr(
+        svc,
+        "_load_run_sleep_cycle",
+        lambda: (lambda ip, lg, **k: slept.append(k)),
+    )
+
+    with pytest.raises(LoginConflictError, match="cmd=259"):
+        svc.run_ws_fallback_wait_round(
+            "phone",
+            _NullLogger(),
+            run_ws_phase_fn=lambda ip, lg: (_ for _ in ()).throw(
+                LoginConflictError("cmd=259")
+            ),
+            enable_dungeon_manager=False,
+        )
+
+    assert slept == []
+
+
 def test_round_swallows_sleep_exception_with_floor_sleep(monkeypatch):
     """A failed run_sleep_cycle must not propagate AND must not hot-spin.
 

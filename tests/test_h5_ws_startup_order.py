@@ -106,3 +106,21 @@ def test_main_resolves_online_skip_after_ws_before_wakeup():
         isinstance(value, ast.Name) and value.id == "skip_online_check_for_wakeup"
         for value in skip_values
     ), "handle_device_wakeup() must receive the resolved current-cycle value"
+
+
+def test_main_refreshes_h5_credentials_when_existing_session_is_ready():
+    """An already-open Playwright page must seed/refresh before daily tasks."""
+    main_fn = _main_function()
+    in_game_branches = [
+        node
+        for node in ast.walk(main_fn)
+        if isinstance(node, ast.If)
+        and isinstance(node.test, ast.Name)
+        and node.test.id == "in_game"
+    ]
+    assert in_game_branches, "main() in-game branch not found"
+    assert any(
+        isinstance(node, ast.Call)
+        and _name(node.func) == "_refresh_h5_ws_credentials"
+        for node in ast.walk(in_game_branches[0])
+    ), "existing H5 sessions must refresh credentials after readiness"

@@ -29,7 +29,12 @@ sys.modules.setdefault("cv2", types.SimpleNamespace())
 
 from ws_token import codec  # noqa: E402
 from ws_token import runner  # noqa: E402
-from ws_token.client import WSLoginError, WSTimeoutError  # noqa: E402
+from ws_token.client import (  # noqa: E402
+    KICK_REASON_EXPLICIT,
+    KICK_REASON_TRANSPORT_DROP,
+    WSLoginError,
+    WSTimeoutError,
+)
 from ws_token.runner import RunReport, run_device  # noqa: E402
 from tests.fakes.ws_fakes import (  # noqa: E402
     CREDS,
@@ -45,10 +50,11 @@ class _SpyClient:
     """Stand-in for WSGameClient: records connect/close, returns a login dict."""
 
     def __init__(self, *, login: dict | None = None, connect_error: Exception | None = None,
-                 kicked: bool = False):
+                 kicked: bool = False, kick_reason: str | None = None):
         self._login = login if login is not None else {"code": 0, "role_id": 1, "serv_time": 99}
         self._connect_error = connect_error
         self._kicked = kicked
+        self._kick_reason = kick_reason
         self.connected = False
         self.closed = False
 
@@ -60,6 +66,9 @@ class _SpyClient:
 
     def is_kicked(self) -> bool:
         return self._kicked
+
+    def get_kick_reason(self) -> str | None:
+        return self._kick_reason
 
     def close(self) -> None:
         self.closed = True
@@ -1452,6 +1461,24 @@ def test_report_kicked_true_when_client_kicked(patched, monkeypatch):
     assert spy_holder["client"].closed is True  # still closed
 
 
+@pytest.mark.parametrize("reason", [KICK_REASON_EXPLICIT, KICK_REASON_TRANSPORT_DROP])
+def test_report_preserves_kick_reason(patched, monkeypatch, reason):
+    """The runner exposes the client reason so runtime layers can classify it."""
+    _calls, spy_holder = patched
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(kicked=True, kick_reason=reason)
+        spy_holder["client"] = spy
+        return spy
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is True
+    assert rep.kick_reason == reason
+
+
 def test_report_kicked_false_when_client_lacks_is_kicked(patched, monkeypatch):
     """Defensive: a client without is_kicked() must not crash the run."""
 
@@ -1499,6 +1526,28 @@ def test_report_kicked_via_fake_transport_259_then_close(monkeypatch):
     rep = run_device("dev", spend=False)
 
     assert rep.kicked is True
+    assert rep.close_reason == "explicit_login_conflict"
+    assert rep.close_detail == "cmd=259 reason=20"
+
+
+def test_report_propagates_transport_close_reason(patched, monkeypatch):
+    """Hybrid callers receive the reason instead of inferring it from kicked."""
+    _calls, spy_holder = patched
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(kicked=True)
+        spy.close_reason = "transport_drop"
+        spy.close_detail = "recv error WebSocketConnectionClosedException: socket is already closed"
+        spy_holder["client"] = spy
+        return spy
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.kicked is True
+    assert rep.close_reason == "transport_drop"
+    assert "socket is already closed" in (rep.close_detail or "")
 
 
 # --- end-to-end over the real task code + FakeTransport responder ----------

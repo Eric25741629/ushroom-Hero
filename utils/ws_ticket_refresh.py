@@ -1,15 +1,11 @@
 """Playwright 階段順手回寫 ws_token creds（自癒迴圈, spec §5）。
 
-遊戲頁載入完成後，page 內的 LoginDataCache 持有最新 login ticket。
+遊戲頁載入完成後，page 內的 LoginDataCache 持有最新 login payload。
 refresh_from_device(d, ip) 用 page.evaluate（in-process，不踢 session、不需 CDP
-attach）讀出來，merge 回 auth_state/_auth_capture_<ip>.json —— 只更新會過期的
-欄位（loginTicket/pKey/loginTime/...），保留 page 上讀不到的 uname/plat。
-下一輪 WS 階段永遠拿到 <1 cycle 舊的 ticket。
-
-無既有 capture 檔（純 web_h5 帳號，例如寶兒/暴哥）時「種一份」：寫入 page 讀得到
-的欄位（含 roleId）。這份 seed 缺 uname/plat，load_creds() 會拒收（故不會被誤當成
-可登入 creds → has_creds 仍 False → 不觸發 WS 登入/checker），但 roleId 讓
-online monitor 能認得這台帳號（get_device_role_id 的寬鬆 fallback → 上線監測/保護）。
+attach）讀出來，merge 回 auth_state/_auth_capture_<ip>.json。LoginDataCache 同時
+提供 uname/plat 等不會顯示在畫面上的欄位，所以無既有 capture 時也能建立
+load_creds() 可讀的完整 seed；若目前版本仍讀不到必填欄位，則保留 partial seed
+給 online monitor 使用，但不會誤觸發 WS 登入。
 
 一律 best-effort：任何失敗只 log 回 False，絕不打斷 wake cycle。
 """
@@ -19,6 +15,8 @@ import json
 import logging
 import time
 from pathlib import Path
+
+from ws_token.creds import Creds, load_creds
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +28,15 @@ AUTH_DIR = Path(__file__).resolve().parents[1] / "auth_state"
 _CAPTURE_JS = """
 async () => {
   const mod = await System.import('chunks:///_virtual/LoginDataCache.ts');
-  const L = mod.LoginDataCache;
+  const L = IS(mod.LoginDataCache);
+  const gatewayInfo = L.gateWayInfo || {};
+  const loginServer = L.loginServer || {};
   let ws = '';
   try { ws = netManager._cnet._socket.url || ''; } catch (e) {}
   return {
     uid: String(L.uid ?? ''),
+    uname: String(L.uname ?? ''),
+    plat: String(L.plat ?? ''),
     loginGameId: String(L.loginGameId ?? ''),
     roleId: Number(L.roleId ?? 0),
     pKey: String(L.pKey ?? ''),
@@ -42,14 +44,26 @@ async () => {
     loginSceneId: Number(L.loginSceneId ?? 0),
     isWhiteIp: Number(L.isWhiteIp ?? 0),
     loginTime: Number(L.loginTime ?? 0),
+    gateway: String(gatewayInfo.ip ?? ''),
+    game_server: String(loginServer.game_server ?? ''),
     _ws_url: ws,
   };
 }
 """
 
-# merge 進 capture 的欄位（page 讀得到、且會過期/變動的）
-_REFRESH_KEYS = ("uid", "loginGameId", "roleId", "pKey", "loginTicket",
-                 "loginSceneId", "isWhiteIp", "loginTime", "_ws_url")
+# merge 進 capture 的欄位（LoginDataCache 讀得到，且 ticket 可能變動）
+_REFRESH_KEYS = ("uid", "uname", "plat", "loginGameId", "roleId", "pKey",
+                 "loginTicket", "loginSceneId", "isWhiteIp", "loginTime",
+                 "gateway", "game_server", "_ws_url")
+
+
+def _is_complete_capture(creds: dict) -> bool:
+    """用 Creds 的正規驗證確認 seed 能否直接交給 WS runner。"""
+    try:
+        Creds.from_dict(creds)
+    except Exception:  # noqa: BLE001 — capture 驗證失敗只能保留 fallback
+        return False
+    return True
 
 
 def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
@@ -74,22 +88,42 @@ def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
         return False
     try:
         data = {} if seeding else json.loads(path.read_text(encoding="utf-8-sig"))
-        creds = dict(data.get("creds") or {})
+        if not isinstance(data, dict):
+            raise ValueError("capture root must be an object")
+        raw_creds = data.get("creds") or {}
+        if not isinstance(raw_creds, dict):
+            raise ValueError("capture creds must be an object")
+        creds = dict(raw_creds)
         for k in _REFRESH_KEYS:
             if fresh.get(k) not in (None, "", 0) or k == "isWhiteIp":
                 creds[k] = fresh[k]
+        complete = _is_complete_capture(creds)
         data["creds"] = creds
         data["_source"] = "playwright_seed" if seeding else "playwright_refresh"
-        # seed 缺 page 讀不到的 uname/plat → 標記為半份，load_creds 仍會拒收。
-        data["_partial"] = bool(seeding and not (creds.get("uname") and creds.get("plat")))
+        data["_partial"] = not complete
         data["_captured_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                         encoding="utf-8")
-        age_h = (time.time() - float(creds.get("loginTime") or 0)) / 3600.0
+
+        # 完整 seed 必須真的能被讀回，否則下一輪仍會走 H5 fallback。
+        if complete:
+            try:
+                load_creds(ip, auth_dir=Path(auth_dir))
+            except Exception as exc:  # noqa: BLE001 — 讀取失敗不可中斷 H5
+                logger.warning("[%s] ws ticket refresh: capture 讀回驗證失敗: %s",
+                               ip, exc)
+                return False
+
+        try:
+            age_h = (time.time() - float(creds.get("loginTime") or 0)) / 3600.0
+        except (TypeError, ValueError):
+            age_h = 0.0
+        mode = "完整 seed" if complete and seeding else (
+            "partial seed" if seeding else "已回寫 ticket")
         logger.info("[%s] ws ticket refresh: %s (loginTime age %.1fh)",
-                    ip, "已種 seed capture (roleId=%s)" % creds.get("roleId")
-                    if seeding else "已回寫 ticket", age_h)
+                    ip, mode, age_h)
         return True
-    except (OSError, ValueError) as exc:
+    except (OSError, TypeError, ValueError, KeyError) as exc:
         logger.warning("[%s] ws ticket refresh: 寫回失敗: %s", ip, exc)
         return False
