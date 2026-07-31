@@ -55,6 +55,8 @@ async () => {
 _REFRESH_KEYS = ("uid", "uname", "plat", "loginGameId", "roleId", "pKey",
                  "loginTicket", "loginSceneId", "isWhiteIp", "loginTime",
                  "gateway", "game_server", "_ws_url")
+_TICKET_CAPTURE_ATTEMPTS = 3
+_TICKET_CAPTURE_RETRY_DELAY_SEC = 0.25
 
 
 def _is_complete_capture(creds: dict) -> bool:
@@ -66,7 +68,14 @@ def _is_complete_capture(creds: dict) -> bool:
     return True
 
 
-def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
+def refresh_from_device(
+    d,
+    ip: str,
+    *,
+    auth_dir: Path = AUTH_DIR,
+    ticket_attempts: int = _TICKET_CAPTURE_ATTEMPTS,
+    retry_delay_sec: float = _TICKET_CAPTURE_RETRY_DELAY_SEC,
+) -> bool:
     """從 d._page 讀 LoginDataCache 並 merge 回 capture 檔。成功回 True。"""
     page = getattr(d, "_page", None)
     if page is None:
@@ -75,11 +84,30 @@ def refresh_from_device(d, ip: str, *, auth_dir: Path = AUTH_DIR) -> bool:
     path = Path(auth_dir) / f"_auth_capture_{ip}.json"
     seeding = not path.exists()
     try:
-        fresh = page.evaluate(_CAPTURE_JS)
-    except Exception as exc:  # noqa: BLE001 — page 可能剛好關閉/導航，不能炸 wake cycle
-        logger.warning("[%s] ws ticket refresh: page.evaluate 失敗: %s", ip, exc)
-        return False
-    if not isinstance(fresh, dict) or not fresh.get("loginTicket"):
+        attempts = max(1, int(ticket_attempts))
+    except (TypeError, ValueError):
+        attempts = _TICKET_CAPTURE_ATTEMPTS
+    try:
+        retry_delay = max(0.0, float(retry_delay_sec))
+    except (TypeError, ValueError):
+        retry_delay = _TICKET_CAPTURE_RETRY_DELAY_SEC
+
+    fresh = None
+    for attempt in range(attempts):
+        try:
+            candidate = page.evaluate(_CAPTURE_JS)
+        except Exception as exc:  # noqa: BLE001 — page 可能剛好關閉/導航，不能炸 wake cycle
+            logger.warning("[%s] ws ticket refresh: page.evaluate 失敗: %s", ip, exc)
+            return False
+        if (isinstance(candidate, dict)
+                and str(candidate.get("loginTicket") or "").strip()):
+            fresh = candidate
+            break
+        if attempt + 1 < attempts and retry_delay:
+            # 主頁剛 ready 時 LoginDataCache 可能晚一個 event loop 才寫入 ticket。
+            time.sleep(retry_delay)
+
+    if not isinstance(fresh, dict):
         logger.warning("[%s] ws ticket refresh: 讀不到 loginTicket，跳過", ip)
         return False
     # 種第一份時 roleId 是這份檔唯一的價值（給 online monitor 認帳號），沒有就別種。

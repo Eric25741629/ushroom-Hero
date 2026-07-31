@@ -21,6 +21,20 @@ class _FakePage:
         return self._result
 
 
+class _SequencePage:
+    def __init__(self, *results):
+        self._results = list(results)
+        self.calls = 0
+
+    def evaluate(self, _js):
+        self.calls += 1
+        if self._results:
+            result = self._results.pop(0)
+        else:
+            result = None
+        return result
+
+
 class _FakeDevice:
     def __init__(self, page):
         self._page = page
@@ -135,5 +149,26 @@ def test_refresh_missing_ticket_in_result_is_noop(tmp_path):
     _seed_capture(tmp_path)
     bad = dict(_FRESH, loginTicket="")
     ok = wtr.refresh_from_device(_FakeDevice(_FakePage(bad)), "dev1",
-                                 auth_dir=tmp_path)
+                                 auth_dir=tmp_path, ticket_attempts=1,
+                                 retry_delay_sec=0)
     assert ok is False
+
+
+def test_refresh_retries_until_login_ticket_is_populated(tmp_path):
+    _seed_capture(tmp_path)
+    empty = dict(_FRESH, loginTicket="")
+    page = _SequencePage(empty, _FRESH)
+
+    ok = wtr.refresh_from_device(
+        _FakeDevice(page),
+        "dev1",
+        auth_dir=tmp_path,
+        ticket_attempts=2,
+        retry_delay_sec=0,
+    )
+
+    assert ok is True
+    assert page.calls == 2
+    data = json.loads((tmp_path / "_auth_capture_dev1.json")
+                      .read_text(encoding="utf-8-sig"))
+    assert data["creds"]["loginTicket"] == "newticket"

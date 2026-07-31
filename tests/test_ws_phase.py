@@ -315,6 +315,35 @@ def test_explicit_cmd_259_raises_login_conflict_before_h5_handoff(
     assert bot_state.get_ws_h5_handoff_ok("dev") is False
 
 
+def test_login_failure_with_explicit_cmd_259_raises_login_conflict(
+    monkeypatch, ws_handoff_cleanup
+):
+    class LoginConflictError(Exception):
+        pass
+
+    stage_guard = types.ModuleType("game_actions.stage_guard")
+    stage_guard.LoginConflictError = LoginConflictError
+    monkeypatch.setitem(sys.modules, "game_actions.stage_guard", stage_guard)
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+    monkeypatch.setattr(
+        ws_phase,
+        "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {}, errors={"login": "timed out"}, login_ok=False,
+            kicked=True, kick_reason=KICK_REASON_EXPLICIT,
+            close_reason="explicit_login_conflict",
+            close_detail="cmd=259 reason=20",
+        ),
+    )
+
+    with pytest.raises(LoginConflictError, match="cmd=259"):
+        ws_phase.run_ws_phase("dev")
+
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
 def test_transport_drop_falls_back_without_login_conflict_cooldown(
     monkeypatch, ws_handoff_cleanup
 ):

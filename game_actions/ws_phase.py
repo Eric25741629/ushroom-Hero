@@ -16,7 +16,11 @@ import logging
 import time
 
 import config_manager
-from ws_token.client import KICK_REASON_EXPLICIT, KICK_REASON_TRANSPORT_DROP
+from ws_token.client import (
+    KICK_REASON_EXPLICIT,
+    KICK_REASON_TRANSPORT_DROP,
+    normalize_kick_reason,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -788,34 +792,18 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         log.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
                     exc_info=True)
         return frozenset()
-    if not report.login_ok:
-        if can_bootstrap:
-            log.warning("[%s] WS 登入失敗 (%s)，嘗試重撈 token 後重跑一次",
-                        ip, report.errors.get("login"))
-            if _bootstrap_token(ip, log, force=True):
-                try:
-                    report = _run_once()
-                except Exception as exc:  # noqa: BLE001
-                    log.warning("[%s] WS 重撈後仍失敗，本輪 Playwright 全跑: %s",
-                                ip, exc, exc_info=True)
-                    return frozenset()
-        if report.login_ok:
-            log.info("[%s] WS 重撈 token 後登入成功", ip)
-        else:
-            log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
-                        ip, report.errors.get("login"))
-            return frozenset()
-
     # kicked 不是單一原因：只有 server 明確送出 cmd 259 才是異地登入，
     # 必須交給主迴圈既有的 LoginConflictError / 30 分鐘冷卻；一般 socket
     # 斷線則保留 WS-first 的天然降級，讓本輪 H5/ADB 接手，不可誤冷卻。
+    # 這段要放在 login_ok 判斷之前，因為 cmd 259 可能在 role_login 回覆前
+    # 抵達；此時 runner 會同時回報 login_ok=False 與 kicked=True。
     if bool(getattr(report, "kicked", False)):
-        kick_reason = getattr(report, "kick_reason", None)
-        if callable(kick_reason):
-            kick_reason = kick_reason()
-        close_reason = getattr(report, "close_reason", None)
-        if callable(close_reason):
-            close_reason = close_reason()
+        kick_reason = normalize_kick_reason(
+            getattr(report, "kick_reason", None)
+        )
+        close_reason = normalize_kick_reason(
+            getattr(report, "close_reason", None)
+        )
         close_detail = getattr(report, "close_detail", None)
         if callable(close_detail):
             close_detail = close_detail()
@@ -849,6 +837,24 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         except Exception:  # noqa: BLE001 — dashboard 更新只允許 best-effort
             log.debug("[%s] WS 斷線降級狀態更新失敗", ip, exc_info=True)
         return frozenset()
+
+    if not report.login_ok:
+        if can_bootstrap:
+            log.warning("[%s] WS 登入失敗 (%s)，嘗試重撈 token 後重跑一次",
+                        ip, report.errors.get("login"))
+            if _bootstrap_token(ip, log, force=True):
+                try:
+                    report = _run_once()
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("[%s] WS 重撈後仍失敗，本輪 Playwright 全跑: %s",
+                                ip, exc, exc_info=True)
+                    return frozenset()
+        if report.login_ok:
+            log.info("[%s] WS 重撈 token 後登入成功", ip)
+        else:
+            log.warning("[%s] WS 登入失敗 (%s)，本輪 Playwright 全跑",
+                        ip, report.errors.get("login"))
+            return frozenset()
 
     # 走到這裡 report.login_ok 必為真（前面所有 not-login_ok 路徑皆已 return）。
     # 記錄本輪 WS 登入成功訊號供 Phase D1 skip-browser 判斷。best-effort。

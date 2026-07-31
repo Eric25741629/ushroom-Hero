@@ -36,6 +36,25 @@ KICK_REASON_TRANSPORT_DROP = "transport_drop"
 ACTIVE_NEW = b"\x00"       # SocketClient active message: fresh connect
 ACTIVE_RECONNECT = b"\x01"
 
+
+def normalize_kick_reason(reason: object) -> Optional[str]:
+    """將新舊 client/report 的 kick reason 統一成穩定字串。
+
+    舊 adapter 可能回傳 callable、Enum 或 cmd=259 的原始 reason code；
+    這裡只做診斷欄位正規化，不把一般斷線誤提升成異地登入。
+    """
+    if callable(reason):
+        try:
+            reason = reason()
+        except Exception:  # noqa: BLE001 — 診斷欄位失敗只能視為未知
+            return None
+    value = getattr(reason, "value", reason)
+    if value in (None, ""):
+        return None
+    if value == 20 or str(value) == "20":
+        return KICK_REASON_EXPLICIT
+    return str(value)
+
 _MAX_SEND_ID = 65535
 _DEFAULT_HEARTBEAT_S = 5.0
 _DEFAULT_LOGIN_TIMEOUT_S = 20.0

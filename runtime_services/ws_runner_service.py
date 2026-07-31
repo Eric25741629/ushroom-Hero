@@ -457,6 +457,24 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     login_ok = bool(getattr(report, "login_ok", False))
     tasks = getattr(report, "tasks", {}) or {}
     errors = getattr(report, "errors", {}) or {}
+    report_kicked = bool(getattr(report, "kicked", False))
+    if report_kicked:
+        reason = _report_kick_reason(report) or "unknown"
+        from ws_token.client import KICK_REASON_EXPLICIT
+        if reason == KICK_REASON_EXPLICIT:
+            logger_obj.warning(
+                f"[{ip}] ws_token 明確收到 cmd=259，交由迴圈進入異地登入冷卻"
+            )
+            bot_state.update_state(
+                ip, task="WS 異地登入", step="cmd=259，準備進入 30 分鐘冷卻"
+            )
+        else:
+            logger_obj.warning(
+                f"[{ip}] ws_token 連線中斷 (reason={reason})，本輪不進異地登入冷卻"
+            )
+            bot_state.update_state(
+                ip, task="WS 傳輸中斷", step=f"reason={reason}，照常排程休眠"
+            )
     if not login_ok:
         # ticket missing / login failed — the loop's state machine handles refresh.
         logger_obj.warning(
@@ -465,24 +483,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         )
         bot_state.update_state(ip, task="WS 登入失敗", step=f"errors={list(errors)}")
     else:
-        if bool(getattr(report, "kicked", False)):
-            reason = getattr(report, "kick_reason", None) or "unknown"
-            from ws_token.client import KICK_REASON_EXPLICIT
-            if reason == KICK_REASON_EXPLICIT:
-                logger_obj.warning(
-                    f"[{ip}] ws_token 明確收到 cmd=259，交由迴圈進入異地登入冷卻"
-                )
-                bot_state.update_state(
-                    ip, task="WS 異地登入", step="cmd=259，準備進入 30 分鐘冷卻"
-                )
-            else:
-                logger_obj.warning(
-                    f"[{ip}] ws_token 連線中斷 (reason={reason})，本輪不進異地登入冷卻"
-                )
-                bot_state.update_state(
-                    ip, task="WS 傳輸中斷", step=f"reason={reason}，照常排程休眠"
-                )
-        else:
+        if not report_kicked:
             logger_obj.info(
                 f"[{ip}] ws_token 完成: spend={spend} tasks_ok={list(tasks)} errors={list(errors)}"
             )
@@ -504,6 +505,18 @@ def _is_token_invalid(report: Optional[Any]) -> bool:
     return report is not None and not bool(getattr(report, "login_ok", False))
 
 
+def _report_kick_reason(report: Optional[Any]) -> Optional[str]:
+    """讀取 report 的明確 kick reason，兼容舊 adapter 的欄位形狀。"""
+    if report is None or not bool(getattr(report, "kicked", False)):
+        return None
+    from ws_token.client import normalize_kick_reason
+
+    reason = normalize_kick_reason(getattr(report, "kick_reason", None))
+    return reason or normalize_kick_reason(
+        getattr(report, "close_reason", None)
+    )
+
+
 def _report_kicked(report: Optional[Any]) -> bool:
     """True iff a run explicitly reported the login-conflict push (cmd 259).
 
@@ -514,7 +527,7 @@ def _report_kicked(report: Optional[Any]) -> bool:
     if report is None or not bool(getattr(report, "kicked", False)):
         return False
     from ws_token.client import KICK_REASON_EXPLICIT
-    return getattr(report, "kick_reason", None) == KICK_REASON_EXPLICIT
+    return _report_kick_reason(report) == KICK_REASON_EXPLICIT
 
 
 def _kick_cooldown_wake_ts() -> float:
@@ -633,7 +646,8 @@ def run_ws_device_loop(ip: str, logger_obj) -> None:
                         _ensure_token(ip, cfg, logger_obj)
                         token_bootstrapped = True
                     report = run_ws_device_cycle(ip, cfg, logger_obj)
-                    if protect and _is_token_invalid(report):
+                    if (protect and _is_token_invalid(report)
+                            and not _report_kicked(report)):
                         need_refresh = True
                         logger_obj.warning(
                             f"[{ip}] ws_token token 失效，進入重撈模式（停跑 cycle，"

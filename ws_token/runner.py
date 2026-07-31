@@ -1639,6 +1639,14 @@ def run_device(device: str, *, spend: bool = False,
     except (WSLoginError, WSError, OSError) as exc:
         logger.error("ws_token runner: %s login failed: %s", device, exc)
         try:
+            kicked = _client_is_kicked(client)
+        except Exception:  # noqa: BLE001 — diagnostic metadata never masks login error
+            kicked = False
+        try:
+            kick_reason = _client_kick_reason(client)
+        except Exception:  # noqa: BLE001 — diagnostic metadata never masks login error
+            kick_reason = None
+        try:
             client.close()
         except Exception:  # noqa: BLE001 — close must never mask the login error
             logger.debug("ws_token runner: %s close after login failure raised", device,
@@ -1646,6 +1654,7 @@ def run_device(device: str, *, spend: bool = False,
         close_reason, close_detail = _client_close_metadata(client)
         return RunReport(device=device, login_ok=False, spend=spend,
                          tasks=tasks, errors={LOGIN_TASK: str(exc)},
+                         kicked=kicked, kick_reason=kick_reason,
                          close_reason=close_reason, close_detail=close_detail)
 
     serv_time = int(login.get("serv_time") or creds.login_time or 0)

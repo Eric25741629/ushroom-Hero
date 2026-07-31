@@ -1425,6 +1425,32 @@ def test_login_failure_records_error_and_runs_no_tasks(patched, monkeypatch):
     assert spy_holder["client"].closed is True
 
 
+def test_login_failure_preserves_explicit_kick_metadata(patched, monkeypatch):
+    """A cmd-259 arriving before login reply still reaches cooldown routing."""
+    _calls, spy_holder = patched
+
+    def fake_make_client(creds, **kwargs):
+        spy = _SpyClient(
+            connect_error=WSLoginError("timed out waiting for role_login_s2c"),
+            kicked=True,
+            kick_reason=KICK_REASON_EXPLICIT,
+        )
+        spy.close_reason = "explicit_login_conflict"
+        spy.close_detail = "cmd=259 reason=20"
+        spy_holder["client"] = spy
+        return spy
+
+    monkeypatch.setattr(runner, "_make_client", fake_make_client)
+
+    rep = run_device("dev", spend=False)
+
+    assert rep.login_ok is False
+    assert rep.kicked is True
+    assert rep.kick_reason == KICK_REASON_EXPLICIT
+    assert rep.close_reason == "explicit_login_conflict"
+    assert rep.close_detail == "cmd=259 reason=20"
+
+
 # --- kick detection surfaces on the report ----------------------------------
 
 def test_report_kicked_false_on_normal_run(patched):

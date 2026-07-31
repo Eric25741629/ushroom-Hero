@@ -413,6 +413,15 @@ def test_report_kicked_helper(svc):
     ) is False
     # report without a `kicked` attribute is safe (legacy / partial fakes)
     assert svc._report_kicked(types.SimpleNamespace(login_ok=True)) is False
+    # Login can fail after cmd=259 arrives; it still must enter cooldown.
+    assert svc._report_kicked(_ns(login_ok=False, kicked=True)) is True
+    # Legacy reports may only expose close_reason, or expose a callable reason.
+    assert svc._report_kicked(
+        types.SimpleNamespace(kicked=True, close_reason=KICK_REASON_EXPLICIT)
+    ) is True
+    assert svc._report_kicked(
+        types.SimpleNamespace(kicked=True, kick_reason=lambda: KICK_REASON_EXPLICIT)
+    ) is True
 
 
 def test_loop_kicked_run_sleeps_cooldown_and_skips_cycle_next_wake(svc, monkeypatch):
