@@ -2,6 +2,7 @@
 created: 2026-07-30T15:22:24.914Z
 title: Complete web H5 WS credential bootstrap
 area: auth
+priority: P1
 files:
   - game_actions/ws_phase.py:575
   - game_actions/ws_phase.py:596
@@ -39,4 +40,3 @@ files:
 - 下一次喚醒可直接完成 WS-first，不再出現 `no captured creds`。
 - 擷取失敗仍維持 Playwright fallback，不可漏跑任務或打斷 wake loop。
 - 補上完整 seed、partial seed、讀取失敗和既有 capture refresh 的目標測試。
-

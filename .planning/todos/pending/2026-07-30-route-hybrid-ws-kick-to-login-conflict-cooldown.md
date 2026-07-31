@@ -2,6 +2,7 @@
 created: 2026-07-30T15:22:24.914Z
 title: Route hybrid WS kick to login conflict cooldown
 area: runtime
+priority: P0
 files:
   - ws_token/client.py:224
   - ws_token/runner.py:1878
@@ -36,4 +37,3 @@ files:
 - 控制訊號不可被 `_run_ws_phase_for_wake()` 的 generic fallback 吞掉。
 - local/master/worker 的 dashboard 狀態與下一次喚醒時間一致。
 - 補上 hybrid kicked、一般 WS task error、transport drop 的分流測試。
-

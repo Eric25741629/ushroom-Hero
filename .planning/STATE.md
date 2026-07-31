@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: (determining...)
 status: Resuming
-last_updated: "2026-04-09T11:36:56.963Z"
+last_updated: "2026-07-31T17:32:58.764Z"
 progress:
   total_phases: 4
   completed_phases: 2
@@ -32,4 +32,11 @@ See: .planning/PROJECT.md
 
 ### Pending Todos
 
-- 3 pending: web_h5 WS credential bootstrap, hybrid WS kick routing, and cloud ladder error 19 diagnostics
+- 3 pending, ordered by priority:
+  1. [P0] Diagnose recurring 5560 WS socket closure
+  2. [P0] Route hybrid WS kick to login conflict cooldown
+  3. [P1] Complete web H5 WS credential bootstrap
+
+### Completed Todos
+
+- 2026-07-31: Diagnose cloud ladder second battle error 19; live WS verified 147/150 through 151/150, and later runs correctly skip the completed weekly task.
