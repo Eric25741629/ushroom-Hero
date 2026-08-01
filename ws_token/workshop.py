@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from ws_token import codec
-from ws_token.client import WSGameClient
+from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +362,155 @@ def collect(
 
 # 小隊加工 team_cfg_ids (手動加工 6001 excluded — it rejects team choose_food).
 TEAM_WORKSHOP_CFG_IDS = (6002, 6003)
+
+
+def switch_recipe(
+    client: WSGameClient,
+    *,
+    team_cfg_id: int,
+    food_id: int,
+    materials: Optional[dict[int, int]] = None,
+    cancel_first: bool = True,
+    current_food: Optional[int] = None,
+    timeout: Optional[float] = None,
+) -> dict:
+    """切換小隊加工配方，使用原料可製作量而不是食堂成品數量。
+
+    ``worker_pw_info`` 回傳的 ``team_cfg_id`` 會先轉成 wire 用的
+    ``configWorkshop.id``。只有目標配方確實有可製作量時才取消目前工作，避免
+    素材不足時先把正在生產的工坊清成閒置。取消/選擇的成功都以後續 18434
+    ``selected_food`` 重讀為準；遊戲對 18435 成功不一定回應同 cmd。
+    """
+    wire_id = team_cfg_id_to_workshop_id(team_cfg_id)
+    stock = materials or {}
+    count = producible_count(stock, food_id)
+
+    if current_food == food_id:
+        return {
+            "cancelled": {"ok": True, "error_code": None,
+                          "skipped": "already_selected"},
+            "chosen": {"ok": True, "food_id": food_id, "count": count,
+                       "workshop_id": wire_id, "reason": "already_selected"},
+            "food_id": food_id,
+            "count": count,
+            "workshop_id": wire_id,
+        }
+
+    if count < 1:
+        logger.info(
+            "ws_token workshop: team_cfg_id=%s food=%s has no producible units "
+            "— keep current recipe", team_cfg_id, food_id)
+        return {
+            "cancelled": {"ok": False, "error_code": None,
+                          "skipped": "no_producible_food"},
+            "chosen": {"ok": False, "food_id": food_id, "count": count,
+                       "workshop_id": wire_id, "reason": "no_count"},
+            "food_id": food_id,
+            "count": count,
+            "workshop_id": wire_id,
+        }
+
+    if cancel_first:
+        try:
+            cancelled = cancel_work(client, wire_id, timeout=timeout)
+        except WSTimeoutError:
+            logger.warning(
+                "ws_token workshop: cancel_work workshop_id=%s no response "
+                "— continue to choose", wire_id)
+            cancelled = {"ok": False, "error_code": None, "timeout": True}
+    else:
+        cancelled = {"ok": True, "error_code": None, "skipped": "not_running"}
+
+    try:
+        chosen = choose_food(client, food_k=food_id, food_v=count,
+                             workshop_id=wire_id, timeout=timeout)
+    except WSTimeoutError:
+        logger.warning(
+            "ws_token workshop: choose_food food=%s workshop_id=%s no response",
+            food_id, wire_id)
+        chosen = {"ok": False, "food_id": food_id, "count": count,
+                  "workshop_id": wire_id, "timeout": True}
+
+    logger.info(
+        "ws_token workshop: switch_recipe team_cfg_id=%s workshop_id=%s "
+        "food_id=%s count=%s cancelled_ok=%s chosen_ok=%s",
+        team_cfg_id, wire_id, food_id, count,
+        cancelled.get("ok"), chosen.get("ok"),
+    )
+    return {
+        "cancelled": cancelled,
+        "chosen": chosen,
+        "food_id": food_id,
+        "count": count,
+        "workshop_id": wire_id,
+    }
+
+
+def rotate_team_recipes(
+    client: WSGameClient,
+    *,
+    parity: int,
+    materials: Optional[dict[int, int]] = None,
+    timeout: Optional[float] = None,
+) -> dict:
+    """每 12 小時輪換兩個小隊加工配方。
+
+    偶數 parity 依序使用 ``RECIPE_FOOD_IDS``，奇數 parity 反序。已經是目標
+    配方的工坊不重送；正在做其他配方且目標可製作時才先取消再選擇。若目標
+    配方缺料，會嘗試另一個配方；兩者都缺料則保留目前狀態並回報 skip。
+    """
+    info = read_info(client, timeout=timeout)
+    teams = [w for w in info.workshops
+             if w.team_cfg_id in TEAM_WORKSHOP_CFG_IDS]
+    order = RECIPE_FOOD_IDS if parity % 2 == 0 else tuple(reversed(RECIPE_FOOD_IDS))
+    stock = materials or {}
+    switched: list[dict] = []
+
+    for i, w in enumerate(teams):
+        preferred = order[i % len(order)]
+        candidates = (preferred,) + tuple(food for food in order if food != preferred)
+        # 已經在目標配方時不需要素材快照，也不應因快照缺欄而反覆重試。
+        if w.selected_food == preferred:
+            food_id = preferred
+        else:
+            food_id, _count = _pick_producible(stock, candidates)
+        if food_id is None:
+            switched.append({
+                "team_cfg_id": w.team_cfg_id,
+                "workshop_id": w.workshop_id,
+                "action": "skipped",
+                "reason": "no_producible_food",
+                "target_food_id": preferred,
+                "food_id": None,
+                "count": 0,
+                "ok": False,
+            })
+            continue
+
+        result = switch_recipe(
+            client,
+            team_cfg_id=w.team_cfg_id,
+            food_id=food_id,
+            materials=stock,
+            cancel_first=w.is_running,
+            current_food=w.selected_food,
+            timeout=timeout,
+        )
+        already_selected = result["chosen"].get("reason") == "already_selected"
+        result = {
+            "team_cfg_id": w.team_cfg_id,
+            "target_food_id": preferred,
+            "action": "skipped" if already_selected else (
+                "switched" if result["chosen"].get("ok") else "skipped"),
+            **result,
+        }
+        if already_selected:
+            result["reason"] = "already_selected"
+        switched.append(result)
+
+    logger.info("ws_token workshop: rotate_team_recipes parity=%d switched=%d",
+                parity % 2, len(switched))
+    return {"parity": parity % 2, "switched": switched}
 
 
 def assign_idle_workshops(

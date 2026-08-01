@@ -55,6 +55,8 @@ from ws_token.workshop import (  # noqa: E402
     producible_count,
     read_dining_hall,
     read_info,
+    rotate_team_recipes,
+    switch_recipe,
     team_cfg_id_to_workshop_id,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
@@ -500,7 +502,7 @@ def _info_s2c_body(teams):
     return out
 
 
-def _assign_client(teams, *, reread=None):
+def _assign_client(teams, *, reread=None, cancel_responder=None):
     """Fake client for assign_idle_workshops tests.
 
     ``teams`` = initial 18434 state (list of (team_cfg_id, selected_food)).
@@ -518,10 +520,13 @@ def _assign_client(teams, *, reread=None):
         seq["i"] += 1
         return [s2c(CMD_INFO, info_bodies[i])]
 
-    return _client({
+    extra = {
         CMD_INFO: _info,
         CMD_CHOOSE_FOOD: lambda _b: [s2c(CMD_CHOOSE_FOOD, b"")],
-    })
+    }
+    if cancel_responder is not None:
+        extra[CMD_CANCEL_WORK] = cancel_responder
+    return _client(extra)
 
 
 def _forbid_cancel(_body):
@@ -636,5 +641,113 @@ def test_assign_no_team_workshops_is_noop():
         out = assign_idle_workshops(c, materials={6017: 999})
         assert all(cmd != CMD_CHOOSE_FOOD for _s, cmd, _b in fake.framed_sent())
         assert out["workshops"][0]["team_cfg_id"] == 6001
+    finally:
+        c.close()
+
+
+# --- switch/rotate: 12h 配方輪換 -------------------------------------------
+
+def test_switch_recipe_uses_material_count_and_cancel_first():
+    order = []
+
+    def cancel(_body):
+        order.append("cancel")
+        return [s2c(CMD_CANCEL_WORK, b"")]
+
+    c, fake = _assign_client(
+        [(6002, 8005)],
+        cancel_responder=cancel,
+    )
+    try:
+        out = switch_recipe(
+            c,
+            team_cfg_id=6002,
+            food_id=8005,
+            materials={6019: 118, 6020: 118, 6021: 1138},
+            current_food=8001,
+        )
+        assert out["chosen"]["ok"] is True
+        assert out["count"] == 59
+        assert order == ["cancel"]
+        chosen = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                  if cmd == CMD_CHOOSE_FOOD]
+        assert codec.walk_dict(bytes(chosen[0][1])) == {1: 8005, 2: 59}
+        assert chosen[0][2] == 2
+    finally:
+        c.close()
+
+
+def test_switch_recipe_does_not_cancel_when_target_has_no_materials():
+    c, fake = _assign_client(
+        [(6002, 8005)],
+        cancel_responder=lambda _body: [s2c(CMD_CANCEL_WORK, b"")],
+    )
+    try:
+        out = switch_recipe(
+            c,
+            team_cfg_id=6002,
+            food_id=8001,
+            materials={},
+            current_food=8005,
+        )
+        assert out["chosen"]["reason"] == "no_count"
+        assert CMD_CANCEL_WORK not in fake.sent_cmds()
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
+    finally:
+        c.close()
+
+
+def test_rotate_parity0_assigns_targets_without_canceling_idle_workshops():
+    c, fake = _assign_client(
+        [(6002, 0), (6003, 0)],
+        reread=[[(6002, 8005), (6003, 0)],
+                [(6002, 8005), (6003, 8001)]],
+        cancel_responder=lambda _body: [s2c(CMD_CANCEL_WORK, b"")],
+    )
+    try:
+        out = rotate_team_recipes(
+            c,
+            parity=0,
+            materials={6017: 999, 6019: 999, 6020: 999, 6021: 999},
+        )
+        assert [row["food_id"] for row in out["switched"]] == [8005, 8001]
+        assert [row["action"] for row in out["switched"]] == [
+            "switched", "switched"]
+        assert CMD_CANCEL_WORK not in fake.sent_cmds()
+        assert fake.sent_cmds().count(CMD_CHOOSE_FOOD) == 2
+    finally:
+        c.close()
+
+
+def test_rotate_cancels_running_workshop_before_switching():
+    c, fake = _assign_client(
+        [(6002, 8001)],
+        reread=[[(6002, 8005)]],
+        cancel_responder=lambda _body: [s2c(CMD_CANCEL_WORK, b"")],
+    )
+    try:
+        out = rotate_team_recipes(
+            c,
+            parity=0,
+            materials={6019: 2, 6020: 2, 6021: 2},
+        )
+        assert out["switched"][0]["chosen"]["ok"] is True
+        cancels = [codec.walk_dict(b) for _s, cmd, b in fake.framed_sent()
+                   if cmd == CMD_CANCEL_WORK]
+        assert cancels == [{1: 2}]
+    finally:
+        c.close()
+
+
+def test_rotate_accepts_already_selected_target_without_material_snapshot():
+    c, fake = _assign_client([(6002, 8005)])
+    try:
+        out = rotate_team_recipes(c, parity=0, materials={})
+        row = out["switched"][0]
+        assert row["action"] == "skipped"
+        assert row["reason"] == "already_selected"
+        assert row["chosen"]["ok"] is True
+        assert CMD_CANCEL_WORK not in fake.sent_cmds()
+        assert CMD_CHOOSE_FOOD not in fake.sent_cmds()
     finally:
         c.close()

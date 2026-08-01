@@ -218,10 +218,13 @@ def patched(monkeypatch):
                         lambda c, **k: (calls.append(("spirit", "draw_all_free"))
                                         or {"pools_drawn": 0, "rewards": {}, "results": []}))
 
-    # workshop (閒置才補配方; idempotent, no cadence state)
-    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
-                        lambda c, **k: (calls.append(("workshop", "assign_idle_workshops"))
-                                        or {"workshops": []}))
+    # workshop (12h 兩配方輪換; cadence state is handled by _run_workshop)
+    monkeypatch.setattr(
+        runner.workshop,
+        "rotate_team_recipes",
+        lambda c, **k: (calls.append(("workshop", "rotate_team_recipes"))
+                        or {"parity": k.get("parity", 0), "switched": []}),
+    )
     _mem_state: dict = {}
     monkeypatch.setattr(runner.ws_state, "load_state",
                         lambda device, **k: dict(_mem_state))
@@ -1686,8 +1689,8 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
     assert rep.tasks["carpark"]["skipped"]
     # spirit / workshop / couple ran end-to-end over the real code
     assert rep.tasks["spirit"]["pools_drawn"] == 0
-    # workshop: empty info -> no team workshops to assign -> empty result
-    assert rep.tasks["workshop"]["workshops"] == []
+    # workshop: empty info -> no team workshops to rotate -> empty result
+    assert rep.tasks["workshop"]["switched"] == []
     assert rep.tasks["couple"]["skipped"] == "no partner"
     # lamp is opt-in (open_lamp defaults False) so it must NOT have run.
     assert "lamp" not in rep.tasks
@@ -1994,35 +1997,52 @@ class _FakeTracker:
         self.counts = dict(counts)
 
 
-def test_run_workshop_passes_tracker_counts_as_materials(monkeypatch):
-    # _run_workshop threads inventory_tracker.counts into assign_idle_workshops
-    # (the 0x0402 原料庫存 snapshot) — no parity/cadence/state involved.
+def test_run_workshop_passes_tracker_counts_as_materials(monkeypatch, tmp_path):
+    # _run_workshop threads inventory_tracker.counts into rotate_team_recipes
+    # and writes the first parity after a confirmed target.
     from ws_token import runner
     seen = {}
     monkeypatch.setattr(
-        runner.workshop, "assign_idle_workshops",
-        lambda c, *, materials: seen.update(materials)
-        or {"workshops": [{"team_cfg_id": 6002, "action": "assigned",
-                           "food_id": 8005, "count": 59, "ok": True}]})
+        runner.workshop,
+        "rotate_team_recipes",
+        lambda c, *, materials, parity: seen.update(materials)
+        or {"parity": parity, "switched": [
+            {"team_cfg_id": 6002, "action": "switched",
+             "food_id": 8005, "chosen": {"ok": True}}]},
+    )
     tracker = _FakeTracker({6017: 7, 6019: 118, 6020: 118, 6021: 1138})
-    out = runner._run_workshop(object(), tracker, device="devA")
+    out = runner._run_workshop(object(), tracker, device="devA",
+                               state_dir=tmp_path, now=1000)
     assert seen == {6017: 7, 6019: 118, 6020: 118, 6021: 1138}
-    assert out["workshops"][0]["food_id"] == 8005
+    assert out["rotated"] is True
+    assert out["switched"][0]["food_id"] == 8005
     assert "missing_materials" not in out
 
 
-def test_run_workshop_is_idempotent_no_cadence(monkeypatch):
-    # Repeated calls always invoke assign_idle_workshops (idempotent — it only
-    # touches idle workshops, so re-running is harmless). No 12h gate.
+def test_run_workshop_rotates_only_after_12h(monkeypatch, tmp_path):
+    # The first pass uses parity 0, the next pass inside 12h is gated, and the
+    # following pass uses parity 1.
     from ws_token import runner
     calls = []
-    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
-                        lambda c, *, materials: calls.append(1) or {"workshops": []})
-    tracker = _FakeTracker({6017: 4})
-    runner._run_workshop(object(), tracker, device="devB")
-    runner._run_workshop(object(), tracker, device="devB")
-    runner._run_workshop(object(), tracker, device="devB")
-    assert calls == [1, 1, 1]  # ran every time, never gated
+
+    def fake_rotate(_client, *, materials, parity):
+        calls.append((dict(materials), parity))
+        return {"parity": parity, "switched": [
+            {"team_cfg_id": 6002, "reason": "already_selected",
+             "chosen": {"ok": True}}]}
+
+    monkeypatch.setattr(runner.workshop, "rotate_team_recipes", fake_rotate)
+    tracker = _FakeTracker({6017: 4, 6019: 4, 6020: 4, 6021: 4})
+    first = runner._run_workshop(object(), tracker, device="devB",
+                                 state_dir=tmp_path, now=1000)
+    gated = runner._run_workshop(object(), tracker, device="devB",
+                                 state_dir=tmp_path, now=1000 + 11 * 3600)
+    second = runner._run_workshop(object(), tracker, device="devB",
+                                  state_dir=tmp_path, now=1000 + 12 * 3600 + 1)
+    assert first["rotated"] is True
+    assert gated["rotated"] is False
+    assert second["rotated"] is True
+    assert [parity for _materials, parity in calls] == [0, 1]
 
 
 def test_run_workshop_warns_and_reports_missing_materials(monkeypatch):
@@ -2031,9 +2051,12 @@ def test_run_workshop_warns_and_reports_missing_materials(monkeypatch):
     # downstream), never forged into a count.
     from ws_token import runner
     seen = {}
-    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
-                        lambda c, *, materials: seen.update(materials)
-                        or {"workshops": []})
+    monkeypatch.setattr(
+        runner.workshop,
+        "rotate_team_recipes",
+        lambda c, *, materials, parity: seen.update(materials)
+        or {"parity": parity, "switched": []},
+    )
     # only 6017 present; 6019/6020/6021 (needed by 8005) are missing
     tracker = _FakeTracker({6017: 10})
     out = runner._run_workshop(object(), tracker, device="devC")
@@ -2043,8 +2066,11 @@ def test_run_workshop_warns_and_reports_missing_materials(monkeypatch):
 
 def test_run_workshop_no_missing_when_all_materials_present(monkeypatch):
     from ws_token import runner
-    monkeypatch.setattr(runner.workshop, "assign_idle_workshops",
-                        lambda c, *, materials: {"workshops": []})
+    monkeypatch.setattr(
+        runner.workshop,
+        "rotate_team_recipes",
+        lambda c, *, materials, parity: {"parity": parity, "switched": []},
+    )
     tracker = _FakeTracker({6017: 1, 6019: 1, 6020: 1, 6021: 1})
     out = runner._run_workshop(object(), tracker, device="devD")
     assert "missing_materials" not in out
