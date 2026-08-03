@@ -3199,7 +3199,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             presenceEl.textContent = '腳本執行';
             presenceEl.className = 'acct-presence bot';
           } else if (OBSERVER_ZH[info.lease_owner]) {
-            presenceEl.textContent = '在線觀察';
+            presenceEl.textContent = OBSERVER_ZH[info.lease_owner];
             presenceEl.title = OBSERVER_ZH[info.lease_owner];
             presenceEl.className = 'acct-presence watch';
           } else if (info.lease_owner === 'tool') {

@@ -28,6 +28,25 @@ def test_lease_fields_falls_back_to_real_ip_key():
     assert _lease_fields(leases, "127.0.0.1:5554", "5554")["lease_owner"] == "mount_tracker"
 
 
+def test_lease_fields_preserves_observer_owner_per_device():
+    from control_panel.routes_status import _lease_fields
+
+    leases = {
+        "emulator-5554": _lease("emulator-5554", Owner.ONLINE_MONITOR),
+        "emulator-5556": _lease("emulator-5556", Owner.ONLINE_CHECK),
+        "emulator-5558": _lease("emulator-5558", Owner.MOUNT_TRACKER),
+    }
+
+    assert {
+        device: _lease_fields(leases, device, device)["lease_owner"]
+        for device in leases
+    } == {
+        "emulator-5554": "online_monitor",
+        "emulator-5556": "online_check",
+        "emulator-5558": "mount_tracker",
+    }
+
+
 # --- ws_session.precheck -----------------------------------------------------
 
 def test_precheck_reports_lease_and_online(monkeypatch):
