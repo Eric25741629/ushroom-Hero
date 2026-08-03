@@ -53,6 +53,10 @@ _ADVANCE_TIMEOUT = 40       # 從主面板進到關卡視圖上限
 _BATTLE_TIMEOUT = 90        # 單關等結果上限(慢速裝置戰鬥動畫)
 _SETTLE_TIMEOUT = 40        # 結算退出回主面板上限
 _MAX_STAGES = 80            # 單局安全上限關數
+# 結算「回到主面板」需連續穩定，避免獎勵/本局報告延遲彈出造成假 HOME
+# （2026-08-04 log：settle 成功後 1s 內開下一局 → state=SETTLE 空等逾時）
+_HOME_STABLE_POLLS = 3      # 連續幾次讀到 HOME 才算真回主面板
+_HOME_STABLE_GAP = 0.5      # 穩定檢查間隔(秒)
 
 
 # --- cocos JS -----------------------------------------------------------------
@@ -264,26 +268,61 @@ def _shot(cb: Optional[Callable[[str], None]], tag: str) -> None:
             pass
 
 
+def _active_flags(s: dict) -> dict:
+    """只留 truthy flag，方便 log 診斷 SETTLE/UNKNOWN。"""
+    if not isinstance(s, dict):
+        return {}
+    return {k: v for k, v in s.items() if v}
+
+
+def _dismiss_settle_overlay(page: Any, s: dict) -> bool:
+    """關掉結算獎勵 / 本局報告。回傳是否有發出關閉動作。"""
+    if s.get("settleGoods"):
+        return emit(page, BTN_SETTLE_GOODS)
+    if s.get("recordView"):
+        return emit(page, BTN_REPORT_CLOSE)
+    return False
+
+
+# 進場狀態機：狀態 → 動作。SETTLE/結果窗必須可關閉，不能只 wait。
+# （2026-08-04：多裝置 log 在「上一局 settle 後再開下一局」卡 SETTLE 空等 40s）
+_ADVANCE_EMIT = {
+    HOME: BTN_HOME_START,
+    ENTER: BTN_ENTER_START,
+    CONFIRM: BTN_MSG_ENSURE,
+    REMAKE: BTN_REMAKE_ENTER,
+    RESULT_WIN: BTN_RESULT_CLOSE,
+    RESULT_LOSE: BTN_RESULT_CLOSE,
+    END_TIPS: BTN_ENDTIPS_END,  # 殘留「結束本局」對話框先往結算確認走
+}
+
+
 def advance_to_stage(page: Any, shot: Optional[Callable] = None) -> bool:
-    """從主面板/任意開局窗，逐步 emit 直到進入關卡視圖(STAGE)。"""
+    """從主面板/任意開局窗，以狀態機逐步前進直到關卡視圖(STAGE)。
+
+    每個 tick：read_state → classify → 依狀態表 emit/關閉覆蓋層 → pace。
+    與舊版差異：SETTLE（本局報告/結算獎勵）會主動關閉，不再無動作空等逾時。
+    """
     deadline = time.monotonic() + _ADVANCE_TIMEOUT
     while time.monotonic() < deadline:
-        st = state(page)
+        s = read_state(page)
+        st = classify(s)
         if st == STAGE:
             logger.info("[rogue_h5] 已到關卡視圖")
             _shot(shot, "stage")
             return True
-        act = {
-            HOME: BTN_HOME_START,
-            ENTER: BTN_ENTER_START,
-            CONFIRM: BTN_MSG_ENSURE,
-            REMAKE: BTN_REMAKE_ENTER,
-        }.get(st)
-        if act:
+
+        if st == SETTLE:
+            logger.info("[rogue_h5] 進場 state=SETTLE → 關閉覆蓋層 flags=%s", _active_flags(s))
+            if not _dismiss_settle_overlay(page, s):
+                logger.info("[rogue_h5] 進場 SETTLE 無可用關閉鈕，等待 flags=%s", _active_flags(s))
+        elif st in _ADVANCE_EMIT:
+            act = _ADVANCE_EMIT[st]
             logger.info("[rogue_h5] 進場 state=%s → emit", st)
             emit(page, act)
         else:
-            logger.info("[rogue_h5] 進場 state=%s 等待", st)
+            # UNKNOWN 等：打 flags 方便對 live 場景
+            logger.info("[rogue_h5] 進場 state=%s 等待 flags=%s", st, _active_flags(s))
         time.sleep(_PACE)
     logger.warning("[rogue_h5] 進場逾時，未到關卡視圖")
     return False
@@ -425,33 +464,67 @@ def battle_loop(
 
 
 def settle_run(page: Any, shot: Optional[Callable] = None) -> bool:
-    """結束本局並回 RogueView 主面板：紅箭頭 → 結束本局 → 確定 → 關獎勵/報告。回傳是否回到主面板。"""
-    # 開結束本局對話框
+    """結束本局並回 RogueView 主面板（結算狀態機）。
+
+    階段：
+      1) OPEN_END_TIPS  — 紅箭頭 → 等 END_TIPS
+      2) CONFIRM_END    — 「結束本局」→ 等 CONFIRM → 確定
+      3) DISMISS        — 關獎勵/本局報告，直到 *穩定* HOME
+
+    穩定 HOME：連續 _HOME_STABLE_POLLS 次 classify==HOME。
+    避免「確定後短暫 HOME → 延遲報告/獎勵才跳出」被誤判成功，
+    進而在下一局 advance 卡在 SETTLE（2026-08-04 多裝置實測）。
+    """
+    # --- 階段 1：開結束本局對話框 ---
     emit(page, BTN_STAGE_EXIT)
     if not _wait_state(page, {END_TIPS}, 10):
         logger.warning("[rogue_h5] 結算：未開出結束本局對話框")
         return False
+
+    # --- 階段 2：確認結束本局 ---
     emit(page, BTN_ENDTIPS_END)                 # 結束本局
     if not _wait_state(page, {CONFIRM}, 10):
         logger.warning("[rogue_h5] 結算：未出結算確認窗")
         return False
     emit(page, BTN_MSG_ENSURE)                  # 確定「是否確認結算本局」
     _shot(shot, "settled")
-    # 關結算後的獎勵 + 本局報告，逐步驗證回到主面板
+
+    # --- 階段 3：關閉覆蓋層，穩定回到主面板 ---
     deadline = time.monotonic() + _SETTLE_TIMEOUT
+    home_hits = 0
     while time.monotonic() < deadline:
         s = read_state(page)
         st = classify(s)
         if st == HOME:
-            logger.info("[rogue_h5] 本局結束，回到主面板")
-            return True
-        if s.get("settleGoods"):
-            emit(page, BTN_SETTLE_GOODS)
-        elif s.get("recordView"):
-            emit(page, BTN_REPORT_CLOSE)
+            home_hits += 1
+            if home_hits >= _HOME_STABLE_POLLS:
+                logger.info("[rogue_h5] 本局結束，回到主面板(stable=%d)", home_hits)
+                return True
+            time.sleep(_HOME_STABLE_GAP)
+            continue
+
+        # 離開 HOME 就重置穩定計數
+        home_hits = 0
+        if st == SETTLE or s.get("settleGoods") or s.get("recordView"):
+            logger.info("[rogue_h5] 結算 state=%s → 關閉覆蓋層 flags=%s", st, _active_flags(s))
+            if not _dismiss_settle_overlay(page, s):
+                logger.info("[rogue_h5] 結算覆蓋層無關閉鈕，等待 flags=%s", _active_flags(s))
+        elif st in (RESULT_WIN, RESULT_LOSE):
+            logger.info("[rogue_h5] 結算殘留結果窗 → 關閉")
+            emit(page, BTN_RESULT_CLOSE)
+        elif st == END_TIPS:
+            logger.info("[rogue_h5] 結算再遇 END_TIPS → 結束本局")
+            emit(page, BTN_ENDTIPS_END)
+        elif st == CONFIRM:
+            logger.info("[rogue_h5] 結算再遇 CONFIRM → 確定")
+            emit(page, BTN_MSG_ENSURE)
+        else:
+            logger.info("[rogue_h5] 結算 state=%s 等待 flags=%s", st, _active_flags(s))
         time.sleep(_PACE)
-    logger.warning("[rogue_h5] 結算後未確認回主面板")
-    return state(page) == HOME
+
+    final = state(page)
+    logger.warning("[rogue_h5] 結算後未確認回主面板(final=%s)", final)
+    return final == HOME
 
 
 def _wait_state(page: Any, targets: set, timeout: float) -> bool:

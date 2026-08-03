@@ -172,3 +172,163 @@ def test_open_view_skips_when_already_open():
     page.opened.append("pre")  # 假裝已經開著
     assert cocos_view.open_view(page, "DoubleChapterMainView") is True
     assert page.opened == ["pre"]  # 沒有重複 openView
+
+
+# --- 進場/結算狀態機（2026-08-04：SETTLE 殘窗 + 過早 HOME）-----------------
+
+def _flags(**over):
+    return _blank(**over)
+
+
+class _FsmPage:
+    """依目前 flags 回 read_state；emit 時依路徑推進，模擬 cocos UI 轉場。"""
+
+    def __init__(self, initial):
+        self.flags = dict(initial)
+        self.emits = []
+        self._after_ensure_seq = None
+        self._after_ensure_idx = 0
+        self._ensure_armed = False
+
+    def set_after_ensure_sequence(self, seq):
+        self._after_ensure_seq = [dict(x) for x in seq]
+        self._after_ensure_idx = 0
+
+    def evaluate(self, js, arg=None):
+        if js == r._STATE_JS:
+            if (
+                self._ensure_armed
+                and self._after_ensure_seq is not None
+                and self._after_ensure_idx < len(self._after_ensure_seq)
+            ):
+                self.flags = dict(self._after_ensure_seq[self._after_ensure_idx])
+                self._after_ensure_idx += 1
+            return dict(self.flags)
+        if js == r._EMIT_JS:
+            self.emits.append(arg)
+            self._on_emit(arg)
+            return {"found": True, "active": True, "tried": ["emit"]}
+        return {}
+
+    def _on_emit(self, path):
+        raise NotImplementedError
+
+
+class _AdvancePage(_FsmPage):
+    def _on_emit(self, path):
+        if path == r.BTN_HOME_START:
+            # 點開始後先冒出延遲本局報告（真實 log 竞態）
+            self.flags = _flags(rogueView=True, recordView=True)
+        elif path == r.BTN_REPORT_CLOSE:
+            self.flags = _flags(rogueView=True, enterView=True)
+        elif path == r.BTN_SETTLE_GOODS:
+            self.flags = _flags(rogueView=True, enterView=True)
+        elif path == r.BTN_ENTER_START:
+            self.flags = _flags(confirm=True, confirmText="是否確認開啟新一局試煉")
+        elif path == r.BTN_MSG_ENSURE:
+            self.flags = _flags(rogueView=True, mainView=True)
+        elif path == r.BTN_REMAKE_ENTER:
+            self.flags = _flags(rogueView=True, mainView=True)
+        elif path == r.BTN_RESULT_CLOSE:
+            self.flags = _flags(rogueView=True, mainView=True)
+
+
+def test_advance_to_stage_dismisses_delayed_settle_report(monkeypatch):
+    """回歸：結算後點開始，延遲本局報告蓋住進場 → 必須關掉再進 STAGE。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_ADVANCE_TIMEOUT", 5)
+    page = _AdvancePage(_flags(rogueView=True))
+    assert r.advance_to_stage(page) is True
+    assert r.BTN_HOME_START in page.emits
+    assert r.BTN_REPORT_CLOSE in page.emits
+    assert r.BTN_ENTER_START in page.emits
+    assert r.BTN_MSG_ENSURE in page.emits
+
+
+def test_advance_to_stage_dismisses_settle_goods(monkeypatch):
+    """進場途中遇到 GoodsGetView 也要關，不能只 wait。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_ADVANCE_TIMEOUT", 5)
+    page = _AdvancePage(_flags(rogueView=True, settleGoods=True))
+    assert r.advance_to_stage(page) is True
+    assert r.BTN_SETTLE_GOODS in page.emits
+
+
+def test_advance_to_stage_closes_result_then_reaches_stage(monkeypatch):
+    """進場狀態機要收掉殘留結果窗再視為 STAGE。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_ADVANCE_TIMEOUT", 5)
+    page = _AdvancePage(_flags(rogueView=True, mainView=True, resultView=True, lose=True))
+    assert r.advance_to_stage(page) is True
+    assert r.BTN_RESULT_CLOSE in page.emits
+
+
+class _SettlePage(_FsmPage):
+    def _on_emit(self, path):
+        if path == r.BTN_STAGE_EXIT:
+            self.flags = _flags(rogueView=True, mainView=True, endTips=True)
+        elif path == r.BTN_ENDTIPS_END:
+            self.flags = _flags(confirm=True, confirmText="是否確認結算本局")
+        elif path == r.BTN_MSG_ENSURE:
+            # 只 armed；下一拍 read_state 再消費序列，避免漏掉第一幀 HOME
+            self._ensure_armed = True
+            self._after_ensure_idx = 0
+            if not self._after_ensure_seq:
+                self.flags = _flags(rogueView=True)
+        elif path == r.BTN_REPORT_CLOSE:
+            # 關報告後給穩定 HOME
+            self._after_ensure_seq = [
+                _flags(rogueView=True),
+                _flags(rogueView=True),
+                _flags(rogueView=True),
+                _flags(rogueView=True),
+            ]
+            self._after_ensure_idx = 0
+            self.flags = _flags(rogueView=True)
+        elif path == r.BTN_SETTLE_GOODS:
+            self.flags = _flags(rogueView=True)
+
+
+def test_settle_run_stable_home_dismisses_late_report(monkeypatch):
+    """回歸：確定後先閃 HOME 再出本局報告 → 不可提早成功，須關報告並穩定 HOME。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_STATE_POLL", 0)
+    monkeypatch.setattr(r, "_HOME_STABLE_GAP", 0)
+    monkeypatch.setattr(r, "_HOME_STABLE_POLLS", 3)
+    monkeypatch.setattr(r, "_SETTLE_TIMEOUT", 5)
+
+    page = _SettlePage(_flags(rogueView=True, mainView=True))
+    page.set_after_ensure_sequence([
+        _flags(rogueView=True),                         # 過早 HOME
+        _flags(rogueView=True),                         # 第 2 次 HOME（未滿 3）
+        _flags(rogueView=True, recordView=True),        # 延遲報告
+        _flags(rogueView=True),
+        _flags(rogueView=True),
+        _flags(rogueView=True),
+    ])
+    assert r.settle_run(page) is True
+    assert r.BTN_REPORT_CLOSE in page.emits
+
+
+def test_settle_run_rejects_unstable_home(monkeypatch):
+    """HOME 無法穩定維持時應結算失敗，避免誤開下一局。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_STATE_POLL", 0)
+    monkeypatch.setattr(r, "_HOME_STABLE_GAP", 0)
+    monkeypatch.setattr(r, "_HOME_STABLE_POLLS", 3)
+    monkeypatch.setattr(r, "_SETTLE_TIMEOUT", 1)
+
+    page = _SettlePage(_flags(rogueView=True, mainView=True))
+    page.set_after_ensure_sequence([
+        _flags(rogueView=True),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+        _flags(),
+    ])
+    assert r.settle_run(page) is False
