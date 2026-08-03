@@ -524,7 +524,8 @@ def settle_run(page: Any, shot: Optional[Callable] = None) -> bool:
 
     final = state(page)
     logger.warning("[rogue_h5] 結算後未確認回主面板(final=%s)", final)
-    return final == HOME
+    # 逾時後的單次 HOME 不代表穩定，否則仍可能漏掉稍後彈出的結算覆蓋層。
+    return False
 
 
 def _wait_state(page: Any, targets: set, timeout: float) -> bool:

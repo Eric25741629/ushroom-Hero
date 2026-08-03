@@ -332,3 +332,16 @@ def test_settle_run_rejects_unstable_home(monkeypatch):
         _flags(),
     ])
     assert r.settle_run(page) is False
+
+
+def test_settle_run_timeout_rejects_single_final_home(monkeypatch):
+    """逾時後最後一拍 HOME 未達穩定次數，不可誤判結算成功。"""
+    monkeypatch.setattr(r, "_SETTLE_TIMEOUT", 1)
+    monkeypatch.setattr(r, "_wait_state", lambda *_args, **_kwargs: True)
+    ticks = iter([0.0, 2.0])
+    monkeypatch.setattr(r.time, "monotonic", lambda: next(ticks))
+
+    page = _SettlePage(_flags(rogueView=True, mainView=True))
+    page.set_after_ensure_sequence([_flags(rogueView=True)])
+
+    assert r.settle_run(page) is False
