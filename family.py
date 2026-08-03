@@ -106,6 +106,19 @@ class Family_manager(device):
                 print(f"{self.device_ip} 家族操作冷卻中 (上次執行: {record.get('datetime', 'unknown')})")
                 return
 
+        # web_h5：家族/寶箱/雪國由 Cocos Label 驅動；只有 Cocos 不可用時才
+        # 退回下面原有的 ADB OCR 流程。
+        page = getattr(self.device, "_page", None)
+        if page is not None and getattr(self.device, "backend_kind", None) == "web_h5":
+            try:
+                from game_actions.cocos_family import run_family_h5
+                if run_family_h5(page):
+                    time_manager.record_time("donate_family")
+                    time_manager.record_time("go_to_family_cooldown")
+                    return
+            except Exception as exc:
+                print(f"{self.device_ip} H5 家族 Cocos 流程失敗，退回 ADB fallback: {exc}")
+
         time.sleep(0.3)
         self.device.click(391, 938)
         time.sleep(1)

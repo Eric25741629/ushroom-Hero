@@ -200,14 +200,32 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 except Exception as stop_err:
                     logger.warning(f"[{ip}] 達重啟上限後停止遊戲失敗: {stop_err}")
                 return False
-            # Startup loop only decides startup-specific things; popup cleanup is delegated to the shared resolver.
-            current_stage = resolve_stage_until_stable(
-                d,
-                ip,
-                Cnn_model=None,
-                reward_fn=reward_fn,
-                logger=logger,
-            )
+            # H5 已知頁面直接由 Cocos navigator 收回主頁，不為 HOME/FARM/MINE 等
+            # 可確定狀態做全幀 OCR。未知 overlay 與登入衝突仍交給下方舊 detector。
+            try:
+                from utils.page_detector import PageState, detect_known_h5_page
+                known_page = detect_known_h5_page(d, ip)
+                if known_page == PageState.MAIN:
+                    current_stage = "主頁面"
+                elif known_page is not None:
+                    from utils.cocos_navigator import CocosNavigator
+                    page = getattr(d, "_page", None)
+                    if page is not None and CocosNavigator(page).goto_main():
+                        logger.info(f"[{ip}] 啟動 Cocos 從 {known_page.value} 返回主頁")
+                        current_stage = "主頁面"
+                    else:
+                        current_stage = resolve_stage_until_stable(
+                            d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
+                        )
+                else:
+                    current_stage = resolve_stage_until_stable(
+                        d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
+                    )
+            except Exception as cocos_exc:
+                logger.debug(f"[{ip}] 啟動 Cocos 探測失敗，退回 OCR: {cocos_exc}")
+                current_stage = resolve_stage_until_stable(
+                    d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
+                )
             last_stage = current_stage
             logger.info(f"[{ip}] 啟動狀態判定: {current_stage}")
 

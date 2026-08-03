@@ -379,6 +379,27 @@ def try_detect_main_page_fast(d: Any, device_ip: Optional[str]) -> Optional[str]
     return None
 
 
+def detect_known_h5_page(d: Any, device_ip: Optional[str]) -> Optional[PageState]:
+    """啟動流程用的唯讀 Cocos 探測。
+
+    只回傳能由現有 fingerprint 明確辨識的狀態。未識別 overlay、Cocos 尚未
+    載入或非 web_h5 一律回 None，讓呼叫端保留 OCR 安全網。
+    """
+    if getattr(d, "backend_kind", None) != "web_h5":
+        return None
+    page = getattr(d, "_page", None)
+    if page is None:
+        return None
+    try:
+        state = PageDetector(page, ocr_enabled=False).detect_via_cocos()
+    except Exception as exc:
+        logger.debug(f"[page_detector] known-page probe failed for {device_ip}: {exc}")
+        return None
+    if state in (None, PageState.UNKNOWN, PageState.LOADING, PageState.GUIDE):
+        return None
+    return state
+
+
 def _legacy_fast_path_enabled(device_ip: Optional[str]) -> bool:
     """Both `experimental_cocos_navigation: true` AND `backend == 'web_h5'`."""
     if not device_ip:

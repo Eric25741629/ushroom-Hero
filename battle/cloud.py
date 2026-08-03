@@ -5,6 +5,7 @@ import time
 
 import img_tools
 from json_manager import return_time, time_recording
+from utils.logging_utils import logger
 from utils.cocos_view import open_view, web_page
 
 # 雲纏天梯試煉的 cocos 主面板（double_ladder / module 64，見 ws_token/ladder_reward.py）。
@@ -16,10 +17,13 @@ def into_cloud(d):
     """進雲纏天梯主面板。web_h5 直開 view；adb 走原本的副本清單捲動 + OCR。"""
     page = web_page(d)
     if page is not None:
-        if not open_view(page, LADDER_VIEW):
-            return False
-        img_tools.click_str_by_server(d, '結算獎勵')
-        return True
+        try:
+            from game_actions.cocos_cloud_battle import CocosCloudBattle
+            if CocosCloudBattle(page).enter():
+                return True
+            logger.warning("[cloud] Cocos 進場未驗證成功，退回 OCR")
+        except Exception as exc:
+            logger.warning(f"[cloud] Cocos 進場失敗，退回 OCR: {exc}")
 
     img_tools.click_str_by_server(d, '副本', y_range=(870, 973))
     time.sleep(2)
@@ -41,6 +45,15 @@ def into_cloud(d):
 
 def friend_help(d, name='大車輪'):
     """請求朋友幫助"""
+    page = web_page(d)
+    if page is not None:
+        try:
+            from game_actions.cocos_cloud_battle import CocosCloudBattle
+            if CocosCloudBattle(page).friend_help(name):
+                return True
+            logger.warning("[cloud] Cocos 戰友設置未完成，退回 OCR")
+        except Exception as exc:
+            logger.warning(f"[cloud] Cocos 戰友設置失敗，退回 OCR: {exc}")
     img_tools.click_str_by_server(d, '戰友設置', y_range=(726, 827))
     time.sleep(2)
     img_tools.click_str_by_server(d, '戰友招募', y_range=(583, 631))
@@ -53,10 +66,20 @@ def friend_help(d, name='大車輪'):
     time.sleep(0.5)
     d.click(276, 888)
     img_tools.click_str_by_server(d, '關閉')
+    return True
 
 
 def help_friend(d):
     """幫助朋友"""
+    page = web_page(d)
+    if page is not None:
+        try:
+            from game_actions.cocos_cloud_battle import CocosCloudBattle
+            if CocosCloudBattle(page).help_friend():
+                return True
+            logger.warning("[cloud] Cocos 助戰申請未完成，退回 OCR")
+        except Exception as exc:
+            logger.warning(f"[cloud] Cocos 助戰申請失敗，退回 OCR: {exc}")
     img_tools.click_str_by_server(d, '助戰設置', y_range=(726, 827))
     time.sleep(2)
     img = d.screenshot(format='opencv')
@@ -70,6 +93,7 @@ def help_friend(d):
     d.click(276, 888)
     time.sleep(1)
     img_tools.click_str_by_server(d, '關閉')
+    return True
 
 
 def cloud_fight_pre(d, ip, name='大車輪'):
@@ -89,6 +113,15 @@ def cloud_fight_pre_help(d):
 
 
 def check_if_pass(d):
+    page = web_page(d)
+    if page is not None:
+        try:
+            from game_actions.cocos_cloud_battle import CocosCloudBattle
+            passed = CocosCloudBattle(page).is_passed()
+            if passed is not None:
+                return passed
+        except Exception as exc:
+            logger.warning(f"[cloud] Cocos 最高難度判斷失敗，退回 OCR: {exc}")
     img = d.screenshot(format='opencv')
     result = img_tools.analyze_skill_via_http(img)
     if result['success'] != False:
@@ -100,6 +133,15 @@ def check_if_pass(d):
 
 
 def cloud_fighting(d, ip, name='大車輪'):
+    page = web_page(d)
+    if page is not None:
+        try:
+            from game_actions.cocos_cloud_battle import CocosCloudBattle
+            if CocosCloudBattle(page).cloud_fighting():
+                return True
+            logger.warning(f"[{ip}] cloud Cocos 流程未完成，退回 OCR")
+        except Exception as exc:
+            logger.warning(f"[{ip}] cloud Cocos 流程失敗，退回 OCR: {exc}")
     state = into_cloud(d)
     if check_if_pass(d) and state:
         d.click(276, 888)
@@ -143,6 +185,7 @@ def cloud_fighting(d, ip, name='大車輪'):
     d.click(276, 888)
     time.sleep(1)
     img_tools.click_str_by_server(d, '關閉')
+    return True
 
 
 def run_weekly_cloud_pre_single(d, ip: str, name='大車輪') -> None:

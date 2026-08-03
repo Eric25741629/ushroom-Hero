@@ -27,8 +27,49 @@ from utils.screenshot_helpers import save_error_screenshot
 logger = logging.getLogger("farm_v2.manager")
 
 
+def _h5_work_is_active(d: "uiauto.Device") -> Optional[bool]:
+    page = getattr(d, "_page", None)
+    if page is None or getattr(d, "backend_kind", None) != "web_h5":
+        return None
+    from utils.cocos_ui import CocosUI
+    ui = CocosUI(page)
+    if not ui.click_text("打工", root="PlantMainView"):
+        return None
+    state = ui.wait_for_text(("開始打工", "取消打工"), timeout=5)
+    for text in ("關閉", "返回"):
+        if ui.has_text(text):
+            ui.click_text(text)
+            break
+    if state == "取消打工":
+        return True
+    if state == "開始打工":
+        return False
+    return None
+
+
 def _ensure_work_active(d: "uiauto.Device") -> None:
     """Open work panel, check if 打工 is running. If not, start it."""
+    page = getattr(d, "_page", None)
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        from utils.cocos_ui import CocosUI
+        ui = CocosUI(page)
+        if not ui.click_text("打工", root="PlantMainView"):
+            logger.warning("H5 找不到打工入口")
+            return
+        state = ui.wait_for_text(("開始打工", "取消打工"), timeout=5)
+        if state == "開始打工":
+            ui.click_text("開始打工")
+            logger.info("H5 打工未啟動，已用 Cocos 開始打工")
+        elif state == "取消打工":
+            logger.info("H5 打工已在執行中")
+        else:
+            logger.warning("H5 無法確認打工狀態")
+        for text in ("關閉", "返回"):
+            if ui.has_text(text):
+                ui.click_text(text)
+                break
+        return
+
     from farm_v2.config import COORD, TIMING
     from farm_v2.operations.base import click_with_jitter, wait_jitter
 
@@ -77,7 +118,15 @@ def navigate_to_farm(d: "uiauto.Device", cnn_model=None, device_ip: Optional[str
     # Only fires when the device has experimental_cocos_navigation=true in
     # bot_config.json. None means "not applicable" (flag off / not web_h5) —
     # caller MUST fall back to the click-based logic below.
-    cocos_result = try_cocos_navigate(d, device_ip, "farm")
+    if getattr(d, "backend_kind", None) == "web_h5" and getattr(d, "_page", None) is not None:
+        try:
+            from utils.cocos_navigator import CocosNavigator
+            cocos_result = CocosNavigator(d._page).goto_farm()
+        except Exception as exc:
+            logger.warning(f"[farm_v2] H5 Cocos 導航例外: {exc}")
+            cocos_result = False
+    else:
+        cocos_result = try_cocos_navigate(d, device_ip, "farm")
     if cocos_result is True:
         logger.info(f"[farm_v2] cocos fast-path succeeded for {device_ip}")
         # Saved roughly the full OCR wait + two animations (≈8s) vs blind clicks.
@@ -170,7 +219,8 @@ def farm(
     # at the very end. Enabling it up front (the old order) forced the harvest
     # card flow to cancel it again, and made `is_working` always True — which
     # silently gated out seed buying so 打工 eventually ran out of seeds.
-    is_working = check_if_parttime(d)
+    h5_working = _h5_work_is_active(d)
+    is_working = check_if_parttime(d) if h5_working is None else h5_working
     if is_working:
         logger.info("打工中，種植交給打工，本輪只補種子/收散落獎勵")
 
@@ -212,46 +262,61 @@ def farm(
     else:
         logger.info(f"[harvest_card] 本週已執行豐收卡,略過 - {device_ip}")
 
-    start = time.time()
-    while time.time() - start < 25:
-        from img_tools import find_and_click
+    page = getattr(d, "_page", None)
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        from farm_v2 import web_farm
+        # H5 直接讀 PlantMainView 的按鈕 active 狀態；不跑模板/CNN/OCR。
+        for _ in range(8):
+            state = web_farm.read_farm_state(page)
+            acted = False
+            for name in ("btnOneKeyPick", "btnOneKeyFetch"):
+                if web_farm.tap_onekey(page, name, state=state):
+                    acted = True
+                    time.sleep(1.0)
+                    break
+            if not acted:
+                break
+    else:
+        start = time.time()
+        while time.time() - start < 25:
+            from img_tools import find_and_click
 
-        if find_and_click(d, r"getting.jpg"):
-            time.sleep(7)
-        elif find_and_click(d, r"get_all.jpg"):
-            time.sleep(3)
-        elif find_and_click(d, "new_get.jpg", threshold=0.6, x=10, y=100):
-            time.sleep(7)
+            if find_and_click(d, r"getting.jpg"):
+                time.sleep(7)
+            elif find_and_click(d, r"get_all.jpg"):
+                time.sleep(3)
+            elif find_and_click(d, "new_get.jpg", threshold=0.6, x=10, y=100):
+                time.sleep(7)
 
-        current_hour = time.localtime().tm_hour
-        if current_hour >= 8 and not is_working:
-            is_same_day = time_manager.is_same_day("farm_plant_click")
-            daily_count = (
-                time_manager.get_numeric_value("farm_plant_click", "count", 0)
-                if is_same_day
-                else 0
-            )
+            current_hour = time.localtime().tm_hour
+            if current_hour >= 8 and not is_working:
+                is_same_day = time_manager.is_same_day("farm_plant_click")
+                daily_count = (
+                    time_manager.get_numeric_value("farm_plant_click", "count", 0)
+                    if is_same_day
+                    else 0
+                )
 
-            if daily_count < MAX_PLANT_PER_DAY:
-                if find_and_click(d, r"plants.jpg"):
-                    daily_count += 1
-                    time_manager.record_timestamp(
-                        "farm_plant_click", {"count": daily_count}
-                    )
-                    time.sleep(2)
-
-                    from farm_v2.operations import check_slot_color
-
-                    if check_slot_color(d):
-                        d.click(199, 437)
+                if daily_count < MAX_PLANT_PER_DAY:
+                    if find_and_click(d, r"plants.jpg"):
+                        daily_count += 1
+                        time_manager.record_timestamp(
+                            "farm_plant_click", {"count": daily_count}
+                        )
                         time.sleep(2)
-                        d.click(126, 588)
-                        time.sleep(1)
-                        d.click(165, 460)
-                        time.sleep(1)
 
-                    if find_and_click(d, r"put.jpg"):
-                        time.sleep(5)
+                        from farm_v2.operations import check_slot_color
+
+                        if check_slot_color(d):
+                            d.click(199, 437)
+                            time.sleep(2)
+                            d.click(126, 588)
+                            time.sleep(1)
+                            d.click(165, 460)
+                            time.sleep(1)
+
+                        if find_and_click(d, r"put.jpg"):
+                            time.sleep(5)
 
     # (Re-)enable 打工 last, so it keeps the auto plant/harvest cycle running
     # while the device sleeps. Done after seed restock + harvest card + leftover
