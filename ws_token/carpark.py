@@ -40,6 +40,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from datetime import date
+from typing import Optional
 
 from ws_token import codec
 from ws_token import state as ws_state
@@ -206,6 +207,8 @@ class NullSpace:
     null_num: int       # #3 (empty-slot count; >0 means parkable)
     ceng: int           # #7
     reward_kv: dict = field(default_factory=dict)  # #8 reward_buff {key: value}
+    # #6 ext key=2; the client renders this as 抱團湧動 group count.
+    same_server_count: Optional[int] = None
 
     @property
     def rate(self) -> int:
@@ -430,6 +433,7 @@ def parse_null_spaces(body: bytes) -> list[NullSpace]:
             park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
             null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
             reward_kv=reward_kv,
+            same_server_count=_parse_kv_list(entry, kv_field=6).get(2),
         ))
     return out
 
@@ -451,6 +455,7 @@ def parse_collect_spaces(body: bytes) -> list[NullSpace]:
             park_type=_as_int(d.get(1)), master_id=_as_int(d.get(2)),
             null_num=_as_int(d.get(3)), ceng=_as_int(d.get(7)),
             reward_kv=reward_kv,
+            same_server_count=_parse_kv_list(entry, kv_field=6).get(2),
         ))
     return out
 
@@ -1077,8 +1082,11 @@ def auto_select_and_park_many(client: WSGameClient, *, count: int = 1,
                 if _silver_level(lot.ceng) > SILVER_LOW_MAX_LEVEL:
                     continue
                 try:
-                    same_counts[lot.master_id] = count_same_server(
-                        _read_detail(lot), cluster_server_id)
+                    if lot.same_server_count is not None:
+                        same_counts[lot.master_id] = lot.same_server_count
+                    else:
+                        same_counts[lot.master_id] = count_same_server(
+                            _read_detail(lot), cluster_server_id)
                 except Exception:  # noqa: BLE001 — 一個 lot 讀失敗不擋整體
                     logger.debug("ws_token carpark: probe read_lot %s failed",
                                  lot.master_id, exc_info=True)
@@ -1108,6 +1116,7 @@ def scan_lots_same_server(
     levels: tuple[int, ...],
     *,
     priority_levels: tuple[int, ...] = (),
+    min_allies: int = 0,
     decision_log=None,
     timeout: float | None = None,
 ) -> list[tuple[NullSpace, int]]:
@@ -1119,29 +1128,59 @@ def scan_lots_same_server(
     ``priority_levels`` this degrades to the plain count-desc/ceng-asc order.
     The caller picks the first entry meeting its ally threshold, so a priority
     lot that clears the threshold wins over a higher-ally non-priority lot.
-    Only lots present in ``lots`` with matching ceng are probed.
+    Only lots present in ``lots`` with matching ceng are probed. When
+    ``min_allies`` is positive, ``null_num`` is used as a cheap upper bound:
+    a 10-slot lot with fewer than ``min_allies`` total occupants cannot
+    possibly contain enough same-server occupants, so its detail request is
+    skipped entirely.
     """
     target_cengs = {silver_level_to_ceng(lv) for lv in levels}
     prio_cengs = {silver_level_to_ceng(lv) for lv in priority_levels}
-    candidates = [lot for lot in lots if lot.ceng in target_cengs and lot.null_num > 0]
-    results: list[tuple[NullSpace, int]] = []
-    for lot in sorted(candidates, key=lambda l: l.ceng):
-        try:
-            detail = read_lot(client, type=CROSS_TYPE, master_id=lot.master_id,
-                              ceng=lot.ceng, timeout=timeout)
-            cnt = count_same_server(detail, server_id)
-            results.append((lot, cnt))
-            if decision_log is not None:
-                decision_log(
-                    f"candidate level={silver_ceng_to_level(lot.ceng)} "
-                    f"master_id={lot.master_id} null_num={lot.null_num} "
-                    f"allies={cnt} read=ok")
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("scan_lots: read_lot %s failed", lot.master_id, exc_info=True)
-            if decision_log is not None:
-                decision_log(
-                    f"candidate level={silver_ceng_to_level(lot.ceng)} "
-                    f"master_id={lot.master_id} read=error error={exc!r}")
+    candidates = [
+        lot for lot in lots
+        if lot.ceng in target_cengs
+        and lot.null_num > 0
+        and (min_allies <= 0
+             or CROSS_LOT_CAPACITY - lot.null_num >= min_allies)
+    ]
+
+    def _scan_group(group: list[NullSpace]) -> list[tuple[NullSpace, int]]:
+        group_results: list[tuple[NullSpace, int]] = []
+        for lot in sorted(group, key=lambda l: l.ceng):
+            try:
+                if lot.same_server_count is not None:
+                    # 12808 已帶前端「抱團湧動」同服計數，免發 12801。
+                    cnt = lot.same_server_count
+                else:
+                    detail = read_lot(client, type=CROSS_TYPE,
+                                      master_id=lot.master_id,
+                                      ceng=lot.ceng, timeout=timeout)
+                    cnt = count_same_server(detail, server_id)
+                group_results.append((lot, cnt))
+                if decision_log is not None:
+                    decision_log(
+                        f"candidate level={silver_ceng_to_level(lot.ceng)} "
+                        f"master_id={lot.master_id} null_num={lot.null_num} "
+                        f"allies={cnt} read=ok")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("scan_lots: read_lot %s failed", lot.master_id,
+                             exc_info=True)
+                if decision_log is not None:
+                    decision_log(
+                        f"candidate level={silver_ceng_to_level(lot.ceng)} "
+                        f"master_id={lot.master_id} read=error error={exc!r}")
+        return group_results
+
+    # 優先區已有達標車位時，低優先區不可能被 caller 選中，直接略過查詢。
+    priority = [lot for lot in candidates if lot.ceng in prio_cengs]
+    non_priority = [lot for lot in candidates if lot.ceng not in prio_cengs]
+    if min_allies > 0 and priority:
+        results = _scan_group(priority)
+        if any(cnt >= min_allies for _lot, cnt in results):
+            return sorted(results, key=lambda x: (-x[1], x[0].ceng))
+        results.extend(_scan_group(non_priority))
+    else:
+        results = _scan_group(candidates)
     results.sort(key=lambda x: (0 if x[0].ceng in prio_cengs else 1,
                                 -x[1], x[0].ceng))
     return results

@@ -176,7 +176,8 @@ def allow_low_noncluster(cfg: dict | None) -> bool:
 DEFAULT_CLUSTER_SCAN_EXCLUDED_LEVELS = (1, 2, 3)
 DEFAULT_CLUSTER_SCAN_LEVELS = tuple(range(4, 11))  # 鉑銀4-10；1/2/3 永久排除
 DEFAULT_CLUSTER_SCAN_DURATION = 300     # 5 minutes
-DEFAULT_CLUSTER_SCAN_INTERVAL = 5       # poll every 5 seconds
+# 官方 H5 跨界車位刷新按鈕的 isInCD timer 是 1 秒。
+DEFAULT_CLUSTER_SCAN_INTERVAL = 1       # 每輪完成後最少等官方冷卻 1 秒
 DEFAULT_CLUSTER_SCAN_MIN_ALLIES = 5     # 停入前已有 >= 5 位同服（不含自己）
 DEFAULT_CLUSTER_SCAN_FALLBACK = 9       # park 鉑銀9 if no cluster found
 

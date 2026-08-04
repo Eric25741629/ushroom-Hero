@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import pytest
 
 from ws_token.carpark_plan import ClusterScanConfig, parse_cluster_scan
 from ws_token.carpark import (
-    NullSpace, CarParkLot, Space, scan_lots_same_server,
+    NullSpace, CarParkLot, Space, parse_null_spaces, scan_lots_same_server,
     silver_level_to_ceng, silver_ceng_to_level, CROSS_TYPE,
 )
+from ws_token import codec
 import ws_token.carpark as carpark_mod
 
 
@@ -55,7 +57,7 @@ def test_parse_enabled_defaults():
     assert cs.levels == tuple(range(4, 11))
     assert cs.excluded_levels == (1, 2, 3)
     assert cs.duration == 300
-    assert cs.interval == 5
+    assert cs.interval == 1
     assert cs.min_allies == 5
     assert cs.fallback_level == 9
 
@@ -105,11 +107,13 @@ def test_parse_excluded_levels_always_keeps_required_1_2_3():
 
 # --- scan_lots_same_server ---------------------------------------------------
 
-def _lot(level: int, null_num: int = 5) -> NullSpace:
+def _lot(level: int, null_num: int = 5,
+         same_server_count: int | None = None) -> NullSpace:
     return NullSpace(park_type=CROSS_TYPE,
                      master_id=1001001000 + silver_level_to_ceng(level),
                      null_num=null_num,
-                     ceng=silver_level_to_ceng(level))
+                     ceng=silver_level_to_ceng(level),
+                     same_server_count=same_server_count)
 
 
 def _make_detail(level: int, server_id: int, same_count: int) -> CarParkLot:
@@ -222,6 +226,77 @@ def test_scan_skips_levels_not_in_filter(monkeypatch):
     ranked = scan_lots_same_server(None, lots, 1467, (5, 9))
     assert len(ranked) == 2
     assert ranked[0][0].ceng == silver_level_to_ceng(5)
+
+
+def test_scan_skips_lots_that_cannot_reach_ally_threshold(monkeypatch):
+    lots = [_lot(4, null_num=6), _lot(5, null_num=5)]
+    read_ids = []
+
+    def fake_read_lot(client, *, type, master_id, ceng, timeout=None):
+        read_ids.append(master_id)
+        return _make_detail(silver_ceng_to_level(ceng), 1467, 5)
+
+    import ws_token.carpark as cp_mod
+    monkeypatch.setattr(cp_mod, "read_lot", fake_read_lot)
+
+    ranked = scan_lots_same_server(
+        None, lots, 1467, (4, 5), min_allies=5,
+    )
+
+    assert read_ids == [_lot(5).master_id]
+    assert [silver_ceng_to_level(lot.ceng) for lot, _ in ranked] == [5]
+
+
+def test_scan_does_not_probe_nonpriority_after_priority_qualifies(monkeypatch):
+    lots = [_lot(4, null_num=5), _lot(20, null_num=5)]
+    read_levels = []
+
+    def fake_read_lot(client, *, type, master_id, ceng, timeout=None):
+        level = silver_ceng_to_level(ceng)
+        read_levels.append(level)
+        return _make_detail(level, 1467, 5)
+
+    import ws_token.carpark as cp_mod
+    monkeypatch.setattr(cp_mod, "read_lot", fake_read_lot)
+
+    ranked = scan_lots_same_server(
+        None, lots, 1467, (4, 20), priority_levels=(4,), min_allies=5,
+    )
+
+    assert read_levels == [4]
+    assert [silver_ceng_to_level(lot.ceng) for lot, _ in ranked] == [4]
+
+
+def test_scan_uses_search_group_count_without_lot_detail(monkeypatch):
+    lot = _lot(4, null_num=5, same_server_count=5)
+
+    import ws_token.carpark as cp_mod
+    monkeypatch.setattr(
+        cp_mod, "read_lot",
+        lambda *args, **kwargs: pytest.fail("12801 detail should not be needed"),
+    )
+
+    ranked = scan_lots_same_server(
+        None, [lot], 1467, (4,), priority_levels=(4,), min_allies=5,
+    )
+
+    assert ranked == [(lot, 5)]
+
+
+def test_search_parser_reads_group_count_from_ext_key_two():
+    ext_group_count = codec.pb_uint(1, 2) + codec.pb_uint(2, 6)
+    entry = (
+        codec.pb_uint(1, CROSS_TYPE)
+        + codec.pb_uint(2, 1001001008)
+        + codec.pb_uint(3, 4)
+        + codec.pb_msg(6, ext_group_count)
+        + codec.pb_uint(7, silver_level_to_ceng(4))
+    )
+
+    lots = parse_null_spaces(codec.pb_msg(1, entry))
+
+    assert len(lots) == 1
+    assert lots[0].same_server_count == 6
 
 
 def test_scan_empty_when_no_lots():

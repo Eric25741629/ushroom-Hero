@@ -891,6 +891,7 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
             last_audit = {}
 
             while time_fn() < scan_deadline:
+                round_started = time_fn()
                 scan_round += 1
                 _null, _collect = carpark.read_cross_null_and_collect(client)
                 scan_parkable, last_audit = carpark.prepare_cluster_scan_candidates(
@@ -907,6 +908,7 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                 ranked = carpark.scan_lots_same_server(
                     client, scan_parkable, cluster_server_id, cs_cfg.levels,
                     priority_levels=cs_cfg.priority_levels,
+                    min_allies=cs_cfg.min_allies,
                     decision_log=lambda msg: _decision(
                         "scan", round=scan_round, detail=msg))
                     # ranked is priority-range-first, so pick the first lot that
@@ -956,7 +958,11 @@ def _run_carpark(client, *, target: Optional[int], auto: bool = False,
                                     "success": True}]}
                             cluster_found = True
                             break
-                sleep_fn(cs_cfg.interval)
+                # 官方刷新冷卻從搜尋送出時起算；詳細 lot 查詢若已耗掉
+                # 這段時間，就不應在整輪結束後再固定多等一次。
+                cooldown_left = cs_cfg.interval - (time_fn() - round_started)
+                if cooldown_left > 0:
+                    sleep_fn(cooldown_left)
 
             if cluster_found:
                 parked = carpark.read_parked_cross(client)
