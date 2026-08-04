@@ -42,6 +42,9 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "arena": ("競技場挑戰",),
     "ladder_reward": ("天梯每週獎勵",),
     "cloud_ladder": ("雲端戰鬥",),
+    "kungfu_worship": ("菇菇武道會",),
+    "hellgate": ("地獄之門",),
+    "escort": ("賞金之路",),
 }
 
 # pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
@@ -54,7 +57,10 @@ SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
     "家族任務": ("donate_family",),
     "挖礦/Oracle": ("挖礦",),
     "萬神試煉": ("萬神試煉",),
+    "地獄之門": ("地獄之門",),
     "競技場挑戰": ("arena_challenges",),
+    "菇菇武道會": ("mushroom_arena_cycle_start", "mushroom_arena_daily"),
+    "賞金之路": ("escort_last_run",),
 }
 
 
@@ -207,9 +213,13 @@ _RESUME_TTL_SEC = 30 * 60
 _RESUME_EXEMPT = frozenset({"carpark", "idle_reward"})
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
+    "hellgate": "地獄之門",
     "lamp": "開神燈",
     "ladder_reward": "天梯每週獎勵",
     "cloud_ladder": "雲纏天梯",
+    "main_chapter_kills": "主線擊敗敵人",
+    "kungfu_worship": "菇菇武道會",
+    "escort": "賞金之路",
 }
 
 
@@ -359,6 +369,7 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
     kwargs = dict(
         progress=progress,
         spend=bool(cfg.get("spend", False)),
+        sweep_list=cfg.get("sweep_list") or None,
         open_lamp=bool(cfg.get("open_lamp", False)),
         lamp_percent=cfg.get("lamp_percent", 0),
         lamp_min_keep=cfg.get("lamp_min_keep", 0),
@@ -372,6 +383,7 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         workshop_rotate=bool(cfg.get("workshop_rotate", True)),
         forge_ring=bool(cfg.get("forge_ring", False)),
         kungfu_guess=bool(cfg.get("kungfu_guess", False)),
+        kungfu_worship=bool(cfg.get("kungfu_worship", False)),
         mail_claim=bool(cfg.get("mail_claim", False)),
         mail_gem_threshold=_cfg_opt_int(cfg, "mail_gem_threshold"),
         mail_skill_threshold=_cfg_opt_int(cfg, "mail_skill_threshold"),
@@ -387,6 +399,10 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         mining_config=cfg.get("mining") or None,
         sea_config=cfg.get("sea_season") or None,
         arena_config=cfg.get("arena") or None,
+        escort_config=(cfg.get("escort")
+                       if isinstance(cfg.get("escort"), dict)
+                       and cfg.get("escort", {}).get("enabled") else None),
+        hellgate_config=cfg.get("hellgate") or None,
         cloud_ladder_enabled=bool(cfg.get("cloud_ladder_enabled", True)),
         ladder_reward_enabled=bool(cfg.get("ladder_reward_enabled", True)),
         dragon_realm_enabled=bool(cfg.get("dragon_realm_enabled", True)),
@@ -395,6 +411,9 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         skip_tasks=skip_tasks,
         only_tasks=cfg.get("only_tasks") or None,
     )
+    kill_cfg = cfg.get("main_chapter_kills")
+    if isinstance(kill_cfg, dict) and bool(kill_cfg.get("enabled")):
+        kwargs["main_chapter_kills_config"] = kill_cfg
     if "mount_sprint_enabled" in cfg:
         kwargs["mount_sprint_enabled"] = bool(cfg.get("mount_sprint_enabled"))
     if "mount_sprint_quantity" in cfg:
@@ -650,6 +669,12 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         _mining = device_cfg.get("ws_token_mining")
         if _mining is not None:
             cfg = {**cfg, "mining": _mining}
+    # root 層 explicit sweep_list 是副本管家的唯一手動覆寫；WS-first 也要
+    # 傳給 runner，否則會只帶 dungeon_sweeps，導致廣告欄位永遠遺失。
+    if "sweep_list" not in cfg:
+        _sweep_list = device_cfg.get("ws_token_sweep_list")
+        if _sweep_list:
+            cfg = {**cfg, "sweep_list": _sweep_list}
     # 雲纏挑戰沿用裝置層 enable_cloud_battle；5558 明確保留 H5 助戰/挑戰。
     # 天梯每週獎勵同樣排除 5558，避免同帳 WS 與其特殊 H5 排程互踢。
     _use_ladder_ws = ip != "emulator-5558"
@@ -723,6 +748,79 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             )
     except Exception:  # noqa: BLE001
         log.debug("[%s] 注入 arena pure_ws 設定失敗", ip, exc_info=True)
+    # WorldBoss / 地獄之門：WS A 連線負責 3597/3592；裝置自己的已開 CDP
+    # 只作官方 BattleMainServer 計算頁。沒有 CDP 時不宣稱 WS 已完成，讓舊
+    # Playwright/ADB 流程保留接手機會。
+    try:
+        _hg_raw = cfg.get("hellgate")
+        _hg = dict(_hg_raw) if isinstance(_hg_raw, dict) else {}
+        _hg_enabled = bool(_hg.get("enabled", True)) and bool(
+            device_cfg.get("enable_hellgate", True)
+        )
+        _hg_mode = str(_hg.get("b_mode") or "cdp").strip().lower()
+        if _hg_mode not in ("cdp", "ephemeral"):
+            _hg_mode = "cdp"
+        _hg_port = _hg.get("cdp_port") or device_cfg.get("web_debug_port")
+        _hg_can = (
+            _hg_enabled
+            and str(device_cfg.get("backend", "adb")).strip().lower()
+            in ("web_h5", "ws_token", "adb")
+            and (_hg_mode == "ephemeral" or bool(_hg_port))
+        )
+        cfg = {
+            **cfg,
+            "hellgate": {
+                **_hg,
+                "enabled": _hg_can,
+                "b_mode": _hg_mode,
+                "cdp_port": _hg_port,
+                "game_url": _hg.get("game_url") or device_cfg.get("web_url"),
+                "headless": bool(_hg.get("headless", True)),
+                "ready_timeout_sec": float(_hg.get("ready_timeout_sec") or 90),
+                "max_frames": int(_hg.get("max_frames") or 30_000),
+                "speed_scale": float(_hg.get("speed_scale") or 2.0),
+                "realtime": bool(_hg.get("realtime", True)),
+                "simulation_timeout_sec": float(
+                    _hg.get("simulation_timeout_sec") or 330
+                ),
+            },
+        }
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 注入 hellgate pure_ws 設定失敗", ip, exc_info=True)
+    # 賞金之路：WS A 端執行，B 端只載入官方戰鬥計算。預設關閉，須由
+    # ws_token.escort.enabled 明確開啟，避免新程式未經活動時段驗證就送包。
+    try:
+        _ec_raw = cfg.get("escort")
+        _ec = dict(_ec_raw) if isinstance(_ec_raw, dict) else {}
+        _ec_enabled = bool(_ec.get("enabled", False)) and bool(
+            device_cfg.get("enable_escort", False)
+        )
+        _ec_mode = str(_ec.get("b_mode") or "ephemeral").strip().lower()
+        if _ec_mode not in ("cdp", "ephemeral"):
+            _ec_mode = "ephemeral"
+        _ec_port = _ec.get("cdp_port") or device_cfg.get("web_debug_port")
+        _backend_kind = str(device_cfg.get("backend", "adb")).strip().lower()
+        _ec_can = (
+            _ec_enabled
+            and _backend_kind in ("web_h5", "ws_token", "adb")
+            and (_ec_mode == "ephemeral" or bool(_ec_port))
+        )
+        cfg = {
+            **cfg,
+            "escort": {
+                **_ec,
+                "enabled": _ec_can,
+                "b_mode": _ec_mode,
+                "cdp_port": _ec_port,
+                "game_url": _ec.get("game_url") or device_cfg.get("web_url"),
+                "headless": bool(_ec.get("headless", True)),
+                "ready_timeout_sec": float(_ec.get("ready_timeout_sec") or 90),
+                "max_fights": int(_ec.get("max_fights") or 3),
+                "gap_sec": float(_ec.get("gap_sec") or 2),
+            },
+        }
+    except Exception:  # noqa: BLE001
+        log.debug("[%s] 注入 escort pure_ws 設定失敗", ip, exc_info=True)
     # 所有帳號都是真人 → 每台都在自己的 WS 登入「之前」先等真人下線（WS 登入會異地
     # 登入踢掉真人正在玩的 session）。涵蓋正常 WS 與離線 fallback 兩條路（都走本函式）。
     # human_played(手機主帳號) 的「觀察者看不到」採無限等；其他 best-effort 放行。
@@ -792,6 +890,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         log.warning("[%s] WS 階段失敗，本輪 Playwright 全跑: %s", ip, exc,
                     exc_info=True)
         return frozenset()
+
     # kicked 不是單一原因：只有 server 明確送出 cmd 259 才是異地登入，
     # 必須交給主迴圈既有的 LoginConflictError / 30 分鐘冷卻；一般 socket
     # 斷線則保留 WS-first 的天然降級，讓本輪 H5/ADB 接手，不可誤冷卻。

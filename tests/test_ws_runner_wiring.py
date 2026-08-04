@@ -258,6 +258,7 @@ def patched_runner(monkeypatch):
                         farm_config=None, dungeon_sweeps=None, carpark_target=None,
                         carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
                         workshop_rotate=True, kungfu_guess=False,
+                        kungfu_worship=False,
                         mail_claim=False, mail_gem_threshold=None,
                         mail_skill_threshold=None,
                         relic_upgrade=False, relic_max_steps=10,
@@ -281,6 +282,7 @@ def patched_runner(monkeypatch):
                       "couple_gifts": couple_gifts, "forge_ring": forge_ring,
                       "workshop_rotate": workshop_rotate,
                       "kungfu_guess": kungfu_guess,
+                      "kungfu_worship": kungfu_worship,
                       "mail_claim": mail_claim,
                       "mail_gem_threshold": mail_gem_threshold,
                       "mail_skill_threshold": mail_skill_threshold,
@@ -322,6 +324,7 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "carpark_plan": None,
                         "couple_gifts": True, "forge_ring": False,
                         "workshop_rotate": True, "kungfu_guess": False,
+                        "kungfu_worship": False,
                         "mail_claim": False, "mail_gem_threshold": None,
                         "mail_skill_threshold": None,
                         "relic_upgrade": False, "relic_max_steps": 10,
@@ -496,9 +499,10 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
     def failing_login(ip, *, spend=False, sweep_list=None, open_lamp=False,
                       lamp_percent=0.0, lamp_min_keep=0, lamp_daily_min=0,
                       farm_config=None, dungeon_sweeps=None, carpark_target=None,
-                      carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
-                      workshop_rotate=True, kungfu_guess=False,
-                      mail_claim=False, mail_gem_threshold=None,
+                          carpark_auto=False, carpark_plan=None, couple_gifts=True, forge_ring=False,
+                          workshop_rotate=True, kungfu_guess=False,
+                          kungfu_worship=False,
+                          mail_claim=False, mail_gem_threshold=None,
                       mail_skill_threshold=None,
                       relic_upgrade=False, relic_max_steps=10,
                       relic_fragment_floor=0, tycoon=False, tycoon_max_rolls=50,
@@ -667,6 +671,35 @@ def test_progress_branch_maps_lamp_progress_to_step(monkeypatch):
     assert callable(progress)
     progress("lamp", "progress", "12/34")
     assert ("ws-prog", "WS 開神燈 (12/34)") in steps
+
+
+def test_ws_runner_service_forwards_main_chapter_kills(monkeypatch):
+    import runtime_services.ws_runner_service as svc
+
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(
+            device=ip, login_ok=True, spend=False, tasks={}, errors={})
+
+    monkeypatch.setattr(svc, "_load_run_device", lambda: fake_run_device)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    cfg = config_manager.DeviceConfig.from_dict({
+        "use_ws_runner": True,
+        "ws_token": {
+            "main_chapter_kills": {
+                "enabled": True,
+                "interval_sec": 3.0,
+                "persist_every": 10,
+            }
+        },
+    })
+
+    svc.run_ws_device_cycle("ws-kills", cfg, _NullLogger())
+
+    assert captured["main_chapter_kills_config"]["enabled"] is True
+    assert captured["main_chapter_kills_config"]["interval_sec"] == 3.0
 
 
 def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):

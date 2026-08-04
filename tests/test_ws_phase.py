@@ -147,6 +147,58 @@ def test_ws_phase_defaults_primary_to_v1_and_shadow_to_empty(monkeypatch):
     assert captured["mining"]["shadow_planner_version"] == ""
 
 
+def test_ws_phase_injects_root_housekeeper_sweep_list(monkeypatch):
+    captured = {}
+    sweep_list = [[2, 150, 1, 1]]
+    monkeypatch.setattr(
+        config_manager, "get_device_config",
+        lambda ip: type("C", (), {"get": lambda self, k, d=None: {
+            "ws_token": {"enabled": True, "bootstrap_token": False},
+            "ws_token_sweep_list": sweep_list,
+            "backend": "adb",
+        }.get(k, d)})())
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda _ip, cfg, progress=None, **_kw: captured.update(cfg) or _report({}))
+
+    ws_phase.run_ws_phase("dev")
+
+    assert captured["sweep_list"] == sweep_list
+
+
+def test_ws_phase_enables_hellgate_for_adb_with_ephemeral_b(monkeypatch):
+    captured = {}
+    device_values = {
+        "ws_token": {
+            "enabled": True,
+            "bootstrap_token": False,
+            "hellgate": {"enabled": True, "b_mode": "ephemeral"},
+        },
+        "backend": "adb",
+        "enable_hellgate": True,
+    }
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda _ip: type(
+            "C",
+            (),
+            {"get": lambda self, key, default=None: device_values.get(key, default)},
+        )(),
+    )
+    monkeypatch.setattr(
+        ws_phase,
+        "_run_device",
+        lambda _ip, cfg, progress=None, **_kw: captured.update(cfg) or _report({}),
+    )
+
+    ws_phase.run_ws_phase("phone")
+
+    assert captured["hellgate"]["enabled"] is True
+    assert captured["hellgate"]["b_mode"] == "ephemeral"
+    assert captured["hellgate"]["cdp_port"] is None
+
+
 def test_run_device_passes_mining_config(monkeypatch):
     captured = {}
 
@@ -163,6 +215,24 @@ def test_run_device_passes_mining_config(monkeypatch):
 
     assert captured["ip"] == "dev"
     assert captured["mining_config"] == {"enabled": True, "allow_drill": True}
+
+
+def test_run_device_passes_housekeeper_sweep_list(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured["ip"] = ip
+        captured.update(kwargs)
+        return _report({"steward": {}})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    sweep_list = [[2, 150, 1, 1]]
+    ws_phase._run_device("dev", {"enabled": True, "sweep_list": sweep_list})
+
+    assert captured["ip"] == "dev"
+    assert captured["sweep_list"] == sweep_list
 
 
 def test_run_device_passes_lamp_percent_and_min_keep(monkeypatch):
@@ -288,6 +358,68 @@ def test_errored_task_not_skipped(monkeypatch):
     assert "紅包檢查" in skips and "開神燈" not in skips
 
 
+def test_task_self_skipped_not_mapped(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
+        {"couple": {"skipped": "no partner"}, "redpack": {}}))
+    skips = ws_phase.run_ws_phase("dev")
+    assert "好友每日禮物" not in skips and "紅包檢查" in skips
+
+
+def test_login_failure_returns_empty(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
+        {}, errors={"login": "boom"}, login_ok=False))
+    assert ws_phase.run_ws_phase("dev") == frozenset()
+
+
+def test_any_exception_returns_empty(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    def _boom(ip, cfg, progress=None, **_kw):
+        raise RuntimeError("creds missing")
+    monkeypatch.setattr(ws_phase, "_run_device", _boom)
+    assert ws_phase.run_ws_phase("dev") == frozenset()
+
+
+def test_config_exception_resets_previous_h5_handoff(monkeypatch,
+                                                     ws_handoff_cleanup):
+    import bot_state
+    bot_state.set_ws_h5_handoff_ok("dev", True)
+
+    def boom(ip):
+        raise RuntimeError("bad config")
+
+    monkeypatch.setattr(config_manager, "get_device_config", boom)
+    with pytest.raises(RuntimeError, match="bad config"):
+        ws_phase.run_ws_phase("dev")
+    assert bot_state.get_ws_h5_handoff_ok("dev") is False
+
+
+def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch, ws_handoff_cleanup):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report({"redpack": {}}),
+    )
+    ws_phase.run_ws_phase("dev")
+    import bot_state
+    assert bot_state.get_ws_h5_handoff_ok("dev") is True
+
+
+def test_task_error_still_marks_h5_handoff_safe(monkeypatch,
+                                                ws_handoff_cleanup):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase, "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report(
+            {"redpack": {}}, errors={"lamp": "WSTimeoutError: x"}
+        ),
+    )
+    ws_phase.run_ws_phase("dev")
+    import bot_state
+    assert bot_state.get_ws_h5_handoff_ok("dev") is True
+
+
 def test_explicit_cmd_259_raises_login_conflict_before_h5_handoff(
     monkeypatch, ws_handoff_cleanup
 ):
@@ -360,68 +492,6 @@ def test_transport_drop_falls_back_without_login_conflict_cooldown(
 
     assert ws_phase.run_ws_phase("dev") == frozenset()
     assert bot_state.get_ws_h5_handoff_ok("dev") is False
-
-
-def test_task_self_skipped_not_mapped(monkeypatch):
-    _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
-        {"couple": {"skipped": "no partner"}, "redpack": {}}))
-    skips = ws_phase.run_ws_phase("dev")
-    assert "好友每日禮物" not in skips and "紅包檢查" in skips
-
-
-def test_login_failure_returns_empty(monkeypatch):
-    _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(
-        {}, errors={"login": "boom"}, login_ok=False))
-    assert ws_phase.run_ws_phase("dev") == frozenset()
-
-
-def test_any_exception_returns_empty(monkeypatch):
-    _cfg(monkeypatch, {"enabled": True})
-    def _boom(ip, cfg, progress=None, **_kw):
-        raise RuntimeError("creds missing")
-    monkeypatch.setattr(ws_phase, "_run_device", _boom)
-    assert ws_phase.run_ws_phase("dev") == frozenset()
-
-
-def test_config_exception_resets_previous_h5_handoff(monkeypatch,
-                                                     ws_handoff_cleanup):
-    import bot_state
-    bot_state.set_ws_h5_handoff_ok("dev", True)
-
-    def boom(ip):
-        raise RuntimeError("bad config")
-
-    monkeypatch.setattr(config_manager, "get_device_config", boom)
-    with pytest.raises(RuntimeError, match="bad config"):
-        ws_phase.run_ws_phase("dev")
-    assert bot_state.get_ws_h5_handoff_ok("dev") is False
-
-
-def test_clean_ws_run_marks_h5_handoff_safe(monkeypatch, ws_handoff_cleanup):
-    _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(
-        ws_phase, "_run_device",
-        lambda ip, cfg, progress=None, **_kw: _report({"redpack": {}}),
-    )
-    ws_phase.run_ws_phase("dev")
-    import bot_state
-    assert bot_state.get_ws_h5_handoff_ok("dev") is True
-
-
-def test_task_error_still_marks_h5_handoff_safe(monkeypatch,
-                                                ws_handoff_cleanup):
-    _cfg(monkeypatch, {"enabled": True})
-    monkeypatch.setattr(
-        ws_phase, "_run_device",
-        lambda ip, cfg, progress=None, **_kw: _report(
-            {"redpack": {}}, errors={"lamp": "WSTimeoutError: x"}
-        ),
-    )
-    ws_phase.run_ws_phase("dev")
-    import bot_state
-    assert bot_state.get_ws_h5_handoff_ok("dev") is True
 
 
 @pytest.mark.parametrize(
@@ -794,6 +864,14 @@ def test_run_device_passes_mail_claim(monkeypatch):
     assert cap["mail_skill_threshold"] == 3
 
 
+def test_run_device_passes_enabled_main_chapter_kills(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    kill_cfg = {"enabled": True, "interval_sec": 3.0, "persist_every": 10}
+    ws_phase._run_device(
+        "dev", {"enabled": True, "main_chapter_kills": kill_cfg})
+    assert cap["main_chapter_kills_config"] == kill_cfg
+
+
 def test_run_device_passes_tycoon(monkeypatch):
     cap = _capture_run_device(monkeypatch)
     ws_phase._run_device("dev", {"enabled": True, "tycoon": True, "tycoon_max_rolls": 12})
@@ -818,12 +896,21 @@ def test_run_device_passes_weekly_ladder_flags(monkeypatch):
 def test_ws_skip_mapping_contains_weekly_ladder_tasks():
     assert ws_phase.WS_TO_PIPELINE_SKIPS["cloud_ladder"] == ("雲端戰鬥",)
     assert ws_phase.WS_TO_PIPELINE_SKIPS["ladder_reward"] == ("天梯每週獎勵",)
+    assert ws_phase.WS_TO_PIPELINE_SKIPS["kungfu_worship"] == ("菇菇武道會",)
+    assert ws_phase.SKIP_TO_DAILY_RECORD["菇菇武道會"] == (
+        "mushroom_arena_cycle_start", "mushroom_arena_daily")
 
 
 def test_run_device_passes_kungfu_guess(monkeypatch):
     cap = _capture_run_device(monkeypatch)
     ws_phase._run_device("dev", {"enabled": True, "kungfu_guess": True})
     assert cap["kungfu_guess"] is True
+
+
+def test_run_device_passes_kungfu_worship(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    ws_phase._run_device("dev", {"enabled": True, "kungfu_worship": True})
+    assert cap["kungfu_worship"] is True
 
 
 def test_run_device_passes_ad_reward_config_ids_when_enabled(monkeypatch):

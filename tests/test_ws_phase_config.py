@@ -27,6 +27,11 @@ def test_default_device_config_has_ws_token_disabled():
     assert ws["lamp_percent"] == 0
     assert ws["lamp_min_keep"] == 0
     assert ws["lamp_daily_min"] == 0
+    assert ws["main_chapter_kills"] == {
+        "enabled": False,
+        "interval_sec": 3.0,
+        "persist_every": 10,
+    }
 
 
 def test_merge_ws_token_fills_lamp_percent_min_keep_when_absent():

@@ -11,7 +11,9 @@ async ({ mode, body_b64 }) => {
   if (!nm || !nm.protoRoot) return { ok: false, err: 'no protoRoot' };
   const typeName = mode === 'rogue'
     ? 'rogue.rogue_main_combat_s2c'
-    : 'arena.arena_combat_s2c';
+    : mode === 'escort'
+      ? 'escort.escort_battle_start_s2c'
+      : 'arena.arena_combat_s2c';
   const Type = nm.protoRoot.lookupType(typeName);
   if (!Type) return { ok: false, err: 'no type ' + typeName };
 
@@ -35,6 +37,19 @@ async ({ mode, body_b64 }) => {
     atk = (msg.atk_data && msg.atk_data[0]) ? msg.atk_data[0] : msg.atk_data;
     defRole = (msg.def_data && msg.def_data[0]) ? msg.def_data[0] : msg.def_data;
     vid = null;
+  } else if (mode === 'escort') {
+    const cfg = (typeof configEscort_chapter !== 'undefined')
+      ? configEscort_chapter.getDataByKey(Number(msg.type))
+      : null;
+    if (!cfg || !msg.roles || !msg.roles[0] || !msg.monsters || !msg.monsters[0]) {
+      return { ok: false, err: 'escort missing chapter/role/monster', code: msg.code };
+    }
+    chapterType = cfg.part_type;
+    chapterId = cfg.id;
+    seed = msg.seed;
+    atk = msg.roles[0];
+    defRole = null;
+    vid = null;
   } else {
     chapterType = ChapterType.Arena;
     chapterId = 50001;
@@ -43,7 +58,7 @@ async ({ mode, body_b64 }) => {
     defRole = msg.def_data;
     vid = msg.vid;
   }
-  if (seed == null || !atk || !defRole) {
+  if (seed == null || !atk || (mode !== 'escort' && !defRole)) {
     return { ok: false, err: 'decode missing seed/atk/def', code: msg.code };
   }
 
@@ -52,9 +67,14 @@ async ({ mode, body_b64 }) => {
   data.seed = seed;
   data.chapterType = chapterType;
   data.playerList[1] = new PlayerData(1);
-  data.playerList[2] = new PlayerData(2);
-  BattleDataFill.setPlayerList(atk, data.playerList[1], chapterType);
-  BattleDataFill.setPlayerList(defRole, data.playerList[2], chapterType);
+  if (mode === 'escort') {
+    data.monster = BattleDataFill.setMonster(msg.monsters[0]);
+    BattleDataFill.setPlayerList(atk, data.playerList[1], chapterType);
+  } else {
+    data.playerList[2] = new PlayerData(2);
+    BattleDataFill.setPlayerList(atk, data.playerList[1], chapterType);
+    BattleDataFill.setPlayerList(defRole, data.playerList[2], chapterType);
+  }
 
   const sim = new BattleMainServer(seed);
   const t0 = performance.now();
@@ -73,6 +93,8 @@ async ({ mode, body_b64 }) => {
       const l = sim.chapter.arenaPlayerCtr;
       precent = Math.floor(l.player.data.currenHp / l.player.data.maxHp * 100);
     } catch (e) { precent = 0; }
+  } else if (mode === 'escort') {
+    wid = null;
   } else {
     wid = (0 === result) ? atk.id : defRole.id;
   }
@@ -89,7 +111,7 @@ async ({ mode, body_b64 }) => {
     frames,
     ms: Math.round(ms * 100) / 100,
     atk_id: atk.id != null ? Number(atk.id) : null,
-    def_id: defRole.id != null ? Number(defRole.id) : null,
+    def_id: defRole && defRole.id != null ? Number(defRole.id) : null,
     code: msg.code,
   };
 }

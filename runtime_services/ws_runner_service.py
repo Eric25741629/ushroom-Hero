@@ -76,10 +76,14 @@ _PROTECT_WAIT_SEC_DEFAULT = 60.0
 _KICK_COOLDOWN_SEC = 1800.0
 _WS_TASK_LABELS = {
     "harvest_card": "豐收卡",
+    "hellgate": "地獄之門",
     "arena": "競技場",
     "lamp": "開神燈",
     "ladder_reward": "天梯每週獎勵",
     "cloud_ladder": "雲纏天梯",
+    "main_chapter_kills": "主線擊敗敵人",
+    "kungfu_worship": "菇菇武道會",
+    "escort": "賞金之路",
 }
 
 
@@ -248,6 +252,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     forge_ring = bool(cfg.get("ws_token_forge_ring", False))
     workshop_rotate = bool(cfg.get("ws_token_workshop_rotate", True))
     kungfu_guess = bool(cfg.get("ws_token_kungfu_guess", False))
+    kungfu_worship = bool(_ws_nested.get("kungfu_worship", False))
     # 每日自動領郵件附件：單一真相在巢狀 ws_token dict（mail_claim 預設關）。
     mail_claim = bool(_ws_nested.get("mail_claim", False))
 
@@ -340,6 +345,64 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                 }
     except Exception:  # noqa: BLE001
         logger_obj.debug("[%s] arena pure_ws config inject failed", ip, exc_info=True)
+    # WorldBoss / 地獄之門：純 WS 帳號也可用裝置自己的 CDP 作官方戰鬥計算頁。
+    hellgate_config = None
+    try:
+        _hg_raw = _ws_nested.get("hellgate")
+        _hg = dict(_hg_raw) if isinstance(_hg_raw, dict) else {}
+        _hg_mode = str(_hg.get("b_mode") or "cdp").strip().lower()
+        if _hg_mode not in ("cdp", "ephemeral"):
+            _hg_mode = "cdp"
+        _hg_port = _hg.get("cdp_port") or cfg.get("web_debug_port")
+        _hg_enabled = bool(_hg.get("enabled", True)) and bool(
+            cfg.get("enable_hellgate", True)
+        )
+        if (_hg_enabled and _hg_mode == "ephemeral") or (
+                _hg_enabled and _hg_mode == "cdp" and _hg_port):
+            hellgate_config = {
+                **_hg,
+                "enabled": True,
+                "b_mode": _hg_mode,
+                "cdp_port": _hg_port,
+                "game_url": _hg.get("game_url") or cfg.get("web_url"),
+                "headless": bool(_hg.get("headless", True)),
+                "ready_timeout_sec": float(_hg.get("ready_timeout_sec") or 90),
+                "max_frames": int(_hg.get("max_frames") or 30_000),
+                "speed_scale": float(_hg.get("speed_scale") or 2.0),
+                "realtime": bool(_hg.get("realtime", True)),
+                "simulation_timeout_sec": float(
+                    _hg.get("simulation_timeout_sec") or 330
+                ),
+            }
+    except Exception:  # noqa: BLE001
+        logger_obj.debug("[%s] hellgate pure_ws config inject failed", ip, exc_info=True)
+    # 賞金之路純 WS：A 端只送 Escort API，B 端只做官方 BattleMainServer 計算。
+    escort_config = None
+    try:
+        _ec_raw = _ws_nested.get("escort")
+        _ec = dict(_ec_raw) if isinstance(_ec_raw, dict) else {}
+        _ec_mode = str(_ec.get("b_mode") or "ephemeral").strip().lower()
+        if _ec_mode not in ("cdp", "ephemeral"):
+            _ec_mode = "ephemeral"
+        _ec_port = _ec.get("cdp_port") or cfg.get("web_debug_port")
+        _ec_enabled = bool(_ec.get("enabled", False)) and bool(
+            cfg.get("enable_escort", False)
+        )
+        if (_ec_enabled and _ec_mode == "ephemeral") or (
+                _ec_enabled and _ec_mode == "cdp" and _ec_port):
+            escort_config = {
+                **_ec,
+                "enabled": True,
+                "b_mode": _ec_mode,
+                "cdp_port": _ec_port,
+                "game_url": _ec.get("game_url") or cfg.get("web_url"),
+                "headless": bool(_ec.get("headless", True)),
+                "ready_timeout_sec": float(_ec.get("ready_timeout_sec") or 90),
+                "max_fights": int(_ec.get("max_fights") or 3),
+                "gap_sec": float(_ec.get("gap_sec") or 2),
+            }
+    except Exception:  # noqa: BLE001
+        logger_obj.debug("[%s] escort pure_ws config inject failed", ip, exc_info=True)
     # 開神燈百分比/最低保留：單一真相在巢狀 ws_token dict（防呆轉型，壞值退回 0）。
     try:
         lamp_percent = max(0.0, float(_ws_nested.get("lamp_percent", 0) or 0))
@@ -379,6 +442,13 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         extra_kwargs["xwar_idle_enabled"] = True
     if arena_config is not None:
         extra_kwargs["arena_config"] = arena_config
+    if hellgate_config is not None:
+        extra_kwargs["hellgate_config"] = hellgate_config
+    if escort_config is not None:
+        extra_kwargs["escort_config"] = escort_config
+    _kill_cfg = _ws_nested.get("main_chapter_kills")
+    if isinstance(_kill_cfg, dict) and bool(_kill_cfg.get("enabled")):
+        extra_kwargs["main_chapter_kills_config"] = _kill_cfg
     if mount_sprint_enabled is not None or mount_sprint_quantity is not None:
         extra_kwargs["mount_sprint_enabled"] = bool(
             mount_sprint_enabled if mount_sprint_enabled is not None else True)
@@ -430,6 +500,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             couple_gifts=couple_gifts, forge_ring=forge_ring,
                             workshop_rotate=workshop_rotate,
                             kungfu_guess=kungfu_guess,
+                            kungfu_worship=kungfu_worship,
                             mail_claim=mail_claim,
                             mail_gem_threshold=mail_gem_threshold,
                             mail_skill_threshold=mail_skill_threshold,

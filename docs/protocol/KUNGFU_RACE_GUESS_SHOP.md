@@ -68,3 +68,14 @@ config gate `ws_token_kungfu_guess` (default off) decides *which devices* run it
 `kungfu_race.*_c2s` ids 16641–16672 (e.g. `kungfu_race_info` 16641, `kungfu_race_bet`
 16670 = 押注 team, `kungfu_race_worship` 16665 = 膜拜). The 競猜幣 *purchase* does
 NOT use any of these — it is the Mall `shop_buy` above.
+
+## 純 WS 膜拜冠軍
+
+`kungfu_race_worship_c2s` (`16665`) 的 body 為空 bytes；成功回 `16665`，field 1
+是伺服器更新後的膜拜累計值。活動窗口、資格與重複膜拜由伺服器判斷；拒絕會走
+`0x0201`，因此 runner 將拒絕/逾時視為本輪 safe no-op，不依賴瀏覽器或 OCR。
+
+程式入口是 `ws_token.kungfu_race.worship()`，每日 WS runner 以獨立的
+`kungfu_worship` task 執行；裝置設定 `ws_token.kungfu_worship: true` 後，成功會
+跳過舊的 Task 13「菇菇武道會」UI 流程並回寫 `mushroom_arena_cycle_start`、
+`mushroom_arena_daily` 紀錄。

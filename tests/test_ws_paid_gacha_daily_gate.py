@@ -1,0 +1,159 @@
+import datetime
+from types import SimpleNamespace
+
+from game_actions import ws_phase
+from ws_token import runner
+from ws_token import state as ws_state
+
+
+WEEKEND_CONFIG = {
+    "enabled": True,
+    "types": [1, 2],
+    "mode": "fixed",
+    "count": 35,
+    "batches": 3,
+    "weekend_only": True,
+}
+
+
+def _report(draw_type):
+    return SimpleNamespace(
+        total_drawn=105,
+        bundles=[35, 35, 35],
+        stopped_reason=f"type-{draw_type}-done",
+    )
+
+
+def test_paid_gacha_runs_each_type_once_per_weekend_day(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(client, tracker, **kwargs):
+        calls.append(kwargs["draw_type"])
+        return _report(kwargs["draw_type"])
+
+    monkeypatch.setattr(runner.gacha, "run_gacha", fake_run)
+    saturday = datetime.datetime(2026, 8, 1, 9, 0)
+
+    first = runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=saturday,
+    )
+    second = runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=saturday.replace(hour=11),
+    )
+
+    assert calls == [1, 2]
+    assert first["技能"]["drawn"] == 105
+    assert first["同伴"]["drawn"] == 105
+    assert second == {"already_attempted": True, "last_date": "2026-08-01"}
+    saved = ws_state.load_state("phone", state_dir=tmp_path)["gacha_paid"]
+    assert saved["last_date"] == "2026-08-01"
+    assert saved["attempted_types"] == [1, 2]
+
+
+def test_paid_gacha_runs_again_on_sunday(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda client, tracker, **kwargs: (
+            calls.append(kwargs["draw_type"]) or _report(kwargs["draw_type"])
+        ),
+    )
+
+    runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=datetime.datetime(2026, 8, 1, 9, 0),
+    )
+    runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=datetime.datetime(2026, 8, 2, 9, 0),
+    )
+
+    assert calls == [1, 2, 1, 2]
+
+
+def test_paid_gacha_skips_friday_without_writing_gate(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("不應抽卡")),
+    )
+
+    result = runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=datetime.datetime(2026, 7, 31, 9, 0),
+    )
+
+    assert result == {"skipped": "weekend_only: not Sat/Sun"}
+    assert ws_state.load_state("phone", state_dir=tmp_path) == {}
+
+
+def test_paid_gacha_error_is_recorded_and_other_type_continues(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    def fake_run(client, tracker, **kwargs):
+        draw_type = kwargs["draw_type"]
+        calls.append(draw_type)
+        if draw_type == 1:
+            raise RuntimeError("socket lost")
+        return _report(draw_type)
+
+    monkeypatch.setattr(runner.gacha, "run_gacha", fake_run)
+    saturday = datetime.datetime(2026, 8, 1, 9, 0)
+
+    first = runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=saturday,
+    )
+    second = runner._run_gacha(
+        object(),
+        object(),
+        gacha_config=WEEKEND_CONFIG,
+        device="phone",
+        state_dir=tmp_path,
+        now=saturday.replace(hour=10),
+    )
+
+    assert calls == [1, 2]
+    assert first["技能"]["error"] == "RuntimeError: socket lost"
+    assert first["同伴"]["drawn"] == 105
+    assert second == {"already_attempted": True, "last_date": "2026-08-01"}
+    saved = ws_state.load_state("phone", state_dir=tmp_path)["gacha_paid"]
+    assert saved["attempted_types"] == [1, 2]
+    assert saved["results"]["1"]["error"] == "RuntimeError: socket lost"
+
+
+def test_already_attempted_still_skips_adb_paid_fallback():
+    report = SimpleNamespace(
+        tasks={"gacha": {"already_attempted": True, "last_date": "2026-08-01"}}
+    )
+
+    assert "gacha" in ws_phase._substantive_done(report)

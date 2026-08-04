@@ -57,7 +57,8 @@ from typing import Any, Callable, Iterable, Optional, Sequence
 import json_manager
 from ws_token import (
     ad_reward, arena_fight, carpark, cloud_ladder, couple, dragon_realm, dungeon,
-    farm, gacha, guild, idle_reward, kungfu_store, ladder_reward, league_solo,
+    escort_fight,
+    farm, gacha, guild, hellgate, idle_reward, kungfu_race, kungfu_store, ladder_reward, league_solo,
     main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
     secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
@@ -88,11 +89,11 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "mount_sprint", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
-    "rogue", "ladder_reward", "cloud_ladder", "arena", "statue", "guild",
+    "hellgate", "rogue", "ladder_reward", "cloud_ladder", "arena", "escort", "statue", "guild",
     "steward", "relic", "relic_sprint",
-    "gacha", "gacha_free", "kungfu_store", "pay_mall", "spirit", "secret_jewel",
+    "gacha", "gacha_free", "kungfu_store", "kungfu_worship", "pay_mall", "spirit", "secret_jewel",
     "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
-    "main_tasks_late")
+    "main_tasks_late", "main_chapter_kills")
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
@@ -374,7 +375,8 @@ def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
 
 
 def _run_gacha(client, inventory_tracker, *,
-               gacha_config: Optional[dict]) -> dict:
+               gacha_config: Optional[dict], device: str,
+               state_dir=None, now=None) -> dict:
     """抽卡 (技能/同伴) — opt-in, default off; SPENDS draw tickets (1012/1013).
 
     Only reached when ``gacha_config.enabled``. For each type in ``types``
@@ -386,9 +388,11 @@ def _run_gacha(client, inventory_tracker, *,
     """
     if not gacha_config or not gacha_config.get("enabled"):
         return {"skipped": "gacha disabled (set ws_token.gacha.enabled=True)"}
+    import datetime as _dt
+
+    current = now or _dt.datetime.now()
     if gacha_config.get("weekend_only"):
-        import datetime as _dt
-        if _dt.date.today().weekday() < 5:
+        if current.weekday() < 5:
             return {"skipped": "weekend_only: not Sat/Sun"}
     raw_types = gacha_config.get("types") or [gacha_config.get("type", 1)]
     mode = str(gacha_config.get("mode", "drain"))
@@ -400,19 +404,89 @@ def _run_gacha(client, inventory_tracker, *,
         batches = int(gacha_config.get("batches", 1))
     except (TypeError, ValueError):
         batches = 1
-    out: dict = {}
-    for t in raw_types:
+
+    valid_types: list[int] = []
+    for value in raw_types:
         try:
-            dt = int(t)
+            draw_type = int(value)
         except (TypeError, ValueError):
             continue
-        rep = gacha.run_gacha(client, inventory_tracker, enabled=True,
-                              draw_type=dt, mode=mode, count=count,
-                              batches=batches)
-        out[gacha.DRAW_TYPE_NAME.get(dt, str(dt))] = {
-            "drawn": rep.total_drawn, "bundles": rep.bundles,
-            "stopped": rep.stopped_reason}
-    return out or {"skipped": "no valid gacha types"}
+        if draw_type in gacha.DRAW_TYPE_NAME and draw_type not in valid_types:
+            valid_types.append(draw_type)
+    if not valid_types:
+        return {"skipped": "no valid gacha types"}
+
+    # 付費抽會在手機 ADB 離線時由 WS 備援每小時重跑，因此必須用持久化
+    # at-most-once 閘門。每種類型在送協議前先記 attempted，避免抽完後程序
+    # 崩潰／WS 斷線，下一輪又重複扣同一種券。
+    state_kw = {"state_dir": state_dir} if state_dir is not None else {}
+    state = ws_state.load_state(device, **state_kw)
+    today = current.date().isoformat()
+    paid = state.get("gacha_paid")
+    if not isinstance(paid, dict) or paid.get("last_date") != today:
+        paid = {
+            "last_date": today,
+            "attempted_types": [],
+            "results": {},
+            "mode": mode,
+            "count": count,
+            "batches": batches,
+        }
+    attempted = {
+        int(value)
+        for value in (paid.get("attempted_types") or [])
+        if str(value).isdigit()
+    }
+    if all(draw_type in attempted for draw_type in valid_types):
+        logger.info("[%s] WS 週末抽卡今日已嘗試，跳過重複扣券", device)
+        # 這仍算「實質完成」，讓後續 ADB pipeline 繼續跳過 weekend_to_buy。
+        # 若回傳 skipped，手機由離線恢復 ADB 後可能在同日再付費抽一次。
+        return {"already_attempted": True, "last_date": today}
+
+    out: dict = {}
+    for dt in valid_types:
+        if dt in attempted:
+            continue
+
+        attempted.add(dt)
+        paid["attempted_types"] = sorted(attempted)
+        paid["last_attempt_ts"] = current.timestamp()
+        state["gacha_paid"] = paid
+        ws_state.save_state(device, state, **state_kw)
+
+        name = gacha.DRAW_TYPE_NAME.get(dt, str(dt))
+        logger.info(
+            "[%s] WS 週末抽卡開始: %s，%s×%s（mode=%s）",
+            device, name, count, batches, mode,
+        )
+        try:
+            rep = gacha.run_gacha(
+                client,
+                inventory_tracker,
+                enabled=True,
+                draw_type=dt,
+                mode=mode,
+                count=count,
+                batches=batches,
+            )
+            result = {
+                "drawn": rep.total_drawn,
+                "bundles": rep.bundles,
+                "stopped": rep.stopped_reason,
+            }
+            logger.info(
+                "[%s] WS 週末抽卡完成: %s drawn=%s stopped=%s",
+                device, name, rep.total_drawn, rep.stopped_reason,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # attempted 已先落盤；不在同日自動重試不確定是否已扣券的請求。
+            result = {"error": f"{type(exc).__name__}: {exc}"}
+            logger.exception("[%s] WS 週末抽卡失敗: %s（本日不重試）", device, name)
+        out[name] = result
+        paid.setdefault("results", {})[str(dt)] = result
+        state["gacha_paid"] = paid
+        ws_state.save_state(device, state, **state_kw)
+    return out
 
 
 def _run_gacha_free(client, *, device: str, state_dir=None, now=None) -> dict:
@@ -586,6 +660,37 @@ def _run_dungeon(client, *, sweeps: Sequence[Sequence[int]]) -> dict:
     return {"sweeps": results}
 
 
+def _run_hellgate(client, *, hellgate_config: Optional[dict], should_abort=None) -> dict:
+    """穿越深淵之門：WS 進場/結算，官方 B 引擎計算傷害。"""
+    cfg = hellgate_config or {}
+    if not cfg.get("enabled"):
+        return {"skipped": "hellgate pure_ws disabled"}
+    b_mode = str(cfg.get("b_mode") or "cdp").strip().lower()
+    prefer_ephemeral = b_mode == "ephemeral"
+    cdp = cfg.get("cdp_port")
+    if not prefer_ephemeral and not cdp:
+        return {"skipped": "no hellgate B cdp_port", "success": False}
+    report = hellgate.run_with_b(
+        client,
+        prefer_ephemeral=prefer_ephemeral,
+        cdp_port=int(cdp) if cdp else None,
+        game_url=cfg.get("game_url"),
+        headless=bool(cfg.get("headless", True)),
+        ready_timeout_sec=float(cfg.get("ready_timeout_sec") or 90),
+        max_frames=int(cfg.get("max_frames") or 30_000),
+        speed_scale=float(cfg.get("speed_scale") or 2.0),
+        realtime=bool(cfg.get("realtime", True)),
+        simulation_timeout_sec=float(cfg.get("simulation_timeout_sec") or 330),
+        timeout=float(cfg.get("timeout_sec")) if cfg.get("timeout_sec") else None,
+    )
+    out = report.as_dict()
+    if report.skipped:
+        return out
+    if not report.success:
+        raise RuntimeError(report.error or "hellgate pure_ws failed")
+    return out
+
+
 def _run_arena(client, *, arena_config: Optional[dict], should_abort=None) -> dict:
     """競技場 pure WS：``arena_battle_mode=pure_ws`` 時執行。
 
@@ -622,6 +727,37 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None) -> di
     out = report.as_dict()
     if not report.success:
         raise RuntimeError(report.error or f"arena pure_ws incomplete fought={report.fought}")
+    return out
+
+
+def _run_escort(client, *, device: str, escort_config: Optional[dict],
+                should_abort=None) -> dict:
+    """賞金之路純 WS：WS 取戰鬥資料，官方 BattleMainServer 算勝負。"""
+    cfg = escort_config or {}
+    if not cfg.get("enabled"):
+        return {"skipped": "escort pure_ws disabled"}
+    b_mode = str(cfg.get("b_mode") or "ephemeral").strip().lower()
+    prefer_ephemeral = b_mode != "cdp"
+    cdp = cfg.get("cdp_port")
+    if not prefer_ephemeral and not cdp:
+        return {"skipped": "no escort B cdp_port", "success": False}
+    report = escort_fight.run_with_b(
+        client,
+        device=device,
+        max_fights=int(cfg.get("max_fights") or escort_fight.DEFAULT_MAX_FIGHTS),
+        gap_sec=float(cfg.get("gap_sec") or escort_fight.DEFAULT_GAP_SEC),
+        should_abort=should_abort,
+        prefer_ephemeral=prefer_ephemeral,
+        cdp_port=int(cdp) if cdp else None,
+        game_url=cfg.get("game_url"),
+        headless=bool(cfg.get("headless", True)),
+        ready_timeout_sec=float(cfg.get("ready_timeout_sec") or 90),
+    )
+    out = report.as_dict()
+    if report.skipped:
+        return out
+    if not report.success:
+        raise RuntimeError(report.error or f"escort pure_ws incomplete fought={report.fought}")
     return out
 
 
@@ -1062,6 +1198,25 @@ def _run_kungfu_store(client) -> dict:
             "bought": rep.bought, "stopped": rep.stopped}
 
 
+def _run_kungfu_worship(client) -> dict:
+    """菇菇武道會膜拜冠軍：空 body 的 16665 純 WS action。
+
+    活動窗口、已膜拜與帳號資格都由 server 判斷；拒絕/逾時只視為本輪
+    無可做，不讓它阻斷其他每日任務。
+    """
+    result = kungfu_race.worship(client)
+    if result.success:
+        return {"worship": result.worship,
+                "response_cmd": result.response_cmd}
+    summary = {"skipped": "server_rejected" if result.response_cmd == kungfu_race.CMD_ERROR
+               else "no_ack"}
+    if result.error_code is not None:
+        summary["error_code"] = result.error_code
+    if result.error:
+        summary["error"] = result.error
+    return summary
+
+
 def _run_pay_mall(client) -> dict:
     """限時商店 -> 每日商店 免費禮包 (150 鑽石/日, bundle_id 20101).
 
@@ -1071,12 +1226,9 @@ def _run_pay_mall(client) -> dict:
     return {"success": result.success, "error_code": result.error_code}
 
 
-def _run_workshop(client, inventory_tracker, *, device: str) -> dict:
-    """加工坊「閒置才補配方」: 只對閒置的小隊加工依可做量指派食物,絕不動 running 工坊.
-
-    冪等 (idempotent) — 每次喚醒都跑,因為只動 selected_food==0 的工坊,重複呼叫無害。
-    可做量 (producible_count) 由 ``inventory_tracker.counts`` 算 (登入 0x0402 9800004
-    全庫存快照,runner 連線時已捕獲)。不再有 12h parity/cadence 死結。
+def _run_workshop(client, inventory_tracker, *, device: str,
+                  state_dir=None, now=None) -> dict:
+    """加工坊 12h 配方輪換，並以可製作量作為切換前的安全閘門。
 
     ``selected_food`` 已經是目標時不重送；目標缺料時不先 cancel，避免把正在
     生產的工坊清成閒置。只有至少一個小隊成功切換或已確認在目標配方時才寫入
@@ -1313,11 +1465,19 @@ def _run_steward(client, *, spend: bool, serv_time: int,
                 st["steward"] = {**steward_st, "shopping_date": today}
                 ws_state.save_state(device, st, **kw)
 
-    # caller 沒給 sweep_list 時，從遊戲內掃蕩設定自動推導章節（2026-06-12）。
+    # caller 沒給 sweep_list 時，從遊戲內「開啟掃蕩」設定 + dungeon_list
+    # 自動推導；設定回覆的內層 key 不是 level/times，不能直接拿來組封包。
     effective_sweeps: Sequence[Sequence[int]] = sweep_list
     if not effective_sweeps:
-        effective_sweeps = steward.derive_sweep_list(
-            steward.read_dungeon_setting(client))
+        try:
+            setting = steward.read_dungeon_setting(client)
+            levels = steward.read_dungeon_levels(client)
+            effective_sweeps = steward.derive_sweep_list(setting, levels)
+        except Exception as exc:  # noqa: BLE001
+            # 讀不到副本清單時只跳過副本管家，不能讓其它 WS 日任務整批失敗。
+            logger.warning("ws_token steward: auto derive sweep list failed: %s", exc)
+            effective_sweeps = ()
+            summary["sweep_derived_error"] = f"{type(exc).__name__}: {exc}"
         summary["sweep_derived"] = list(effective_sweeps)
     if effective_sweeps:
         dungeon_active = steward.ensure_active(
@@ -1524,6 +1684,7 @@ def run_device(device: str, *, spend: bool = False,
                forge_ring: bool = False,
                workshop_rotate: bool = True,
                kungfu_guess: bool = False,
+               kungfu_worship: bool = False,
                mail_claim: bool = False,
                mail_gem_threshold: Optional[int] = None,
                mail_skill_threshold: Optional[int] = None,
@@ -1541,9 +1702,12 @@ def run_device(device: str, *, spend: bool = False,
                secret_jewel_config: Optional[dict] = None,
                 mining_config: Optional[dict] = None,
                 sea_config: Optional[dict] = None,
-                arena_config: Optional[dict] = None,
+               arena_config: Optional[dict] = None,
+               escort_config: Optional[dict] = None,
+               hellgate_config: Optional[dict] = None,
                 cloud_ladder_enabled: bool = False,
                 ladder_reward_enabled: bool = False,
+                main_chapter_kills_config: Optional[dict] = None,
                 dragon_realm_enabled: bool = True,
                 xwar_idle_enabled: bool = False,
                 statue_amount: int = 7000,
@@ -1560,8 +1724,9 @@ def run_device(device: str, *, spend: bool = False,
     (default) sends no cost action.
 
     ``sweep_list`` (only used when ``spend``) is the 副本管家 chapter list
-    ``[(id, level, times[, use_ad]), ...]``; with none configured the sweep is
-    skipped (steward does not auto-derive level/times).
+    ``[(id, level, times[, use_ad]), ...]``. With none configured, the steward
+    reads the in-game sweep switches and available dungeon levels, then derives
+    a conservative one-entry-per-enabled-chapter list.
 
     ``open_lamp`` (default False) is an independent opt-in for 開神燈. When True
     the runner opens one bounded batch of 神燈 boxes (REAL, not dry_run) and
@@ -1799,6 +1964,12 @@ def run_device(device: str, *, spend: bool = False,
                   client, role_id=role_id_hint, farm_config=farm_config,
                   inventory_tracker=inventory_tracker, device=device))
         _step("dungeon", lambda: _run_dungeon(client, sweeps=dsweeps))
+        if hellgate_config and hellgate_config.get("enabled"):
+            _step("hellgate", lambda: _run_hellgate(
+                client,
+                hellgate_config=hellgate_config,
+                should_abort=should_abort,
+            ))
         _step("rogue", lambda: _run_rogue(client, device=device))
         # 5558 保留 H5 挑戰/助戰流程；其他裝置每週挑戰與獎勵皆走同一 WS。
         if device != cloud_ladder.EXCLUDED_DEVICE:
@@ -1828,6 +1999,11 @@ def run_device(device: str, *, spend: bool = False,
             _step("arena",
                   lambda: _run_arena(client, arena_config=arena_config,
                                      should_abort=should_abort))
+        if escort_config and escort_config.get("enabled"):
+            _step("escort",
+                  lambda: _run_escort(client, device=device,
+                                      escort_config=escort_config,
+                                      should_abort=should_abort))
         _step("statue", lambda: _run_statue(client, device=device, amount=statue_amount))
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",
@@ -1845,12 +2021,15 @@ def run_device(device: str, *, spend: bool = False,
         if gacha_config and gacha_config.get("enabled"):
             _step("gacha",
                   lambda: _run_gacha(client, inventory_tracker,
-                                     gacha_config=gacha_config))
+                                     gacha_config=gacha_config,
+                                     device=device))
         if gacha_config and gacha_config.get("free_daily"):
             _step("gacha_free",
                   lambda: _run_gacha_free(client, device=device))
         if kungfu_guess:
             _step("kungfu_store", lambda: _run_kungfu_store(client))
+        if kungfu_worship:
+            _step("kungfu_worship", lambda: _run_kungfu_worship(client))
         _step("pay_mall", lambda: _run_pay_mall(client))
         _step("spirit", lambda: _run_spirit(client))
         _sj_cfg = secret_jewel_config or {}
@@ -1912,6 +2091,46 @@ def run_device(device: str, *, spend: bool = False,
         except Exception:  # noqa: BLE001
             logger.debug("ws_token runner: %s close raised", device, exc_info=True)
         close_reason, close_detail = _client_close_metadata(client)
+
+    # 主線擊殺需要自己的 A 端 WS，且 B 端會啟動免登入 H5 runtime；務必等既有
+    # 每日任務主連線關閉後才跑，避免同帳號兩條 WS 互踢。排在最後也避免星期五
+    # 3000 隻長任務阻塞停車、領獎等高優先工作。
+    kill_cfg = (
+        main_chapter_kills_config
+        if isinstance(main_chapter_kills_config, dict)
+        else {}
+    )
+    if bool(kill_cfg.get("enabled")) and not kicked and not aborted:
+        name = "main_chapter_kills"
+        if only_set is None or name in only_set:
+            if name in skip_set:
+                _notify(name, "skip", "resume: already done")
+            elif should_abort is not None and should_abort():
+                aborted = True
+                _notify(name, "aborted", "pending web launch")
+            else:
+                def _kill_progress(sent: int, target: int) -> None:
+                    _notify(name, "progress", f"{sent}/{target}")
+
+                try:
+                    from ws_token import main_chapter_kills
+
+                    _safe(
+                        tasks,
+                        errors,
+                        name,
+                        lambda: main_chapter_kills.run_daily(
+                            device,
+                            interval_sec=kill_cfg.get("interval_sec", 3.0),
+                            persist_every=kill_cfg.get("persist_every", 10),
+                            should_abort=should_abort,
+                            progress=_kill_progress,
+                        ),
+                        notify=_notify,
+                    )
+                except WSRunAborted:
+                    aborted = True
+                    _notify(name, "aborted", "interrupted")
 
     if kicked:
         logger.warning(

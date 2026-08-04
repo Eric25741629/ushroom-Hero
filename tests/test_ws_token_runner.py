@@ -463,6 +463,35 @@ def test_ladder_reward_send_failure_raises_for_h5_fallback(monkeypatch):
         runner._run_ladder_reward(object(), device="dev")
 
 
+def test_main_chapter_kills_runs_after_primary_client_closes(
+    patched, monkeypatch,
+):
+    _calls, holder = patched
+    events = []
+    from ws_token import main_chapter_kills
+
+    def fake_kills(device, **kwargs):
+        assert holder["client"].closed is True
+        events.append((device, kwargs))
+        return {"sent": 150, "target": 150}
+
+    monkeypatch.setattr(main_chapter_kills, "run_daily", fake_kills)
+    report = run_device(
+        "dev",
+        spend=False,
+        main_chapter_kills_config={
+            "enabled": True,
+            "interval_sec": 2.5,
+            "persist_every": 7,
+        },
+    )
+
+    assert events[0][0] == "dev"
+    assert events[0][1]["interval_sec"] == 2.5
+    assert events[0][1]["persist_every"] == 7
+    assert report.tasks["main_chapter_kills"]["sent"] == 150
+
+
 def _last_index(seq, val):
     return len(seq) - 1 - seq[::-1].index(val)
 
@@ -490,8 +519,8 @@ def test_spend_true_adds_cost_actions(patched):
     calls, _ = patched
 
     # provide a sweep_list so the 副本管家 sweep is exercised (it is gated on a
-    # caller-supplied chapter list; with none configured the sweep is skipped).
-    run_device("dev", spend=True, sweep_list=[(1, 5, 10)])
+    # caller-supplied chapter list; auto-derived lists are covered below.
+    run_device("dev", spend=True, sweep_list=[(2, 150, 1, 1)])
 
     actions = {(t, a) for t, a in calls}
     assert ("guild", "donate_until_capped") in actions
@@ -524,12 +553,38 @@ def test_mail_runs_after_redpack_when_enabled(patched):
 def test_spend_true_skips_sweep_without_chapter_list(patched):
     calls, _ = patched
 
-    run_device("dev", spend=True)  # no sweep_list
+    run_device("dev", spend=True)  # live setting probe fails on this minimal spy
 
     actions = {(t, a) for t, a in calls}
     # shopping still runs on spend, but the sweep is skipped (nothing configured)
     assert ("steward", "run_shopping") in actions
     assert ("steward", "run_dungeon_sweep") not in actions
+
+
+def test_spend_true_auto_derives_housekeeper_sweep_list(patched, monkeypatch):
+    calls, _ = patched
+    captured = {}
+
+    monkeypatch.setattr(
+        runner.steward,
+        "read_dungeon_setting",
+        lambda _client: {1: {2: 1}, 2: {1: 1}, 7: {1: 1}},
+    )
+    monkeypatch.setattr(
+        runner.steward,
+        "read_dungeon_levels",
+        lambda _client: {1: 639, 2: 150, 7: 49},
+    )
+    def fake_sweep(_client, sweep_list, **_kw):
+        captured["sweep_list"] = list(sweep_list)
+        calls.append(("steward", "run_dungeon_sweep"))
+        return "SWEEP"
+
+    monkeypatch.setattr(runner.steward, "run_dungeon_sweep", fake_sweep)
+
+    run_device("dev", spend=True)
+
+    assert captured["sweep_list"] == [(2, 150, 1, 1), (7, 49, 1, 0)]
 
 
 # --- redpack (free; always runs) --------------------------------------------
@@ -1635,7 +1690,7 @@ def test_run_device_end_to_end_over_fake_transport(monkeypatch):
         steward.CMD_INFO: lambda b: [s2c(steward.CMD_INFO, b"")],
         # spirit: empty pool list -> no free draws
         spirit.CMD_DRAW_INFO: lambda b: [s2c(spirit.CMD_DRAW_INFO, b"")],
-        # workshop: empty info -> no team workshops to assign
+    # workshop: empty info -> no team workshops to rotate
         workshop.CMD_INFO: lambda b: [s2c(workshop.CMD_INFO, b"")],
         # couple: empty favor list + lover_id=0 -> no partner, skipped
         couple.CMD_FAVOR_INFO: lambda b: [s2c(couple.CMD_FAVOR_INFO, b"")],
@@ -1712,9 +1767,10 @@ def test_task_order_has_home_features_before_lamp():
     # dragon_realm/sea_season tasks that sit between couple and mining.)
     assert order.index("spirit") < order.index("secret_jewel") < order.index("workshop")
     assert order.index("workshop") < order.index("couple") < order.index("mining")
-    # 尾端二次領取 main_tasks_late is dead-last, right after lamp.
-    assert order[-1] == "main_tasks_late"
+    # 主線擊殺另開 WS，排在主連線尾端領取與關閉之後。
+    assert order[-1] == "main_chapter_kills"
     assert order.index("lamp") < order.index("main_tasks_late")
+    assert order.index("main_tasks_late") < order.index("main_chapter_kills")
     # 萬神試煉 本周積分獎勵 sits in the free group, after dungeon and before guild.
     assert order.index("dungeon") < order.index("rogue") < order.index("guild")
     assert order.index("rogue") < order.index("ladder_reward")
@@ -1737,6 +1793,40 @@ class _FakeKungfuClient:
         if self.accept_all:
             return ks.CMD_SHOP_BUY, b""
         return ks.CMD_ERR, b""
+
+
+class _FakeKungfuWorshipClient:
+    def __init__(self, reply):
+        self.reply = reply
+        self.calls = []
+
+    def call_for(self, cmd, body=b"", *, expect_cmds, timeout=None):
+        from ws_token import kungfu_race as kr
+        self.calls.append((cmd, bytes(body), tuple(expect_cmds), timeout))
+        return self.reply
+
+
+def test_run_kungfu_worship_helper_sends_empty_body():
+    from ws_token import kungfu_race as kr
+    from ws_token import runner
+
+    client = _FakeKungfuWorshipClient((kr.CMD_WORSHIP, codec.pb_uint(1, 21312)))
+    summary = runner._run_kungfu_worship(client)
+
+    assert summary == {"worship": 21312, "response_cmd": kr.CMD_WORSHIP}
+    assert client.calls == [
+        (kr.CMD_WORSHIP, b"", (kr.CMD_WORSHIP, kr.CMD_ERROR), 6.0)
+    ]
+
+
+def test_run_kungfu_worship_helper_marks_server_rejection_skipped():
+    from ws_token import kungfu_race as kr
+    from ws_token import runner
+
+    client = _FakeKungfuWorshipClient((kr.CMD_ERROR, codec.pb_uint(1, 173)))
+    summary = runner._run_kungfu_worship(client)
+
+    assert summary == {"skipped": "server_rejected", "error_code": 173}
 
 
 def test_run_kungfu_store_helper_buys_to_cap():

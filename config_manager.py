@@ -104,6 +104,11 @@ DEFAULT_DEVICE_CONFIG = {
         "bootstrap_token": True, # ADB 裝置缺 capture/登入失敗時主動冷啟 App 撈 token
         "offline_fallback": False, # 手機 ADB 不可達時改跑純 WS 等待迴圈（離線備援），預設 off
         "fallback_host": "",    # 限定哪台主機跑離線備援（hostname，不分大小寫）；空 = 只有 master（防 NAS 同步雙主機注入互踢）
+        "main_chapter_kills": {  # 免開 App 主線擊殺：一般日 150、星期五固定 3000
+            "enabled": False,
+            "interval_sec": 3.0,
+            "persist_every": 10,
+        },
         # 2026-06-12 使用者指示：enabled 開了就代表全要 → 子功能預設全開
         "spend": True,          # 家族捐獻/管家代購/掃蕩/續約 等花費類
         "open_lamp": True,      # WS 開神燈（一批，取代 Playwright 開神燈）
@@ -112,6 +117,29 @@ DEFAULT_DEVICE_CONFIG = {
         "lamp_daily_min": 0,   # WS 開神燈：每日最少開啟數量（0 = 不限制；不受百分比規則約束，仍受 min_keep 地板）
         "farm": None,           # {"seed_id": int, "team_cfg_id": int}；填 seed_id 才 skip 農場任務
         "dungeon_sweeps": [],   # [[type, dungeon_id, num], ...]；有配才 skip 萬神試煉
+        "hellgate": {            # WorldBoss 純 WS：WS 進場/結算，CDP 只作官方戰鬥計算
+            "enabled": True,
+            "b_mode": "cdp",
+            "cdp_port": 0,
+            "game_url": "",
+            "headless": True,
+            "ready_timeout_sec": 90,
+            "max_frames": 30000,
+            "speed_scale": 2.0,          # 官方 timeScale；2 倍約 5 分鐘
+            "realtime": True,             # 按實際時間跑，不緊湊快轉傷害
+            "simulation_timeout_sec": 330,
+            "timeout_sec": 0,
+        },
+        "escort": {              # 賞金之路純 WS；先顯式開啟，避免未驗證就送戰鬥封包
+            "enabled": False,
+            "b_mode": "ephemeral",
+            "cdp_port": 0,
+            "game_url": "",
+            "headless": True,
+            "ready_timeout_sec": 90,
+            "max_fights": 3,
+            "gap_sec": 2.0,
+        },
         "carpark_target": None, # 跨界停車 master_id（只停不收；legacy 單停模式）
         "carpark_auto": False,  # 跨界自動掃可停 lot（legacy 單停模式）
         "carpark_plan": {       # 日/夜窗口跨界停車（限定泊銀、優先鉑銀9/10、抱團優先；窗口內持續補停）
@@ -130,6 +158,7 @@ DEFAULT_DEVICE_CONFIG = {
         "couple_gifts": True,   # 伴侶奶茶+玫瑰送光（每批20，server 封頂）
         "forge_ring": False,    # 戒指錘鍊（消耗全部真愛之石）
         "workshop_rotate": True,  # 加工坊 12h 兩配方輪換（couple_gifts 旁）
+        "kungfu_worship": False,  # 菇菇武道會膜拜冠軍（16665，server-gated）
         "mail_claim": False,    # 每日自動領取全部郵件附件（一鍵領取，每日一次；預設關，加法功能）
         "mail_gem_threshold": None,   # 神器附魔寶石 best-effort 滿門檻（僅 log，不擋領取；None=不查）
         "mail_skill_threshold": None,  # 武魂 best-effort 滿門檻（僅 log，不擋領取；None=不查）
@@ -617,6 +646,20 @@ def _merge_ws_token_phase_config(v: Any) -> dict:
         merged.get("offline_fallback"),
         default["offline_fallback"],
     )
+    kill_default = default["main_chapter_kills"]
+    kill_input = merged.get("main_chapter_kills")
+    kill_cfg = copy.deepcopy(kill_default)
+    if isinstance(kill_input, dict):
+        kill_cfg.update(kill_input)
+    kill_cfg["enabled"] = _to_bool(
+        kill_cfg.get("enabled"), kill_default["enabled"])
+    kill_cfg["interval_sec"] = max(
+        0.0, _to_float(kill_cfg.get("interval_sec"),
+                       kill_default["interval_sec"]))
+    kill_cfg["persist_every"] = max(
+        1, _to_int(kill_cfg.get("persist_every"),
+                   kill_default["persist_every"]))
+    merged["main_chapter_kills"] = kill_cfg
     mining_cfg = _sanitize_mining_config(merged.get("mining"))
     merged["mining"] = mining_cfg or copy.deepcopy(default["mining"])
     merged["gacha"] = _sanitize_gacha_config(merged.get("gacha"),
