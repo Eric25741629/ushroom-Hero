@@ -2,6 +2,12 @@
 
 ## GSD 流程規範
 
+### Git Worktree 隔離規則
+- 禁止直接在 `main` 工作樹修改程式碼。
+- 每項功能或修復都必須先建立獨立的 `git worktree` 與功能分支，在隔離工作樹完成修改與驗證。
+- 驗證通過後，切回 `main` 合併功能分支；合併後再於 `main` 重跑相關驗證。
+- 合併完成前不得刪除功能分支或工作樹；不得覆蓋其他未提交修改。
+
 ### 環境準備
 1. 啟用 Conda 環境：`conda activate mushroom1`
 2. 安裝相依套件：`pip install -r requirements.txt`
