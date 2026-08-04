@@ -17,7 +17,7 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
   3. redpack     — free: list grab_list and claim every claimable 紅包.
   4. guild       — help_all (free); donate_until_capped (spend); treasure open
                    only when a round is active (event-gated; spend).
-  5. steward     — read_info (free); shopping + dungeon sweep (spend); service
+  5. steward     — read_info; shopping (spend) + active dungeon sweep (every wake)
                    renewal only when spend AND the service is expired.
   6. spirit      — free: 守護靈免費召喚 (draw_all_free; only free_times,
                    never buys 招喚貨幣 — item 800003 does not exist).
@@ -40,8 +40,8 @@ Task order (matches the in-game daily flow's free-then-paid grouping):
                    (NOT ``spend``) and OFF by default. Runs one batch of up to
                    ``batch_num`` boxes (lamp.open_lamp's own cap), never unbounded.
 
-Default ``spend=False`` runs only the free reads + claims (incl. redpack) and
-sends NO cost action. ``spend=True`` additionally donates, shops, sweeps, and (if
+Default ``spend=False`` runs free reads + claims (incl. redpack) and an already
+active dungeon-housekeeper sweep. ``spend=True`` additionally donates, shops, and (if
 expired) renews — see the per-task spend gates below. ``open_lamp`` is an
 independent opt-in: it is OFF by default and consumes 神燈 items only when True.
 
@@ -1434,36 +1434,36 @@ def _run_guild(client, *, spend: bool) -> dict:
 def _run_steward(client, *, spend: bool, serv_time: int,
                  sweep_list: Sequence[Sequence[int]],
                  device: str = "", state_dir=None) -> dict:
-    """read_info (free); shopping (once/day) + dungeon sweep (every wake) when spend.
+    """Read state; shopping once/day when spend; dungeon sweep every wake.
 
-    購物管家 每日只跑一次（ws_state 日期閘）；副本管家 每次喚醒都跑。
+    購物管家受 ``spend`` 與每日日期閘控制；副本管家每次喚醒都嘗試。
+    ``spend=False`` 時不自動續費，但已在有效期內仍會正常掃蕩。
     """
     summary: dict = {
         "info": None, "shopping": None, "sweep": None,
         "shopping_active": False, "dungeon_active": False,
     }
     summary["info"] = steward.read_info(client)
-    if not spend:
-        return summary
 
     # --- 購物管家: once per day ---
-    from datetime import datetime
-    today = datetime.now().strftime("%Y-%m-%d")
-    kw = {"state_dir": state_dir} if state_dir is not None else {}
-    st = ws_state.load_state(device, **kw) if device else {}
-    steward_st = st.get("steward") or {}
+    if spend:
+        from datetime import datetime
+        today = datetime.now().strftime("%Y-%m-%d")
+        kw = {"state_dir": state_dir} if state_dir is not None else {}
+        st = ws_state.load_state(device, **kw) if device else {}
+        steward_st = st.get("steward") or {}
 
-    if steward_st.get("shopping_date") == today:
-        summary["shopping_skipped"] = f"already shopped {today}"
-    else:
-        shopping_active = steward.ensure_active(
-            client, steward.SERVICE_SHOPPING, serv_time=serv_time, renew=True)
-        summary["shopping_active"] = shopping_active
-        if shopping_active:
-            summary["shopping"] = steward.run_shopping(client)
-            if device:
-                st["steward"] = {**steward_st, "shopping_date": today}
-                ws_state.save_state(device, st, **kw)
+        if steward_st.get("shopping_date") == today:
+            summary["shopping_skipped"] = f"already shopped {today}"
+        else:
+            shopping_active = steward.ensure_active(
+                client, steward.SERVICE_SHOPPING, serv_time=serv_time, renew=True)
+            summary["shopping_active"] = shopping_active
+            if shopping_active:
+                summary["shopping"] = steward.run_shopping(client)
+                if device:
+                    st["steward"] = {**steward_st, "shopping_date": today}
+                    ws_state.save_state(device, st, **kw)
 
     # caller 沒給 sweep_list 時，從遊戲內「開啟掃蕩」設定 + dungeon_list
     # 自動推導；設定回覆的內層 key 不是 level/times，不能直接拿來組封包。
@@ -1481,10 +1481,20 @@ def _run_steward(client, *, spend: bool, serv_time: int,
         summary["sweep_derived"] = list(effective_sweeps)
     if effective_sweeps:
         dungeon_active = steward.ensure_active(
-            client, steward.SERVICE_DUNGEON, serv_time=serv_time, renew=True)
+            client, steward.SERVICE_DUNGEON, serv_time=serv_time, renew=spend)
         summary["dungeon_active"] = dungeon_active
         if dungeon_active:
+            logger.info(
+                "ws_token steward: 每輪副本掃蕩送出 entries=%s",
+                list(effective_sweeps),
+            )
             summary["sweep"] = steward.run_dungeon_sweep(client, effective_sweeps)
+            logger.info(
+                "ws_token steward: 每輪副本掃蕩完成 results=%d",
+                len(getattr(summary["sweep"], "results", ())),
+            )
+    else:
+        logger.info("ws_token steward: 本輪沒有可送出的副本掃蕩項目")
     return summary
 
 
@@ -1723,7 +1733,7 @@ def run_device(device: str, *, spend: bool = False,
     :class:`RunReport` summarising per-task results and errors. ``spend=False``
     (default) sends no cost action.
 
-    ``sweep_list`` (only used when ``spend``) is the 副本管家 chapter list
+    ``sweep_list`` is the 副本管家 chapter list used on every wake
     ``[(id, level, times[, use_ad]), ...]``. With none configured, the steward
     reads the in-game sweep switches and available dungeon levels, then derives
     a conservative one-entry-per-enabled-chapter list.
@@ -2232,7 +2242,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                          "+ sweep / service renew). Default: free reads/claims only.")
     ap.add_argument("--sweep", action="append", default=[],
                     metavar="id:level:times[:use_ad]",
-                    help="副本管家 sweep chapter (repeatable; only used with --spend)")
+                    help="副本管家 sweep chapter (repeatable; runs every wake)")
     ap.add_argument("--open-lamp", dest="open_lamp", action="store_true",
                     help="also 開神燈 (REAL): opens one bounded batch and "
                          "auto-equips/sells drops. Consumes 神燈 items. Default: off.")

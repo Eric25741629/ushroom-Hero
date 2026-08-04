@@ -38,6 +38,7 @@ from ws_token.steward import (  # noqa: E402
     build_buy_service_body,
     build_set_shop_item_body,
     build_sweep_body,
+    derive_sweep_list,
     ensure_active,
     is_active,
     read_dungeon_setting,
@@ -420,14 +421,32 @@ def test_run_dungeon_active_but_no_sweep_list_skips_sweep():
         c.close()
 
 
-# --- derive_sweep_list (2026-06-12 auto-derive from in-game setting) --------
+# --- derive_sweep_list (live副本管家設定 + dungeon_list) -------------------
 
-def test_derive_sweep_list_keeps_enabled_levels_only():
-    from ws_token.steward import derive_sweep_list
-    setting = {1: {2: 1}, 7: {1: 1, 3: 0}, 12: {1: 1}}
-    assert derive_sweep_list(setting) == [(1, 2, 1), (7, 1, 1), (12, 1, 1)]
+def test_derive_sweep_list_uses_live_levels_and_sets_ad_for_every_chapter():
+    # 內層 key 1 是「開啟掃蕩」switch，不是 level；level 必須來自
+    # dungeon_list。id=1 是武魂試煉，沒有一般掃蕩 switch，必須排除。
+    setting = {
+        1: {2: 1},
+        2: {1: 1},
+        7: {1: 1, 3: 0},
+        12: {1: 1},
+    }
+    levels = {1: 639, 2: 150, 7: 150, 12: 1751}
+    assert derive_sweep_list(setting, levels) == [
+        (2, 150, 1, 1),
+        (7, 150, 1, 1),
+        (12, 1751, 1, 1),
+    ]
+
+
+def test_derive_sweep_list_does_not_guess_without_live_levels():
+    assert derive_sweep_list({2: {1: 1}}) == []
+
+
+def test_derive_sweep_list_can_disable_ads_explicitly():
+    assert derive_sweep_list({2: {1: 1}}, {2: 150}, use_ad=0) == [(2, 150, 1, 0)]
 
 
 def test_derive_sweep_list_empty_setting_returns_empty():
-    from ws_token.steward import derive_sweep_list
     assert derive_sweep_list({}) == []
