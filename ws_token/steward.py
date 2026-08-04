@@ -20,10 +20,11 @@ Service ids (ws_token/data/housekeeper_config.json -> configHousekeeper): 購物
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
-from ws_token import codec
+from ws_token import codec, dungeon
 from ws_token.client import WSGameClient, WSTimeoutError
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,30 @@ CMD_DUNGEON_SETTING_INFO = 18699  # worker_common_farm_housekeeper_dungeon_setti
 CMD_SET_DUNGEON = 18700           # worker_common_farm_housekeeper_set_dungeon
 CMD_DUNGEON_SWEEP = 18701         # worker_common_farm_housekeeper_dungeon_sweep
 
+# dungeon_setting_info 的 list.k 是 MysteryDungeonKey，不是 level 或 times。
+# 遊戲客戶端目前使用 1 表示「開啟副本掃蕩」；2 是武魂試煉的自動購買設定。
+DUNGEON_SWEEP_SETTING = 1
+
 # Service row ids from configHousekeeper (housekeeper_config.json).
 SERVICE_SHOPPING = 1  # 購物管家
 SERVICE_DUNGEON = 2   # 副本管家
+
+# configHousekeeper.chapter.id -> configChapter_type.type。
+# ID 1 是「武魂試煉」專用設定，沒有一般副本掃蕩次數，不能拿來組 sweep_req。
+HOUSEKEEPER_CHAPTER_TYPES: dict[int, int] = {
+    1: 11,
+    2: 2,
+    3: 3,
+    4: 8,
+    5: 9,
+    6: 22,
+    7: 28,
+    8: 29,
+    9: 30,
+    10: 36,
+    11: 38,
+    12: 6,
+}
 
 # Renewal length sent in buy_service.day_num.
 # live-confirm: day_num semantics — is it the literal day count (30) or the
@@ -120,9 +142,9 @@ def build_set_shop_item_body(
 def build_sweep_body(sweep_list: Iterable[Sequence[int]]) -> bytes:
     """dungeon_sweep_c2s {sweep_list#1 repeated p_sweep_req{id#1,level#2,times#3,use_ad#4}}.
 
-    Each entry is (id, level, times[, use_ad]); use_ad defaults to 0. The caller
-    supplies these — v1 does NOT auto-derive level/times (that needs per-chapter
-    info; later work).
+    Each entry is (id, level, times[, use_ad]); use_ad defaults to 0. Automatic
+    derivation is handled separately by ``derive_sweep_list`` after reading the
+    real switch settings and available dungeon levels.
     # live-confirm: sweep_list[].id maps to chapter id (1-12) vs chapter_type;
     #               level/times source; ticket (門票) consumption per sweep.
     """
@@ -290,22 +312,61 @@ def run_shopping(client: WSGameClient, *, timeout: Optional[float] = None) -> Sh
 def read_dungeon_setting(
     client: WSGameClient, *, timeout: Optional[float] = None
 ) -> dict[int, dict[int, int]]:
-    """副本管家: read the dungeon sweep settings (dungeon_setting_info 18699)."""
+    """副本管家: read switch settings (dungeon_setting_info 18699).
+
+    回傳 ``{configHousekeeper.chapter.id: {MysteryDungeonKey: enabled}}``；
+    內層 key 是設定枚舉，不是副本 level/times。
+    """
     return parse_dungeon_setting(client.call(CMD_DUNGEON_SETTING_INFO, b"", timeout=timeout))
 
 
-def derive_sweep_list(setting: dict[int, dict[int, int]]) -> list[tuple[int, int, int]]:
-    """由 dungeon_setting_info 的遊戲內設定自動組 sweep_list。
+def read_dungeon_levels(
+    client: WSGameClient, *, timeout: Optional[float] = None
+) -> dict[int, int]:
+    """讀取遊戲副本 level，轉成 housekeeper chapter id -> max level。"""
+    rows = dungeon.list_dungeons(client, timeout=timeout)
+    level_by_type = {
+        int(row.type): int(row.max_level)
+        for row in rows
+        if int(row.max_level) > 0
+    }
+    return {
+        chapter_id: level_by_type[chapter_type]
+        for chapter_id, chapter_type in HOUSEKEEPER_CHAPTER_TYPES.items()
+        if chapter_type in level_by_type
+    }
 
-    setting 形如 {chapter: {level: times}}（live 觀測值為 0/1；0 = 該層停用）。
-    只收 times >= 1 的 (chapter, level, times)，免去手動維護章節清單。
+
+def derive_sweep_list(
+    setting: Mapping[int, Mapping[int, int]],
+    dungeon_levels: Mapping[int, int] | None = None,
+    *,
+    times: int = 1,
+    use_ad: int | None = None,
+) -> list[tuple[int, int, int, int]]:
+    """由真實副本設定與 level 組出副本管家 sweep_list。
+
+    ``setting`` 的內層 key 只判斷 ``DUNGEON_SWEEP_SETTING``；level 來自
+    ``dungeon_list``。自動推導每個已開啟副本 1 次，且免廣告卡帳號送出時
+    一律帶 ``use_ad=1``，讓畫面上的額外廣告次數確實被消耗。
     """
-    out: list[tuple[int, int, int]] = []
-    for chapter in sorted(setting):
-        for level in sorted(setting[chapter]):
-            times = setting[chapter][level]
-            if times >= 1:
-                out.append((chapter, level, times))
+    if not dungeon_levels:
+        return []
+    try:
+        sweep_times = max(1, int(times))
+    except (TypeError, ValueError):
+        sweep_times = 1
+    ad = 1 if use_ad is None else int(bool(use_ad))
+    out: list[tuple[int, int, int, int]] = []
+    for chapter_id in sorted(setting):
+        try:
+            switches = setting[chapter_id]
+            enabled = int(switches.get(DUNGEON_SWEEP_SETTING, 0)) > 0
+            level = int(dungeon_levels.get(int(chapter_id), 0))
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if enabled and level > 0:
+            out.append((int(chapter_id), level, sweep_times, ad))
     return out
 
 

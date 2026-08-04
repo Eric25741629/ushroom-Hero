@@ -528,6 +528,16 @@ def test_spend_true_adds_cost_actions(patched):
     assert ("steward", "run_dungeon_sweep") in actions
 
 
+def test_spend_false_still_runs_active_housekeeper_sweep_each_wake(patched):
+    calls, _ = patched
+
+    run_device("dev", spend=False, sweep_list=[(7, 150, 1, 1)])
+
+    actions = {(t, a) for t, a in calls}
+    assert ("steward", "run_shopping") not in actions
+    assert ("steward", "run_dungeon_sweep") in actions
+
+
 # --- mail gate (opt-in via mail_claim; runs after redpack) ------------------
 
 def test_mail_skipped_without_flag(patched):
@@ -584,7 +594,7 @@ def test_spend_true_auto_derives_housekeeper_sweep_list(patched, monkeypatch):
 
     run_device("dev", spend=True)
 
-    assert captured["sweep_list"] == [(2, 150, 1, 1), (7, 49, 1, 0)]
+    assert captured["sweep_list"] == [(2, 150, 1, 1), (7, 49, 1, 1)]
 
 
 # --- redpack (free; always runs) --------------------------------------------
