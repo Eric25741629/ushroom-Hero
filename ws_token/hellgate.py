@@ -637,7 +637,29 @@ def run_with_b(
                 ready_timeout_sec=ready_timeout_sec,
             )
         else:
-            pw, browser, page, kind = open_raw_cdp_runtime(int(cdp_port))
+            try:
+                pw, browser, page, kind = open_raw_cdp_runtime(int(cdp_port))
+            except Exception as cdp_exc:  # noqa: BLE001
+                # 裝置的 debug port 不代表頁面一定已啟動；CDP 拒絕連線時
+                # 自動開一個無 profile 的 headless B 頁，避免所有裝置卡在 10061。
+                logger.warning(
+                    "WorldBoss B 頁 CDP %s 連線失敗，改用 ephemeral headless: %s",
+                    cdp_port,
+                    cdp_exc,
+                )
+                try:
+                    pw, browser, page, kind = open_b_runtime(
+                        prefer_ephemeral=True,
+                        cdp_port=None,
+                        game_url=game_url,
+                        headless=headless,
+                        ready_timeout_sec=ready_timeout_sec,
+                    )
+                except Exception as ephemeral_exc:  # noqa: BLE001
+                    raise RuntimeError(
+                        f"CDP {cdp_port} failed: {cdp_exc}; "
+                        f"ephemeral fallback failed: {ephemeral_exc}"
+                    ) from ephemeral_exc
     except Exception as exc:  # noqa: BLE001 — 未進場，不可送放棄結算
         return WorldBossRun(success=False, error=f"B page failed: {exc}")
 
