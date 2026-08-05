@@ -276,9 +276,9 @@ def _mock_run_client(*, has_active_run, sim_results):
     return client
 
 
-def test_run_rogue_run_always_enters_even_when_active_run():
-    # live 測試證實 status.raw==1 時跳過 enter 會讓 combat 回 server error 2；
-    # 故現在無論 status 為何，每局一律先呼叫 enter。
+def test_run_rogue_run_ends_active_run_before_entering_new_run():
+    # 5554 live：active run 直接 enter 後重送 0x4C24 不會收到回覆；
+    # 必須先 over 舊局，再建立新局與確認開局獎勵。
     client = _mock_run_client(has_active_run=True, sim_results=[0, 1])
     sims = iter([
         {"ok": True, "result": 0, "precent": 0, "ms": 1.0},
@@ -295,7 +295,28 @@ def test_run_rogue_run_always_enters_even_when_active_run():
     enter_calls = [
         c for c in client.call_for.call_args_list if c.args[0] == rogue_mod.CMD_ENTER
     ]
+    over_calls = [
+        c for c in client.call_for.call_args_list if c.args[0] == rogue_mod.CMD_OVER
+    ]
     assert len(enter_calls) == 1
+    assert len(over_calls) == 2  # 舊局收尾 + 新局完成後收尾
+    assert client.call_for.call_args_list[0].args[0] == rogue_mod.CMD_OVER
+    assert client.call_for.call_args_list[1].args[0] == rogue_mod.CMD_ENTER
+
+
+def test_run_rogue_run_stops_when_active_run_cannot_be_ended():
+    client = _mock_run_client(has_active_run=True, sim_results=[])
+    client.call_for.side_effect = lambda cmd, *args, **kwargs: (
+        (rogue_mod.CMD_ERROR, codec.pb_uint(1, 9))
+        if cmd == rogue_mod.CMD_OVER
+        else (_ for _ in ()).throw(AssertionError(f"unexpected cmd {cmd}"))
+    )
+
+    report = run_rogue_run(client, object(), stages=80)
+
+    assert report.success is False
+    assert "active run" in (report.error or "")
+    assert [c.args[0] for c in client.call_for.call_args_list] == [rogue_mod.CMD_OVER]
 
 
 def test_run_rogue_run_enters_when_no_active_run():
@@ -314,7 +335,7 @@ def test_run_rogue_run_enters_when_no_active_run():
 
 
 def test_run_rogue_run_stops_on_loss():
-    client = _mock_run_client(has_active_run=True, sim_results=[0, 0, 1])
+    client = _mock_run_client(has_active_run=False, sim_results=[0, 0, 1])
     sims = iter([
         {"ok": True, "result": 0, "precent": 0, "ms": 1.0},
         {"ok": True, "result": 0, "precent": 0, "ms": 1.0},
@@ -335,7 +356,7 @@ def test_run_rogue_run_stops_on_loss():
 
 
 def test_run_rogue_run_calls_over_even_after_combat_failure():
-    client = _mock_run_client(has_active_run=True, sim_results=[])
+    client = _mock_run_client(has_active_run=False, sim_results=[])
     client.call_for.side_effect = None
 
     def call_for(cmd, body=b"", *, expect_cmds, timeout=None):

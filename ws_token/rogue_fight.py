@@ -196,14 +196,14 @@ def run_rogue_run(
     stages: int = _MAX_STAGES,
     should_abort=None,
 ) -> RogueFightReport:
-    """一局完整流程：check status → (enter if needed) → fight loop → over。
+    """一局完整流程：check status → 清舊局 → enter → fight loop → over。
 
     stages：單局最大關數安全上限（預設 80，同 _MAX_STAGES）。
     """
     report = RogueFightReport(success=False)
 
-    # 1. 查狀態（純 telemetry）：rogue_status_s2c 只有 field1 status，語意未經
-    # server 文件證實。
+    # 1. 查狀態：5554 live 已驗證 field1=1 代表有尚未結算的 run。
+    status = None
     try:
         status = rogue_mod.fetch_status(client)
         logger.info("rogue pure_ws status: has_active_run=%s raw=%s",
@@ -211,7 +211,21 @@ def run_rogue_run(
     except Exception as e:
         logger.warning("rogue pure_ws: fetch_status failed (non-fatal): %s", e)
 
-    # 2. 開新局（rogue_main_enter_s2c 依 schema 無 code 欄位，任何非
+    # 2. 邊界清理：active run 代表上一輪尚未結算。5554 live 證實此狀態直接
+    # enter 後再送 start_reward_info(0x4C24) 不會收到回覆，必須先 over 舊局。
+    if status is not None and status.has_active_run:
+        logger.info("rogue pure_ws: active run detected, end it before restart")
+        try:
+            previous = rogue_mod.end_run(client, return_type=0)
+        except Exception as e:
+            report.error = f"active run cleanup exception: {e}"
+            return report
+        if not previous.success:
+            report.error = f"active run cleanup failed: {previous.error}"
+            return report
+        logger.info("rogue pure_ws: previous active run ended")
+
+    # 3. 開新局（rogue_main_enter_s2c 依 schema 無 code 欄位，任何非
     # error 回覆即成功 —— 見 ws_token/rogue.py parse_enter）。
     logger.info("rogue pure_ws: enter run (return_type=1)")
     try:
@@ -226,7 +240,7 @@ def run_rogue_run(
         report.error = f"enter exception: {e}"
         return report
 
-    # 3. 開局獎勵(重造)確認 — combat 前必經，先前遺漏是 "server error 2" 根因。
+    # 4. 開局獎勵(重造)確認 — combat 前必經，先前遺漏是 "server error 2" 根因。
     # UI 對應 RogueRemakeRewardView「進入遊戲」→確認窗「是否確認進入本次萬神試煉」；
     # live 實測(2026-07-17 5556 node-emit)這一步送 rogue_start_reward_info(0x4C24)+
     # rogue_start_reward_confirm(0x4C26)，缺這步直接打 combat 會被 server 拒絕。
@@ -246,7 +260,7 @@ def run_rogue_run(
         report.error = f"start_reward exception: {e}"
         return report
 
-    # 4. 打關迴圈
+    # 5. 打關迴圈
     last_t = 0.0
     for i in range(max(1, min(_MAX_STAGES, stages))):
         if should_abort and should_abort():
@@ -279,7 +293,7 @@ def run_rogue_run(
             logger.info("rogue pure_ws: stage %d 失敗 → 本局結束", stage_num)
             break
 
-    # 4. 結束本局
+    # 6. 結束本局
     try:
         over = rogue_mod.end_run(client, return_type=0)
         logger.info("rogue pure_ws: over code=%s fields=%s",
