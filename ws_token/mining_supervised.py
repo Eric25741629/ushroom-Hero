@@ -13,6 +13,7 @@ from functools import wraps
 import json
 import logging
 import math
+import sys
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -29,6 +30,9 @@ logger = logging.getLogger(__name__)
 _ACTIVE_WS_TELEMETRY: contextvars.ContextVar[Optional["_WSTelemetry"]] = (
     contextvars.ContextVar("active_ws_telemetry", default=None)
 )
+_ACTIVE_WS_FINALIZER: contextvars.ContextVar[Optional[Callable[..., Any]]] = (
+    contextvars.ContextVar("active_ws_finalizer", default=None)
+)
 
 
 def _telemetry_guard(func):
@@ -39,11 +43,16 @@ def _telemetry_guard(func):
             return func(*args, **kwargs)
         except BaseException as exc:
             telemetry = _ACTIVE_WS_TELEMETRY.get()
-            if telemetry is not None and not telemetry._finished:
-                message = f"{type(exc).__name__}: {exc}"
+            if (telemetry is not None and not telemetry._finished
+                    and not telemetry._exception_recorded):
                 telemetry.exception("supervised", exc)
-                telemetry.finish("exception", error=message)
             raise
+        finally:
+            finalizer = _ACTIVE_WS_FINALIZER.get()
+            if finalizer is not None:
+                # The finalizer owns map cleanup, summary emission and context
+                # reset.  It must not mask an exception already in flight.
+                finalizer(sys.exc_info()[1])
     return wrapped
 
 
@@ -92,17 +101,23 @@ class _WSTelemetry:
     shadow_elapsed_ms: float = 0.0
     _active_round: Optional[int] = field(default=None, init=False, repr=False)
     _finished: bool = field(default=False, init=False, repr=False)
+    _exception_recorded: bool = field(default=False, init=False, repr=False)
 
     # WS 挖礦沒有 screenshot/classifier/overlay 實作；欄位名稱與
     # miner/mining_service 遙測共用，方便下游合併分析。
     _OVERLAY_SOURCE = "not_in_ws_module"
 
     def __post_init__(self) -> None:
+        # The shared telemetry contract treats identifiers as strings while
+        # keeping an omitted device id explicitly null in JSON.
+        self.device_id = None if self.device_id is None else str(self.device_id)
+        self.session_id = str(self.session_id or uuid.uuid4().hex)
         self.planner_version = str(self.planner_version or "v1")
         self.shadow_planner_version = str(self.shadow_planner_version or "")
         self._emit({
             "schema": "mining_telemetry_v1",
             "event": "session_start",
+            "scope": "session",
             "session_id": self.session_id,
             "device_id": self.device_id,
             "planner": self.planner_version,
@@ -118,6 +133,21 @@ class _WSTelemetry:
             "shadow_skipped": 0,
             "shadow_not_attempted": 0,
             "shadow_elapsed_ms": 0.0,
+            "shadow_sample_rate": 0.0,
+            "screenshots_total": 0,
+            "screenshots_per_round_avg": 0.0,
+            # Canonical per-round names are present on every event.  The
+            # legacy cumulative aliases remain additive for old consumers.
+            "round_screenshot_calls": 0,
+            "round_classify_calls": 0,
+            "round_overlay_ocr_calls": 0,
+            "round_shadow_calls": 0,
+            "round_shadow_successes": 0,
+            "round_shadow_failures": 0,
+            "round_shadow_skipped": 0,
+            "round_shadow_not_attempted": 0,
+            "round_shadow_elapsed_ms": 0.0,
+            "round_shadow_sample_rate": 0.0,
         })
 
     def _emit(self, event: Dict[str, Any]) -> None:
@@ -178,11 +208,15 @@ class _WSTelemetry:
         event: Dict[str, Any] = {
             "schema": "mining_telemetry_v1",
             "event": "round",
+            "scope": "round",
             "session_id": self.session_id,
             "device_id": self.device_id,
             "round": self._active_round,
             "status": status,
-            "planner": (plan_result or {}).get("planner_name", self.planner_version),
+            "planner": str(
+                (plan_result or {}).get("planner_name", self.planner_version)
+                or self.planner_version
+            ),
             "shadow_planner": self.shadow_planner_version or None,
             "planner_source": (plan_result or {}).get("planner_source", "planner"),
             # WS uses 0x0c01 board snapshots, not ADB screenshots/CNN.
@@ -198,6 +232,19 @@ class _WSTelemetry:
             "round_shadow_not_attempted": shadow_not_attempted,
             "round_shadow_elapsed_ms": shadow_elapsed,
             "round_shadow_sample_rate": 1.0 if shadow_call else 0.0,
+            # Compatibility aliases (the canonical names above are the only
+            # fields whose meaning is shared with miner telemetry).
+            "screenshot_calls": 0,
+            "classify_calls": 0,
+            "overlay_ocr_calls": 0,
+            "overlay_dismissals": 0,
+            "shadow_calls": self.shadow_calls,
+            "shadow_successes": self.shadow_successes,
+            "shadow_failures": self.shadow_failures,
+            "shadow_skipped": self.shadow_skipped,
+            "shadow_not_attempted": self.shadow_not_attempted,
+            "shadow_elapsed_ms": self.shadow_elapsed_ms,
+            "shadow_sample_rate": self.shadow_calls / self.rounds if self.rounds else 0.0,
             "shadow_skip_reason": (
                 None if shadow_requested and shadow_present else
                 ("disabled" if not shadow_configured else "missing_result")
@@ -214,12 +261,18 @@ class _WSTelemetry:
         phase: str,
         exc: BaseException,
         plan_result: Optional[Dict[str, Any]] = None,
+        *,
+        fatal: bool = True,
     ) -> None:
         """記錄例外路徑，但維持原例外繼續向上拋出的行為。"""
+        if fatal:
+            self._exception_recorded = True
         message = f"{type(exc).__name__}: {exc}"
         self._emit({
             "schema": "mining_telemetry_v1",
             "event": "exception",
+            "scope": "session",
+            "overlay_source": self._OVERLAY_SOURCE,
             "session_id": self.session_id,
             "device_id": self.device_id,
             "planner": self.planner_version,
@@ -228,19 +281,28 @@ class _WSTelemetry:
             "round": self._active_round,
             "error": message,
         })
-        if self._active_round is not None:
-            self.finish_round(plan_result, status="exception", error=message)
+        if fatal and self._active_round is not None:
+            try:
+                self.finish_round(plan_result, status="exception", error=message)
+            except BaseException:
+                # A telemetry hook itself must never prevent the outer
+                # finalizer from producing the session summary.
+                self._active_round = None
 
     def finish(self, stopped_reason: str, *, error: Optional[str] = None) -> None:
         if self._finished:
             return
         if self._active_round is not None:
-            self.finish_round(None, status="abandoned", error=error)
+            try:
+                self.finish_round(None, status="abandoned", error=error)
+            except BaseException:
+                self._active_round = None
         self._finished = True
         rounds = self.rounds
         self._emit({
             "schema": "mining_telemetry_v1",
             "event": "session_summary",
+            "scope": "session",
             "session_id": self.session_id,
             "device_id": self.device_id,
             "planner": self.planner_version,
@@ -249,9 +311,11 @@ class _WSTelemetry:
             "stopped_reason": stopped_reason,
             "error": error,
             "screenshot_calls": self.screenshot_calls,
+            "screenshots_total": self.screenshot_calls,
             "screenshots_per_round": (
                 self.screenshot_calls / rounds if rounds else 0.0
             ),
+            "screenshots_per_round_avg": self.screenshot_calls / rounds if rounds else 0.0,
             "screenshot_calls_avg": self.screenshot_calls / rounds if rounds else 0.0,
             "classify_calls": self.classify_calls,
             "classify_calls_avg": self.classify_calls / rounds if rounds else 0.0,
@@ -275,6 +339,8 @@ class _WSTelemetry:
             "shadow_successes_avg": self.shadow_successes / rounds if rounds else 0.0,
             "shadow_failures_avg": self.shadow_failures / rounds if rounds else 0.0,
             "shadow_skipped_avg": self.shadow_skipped / rounds if rounds else 0.0,
+            "shadow_not_attempted_avg": self.shadow_not_attempted / rounds if rounds else 0.0,
+            "shadow_sample_rate_avg": self.shadow_calls / rounds if rounds else 0.0,
             "session_elapsed_ms": round(
                 max(0.0, (time.monotonic() - self.started_at) * 1000.0), 3
             ),
@@ -942,10 +1008,57 @@ def mine_until_pickaxe_empty(
         shadow_planner_version=shadow_planner_version,
         log=_wlog or logger,
     )
-    _ACTIVE_WS_TELEMETRY.set(telemetry)
+    telemetry_token = _ACTIVE_WS_TELEMETRY.set(telemetry)
+
+    # Finalization is installed before map-recorder construction so every
+    # return/exception path emits exactly one summary and resets both context
+    # variables.  ``map_end`` is deliberately before ``session_summary`` so an
+    # end failure is observable in the same invocation's telemetry.
+    map_recorder = None
+    executed: list[Dict[str, Any]] = []
+    stopped_reason = "exception"
+    _final_error: Optional[str] = None
+    _finalized = False
+
+    def _finalize(active_exc: Optional[BaseException]) -> None:
+        nonlocal _finalized, _final_error, stopped_reason
+        if _finalized:
+            return
+        _finalized = True
+        map_exc: Optional[BaseException] = None
+        if map_recorder is not None:
+            try:
+                map_recorder.end(totals={
+                    "stopped": stopped_reason if active_exc is None else "exception",
+                    "digs": len(executed),
+                })
+            except BaseException as exc:
+                map_exc = exc
+                telemetry.exception("map_end", exc)
+                _final_error = f"{type(exc).__name__}: {exc}"
+                stopped_reason = "exception"
+        if active_exc is not None and not telemetry._exception_recorded:
+            telemetry.exception("supervised", active_exc)
+        if active_exc is not None:
+            stopped_reason = "aborted" if isinstance(active_exc, WSRunAborted) else "exception"
+            _final_error = f"{type(active_exc).__name__}: {active_exc}"
+        try:
+            telemetry.finish(stopped_reason, error=_final_error)
+        finally:
+            _ACTIVE_WS_FINALIZER.reset(finalizer_token)
+            _ACTIVE_WS_TELEMETRY.reset(telemetry_token)
+        if map_exc is not None and active_exc is None:
+            raise map_exc
+
+    finalizer_token = _ACTIVE_WS_FINALIZER.set(_finalize)
 
     # 每帳號挖礦地圖記錄（純 WS 路徑：21 列已知盤 + WS baseline authoritative depth）。
-    map_recorder = MiningMapRecorder.for_device(device_id, "ws") if device_id else None
+    if device_id:
+        try:
+            map_recorder = MiningMapRecorder.for_device(device_id, "ws")
+        except BaseException as exc:
+            telemetry.exception("map_init", exc)
+            raise
 
     def _map_snapshot(board_obj):
         """回傳 (depth, visible_7列, below_列或None)；失敗回 None（不得中斷挖礦）。"""
@@ -958,10 +1071,12 @@ def mine_until_pickaxe_empty(
                 full = mining_adapter.build_final_v1_input(board_obj)["board"]
                 if len(full) > len(visible):
                     below = full[len(visible):]
-            except Exception:
+            except Exception as exc:
+                telemetry.exception("map_snapshot", exc, fatal=False)
                 below = None
             return depth, visible, below
-        except Exception:
+        except Exception as exc:
+            telemetry.exception("map_snapshot", exc, fatal=False)
             return None
 
     def _record_ws_round(board_obj, plan_result, item, tried_any):
@@ -995,7 +1110,7 @@ def mine_until_pickaxe_empty(
     if is_final_v1 and not seen:
         # final_v1 只信 authoritative inventory（0x0401 seed + 0x0402 delta）；
         # 沒看過 4001 現量就不猜、不 seed，直接 skip（保留 ADB/v1 後備）。
-        telemetry.finish("inventory_unknown")
+        stopped_reason = "inventory_unknown"
         return {
             "initial_inventory": tracker.as_props(),
             "final_inventory": tracker.as_props(),
@@ -1009,14 +1124,13 @@ def mine_until_pickaxe_empty(
     initial_inventory = dict(inventory)
     plans: list[Dict[str, Any]] = []
     candidate_steps: list[Dict[str, Any]] = []
-    executed: list[Dict[str, Any]] = []
     limit = max(0, int(max_steps))
     stopped_reason = "max_steps"
 
     # 已知初始鎬子為 0 時不讀盤、不建立 round；這是 session-level stop，
     # 不是一輪 no_steps，避免 telemetry 虛構一次 planner invocation。
     if seen and int(inventory.get("pickaxe", 0) or 0) <= 0:
-        telemetry.finish("pickaxe_empty")
+        stopped_reason = "pickaxe_empty"
         return {
             "initial_inventory": initial_inventory,
             "final_inventory": inventory,
@@ -1032,32 +1146,34 @@ def mine_until_pickaxe_empty(
 
     def _raise_if_aborted(plan_result: Optional[Dict[str, Any]] = None) -> None:
         """統一處理中斷 callback；任何 callback 例外都必須封存 session。"""
+        nonlocal stopped_reason
         try:
             requested = should_abort is not None and bool(should_abort())
         except Exception as exc:
             telemetry.exception("should_abort", exc, plan_result)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
             raise
         if requested:
             exc = WSRunAborted("挖礦中途收到中斷請求（開啟瀏覽器）")
             telemetry.exception("abort", exc, plan_result)
-            telemetry.finish("aborted", error=f"{type(exc).__name__}: {exc}")
+            stopped_reason = "aborted"
             raise exc
 
     try:
         current_board = mining.read_board(client, timeout=timeout)
     except Exception as exc:
         telemetry.exception("initial_board", exc)
-        telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
         raise
     try:
         _log_board_trace(current_board, inventory, phase="initial", step_index=0, log=_wlog)
-        if map_recorder is not None:
-            map_recorder.start(planner=planner_version, inv=dict(inventory))
     except Exception as exc:
-        telemetry.exception("initial_bookkeeping", exc)
-        telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
+        telemetry.exception("board_log", exc)
         raise
+    if map_recorder is not None:
+        try:
+            map_recorder.start(planner=planner_version, inv=dict(inventory))
+        except BaseException as exc:
+            telemetry.exception("map_start", exc)
+            raise
     for _idx in range(limit):
         # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
         # 續做時讀當前 board 接續，不會重複。
@@ -1086,7 +1202,6 @@ def mine_until_pickaxe_empty(
             )
         except Exception as exc:
             telemetry.exception("plan", exc)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
             raise
         plans.append(plan_result)
         try:
@@ -1095,7 +1210,6 @@ def mine_until_pickaxe_empty(
                             shadow_planner_version=shadow_planner_version)
         except Exception as exc:
             telemetry.exception("plan_log", exc, plan_result)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
             raise
 
         # 同一盤面內逐個候選嘗試：被伺服器拒挖（unconfirmed、版面不變）的目標只
@@ -1120,7 +1234,6 @@ def mine_until_pickaxe_empty(
                 )
             except Exception as exc:
                 telemetry.exception("select", exc)
-                telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
                 raise
             if step is None:
                 break
@@ -1144,7 +1257,6 @@ def mine_until_pickaxe_empty(
                 )
             except Exception as exc:
                 telemetry.exception("execute", exc, plan_result)
-                telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
                 raise
             executed.append(item)
             if item.get("confirmed"):
@@ -1153,23 +1265,25 @@ def mine_until_pickaxe_empty(
                 _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
             except Exception as exc:
                 telemetry.exception("execute_log", exc, plan_result)
-                telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
                 raise
             rejected.add(int(step["block_id"]))
             item = None
 
-        telemetry.finish_round(
-            plan_result,
-            status=(
-                "confirmed" if item and item.get("confirmed") else
-                ("unconfirmed" if tried_any else "no_steps")
-            ),
-        )
         try:
             _record_ws_round(current_board, plan_result, item, tried_any)
-        except Exception as exc:
-            telemetry.exception("round_record", exc, plan_result)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
+        except BaseException as exc:
+            telemetry.exception("map_round", exc, plan_result)
+            raise
+        try:
+            telemetry.finish_round(
+                plan_result,
+                status=(
+                    "confirmed" if item and item.get("confirmed") else
+                    ("unconfirmed" if tried_any else "no_steps")
+                ),
+            )
+        except BaseException as exc:
+            telemetry.exception("round", exc, plan_result)
             raise
 
         if item is None:
@@ -1195,7 +1309,6 @@ def mine_until_pickaxe_empty(
             _log_execute_trace(item, step_index=_idx, inventory=inventory, log=_wlog)
         except Exception as exc:
             telemetry.exception("execute_log", exc, plan_result)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
             raise
         if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
@@ -1211,27 +1324,26 @@ def mine_until_pickaxe_empty(
                              step_index=_idx, log=_wlog)
         except Exception as exc:
             telemetry.exception("board_log", exc, plan_result)
-            telemetry.finish("exception", error=f"{type(exc).__name__}: {exc}")
             raise
     else:
         if seen and int(inventory.get("pickaxe", 0)) <= 0:
             stopped_reason = "pickaxe_empty"
 
     _summary_log = _wlog or logger
-    _summary_log.info(
-        "ws_mining summary: stopped=%s digs=%s hold_floor_rounds=%s "
-        "pickaxe %s→%s drill %s→%s bomb %s→%s",
-        stopped_reason,
-        len(executed),
-        sum(1 for p in plans if p.get("hold_floor")),
-        initial_inventory.get("pickaxe"), inventory.get("pickaxe"),
-        initial_inventory.get("drill"), inventory.get("drill"),
-        initial_inventory.get("bomb"), inventory.get("bomb"),
-    )
-    telemetry.finish(stopped_reason)
-
-    if map_recorder is not None:
-        map_recorder.end(totals={"stopped": stopped_reason, "digs": len(executed)})
+    try:
+        _summary_log.info(
+            "ws_mining summary: stopped=%s digs=%s hold_floor_rounds=%s "
+            "pickaxe %s→%s drill %s→%s bomb %s→%s",
+            stopped_reason,
+            len(executed),
+            sum(1 for p in plans if p.get("hold_floor")),
+            initial_inventory.get("pickaxe"), inventory.get("pickaxe"),
+            initial_inventory.get("drill"), inventory.get("drill"),
+            initial_inventory.get("bomb"), inventory.get("bomb"),
+        )
+    except BaseException as exc:
+        telemetry.exception("summary_log", exc)
+        raise
 
     result: Dict[str, Any] = {
         "initial_inventory": initial_inventory,
