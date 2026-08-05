@@ -134,6 +134,33 @@ def _planned_pickaxe_hits(step: Dict[str, Any], goods_id: int) -> int:
     return 1
 
 
+def _inventory_delta_confirms(
+    before: Optional[Dict[str, int]],
+    after: Optional[Dict[str, int]],
+    goods_id: int,
+) -> bool:
+    """只把目標道具現量下降當成 WS 動作成功。
+
+    盤面快照可能因動畫／短暫 WS 斷線沒有更新，但 0x0402 consume push
+    已抵達；此時下降的目標道具是最可靠的歸因訊號。整張 dict 不同（例如
+    同步到獎勵增加）不能單獨算成功，避免把無關庫存變化誤認成挖掘成功。
+    """
+    if before is None or after is None:
+        return False
+    key_by_goods = {
+        mining.GOODS_PICKAXE: "pickaxe",
+        mining.GOODS_DRILL: "drill",
+        mining.GOODS_BOMB: "bomb",
+    }
+    key = key_by_goods.get(int(goods_id))
+    if key is None:
+        return False
+    try:
+        return int(after.get(key, 0)) < int(before.get(key, 0))
+    except (TypeError, ValueError):
+        return False
+
+
 def _decrement_inventory(inventory: Dict[str, int], goods_id: int, hits: int) -> None:
     key_by_goods = {
         mining.GOODS_PICKAXE: "pickaxe",
@@ -310,6 +337,20 @@ def execute_plan_step(
             except Exception as exc:  # pragma: no cover - live transport failure path
                 confirmation = "refresh_failed"
                 error = f"{type(exc).__name__}: {exc}"
+                # WinError 10038 and similar transient refresh failures can
+                # happen after the server already accepted 0x0c03.  Keep the
+                # inventory-delta success contract instead of discarding the
+                # consume push merely because 0x0c01 could not be read.
+                if inventory_reader is not None:
+                    try:
+                        inventory_after = inventory_reader()
+                    except Exception:
+                        inventory_after = None
+                    if _inventory_delta_confirms(
+                        before_inventory, inventory_after, goods_id
+                    ):
+                        confirmed = True
+                        confirmation = "inventory_changed"
                 break
             board_conf = _board_confirmation(before_board, after_board, step)
             if inventory_reader is None:
@@ -327,7 +368,9 @@ def execute_plan_step(
                     confirmation = board_conf
                     break
                 inventory_after = inventory_reader()
-                if before_inventory is not None and inventory_after != before_inventory:
+                if _inventory_delta_confirms(
+                    before_inventory, inventory_after, goods_id
+                ):
                     confirmed = True
                     confirmation = "inventory_changed"
                     break
