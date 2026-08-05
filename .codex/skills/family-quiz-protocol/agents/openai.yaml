@@ -1,0 +1,4 @@
+interface:
+  display_name: "家族趣味競答協議"
+  short_description: "自動索引家族趣味競答封包、題庫、排名與 CDP 抓取分析流程"
+  default_prompt: "Use $family-quiz-protocol to inspect and decode the latest family quiz packets."
