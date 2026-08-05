@@ -141,6 +141,43 @@ def test_run_with_b_skips_before_start_when_event_is_closed(monkeypatch):
         client.close()
 
 
+def test_run_with_b_falls_back_to_ephemeral_when_cdp_is_unavailable(monkeypatch):
+    events = []
+    info = hellgate.WorldBossInfo(success=True, is_open=0, times=1)
+
+    def fail_cdp(port):
+        events.append(("cdp", port))
+        raise OSError("WinError 10061")
+
+    def open_ephemeral(**kwargs):
+        events.append(("ephemeral", kwargs))
+        return object(), object(), object(), "ephemeral"
+
+    monkeypatch.setattr(hellgate, "open_raw_cdp_runtime", fail_cdp)
+    monkeypatch.setattr(hellgate, "open_b_runtime", open_ephemeral)
+    monkeypatch.setattr(hellgate, "fetch_info", lambda *_args, **_kwargs: info)
+    monkeypatch.setattr(
+        hellgate,
+        "close_b_runtime",
+        lambda *_args, **kwargs: events.append(("close", kwargs)),
+    )
+
+    report = hellgate.run_with_b(
+        object(),
+        cdp_port=9230,
+        game_url="https://mushroomh5.acenetgame.com/",
+        headless=True,
+        session_settle_sec=0,
+    )
+
+    assert report.skipped == "event closed (is_open=0)"
+    assert events[0] == ("cdp", 9230)
+    assert events[1][0] == "ephemeral"
+    assert events[1][1]["prefer_ephemeral"] is True
+    assert events[1][1]["headless"] is True
+    assert events[2] == ("close", {"kind": "ephemeral"})
+
+
 def test_run_with_b_opens_b_before_info_and_start(monkeypatch):
     events = []
     info = hellgate.WorldBossInfo(success=True, is_open=1, times=1)
