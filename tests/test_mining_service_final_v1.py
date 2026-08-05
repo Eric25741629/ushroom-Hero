@@ -1,6 +1,7 @@
 """CNN mining_service final_v1 dispatch, v1 fallback, blocked-first-step,
 and shadow exception isolation."""
 import logging
+import json
 import sys
 import types
 
@@ -223,3 +224,115 @@ def test_run_force_sleep_is_re_raised_after_recorder_cleanup(monkeypatch):
     assert len(recorder.end_calls) == 1
     assert recorder.end_calls[0]["totals"] is None
     assert rl.flush_calls == 1
+
+
+class _TelemetryLogger(_FakeLogger):
+    def __init__(self):
+        super().__init__()
+        self.info_calls = []
+
+    def info(self, message, *args, **kwargs):
+        if args:
+            message = message % args
+        self.info_calls.append(str(message))
+
+
+class _ScreenshotDevice:
+    def __init__(self):
+        self.screenshot_calls = 0
+
+    def screenshot(self, **_kwargs):
+        self.screenshot_calls += 1
+        return object()
+
+
+def _patch_telemetry_run(monkeypatch, logger, recorder, *, shadow="", overlay=False):
+    _patch_run_dependencies(monkeypatch, recorder, logger)
+    monkeypatch.setattr(
+        service.config_manager,
+        "get_device_config",
+        lambda _ip: {
+            "backend": "adb",
+            "mining_planner_version": "v1",
+            "mining_shadow_planner_version": shadow,
+        },
+    )
+    monkeypatch.setattr(service, "read_ws_prop_counts", lambda _d: None)
+    monkeypatch.setattr(service, "check_drill_num", lambda *_a, **_k: 0)
+    monkeypatch.setattr(service, "check_boom_num", lambda *_a, **_k: 0)
+    monkeypatch.setattr(service, "_log_inventory_validation", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "_log_board_validation", lambda *_a, **_k: None)
+    monkeypatch.setattr(service, "_check_force_sleep", lambda _ip: None)
+    monkeypatch.setattr(
+        service,
+        "_dismiss_mining_overlay_if_needed",
+        lambda *_a, **_k: overlay,
+    )
+    monkeypatch.setattr(
+        service,
+        "_dispatch_planner",
+        lambda *_a, **_k: (
+            {"ok": True, "steps": [{"type": "dig", "target": (1, 2), "pos": (1, 2)}]},
+            "test",
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "execute_plan_steps",
+        lambda *_a, **_k: service.ExecutionResult(shovels_used=10, steps_completed=1),
+    )
+
+
+def _telemetry_json_lines(logger, event):
+    prefix = "[MiningTelemetryJSON] "
+    payloads = [json.loads(line[len(prefix):]) for line in logger.info_calls if line.startswith(prefix)]
+    return [payload for payload in payloads if payload.get("event") == event]
+
+
+def test_run_telemetry_counts_round_overlay_and_session_screenshots(monkeypatch):
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_telemetry_run(monkeypatch, logger, recorder, overlay=True)
+    clf = types.SimpleNamespace(
+        classify_board=lambda *_a, **_k: (_board(), []),
+    )
+    device = _ScreenshotDevice()
+
+    service.run(device, "telemetry-device", clf)
+
+    summary = _telemetry_json_lines(logger, "session_summary")[0]
+    assert summary["rounds"] == 1
+    assert summary["overlay_ocr_calls"] == 1
+    assert summary["classify_calls"] == 1
+    # One shared frame + one frame after the detected overlay; execution is
+    # monkeypatched here, so no executor screenshots are added.
+    assert summary["screenshot_calls"] == 2
+    assert summary["shadow_calls"] == 0
+    assert summary["shadow_sample_rate"] == 0.0
+    round_payloads = _telemetry_json_lines(logger, "round")
+    assert round_payloads, logger.info_calls
+    round_event = round_payloads[0]
+    assert round_event["screenshots_per_round"] == 2
+
+
+def test_run_telemetry_records_shadow_exception_and_elapsed_time(monkeypatch):
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_telemetry_run(monkeypatch, logger, recorder, shadow="final_v1")
+    monkeypatch.setattr(
+        service,
+        "plan_final_v1",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("shadow boom")),
+    )
+    clf = types.SimpleNamespace(
+        classify_board=lambda *_a, **_k: (_board(), []),
+    )
+
+    service.run(_ScreenshotDevice(), "telemetry-shadow", clf)
+
+    summary = _telemetry_json_lines(logger, "session_summary")[0]
+    assert summary["shadow_calls"] == 1
+    assert summary["shadow_failures"] == 1
+    assert summary["shadow_elapsed_ms"] >= 0
+    assert summary["shadow_sample_rate"] == 1.0
+    assert summary["shadow_skipped"] == 0
