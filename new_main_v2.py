@@ -571,7 +571,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     special_wanshen_claimed=special_wanshen_claimed,
                 ))
                 if special_wanshen_one_shot:
-                    device_logger.info(f"[{ip}] 萬神一次性排程結束，關閉執行緒")                   if handle_pending_web_launch(ip, d, backend_kind, device_logger):
+                    if handle_pending_web_launch(ip, d, backend_kind, device_logger):
+                        continue
+                    device_logger.info(f"[{ip}] 萬神一次性排程結束，關閉執行緒")
                     stop_runtime_device_for_sleep(d, ip, backend_kind, device_logger)
                     if backend_kind == "web_h5":
                         bot_state.set_web_browser_open(ip, False)
