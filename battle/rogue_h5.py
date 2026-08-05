@@ -30,6 +30,10 @@ except Exception:  # pragma: no cover - allow standalone import in tests
     logger = logging.getLogger(__name__)
 
 
+class LossResultSyncError(RuntimeError):
+    """失敗結果 UI 尚未同步完成；呼叫端必須保留現場並停止所有後續動作。"""
+
+
 # --- 節點路徑（5556 實測，全部 emit 有效）-------------------------------------
 BTN_HOME_START = "/UIRoot/NormalView/RogueView/view/btnStart"            # 主面板「開始」
 BTN_ENTER_START = "/UIRoot/NormalView/RogueEnterView/bg/btn"            # 選起點「開始」
@@ -57,6 +61,7 @@ _MAX_STAGES = 80            # 單局安全上限關數
 # （2026-08-04 log：settle 成功後 1s 內開下一局 → state=SETTLE 空等逾時）
 _HOME_STABLE_POLLS = 3      # 連續幾次讀到 HOME 才算真回主面板
 _HOME_STABLE_GAP = 0.5      # 穩定檢查間隔(秒)
+_ACTION_RETRY_SEC = 5.0     # 同一畫面轉場未完成時，避免重複送出同一 click
 
 
 # --- cocos JS -----------------------------------------------------------------
@@ -304,6 +309,8 @@ def advance_to_stage(page: Any, shot: Optional[Callable] = None) -> bool:
     與舊版差異：SETTLE（本局報告/結算獎勵）會主動關閉，不再無動作空等逾時。
     """
     deadline = time.monotonic() + _ADVANCE_TIMEOUT
+    last_action_key = None
+    last_action_at = 0.0
     while time.monotonic() < deadline:
         s = read_state(page)
         st = classify(s)
@@ -318,8 +325,17 @@ def advance_to_stage(page: Any, shot: Optional[Callable] = None) -> bool:
                 logger.info("[rogue_h5] 進場 SETTLE 無可用關閉鈕，等待 flags=%s", _active_flags(s))
         elif st in _ADVANCE_EMIT:
             act = _ADVANCE_EMIT[st]
-            logger.info("[rogue_h5] 進場 state=%s → emit", st)
-            emit(page, act)
+            # CONFIRM 可能連續出現不同對話框，文字不同時視為新動作；同一對話框則等待
+            # server/UI 完成轉場，避免每 1.2 秒重複送出確定或進場。
+            action_key = (st, act, s.get("confirmText") if st == CONFIRM else None)
+            now = time.monotonic()
+            if action_key != last_action_key or now - last_action_at >= _ACTION_RETRY_SEC:
+                logger.info("[rogue_h5] 進場 state=%s → emit", st)
+                emit(page, act)
+                last_action_key = action_key
+                last_action_at = now
+            else:
+                logger.debug("[rogue_h5] 進場 state=%s 轉場中，略過重複 emit", st)
         else:
             # UNKNOWN 等：打 flags 方便對 live 場景
             logger.info("[rogue_h5] 進場 state=%s 等待 flags=%s", st, _active_flags(s))
@@ -337,6 +353,37 @@ def _wait_result(page: Any) -> str:
             return st
         time.sleep(_STATE_POLL)
     return UNKNOWN
+
+
+def wait_and_close_loss_result(page: Any, timeout: float = _BATTLE_TIMEOUT) -> bool:
+    """local_sim 算出失敗後，等失敗彈窗真正出現並確認關閉。
+
+    失敗結果的 UI 可能比模擬結果晚數秒 render；在它出現前送「立即結算」會讓
+    RogueBattleResultView 延遲疊到結算畫面上。等不到或關不掉時回 False，呼叫端
+    必須停止，不可繼續送結算動作。
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        st = state(page)
+        if st == RESULT_LOSE:
+            if not emit(page, BTN_RESULT_CLOSE):
+                time.sleep(_STATE_POLL)
+                continue
+            while time.monotonic() < deadline:
+                post_state = state(page)
+                if post_state == STAGE:
+                    logger.info("[rogue_h5][local_sim] 失敗彈窗已關閉並回到可結算關卡頁")
+                    return True
+                if post_state != RESULT_LOSE:
+                    logger.warning(
+                        "[rogue_h5][local_sim] 失敗彈窗關閉後狀態異常，等待 STAGE: %s",
+                        post_state,
+                    )
+                time.sleep(_STATE_POLL)
+            break
+        time.sleep(_STATE_POLL)
+    logger.warning("[rogue_h5][local_sim] 等待或關閉失敗彈窗逾時")
+    return False
 
 
 def battle_loop(
@@ -417,15 +464,17 @@ def battle_loop(
                     fought, ms, sim.get("result"), precent,
                 )
                 _shot(shot, f"stage{fought}_{res}")
-                # 客戶端收到 rogue_main_result_s2c 後仍 render RogueBattleResultView；
-                # 必須點關閉才能繼續下一關（2026-07-17 live 驗證，不點則下關 STAGE 不出現）。
-                # sim 很快(<100ms)，result view 渲染需要約 0.4s；先 wait 再 emit，避免找不到節點 warning。
+                if not won:
+                    # 失敗彈窗可能延遲數秒才 render；必須等它出現並確實關閉，才能結算。
+                    if not wait_and_close_loss_result(page):
+                        raise LossResultSyncError("萬神失敗彈窗未完成，停止後續結算")
+                    logger.info("[rogue_h5][local_sim] 第 %d 關 失敗 → 本局結束", fought)
+                    return fought
+                # 成功維持快速路徑：短暫讓 view render 後直接關閉；若尚未出現，下一輪
+                # 既有狀態機遇到 RESULT_WIN 時仍會補關，不為成功結果額外阻塞等待。
                 time.sleep(0.4)
                 emit(page, BTN_RESULT_CLOSE)
                 time.sleep(_PACE)
-                if not won:
-                    logger.info("[rogue_h5][local_sim] 第 %d 關 失敗 → 本局結束", fought)
-                    return fought
                 continue
             else:
                 # sim 失敗：block 已由 run_sim_path finally 釋放；fallback _wait_result

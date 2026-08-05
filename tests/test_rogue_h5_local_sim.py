@@ -62,6 +62,7 @@ class TestBattleLoopLocalSim:
 
         wait_result_calls = []
         monkeypatch.setattr(rh, "_wait_result", lambda _p: wait_result_calls.append(1) or rh.RESULT_WIN)
+        monkeypatch.setattr(rh, "wait_and_close_loss_result", lambda _p: True)
 
         sim_calls = []
         def _fake_run_sim_path(*a, **kw):
@@ -89,8 +90,15 @@ class TestBattleLoopLocalSim:
         # 兩關 STAGE，第三次才結束
         states = iter([rh.STAGE, rh.STAGE, rh.HOME])
         monkeypatch.setattr(rh, "state", lambda _p: next(states, rh.HOME))
-        monkeypatch.setattr(rh, "emit", lambda _p, _path: True)
+        emits = []
+        monkeypatch.setattr(rh, "emit", lambda _p, path: emits.append(path) or True)
         monkeypatch.setattr(rh, "_wait_result", lambda _p: rh.RESULT_WIN)
+        loss_waits = []
+        monkeypatch.setattr(
+            rh,
+            "wait_and_close_loss_result",
+            lambda _p: loss_waits.append(1) or True,
+        )
 
         # 第 1 關贏，第 2 關輸
         results = [
@@ -109,6 +117,8 @@ class TestBattleLoopLocalSim:
             fought = rh.battle_loop(page, mode="local_sim")
 
         assert fought == 2, f"應打 2 關(1贏1輸)，實際 {fought}"
+        assert loss_waits == [1], "只應在失敗關等待失敗彈窗"
+        assert rh.BTN_RESULT_CLOSE in emits, "成功關應走快速關閉，不等待失敗彈窗"
 
     def test_loss_ends_loop_with_correct_count(self, monkeypatch):
         """sim result=1（失敗）→ 本局結束，回傳完成關數包含失敗關。"""
@@ -118,6 +128,7 @@ class TestBattleLoopLocalSim:
         states = iter([rh.STAGE, rh.HOME])
         monkeypatch.setattr(rh, "state", lambda _p: next(states, rh.HOME))
         monkeypatch.setattr(rh, "emit", lambda _p, _path: True)
+        monkeypatch.setattr(rh, "wait_and_close_loss_result", lambda _p: True)
 
         results = [{"ok": True, "sim": {"result": 1, "precent": 0}}]  # 第 1 關輸
 
@@ -132,6 +143,56 @@ class TestBattleLoopLocalSim:
             fought = rh.battle_loop(page, mode="local_sim")
 
         assert fought == 1, f"第 1 關輸應回傳 1，實際 {fought}"
+
+    def test_loss_popup_timeout_stops_before_settlement(self, monkeypatch):
+        """算出失敗但 UI 彈窗未出現時，必須中止而不是繼續結算。"""
+        page = _FakePage()
+        monkeypatch.setattr(rh, "_PACE", 0)
+        monkeypatch.setattr(rh, "state", lambda _p: rh.STAGE)
+        monkeypatch.setattr(rh, "emit", lambda _p, _path: True)
+        monkeypatch.setattr(rh, "wait_and_close_loss_result", lambda _p: False)
+
+        results = [{"ok": True, "sim": {"result": 1, "precent": 94}}]
+        with patch.dict("sys.modules", {
+            "battle_calc.runner": types.SimpleNamespace(run_sim_path=_make_run_sim_path(results)),
+            "battle_calc.page_hooks": types.SimpleNamespace(
+                install_hooks=lambda _: None,
+                clear_combat=lambda *a: None,
+                set_block_result=lambda *a: None,
+            ),
+        }):
+            with __import__("pytest").raises(rh.LossResultSyncError, match="停止後續結算"):
+                rh.battle_loop(page, mode="local_sim")
+
+
+    def test_wait_and_close_loss_result_waits_for_render_and_disappear(self, monkeypatch):
+        """失敗 UI 延遲出現時，出現前不點，關閉且消失後才回成功。"""
+        page = _FakePage()
+        states = iter([rh.STAGE, rh.STAGE, rh.RESULT_LOSE, rh.RESULT_LOSE, rh.STAGE])
+        emits = []
+        monkeypatch.setattr(rh, "_STATE_POLL", 0)
+        monkeypatch.setattr(rh, "state", lambda _p: next(states, rh.STAGE))
+        monkeypatch.setattr(rh, "emit", lambda _p, path: emits.append(path) or True)
+
+        assert rh.wait_and_close_loss_result(page, timeout=2) is True
+        assert emits == [rh.BTN_RESULT_CLOSE]
+
+    def test_wait_and_close_loss_result_rejects_interleaved_remake(self, monkeypatch):
+        """關閉失敗窗後若出現另一條進場 REMAKE，不可誤判成可結算。"""
+        page = _FakePage()
+        ticks = iter([0.0, 0.0, 2.0, 2.0])
+        emits = []
+        monkeypatch.setattr(rh.time, "monotonic", lambda: next(ticks, 2.0))
+        monkeypatch.setattr(rh, "_STATE_POLL", 0)
+        monkeypatch.setattr(
+            rh,
+            "state",
+            lambda _p: rh.RESULT_LOSE if not emits else rh.REMAKE,
+        )
+        monkeypatch.setattr(rh, "emit", lambda _p, path: emits.append(path) or True)
+
+        assert rh.wait_and_close_loss_result(page, timeout=1) is False
+        assert emits == [rh.BTN_RESULT_CLOSE]
 
     def test_sim_fail_fallback_to_wait_result(self, monkeypatch):
         """run_sim_path ok=False → fallback 到 _wait_result，不整局炸掉。"""

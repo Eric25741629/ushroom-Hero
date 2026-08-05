@@ -296,6 +296,7 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     # (雲端戰鬥/好友禮物/開神燈/轉盤金幣) 會全部因「不在主頁面」被跳過。
     # 進『副本』後一律在收尾返回主頁（成功與中止路徑皆然）。
     aborted = False  # 入場/進場/結算失敗 → 收尾除 _recover_to_home 外再強制導回主頁
+    preserve_page_state = False  # 失敗結果 UI 未同步時不可再送任何收尾動作
     try:
         if is_web:
             # web_h5：直接開 RogueView，不碰副本清單。OCR 捲清單找入口在 2026-07-21
@@ -383,6 +384,12 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
                     if until_cap:
                         cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
                         cap_reached = bool(cap and cap[0] >= cap[1])
+                except rogue_h5.LossResultSyncError:
+                    preserve_page_state = True
+                    logger.exception(
+                        "[萬神試煉] 失敗結果彈窗未同步，保留現場並停止所有後續動作"
+                    )
+                    return False
                 except Exception:
                     logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
                     completed = 0
@@ -404,15 +411,18 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         logger.info("[萬神試煉] 結束：完成 %d/%d 局，跑滿=%s", completed, rounds, done)
         return done
     finally:
-        # ponytail: 單次 best-effort 回主頁；殘留面板時下次對齊喚醒由 detector 重啟恢復。
-        _recover_to_home(d)
-        if aborted:
-            # 中止路徑(入場失敗/進場失敗/結算退出失敗)：_recover_to_home 的盲點序列
-            # 不保證離開 Rogue 殘留面板(5558 log 實測 23 次停在非主頁污染後續任務)，
-            # 再疊一層共用導航 helper 強制回主頁。lazy import 避免 battle 套件
-            # 在載入期拉進 game_state.detector 的重依賴。
-            try:
-                from game_actions.navigation import navigate_to_main_page
-                navigate_to_main_page(d, label="weekly_trials")
-            except Exception:
-                logger.exception("[萬神試煉] 中止後導回主頁失敗")
+        if preserve_page_state:
+            logger.warning("[萬神試煉] 保留失敗結果現場，不執行回主頁或強制導航")
+        else:
+            # ponytail: 單次 best-effort 回主頁；殘留面板時下次對齊喚醒由 detector 重啟恢復。
+            _recover_to_home(d)
+            if aborted:
+                # 中止路徑(入場失敗/進場失敗/結算退出失敗)：_recover_to_home 的盲點序列
+                # 不保證離開 Rogue 殘留面板(5558 log 實測 23 次停在非主頁污染後續任務)，
+                # 再疊一層共用導航 helper 強制回主頁。lazy import 避免 battle 套件
+                # 在載入期拉進 game_state.detector 的重依賴。
+                try:
+                    from game_actions.navigation import navigate_to_main_page
+                    navigate_to_main_page(d, label="weekly_trials")
+                except Exception:
+                    logger.exception("[萬神試煉] 中止後導回主頁失敗")
