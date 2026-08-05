@@ -377,6 +377,13 @@ def test_control_button_lock_and_animation_helpers_present():
     assert "@keyframes btnSpin" in html
     assert "@keyframes btnPulse" in html
 
+
+def test_paused_status_uses_chinese_only():
+    html = _html()
+    assert "? '已暫停'" in html
+    assert "已暫停 (PAUSED)" not in html
+
+
 def test_dashboard_exposes_final_v1_primary_and_shadow_controls():
     html = _html()
     assert '<option value="final_v1">' in html
