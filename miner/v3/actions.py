@@ -13,7 +13,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, FrozenSet, List, Tuple
 
-from miner.core.mechanics import get_drill_affected_cells
+from miner.core.mechanics import (
+    get_bomb_affected_cells_with_offscreen,
+    get_drill_affected_cells,
+)
 
 from .board import (
     PIT_LABELS,
@@ -29,6 +32,12 @@ from .types import Board, Coordinate
 
 
 def dig_cost(label: str) -> int:
+    """回傳實際 dig 動作的資源消耗。
+
+    這是 v3 action/executor 的消耗語意，不等同於 planner 的路徑
+    ``enter_cost`` 或 ``core.config.HIT_TABLE`` 擊中次數；三者先維持
+    各自契約，未有 replay 證據前不合併成本表。
+    """
     label = normalize_label(label)
     base = base_label(label)
     if label in PIT_LABELS:
@@ -50,24 +59,17 @@ def apply_dig(board: Board, pos: Coordinate) -> float:
 
 
 def get_drill_targets(r: int, c: int, rows: int, cols: int) -> List[Coordinate]:
-    return [t for t in get_drill_affected_cells(r, c, rows, cols) if 0 <= t[0] < rows and 0 <= t[1] < cols]
+    # 保留舊名稱供 planner/executor 使用；幾何規則只在 mechanics 維護。
+    # 邊界過濾是 wrapper 的舊輸入契約，避免非法中心座標時回傳負座標。
+    return [
+        target
+        for target in get_drill_affected_cells(r, c, rows, cols)
+        if 0 <= target[0] < rows and 0 <= target[1] < cols
+    ]
 
 
 def get_bomb_targets(r: int, c: int, rows: int, cols: int) -> Tuple[List[Coordinate], int]:
-    raw: List[Coordinate] = []
-    for dr in range(-1, 2):
-        for dc in range(-1, 2):
-            raw.append((r + dr, c + dc))
-    for dr, dc in ((0, 2), (0, -2), (2, 0), (-2, 0)):
-        raw.append((r + dr, c + dc))
-    visible: List[Coordinate] = []
-    offscreen_bottom = 0
-    for nr, nc in raw:
-        if 0 <= nr < rows and 0 <= nc < cols:
-            visible.append((nr, nc))
-        elif nr >= rows:
-            offscreen_bottom += 1
-    return visible, offscreen_bottom
+    return get_bomb_affected_cells_with_offscreen(r, c, rows, cols)
 
 
 def apply_drill(board: Board, pos: Coordinate) -> Tuple[float, List[Coordinate]]:

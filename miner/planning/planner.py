@@ -23,7 +23,12 @@ def base_label(lbl: str) -> str:
 
 
 def enter_cost(lbl: str) -> Optional[int]:
-    """回傳進入該格需要的鏟子成本；None 代表不可進入。
+    """回傳路徑進入該格需要的鏟子成本；None 代表不可進入。
+
+    ``COST_TABLE`` 是原始路徑進入表；本函式的
+    ``unreachable_pit`` 特例是既有 planner 語意（以 reachable_pit 的
+    成本進入），不要與 v3 ``dig_cost`` 的實際動作消耗或 HIT_TABLE
+    擊中次數混用。
 
     調整：unreachable_pit 可以用鏟子挖開（成本與 reachable_pit 相同），
     但在路徑起點判斷時仍不應把 unreachable_* 當作可直接當作起點的空地。

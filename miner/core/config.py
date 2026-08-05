@@ -62,6 +62,9 @@ SCREEN_CHECK_REGION_GUARD = {
     'dark_ratio_max': 0.55,
 }
 
+# 成本語意刻意分層：COST_TABLE/enter_cost 是「路徑進入」成本，
+# v3/actions.dig_cost 是「實際 dig」消耗，HIT_TABLE 則是擊中次數。
+# 目前沒有 replay 證據支持合併，修改任一表都應同步更新契約測試。
 COST_TABLE: Dict[str, Optional[int]] = {
     'empty': 0,
     'void': 0,
@@ -99,6 +102,7 @@ DEFAULT_CLASSES: Sequence[str] = (
     'unreachable_empty',
 )
 
+# 與 COST_TABLE 分開維護；此表只描述材質需要幾次擊中，不代表鏟子消耗。
 HIT_TABLE = {
     'empty': 0,
     'dirt': 1,
