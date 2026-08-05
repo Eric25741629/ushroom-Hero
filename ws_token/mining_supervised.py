@@ -1044,8 +1044,12 @@ def mine_until_pickaxe_empty(
             except BaseException as exc:
                 map_exc = exc
                 telemetry.exception("map_end", exc)
-                _final_error = f"{type(exc).__name__}: {exc}"
-                stopped_reason = "exception"
+                # Preserve an in-flight abort/error as the session outcome;
+                # only a map-finalization failure by itself should replace the
+                # normal stop reason and error details.
+                if active_exc is None:
+                    _final_error = f"{type(exc).__name__}: {exc}"
+                    stopped_reason = "exception"
         if active_exc is not None and not telemetry._exception_recorded:
             telemetry.exception("supervised", active_exc)
         try:
