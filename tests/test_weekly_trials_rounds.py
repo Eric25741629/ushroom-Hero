@@ -11,7 +11,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 import sys
+import threading
 import types
 
 import pytest
@@ -113,6 +115,36 @@ def test_default_rounds_is_eight(wt, monkeypatch, harness):
     _wire(monkeypatch, wt, harness, advance=[True] * 8, battle=[1] * 8, settle=[True] * 8)
     assert wt.fight_test(_fake_device()) is True  # 不帶 rounds → 預設 8
     assert harness.calls.count("advance") == 8
+
+
+def test_pure_ws_runs_on_thread_without_callers_running_loop(wt, monkeypatch):
+    """web_h5 的 sync Playwright loop 不可污染 pure-WS 的 B 瀏覽器。"""
+    caller_thread = threading.get_ident()
+    worker_state = {}
+    expected = object()
+
+    def fake_sync(*_args, **_kwargs):
+        worker_state["thread"] = threading.get_ident()
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            worker_state["has_running_loop"] = False
+        else:
+            worker_state["has_running_loop"] = True
+        return expected
+
+    monkeypatch.setattr(wt, "_run_pure_ws_wanshen_sync", fake_sync, raising=False)
+    stuck_loop = asyncio.new_event_loop()
+    asyncio.events._set_running_loop(stuck_loop)
+    try:
+        result = wt._run_pure_ws_wanshen(object(), "web-001", 10, {})
+    finally:
+        asyncio.events._set_running_loop(None)
+        stuck_loop.close()
+
+    assert result is expected
+    assert worker_state["has_running_loop"] is False
+    assert worker_state["thread"] != caller_thread
 
 
 # ---- _settle_run fail-safe (2026-06-30「沒有正常退出」回歸防護) -------------------

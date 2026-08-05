@@ -16,6 +16,7 @@ rogue 一次失敗只扣 1「試煉之心」、可續打、❤=0 才真結束;�
 週積分獎勵由 WS rogue 週五領取(ws_token.runner._run_rogue)，本版只負責真打 + 祕寶閣。
 """
 
+import concurrent.futures
 import time
 
 import img_tools
@@ -214,7 +215,7 @@ def _fight_rounds_ocr(d, rounds: int) -> tuple[int, bool]:
     return completed, False
 
 
-def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
+def _run_pure_ws_wanshen_sync(ip: str, rounds: int, cfg: dict | None = None):
     """萬神試煉 pure WS：純協議打完 N 局 + B 頁秒算(預設全新無 profile 瀏覽器)。
 
     對齊 game_actions/arena_battle.py 的 `_run_pure_ws_fights`。回傳
@@ -263,6 +264,23 @@ def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
                 pass
     except Exception:
         logger.exception("[萬神試煉][%s] pure_ws 失敗", ip)
+        return None
+
+
+def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
+    """在乾淨執行緒執行 pure WS，隔離 web_h5 已存在的 sync Playwright loop。"""
+    # Playwright device 是 thread-affine；worker 只接收純資料，不可把 d 傳進去。
+    del d
+    try:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix=f"WanshenPureWS-{ip}",
+        ) as executor:
+            return executor.submit(
+                _run_pure_ws_wanshen_sync, ip, rounds, cfg
+            ).result()
+    except Exception:
+        logger.exception("[萬神試煉][%s] pure_ws worker 失敗", ip)
         return None
 
 
