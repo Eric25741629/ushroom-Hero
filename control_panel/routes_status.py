@@ -579,8 +579,40 @@ def get_status():
     for dev_id, dcfg in all_devices.items():
         if dev_id in seen_ids:
             continue
-        if bool((dcfg or {}).get("enabled", True)):
-            continue  # 只補明確停用的
+        dcfg = dcfg or {}
+        special_wanshen_waiting = bool(
+            dcfg.get("enabled", True)
+            and dcfg.get("special_wanshen_account", False)
+            and dcfg.get("special_wanshen_enabled", False)
+        )
+        if bool(dcfg.get("enabled", True)) and not special_wanshen_waiting:
+            continue
+
+        special_status = _special_wanshen_fields(dev_id, dcfg)
+        if special_wanshen_waiting:
+            if special_status["special_wanshen_completed_this_week"]:
+                step = "本週已完成，不再執行"
+            elif special_status["special_wanshen_attempted_today"]:
+                step = "今日已嘗試，順延下一個有效日"
+            else:
+                step = "等待每週萬神排程"
+            states[dev_id] = {
+                "name": dcfg.get("name") or dev_id,
+                "enabled": True,
+                "backend": dcfg.get("backend", "adb"),
+                "is_real_phone": bool(dcfg.get("is_real_phone", False)),
+                "status": "SCHEDULED",
+                "task": "萬神試煉",
+                "step": step,
+                "logs": [],
+                "live_view_available": False,
+                "battle_speed_scale": battle_speed.coerce_battle_speed_scale(
+                    dcfg.get("battle_speed_scale", 4)
+                ),
+            }
+            states[dev_id].update(special_status)
+            continue
+
         states[dev_id] = {
             "name": (dcfg or {}).get("name") or dev_id,
             "enabled": False,
@@ -595,7 +627,7 @@ def get_status():
                 (dcfg or {}).get("battle_speed_scale", 4)
             ),
         }
-        states[dev_id].update(_special_wanshen_fields(dev_id, dcfg or {}))
+        states[dev_id].update(special_status)
 
     # 出口統一過濾：非管理員只看得到自己可見的裝置（含上面 disabled 回填）。
     states = filter_visible_states(states)

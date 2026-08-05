@@ -152,3 +152,18 @@ def test_status_includes_special_fields_for_running_and_disabled_cards(client):
         assert bots[ip]["special_wanshen_completed_this_week"] is False
     assert bots["web-001"]["special_wanshen_mode"] == "full"
     assert bots["web-002"]["special_wanshen_mode"] == "off"
+
+
+def test_status_keeps_waiting_wanshen_card_when_runtime_state_is_gone(client, monkeypatch):
+    monkeypatch.setattr(bot_state, "get_all_states", lambda: {})
+    config_manager.update_device_config(
+        "web-001", {"enabled": True, "special_wanshen_enabled": True}
+    )
+
+    response = client.get("/api/status")
+
+    assert response.status_code == 200
+    bot = response.get_json()["bots"]["web-001"]
+    assert bot["status"] == "SCHEDULED"
+    assert bot["task"] == "萬神試煉"
+    assert bot["special_wanshen_mode"] == "wanshen"
