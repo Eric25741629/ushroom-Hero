@@ -458,6 +458,17 @@ h1 {
   gap: 11px;
   margin-bottom: 16px;
 }
+.card-header-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.card-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
 
 /* NEW: emoji avatar chip — sunk warm square, inset highlight */
 .dev-avatar {
@@ -477,6 +488,10 @@ h1 {
 .card:hover .dev-avatar { transform: rotate(-7deg) scale(1.05); }
 
 .device-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--display);
   font-size: 1.18em;
   font-weight: 700;
@@ -3142,11 +3157,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           card.innerHTML = `
             <div class="card-header">
               <div class="dev-avatar">${deviceEmoji(ip, info)}</div>
-              <div style="flex:1; min-width:0;">
-                <div class="device-title" id="title-${ip}">${info.name || ip}</div>
+              <div class="card-header-main">
+                <div class="device-title" id="title-${ip}" title="${info.name || ip}">${info.name || ip}</div>
                 <div class="device-ip">${ip}</div>
               </div>
-              <div style="display:flex;align-items:center;gap:5px;">
+              <div class="card-header-actions">
                 <span class="acct-presence" id="presence-${ip}" title="帳號連線歸屬：腳本執行 / 在線觀察 / 被借走 / 玩家在線 / 離線"></span>
                 <span class="status-text" id="status-${ip}">${statusText}</span>
                 <button class="settings-btn" onclick="openSettings('${ip}')" title="裝置設定" aria-label="裝置設定">⚙</button>

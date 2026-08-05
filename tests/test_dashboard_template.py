@@ -32,6 +32,20 @@ def test_broken_last_update_subtraction_countdown_removed():
     assert "Math.floor(Date.now() / 1000) - (info.last_update" not in html
 
 
+def test_device_title_is_constrained_before_status_badge():
+    """長裝置名稱必須在標題欄內省略，不能穿過右側狀態徽章。"""
+    html = _html()
+    assert 'class="card-header-main"' in html
+    assert 'class="card-header-actions"' in html
+    assert ".card-header-main" in html
+    assert "min-width: 0;" in html
+    assert ".device-title" in html
+    assert "overflow: hidden;" in html
+    assert "text-overflow: ellipsis;" in html
+    assert "white-space: nowrap;" in html
+    assert 'title="${info.name || ip}"' in html
+
+
 def test_dashboard_has_device_enable_toggle():
     """A disabled device must surface an enable control on its card.
 
