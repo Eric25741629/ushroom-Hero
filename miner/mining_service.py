@@ -7,6 +7,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import contextlib
 import io
 import copy
+import json
+import uuid
+from dataclasses import dataclass
 
 import uiautomator2 as u2
 import img_tools
@@ -108,6 +111,260 @@ _MAX_IDENTICAL_BOARDS: int = 3
 # 未變版面連續失敗才整場停用。dig（鎬子）仍沿用 action-level blocked
 # 契約，不套用這個 item-level 門檻。
 _ITEM_FAILURE_BLACKLIST_LIMIT: int = 2
+
+
+@dataclass
+class MiningTelemetryCounters:
+    """Cheap, session-scoped counters for the CNN/ADB mining service.
+
+    The counters intentionally live at the service boundary.  They are copied
+    into both the existing ``MiningTelemetry`` log lines and map-recorder JSON
+    events, so adding observability does not replace or mutate the append-only
+    execution event contract.
+    """
+
+    rounds: int = 0
+    overlay_ocr_calls: int = 0
+    screenshot_calls: int = 0
+    classify_calls: int = 0
+    shadow_calls: int = 0
+    shadow_successes: int = 0
+    shadow_elapsed_ms: float = 0.0
+    shadow_skipped: int = 0
+    shadow_failures: int = 0
+    shadow_not_attempted: int = 0
+
+    def snapshot(self, *, screenshots_per_round: int = 0) -> Dict[str, Any]:
+        """Return cumulative fields plus legacy aliases.
+
+        ``snapshot`` is kept for the append-only text log and old consumers.
+        Machine-readable session summaries use :meth:`summary_fields`, while
+        round events use :meth:`round_fields`; this prevents the old
+        ``screenshots_per_round`` key from changing meaning between scopes.
+        """
+        sample_rate = (
+            float(self.shadow_calls) / float(self.rounds)
+            if self.rounds
+            else 0.0
+        )
+        return {
+            "overlay_ocr_calls": int(self.overlay_ocr_calls),
+            "screenshot_calls": int(self.screenshot_calls),
+            "classify_calls": int(self.classify_calls),
+            "screenshots_per_round": int(screenshots_per_round),
+            "screenshots_per_round_avg": round(
+                float(self.screenshot_calls) / float(self.rounds)
+                if self.rounds else 0.0,
+                6,
+            ),
+            "shadow_calls": int(self.shadow_calls),
+            "shadow_successes": int(self.shadow_successes),
+            "shadow_elapsed_ms": round(float(self.shadow_elapsed_ms), 3),
+            "shadow_sample_rate": round(sample_rate, 6),
+            "shadow_skipped": int(self.shadow_skipped),
+            "shadow_failures": int(self.shadow_failures),
+            "shadow_not_attempted": int(self.shadow_not_attempted),
+        }
+
+    def summary_fields(self) -> Dict[str, Any]:
+        """Return the canonical session-summary aggregates.
+
+        The ``*_avg`` values are per mining round (except elapsed shadow time,
+        which is per attempted shadow call).  Legacy cumulative keys are kept
+        additively for existing log readers; ``screenshots_per_round`` is the
+        historical average alias, never the total screenshot count.
+        """
+        rounds = int(self.rounds)
+        rounds_f = float(rounds) if rounds else 0.0
+        shadow_calls = int(self.shadow_calls)
+        shadow_calls_f = float(shadow_calls) if shadow_calls else 0.0
+        fields = {
+            "screenshots_total": int(self.screenshot_calls),
+            "screenshots_per_round_avg": round(
+                float(self.screenshot_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "screenshot_calls_avg": round(
+                float(self.screenshot_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "classify_calls_avg": round(
+                float(self.classify_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "overlay_ocr_calls_avg": round(
+                float(self.overlay_ocr_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_calls_avg": round(
+                float(self.shadow_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_successes_avg": round(
+                float(self.shadow_successes) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_failures_avg": round(
+                float(self.shadow_failures) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_skipped_avg": round(
+                float(self.shadow_skipped) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_not_attempted_avg": round(
+                float(self.shadow_not_attempted) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_elapsed_ms_avg": round(
+                float(self.shadow_elapsed_ms) / shadow_calls_f
+                if shadow_calls else 0.0,
+                3,
+            ),
+            # Cumulative counters retained for additive compatibility.
+            "screenshot_calls": int(self.screenshot_calls),
+            "classify_calls": int(self.classify_calls),
+            "overlay_ocr_calls": int(self.overlay_ocr_calls),
+            "screenshots_per_round": round(
+                float(self.screenshot_calls) / rounds_f if rounds else 0.0, 6
+            ),
+            "shadow_calls": shadow_calls,
+            "shadow_successes": int(self.shadow_successes),
+            "shadow_failures": int(self.shadow_failures),
+            "shadow_skipped": int(self.shadow_skipped),
+            "shadow_not_attempted": int(self.shadow_not_attempted),
+            "shadow_elapsed_ms": round(float(self.shadow_elapsed_ms), 3),
+            "shadow_sample_rate": round(
+                float(self.shadow_calls) / rounds_f if rounds else 0.0, 6
+            ),
+        }
+        return fields
+
+    def round_fields(
+        self,
+        *,
+        screenshot_start: int,
+        classify_start: int,
+        overlay_start: int,
+        shadow_start: int,
+        shadow_success_start: int,
+        shadow_failure_start: int,
+        shadow_skip_start: int,
+        shadow_not_attempted_start: int,
+        shadow_elapsed_start: float,
+    ) -> Dict[str, Any]:
+        """Return canonical per-round counters (``round_*`` namespace)."""
+        shadow_calls = max(0, int(self.shadow_calls) - int(shadow_start))
+        elapsed = max(
+            0.0, float(self.shadow_elapsed_ms) - float(shadow_elapsed_start)
+        )
+        return {
+            "round_screenshot_calls": max(0, int(self.screenshot_calls) - int(screenshot_start)),
+            "round_classify_calls": max(0, int(self.classify_calls) - int(classify_start)),
+            "round_overlay_ocr_calls": max(0, int(self.overlay_ocr_calls) - int(overlay_start)),
+            "round_shadow_calls": shadow_calls,
+            "round_shadow_successes": max(0, int(self.shadow_successes) - int(shadow_success_start)),
+            "round_shadow_failures": max(0, int(self.shadow_failures) - int(shadow_failure_start)),
+            "round_shadow_skipped": max(0, int(self.shadow_skipped) - int(shadow_skip_start)),
+            "round_shadow_not_attempted": max(
+                0, int(self.shadow_not_attempted) - int(shadow_not_attempted_start)
+            ),
+            "round_shadow_elapsed_ms": round(elapsed, 3),
+            "round_shadow_sample_rate": 1.0 if shadow_calls else 0.0,
+            # Legacy round alias; canonical consumers must use round_screenshot_calls.
+            "screenshots_per_round": max(
+                0, int(self.screenshot_calls) - int(screenshot_start)
+            ),
+        }
+
+
+class _TelemetryDeviceProxy:
+    """Delegate a device while counting screenshots made by the executor."""
+
+    def __init__(self, device: u2.Device, counters: MiningTelemetryCounters):
+        self._device = device
+        self._counters = counters
+
+    def screenshot(self, *args, **kwargs):
+        self._counters.screenshot_calls += 1
+        return self._device.screenshot(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._device, name)
+
+
+class _TelemetryClassifierProxy:
+    """Delegate a classifier while counting executor board classifications."""
+
+    def __init__(self, classifier: ClassifierCNN, counters: MiningTelemetryCounters):
+        self._classifier = classifier
+        self._counters = counters
+
+    def classify_board(self, *args, **kwargs):
+        self._counters.classify_calls += 1
+        return self._classifier.classify_board(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._classifier, name)
+
+
+def _counted_screenshot(
+    d: u2.Device,
+    counters: Optional[MiningTelemetryCounters],
+    *args,
+    **kwargs,
+):
+    if counters is not None:
+        counters.screenshot_calls += 1
+    return d.screenshot(*args, **kwargs)
+
+
+def _telemetry_fields(
+    counters: MiningTelemetryCounters,
+    *,
+    screenshots_per_round: int = 0,
+) -> str:
+    """Render stable key/value fields for the append-only text log."""
+    fields = counters.snapshot(screenshots_per_round=screenshots_per_round)
+    return (
+        "overlay_ocr_calls=%d screenshot_calls=%d classify_calls=%d "
+        "screenshots_per_round=%d screenshots_per_round_avg=%.6f "
+        "shadow_calls=%d shadow_successes=%d shadow_elapsed_ms=%.3f "
+        "shadow_sample_rate=%.6f shadow_skipped=%d shadow_failures=%d "
+        "shadow_not_attempted=%d "
+        "overlay_source=service"
+        % (
+            fields["overlay_ocr_calls"], fields["screenshot_calls"],
+            fields["classify_calls"], fields["screenshots_per_round"],
+            fields["screenshots_per_round_avg"],
+            fields["shadow_calls"], fields["shadow_successes"],
+            fields["shadow_elapsed_ms"], fields["shadow_sample_rate"],
+            fields["shadow_skipped"], fields["shadow_failures"],
+            fields["shadow_not_attempted"],
+        )
+    )
+
+
+def _json_telemetry_payload(
+    counters: MiningTelemetryCounters,
+    event: str,
+    *,
+    screenshots_per_round: int = 0,
+    **extra: Any,
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "schema": "mining_telemetry_v1",
+        "event": event,
+        "overlay_source": "service",
+        # Keep common identity fields present and JSON-stable on every event.
+        "session_id": None,
+        "device_id": None,
+        "planner": None,
+        "shadow_planner": None,
+    }
+    payload.update(counters.snapshot(screenshots_per_round=screenshots_per_round))
+    payload.update(extra)
+    payload["session_id"] = (
+        str(payload["session_id"]) if payload.get("session_id") is not None else None
+    )
+    payload["device_id"] = (
+        str(payload["device_id"]) if payload.get("device_id") is not None else None
+    )
+    for key in ("planner", "shadow_planner"):
+        value = payload.get(key)
+        payload[key] = str(value) if value is not None and str(value) else None
+    return payload
 
 
 def _identical_board_exceeded(cur_sig, prev_sig, count: int):
@@ -558,6 +815,7 @@ def _verify_items_pre_execution(
     zero_streaks: Dict[str, int],
     zero_streak_limit: int,
     miner_logger,
+    telemetry: Optional[MiningTelemetryCounters] = None,
 ) -> bool:
     """Live-check item counts before execution. Returns True if replanning is needed."""
     planned_item_uses = _count_planned_item_uses(plan.get("steps", []))
@@ -570,7 +828,7 @@ def _verify_items_pre_execution(
     if ws_counts is not None:
         live_counts = {"drill": ws_counts["drill"], "bomb": ws_counts["bomb"]}
     else:
-        live_frame = d.screenshot(format="opencv")
+        live_frame = _counted_screenshot(d, telemetry, format="opencv")
         live_counts = {
             "drill": check_drill_num(d, frame=live_frame),
             "bomb": check_boom_num(d, frame=live_frame),
@@ -603,29 +861,162 @@ def run(
 ) -> None:
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     miner_logger = setup_miner_logger(ip)
-    device_cfg = config_manager.get_device_config(ip)
+    telemetry = MiningTelemetryCounters()
+    session_id = uuid.uuid4().hex
+    device_id = str(ip) if ip is not None else None
+    fatal_totals: Optional[Dict[str, Any]] = None
+    summary_emitted = False
+    map_recorder = None
+    map_recorder_ended = False
+    round_active = False
+    # Start with safe defaults so a config-loader exception still gets a
+    # complete, typed session_start/exception/session_summary sequence.
+    device_cfg: Dict[str, Any] = {}
+    planner_version = "v1"
+    shadow_version: Optional[str] = None
+    mining_save_samples = False
+
+    def _safe_end_map_recorder(totals: Optional[Dict[str, Any]]) -> None:
+        """End a recorder at most once, including a partially-started one."""
+        nonlocal map_recorder_ended
+        if map_recorder is None or map_recorder_ended:
+            return
+        map_recorder_ended = True
+        try:
+            map_recorder.end(totals=totals)
+        except Exception as exc:
+            miner_logger.warning("[MiningService] map recorder 收尾失敗: %s", exc)
+
+    def _emit_exception_event(phase: str, exc: BaseException) -> None:
+        """Emit one standalone exception event without changing mining flow."""
+        miner_logger.info(
+            json.dumps(
+                _json_telemetry_payload(
+                    telemetry,
+                    "exception",
+                    scope="session",
+                    session_id=session_id,
+                    device_id=device_id,
+                    planner=planner_version,
+                    shadow_planner=shadow_version,
+                    phase=phase,
+                    round=telemetry.rounds if round_active else None,
+                    error=f"{type(exc).__name__}: {exc}",
+                    rounds=telemetry.rounds,
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+
+    def _emit_session_summary(stopped_reason: str = "completed") -> None:
+        """Emit exactly one cumulative summary for this mining session."""
+        nonlocal summary_emitted
+        if summary_emitted:
+            return
+        summary_emitted = True
+        summary_fields = telemetry.summary_fields()
+        miner_logger.info(
+            "[MiningTelemetry] event=session_summary rounds=%d %s"
+            % (telemetry.rounds, _telemetry_fields(telemetry))
+        )
+        payload = _json_telemetry_payload(
+            telemetry,
+            "session_summary",
+            # ``summary_fields`` contains canonical averages and additive old
+            # aliases.  In particular screenshots_total is never conflated
+            # with the legacy average screenshots_per_round key.
+            **summary_fields,
+            scope="session",
+            session_id=session_id,
+            device_id=device_id,
+            planner=planner_version,
+            shadow_planner=shadow_version,
+            rounds=telemetry.rounds,
+            stopped_reason=stopped_reason,
+        )
+        miner_logger.info(
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        )
+
+    def _emit_session_start() -> None:
+        miner_logger.info(
+            json.dumps(
+                _json_telemetry_payload(
+                    telemetry,
+                    "session_start",
+                    scope="session",
+                    session_id=session_id,
+                    device_id=device_id,
+                    planner=planner_version,
+                    shadow_planner=shadow_version,
+                    backend=str(device_cfg.get("backend", "adb")),
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+
+    try:
+        loaded_cfg = config_manager.get_device_config(ip)
+        device_cfg = dict(loaded_cfg or {})
+    except ForceSleepRequested:
+        _emit_session_start()
+        _emit_session_summary("force_sleep")
+        raise
+    except Exception as exc:
+        fatal_totals = {
+            "fatal_error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+        }
+        _emit_session_start()
+        _emit_exception_event("config_preflight", exc)
+        miner_logger.exception("[MiningService] 設定前置檢查例外，停止挖礦: %s", exc)
+        _emit_session_summary("exception")
+        return
+
     # Default planner is v1 (A*). Real-board eval at the recalibrated 3.6%
     # density (docs/.../2026-06-18-...top-pileup-fix.md): v1 is the most
     # shovel-efficient and highest-scoring of all planners; v3 is cluster-aware;
     # v4 is a bounded 3-step DFS. v5 (priors-driven) and v2 were removed.
     # Override per-device with `mining_planner_version` in config.
-    planner_version = str(device_cfg.get("mining_planner_version", "v1")).strip().lower()
-    shadow_version = str(device_cfg.get("mining_shadow_planner_version", "")).strip().lower()
+    planner_version = str(device_cfg.get("mining_planner_version", "v1") or "v1").strip().lower()
+    shadow_value = str(device_cfg.get("mining_shadow_planner_version", "") or "").strip().lower()
+    shadow_version = shadow_value or None
     mining_save_samples = bool(device_cfg.get("mining_save_samples", False))
     if planner_version not in {"v1", "v3", "v4", "final_v1"}:
         planner_version = "v1"
     if shadow_version not in {"", "final_v1"}:
-        shadow_version = ""
+        shadow_version = None
 
     start_time = time.time()
     max_duration_seconds = max_duration_minutes * 60
     miner_logger.info(f"[MiningService] 開始挖礦，時間限制: {max_duration_minutes} 分鐘 (設備 {ip})")
     miner_logger.info(f"[MiningService] planner_version={planner_version}")
     miner_logger.info(f"[MiningService] mining_save_samples={mining_save_samples}")
+    _emit_session_start()
 
-    count = check_pickaxe_count(d)
+    try:
+        count = check_pickaxe_count(d)
+    except ForceSleepRequested:
+        _emit_session_summary("force_sleep")
+        raise
+    except Exception as exc:
+        fatal_totals = {
+            "fatal_error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+        }
+        _emit_exception_event("session_start", exc)
+        miner_logger.exception("[MiningService] session-start 前置檢查例外，停止挖礦: %s", exc)
+        _emit_session_summary("exception")
+        return
     if count < 5:
         miner_logger.info("鏟子數量過少，停止挖礦")
+        _emit_session_summary("insufficient_pickaxe")
         return
 
     items_available: Dict[str, int] = {"drill": 0, "bomb": 0}
@@ -679,12 +1070,34 @@ def run(
 
     # 每帳號挖礦地圖記錄（session JSONL + 累積 global_map）。for_device 讀
     # mining_map_record（預設開），停用時完全不建檔；所有呼叫 fail-safe。
-    map_recorder = MiningMapRecorder.for_device(ip, str(device_cfg.get("backend", "adb")))
-    map_recorder.start(
-        planner=planner_version,
-        depth_base=depth_tracker.depth,
-        inv={"pickaxe": count, **items_available},
-    )
+    try:
+        map_recorder = MiningMapRecorder.for_device(ip, str(device_cfg.get("backend", "adb")))
+        map_recorder.start(
+            planner=planner_version,
+            depth_base=depth_tracker.depth,
+            inv={"pickaxe": count, **items_available},
+        )
+    except ForceSleepRequested:
+        _safe_end_map_recorder(None)
+        _emit_session_summary("force_sleep")
+        raise
+    except Exception as exc:
+        fatal_totals = {
+            "fatal_error": {
+                "type": type(exc).__name__,
+                "message": str(exc),
+            }
+        }
+        _emit_exception_event("session_start", exc)
+        miner_logger.exception("[MiningService] map recorder 啟動例外，停止挖礦: %s", exc)
+        _safe_end_map_recorder(fatal_totals)
+        _emit_session_summary("exception")
+        return
+    # Only the executor receives proxies; the rest of the service keeps the
+    # original uiautomator2 objects, while all executor screenshots/classifier
+    # calls are included in the same session counters.
+    execution_device = _TelemetryDeviceProxy(d, telemetry)
+    execution_clf = _TelemetryClassifierProxy(clf, telemetry)
 
     def _exec_counts(res) -> Dict[str, int]:
         return {
@@ -698,6 +1111,11 @@ def run(
         # 讀 loop 內即時 locals（board/known_board/count/...）。recorder 內部已吞例外。
         below = known_board[len(board):] if known_board else None
         exec_payload = dict(exec_dict or {})
+        exec_payload.update(
+            telemetry.snapshot(
+                screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start)
+            )
+        )
         exec_payload.setdefault("planner", plan.get("planner_name", planner_version))
         if plan.get("planner_source"):
             exec_payload.setdefault("planner_source", plan["planner_source"])
@@ -712,10 +1130,93 @@ def run(
         )
 
     iterations = 0
+    round_screenshot_start = 0
+    round_classify_start = 0
+    round_overlay_start = 0
+    round_shadow_start = 0
+    round_shadow_success_start = 0
+    round_shadow_failure_start = 0
+    round_shadow_skip_start = 0
+    round_shadow_not_attempted_start = 0
+    round_shadow_elapsed_start = 0.0
+    round_active = False
+    round_shadow_accounted = False
     consecutive_empty_plans = 0
     identical_board_count = 0
     prev_exec_sig = None
-    fatal_totals: Optional[Dict[str, Any]] = None
+    stopped_reason = "completed"
+    round_event_logged = False
+
+    def _account_shadow_missing() -> None:
+        """Close shadow accounting for an active round before re-raising.
+
+        A configured shadow that never returned a result is still one dispatch
+        attempt with a skipped result.  Disabled shadows are explicitly marked
+        ``not_attempted`` so calls/result invariants remain aggregatable.
+        """
+        nonlocal round_shadow_accounted
+        if not round_active or round_shadow_accounted:
+            return
+        round_shadow_accounted = True
+        if shadow_version:
+            telemetry.shadow_calls += 1
+            telemetry.shadow_skipped += 1
+        else:
+            telemetry.shadow_not_attempted += 1
+
+    def _log_round_telemetry(status: str = "unknown", error: Optional[str] = None) -> None:
+        """Write one machine-parseable observation event for every round."""
+        nonlocal round_event_logged, round_active
+        try:
+            active_planner = plan.get("planner_name", planner_version)
+        except (NameError, UnboundLocalError):
+            active_planner = planner_version
+        round_fields = telemetry.round_fields(
+            screenshot_start=round_screenshot_start,
+            classify_start=round_classify_start,
+            overlay_start=round_overlay_start,
+            shadow_start=round_shadow_start,
+            shadow_success_start=round_shadow_success_start,
+            shadow_failure_start=round_shadow_failure_start,
+            shadow_skip_start=round_shadow_skip_start,
+            shadow_not_attempted_start=round_shadow_not_attempted_start,
+            shadow_elapsed_start=round_shadow_elapsed_start,
+        )
+        miner_logger.info(
+            "[MiningTelemetry] event=round round=%d status=%s planner=%s %s"
+            % (
+                iterations,
+                status,
+                active_planner,
+                _telemetry_fields(
+                    telemetry,
+                    screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start),
+                ),
+            )
+        )
+        miner_logger.info(
+            json.dumps(
+                _json_telemetry_payload(
+                    telemetry,
+                    "round",
+                    scope="round",
+                    session_id=session_id,
+                    device_id=device_id,
+                    planner=active_planner,
+                    shadow_planner=shadow_version or None,
+                    round=iterations,
+                    status=status,
+                    error=error,
+                    **round_fields,
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        round_event_logged = True
+        # A round is closed once its machine-readable event is emitted.  If a
+        # later cleanup path raises, it must not double-account this round.
+        round_active = False
     try:
         while count >= 1:
             _check_force_sleep(ip)
@@ -724,12 +1225,28 @@ def run(
                 break
 
             iterations += 1
+            telemetry.rounds += 1
+            round_screenshot_start = telemetry.screenshot_calls
+            round_classify_start = telemetry.classify_calls
+            round_overlay_start = telemetry.overlay_ocr_calls
+            round_shadow_start = telemetry.shadow_calls
+            round_shadow_success_start = telemetry.shadow_successes
+            round_shadow_failure_start = telemetry.shadow_failures
+            round_shadow_skip_start = telemetry.shadow_skipped
+            round_shadow_not_attempted_start = telemetry.shadow_not_attempted
+            round_shadow_elapsed_start = telemetry.shadow_elapsed_ms
+            round_active = True
+            round_shadow_accounted = False
+            round_event_logged = False
             # Shared frame for this loop: pickaxe/item OCR + board classification.
-            shared_frame = d.screenshot(format="opencv")
+            shared_frame = _counted_screenshot(d, telemetry, format="opencv")
+            # Count the service-level OCR probe even when it finds no overlay;
+            # this is the expensive call P1-09 asks us to quantify.
+            telemetry.overlay_ocr_calls += 1
             # 礦洞彈窗在「挖到 pit」後可能被遮蓋，executor 的本地清理不一定夠 —
             # 每輪重新做一次 OCR 檢查並 click_white，避免主迴圈被卡在彈窗上。
             if _dismiss_mining_overlay_if_needed(d, shared_frame, miner_logger):
-                shared_frame = d.screenshot(format="opencv")
+                shared_frame = _counted_screenshot(d, telemetry, format="opencv")
             # Internal counter is the source of truth; OCR is a periodic
             # validator. `allow_none=True` lets us distinguish "OCR says X"
             # from "OCR is broken" — failure no longer pretends the count is
@@ -761,6 +1278,10 @@ def run(
                     )
                 count = new_count
                 if count < 1:
+                    # OCR 讀到 0 時本輪已經開始；先補齊 shadow accounting 與
+                    # round event，避免 summary.rounds 大於可聚合的 round 事件數。
+                    _account_shadow_missing()
+                    _log_round_telemetry("pickaxe_empty")
                     break
 
             refresh_item_inventory(shared_frame)
@@ -770,6 +1291,7 @@ def run(
             )
             _log_inventory_validation(ip, count, items_available, miner_logger)
 
+            telemetry.classify_calls += 1
             board, _ = clf.classify_board(shared_frame, save_samples=mining_save_samples)
             miner_logger.info(f"\n[MiningService] Current Board:\n{get_visual_board(board)}")
             _log_board_validation(ip, board, miner_logger)
@@ -811,10 +1333,40 @@ def run(
             )
             plan_elapsed_ms = (time.perf_counter() - plan_started_at) * 1000.0
             # Shadow：同一盤面/庫存快照額外計算，只記錄不執行；失敗只留 log。
-            shadow_payload = _compute_shadow_plan(
-                board, count, current_items, blocked_action_signatures, shadow_version, miner_logger,
-                known_board=known_board,
-            )
+            shadow_payload = None
+            if shadow_version:
+                round_shadow_accounted = True
+                telemetry.shadow_calls += 1
+                shadow_started_at = time.perf_counter()
+                try:
+                    try:
+                        shadow_payload = _compute_shadow_plan(
+                            board, count, current_items, blocked_action_signatures, shadow_version, miner_logger,
+                            known_board=known_board,
+                        )
+                    except Exception as exc:
+                        # Shadow 只做觀測；實作例外不可中止主挖礦迴圈。
+                        miner_logger.warning("[MiningService] shadow planner wrapper failed: %s", exc)
+                        shadow_payload = {
+                            "ok": False,
+                            "planner": shadow_version,
+                            "error": str(exc),
+                        }
+                finally:
+                    telemetry.shadow_elapsed_ms += (
+                        time.perf_counter() - shadow_started_at
+                    ) * 1000.0
+                if shadow_payload is None:
+                    # 已配置但沒有結果，算一次 skipped；calls 仍代表真正嘗試過。
+                    telemetry.shadow_skipped += 1
+                elif shadow_payload.get("ok") is True:
+                    telemetry.shadow_successes += 1
+                else:
+                    telemetry.shadow_failures += 1
+            else:
+                # 未啟用的輪次不是嘗試；維持 calls/result invariant，另記缺席輪次。
+                round_shadow_accounted = True
+                telemetry.shadow_not_attempted += 1
             if shadow_payload is not None:
                 plan["shadow"] = shadow_payload
             _log_planner_stats(plan, planner_version, plan_elapsed_ms, len(blocked_action_signatures), miner_logger, depth_tracker.depth)
@@ -825,6 +1377,7 @@ def run(
                 miner_logger.warning(f"[Mining] 規劃失敗: {plan.get('message', '未知錯誤')}")
                 miner_logger.warning(f"  剩餘寶箱: {plan.get('remaining_pits', '?')}, 底層開啟: {plan.get('floor7_open', '?')}")
                 _record_map_round([], {"ok": False, "reason": "plan_failed"})
+                _log_round_telemetry("plan_failed")
                 consecutive_empty_plans += 1
                 if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
                     miner_logger.warning(
@@ -850,7 +1403,7 @@ def run(
                         )
                         try:
                             descent_result = execute_plan_steps(
-                                d, clf, board,
+                                execution_device, execution_clf, board,
                                 [{"type": "dig", "action": "dig", "dig_list": [descent],
                                   "target": descent}],
                                 rl_recorder=rl_recorder, deadline=start_time + max_duration_seconds,
@@ -864,8 +1417,10 @@ def run(
                             # drifts high until the next OCR reconcile.
                             count = _apply_partial(descent_result, count, items_available, miner_logger)
                             consecutive_empty_plans = 0
+                            _log_round_telemetry("forced_descent")
                             continue
                 consecutive_empty_plans += 1
+                _log_round_telemetry("no_steps")
                 if consecutive_empty_plans >= _MAX_EMPTY_PLANS:
                     miner_logger.warning(
                         f"[MiningService] 連續 {consecutive_empty_plans} 次取得空 plan，中止挖礦迴圈"
@@ -877,8 +1432,10 @@ def run(
             consecutive_empty_plans = 0
 
             if _verify_items_pre_execution(
-                d, plan, items_available, item_blacklist, zero_streaks, zero_streak_limit, miner_logger
+                d, plan, items_available, item_blacklist, zero_streaks, zero_streak_limit, miner_logger,
+                telemetry=telemetry,
             ):
+                _log_round_telemetry("item_replan")
                 continue
 
             print_plan_result(miner_logger, plan_title, plan, board)
@@ -889,7 +1446,8 @@ def run(
             inv_before = {"pickaxe": count, **items_available}
             try:
                 exec_result = execute_plan_steps(
-                    d, clf, board, plan["steps"], rl_recorder=rl_recorder, deadline=deadline
+                    execution_device, execution_clf, board, plan["steps"],
+                    rl_recorder=rl_recorder, deadline=deadline
                 )
             except NoBoardChangeError as exc:
                 count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
@@ -922,14 +1480,19 @@ def run(
                     miner_logger.warning(f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}")
                 miner_logger.info(
                     "[MiningTelemetry] planner=%s exec=rejected reason=no_board_change "
-                    "step=%s item=%s inv_before=%s inv_after=%s"
+                    "step=%s item=%s inv_before=%s inv_after=%s %s"
                 % (plan.get("planner_name", planner_version), action_signature, exc.item_type or "-",
-                       inv_before, {"pickaxe": count, **items_available})
+                       inv_before, {"pickaxe": count, **items_available},
+                       _telemetry_fields(
+                           telemetry,
+                           screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start),
+                       ))
                 )
                 _record_map_round(
                     plan.get("steps", []),
                     {"ok": False, "reason": "no_board_change", **_exec_counts(exc.partial_result)},
                 )
+                _log_round_telemetry("no_board_change")
                 continue
             except OutOfItemError as exc:
                 count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
@@ -942,14 +1505,19 @@ def run(
                 )
                 miner_logger.info(
                     "[MiningTelemetry] planner=%s exec=rejected reason=out_of_item "
-                    "item=%s live_count=%s inv_before=%s inv_after=%s"
+                    "item=%s live_count=%s inv_before=%s inv_after=%s %s"
                 % (plan.get("planner_name", planner_version), exc.item_type, exc.live_count,
-                       inv_before, {"pickaxe": count, **items_available})
+                       inv_before, {"pickaxe": count, **items_available},
+                       _telemetry_fields(
+                           telemetry,
+                           screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start),
+                       ))
                 )
                 _record_map_round(
                     plan.get("steps", []),
                     {"ok": False, "reason": "out_of_item", **_exec_counts(exc.partial_result)},
                 )
+                _log_round_telemetry("out_of_item")
                 continue
 
             # Plan executed cleanly — credit shovels / items consumed.
@@ -961,18 +1529,23 @@ def run(
             miner_logger.info(
                 "[MiningTelemetry] planner=%s exec=ok steps_planned=%d steps_completed=%s "
                 "terminated=%s shovels_used=%s bombs_used=%s drills_used=%s "
-                "inv_before=%s inv_after=%s verification=%s"
+                "inv_before=%s inv_after=%s verification=%s %s"
             % (plan.get("planner_name", planner_version), len(plan["steps"]), exec_result.steps_completed,
                    exec_result.terminated_reason or "-", exec_result.shovels_used,
                    exec_result.bombs_used, exec_result.drills_used,
                    inv_before, {"pickaxe": count, **items_available},
-                   exec_result.verification_events)
+                   exec_result.verification_events,
+                   _telemetry_fields(
+                       telemetry,
+                       screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start),
+                   ))
             )
             _record_map_round(
                 plan["steps"],
                 {"ok": True, "reason": exec_result.terminated_reason or "ok",
                  **_exec_counts(exec_result)},
             )
+            _log_round_telemetry("ok")
 
             # Identical-state deadlock guard: if executing a non-empty plan left
             # the board unchanged for too many iterations in a row, abort instead
@@ -988,23 +1561,41 @@ def run(
                 )
                 break
 
-    except ForceSleepRequested:
+    except ForceSleepRequested as exc:
         # 強制休眠是上層喚醒策略的控制訊號，不可被全域保險吞掉。
+        # Active rounds still need a complete exception + round telemetry pair.
+        stopped_reason = "force_sleep"
+        _account_shadow_missing()
+        _emit_exception_event("main_loop", exc)
+        if iterations and round_active and not round_event_logged:
+            _log_round_telemetry(
+                "exception",
+                error=f"{type(exc).__name__}: {exc}",
+            )
         raise
     except Exception as exc:
+        stopped_reason = "exception"
         fatal_totals = {
             "fatal_error": {
                 "type": type(exc).__name__,
                 "message": str(exc),
             }
         }
+        _account_shadow_missing()
+        _emit_exception_event("main_loop", exc)
+        if iterations and round_active and not round_event_logged:
+            _log_round_telemetry(
+                "exception",
+                error=f"{type(exc).__name__}: {exc}",
+            )
         miner_logger.exception("[MiningService] 主迴圈未預期例外，停止挖礦: %s", exc)
     finally:
         # 無論正常停止或主迴圈例外，都要完成兩個 recorder 的收尾。
-        try:
-            map_recorder.end(totals=fatal_totals)
-        except Exception as exc:
-            miner_logger.warning("[MiningService] map recorder 收尾失敗: %s", exc)
+        _emit_session_summary(stopped_reason)
+        # Keep the recorder's existing end/totals contract untouched;
+        # telemetry is already present in every round JSON event and in
+        # the standalone session-summary event above.
+        _safe_end_map_recorder(fatal_totals)
         if rl_recorder:
             try:
                 rl_recorder.flush()
@@ -1029,6 +1620,7 @@ if __name__ == "__main__":  # pragma: no cover - manual trigger only
 
 __all__ = [
     "run",
+    "MiningTelemetryCounters",
     "_dismiss_mining_overlay_if_needed",
     "print_plan_result",
     "execute_plan_steps",
