@@ -207,6 +207,97 @@ def test_ws_telemetry_emits_exception_and_does_not_count_unstarted_shadow(
                for event in events)
 
 
+@pytest.mark.parametrize(
+    ("shadow", "successes", "failures"),
+    [
+        ({"ok": True, "elapsed_ms": 2.5}, 1, 0),
+        ({"ok": False, "elapsed_ms": 3.25, "error": "shadow boom"}, 0, 1),
+    ],
+)
+def test_ws_select_exception_preserves_configured_shadow_result(
+    monkeypatch, caplog, shadow, successes, failures,
+):
+    """A select failure still attributes the already-run shadow planner."""
+    board = _board()
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {mining_supervised.mining.GOODS_PICKAXE: 1}
+    monkeypatch.setattr(mining_supervised.mining, "read_board", lambda *a, **k: board)
+    monkeypatch.setattr(
+        mining_supervised.mining_adapter,
+        "plan",
+        lambda *a, **k: {"ws_steps": [], "shadow": shadow},
+    )
+    monkeypatch.setattr(
+        mining_supervised,
+        "_select_dig_step",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("select boom")),
+    )
+
+    with caplog.at_level("INFO", logger=mining_supervised.logger.name):
+        with pytest.raises(RuntimeError, match="select boom"):
+            mining_supervised.mine_until_pickaxe_empty(
+                object(), tracker, shadow_planner_version="final_v1",
+            )
+
+    events = _events(caplog)
+    summary = next(event for event in events if event["event"] == "session_summary")
+    assert summary["shadow_calls"] == 1
+    assert summary["shadow_successes"] == successes
+    assert summary["shadow_failures"] == failures
+    assert summary["shadow_skipped"] == 0
+    assert summary["shadow_elapsed_ms"] == pytest.approx(shadow["elapsed_ms"])
+    assert summary["shadow_successes"] + summary["shadow_failures"] + summary["shadow_skipped"] == summary["shadow_calls"]
+
+
+def test_ws_abort_map_totals_match_telemetry_summary(monkeypatch, caplog):
+    """An interrupt closes map and telemetry sessions with ``aborted``."""
+    from ws_token.abort import WSRunAborted
+
+    board = _board()
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {mining_supervised.mining.GOODS_PICKAXE: 1}
+    monkeypatch.setattr(mining_supervised.mining, "read_board", lambda *a, **k: board)
+    monkeypatch.setattr(
+        "utils.logging_utils.get_or_create_ws_mining_logger",
+        lambda *a, **k: mining_supervised.logger,
+    )
+
+    class FakeRecorder:
+        enabled = True
+
+        def __init__(self):
+            self.ends = []
+
+        def start(self, **kwargs):
+            return None
+
+        def end(self, totals=None):
+            self.ends.append(dict(totals or {}))
+
+    recorder = FakeRecorder()
+
+    class FakeRecorderFactory:
+        @classmethod
+        def for_device(cls, *args, **kwargs):
+            return recorder
+
+    monkeypatch.setattr(mining_supervised, "MiningMapRecorder", FakeRecorderFactory)
+
+    with caplog.at_level("INFO", logger=mining_supervised.logger.name):
+        with pytest.raises(WSRunAborted):
+            mining_supervised.mine_until_pickaxe_empty(
+                object(), tracker, device_id="emulator-5554",
+                should_abort=lambda: True,
+            )
+
+    assert recorder.ends == [{"stopped": "aborted", "digs": 0}]
+    events = _events(caplog)
+    summary = next(event for event in events if event["event"] == "session_summary")
+    assert summary["stopped_reason"] == "aborted"
+    assert mining_supervised._ACTIVE_WS_TELEMETRY.get() is None
+    assert mining_supervised._ACTIVE_WS_FINALIZER.get() is None
+
+
 def test_ws_telemetry_counters_reset_between_sessions(caplog):
     with caplog.at_level("INFO", logger=mining_supervised.logger.name):
         first = mining_supervised._WSTelemetry(None, "v1", "", mining_supervised.logger)

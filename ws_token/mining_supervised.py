@@ -1025,11 +1025,20 @@ def mine_until_pickaxe_empty(
         if _finalized:
             return
         _finalized = True
+        # Normalize an exception's stop reason before closing the map session.
+        # ``map_recorder.end`` persists this value in the session totals, so it
+        # must match the reason emitted by the telemetry summary (in particular
+        # WSRunAborted is an intentional abort, not a generic exception).
+        if active_exc is not None:
+            stopped_reason = (
+                "aborted" if isinstance(active_exc, WSRunAborted) else "exception"
+            )
+            _final_error = f"{type(active_exc).__name__}: {active_exc}"
         map_exc: Optional[BaseException] = None
         if map_recorder is not None:
             try:
                 map_recorder.end(totals={
-                    "stopped": stopped_reason if active_exc is None else "exception",
+                    "stopped": stopped_reason,
                     "digs": len(executed),
                 })
             except BaseException as exc:
@@ -1039,9 +1048,6 @@ def mine_until_pickaxe_empty(
                 stopped_reason = "exception"
         if active_exc is not None and not telemetry._exception_recorded:
             telemetry.exception("supervised", active_exc)
-        if active_exc is not None:
-            stopped_reason = "aborted" if isinstance(active_exc, WSRunAborted) else "exception"
-            _final_error = f"{type(active_exc).__name__}: {active_exc}"
         try:
             telemetry.finish(stopped_reason, error=_final_error)
         finally:
@@ -1233,7 +1239,7 @@ def mine_until_pickaxe_empty(
                     allow_drill=allow_drill,
                 )
             except Exception as exc:
-                telemetry.exception("select", exc)
+                telemetry.exception("select", exc, plan_result)
                 raise
             if step is None:
                 break
