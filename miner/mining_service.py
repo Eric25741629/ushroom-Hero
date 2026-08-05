@@ -204,6 +204,9 @@ class MiningTelemetryCounters:
             "shadow_skipped_avg": round(
                 float(self.shadow_skipped) / rounds_f if rounds else 0.0, 6
             ),
+            "shadow_not_attempted_avg": round(
+                float(self.shadow_not_attempted) / rounds_f if rounds else 0.0, 6
+            ),
             "shadow_elapsed_ms_avg": round(
                 float(self.shadow_elapsed_ms) / shadow_calls_f
                 if shadow_calls else 0.0,
@@ -1275,6 +1278,10 @@ def run(
                     )
                 count = new_count
                 if count < 1:
+                    # OCR 讀到 0 時本輪已經開始；先補齊 shadow accounting 與
+                    # round event，避免 summary.rounds 大於可聚合的 round 事件數。
+                    _account_shadow_missing()
+                    _log_round_telemetry("pickaxe_empty")
                     break
 
             refresh_item_inventory(shared_frame)

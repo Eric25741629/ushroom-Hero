@@ -401,6 +401,50 @@ def test_run_telemetry_records_shadow_exception_and_elapsed_time(monkeypatch):
     assert summary["shadow_sample_rate"] == 1.0
 
 
+@pytest.mark.parametrize("shadow", ["", "final_v1"])
+def test_pickaxe_empty_ocr_closes_fifth_round_and_shadow_accounting(monkeypatch, shadow):
+    """A fifth-round OCR zero must still emit a complete round event."""
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_telemetry_run(monkeypatch, logger, recorder, shadow=shadow)
+    pickaxe_reads = iter([10, 0])  # session preflight, then round five OCR
+    monkeypatch.setattr(
+        service,
+        "check_pickaxe_count",
+        lambda *_a, **_k: next(pickaxe_reads),
+    )
+    monkeypatch.setattr(
+        service,
+        "execute_plan_steps",
+        lambda *_a, **_k: service.ExecutionResult(shovels_used=1, steps_completed=1),
+    )
+    monkeypatch.setattr(service, "_identical_board_exceeded", lambda _a, _b, count: (count, False))
+    if shadow:
+        # Keep the test focused on lifecycle accounting: no shadow result means
+        # every configured dispatch is represented as a skipped result.
+        monkeypatch.setattr(service, "_compute_shadow_plan", lambda *_a, **_k: None)
+    clf = types.SimpleNamespace(classify_board=lambda *_a, **_k: (_board(), []))
+
+    service.run(_ScreenshotDevice(), "pickaxe-empty", clf)
+
+    rounds = _telemetry_json_lines(logger, "round")
+    summary = _telemetry_json_lines(logger, "session_summary")[0]
+    assert len(rounds) == summary["rounds"] == 5
+    assert rounds[-1]["status"] == "pickaxe_empty"
+    if shadow:
+        assert summary["shadow_calls"] == 5
+        assert summary["shadow_skipped"] == 5
+        assert summary["shadow_not_attempted"] == 0
+        assert rounds[-1]["round_shadow_calls"] == 1
+        assert rounds[-1]["round_shadow_skipped"] == 1
+    else:
+        assert summary["shadow_calls"] == 0
+        assert summary["shadow_skipped"] == 0
+        assert summary["shadow_not_attempted"] == 5
+        assert rounds[-1]["round_shadow_calls"] == 0
+        assert rounds[-1]["round_shadow_not_attempted"] == 1
+
+
 def test_executor_telemetry_proxies_count_real_calls_and_delegate(monkeypatch):
     recorder = _FakeMapRecorder()
     logger = _TelemetryLogger()
@@ -463,7 +507,7 @@ def test_telemetry_common_schema_and_canonical_aggregates(monkeypatch):
         "screenshots_total", "screenshots_per_round_avg", "screenshot_calls_avg",
         "classify_calls_avg", "overlay_ocr_calls_avg", "shadow_calls_avg",
         "shadow_successes_avg", "shadow_failures_avg", "shadow_skipped_avg",
-        "shadow_elapsed_ms_avg",
+        "shadow_not_attempted_avg", "shadow_elapsed_ms_avg",
     ):
         assert key in summary
     assert summary["screenshots_total"] == summary["screenshot_calls"]
