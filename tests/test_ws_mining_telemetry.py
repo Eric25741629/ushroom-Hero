@@ -42,7 +42,7 @@ def _events(caplog):
             payload = json.loads(record.getMessage())
         except (TypeError, ValueError):
             continue
-        if payload.get("schema") == "ws_mining_telemetry_v1":
+        if payload.get("schema") == "mining_telemetry_v1":
             events.append(payload)
     return events
 
@@ -81,16 +81,17 @@ def test_ws_telemetry_round_and_session_have_explicit_zero_vision_counters(
     ]
     round_event, summary = events[1], events[2]
     for event in (round_event, summary):
-        assert event["screenshot_calls"] == 0
-        assert event["classify_calls"] == 0
-        assert event["overlay_ocr_calls"] == 0
+        assert event.get("screenshot_calls", 0) == 0
+        assert event.get("classify_calls", 0) == 0
+        assert event.get("overlay_ocr_calls", 0) == 0
         assert event["overlay_source"] == "not_in_ws_module"
-    assert round_event["screenshots_per_round"] == 0
+    assert round_event["round_screenshot_calls"] == 0
     assert summary["rounds"] == 1
     assert summary["shadow_calls"] == 0
     assert summary["shadow_elapsed_ms"] == 0.0
     assert summary["shadow_sample_rate"] == 0.0
-    assert summary["shadow_skipped"] == 1
+    assert summary["shadow_skipped"] == 0
+    assert summary["shadow_not_attempted"] == 1
 
 
 def test_ws_telemetry_shadow_success_and_failure_are_json_serializable(
@@ -135,12 +136,15 @@ def test_ws_telemetry_shadow_success_and_failure_are_json_serializable(
     events = _events(caplog)
     round_event = next(event for event in events if event["event"] == "round")
     summary = next(event for event in events if event["event"] == "session_summary")
-    assert round_event["shadow_calls"] == 1
-    assert round_event["shadow_elapsed_ms"] == pytest.approx(2.5)
+    assert round_event["round_shadow_calls"] == 1
+    assert round_event["round_shadow_elapsed_ms"] == pytest.approx(2.5)
     assert summary["shadow_calls"] == 1
+    assert summary["shadow_successes"] == 1
     assert summary["shadow_elapsed_ms"] == pytest.approx(2.5)
     assert summary["shadow_sample_rate"] == pytest.approx(1.0)
     assert summary["shadow_failures"] == 0
+    assert summary["shadow_skipped"] == 0
+    assert summary["shadow_successes"] + summary["shadow_failures"] + summary["shadow_skipped"] == summary["shadow_calls"]
 
 
 def test_ws_telemetry_counts_shadow_failure_and_missing_result(monkeypatch, caplog):
@@ -168,6 +172,8 @@ def test_ws_telemetry_counts_shadow_failure_and_missing_result(monkeypatch, capl
     assert summary["shadow_elapsed_ms"] == pytest.approx(1.75)
     assert summary["shadow_failures"] == 1
     assert summary["shadow_skipped"] == 0
+    assert summary["shadow_successes"] == 0
+    assert summary["shadow_successes"] + summary["shadow_failures"] + summary["shadow_skipped"] == summary["shadow_calls"]
 
 
 def test_ws_telemetry_emits_exception_and_does_not_count_unstarted_shadow(
@@ -192,8 +198,11 @@ def test_ws_telemetry_emits_exception_and_does_not_count_unstarted_shadow(
     summary = next(event for event in events if event["event"] == "session_summary")
     assert summary["stopped_reason"] == "exception"
     assert summary["rounds"] == 1
-    assert summary["shadow_calls"] == 0
+    assert summary["shadow_calls"] == 1
     assert summary["shadow_elapsed_ms"] == 0.0
+    assert summary["shadow_skipped"] == 1
+    assert any(event["event"] == "exception" and event["phase"] == "plan"
+               for event in events)
     assert any(event["event"] == "round" and event["status"] == "exception"
                for event in events)
 
@@ -214,3 +223,60 @@ def test_ws_telemetry_counters_reset_between_sessions(caplog):
     assert summaries[-2]["rounds"] == 1
     assert summaries[-1]["rounds"] == 0
     assert summaries[-2]["session_id"] != summaries[-1]["session_id"]
+
+
+def test_ws_telemetry_initial_empty_has_no_round(monkeypatch, caplog):
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {mining_supervised.mining.GOODS_PICKAXE: 0}
+    monkeypatch.setattr(
+        mining_supervised.mining,
+        "read_board",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not read")),
+    )
+    with caplog.at_level("INFO", logger=mining_supervised.logger.name):
+        result = mining_supervised.mine_until_pickaxe_empty(object(), tracker)
+    assert result["stopped_reason"] == "pickaxe_empty"
+    events = _events(caplog)
+    assert [event["event"] for event in events] == ["session_start", "session_summary"]
+    assert events[-1]["rounds"] == 0
+
+
+def test_ws_telemetry_unhandled_select_exception_finishes_once(monkeypatch, caplog):
+    board = _board()
+    tracker = mining_supervised.mining.InventoryTracker()
+    tracker.counts = {mining_supervised.mining.GOODS_PICKAXE: 1}
+    monkeypatch.setattr(mining_supervised.mining, "read_board", lambda *_a, **_k: board)
+    monkeypatch.setattr(mining_supervised.mining_adapter, "plan", lambda *_a, **_k: {"ws_steps": []})
+    monkeypatch.setattr(
+        mining_supervised,
+        "_select_dig_step",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("select boom")),
+    )
+    with caplog.at_level("INFO", logger=mining_supervised.logger.name):
+        with pytest.raises(RuntimeError, match="select boom"):
+            mining_supervised.mine_until_pickaxe_empty(object(), tracker)
+    events = _events(caplog)
+    assert sum(event["event"] == "session_summary" for event in events) == 1
+    assert sum(event["event"] == "exception" for event in events) == 1
+    assert sum(event["event"] == "round" and event["status"] == "exception" for event in events) == 1
+
+
+def test_ws_raw_trace_lines_keep_original_prefix_and_add_shadow_tail(caplog):
+    board = _board(actives=[16239104], blocks=[_block(16239104)])
+    plan = {
+        "ws_steps": [{"type": "dig", "block_id": 16239104}],
+        "shadow": {"ok": True, "elapsed_ms": 1.0},
+    }
+    item = {"goods_id": 4001, "block_id": 16239104, "confirmed": True}
+    with caplog.at_level("INFO", logger=mining_supervised.logger.name):
+        mining_supervised._log_board_trace(board, {"pickaxe": 1}, phase="initial", step_index=0)
+        mining_supervised._log_plan_trace(
+            plan, {"pickaxe": 1}, step_index=0, shadow_planner_version="final_v1",
+        )
+        mining_supervised._log_execute_trace(item, step_index=0, inventory={"pickaxe": 0})
+    messages = [record.getMessage() for record in caplog.records]
+    assert any(message.startswith("ws_mining board ") for message in messages)
+    plan_line = next(message for message in messages if message.startswith("ws_mining plan "))
+    assert "shadow=" in plan_line
+    assert plan_line.endswith("shadow_sample_rate=1.0")
+    assert any(message.startswith("ws_mining execute ") for message in messages)
