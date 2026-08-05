@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import argparse
 import io
+import msvcrt
+import os
 import sys
+import tempfile
 import time
 
 if hasattr(sys.stdout, "buffer"):
@@ -25,6 +28,22 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 GAME_HOST = "mushroomh5.acenetgame.com"
+
+
+def acquire_run_lock(port: int):
+    """同一 CDP port 僅允許一個 smoke，程序退出時 Windows 會自動釋放鎖。"""
+    path = os.path.join(tempfile.gettempdir(), f"rogue-local-sim-{port}.lock")
+    handle = open(path, "a+b")
+    if os.path.getsize(path) == 0:
+        handle.write(b"0")
+        handle.flush()
+    handle.seek(0)
+    try:
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+    except OSError:
+        handle.close()
+        return None
+    return handle
 
 
 def connect(port: int):
@@ -46,7 +65,22 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="萬神試煉 local_sim smoke test")
     ap.add_argument("--port", type=int, default=9226, help="CDP port（預設 9226，小寶）")
     ap.add_argument("--rounds", type=int, default=1, help="跑幾局（預設 1）")
+    ap.add_argument(
+        "--close-loss-only",
+        action="store_true",
+        help="只關閉目前失敗彈窗並確認消失，不進場、不結算",
+    )
+    ap.add_argument(
+        "--cleanup-active-only",
+        action="store_true",
+        help="只把未完成局推進到可結算狀態後結束，不開始新局",
+    )
     args = ap.parse_args()
+
+    run_lock = acquire_run_lock(args.port)
+    if run_lock is None:
+        print(f"[smoke] CDP port={args.port} 已有測試執行中，拒絕重複啟動")
+        return 3
 
     print(f"[smoke] connect CDP port={args.port}")
     pw, page = connect(args.port)
@@ -79,6 +113,52 @@ def main() -> int:
         print(f"[smoke] 讀狀態失敗: {e}")
         pw.stop()
         return 1
+
+    if st == rogue_h5.RESULT_LOSE:
+        print("[smoke] 偵測到延遲失敗彈窗，先等待並確認關閉")
+        if not rogue_h5.wait_and_close_loss_result(page):
+            print("[smoke] 失敗彈窗無法安全關閉，停止測試")
+            pw.stop()
+            return 4
+        st = rogue_h5.state(page)
+        print(f"[smoke] 關閉失敗彈窗後狀態: {st}")
+
+    if args.close_loss_only:
+        print(f"[smoke] close-loss-only 完成，最終狀態: {st}")
+        pw.stop()
+        return 0
+
+    if args.cleanup_active_only:
+        if st in (rogue_h5.ENTER, rogue_h5.CONFIRM, rogue_h5.REMAKE):
+            print(f"[smoke] 未完成局停在 {st}，先推進到可結算 STAGE")
+            if not rogue_h5.advance_to_stage(page):
+                print("[smoke] 無法安全推進到 STAGE，停止清理")
+                pw.stop()
+                return 5
+            st = rogue_h5.state(page)
+        if st == rogue_h5.STAGE:
+            print("[smoke] 結束目前未完成局")
+            if not rogue_h5.settle_run(page):
+                print("[smoke] 未完成局結算失敗")
+                pw.stop()
+                return 6
+            st = rogue_h5.state(page)
+        print(f"[smoke] cleanup-active-only 完成，最終狀態: {st}")
+        pw.stop()
+        return 0
+
+    # 尚未進入萬神狀態時，先清登入後公告、獎勵與 TopView 彈窗，再回主頁。
+    # 已在萬神內則不可用通用 popup sweep，避免把 RogueMainView 的結束鈕誤當關閉鈕。
+    if st == rogue_h5.UNKNOWN:
+        from utils.cocos_navigator import CocosNavigator
+
+        nav = CocosNavigator(page)
+        closed = nav.dismiss_blocking_popups()
+        nav.goto_main()
+        print(f"[smoke] 啟動彈窗清理: closed={closed}, view={nav.current_view()}")
+        time.sleep(1.5)
+        st = rogue_h5.state(page)
+        print(f"[smoke] 清理後狀態: {st}")
 
     # 若已有進行中的 run（不在 HOME）先結算
     if st not in (rogue_h5.HOME, rogue_h5.UNKNOWN):

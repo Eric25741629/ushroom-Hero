@@ -263,6 +263,38 @@ def test_advance_to_stage_closes_result_then_reaches_stage(monkeypatch):
     assert r.BTN_RESULT_CLOSE in page.emits
 
 
+class _StickyEnterPage(_AdvancePage):
+    """第一次點 ENTER 後畫面延遲兩拍，模擬 server/UI 尚未完成轉場。"""
+
+    def __init__(self):
+        super().__init__(_flags(rogueView=True, enterView=True))
+        self.enter_reads = 0
+
+    def evaluate(self, js, arg=None):
+        if js == r._STATE_JS and self.flags.get("enterView"):
+            self.enter_reads += 1
+            if self.enter_reads >= 3:
+                self.flags = _flags(confirm=True, confirmText="是否確認開啟新一局試煉")
+        return super().evaluate(js, arg)
+
+    def _on_emit(self, path):
+        if path == r.BTN_ENTER_START:
+            # 刻意維持 ENTER，驗證下一拍不會重送。
+            return
+        super()._on_emit(path)
+
+
+def test_advance_to_stage_deduplicates_same_transition_action(monkeypatch):
+    """轉場慢於輪詢間隔時，同一 ENTER click 不可連續送出。"""
+    monkeypatch.setattr(r, "_PACE", 0)
+    monkeypatch.setattr(r, "_ADVANCE_TIMEOUT", 5)
+    monkeypatch.setattr(r, "_ACTION_RETRY_SEC", 5)
+    page = _StickyEnterPage()
+
+    assert r.advance_to_stage(page) is True
+    assert page.emits.count(r.BTN_ENTER_START) == 1
+
+
 class _SettlePage(_FsmPage):
     def _on_emit(self, path):
         if path == r.BTN_STAGE_EXIT:

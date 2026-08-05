@@ -147,6 +147,40 @@ def test_pure_ws_runs_on_thread_without_callers_running_loop(wt, monkeypatch):
     assert worker_state["thread"] != caller_thread
 
 
+def test_local_sim_loss_sync_error_preserves_page_without_followup_actions(
+    wt, monkeypatch, harness
+):
+    """失敗 UI 未同步時不可買秘寶閣、回主頁或強制導航。"""
+    import config_manager
+    from battle import rogue_h5
+
+    page = object()
+    dev = types.SimpleNamespace(
+        backend_kind="web_h5",
+        device_id="web-test",
+        _page=page,
+    )
+    bought = []
+    monkeypatch.setattr(wt, "buy_god_everyweek", lambda _d: bought.append(True))
+    monkeypatch.setattr(rogue_h5, "open_home", lambda _page: True)
+    monkeypatch.setattr(
+        rogue_h5,
+        "run_rounds",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            rogue_h5.LossResultSyncError("loss UI timeout")
+        ),
+    )
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda _ip: {"wanshen_battle_mode": "local_sim"},
+    )
+
+    assert wt.fight_test(dev, rounds=1) is False
+    assert bought == []
+    assert harness.recovered == []
+
+
 # ---- _settle_run fail-safe (2026-06-30「沒有正常退出」回歸防護) -------------------
 
 class _RecDevice:
