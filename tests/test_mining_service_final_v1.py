@@ -207,6 +207,53 @@ def test_run_unexpected_exception_still_finishes_recorders(monkeypatch):
     assert logger.exception_calls
 
 
+def test_run_main_exception_emits_exception_round_and_one_summary(monkeypatch):
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_run_dependencies(monkeypatch, recorder, logger)
+
+    class _Device:
+        def screenshot(self, **_kwargs):
+            raise RuntimeError("screenshot failed")
+
+    service.run(_Device(), "exception-device", object())
+
+    payloads = [json.loads(line) for line in logger.info_calls if line.startswith("{")]
+    events = [payload["event"] for payload in payloads]
+    assert events.count("exception") == 1
+    assert events.count("round") == 1
+    assert events.count("session_summary") == 1
+    round_event = next(payload for payload in payloads if payload["event"] == "round")
+    assert round_event["status"] == "exception"
+    assert round_event["error"] == "RuntimeError: screenshot failed"
+    summary = next(payload for payload in payloads if payload["event"] == "session_summary")
+    assert summary["session_id"] == round_event["session_id"]
+    assert summary["rounds"] == 1
+
+
+def test_run_session_start_exception_emits_one_summary(monkeypatch):
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_run_dependencies(monkeypatch, recorder, logger)
+    monkeypatch.setattr(
+        service,
+        "check_pickaxe_count",
+        lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("ocr unavailable")),
+    )
+
+    service.run(object(), "preflight-device", object())
+
+    payloads = [json.loads(line) for line in logger.info_calls if line.startswith("{")]
+    assert [p["event"] for p in payloads].count("session_start") == 1
+    assert [p["event"] for p in payloads].count("exception") == 1
+    assert [p["event"] for p in payloads].count("session_summary") == 1
+    summary = next(p for p in payloads if p["event"] == "session_summary")
+    exception = next(p for p in payloads if p["event"] == "exception")
+    assert summary["session_id"] == exception["session_id"]
+    assert summary["device_id"] == "preflight-device"
+    assert summary["rounds"] == 0
+
+
 def test_run_force_sleep_is_re_raised_after_recorder_cleanup(monkeypatch):
     recorder = _FakeMapRecorder()
     rl = _FakeRLRecorder()
@@ -284,8 +331,9 @@ def _patch_telemetry_run(monkeypatch, logger, recorder, *, shadow="", overlay=Fa
 
 
 def _telemetry_json_lines(logger, event):
-    prefix = "[MiningTelemetryJSON] "
-    payloads = [json.loads(line[len(prefix):]) for line in logger.info_calls if line.startswith(prefix)]
+    # Standalone JSON lines mirror the WS telemetry emitter; existing textual
+    # MiningTelemetry lines remain separate and append-only.
+    payloads = [json.loads(line) for line in logger.info_calls if line.startswith("{")]
     return [payload for payload in payloads if payload.get("event") == event]
 
 
@@ -308,11 +356,24 @@ def test_run_telemetry_counts_round_overlay_and_session_screenshots(monkeypatch)
     # monkeypatched here, so no executor screenshots are added.
     assert summary["screenshot_calls"] == 2
     assert summary["shadow_calls"] == 0
+    assert summary["shadow_successes"] == 0
+    assert summary["shadow_failures"] == 0
+    assert summary["shadow_skipped"] == 0
+    assert summary["shadow_not_attempted"] == 1
     assert summary["shadow_sample_rate"] == 0.0
     round_payloads = _telemetry_json_lines(logger, "round")
     assert round_payloads, logger.info_calls
     round_event = round_payloads[0]
     assert round_event["screenshots_per_round"] == 2
+    assert round_event["round_screenshot_calls"] == 2
+    assert round_event["round_shadow_not_attempted"] == 1
+    assert round_event["round_shadow_calls"] == 0
+    assert round_event["round_shadow_successes"] == 0
+    assert round_event["round_shadow_failures"] == 0
+    assert round_event["round_shadow_skipped"] == 0
+    assert summary["screenshots_per_round_avg"] == 2.0
+    assert summary["session_id"] == round_event["session_id"]
+    assert summary["device_id"] == round_event["device_id"]
 
 
 def test_run_telemetry_records_shadow_exception_and_elapsed_time(monkeypatch):
@@ -332,7 +393,40 @@ def test_run_telemetry_records_shadow_exception_and_elapsed_time(monkeypatch):
 
     summary = _telemetry_json_lines(logger, "session_summary")[0]
     assert summary["shadow_calls"] == 1
+    assert summary["shadow_successes"] == 0
     assert summary["shadow_failures"] == 1
+    assert summary["shadow_skipped"] == 0
+    assert summary["shadow_successes"] + summary["shadow_failures"] + summary["shadow_skipped"] == summary["shadow_calls"]
     assert summary["shadow_elapsed_ms"] >= 0
     assert summary["shadow_sample_rate"] == 1.0
-    assert summary["shadow_skipped"] == 0
+
+
+def test_executor_telemetry_proxies_count_real_calls_and_delegate(monkeypatch):
+    recorder = _FakeMapRecorder()
+    logger = _TelemetryLogger()
+    _patch_telemetry_run(monkeypatch, logger, recorder)
+    device = _ScreenshotDevice()
+    device.marker = "device-marker"
+    clf = types.SimpleNamespace(
+        marker="classifier-marker",
+        classify_board=lambda *_a, **_k: (_board(), []),
+    )
+    observed = {}
+
+    def fake_executor(execution_device, execution_clf, *_args, **_kwargs):
+        observed["device_marker"] = execution_device.marker
+        observed["classifier_marker"] = execution_clf.marker
+        execution_device.screenshot(format="opencv")
+        execution_clf.classify_board(object())
+        return service.ExecutionResult(shovels_used=10, steps_completed=1)
+
+    monkeypatch.setattr(service, "execute_plan_steps", fake_executor)
+    service.run(device, "proxy-device", clf)
+
+    summary = _telemetry_json_lines(logger, "session_summary")[0]
+    assert observed == {
+        "device_marker": "device-marker",
+        "classifier_marker": "classifier-marker",
+    }
+    assert summary["screenshot_calls"] == 2
+    assert summary["classify_calls"] == 2
