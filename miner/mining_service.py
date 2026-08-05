@@ -104,6 +104,11 @@ _MAX_EMPTY_PLANS: int = 3
 # 連續相同版面（非空 plan 卻毫無變化）的容忍上限 — 真正的「identical state」死結偵測。
 _MAX_IDENTICAL_BOARDS: int = 3
 
+# WS/動畫驗證偶發短暫失敗時，先封鎖該落點並重規劃一次；只有同一道具在
+# 未變版面連續失敗才整場停用。dig（鎬子）仍沿用 action-level blocked
+# 契約，不套用這個 item-level 門檻。
+_ITEM_FAILURE_BLACKLIST_LIMIT: int = 2
+
 
 def _identical_board_exceeded(cur_sig, prev_sig, count: int):
     """Return (new_count, tripped). Increments when the board signature is
@@ -113,6 +118,22 @@ def _identical_board_exceeded(cur_sig, prev_sig, count: int):
     else:
         count = 0
     return count, count >= _MAX_IDENTICAL_BOARDS
+
+
+def _record_item_failure(
+    item_type: str,
+    streaks: Dict[str, int],
+    *,
+    limit: int = _ITEM_FAILURE_BLACKLIST_LIMIT,
+) -> Tuple[int, bool]:
+    """增加道具驗證失敗計數，回傳 ``(次數, 是否達黑名單門檻)``。
+
+    這個純 helper 讓 WS/非 WS 的測試都能鎖定同一個「首次只 retry、第二次
+    才 blacklist」契約；呼叫端仍負責把落點加入 blocked set 及實際停用道具。
+    """
+    count = int(streaks.get(item_type, 0) or 0) + 1
+    streaks[item_type] = count
+    return count, count >= max(1, int(limit))
 
 # OCR 鏟子驗證頻率（每 N 個 iter 對照一次）。從原本 3 拉長到 5 —
 # 現在 count 由 executor 回傳的 ExecutionResult.shovels_used 增量扣減，
@@ -428,6 +449,18 @@ def _dispatch_planner(
     # v1 default (v2 removed 2026-06-05: violated <300ms on 18.8% of real boards)
     tool_candidate = find_tool_candidate(board, items_available=items) if USE_ITEMS else None
     if tool_candidate:
+        # item_planner predates action-level blocked signatures and otherwise
+        # would return the same failed落點 forever on an unchanged board.
+        candidate_step = {
+            "type": "use",
+            "item": tool_candidate.get("tool"),
+            "pos": tool_candidate.get("target"),
+            "action": f"use_{tool_candidate.get('tool')}",
+            "target": tool_candidate.get("target"),
+        }
+        if _step_signature(candidate_step) in blocked_actions:
+            tool_candidate = None
+    if tool_candidate:
         miner_logger.info(
             "[MiningService] using item candidate: "
             f"{tool_candidate['tool']} at {tool_candidate['target']} "
@@ -598,6 +631,7 @@ def run(
     items_available: Dict[str, int] = {"drill": 0, "bomb": 0}
     item_blacklist: Set[str] = set()
     zero_streaks: Dict[str, int] = {"drill": 0, "bomb": 0}
+    item_failure_streaks: Dict[str, int] = {}
     zero_streak_limit = 2
 
     def refresh_item_inventory(shared_frame=None) -> None:
@@ -750,9 +784,13 @@ def run(
                 )
             prev_board = board
             state_signature = _board_signature(board)
-            if last_board_signature is not None and state_signature != last_board_signature and blocked_action_signatures:
-                miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")
-                blocked_action_signatures.clear()
+            if last_board_signature is not None and state_signature != last_board_signature:
+                if blocked_action_signatures:
+                    miner_logger.info("[MiningService] 版面已變化，清空非法操作封鎖清單")
+                    blocked_action_signatures.clear()
+                # 「連續失敗」只在同一個未變版面內計算；真正有進度後，
+                # 下一次驗證失敗應重新視為第一次，而非沿用舊盤面的計數。
+                item_failure_streaks.clear()
             last_board_signature = state_signature
 
             current_items = items_available.copy() if USE_ITEMS else {"drill": 0, "bomb": 0}
@@ -857,10 +895,28 @@ def run(
                 count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
                 action_signature = _step_signature(exc.step)
                 if exc.item_type:
-                    item_blacklist.add(exc.item_type)
-                    items_available[exc.item_type] = 0
-                    zero_streaks[exc.item_type] = max(zero_streaks.get(exc.item_type, 0), zero_streak_limit)
-                    miner_logger.warning(f"[MiningService] {exc.item_type} 使用後版面未變，加入黑名單直到下次挖礦重置")
+                    # 道具驗證可能只是 refresh_failed／動畫延遲。先封鎖
+                    # 這個落點並重規劃；同一未變版面連續第二次才停用
+                    # 整個道具，避免單次 WinError 10038 誤殺本場道具。
+                    blocked_action_signatures.add(action_signature)
+                    failures, should_blacklist = _record_item_failure(
+                        exc.item_type, item_failure_streaks
+                    )
+                    if should_blacklist:
+                        item_blacklist.add(exc.item_type)
+                        items_available[exc.item_type] = 0
+                        zero_streaks[exc.item_type] = max(
+                            zero_streaks.get(exc.item_type, 0), zero_streak_limit
+                        )
+                        miner_logger.warning(
+                            f"[MiningService] {exc.item_type} 連續 {failures} 次驗證失敗，"
+                            "加入黑名單直到下次挖礦重置"
+                        )
+                    else:
+                        miner_logger.info(
+                            f"[MiningService] {exc.item_type} 驗證暫時失敗（第 {failures} 次），"
+                            f"封鎖落點並重試：{action_signature}"
+                        )
                 else:
                     blocked_action_signatures.add(action_signature)
                     miner_logger.warning(f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}")
@@ -898,6 +954,10 @@ def run(
 
             # Plan executed cleanly — credit shovels / items consumed.
             count = _apply_partial(exec_result, count, items_available, miner_logger)
+            # Any successful use of an item breaks its consecutive failure
+            # streak.  Keep dig/action blocking semantics independent.
+            for item_name in _count_planned_item_uses(plan.get("steps", [])):
+                item_failure_streaks.pop(item_name, None)
             miner_logger.info(
                 "[MiningTelemetry] planner=%s exec=ok steps_planned=%d steps_completed=%s "
                 "terminated=%s shovels_used=%s bombs_used=%s drills_used=%s "

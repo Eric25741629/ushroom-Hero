@@ -124,6 +124,26 @@ def test_get_live_item_count_falls_back_to_ocr_when_ws_unavailable(monkeypatch):
     assert executor.get_live_item_count(dev, "bomb") == 7
 
 
+def test_ws_refresh_failed_is_not_a_success_confirmation(monkeypatch):
+    """Executor WS refresh failure must reach item retry/blacklist logic."""
+    before_board = types.SimpleNamespace(
+        baseline=100, actives=[], blocks=[], holes=[], area=1,
+    )
+    inventory = {"pickaxe": 4, "drill": 1, "bomb": 1}
+    monkeypatch.setattr(executor, "read_ws_mine_board", lambda _d: None)
+    monkeypatch.setattr(executor, "read_ws_prop_counts", lambda _d: dict(inventory))
+    monkeypatch.setattr(executor.time, "sleep", lambda *_a, **_kw: None)
+
+    event = executor._verify_ws_action(
+        object(), before_board,
+        {"type": "dig", "block_id": 10001}, inventory,
+        max_retry=1,
+    )
+
+    assert event["confirmation"] == "refresh_failed"
+    assert event["success"] is False
+
+
 def test_verify_cell_empty_accepts_low_confidence_empty_without_retry_click(monkeypatch):
     frame = _blank_frame()
     dev = _FakeDevice(frame)

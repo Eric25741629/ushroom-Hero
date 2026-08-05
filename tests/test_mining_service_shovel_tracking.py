@@ -92,7 +92,11 @@ if "config.paths" not in sys.modules:
     sys.modules["config.paths"] = types.SimpleNamespace(DATASET_LOW_CONFIDENCE_DIR_STR="")
 
 
-from miner.mining_service import _apply_partial, _reconcile_shovel_count  # noqa: E402
+from miner.mining_service import (  # noqa: E402
+    _apply_partial,
+    _record_item_failure,
+    _reconcile_shovel_count,
+)
 from miner.planning.executor import ExecutionResult  # noqa: E402
 
 
@@ -149,3 +153,14 @@ def test_apply_partial_prefers_authoritative_ws_pickaxe_count():
     count = _apply_partial(result, 12, items, logger)
 
     assert count == 9
+
+
+def test_item_verification_failure_blocks_once_then_blacklists_on_second():
+    """WS refresh_failed/非 WS 暫時驗證失敗共用兩次門檻。"""
+    streaks = {}
+
+    first, first_blacklist = _record_item_failure("bomb", streaks)
+    second, second_blacklist = _record_item_failure("bomb", streaks)
+
+    assert (first, first_blacklist) == (1, False)
+    assert (second, second_blacklist) == (2, True)

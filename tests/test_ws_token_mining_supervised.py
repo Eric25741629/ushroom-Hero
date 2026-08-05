@@ -194,6 +194,54 @@ def test_execute_plan_step_polls_refresh_until_board_changes(monkeypatch):
     assert result["after_board"] is after
 
 
+def test_execute_plan_step_refresh_failed_uses_inventory_delta(monkeypatch):
+    """短暫 0x0c01 失敗但 0x0402 已扣鎬時，仍算本次挖掘成功。"""
+    before = _board(actives=[16239104])
+    reads = iter([
+        {"pickaxe": 8, "drill": 1, "bomb": 1},
+        {"pickaxe": 7, "drill": 1, "bomb": 1},
+    ])
+
+    monkeypatch.setattr(mining_supervised.mining, "send_dig", lambda *a: None)
+
+    def fail_refresh(*_args, **_kwargs):
+        raise OSError(10038, "socket operation on nonsocket")
+
+    monkeypatch.setattr(mining_supervised.mining, "read_board", fail_refresh)
+    item = mining_supervised.execute_plan_step(
+        object(), {"type": "dig", "block_id": 16239104},
+        before_board=before,
+        before_inventory=next(reads),
+        inventory_reader=lambda: next(reads),
+        refresh_timeout=0,
+    )
+
+    assert item["confirmed"] is True
+    assert item["confirmation"] == "inventory_changed"
+    assert item["error"].startswith("OSError:")
+
+
+def test_execute_plan_step_refresh_failed_without_delta_is_retryable(monkeypatch):
+    """無盤面、無庫存下降只回報 refresh_failed，不宣稱成功。"""
+    before = _board(actives=[16239104])
+    monkeypatch.setattr(mining_supervised.mining, "send_dig", lambda *a: None)
+
+    def fail_refresh(*_args, **_kwargs):
+        raise OSError(10038, "socket operation on nonsocket")
+
+    monkeypatch.setattr(mining_supervised.mining, "read_board", fail_refresh)
+    item = mining_supervised.execute_plan_step(
+        object(), {"type": "dig", "block_id": 16239104},
+        before_board=before,
+        before_inventory={"pickaxe": 8, "drill": 1, "bomb": 1},
+        inventory_reader=lambda: {"pickaxe": 8, "drill": 1, "bomb": 1},
+        refresh_timeout=0,
+    )
+
+    assert item["confirmed"] is False
+    assert item["confirmation"] == "refresh_failed"
+
+
 def test_plan_current_board_dry_run_never_digs(monkeypatch):
     board = object()
     plan = {

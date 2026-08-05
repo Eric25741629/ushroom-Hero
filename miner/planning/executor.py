@@ -356,8 +356,17 @@ def _verify_ws_action(
             break
         if attempt < max_retry:
             time.sleep(0.25)
+    # ``read_ws_mine_board`` deliberately swallows transport exceptions and
+    # returns None.  Preserve that distinction in telemetry so the caller can
+    # treat a transient refresh failure as blocked/retryable rather than as a
+    # permanent item failure.  Inventory delta (checked above) still wins.
+    if confirmation is None and after_board is None:
+        confirmation = "refresh_failed"
     return {
-        "success": bool(confirmation),
+        # ``refresh_failed`` is telemetry for a retryable verification miss,
+        # not a positive confirmation.  Inventory/board confirmations remain
+        # successful as before.
+        "success": bool(confirmation) and confirmation != "refresh_failed",
         "source": "ws",
         "confirmation": confirmation,
         "attempts": attempt,
