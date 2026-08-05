@@ -39,6 +39,10 @@ def should_skip_browser(
             return False
         if not bool((cfg.get("ws_token") or {}).get("enabled", False)):
             return False
+        # 有 WS 白名單代表 H5-primary 混合模式；白名單外任務仍由 H5 負責，
+        # 不適用「WS 做完便關瀏覽器」的全量 WS 優化。
+        if (cfg.get("ws_token") or {}).get("only_tasks"):
+            return False
     except Exception:
         return False  # fail-safe：讀 config 失敗 → 照開瀏覽器
     if not ws_login_ok:

@@ -181,11 +181,12 @@ def test_fail_safe_when_enable_raises(monkeypatch):
 # --------------------------------------------------------------------------
 # should_skip_browser — 每個條件 True/False
 # --------------------------------------------------------------------------
-def _skip_cfg(*, backend="web_h5", toggle=True, ws_enabled=True):
+def _skip_cfg(*, backend="web_h5", toggle=True, ws_enabled=True,
+              only_tasks=None):
     return {
         "backend": backend,
         "skip_browser_when_all_done": toggle,
-        "ws_token": {"enabled": ws_enabled},
+        "ws_token": {"enabled": ws_enabled, "only_tasks": only_tasks},
     }
 
 
@@ -197,6 +198,13 @@ def test_skip_true_when_all_conditions_met(monkeypatch):
     _patch_cfg(monkeypatch, _skip_cfg())
     _patch_any_client_due(monkeypatch, False)
     assert browser_skip.should_skip_browser("ip", ws_login_ok=True) is True
+
+
+def test_skip_false_for_h5_primary_ws_allowlist(monkeypatch):
+    _patch_cfg(monkeypatch, _skip_cfg(only_tasks=["sea_season"]))
+    _patch_any_client_due(monkeypatch, False)
+
+    assert browser_skip.should_skip_browser("ip", ws_login_ok=True) is False
 
 
 def test_skip_false_when_toggle_off(monkeypatch):
