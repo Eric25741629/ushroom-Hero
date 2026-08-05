@@ -332,6 +332,45 @@ def test_run_rogue_run_enters_when_no_active_run():
         c for c in client.call_for.call_args_list if c.args[0] == rogue_mod.CMD_ENTER
     ]
     assert len(enter_calls) == 1
+    assert not any(
+        c.args[0] in {
+            rogue_mod.CMD_START_REWARD_INFO,
+            rogue_mod.CMD_START_REWARD_CONFIRM,
+        }
+        for c in client.call_for.call_args_list
+    )
+
+
+def test_run_rogue_run_retries_with_start_reward_after_server_error_2():
+    client = _mock_run_client(has_active_run=False, sim_results=[1])
+    original_call_for = client.call_for.side_effect
+    combat_calls = {"count": 0}
+
+    def call_for(cmd, body=b"", *, expect_cmds, timeout=None):
+        if cmd == rogue_mod.CMD_COMBAT:
+            combat_calls["count"] += 1
+            if combat_calls["count"] == 1:
+                return (rogue_mod.CMD_ERROR, codec.pb_uint(1, 2))
+        return original_call_for(cmd, body, expect_cmds=expect_cmds, timeout=timeout)
+
+    client.call_for.side_effect = call_for
+    with patch(
+        "ws_token.rogue_fight.simulate_combat_body",
+        return_value={"ok": True, "result": 1, "precent": 10, "ms": 1.0},
+    ):
+        report = run_rogue_run(client, object(), stages=80)
+
+    assert report.success is True
+    assert report.stages_fought == 1
+    assert [c.args[0] for c in client.call_for.call_args_list] == [
+        rogue_mod.CMD_ENTER,
+        rogue_mod.CMD_COMBAT,
+        rogue_mod.CMD_START_REWARD_INFO,
+        rogue_mod.CMD_START_REWARD_CONFIRM,
+        rogue_mod.CMD_COMBAT,
+        rogue_mod.CMD_RESULT,
+        rogue_mod.CMD_OVER,
+    ]
 
 
 def test_run_rogue_run_stops_on_loss():
