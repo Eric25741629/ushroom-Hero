@@ -1,29 +1,29 @@
 from typing import List, Tuple
 
+
+def get_bomb_affected_cells_with_offscreen(
+    r: int, c: int, rows: int, cols: int
+) -> Tuple[List[Tuple[int, int]], int]:
+    """回傳炸彈可見 footprint 與畫面下方的命中數。
+
+    炸彈的幾何規則只在此處維護；第二個欄位保留 v3 executor 用來估算
+    viewport 外收益的相容資訊。為維持既有 ``get_bomb_targets`` 數值契約，
+    offscreen-bottom 只判斷列座標 ``nr >= rows``，不另外篩選欄座標。
+    """
+    raw = [(r + dr, c + dc) for dr in range(-1, 2) for dc in range(-1, 2)]
+    raw.extend((r + dr, c + dc) for dr, dc in ((0, 2), (0, -2), (2, 0), (-2, 0)))
+    visible = [(nr, nc) for nr, nc in raw if 0 <= nr < rows and 0 <= nc < cols]
+    # 舊 API 即使列在畫面外、欄位同時越界，也會計入此相容計數；不要在
+    # footprint 去重時順手改變這個數值語意。
+    offscreen_bottom = sum(1 for nr, _nc in raw if nr >= rows)
+    return visible, offscreen_bottom
+
 def get_bomb_affected_cells(r: int, c: int, rows: int, cols: int) -> List[Tuple[int, int]]:
     """
     計算炸彈的影響範圍。
     規則：以 (r,c) 為中心的 3x3 區域，外加十字延伸 (距離2格的上下左右)。
     """
-    targets = []
-    
-    # 1. 3x3 區域
-    for dr in range(-1, 2):
-        for dc in range(-1, 2):
-            targets.append((r + dr, c + dc))
-            
-    # 2. 十字延伸 (距離 2)
-    # 上下左右各延伸一格 (相對於 3x3 的邊界，即距離中心 2)
-    for dr, dc in [(0, 2), (0, -2), (2, 0), (-2, 0)]:
-        targets.append((r + dr, c + dc))
-        
-    # 過濾邊界
-    valid_targets = []
-    for nr, nc in targets:
-        if 0 <= nr < rows and 0 <= nc < cols:
-            valid_targets.append((nr, nc))
-            
-    return valid_targets
+    return get_bomb_affected_cells_with_offscreen(r, c, rows, cols)[0]
 
 def get_drill_affected_cells(r: int, c: int, rows: int, cols: int) -> List[Tuple[int, int]]:
     """
