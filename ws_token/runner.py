@@ -60,6 +60,7 @@ from ws_token import (
     escort_fight,
     farm, gacha, guild, hellgate, idle_reward, kungfu_race, kungfu_store, ladder_reward, league_solo,
     main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
+    seven_login,
     secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
     xwar_idle,
@@ -89,7 +90,8 @@ LOGIN_TASK = "login"
 TASK_ORDER: tuple[str, ...] = (
     "carpark", "mount_sprint", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
     "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
-    "hellgate", "rogue", "ladder_reward", "cloud_ladder", "arena", "escort", "statue", "guild",
+    "hellgate", "rogue", "ladder_reward", "seven_login",
+    "cloud_ladder", "arena", "escort", "statue", "guild",
     "steward", "relic", "relic_sprint",
     "gacha", "gacha_free", "kungfu_store", "kungfu_worship", "pay_mall", "spirit", "secret_jewel",
     "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
@@ -251,6 +253,14 @@ def _run_ladder_reward(client, *, device: str) -> dict:
     )
     if result.get("ok") is False:
         raise RuntimeError(result.get("error") or "ladder reward send failed")
+    return result
+
+
+def _run_seven_login(client, *, device: str) -> dict:
+    """查詢並領取七日登入獎勵；不可領時以安全 skip 返回。"""
+    result = seven_login.apply_via_client(client, device=device)
+    if result.get("error"):
+        raise RuntimeError(result["error"])
     return result
 
 
@@ -1717,6 +1727,7 @@ def run_device(device: str, *, spend: bool = False,
                hellgate_config: Optional[dict] = None,
                 cloud_ladder_enabled: bool = False,
                 ladder_reward_enabled: bool = False,
+               seven_login_enabled: bool = False,
                 main_chapter_kills_config: Optional[dict] = None,
                 dragon_realm_enabled: bool = True,
                 xwar_idle_enabled: bool = False,
@@ -1987,6 +1998,11 @@ def run_device(device: str, *, spend: bool = False,
                 _step(
                     "ladder_reward",
                     lambda: _run_ladder_reward(client, device=device),
+                )
+            if seven_login_enabled:
+                _step(
+                    "seven_login",
+                    lambda: _run_seven_login(client, device=device),
                 )
             if cloud_ladder_enabled:
                 def _cloud_progress(fights: int, level: int, max_level: int) -> None:

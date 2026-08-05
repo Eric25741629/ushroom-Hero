@@ -483,6 +483,44 @@ async ([cmd, bodyArr, timeoutSec, netWaitMs]) => {
 """
 
 
+_RPC_ANY_JS = r"""
+async ([cmd, bodyArr, timeoutSec, netWaitMs, expectCmds]) => {
+  const waitDeadline = Date.now() + (netWaitMs || 5000);
+  while (!window.netManager?._cnet) {
+    if (Date.now() > waitDeadline) throw 'netManager not ready';
+    await new Promise(r => setTimeout(r, 100));
+  }
+  const sock = netManager._cnet;
+  const expected = new Set(expectCmds || [cmd]);
+  return new Promise((resolve, reject) => {
+    const orig = sock.reciveMsg.bind(sock);
+    let cleared = false;
+    const cleanup = () => {
+      if (cleared) return;
+      cleared = true;
+      sock.reciveMsg = orig;
+    };
+    const tid = setTimeout(() => { cleanup(); reject('timeout'); }, timeoutSec * 1000);
+    sock.reciveMsg = function (replyCmd, body) {
+      if (expected.has(replyCmd) && !cleared) {
+        clearTimeout(tid);
+        cleanup();
+        resolve({cmd: replyCmd, body: Array.from(body)});
+      }
+      return orig(replyCmd, body);
+    };
+    try {
+      sock.sendMessage(cmd, new Uint8Array(bodyArr));
+    } catch (e) {
+      clearTimeout(tid);
+      cleanup();
+      reject(String(e));
+    }
+  });
+}
+"""
+
+
 # ── game-state probe ─────────────────────────────────────────────────────────
 
 
@@ -629,6 +667,30 @@ class WebGameAPI:
             [cmd_id, list(body), float(timeout_sec), int(net_wait_ms)],
         )
         return bytes(result)
+
+    def call_raw_for(
+        self,
+        cmd_id: int,
+        body: bytes,
+        *,
+        expect_cmds,
+        timeout_sec: float = 5.0,
+        net_wait_ms: int = 5000,
+    ) -> tuple[int, bytes]:
+        """Send raw RPC and accept one of several response command IDs.
+
+        ``call_raw`` keeps its historical same-command behavior; this variant
+        is for requests such as reward claims that may return ``0x0201`` on a
+        benign server-side rejection.
+        """
+        result = self._page.evaluate(
+            _RPC_ANY_JS,
+            [cmd_id, list(body), float(timeout_sec), int(net_wait_ms),
+             [int(value) for value in expect_cmds]],
+        )
+        if not isinstance(result, dict):
+            raise RuntimeError("raw RPC returned an invalid result")
+        return int(result["cmd"]), bytes(result["body"])
 
     def fetch_friend_list(
         self,

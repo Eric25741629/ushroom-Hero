@@ -38,6 +38,7 @@ from game_actions.dragon_realm_scheduler import run_dragon_realm_if_due
 from game_actions.fannaoxiao_scheduler import run_fannaoxiao_if_due
 from game_actions.escort_scheduler import run_escort_if_due
 from game_actions.ladder_reward_weekly import run_ladder_reward_if_due
+from game_actions.seven_login_daily import run_seven_login_if_due
 from game_actions.daily_tasks import click_arena_challenges, daily_acceleration
 from game_actions.dungeon_scheduler import _run_biweekly_dungeon, _run_weekly_dungeon
 from game_actions.lamp_scheduler import _run_lamp_if_due
@@ -231,6 +232,16 @@ def _run_tasks(ctx: DailyContext) -> None:
     _force_sleep_checkpoint()
     if not _ws_skip("紅包檢查"):
         run_redpack_check_if_due(d, ip)
+
+    # Task 0.1: 七日登入獎勵 — 純 WS 查詢當日可領天數，H5 無頁面時安全略過。
+    _force_sleep_checkpoint()
+    if not _ws_skip("七日登入獎勵"):
+        _guarded_run(
+            task_name="七日登入獎勵",
+            mismatch_reason="七日登入獎勵前不在主頁面",
+            fn=lambda: run_seven_login_if_due(d, ip),
+            step="查詢/領取中",
+        )
 
     # Task 0.5 (experimental): carpark reconciliation — same gating as redpack
     _force_sleep_checkpoint()

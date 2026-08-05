@@ -41,6 +41,7 @@ WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
     "sea_season": ("航海任務 (Sea)",),
     "arena": ("競技場挑戰",),
     "ladder_reward": ("天梯每週獎勵",),
+    "seven_login": ("七日登入獎勵",),
     "cloud_ladder": ("雲端戰鬥",),
     "kungfu_worship": ("菇菇武道會",),
     "hellgate": ("地獄之門",),
@@ -684,6 +685,9 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             _use_ladder_ws and bool(device_cfg.get("enable_cloud_battle", True))
         ),
         "ladder_reward_enabled": _use_ladder_ws,
+        "seven_login_enabled": (
+            _use_ladder_ws and bool(cfg.get("seven_login_enabled", True))
+        ),
     }
     # 坐騎衝刺的 legacy 設定仍在裝置根層；WS 階段把它明確折入，讓純 WS
     # 與舊 UI fallback 使用同一個 enable/quantity 設定。缺欄位的測試/舊設定
