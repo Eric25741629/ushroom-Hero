@@ -3133,7 +3133,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         const statusText = isDisabled
           ? '🚫 已停用 (未啟用掛機)'
           : (isPaused
-              ? '已暫停 (PAUSED)'
+              ? '已暫停'
               : (statusClass === 'DEGRADED' ? '降級 (純 WS 掛機)' : statusClass));
 
         const logs = (info.logs || []).slice().reverse().slice(0, 3);
