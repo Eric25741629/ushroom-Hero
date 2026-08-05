@@ -1959,7 +1959,10 @@
             }
         },
         "online_check_checkers": [
-            "*"
+            "emulator-5554",
+            "emulator-5556",
+            "emulator-5560",
+            "7fe98fc6"
         ],
         "maintenance_check_interval_sec": 600
     }

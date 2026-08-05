@@ -1,9 +1,12 @@
-"""human_played devices must be excluded from the online-check checker pool.
+"""Online-check checker selection guardrails.
 
 A device a human plays directly must never be auto-logged-in as a checker
 (異地登入 would kick the human). The "*" checker wildcard must skip them.
 """
 from __future__ import annotations
+
+import json
+from pathlib import Path
 
 import config_manager as cm
 
@@ -35,3 +38,15 @@ def test_get_human_played_devices(monkeypatch):
     monkeypatch.setattr(cm, "load_config", lambda: {"devices": devices})
 
     assert cm.get_human_played_devices() == ["a"]
+
+
+def test_project_uses_explicit_online_check_checker_allowlist():
+    config_path = Path(cm.__file__).with_name("bot_config.json")
+    config = json.loads(config_path.read_text(encoding="utf-8-sig"))
+
+    assert config["global"]["online_check_checkers"] == [
+        "emulator-5554",
+        "emulator-5556",
+        "emulator-5560",
+        "7fe98fc6",
+    ]
