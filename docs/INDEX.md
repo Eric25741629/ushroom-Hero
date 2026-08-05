@@ -156,6 +156,7 @@
 | [protocol/EQUIPMENT_SCHEMA.md](protocol/EQUIPMENT_SCHEMA.md) | 裝備 0x0504 掉落、預設/方案切換 0x0511/0x032a、清單/明細 cmd（2026-05-11） |
 | [protocol/REDPACK_SCHEMA.md](protocol/REDPACK_SCHEMA.md) | 紅包 red.red_* 家族：0x2605 列表 / 0x2603 領取 / 0x0201 錯誤（2026-05-20） |
 | [protocol/CARPARK_GUILD_NODES.md](protocol/CARPARK_GUILD_NODES.md) | 車位+家族可點節點/cmd 對照：ParkingMainView/GuildMainView 場景樹（2026-05-20） |
+| [protocol/GUILD_TREASURE_LIVE.md](protocol/GUILD_TREASURE_LIVE.md) | 家族驚喜寶箱 CDP 實測：需先移動再拾取、UI 與 guild treasure WS 欄位候選映射（2026-08-05） |
 | [protocol/CARPARK_AUTOMATION.md](protocol/CARPARK_AUTOMATION.md) | 車位自動化設計+進度：6/5 車日夜目標、state/auto/tracker 模組拆分（2026-05-20） |
 | [protocol/CARPARK_ADB_DESIGN.md](protocol/CARPARK_ADB_DESIGN.md) | ADB OCR 跨服停車設計：H5 場景讀 vs ADB tap+OCR 混合、`_CALIBRATED` dry-run gate（2026-05-25） |
 | [protocol/SEA_DAILY.md](protocol/SEA_DAILY.md) | 航海設計+協議：取代 Sea.py 固定滑動，map 在 SeasonMapScene + 靜態 config，node 名=type（2026-05-25） |
