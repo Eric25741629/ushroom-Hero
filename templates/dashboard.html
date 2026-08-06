@@ -3130,6 +3130,12 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         // 實體手機離線時不顯示 OFFLINE，改為「降級」(掉線後改跑純 WS 掛機)，用不同顏色。
         if (statusClass === 'OFFLINE' && showRecover && !isDisabled) statusClass = 'DEGRADED';
 
+        // web_h5 裝置 thread 不在時 (OFFLINE/SCHEDULED)，/api/web_launch 信箱沒有執行緒消費，
+        // 按「開啟網頁」不會有反應。萬神帳號一次性排程完成後執行緒永久退出、掃描器不會重啟，
+        // 開啟網頁須改走獨立 worker (/api/web_login)，與停用卡片的做法一致。
+        const webNoThread = info.backend === 'web_h5'
+          && (statusClass === 'OFFLINE' || statusClass === 'SCHEDULED');
+
         const statusText = isDisabled
           ? '🚫 已停用 (未啟用掛機)'
           : (isPaused
@@ -3425,7 +3431,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
               : `<button class="btn btn-wanshen-off btn--span" onclick="setSpecialWanshenMode('${ip}', 'full')">× 啟用完整腳本・未啟用</button>`;
             const idleWebBtn = webOpen
               ? `<button class="btn btn-force btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁掛機</button>`
-              : (isDisabled
+              : (isDisabled || webNoThread
                   ? `<button class="btn btn--secondary btn-skip btn--span" onclick="openWebForSetup('${ip}')">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`
                   : `<button class="btn btn--secondary btn-skip btn--span${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}', true)">🌐 開啟網頁掛機(不跑任何腳本，僅刷小怪用)</button>`);
             const wanshenBtn = specialWanshenActive
@@ -3440,7 +3446,9 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
               ${showWebLaunch
                 ? (webOpen
                     ? `<button class="btn btn-force${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="closeWebPage('${ip}')">關閉網頁</button>`
-                    : `<button class="btn btn--secondary btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`)
+                    : (webNoThread
+                        ? `<button class="btn btn--secondary btn-skip" onclick="openWebForSetup('${ip}')">開啟網頁</button>`
+                        : `<button class="btn btn--secondary btn-skip${webBtnLocked(ip) ? ' btn-locked' : ''}" data-webbtn="${ip}"${webBtnLocked(ip) ? ' disabled' : ''} onclick="launchWebPage('${ip}')">開啟網頁</button>`))
                 : ''}
               ${showLiveView ? `<button class="btn btn-resume" onclick="openLiveView('${ip}')">遠端畫面</button>` : ''}
               <button class="btn btn--secondary btn-skip" onclick="skipSleep('${ip}')">跳過睡眠</button>
