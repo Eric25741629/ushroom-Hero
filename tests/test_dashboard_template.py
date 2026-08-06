@@ -123,6 +123,18 @@ def test_disabled_web_device_opens_web_via_login_worker():
     assert "/api/web_launch/" not in body
 
 
+def test_wanshen_account_with_dead_thread_routes_web_open_to_login_worker():
+    """萬神帳號 (web-002) 一次性排程完成後執行緒永久退出，/api/web_launch 信箱
+    沒有執行緒消費，按「開啟網頁」不會有反應。thread 不在 (OFFLINE/SCHEDULED)
+    時，萬神卡片的開啟網頁按鈕必須改走獨立 worker (/api/web_login)。
+    """
+    html = _html()
+    assert "const webNoThread" in html
+    assert "isDisabled || webNoThread" in html
+    assert "(webNoThread" in html
+    assert "openWebForSetup('${ip}')" in html
+
+
 def test_opengold_v2_dead_flag_toggle_removed():
     """The lamp always routes to opengold_v2 (lamp_scheduler ignores the flag), so
     the settings checkbox that toggled `use_opengold_v2` is dead UI and must be gone.
