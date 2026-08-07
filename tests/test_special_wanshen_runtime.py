@@ -222,6 +222,9 @@ def _base_main_namespace(calls, cfg):
         "config_manager": SimpleNamespace(get_device_config=lambda ip: cfg),
         "bot_state": SimpleNamespace(
             init_device=lambda ip: None,
+            set_web_launch_consumer_active=lambda ip, active: calls.append(
+                ("web_launch_consumer", active)
+            ),
             update_state=lambda *a, **k: None,
             set_web_browser_open=lambda ip, flag: calls.append(
                 ("set_web_browser_open", flag)
@@ -271,6 +274,8 @@ def test_one_shot_force_sleep_during_init_exits_and_clears_browser_flag():
     assert "sleep" not in calls
     # dashboard browser-open flag cleared on the early exit (issue-2 fix)
     assert ("set_web_browser_open", False) in calls
+    assert ("web_launch_consumer", True) in calls
+    assert calls[-1] == ("web_launch_consumer", False)
 
 
 def test_one_shot_exits_after_pipeline_without_hourly_sleep():

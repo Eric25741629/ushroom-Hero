@@ -123,16 +123,14 @@ def test_disabled_web_device_opens_web_via_login_worker():
     assert "/api/web_launch/" not in body
 
 
-def test_wanshen_account_with_dead_thread_routes_web_open_to_login_worker():
-    """萬神帳號 (web-002) 一次性排程完成後執行緒永久退出，/api/web_launch 信箱
-    沒有執行緒消費，按「開啟網頁」不會有反應。thread 不在 (OFFLINE/SCHEDULED)
-    時，萬神卡片的開啟網頁按鈕必須改走獨立 worker (/api/web_login)。
-    """
+def test_wanshen_web_buttons_use_server_routed_web_launch():
+    """萬神卡片統一打 /api/web_launch，由後端依 consumer 存活狀態原子分流。"""
     html = _html()
-    assert "const webNoThread" in html
-    assert "isDisabled || webNoThread" in html
-    assert "(webNoThread" in html
-    assert "openWebForSetup('${ip}')" in html
+    assert "const webNoThread" not in html
+    assert "launchWebPage('${ip}', true)" in html
+    assert "launchWebPage('${ip}')" in html
+    assert "result.mode === 'standalone'" in html
+    assert "delete _webOpenTs[ip]" in html
 
 
 def test_opengold_v2_dead_flag_toggle_removed():

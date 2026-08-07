@@ -100,6 +100,11 @@ _MAX_DEVICE_LOGS = 200
 # its control commands (pause / force-sleep) to the remote queue.
 _local_device_ids: set = set()
 
+# 只有存活中的 web_h5 裝置 thread 能消費 `_web_launch_requests`。這個集合由
+# thread lifecycle 主動發布，不能用 ONLINE/OFFLINE 或 is_local_device 推測：前者
+# 是畫面狀態快照，後者在 thread 結束後仍保留本機裝置身分。
+_web_launch_consumers: set = set()
+
 
 def register_local_device(ip: str) -> None:
     """Mark ``ip`` as a locally-managed device thread."""
@@ -111,6 +116,21 @@ def is_local_device(ip: str) -> bool:
     """Return True when ``ip`` is handled by a local thread in this process."""
     with _global_lock:
         return ip in _local_device_ids
+
+
+def set_web_launch_consumer_active(ip: str, active: bool) -> None:
+    """發布該裝置目前是否有 thread 可消費 web-launch 信箱。"""
+    with _global_lock:
+        if active:
+            _web_launch_consumers.add(ip)
+        else:
+            _web_launch_consumers.discard(ip)
+
+
+def has_web_launch_consumer(ip: str) -> bool:
+    """回傳該裝置目前是否有存活中的 web-launch 信箱消費者。"""
+    with _global_lock:
+        return ip in _web_launch_consumers
 
 
 def get_device_lock(ip: str) -> threading.Lock:
