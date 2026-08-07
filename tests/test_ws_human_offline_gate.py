@@ -41,7 +41,7 @@ def _report(tasks, errors=None, login_ok=True):
 
 def test_wait_returns_immediately_when_offline(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: False)
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: False)
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     ws_phase._wait_until_human_offline("dev", ws_phase.logger)
@@ -53,7 +53,7 @@ def test_wait_breaks_on_force_sleep_even_if_human_online(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: True)  # 真人一直在線
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: True)  # 真人一直在線
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr("bot_state.has_pending_force_sleep", lambda ip: True)
@@ -70,7 +70,7 @@ def test_wait_breaks_on_pause_even_if_human_online(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: True)
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: True)
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr("bot_state.has_pending_force_sleep", lambda ip: False)
@@ -86,12 +86,41 @@ def test_wait_loops_until_human_goes_offline(monkeypatch):
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
     seq = iter([True, True, False])
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: next(seq))
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: next(seq))
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
     ws_phase._wait_until_human_offline("dev", ws_phase.logger)
-    assert slept == [ws_phase._HUMAN_WAIT_POLL_SEC] * 2  # 在線兩輪 → 等兩次
+    # 在線兩輪 → 各睡一整個輪詢週期（切成 1s 切片）
+    assert slept == [1] * (int(ws_phase._HUMAN_WAIT_POLL_SEC) * 2)
+
+
+def test_wait_force_sleep_mid_wait_breaks_within_one_second(monkeypatch):
+    """等待中強制休眠落在 1s 切片內就中斷，不必等滿 30s 輪詢週期。"""
+    monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
+    monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: True)
+    slept = []
+    monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
+    state = {"force": False, "paused": False}
+    monkeypatch.setattr("bot_state.has_pending_force_sleep",
+                        lambda ip: state["force"])
+    monkeypatch.setattr("bot_state.is_paused", lambda ip: state["paused"])
+
+    def _flip_after(n):
+        def fake_sleep(s):
+            slept.append(s)
+            state["force"] = len(slept) >= n
+        return fake_sleep
+
+    monkeypatch.setattr(ws_phase.time, "sleep", _flip_after(5))
+    aborted = ws_phase._wait_until_human_offline("dev", ws_phase.logger,
+                                                 human_played=True)
+    assert aborted is True
+    assert len(slept) == 5            # 第 5 片才收到強制休眠 → 立即打斷
+    assert slept == [1] * 5           # 全部 1s 切片
 
 
 def test_wait_human_played_treats_unknown_as_online(monkeypatch):
@@ -100,12 +129,12 @@ def test_wait_human_played_treats_unknown_as_online(monkeypatch):
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
     seq = iter([None, None, False])
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: next(seq))
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: next(seq))
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
     ws_phase._wait_until_human_offline("dev", ws_phase.logger, human_played=True)
-    assert slept == [ws_phase._HUMAN_WAIT_POLL_SEC] * 2
+    assert slept == [1] * (int(ws_phase._HUMAN_WAIT_POLL_SEC) * 2)
 
 
 def test_wait_bot_device_best_effort_releases_after_max_polls(monkeypatch):
@@ -113,13 +142,14 @@ def test_wait_bot_device_best_effort_releases_after_max_polls(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: None)  # 永遠看不到
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: None)  # 永遠看不到
     slept = []
     monkeypatch.setattr(ws_phase.time, "sleep", lambda s: slept.append(s))
     monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
     ws_phase._wait_until_human_offline("dev", ws_phase.logger, human_played=False)
-    # 重查 _UNDETERMINED_MAX_POLLS 輪(各睡一次)後第 N+1 輪放行
-    assert slept == [ws_phase._HUMAN_WAIT_POLL_SEC] * ws_phase._UNDETERMINED_MAX_POLLS
+    # 重查 _UNDETERMINED_MAX_POLLS 輪(各睡一個週期)後第 N+1 輪放行
+    assert slept == [1] * (int(ws_phase._HUMAN_WAIT_POLL_SEC)
+                           * ws_phase._UNDETERMINED_MAX_POLLS)
 
 
 def test_wait_releases_immediately_when_device_is_detector(monkeypatch):
@@ -128,7 +158,7 @@ def test_wait_releases_immediately_when_device_is_detector(monkeypatch):
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: "dev")
     called = []
     monkeypatch.setattr(ws_phase, "_account_online",
-                        lambda rid: called.append(rid))
+                        lambda rid, **k: called.append(rid))
     monkeypatch.setattr(ws_phase.time, "sleep",
                         lambda s: (_ for _ in ()).throw(AssertionError("不該等")))
     ws_phase._wait_until_human_offline("dev", ws_phase.logger, human_played=False)
@@ -140,7 +170,7 @@ def test_wait_releases_immediately_on_web_launch_request(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
     monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
     monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: True)
-    monkeypatch.setattr(ws_phase, "_account_online", lambda rid: True)  # 真人在玩
+    monkeypatch.setattr(ws_phase, "_account_online", lambda rid, **k: True)  # 真人在玩
     monkeypatch.setattr(ws_phase.time, "sleep",
                         lambda s: (_ for _ in ()).throw(AssertionError("不該等")))
     ws_phase._wait_until_human_offline("dev", ws_phase.logger, human_played=True)
@@ -151,7 +181,7 @@ def test_wait_passes_through_when_no_creds(monkeypatch):
     monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: None)
     called = []
     monkeypatch.setattr(ws_phase, "_account_online",
-                        lambda rid: called.append(rid))
+                        lambda rid, **k: called.append(rid))
     monkeypatch.setattr(ws_phase.time, "sleep",
                         lambda s: (_ for _ in ()).throw(AssertionError("不該等")))
     ws_phase._wait_until_human_offline("dev", ws_phase.logger)
@@ -190,26 +220,26 @@ def test_run_ws_phase_gates_bot_device_too(monkeypatch):
 def _snap(ts, entries, now_detector="emulator-5554"):
     return online_monitor.Snapshot(
         detector=now_detector, timestamp=ts,
-        entries=tuple(online_monitor.StatusEntry(rid, str(rid), on, None)
-                      for rid, on in entries))
+        entries=tuple(online_monitor.StatusEntry(rid, str(rid), on, ts)
+                      for rid, on, ts in entries))
 
 
 def test_account_online_fresh_snapshot(monkeypatch):
     monkeypatch.setattr(online_monitor, "get_snapshot",
-                        lambda: _snap(1000.0, [(123, True), (456, False)]))
+                        lambda: _snap(1000.0, [(123, True, None), (456, False, None)]))
     assert online_monitor.account_online(123, now=1030.0) is True
     assert online_monitor.account_online(456, now=1030.0) is False
 
 
 def test_account_online_unknown_when_not_in_friend_list(monkeypatch):
     monkeypatch.setattr(online_monitor, "get_snapshot",
-                        lambda: _snap(1000.0, [(123, True)]))
+                        lambda: _snap(1000.0, [(123, True, None)]))
     assert online_monitor.account_online(999, now=1030.0) is None
 
 
 def test_account_online_unknown_when_stale(monkeypatch):
     monkeypatch.setattr(online_monitor, "get_snapshot",
-                        lambda: _snap(1000.0, [(123, True)]))
+                        lambda: _snap(1000.0, [(123, True, None)]))
     assert online_monitor.account_online(123, now=1000.0 + 61) is None
 
 
@@ -235,7 +265,7 @@ def _monitor_state(monkeypatch, *, snap, active=None, yield_ts=None):
 def test_wake_gate_uses_normal_fresh_snapshot(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(123, True), (456, False)]),
+        snap=_snap(1000.0, [(123, True, 1000), (456, False, None)]),
         active="emulator-5554",
     )
     assert online_monitor.account_online_for_wake_gate(123, now=1030.0) is True
@@ -245,7 +275,7 @@ def test_wake_gate_uses_normal_fresh_snapshot(monkeypatch):
 def test_wake_gate_accepts_recent_no_idle_stale_offline(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(456, False)]),
+        snap=_snap(1000.0, [(456, False, None)]),
         active=None,
         yield_ts=1000.0,
     )
@@ -255,7 +285,7 @@ def test_wake_gate_accepts_recent_no_idle_stale_offline(monkeypatch):
 def test_wake_gate_rejects_expired_no_idle_snapshot(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(456, False)]),
+        snap=_snap(1000.0, [(456, False, None)]),
         active=None,
         yield_ts=1000.0,
     )
@@ -265,7 +295,7 @@ def test_wake_gate_rejects_expired_no_idle_snapshot(monkeypatch):
 def test_wake_gate_never_accepts_stale_online(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(123, True)]),
+        snap=_snap(1000.0, [(123, True, 1000)]),
         active=None,
         yield_ts=1000.0,
     )
@@ -275,7 +305,7 @@ def test_wake_gate_never_accepts_stale_online(monkeypatch):
 def test_wake_gate_requires_matching_yield_snapshot(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1001.0, [(456, False)]),
+        snap=_snap(1001.0, [(456, False, None)]),
         active=None,
         yield_ts=1000.0,
     )
@@ -285,7 +315,7 @@ def test_wake_gate_requires_matching_yield_snapshot(monkeypatch):
 def test_wake_gate_requires_monitor_to_remain_disconnected(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(456, False)]),
+        snap=_snap(1000.0, [(456, False, None)]),
         active="emulator-5556",
         yield_ts=1000.0,
     )
@@ -295,21 +325,106 @@ def test_wake_gate_requires_monitor_to_remain_disconnected(monkeypatch):
 def test_wake_gate_rejects_stale_offline_without_yield_marker(monkeypatch):
     _monitor_state(
         monkeypatch,
-        snap=_snap(1000.0, [(456, False)]),
+        snap=_snap(1000.0, [(456, False, None)]),
         active=None,
         yield_ts=None,
     )
     assert online_monitor.account_online_for_wake_gate(456, now=1100.0) is None
 
 
+def test_wake_gate_recomputes_online_from_raw_ts(monkeypatch):
+    """快照新、baked bool 卻說在線 → 改用原始 last_login_ts 重算（修強制休眠延遲）。"""
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, True, 900), (456, False, 1000)]),
+        active="emulator-5554",
+    )
+    # last_login_ts 90s 前、threshold 60 → 判定已離線（不吃 baked True）
+    assert online_monitor.account_online_for_wake_gate(123, now=990.0) is False
+    # 30s 內登入 → 判定在線
+    assert online_monitor.account_online_for_wake_gate(456, now=1030.0) is True
+
+
+def test_wake_gate_raw_ts_zero_means_online(monkeypatch):
+    """ts==0：server presence sentinel（session 確認存活）→ 判在線。"""
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, True, 0)]),
+        active="emulator-5554",
+    )
+    assert online_monitor.account_online_for_wake_gate(123, now=1050.0) is True
+
+
+def test_wake_gate_missing_ts_means_offline(monkeypatch):
+    """快照新但無 ts（parse 時已判離線）→ False，不誤放行。"""
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, False, None)]),
+        active="emulator-5554",
+    )
+    assert online_monitor.account_online_for_wake_gate(123, now=1030.0) is False
+
+
+def test_wake_gate_honors_custom_threshold_sec(monkeypatch):
+    _monitor_state(
+        monkeypatch,
+        snap=_snap(1000.0, [(123, True, 900)]),
+        active="emulator-5554",
+    )
+    assert online_monitor.account_online_for_wake_gate(
+        123, now=990.0, threshold_sec=120.0) is True  # 120s 內 → 在線
+    assert online_monitor.account_online_for_wake_gate(
+        123, now=1030.0, threshold_sec=120.0) is False  # 130s 前 → 離線
+
+
 def test_ws_phase_account_lookup_uses_wake_gate_policy(monkeypatch):
     calls = []
     monkeypatch.setattr(
         online_monitor, "account_online_for_wake_gate",
-        lambda rid: calls.append(rid) or False,
+        lambda rid, **k: calls.append((rid, k)) or False,
     )
     assert ws_phase._account_online(123) is False
-    assert calls == [123]
+    assert calls == [(123, {"threshold_sec": 60.0})]
+
+
+def test_ws_phase_account_online_forwards_threshold(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        online_monitor, "account_online_for_wake_gate",
+        lambda rid, **k: calls.append(k) or False,
+    )
+    assert ws_phase._account_online(123, threshold_sec=120.0) is False
+    assert calls == [{"threshold_sec": 120.0}]
+
+
+def _threshold_cfg(monkeypatch, threshold_sec):
+    monkeypatch.setattr(
+        config_manager, "get_device_config",
+        lambda ip: type("C", (), {"get": lambda self, k, d=None:
+                                  threshold_sec if k == "online_check_threshold_sec"
+                                  else d})())
+
+
+def test_presence_threshold_sec_reads_device_config(monkeypatch):
+    _threshold_cfg(monkeypatch, 120)
+    assert ws_phase._presence_threshold_sec("dev") == 120.0
+    _threshold_cfg(monkeypatch, None)
+    assert ws_phase._presence_threshold_sec("dev") == 60.0
+
+
+def test_wait_uses_presence_threshold_from_config(monkeypatch):
+    """閘門等待用裝置的 online_check_threshold_sec 重算在線。"""
+    _threshold_cfg(monkeypatch, 120)
+    monkeypatch.setattr(ws_phase, "_account_role_id", lambda ip: 123)
+    monkeypatch.setattr(ws_phase, "_current_detector", lambda: None)
+    monkeypatch.setattr(ws_phase, "_web_launch_pending", lambda ip: False)
+    seen = []
+    monkeypatch.setattr(ws_phase, "_account_online",
+                        lambda rid, **k: seen.append(k) or False)
+    monkeypatch.setattr(ws_phase.time, "sleep", lambda s: None)
+    monkeypatch.setattr("bot_state.update_state", lambda *a, **k: None)
+    ws_phase._wait_until_human_offline("dev", ws_phase.logger)
+    assert seen == [{"threshold_sec": 120.0}]
 
 
 # --- control_panel.ws_session.is_active ---------------------------------------

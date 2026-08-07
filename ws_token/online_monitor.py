@@ -198,8 +198,17 @@ class OnlineMonitor:
     def account_online_for_wake_gate(
             self, role_id: int, *, max_age_sec: float = 60.0,
             yielded_offline_max_age_sec: float = 600.0,
+            threshold_sec: float = 60.0,
             now: Optional[float] = None) -> Optional[bool]:
-        """喚醒閘門專用：只接受 no-idle 讓路窗口內的 stale-offline。"""
+        """喚醒閘門專用：只接受 no-idle 讓路窗口內的 stale-offline。
+
+        ``threshold_sec`` 下用原始 ``last_login_ts`` 重算在線，不吃快照烘入的
+        baked bool（poll_friends 烘入時帶 120s guard 寬限，會讓使用者關閉
+        網頁/登出後多報 ~2 分鐘在線，WS 閘門因此卡在「等待真人下線」）。
+        與 online_check_service._check_monitor_snapshot 的原始 ts 重算一致。
+        ts 缺失（parse 時已判離線）→ False；ts==0（server presence sentinel，
+        session 確認存活）→ True。
+        """
         t = time.time() if now is None else now
         with self._lock:
             snap = self._snapshot
@@ -222,7 +231,12 @@ class OnlineMonitor:
                 if int(entry.role_id) != int(role_id):
                     continue
                 if fresh:
-                    return bool(entry.online)
+                    ts = int(entry.last_login_ts) if entry.last_login_ts is not None else None
+                    if ts is None:
+                        return False
+                    if ts == 0:
+                        return True  # server presence sentinel: session 存活
+                    return (t - ts) < float(threshold_sec)
                 if yielded_stale_offline and not entry.online:
                     return False
                 return None
@@ -663,6 +677,7 @@ def account_online(role_id: int, *, max_age_sec: float = 60.0,
 def account_online_for_wake_gate(
         role_id: int, *, max_age_sec: float = 60.0,
         yielded_offline_max_age_sec: float = 600.0,
+        threshold_sec: float = 60.0,
         now: Optional[float] = None) -> Optional[bool]:
     """只供登入前真人離線閘門使用的 presence 查詢。"""
     mon = _monitor
@@ -672,6 +687,7 @@ def account_online_for_wake_gate(
         role_id,
         max_age_sec=max_age_sec,
         yielded_offline_max_age_sec=yielded_offline_max_age_sec,
+        threshold_sec=threshold_sec,
         now=now,
     )
 

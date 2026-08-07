@@ -447,13 +447,28 @@ def _account_role_id(ip: str):
     return config_manager.get_device_role_id(ip)
 
 
-def _account_online(role_id):
-    """間接層：喚醒閘門可採信 no-idle 讓路前 10 分鐘內的明確離線快照。"""
+def _account_online(role_id, *, threshold_sec: float = 60.0):
+    """間接層：喚醒閘門可採信 no-idle 讓路前 10 分鐘內的明確離線快照。
+
+    ``threshold_sec`` 用原始 last_login_ts 重算在線（不吃快照烘入的 120s
+    guard bool），與 online_check_service 一致；失敗 → None（視為可能在線）。
+    """
     try:
         from ws_token.online_monitor import account_online_for_wake_gate
-        return account_online_for_wake_gate(role_id)
+        return account_online_for_wake_gate(
+            role_id, threshold_sec=threshold_sec)
     except Exception:  # noqa: BLE001 — 讀快照失敗 → None（視為可能在線）
         return None
+
+
+def _presence_threshold_sec(ip: str) -> float:
+    """閘門在線重算的 threshold：裝置 `online_check_threshold_sec`（預設 60）。"""
+    try:
+        v = config_manager.get_device_config(ip).get(
+            "online_check_threshold_sec", 60)
+        return float(v) if v else 60.0
+    except Exception:  # noqa: BLE001 — 讀失敗用預設，絕不影響閘門
+        return 60.0
 
 
 def _current_detector():
@@ -555,9 +570,13 @@ def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> boo
         return False
     undetermined_polls = 0
     waited = 0
-    while True:
-        # 使用者強制中斷最優先：強制休眠 / 暫停 一律打斷等待，不再管真人在不在線。
-        # 回 True 讓呼叫端放棄本輪 WS（強制休眠信號留給主迴圈轉睡眠）。
+    threshold_sec = _presence_threshold_sec(ip)
+
+    def _abort_or_release() -> Optional[bool]:
+        """強制休眠/暫停 → 中斷(True)；開啟網頁 → 放行(False)；否則 None。
+
+        呼叫端依回傳值處理；None 表示沒被中斷/放行，繼續等待。
+        """
         try:
             import bot_state
             if bot_state.has_pending_force_sleep(ip) or bot_state.is_paused(ip):
@@ -568,7 +587,13 @@ def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> boo
         if _web_launch_pending(ip):
             log.info("[%s] 偵測到開啟網頁請求，放行 WS 在線閘門", ip)
             return False
-        online = _account_online(rid)
+        return None
+
+    while True:
+        decision = _abort_or_release()
+        if decision is not None:
+            return decision
+        online = _account_online(rid, threshold_sec=threshold_sec)
         if online is False:
             if waited:
                 log.info("[%s] 帳號已離線，恢復腳本（等了約 %ds）", ip, waited)
@@ -589,7 +614,13 @@ def _wait_until_human_offline(ip: str, log, *, human_played: bool = True) -> boo
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響等待
             log.debug("[%s] 等待真人下線狀態回報失敗", ip, exc_info=True)
         log.info("[%s] 等待真人下線：%s", ip, reason)
-        time.sleep(_HUMAN_WAIT_POLL_SEC)
+        # 等待切成 1s 切片：強制休眠 / 暫停 / 開啟網頁 最慢 ~1s 生效，
+        # 不必等滿整段 30s 輪詢（修「按下強制休眠卡在執行中」）。
+        for _ in range(max(1, int(_HUMAN_WAIT_POLL_SEC))):
+            decision = _abort_or_release()
+            if decision is not None:
+                return decision
+            time.sleep(1)
         waited += _HUMAN_WAIT_POLL_SEC
 
 
