@@ -339,6 +339,7 @@ _DAILY_TASKS_CONFIG = {
     "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
     "商店購買": {"key": "Store"},
     "每日任務": {"key": "mission_timestamp"},
+    "競技場": {"key": "arena_challenges"},
     "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4), "event_open": "mount_sprint"},
     "菇菇武道會": {
         "key": "mushroom_arena_daily",

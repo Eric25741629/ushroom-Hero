@@ -87,3 +87,57 @@ def test_apply_via_page_accepts_raw_page_transport(monkeypatch):
     monkeypatch.setattr(utils.web_game_api, "WebGameAPI", FakeAPI)
     result = seven_login.apply_via_page("page")
     assert result == {"ok": True, "claimed": 1, "day": 1, "claimed_days": ()}
+
+
+# ── run_seven_login_if_due：領取成功 / 已領完 → 回寫「七日登入」徽章 ──────────
+def _fake_page():
+    class _P:
+        _page = object()
+    return _P()
+
+
+def _recorded(monkeypatch):
+    """替換 json_manager.time_recording（_record_done 內部 lazy import 的來源）。"""
+    calls = []
+    import json_manager
+    monkeypatch.setattr(
+        json_manager, "time_recording",
+        lambda i, name="": calls.append((i, name)))
+    from game_actions import seven_login_daily as sl
+    return sl, calls
+
+
+def test_run_seven_login_if_due_records_when_claimed(monkeypatch):
+    sl, calls = _recorded(monkeypatch)
+    monkeypatch.setattr(
+        sl.seven_login, "apply_via_page",
+        lambda page, device="": {"ok": True, "claimed": 3, "day": 3})
+    result = sl.run_seven_login_if_due(_fake_page(), "dev")
+    assert result["ok"] is True
+    assert ("dev", "七日登入") in calls
+
+
+def test_run_seven_login_if_due_records_when_all_claimed_today(monkeypatch):
+    sl, calls = _recorded(monkeypatch)
+    monkeypatch.setattr(
+        sl.seven_login, "apply_via_page",
+        lambda page, device="": {"skipped": "not_claimable", "day": 7})
+    result = sl.run_seven_login_if_due(_fake_page(), "dev")
+    assert result["skipped"] == "not_claimable"
+    assert ("dev", "七日登入") in calls
+
+
+def test_run_seven_login_if_due_does_not_record_when_event_not_started(monkeypatch):
+    sl, calls = _recorded(monkeypatch)
+    monkeypatch.setattr(
+        sl.seven_login, "apply_via_page",
+        lambda page, device="": {"skipped": "not_claimable", "day": 0})
+    sl.run_seven_login_if_due(_fake_page(), "dev")
+    assert calls == []
+
+
+def test_run_seven_login_if_due_no_page_skips_without_record(monkeypatch):
+    sl, calls = _recorded(monkeypatch)
+    result = sl.run_seven_login_if_due(None, "dev")
+    assert result == {"skipped": "no_page"}
+    assert calls == []
