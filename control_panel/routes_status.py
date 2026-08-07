@@ -339,7 +339,7 @@ _DAILY_TASKS_CONFIG = {
     "家族任務": {"key": ["family_market_timestamp", "donate_family"]},
     "商店購買": {"key": "Store"},
     "每日任務": {"key": "mission_timestamp"},
-    "競技場": {"key": "arena_challenges"},
+    "競技場": {"key": "arena_challenges", "arena_progress": True},
     "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4), "event_open": "mount_sprint"},
     "菇菇武道會": {
         "key": "mushroom_arena_daily",
@@ -350,6 +350,41 @@ _DAILY_TASKS_CONFIG = {
         "key": "dragon_realm_last_run", "triweekly": True, "period": "week",
     },
 }
+
+
+def _arena_fought_today(device_id: str, today) -> int:
+    """今日競技場已打場次（ws_state arena_fought.eids 數量）。
+
+    WS pure_ws 路徑每天把已打過的對手 eid 記進 ws_state/<device>.json 的
+    ``arena_fought``（日期變更即重製）。ADB/H5 視覺路徑不打這個檔，只寫
+    ``arena_challenges`` 完成紀錄 —— 所以視覺路徑的進度靠完成徽章即可。
+    讀取失敗 / 無記錄 → 0（best-effort，不影響徽章渲染）。
+    """
+    try:
+        from ws_token import state as ws_state
+        entry = (ws_state.load_state(device_id) or {}).get("arena_fought") or {}
+        if not isinstance(entry, dict) or entry.get("date") != today.isoformat():
+            return 0
+        eids = entry.get("eids")
+        if not isinstance(eids, list):
+            return 0
+        return sum(1 for e in eids if isinstance(e, (int, float)) and not isinstance(e, bool))
+    except Exception:  # noqa: BLE001 — 進度讀取失敗只影響 detail，不影響徽章
+        return 0
+
+
+def _arena_progress(manager, data, device_id, today) -> object:
+    """競技場徽章值：已完成 → ``{"done": True}``；進行中 → ``{"done": False,
+    "detail": "已打 n/3"}``；未打 → ``False``。
+
+    前端支援 dict 值渲染 detail（「已完成」/「已打 n/3」），其餘任務仍是 bool。
+    """
+    if _record_is_today(manager, data, "arena_challenges"):
+        return {"done": True, "detail": "已完成"}
+    fought = _arena_fought_today(device_id, today)
+    if fought > 0:
+        return {"done": False, "detail": f"已打 {fought}/3"}
+    return False
 
 
 def _compute_daily_progress(manager, device_id, *, today=None, now=None):
@@ -388,7 +423,9 @@ def _compute_daily_progress(manager, device_id, *, today=None, now=None):
                 continue
 
         # 2. 點亮：多週活動看「本週是否跑過」，其餘看「今日是否完成」
-        if config.get("period") == "week":
+        if config.get("arena_progress"):
+            results[display_name] = _arena_progress(manager, data, device_id, today)
+        elif config.get("period") == "week":
             results[display_name] = manager.is_same_week(config["key"])
         else:
             results[display_name] = _record_is_today(manager, data, config["key"])
