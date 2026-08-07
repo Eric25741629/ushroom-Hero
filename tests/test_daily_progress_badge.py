@@ -274,3 +274,24 @@ def test_seven_login_badge_visible_without_record():
     mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
     res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
     assert res["七日登入"] is False
+
+
+# ── 競技場：固定每日徽章，今天打過即 ✅，沒打過 ⏳ ───────────────────────
+def test_arena_badge_lit_when_recorded_today():
+    data = {"arena_challenges": {"timestamp": _ts_on(datetime.date(2026, 6, 22)), "date": "x"}}
+    mgr = _FakeManager(data, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["競技場"] is True
+
+
+def test_arena_badge_dim_when_recorded_yesterday():
+    data = {"arena_challenges": {"timestamp": _ts_on(datetime.date(2026, 6, 21)), "date": "x"}}
+    mgr = _FakeManager(data, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["競技場"] is False
+
+
+def test_arena_badge_visible_without_record():
+    mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["競技場"] is False
