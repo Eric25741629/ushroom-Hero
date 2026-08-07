@@ -215,23 +215,15 @@ def register_device():
             new_settings["web_debug_port"] = port
         config_manager.update_device_config(device_id, new_settings)
 
-        with _cpa._web_login_lock:
-            state = _cpa._normalize_web_login_state(device_id)
-            if state.get("running"):
-                return jsonify({"status": "busy", "message": "web login is already running"}), 409
-
         login_payload = {
             "web_url": web_url,
             "prefer_existing_state": False,
             "backup_before_open": False,
         }
-        t = threading.Thread(
-            target=_cpa._run_web_login_worker,
-            args=(device_id, login_payload),
-            daemon=True,
-            name=f"web-login-{device_id}",
-        )
-        t.start()
+        if not _cpa._start_web_login_thread(device_id, login_payload):
+            return jsonify(
+                {"status": "busy", "message": "web login is already running"}
+            ), 409
         return jsonify({"status": "ok", "device_id": device_id})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

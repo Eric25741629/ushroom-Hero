@@ -189,6 +189,9 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
     pre_runtime_ws_done = None
     
     try:
+        bot_state.set_web_launch_consumer_active(
+            ip, str(cfg.get("backend", "adb")).strip().lower() == "web_h5"
+        )
         # 為該設備設定獨立的 logger（按 IP 分檔），先建立 logger 以便連線階段可記錄
         device_logger = setup_logger_for_device(ip)
         # 設定當前線程的 logger
@@ -688,6 +691,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         logger.error(f"[{ip}] main 執行發生未預期錯誤: {e}", exc_info=True)
         bot_state.update_state(ip, log=f"異常中斷: {e}")
     finally:
+        bot_state.set_web_launch_consumer_active(ip, False)
         try:
             if d_orig is not None and hasattr(d_orig, "close"):
                 d_orig.close()

@@ -403,6 +403,46 @@ def _run_web_login_worker(ip: str, payload: dict):
             state["last_message"] = "failed"
 
 
+def _start_web_login_thread(ip: str, payload: dict) -> bool:
+    """原子保留並啟動 standalone Playwright worker；已在執行時回 False。"""
+    with _web_login_lock:
+        state = _normalize_web_login_state(ip)
+        if state.get("running"):
+            return False
+        # 必須在 thread.start() 前占位，否則兩個按鈕快速連按會同時通過檢查，
+        # 建立兩個 worker 競爭同一個 persistent profile。
+        state.update(
+            {
+                "running": True,
+                "started_at": time.time(),
+                "finished_at": None,
+                "last_error": "",
+                "last_message": "starting",
+            }
+        )
+
+    try:
+        # 晚綁定：target 透過 facade 取，保留既有 tests monkeypatch 行為。
+        import control_panel_app as _cpa
+
+        t = threading.Thread(
+            target=_cpa._run_web_login_worker,
+            args=(ip, payload),
+            daemon=True,
+            name=f"web-login-{ip}",
+        )
+        t.start()
+    except Exception as exc:
+        with _web_login_lock:
+            state = _normalize_web_login_state(ip)
+            state["running"] = False
+            state["finished_at"] = time.time()
+            state["last_error"] = str(exc)
+            state["last_message"] = "failed to start"
+        raise
+    return True
+
+
 @bp.route("/api/web_login/<ip>", methods=["POST"])
 def start_web_login(ip):
     """Start manual Playwright login flow from control panel."""
@@ -434,24 +474,10 @@ def start_web_login(ip):
         if persist_settings and safe_cfg:
             config_manager.update_device_config(real_ip, safe_cfg)
 
-        with _web_login_lock:
-            state = _normalize_web_login_state(real_ip)
-            if state.get("running"):
-                return jsonify(
-                    {"status": "busy", "message": "web login is already running"}
-                ), 409
-
-        # 晚綁定：target 透過 façade 取，讓 tests monkeypatch
-        # control_panel_app._run_web_login_worker 生效。
-        import control_panel_app as _cpa
-
-        t = threading.Thread(
-            target=_cpa._run_web_login_worker,
-            args=(real_ip, payload),
-            daemon=True,
-            name=f"web-login-{real_ip}",
-        )
-        t.start()
+        if not _start_web_login_thread(real_ip, payload):
+            return jsonify(
+                {"status": "busy", "message": "web login is already running"}
+            ), 409
         return jsonify({"status": "ok", "message": "web login started", "ip": real_ip})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
@@ -539,6 +565,42 @@ def launch_web_page(ip):
         }
         if clear_once:
             req_payload["message"] = "clear cookies once"
+
+        cfg = config_manager.get_device_config(real_ip)
+        standalone_required = (
+            str(cfg.get("backend", "adb")).strip().lower() == "web_h5"
+            and bool(cfg.get("special_wanshen_account", False))
+            and bool(cfg.get("special_wanshen_enabled", False))
+            and not bot_state.has_web_launch_consumer(real_ip)
+        )
+        if standalone_required:
+            # 舊版按鈕可能已留下永遠 pending 的信箱請求；先結案，避免下週 thread
+            # 重建後意外消費舊請求。standalone worker 自己擁有 Playwright thread。
+            bot_state.complete_web_launch_request(
+                real_ip, ok=False, message="superseded by standalone web login worker"
+            )
+            login_payload = {
+                "persist_settings": False,
+                "web_headless": not force_headful,
+                "web_clear_cookies_on_start": clear_once,
+            }
+            if not _start_web_login_thread(real_ip, login_payload):
+                return jsonify(
+                    {
+                        "status": "busy",
+                        "message": "web login is already running",
+                        "mode": "standalone",
+                    }
+                ), 409
+            return jsonify(
+                {
+                    "status": "ok",
+                    "message": "standalone web login started",
+                    "ip": real_ip,
+                    "mode": "standalone",
+                }
+            )
+
         bot_state.request_web_launch(real_ip, payload=req_payload)
         return jsonify(
             {"status": "ok", "message": "web launch requested", "ip": real_ip}

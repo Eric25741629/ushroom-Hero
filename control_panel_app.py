@@ -122,6 +122,7 @@ for _mod in (
 # 本模組屬性晚綁定查找，因此 patch 這裡即可生效。
 _FLY_PET_ICON_DIR = routes_fly_pet._FLY_PET_ICON_DIR
 _run_web_login_worker = routes_web_session._run_web_login_worker
+_start_web_login_thread = routes_web_session._start_web_login_thread
 _normalize_web_login_state = routes_web_session._normalize_web_login_state
 _web_login_lock = routes_web_session._web_login_lock
 _web_login_state = routes_web_session._web_login_state
