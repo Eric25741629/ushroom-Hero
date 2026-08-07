@@ -16,6 +16,7 @@ from ws_token.rogue_fight import (
     RogueFightReport,
     fight_once,
     run_rogue_run,
+    run_rogue_rounds,
 )
 
 
@@ -49,6 +50,34 @@ def test_parse_status_no_active_run():
     body = codec.pb_uint(1, 0)
     st = rogue_mod.parse_status(body)
     assert st.has_active_run is False
+
+
+def test_parse_science_cap_maps_live_fields_to_ui_values():
+    body = (
+        codec.pb_msg(1, codec.pb_uint(1, 1))
+        + codec.pb_uint(2, 5000)
+        + codec.pb_uint(3, 5000)
+    )
+    cap = rogue_mod.parse_science_cap(rogue_mod.CMD_SCIENCE_INFO, body)
+    assert cap.success is True
+    assert (cap.current, cap.cap) == (5000, 5000)
+
+
+def test_fetch_science_cap_sends_empty_0x4c16_request():
+    client = MagicMock()
+    body = codec.pb_uint(2, 1200) + codec.pb_uint(3, 5000)
+    client.call_for.return_value = (rogue_mod.CMD_SCIENCE_INFO, body)
+
+    cap = rogue_mod.fetch_science_cap(client)
+
+    assert cap.success is True
+    assert (cap.current, cap.cap) == (1200, 5000)
+    client.call_for.assert_called_once_with(
+        rogue_mod.CMD_SCIENCE_INFO,
+        b"",
+        expect_cmds=(rogue_mod.CMD_SCIENCE_INFO, rogue_mod.CMD_ERROR),
+        timeout=None,
+    )
 
 
 def test_parse_enter_success():
@@ -419,6 +448,53 @@ def test_run_rogue_run_calls_over_even_after_combat_failure():
         c for c in client.call_for.call_args_list if c.args[0] == rogue_mod.CMD_OVER
     ]
     assert len(over_calls) == 1
+
+
+def test_run_rogue_rounds_until_cap_skips_when_already_full():
+    client = object()
+    full = rogue_mod.RogueScienceCap(success=True, current=5000, cap=5000)
+    with patch.object(rogue_mod, "fetch_science_cap", return_value=full), patch(
+        "ws_token.rogue_fight.run_rogue_run"
+    ) as run:
+        report = run_rogue_rounds(client, object(), rounds=10, until_cap=True)
+
+    assert report.success is True
+    assert report.cap_reached is True
+    assert report.rounds_completed == 0
+    run.assert_not_called()
+
+
+def test_run_rogue_rounds_until_cap_does_not_fight_when_cap_read_fails():
+    client = object()
+    with patch.object(
+        rogue_mod, "fetch_science_cap", side_effect=TimeoutError("no response")
+    ), patch("ws_token.rogue_fight.run_rogue_run") as run:
+        report = run_rogue_rounds(client, object(), rounds=10, until_cap=True)
+
+    assert report.success is False
+    assert "cap read failed" in (report.error or "")
+    assert report.rounds_completed == 0
+    run.assert_not_called()
+
+
+def test_run_rogue_rounds_until_cap_stops_after_reaching_full():
+    client = object()
+    caps = iter([
+        rogue_mod.RogueScienceCap(success=True, current=4500, cap=5000),
+        rogue_mod.RogueScienceCap(success=True, current=5000, cap=5000),
+    ])
+    one = RogueFightReport(success=True, rounds_completed=1)
+    with patch.object(rogue_mod, "fetch_science_cap", side_effect=lambda _c: next(caps)), patch(
+        "ws_token.rogue_fight.run_rogue_run", return_value=one
+    ) as run:
+        report = run_rogue_rounds(client, object(), rounds=10, until_cap=True)
+
+    assert report.success is True
+    assert report.cap_reached is True
+    assert report.cap_current == 5000
+    assert report.cap_max == 5000
+    assert report.rounds_completed == 1
+    run.assert_called_once()
 
 
 # ─── run_with_b ──────────────────────────────────────────────────────────────
