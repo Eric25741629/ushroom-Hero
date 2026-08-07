@@ -3370,8 +3370,13 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           fetchProgress(ip, info.last_update).then(progress => {
             if (!progress) return;
             let html = '';
-            for (const [name, done] of Object.entries(progress)) {
-              html += `<span class="task-badge ${done ? 'done' : ''}">${done ? '✅' : '⏳'} ${name}</span>`;
+            for (const [name, value] of Object.entries(progress)) {
+              let done = value, detail = '';
+              if (value && typeof value === 'object' && !Array.isArray(value)) {
+                done = !!value.done;
+                detail = value.detail ? ` · ${value.detail}` : '';
+              }
+              html += `<span class="task-badge ${done ? 'done' : ''}" title="${name}${detail}">${done ? '✅' : '⏳'} ${name}${detail}</span>`;
             }
             if (pc.innerHTML !== html) pc.innerHTML = html;
           });
