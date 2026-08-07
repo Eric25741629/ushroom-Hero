@@ -1443,7 +1443,8 @@ def _run_guild(client, *, spend: bool) -> dict:
 
 def _run_steward(client, *, spend: bool, serv_time: int,
                  sweep_list: Sequence[Sequence[int]],
-                 device: str = "", state_dir=None) -> dict:
+                 device: str = "", state_dir=None,
+                 inventory_counts: Optional[dict[int, int]] = None) -> dict:
     """Read state; shopping once/day when spend; dungeon sweep every wake.
 
     購物管家受 ``spend`` 與每日日期閘控制；副本管家每次喚醒都嘗試。
@@ -1482,7 +1483,11 @@ def _run_steward(client, *, spend: bool, serv_time: int,
         try:
             setting = steward.read_dungeon_setting(client)
             levels = steward.read_dungeon_levels(client)
-            effective_sweeps = steward.derive_sweep_list(setting, levels)
+            effective_sweeps = steward.derive_sweep_list(
+                setting,
+                levels,
+                inventory_counts=inventory_counts,
+            )
         except Exception as exc:  # noqa: BLE001
             # 讀不到副本清單時只跳過副本管家，不能讓其它 WS 日任務整批失敗。
             logger.warning("ws_token steward: auto derive sweep list failed: %s", exc)
@@ -2034,7 +2039,8 @@ def run_device(device: str, *, spend: bool = False,
         _step("guild", lambda: _run_guild(client, spend=spend))
         _step("steward",
               lambda: _run_steward(client, spend=spend, serv_time=serv_time,
-                                   sweep_list=sweep, device=device))
+                                   sweep_list=sweep, device=device,
+                                   inventory_counts=inventory_tracker.counts))
         _step("relic",
               lambda: _run_relic(client, inventory_tracker,
                                  enabled=relic_upgrade,

@@ -594,7 +594,11 @@ def test_spend_true_auto_derives_housekeeper_sweep_list(patched, monkeypatch):
 
     run_device("dev", spend=True)
 
-    assert captured["sweep_list"] == [(2, 150, 1, 1), (7, 49, 1, 1)]
+    assert captured["sweep_list"] == [
+        (1, 639, 0, 0),
+        (2, 150, 0, 1),
+        (7, 49, 1, 0),
+    ]
 
 
 # --- redpack (free; always runs) --------------------------------------------
