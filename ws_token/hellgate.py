@@ -33,6 +33,7 @@ CMD_ERROR = 0x0201
 _RESULT_ACK_TIMEOUT_SEC = 3.0
 _RESULT_CONFIRM_POLL_SEC = 0.5
 _SESSION_SETTLE_SEC = 8.0
+_SETTLEMENT_DELAY_SEC = 5 * 60.0
 
 
 @dataclass(frozen=True)
@@ -456,6 +457,8 @@ def _run_after_start(
     speed_scale: float,
     realtime: bool,
     simulation_timeout_sec: float,
+    settlement_delay_sec: float,
+    battle_started_at: float,
     timeout: float | None,
     before_info: WorldBossInfo,
 ) -> WorldBossRun:
@@ -528,6 +531,7 @@ def _run_after_start(
             f"invalid calculator damage: {exc}",
             simulation,
         )
+    _wait_for_settlement_delay(battle_started_at, settlement_delay_sec)
     try:
         reported = submit_result(
             client,
@@ -606,6 +610,16 @@ def _wait_for_session_handoff(client: WSGameClient, settle_sec: float) -> None:
         time.sleep(remaining)
 
 
+def _wait_for_settlement_delay(started_at: float, delay_sec: float) -> float:
+    """從伺服器接受進場起至少等指定秒數，再送出成功結算。"""
+
+    remaining = max(0.0, float(delay_sec) - (time.monotonic() - started_at))
+    if remaining > 0:
+        logger.info("WorldBoss 等待 %.1f 秒後送出 3592 完成結算", remaining)
+        time.sleep(remaining)
+    return remaining
+
+
 def run_with_b(
     client: WSGameClient,
     *,
@@ -618,6 +632,7 @@ def run_with_b(
     speed_scale: float = 2.0,
     realtime: bool = True,
     simulation_timeout_sec: float = 330.0,
+    settlement_delay_sec: float = _SETTLEMENT_DELAY_SEC,
     session_settle_sec: float = _SESSION_SETTLE_SEC,
     timeout: float | None = None,
 ) -> WorldBossRun:
@@ -692,6 +707,7 @@ def run_with_b(
                 start=started,
                 error=started.error,
             )
+        battle_started_at = time.monotonic()
         return _run_after_start(
             client,
             started,
@@ -700,6 +716,8 @@ def run_with_b(
             speed_scale=speed_scale,
             realtime=realtime,
             simulation_timeout_sec=simulation_timeout_sec,
+            settlement_delay_sec=settlement_delay_sec,
+            battle_started_at=battle_started_at,
             timeout=timeout,
             before_info=info,
         )
