@@ -179,7 +179,32 @@ def report_result(
     return parse_result(cmd, body)
 
 
-def pick_weakest(enemies: tuple[ArenaEnemy, ...] | list[ArenaEnemy]) -> Optional[ArenaEnemy]:
+def refresh_info(client: WSGameClient, *, timeout: float | None = None) -> Optional[ArenaInfo]:
+    """刷新對手列表（arena_refresh 5126）。
+
+    5126 是即時型 mutation，server 是否回同 cmd 封包未明，因此只送不等的
+    ``send`` 後重新讀取 5121。任何失敗回 None，由呼叫端決定是否沿用舊列表。
+    """
+    try:
+        client.send(CMD_REFRESH, b"")
+    except Exception:  # noqa: BLE001 — 刷新失敗不算致命，回 None
+        return None
+    try:
+        return fetch_info(client, timeout=timeout)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pick_weakest(
+    enemies: tuple[ArenaEnemy, ...] | list[ArenaEnemy],
+    *,
+    exclude: Optional[set[int] | frozenset[int]] = None,
+) -> Optional[ArenaEnemy]:
+    """挑最弱者；``exclude`` 為今日已打過（黑名單）的對手 id 集合。"""
     if not enemies:
         return None
+    if exclude:
+        enemies = [e for e in enemies if e.id not in exclude]
+        if not enemies:
+            return None
     return min(enemies, key=lambda e: (e.power or 0, e.score or 0))

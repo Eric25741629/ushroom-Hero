@@ -701,7 +701,8 @@ def _run_hellgate(client, *, hellgate_config: Optional[dict], should_abort=None)
     return out
 
 
-def _run_arena(client, *, arena_config: Optional[dict], should_abort=None) -> dict:
+def _run_arena(client, *, arena_config: Optional[dict], should_abort=None,
+               device: str = "") -> dict:
     """競技場 pure WS：``arena_battle_mode=pure_ws`` 時執行。
 
     arena_config::
@@ -733,6 +734,7 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None) -> di
         game_url=cfg.get("game_url"),
         headless=bool(cfg.get("headless", True)),
         ready_timeout_sec=float(cfg.get("ready_timeout_sec") or 90),
+        device=device or None,
     )
     out = report.as_dict()
     if not report.success:
@@ -2029,7 +2031,7 @@ def run_device(device: str, *, spend: bool = False,
         if arena_config and arena_config.get("enabled"):
             _step("arena",
                   lambda: _run_arena(client, arena_config=arena_config,
-                                     should_abort=should_abort))
+                                     should_abort=should_abort, device=device))
         if escort_config and escort_config.get("enabled"):
             _step("escort",
                   lambda: _run_escort(client, device=device,

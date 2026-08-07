@@ -141,6 +141,7 @@ def _run_pure_ws_fights(ip: str, n: int, gap_sec: float, cfg: Optional[dict] = N
                 game_url=bc.get("game_url"),
                 headless=bool(bc.get("headless", True)),
                 ready_timeout_sec=float(bc.get("ready_timeout_sec") or 90),
+                device=ip,
             )
             logger.info(
                 f"[{ip}] pure_ws arena success={report.success} fought={report.fought} "
