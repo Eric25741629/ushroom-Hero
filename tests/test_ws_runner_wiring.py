@@ -270,6 +270,7 @@ def patched_runner(monkeypatch):
                         only_tasks=None,
                         cloud_ladder_enabled=False,
                         ladder_reward_enabled=False,
+                        seven_login_enabled=False,
                         progress=None,
                         should_abort=None):
         calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
@@ -297,7 +298,8 @@ def patched_runner(monkeypatch):
                       "sea_config": sea_config,
                       "only_tasks": only_tasks,
                       "cloud_ladder_enabled": cloud_ladder_enabled,
-                      "ladder_reward_enabled": ladder_reward_enabled})
+                      "ladder_reward_enabled": ladder_reward_enabled,
+                      "seven_login_enabled": seven_login_enabled})
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -337,7 +339,8 @@ def test_run_ws_device_cycle_calls_run_device_with_cfg_flags(patched_runner):
                         "sea_config": None,
                         "only_tasks": None,
                         "cloud_ladder_enabled": True,
-                        "ladder_reward_enabled": True}
+                        "ladder_reward_enabled": True,
+                        "seven_login_enabled": True}
     assert report.login_ok is True
 
 
@@ -510,6 +513,7 @@ def test_run_ws_device_cycle_login_failure_does_not_raise(patched_runner, monkey
                       mining_config=None, sea_config=None,
                       only_tasks=None, cloud_ladder_enabled=False,
                       ladder_reward_enabled=False,
+                      seven_login_enabled=False,
                       progress=None, should_abort=None):
         calls.append(ip)
         return types.SimpleNamespace(
@@ -700,6 +704,33 @@ def test_ws_runner_service_forwards_main_chapter_kills(monkeypatch):
 
     assert captured["main_chapter_kills_config"]["enabled"] is True
     assert captured["main_chapter_kills_config"]["interval_sec"] == 3.0
+
+
+def test_ws_runner_service_forwards_seven_login_enabled(monkeypatch):
+    import runtime_services.ws_runner_service as svc
+
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return types.SimpleNamespace(
+            device=ip, login_ok=True, spend=False, tasks={}, errors={})
+
+    monkeypatch.setattr(svc, "_load_run_device", lambda: fake_run_device)
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: None)
+    cfg = config_manager.DeviceConfig.from_dict({
+        "use_ws_runner": True,
+        "ws_token": {"seven_login_enabled": True},
+    })
+    svc.run_ws_device_cycle("ws-seven", cfg, _NullLogger())
+    assert captured["seven_login_enabled"] is True
+
+    cfg_off = config_manager.DeviceConfig.from_dict({
+        "use_ws_runner": True,
+        "ws_token": {"seven_login_enabled": False},
+    })
+    svc.run_ws_device_cycle("ws-seven", cfg_off, _NullLogger())
+    assert captured["seven_login_enabled"] is False
 
 
 def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):

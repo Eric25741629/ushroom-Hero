@@ -350,6 +350,23 @@ def test_run_device_passes_carpark_plan_and_auto(monkeypatch):
     assert captured["carpark_auto"] is True
 
 
+def test_run_device_passes_seven_login_enabled(monkeypatch):
+    captured = {}
+
+    def fake_run_device(ip, **kwargs):
+        captured.update(kwargs)
+        return _report({"seven_login": {"ok": True, "claimed": 3}})
+
+    import ws_token.runner as runner_mod
+    monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
+
+    ws_phase._run_device("dev", {"enabled": True, "seven_login_enabled": True})
+    assert captured["seven_login_enabled"] is True
+
+    ws_phase._run_device("dev", {"enabled": True})
+    assert captured["seven_login_enabled"] is False
+
+
 def test_errored_task_not_skipped(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
     monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report(

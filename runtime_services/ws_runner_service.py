@@ -426,6 +426,9 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         _use_ladder_ws and bool(cfg.get("enable_cloud_battle", True))
     )
     extra_kwargs["ladder_reward_enabled"] = _use_ladder_ws
+    extra_kwargs["seven_login_enabled"] = (
+        _use_ladder_ws and bool(_ws_nested.get("seven_login_enabled", True))
+    )
     if ad_reward_config_ids is not None:
         extra_kwargs["ad_reward_config_ids"] = ad_reward_config_ids
     # 遺物碎片衝刺預設關 → 不傳這兩個參數 (run_device 走預設 False/SPRINT_TOTAL)，維持既有
