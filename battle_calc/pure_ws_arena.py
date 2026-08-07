@@ -50,6 +50,7 @@ def run_fights(
             cdp_port=cdp_port,
             game_url=game_url,
             headless=headless,
+            device=device_id,
         )
         print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
         return 0 if report.success else 5
