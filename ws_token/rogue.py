@@ -41,6 +41,7 @@ CMD_ENTER   = 0x4C02   # rogue_main_enter_c2s {return_type#1=1}
 CMD_OVER    = 0x4C03   # rogue_main_over_c2s  {return_type#1=0}
 CMD_COMBAT  = 0x4C04   # rogue_main_combat_c2s {} → s2c {code#1,seed#?,atk_data#?,def_data#?}
 CMD_RESULT  = 0x4C05   # rogue_main_result_c2s {result#1,precent#2}
+CMD_SCIENCE_INFO = 0x4C16  # s2c {science_info#1,science_point#2,point_max#3}
 CMD_STATUS  = 0x4C20   # rogue_status_c2s {} → s2c {status#1}（1=有進行中 run）
 
 # 開新局必經的「開局獎勵(重造)」步驟 —— live 實測 2026-07-17(5556 node-emit)：
@@ -146,6 +147,16 @@ class RogueStatus:
 
 
 @dataclass(frozen=True)
+class RogueScienceCap:
+    """神樹祝福「本周獲取上限」進度。"""
+    success: bool
+    current: int = 0
+    cap: int = 0
+    error: str | None = None
+    fields: dict = field(compare=False, default_factory=dict)
+
+
+@dataclass(frozen=True)
 class RogueEnter:
     """rogue_main_enter_s2c 解析結果。"""
     success: bool
@@ -233,6 +244,25 @@ def parse_status(body: bytes) -> RogueStatus:
     return RogueStatus(has_active_run=(raw == 1), raw_status=raw)
 
 
+def parse_science_cap(cmd: int, body: bytes) -> RogueScienceCap:
+    """解析 0x4C16；live 對照 UI 確認 science_point/point_max = current/cap。"""
+    fields = codec.walk_dict(body)
+    if cmd == CMD_ERROR:
+        ec = fields.get(1)
+        return RogueScienceCap(success=False, error=f"server error {ec}", fields=fields)
+    if cmd != CMD_SCIENCE_INFO:
+        return RogueScienceCap(
+            success=False, error=f"unexpected cmd 0x{cmd:04x}", fields=fields
+        )
+    current = fields.get(2)
+    cap = fields.get(3)
+    if not isinstance(current, int) or not isinstance(cap, int) or cap <= 0:
+        return RogueScienceCap(
+            success=False, error="science cap fields missing", fields=fields
+        )
+    return RogueScienceCap(success=True, current=int(current), cap=int(cap), fields=fields)
+
+
 def parse_enter(cmd: int, body: bytes) -> RogueEnter:
     """rogue_main_enter_s2c 依 ROGUE_PROTO_SCHEMA.json 沒有 code 欄位：
     field 1 = other_info(p_other_role_info 訊息)、2/3 = skill_list/my_list、
@@ -310,6 +340,19 @@ def fetch_info(client: WSGameClient, *, timeout: float | None = None) -> RogueIn
 def fetch_status(client: WSGameClient, *, timeout: float | None = None) -> RogueStatus:
     body = client.call(CMD_STATUS, b"", timeout=timeout)
     return parse_status(body)
+
+
+def fetch_science_cap(
+    client: WSGameClient, *, timeout: float | None = None
+) -> RogueScienceCap:
+    """讀取神樹祝福「本周獲取上限 current/cap」。"""
+    cmd, body = client.call_for(
+        CMD_SCIENCE_INFO,
+        b"",
+        expect_cmds=(CMD_SCIENCE_INFO, CMD_ERROR),
+        timeout=timeout,
+    )
+    return parse_science_cap(cmd, body)
 
 
 def enter_run(

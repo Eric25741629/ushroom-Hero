@@ -147,6 +147,24 @@ def test_pure_ws_runs_on_thread_without_callers_running_loop(wt, monkeypatch):
     assert worker_state["thread"] != caller_thread
 
 
+def test_pure_ws_worker_forwards_until_cap(wt, monkeypatch):
+    captured = {}
+
+    def fake_sync(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return object()
+
+    monkeypatch.setattr(wt, "_run_pure_ws_wanshen_sync", fake_sync, raising=False)
+
+    wt._run_pure_ws_wanshen(
+        object(), "web-001", 10, {"web_debug_port": 9223}, until_cap=True
+    )
+
+    assert captured["args"] == ("web-001", 10, {"web_debug_port": 9223})
+    assert captured["kwargs"] == {"until_cap": True}
+
+
 def test_local_sim_loss_sync_error_preserves_page_without_followup_actions(
     wt, monkeypatch, harness
 ):

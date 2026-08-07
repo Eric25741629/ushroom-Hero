@@ -215,7 +215,9 @@ def _fight_rounds_ocr(d, rounds: int) -> tuple[int, bool]:
     return completed, False
 
 
-def _run_pure_ws_wanshen_sync(ip: str, rounds: int, cfg: dict | None = None):
+def _run_pure_ws_wanshen_sync(
+    ip: str, rounds: int, cfg: dict | None = None, *, until_cap: bool = False
+):
     """萬神試煉 pure WS：純協議打完 N 局 + B 頁秒算(預設全新無 profile 瀏覽器)。
 
     對齊 game_actions/arena_battle.py 的 `_run_pure_ws_fights`。回傳
@@ -245,6 +247,7 @@ def _run_pure_ws_wanshen_sync(ip: str, rounds: int, cfg: dict | None = None):
             report = rf.run_with_b(
                 client,
                 rounds=rounds,
+                until_cap=until_cap,
                 prefer_ephemeral=prefer_ephemeral,
                 cdp_port=cdp,
                 game_url=bc.get("game_url"),
@@ -252,8 +255,9 @@ def _run_pure_ws_wanshen_sync(ip: str, rounds: int, cfg: dict | None = None):
                 ready_timeout_sec=float(bc.get("ready_timeout_sec") or 90),
             )
             logger.info(
-                "[萬神試煉][%s] pure_ws success=%s rounds=%d/%d fought=%d won=%d err=%s",
+                "[萬神試煉][%s] pure_ws success=%s rounds=%d/%d cap=%s/%s reached=%s fought=%d won=%d err=%s",
                 ip, report.success, report.rounds_completed, rounds,
+                report.cap_current, report.cap_max, report.cap_reached,
                 report.stages_fought, report.stages_won, report.error,
             )
             return report
@@ -267,7 +271,9 @@ def _run_pure_ws_wanshen_sync(ip: str, rounds: int, cfg: dict | None = None):
         return None
 
 
-def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
+def _run_pure_ws_wanshen(
+    d, ip: str, rounds: int, cfg: dict | None = None, *, until_cap: bool = False
+):
     """在乾淨執行緒執行 pure WS，隔離 web_h5 已存在的 sync Playwright loop。"""
     # Playwright device 是 thread-affine；worker 只接收純資料，不可把 d 傳進去。
     del d
@@ -277,7 +283,7 @@ def _run_pure_ws_wanshen(d, ip: str, rounds: int, cfg: dict | None = None):
             thread_name_prefix=f"WanshenPureWS-{ip}",
         ) as executor:
             return executor.submit(
-                _run_pure_ws_wanshen_sync, ip, rounds, cfg
+                _run_pure_ws_wanshen_sync, ip, rounds, cfg, until_cap=until_cap
             ).result()
     except Exception:
         logger.exception("[萬神試煉][%s] pure_ws worker 失敗", ip)
@@ -353,10 +359,12 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
 
             ip = str(getattr(d, "device_id", "") or "")
             if wanshen_mode == "pure_ws":
-                # pure_ws 不吃 until_cap（無 UI 可複讀『本周獲取上限』），一律跑滿 rounds。
-                report = _run_pure_ws_wanshen(d, ip, rounds, cfg)
+                report = _run_pure_ws_wanshen(
+                    d, ip, rounds, cfg, until_cap=until_cap
+                )
                 if report is not None and report.success:
                     completed = report.rounds_completed
+                    cap_reached = bool(report.cap_reached)
                 else:
                     logger.warning(
                         "[萬神試煉][%s] pure_ws 失敗或未跑滿 → fallback animation 收尾本輪", ip
@@ -364,12 +372,16 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
                     from battle import rogue_h5
                     try:
                         completed = rogue_h5.run_rounds(
-                            page, rounds=rounds, until_cap=False, mode="animation", ip=ip,
+                            page, rounds=rounds, until_cap=until_cap,
+                            mode="animation", ip=ip,
                         )
+                        if until_cap:
+                            cap = rogue_h5.read_blessing_cap(page)
+                            cap_reached = bool(cap and cap[0] >= cap[1])
                     except Exception:
                         logger.exception("[萬神試煉] pure_ws fallback animation 例外 → 中止本輪")
                         completed = 0
-                if completed < rounds:
+                if not until_cap and completed < rounds:
                     aborted = True
             else:
                 try:

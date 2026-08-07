@@ -1,5 +1,21 @@
 # tasks/todo.md（2026-06-20 壓縮）
 
+## 2026-08-08 萬神 pure WS 刷到本周獲取上限
+
+- [x] 5556 CDP 確認神樹祝福 `costTips/limit` 顯示 `5000/5000`。
+- [x] 純 WS live 確認 `0x4C16` field 2/3 對應 UI current/cap。
+- [x] 新增 pure WS 上限解析與 until-cap 循環。
+- [x] 補目標測試並驗證。
+
+### Review
+
+- 權威來源：`rogue_science_info_s2c` 的 `science_point#2` / `point_max#3`；5556
+  live 回應 `5000/5000`，與 `RogueScienceView/content/costTips/limit` 完全一致。
+- pure WS 會在開跑前與每局結束後複讀；達標即正常完成，無進度或安全局數耗盡則不誤寫完成。
+- fail-closed：until-cap 讀不到 `0x4C16` 時不開新局，交由既有 H5 fallback 重讀 UI。
+- 驗證：rogue WS、weekly orchestration、special wanshen runtime/API 共 64 passed；目標
+  `py_compile` 通過。
+
 > 已完成項目（含 Review）已移至 `finish.md`（2026-06-20 archive 區塊）。
 > 重構真相來源：`docs/REFACTORING_OPPORTUNITIES.md`。
 > 其他檔案各自追蹤：見末段。

@@ -49,6 +49,9 @@ class RogueFightReport:
     stages_fought: int = 0
     stages_won: int = 0
     rounds_completed: int = 0   # 完整跑完(enter→...→over)的局數，weekly_trials 用這個算「跑滿」
+    cap_reached: bool = False
+    cap_current: int | None = None
+    cap_max: int | None = None
     outcomes: list[RogueFightOutcome] = field(default_factory=list)
     error: str | None = None
     skipped: str | None = None
@@ -59,6 +62,9 @@ class RogueFightReport:
             "stages_fought": self.stages_fought,
             "stages_won": self.stages_won,
             "rounds_completed": self.rounds_completed,
+            "cap_reached": self.cap_reached,
+            "cap_current": self.cap_current,
+            "cap_max": self.cap_max,
             "error": self.error,
             "skipped": self.skipped,
             "outcomes": [
@@ -311,6 +317,7 @@ def run_rogue_rounds(
     *,
     rounds: int = 1,
     stages: int = _MAX_STAGES,
+    until_cap: bool = False,
     should_abort=None,
 ) -> RogueFightReport:
     """連續跑 N 局（每局：enter/skip→打到失敗→over），對齊 rogue_h5.run_rounds 語意。
@@ -319,10 +326,32 @@ def run_rogue_rounds(
     單局內的『失敗一關』是正常結束(該局視為完成)，不算異常。
     """
     agg = RogueFightReport(success=False)
+    last_current: int | None = None
     for i in range(max(1, int(rounds))):
         if should_abort and should_abort():
             agg.error = "aborted"
             break
+        if until_cap:
+            try:
+                cap = rogue_mod.fetch_science_cap(client)
+            except Exception as e:
+                logger.warning("rogue pure_ws: fetch science cap failed: %s", e)
+                agg.error = f"weekly cap read failed: {e}"
+                break
+            else:
+                if not cap.success:
+                    agg.error = f"weekly cap read failed: {cap.error}"
+                    break
+                agg.cap_current = cap.current
+                agg.cap_max = cap.cap
+                logger.info("rogue pure_ws: 本周獲取上限 %d/%d", cap.current, cap.cap)
+                if cap.current >= cap.cap:
+                    agg.cap_reached = True
+                    break
+                if last_current is not None and cap.current <= last_current:
+                    agg.error = f"weekly cap made no progress ({last_current}->{cap.current})"
+                    break
+                last_current = cap.current
         logger.info("rogue pure_ws: round %d/%d", i + 1, rounds)
         one = run_rogue_run(client, page, stages=stages, should_abort=should_abort)
         agg.outcomes.extend(one.outcomes)
@@ -333,7 +362,22 @@ def run_rogue_rounds(
             logger.warning("rogue pure_ws: round %d failed: %s", i + 1, one.error)
             break
         agg.rounds_completed += 1
-    agg.success = agg.rounds_completed == max(1, int(rounds))
+    if until_cap and not agg.cap_reached and agg.error is None:
+        try:
+            cap = rogue_mod.fetch_science_cap(client)
+        except Exception as e:
+            logger.warning("rogue pure_ws: final science cap read failed: %s", e)
+        else:
+            if cap.success:
+                agg.cap_current = cap.current
+                agg.cap_max = cap.cap
+                agg.cap_reached = cap.current >= cap.cap
+    if until_cap:
+        agg.success = agg.cap_reached
+        if not agg.success and agg.error is None:
+            agg.error = "weekly cap not reached before safety limit"
+    else:
+        agg.success = agg.rounds_completed == max(1, int(rounds))
     return agg
 
 
@@ -342,6 +386,7 @@ def run_with_b(
     *,
     rounds: int = 1,
     stages: int = _MAX_STAGES,
+    until_cap: bool = False,
     should_abort=None,
     prefer_ephemeral: bool = True,
     cdp_port: Optional[int] = None,
@@ -363,7 +408,8 @@ def run_with_b(
     try:
         logger.info("rogue pure_ws B kind=%s", kind)
         return run_rogue_rounds(
-            client, page, rounds=rounds, stages=stages, should_abort=should_abort
+            client, page, rounds=rounds, stages=stages,
+            until_cap=until_cap, should_abort=should_abort
         )
     finally:
         close_b_runtime(pw, browser, kind=kind)
