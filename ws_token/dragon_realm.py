@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import Optional
 
 from ws_token import codec
 from ws_token import dragon_sos
@@ -18,6 +19,22 @@ from ws_token.client import WSGameClient
 from ws_token.mining import InventoryTracker
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_logger(device_id: Optional[str]) -> logging.Logger:
+    """Per-device logger when a device id is given, else the module logger.
+
+    Module logger (console-only, backward-compatible default) is used by smoke
+    tests; runner passes the real device id so the 龍骸明細 lands in the
+    device-scoped `logs/<device>/ws_dragon.log` for later analysis.
+    """
+    if device_id:
+        try:
+            from utils.logging_utils import get_or_create_ws_dragon_logger
+            return get_or_create_ws_dragon_logger(device_id)
+        except Exception:  # noqa: BLE001 — logger 不可阻止龍骸流程
+            return logger
+    return logger
 
 CMD_INFO = 0x4F01           # c2s {} -> s2c (same cmd) { team_id, ceng, hp, ... }
 CMD_EXPLORE = 0x4F10        # c2s {} -> s2c (DIFFERENT cmd, fire-and-forget)
@@ -82,21 +99,22 @@ def _event_data_map(body: bytes) -> dict:
     return ed
 
 
-def _claim_rewards_at_boundary(client: WSGameClient) -> None:
+def _claim_rewards_at_boundary(client: WSGameClient,
+                               log: logging.Logger) -> None:
     """純 WS 龍骸流程結束前，盡力領取本帳號協助獎勵。"""
     creds = getattr(client, "_creds", None)
     role_id = int(getattr(creds, "role_id", 0) or 0)
     if not role_id:
-        logger.warning("[dragon_ws] cannot auto-claim help rewards: role_id unavailable")
+        log.warning("[dragon_ws] cannot auto-claim help rewards: role_id unavailable")
         return
     try:
         result = dragon_sos.claim_help_rewards(client, role_id)
         if result["attempted"]:
-            logger.info(
+            log.info(
                 "[dragon_ws] auto-claimed help rewards: attempted=%d claimed=%d remaining=%d",
                 result["attempted"], result["claimed"], result["remaining"])
     except Exception:  # noqa: BLE001 — 領獎失敗不可中止探索結果
-        logger.warning("[dragon_ws] auto-claim help rewards failed", exc_info=True)
+        log.warning("[dragon_ws] auto-claim help rewards failed", exc_info=True)
 
 
 def _read_info(client: WSGameClient) -> dict:
@@ -121,15 +139,22 @@ def _infer_type(ed: dict) -> str:
 
 
 def run(client: WSGameClient, tracker: InventoryTracker,
-        *, max_actions: int = 200, pace: float = 1.0, max_stuck: int = 6) -> str:
-    """Run dragon realm loop. Returns stop reason."""
+        *, max_actions: int = 200, pace: float = 1.0, max_stuck: int = 6,
+        device: Optional[str] = None) -> str:
+    """Run dragon realm loop. Returns stop reason.
+
+    ``device`` (optional) routes every log line to the per-device
+    ``logs/<device>/ws_dragon.log`` so a misjudged stop reason can be audited
+    afterwards; without it the module logger (console-only) is used.
+    """
+    log = _resolve_logger(device)
     try:
         tracker.seed_from_query(client)
     except Exception:
-        logger.warning("[dragon_ws] inventory seed failed, key count may be stale")
+        log.warning("[dragon_ws] inventory seed failed, key count may be stale")
     info = _read_info(client)
-    logger.info("[dragon_ws] start: ceng=%d hp=%d keys=%d",
-                info["ceng"], info["hp"], tracker.counts.get(KEY_ITEM, 0))
+    log.info("[dragon_ws] start: ceng=%d hp=%d keys=%d",
+             info["ceng"], info["hp"], tracker.counts.get(KEY_ITEM, 0))
 
     actions = 0
     last_sig = None
@@ -149,10 +174,10 @@ def run(client: WSGameClient, tracker: InventoryTracker,
         if sig == last_sig:
             stuck += 1
             if stuck >= max_stuck:
-                logger.warning(
+                log.warning(
                     "[dragon_ws] dead-loop: state frozen %dx (ceng=%d hp=%d eid=%d), abort",
                     stuck, ceng, hp, eid)
-                _claim_rewards_at_boundary(client)
+                _claim_rewards_at_boundary(client, log)
                 return "deadloop"
         else:
             stuck = 0
@@ -162,7 +187,7 @@ def run(client: WSGameClient, tracker: InventoryTracker,
 
         # tier transition
         if ceng == 1 and keys >= TIER2_KEYS:
-            logger.info("[dragon_ws] entering ceng 2 (keys=%d)", keys)
+            log.info("[dragon_ws] entering ceng 2 (keys=%d)", keys)
             client.send(CMD_ENTER_CENG, codec.pb_uint(1, 2))
             time.sleep(pace)
             continue
@@ -170,16 +195,16 @@ def run(client: WSGameClient, tracker: InventoryTracker,
         # 只有 server 權威 ceng==2（實際站在 2 樓）且鑰匙足夠才宣告到 3 樓門前。
         # ceng==1 時上面的 tier transition 會先送 enter_ceng(2)，絕不落到這裡。
         if ceng == 2 and keys >= TIER3_KEYS:
-            logger.info("[dragon_ws] tier-3 gate (keys=%d), stop", keys)
-            _claim_rewards_at_boundary(client)
+            log.info("[dragon_ws] tier-3 gate (keys=%d), stop", keys)
+            _claim_rewards_at_boundary(client, log)
             return "reached_tier_three_gate"
 
         # no event -> explore or stop
         if eid == 0:
             need = STAMINA[min(ceng - 1, 2)]
             if hp < need:
-                logger.info("[dragon_ws] out of stamina (hp=%d)", hp)
-                _claim_rewards_at_boundary(client)
+                log.info("[dragon_ws] out of stamina (hp=%d)", hp)
+                _claim_rewards_at_boundary(client, log)
                 return "out_of_stamina"
             client.send(CMD_EXPLORE, b"")
             time.sleep(pace)
@@ -209,8 +234,9 @@ def run(client: WSGameClient, tracker: InventoryTracker,
         client.send(CMD_CHOICE, _choice_body(choice))
 
         actions += 1
-        logger.debug("[dragon_ws] [%d] c=%d hp=%d eid=%d et=%s", actions, ceng, hp, eid, et)
+        log.info("[dragon_ws] [%d] c=%d hp=%d eid=%d euid=%d et=%s choice=%d keys=%d",
+                 actions, ceng, hp, eid, euid, et, choice, keys)
         time.sleep(pace * 0.5)
 
-    _claim_rewards_at_boundary(client)
+    _claim_rewards_at_boundary(client, log)
     return "budget_exhausted"

@@ -173,6 +173,7 @@ def _build_formatter() -> logging.Formatter:
 #   get_or_create_ws_farm_logger     -> "ws_farm_<id>"      (WS 純掛機農場)
 #   get_or_create_ws_ad_reward_logger-> "ws_ad_reward_<id>" (WS 看廣告獎勵)
 #   get_or_create_ws_lamp_logger     -> "ws_lamp_<id>"      (WS 開神燈)
+#   get_or_create_ws_dragon_logger   -> "ws_dragon_<id>"    (WS 龍骸/龍之試煉)
 # Order: longest/most-specific WS prefixes first so e.g. "ws_mining_" is not
 # accidentally shadowed (none currently overlap, but keep the invariant explicit).
 _DEVICE_LOGGER_NAME_PREFIXES = (
@@ -180,6 +181,7 @@ _DEVICE_LOGGER_NAME_PREFIXES = (
     "ws_mining_",
     "ws_farm_",
     "ws_lamp_",
+    "ws_dragon_",
     "logger_",
     "miner_",
 )
@@ -462,6 +464,45 @@ def get_or_create_ws_lamp_logger(device_id: str) -> logging.Logger:
         _attach_bot_state_handler(logger_obj)
         _purge_old_files(str(log_path.parent / "ws_lamp.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
         _ws_lamp_logger_cache[safe_id] = logger_obj
+        return logger_obj
+
+
+_ws_dragon_logger_cache: dict = {}
+
+
+def get_or_create_ws_dragon_logger(device_id: str) -> logging.Logger:
+    """Return (creating if needed) a per-device WS dragon-realm logger -> ws_dragon.log.
+
+    Mirrors get_or_create_ws_lamp_logger: per-device file handler, rotation,
+    purge of old rotated copies, propagate=False (so 龍骸探索每一步的
+    層數/血量/鑰匙數/事件選項/停止原因 land in a device-scoped retention file,
+    下次遇到「明明有跑卻沒上層」的問題時可直接從 log 還原判讀)。
+    """
+    safe_id = LogPaths.safe_device_id(device_id)
+    with _logger_lock:
+        cached = _ws_dragon_logger_cache.get(safe_id)
+        if cached is not None:
+            return cached
+        log_path = LogPaths.ws_dragon_log(device_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logger_name = f"ws_dragon_{device_id}"
+        logger_obj = logging.getLogger(logger_name)
+        _reset_handlers(logger_obj)
+        logger_obj.propagate = False
+        logger_obj.setLevel(logging.INFO)
+        formatter = _build_formatter()
+        file_handler = SafeRotatingFileHandler(
+            str(log_path),
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+            mode="a",
+        )
+        file_handler.setFormatter(formatter)
+        logger_obj.addHandler(file_handler)
+        _attach_bot_state_handler(logger_obj)
+        _purge_old_files(str(log_path.parent / "ws_dragon.*.log"), max_age_days=_DEVICE_LOG_RETENTION_DAYS)
+        _ws_dragon_logger_cache[safe_id] = logger_obj
         return logger_obj
 
 

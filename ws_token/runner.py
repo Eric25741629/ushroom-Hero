@@ -1634,7 +1634,7 @@ def _run_dragon_realm(client, tracker: mining.InventoryTracker, *,
     if _cycle_completed(device, now):
         logger.info("ws_token runner: %s 龍骸本活動週期已到三樓門，跳過", device)
         return {"skipped": "already reached tier-3 gate this cycle"}
-    reason = dragon_realm.run(client, tracker)
+    reason = dragon_realm.run(client, tracker, device=device)
     if reason == "reached_tier_three_gate":
         _mark_done(device)
     return {"stop_reason": reason, "keys": tracker.counts.get(dragon_realm.KEY_ITEM, 0)}
