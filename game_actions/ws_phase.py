@@ -62,6 +62,7 @@ SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
     "競技場挑戰": ("arena_challenges",),
     "菇菇武道會": ("mushroom_arena_cycle_start", "mushroom_arena_daily"),
     "賞金之路": ("escort_last_run",),
+    "七日登入獎勵": ("七日登入",),
 }
 
 
@@ -200,6 +201,23 @@ def _record_ws_daily_progress(ip: str, report, effective_done: set[str],
             _mark_farm_seed_done(ip, log)
         except Exception:  # noqa: BLE001
             log.warning("[%s] WS 回寫農場買種紀錄失敗", ip, exc_info=True)
+    # 七日登入：領取成功由 SKIP_TO_DAILY_RECORD 回寫；「今天已領/活動已全領完」
+    # （查詢回 not_claimable 且 day>0）等同今日完成，這裡補寫，讓 dashboard 徽章點亮。
+    try:
+        _seven = report.tasks.get("seven_login")
+        _seven_ok = (
+            isinstance(_seven, dict)
+            and _seven.get("skipped") == "not_claimable"
+            and int(_seven.get("day") or 0) > 0
+        )
+    except Exception:  # noqa: BLE001
+        _seven_ok = False
+    if _seven_ok:
+        try:
+            import json_manager
+            json_manager.time_recording(ip, name="七日登入")
+        except Exception:  # noqa: BLE001
+            log.warning("[%s] WS 回寫七日登入紀錄失敗", ip, exc_info=True)
 
 
 # --- 續做 ledger（中斷後持久化進度；瀏覽器用完重新上線只跑未完成）-------------

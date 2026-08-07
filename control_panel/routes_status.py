@@ -332,6 +332,7 @@ def _record_is_today(manager, data, key_or_list):
 _DAILY_TASKS_CONFIG = {
     "農場買種": {"key": "farm_seed_purchase"},
     "農場種植": {"key": "farm_plant_click"},
+    "七日登入": {"key": "七日登入"},
     "挖礦": {"key": ["挖礦", "挖礦"]},
     "地獄之門": {"key": "地獄之門"},
     "萬神試煉": {"key": "萬神試煉", "period": "week"},

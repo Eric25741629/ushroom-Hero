@@ -253,3 +253,24 @@ def test_mount_sprint_badge_hidden_thursday(monkeypatch):
     res = routes_status._compute_daily_progress(
         mgr, "dev", today=_SEA_WEEK_DAY, now=now)
     assert "坐騎衝刺" not in res
+
+
+# ── 七日登入：固定每日徽章，今天領過即 ✅，沒領過 ⏳ ─────────────────────
+def test_seven_login_badge_lit_when_recorded_today():
+    data = {"七日登入": {"timestamp": _ts_on(datetime.date(2026, 6, 22)), "date": "x"}}
+    mgr = _FakeManager(data, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["七日登入"] is True
+
+
+def test_seven_login_badge_dim_when_not_recorded_today():
+    data = {"七日登入": {"timestamp": _ts_on(datetime.date(2026, 6, 21)), "date": "x"}}
+    mgr = _FakeManager(data, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["七日登入"] is False
+
+
+def test_seven_login_badge_visible_without_record():
+    mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["七日登入"] is False

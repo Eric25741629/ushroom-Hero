@@ -686,6 +686,40 @@ def test_ws_success_records_daily_keys_for_dashboard(monkeypatch):
     }
 
 
+def test_seven_login_claimed_records_daily_key(monkeypatch):
+    """WS 七日登入領取成功 → 回寫「七日登入」，dashboard 徽章 ✅。"""
+    _cfg(monkeypatch, {"enabled": True})
+    calls = _patch_time_recording(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "seven_login": {"ok": True, "claimed": 3, "day": 3},
+    }))
+    skips = ws_phase.run_ws_phase("dev")
+    assert ("dev", "七日登入") in calls
+    assert "七日登入獎勵" in skips
+
+
+def test_seven_login_not_claimable_with_day_records_daily_key(monkeypatch):
+    """今天已領 / 活動全領完 (not_claimable 且 day>0) → 補寫「七日登入」。"""
+    _cfg(monkeypatch, {"enabled": True})
+    calls = _patch_time_recording(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "seven_login": {"skipped": "not_claimable", "day": 7},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert ("dev", "七日登入") in calls
+
+
+def test_seven_login_not_started_does_not_record(monkeypatch):
+    """活動未開始 (day=0) → 不視為完成，不寫「七日登入」。"""
+    _cfg(monkeypatch, {"enabled": True})
+    calls = _patch_time_recording(monkeypatch)
+    monkeypatch.setattr(ws_phase, "_run_device", lambda ip, cfg, progress=None, **_kw:_report({
+        "seven_login": {"skipped": "not_claimable", "day": 0},
+    }))
+    ws_phase.run_ws_phase("dev")
+    assert ("dev", "七日登入") not in calls
+
+
 def test_ws_errored_or_self_skipped_tasks_not_recorded(monkeypatch):
     _cfg(monkeypatch, {"enabled": True})
     calls = _patch_time_recording(monkeypatch)
