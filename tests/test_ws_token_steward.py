@@ -41,6 +41,7 @@ from ws_token.steward import (  # noqa: E402
     derive_sweep_list,
     ensure_active,
     is_active,
+    read_dungeon_levels,
     read_dungeon_setting,
     read_info,
     run,
@@ -423,9 +424,9 @@ def test_run_dungeon_active_but_no_sweep_list_skips_sweep():
 
 # --- derive_sweep_list (live副本管家設定 + dungeon_list) -------------------
 
-def test_derive_sweep_list_uses_live_levels_and_sets_ad_for_every_chapter():
+def test_derive_sweep_list_includes_daily_reward_and_only_supported_ads():
     # 內層 key 1 是「開啟掃蕩」switch，不是 level；level 必須來自
-    # dungeon_list。id=1 是武魂試煉，沒有一般掃蕩 switch，必須排除。
+    # dungeon_list。id=1 的 key 2 是武魂每日報酬，須送 times=0 的特殊項目。
     setting = {
         1: {2: 1},
         2: {1: 1},
@@ -434,8 +435,9 @@ def test_derive_sweep_list_uses_live_levels_and_sets_ad_for_every_chapter():
     }
     levels = {1: 639, 2: 150, 7: 150, 12: 1751}
     assert derive_sweep_list(setting, levels) == [
+        (1, 639, 0, 0),
         (2, 150, 1, 1),
-        (7, 150, 1, 1),
+        (7, 150, 1, 0),
         (12, 1751, 1, 1),
     ]
 
@@ -446,6 +448,28 @@ def test_derive_sweep_list_does_not_guess_without_live_levels():
 
 def test_derive_sweep_list_can_disable_ads_explicitly():
     assert derive_sweep_list({2: {1: 1}}, {2: 150}, use_ad=0) == [(2, 150, 1, 0)]
+
+
+def test_derive_sweep_list_uses_ticket_inventory_and_keeps_ad_only_entries():
+    setting = {2: {1: 1}, 3: {1: 1}, 4: {1: 1}}
+    levels = {2: 150, 3: 150, 4: 30}
+    inventory = {1003: 1, 1004: 3}  # 1009 缺席即代表古城門票為 0
+
+    assert derive_sweep_list(setting, levels, inventory_counts=inventory) == [
+        (2, 150, 1, 1),
+        (3, 150, 3, 1),
+        (4, 30, 0, 1),
+    ]
+
+
+def test_read_dungeon_levels_uses_fate_current_level(monkeypatch):
+    rows = [
+        type("Row", (), {"type": 11, "max_level": 749, "cur_level": 748})(),
+        type("Row", (), {"type": 2, "max_level": 150, "cur_level": 149})(),
+    ]
+    monkeypatch.setattr("ws_token.steward.dungeon.list_dungeons", lambda _client, timeout=None: rows)
+
+    assert read_dungeon_levels(object()) == {1: 748, 2: 150}
 
 
 def test_derive_sweep_list_empty_setting_returns_empty():

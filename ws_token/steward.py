@@ -47,6 +47,7 @@ CMD_DUNGEON_SWEEP = 18701         # worker_common_farm_housekeeper_dungeon_sweep
 # dungeon_setting_info 的 list.k 是 MysteryDungeonKey，不是 level 或 times。
 # 遊戲客戶端目前使用 1 表示「開啟副本掃蕩」；2 是武魂試煉的自動購買設定。
 DUNGEON_SWEEP_SETTING = 1
+DUNGEON_DAILY_REWARD_SETTING = 2
 
 # Service row ids from configHousekeeper (housekeeper_config.json).
 SERVICE_SHOPPING = 1  # 購物管家
@@ -68,6 +69,22 @@ HOUSEKEEPER_CHAPTER_TYPES: dict[int, int] = {
     11: 38,
     12: 6,
 }
+
+# 原生 MysteryDungeonManagerView.GetMaxLimit 會以這些門票的背包現量當 times。
+# housekeeper_chapter_limit 的客戶端全域上限目前是 100。
+HOUSEKEEPER_CHAPTER_TICKET_ITEMS: dict[int, int] = {
+    2: 1003,
+    3: 1004,
+    4: 1009,
+    5: 1011,
+    6: 1075,
+    11: 1326,
+    12: 7002,
+}
+HOUSEKEEPER_CHAPTER_LIMIT = 100
+
+# configChapter_type.ad > 0 的副本；其餘章節不可送廣告追加次數。
+HOUSEKEEPER_AD_CHAPTERS = frozenset({2, 3, 4, 5, 6, 12})
 
 # Renewal length sent in buy_service.day_num.
 # live-confirm: day_num semantics — is it the literal day count (30) or the
@@ -323,32 +340,38 @@ def read_dungeon_setting(
 def read_dungeon_levels(
     client: WSGameClient, *, timeout: Optional[float] = None
 ) -> dict[int, int]:
-    """讀取遊戲副本 level，轉成 housekeeper chapter id -> max level。"""
+    """讀取遊戲副本 level，轉成 housekeeper chapter id -> 原生掃蕩 level。"""
     rows = dungeon.list_dungeons(client, timeout=timeout)
-    level_by_type = {
-        int(row.type): int(row.max_level)
+    rows_by_type = {
+        int(row.type): row
         for row in rows
         if int(row.max_level) > 0
     }
-    return {
-        chapter_id: level_by_type[chapter_type]
-        for chapter_id, chapter_type in HOUSEKEEPER_CHAPTER_TYPES.items()
-        if chapter_type in level_by_type
-    }
+    out: dict[int, int] = {}
+    for chapter_id, chapter_type in HOUSEKEEPER_CHAPTER_TYPES.items():
+        row = rows_by_type.get(chapter_type)
+        if row is None:
+            continue
+        # 武魂每日報酬原生 sweepShow 使用目前層，而不是最高通關層。
+        level = row.cur_level if chapter_id == 1 else row.max_level
+        if int(level) > 0:
+            out[chapter_id] = int(level)
+    return out
 
 
 def derive_sweep_list(
     setting: Mapping[int, Mapping[int, int]],
     dungeon_levels: Mapping[int, int] | None = None,
     *,
+    inventory_counts: Mapping[int, int] | None = None,
     times: int = 1,
     use_ad: int | None = None,
 ) -> list[tuple[int, int, int, int]]:
     """由真實副本設定與 level 組出副本管家 sweep_list。
 
-    ``setting`` 的內層 key 只判斷 ``DUNGEON_SWEEP_SETTING``；level 來自
-    ``dungeon_list``。自動推導每個已開啟副本 1 次，且免廣告卡帳號送出時
-    一律帶 ``use_ad=1``，讓畫面上的額外廣告次數確實被消耗。
+    ``setting`` 的內層 key 是設定枚舉；level 來自 ``dungeon_list``。
+    武魂每日報酬是 id=1/times=0 的特殊項目。一般副本若有背包快照，times
+    依原生客戶端取門票現量；門票為 0 仍保留項目，讓 use_ad=1 消耗純廣告次數。
     """
     if not dungeon_levels:
         return []
@@ -356,17 +379,36 @@ def derive_sweep_list(
         sweep_times = max(1, int(times))
     except (TypeError, ValueError):
         sweep_times = 1
-    ad = 1 if use_ad is None else int(bool(use_ad))
     out: list[tuple[int, int, int, int]] = []
     for chapter_id in sorted(setting):
         try:
             switches = setting[chapter_id]
-            enabled = int(switches.get(DUNGEON_SWEEP_SETTING, 0)) > 0
             level = int(dungeon_levels.get(int(chapter_id), 0))
         except (AttributeError, TypeError, ValueError):
             continue
-        if enabled and level > 0:
-            out.append((int(chapter_id), level, sweep_times, ad))
+        chapter_id = int(chapter_id)
+        if level <= 0:
+            continue
+        if chapter_id == 1:
+            if int(switches.get(DUNGEON_DAILY_REWARD_SETTING, 0)) > 0:
+                out.append((chapter_id, level, 0, 0))
+            continue
+        if int(switches.get(DUNGEON_SWEEP_SETTING, 0)) <= 0:
+            continue
+
+        chapter_times = sweep_times
+        ticket_item = HOUSEKEEPER_CHAPTER_TICKET_ITEMS.get(chapter_id)
+        if inventory_counts is not None and ticket_item is not None:
+            try:
+                owned = max(0, int(inventory_counts.get(ticket_item, 0)))
+            except (AttributeError, TypeError, ValueError):
+                owned = 0
+            chapter_times = min(owned, HOUSEKEEPER_CHAPTER_LIMIT)
+        if use_ad is None:
+            ad = int(chapter_id in HOUSEKEEPER_AD_CHAPTERS)
+        else:
+            ad = int(bool(use_ad))
+        out.append((chapter_id, level, chapter_times, ad))
     return out
 
 
