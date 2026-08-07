@@ -65,6 +65,28 @@ def test_wait_for_session_handoff_only_sleeps_remaining_time(monkeypatch):
     assert sleeps == [3.0]
 
 
+def test_wait_for_settlement_delay_only_sleeps_until_five_minutes(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(hellgate.time, "monotonic", lambda: 125.0)
+    monkeypatch.setattr(hellgate.time, "sleep", sleeps.append)
+
+    waited = hellgate._wait_for_settlement_delay(100.0, 300.0)
+
+    assert waited == 275.0
+    assert sleeps == [275.0]
+
+
+def test_wait_for_settlement_delay_does_not_add_another_five_minutes(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(hellgate.time, "monotonic", lambda: 405.0)
+    monkeypatch.setattr(hellgate.time, "sleep", sleeps.append)
+
+    waited = hellgate._wait_for_settlement_delay(100.0, 300.0)
+
+    assert waited == 0.0
+    assert sleeps == []
+
+
 def test_parse_worldboss_info_decodes_gate_and_string_counters():
     body = (
         codec.pb_uint(1, 1)
@@ -134,7 +156,12 @@ def test_run_with_b_skips_before_start_when_event_is_closed(monkeypatch):
     ))
     monkeypatch.setattr(hellgate, "close_raw_cdp_runtime", lambda *_args: None)
     try:
-        report = hellgate.run_with_b(client, cdp_port=1, session_settle_sec=0)
+        report = hellgate.run_with_b(
+            client,
+            cdp_port=1,
+            session_settle_sec=0,
+            settlement_delay_sec=0,
+        )
         assert report.skipped == "event closed (is_open=0)"
         assert hellgate.CMD_BATTLE_MORE_START not in fake.sent_cmds()
     finally:
@@ -256,7 +283,9 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
         "ms": 1.0,
     })
     try:
-        report = hellgate.run_with_b(client, cdp_port=1, session_settle_sec=0)
+        report = hellgate.run_with_b(
+            client, cdp_port=1, session_settle_sec=0, settlement_delay_sec=0
+        )
         assert report.success is True
         assert report.info is not None
         assert report.info.times == 1
@@ -303,7 +332,9 @@ def test_failed_calculation_abandons_without_damage_fields(monkeypatch):
         "err": "frame limit",
     })
     try:
-        report = hellgate.run_with_b(client, cdp_port=1, session_settle_sec=0)
+        report = hellgate.run_with_b(
+            client, cdp_port=1, session_settle_sec=0, settlement_delay_sec=0
+        )
         assert report.success is False
         sent = [body for _sid, cmd, body in fake.framed_sent() if cmd == hellgate.CMD_RESULT]
         assert len(sent) == 1
@@ -344,7 +375,11 @@ def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
     monkeypatch.setattr(hellgate, "_RESULT_ACK_TIMEOUT_SEC", 0.1)
     try:
         report = hellgate.run_with_b(
-            client, cdp_port=1, session_settle_sec=0, timeout=0.1
+            client,
+            cdp_port=1,
+            session_settle_sec=0,
+            settlement_delay_sec=0,
+            timeout=0.1,
         )
         assert report.success is True
         assert report.after_info is not None
@@ -389,7 +424,11 @@ def test_result_error_cannot_be_promoted_by_stale_info_update(monkeypatch):
     })
     try:
         report = hellgate.run_with_b(
-            client, cdp_port=1, session_settle_sec=0, timeout=0.1
+            client,
+            cdp_port=1,
+            session_settle_sec=0,
+            settlement_delay_sec=0,
+            timeout=0.1,
         )
         assert report.success is False
         assert report.result is not None
