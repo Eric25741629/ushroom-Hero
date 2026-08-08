@@ -83,9 +83,9 @@ def _stub_ladder_store(monkeypatch, store):
 
 
 # --------------------------------------------------------------------------
-# 地獄之門
+# 地獄之門（每日一次；時段窗 01:00~23:00，不再限每小時 0~20 分）
 # --------------------------------------------------------------------------
-def test_hellgate_due_when_no_record_and_before_minute_20(monkeypatch):
+def test_hellgate_due_when_no_record_and_in_window(monkeypatch):
     # Arrange
     _patch_records(monkeypatch, {})
     # Act
@@ -99,15 +99,21 @@ def test_hellgate_not_due_when_done_today(monkeypatch):
     assert task_due.is_due("地獄之門", "ip", now=_dt(2026, 7, 6, 10, 5)) is False
 
 
-def test_hellgate_due_when_next_day_and_before_minute_20(monkeypatch):
+def test_hellgate_due_when_next_day_and_in_window(monkeypatch):
     _patch_records(monkeypatch, {"地獄之門": {"is_next_day": True}})
     assert task_due.is_due("地獄之門", "ip", now=_dt(2026, 7, 6, 10, 5)) is True
 
 
-def test_hellgate_not_due_when_minute_gate_closed(monkeypatch):
-    # 即使跨日 due，minute >= 20 也不執行
+def test_hellgate_due_late_evening(monkeypatch):
+    # 23:xx 仍在 01:00~23:00 窗內 → due
     _patch_records(monkeypatch, {})
-    assert task_due.is_due("地獄之門", "ip", now=_dt(2026, 7, 6, 10, 30)) is False
+    assert task_due.is_due("地獄之門", "ip", now=_dt(2026, 7, 6, 23, 45)) is True
+
+
+def test_hellgate_not_due_midnight_hour(monkeypatch):
+    # 00:xx 在時段窗外，即使跨日 due 也不執行
+    _patch_records(monkeypatch, {})
+    assert task_due.is_due("地獄之門", "ip", now=_dt(2026, 7, 6, 0, 30)) is False
 
 
 # --------------------------------------------------------------------------
