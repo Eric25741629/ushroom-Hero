@@ -1,8 +1,8 @@
 """純 WS 穿越深淵之門（WorldBoss / 地獄之門）。
 
 這個玩法不是 ``ws_token.dungeon.TYPE_ABYSS``：它是 ``ChapterType.WorldBoss``
-(13)，入口用 3597，結算用 dungeon_battle_result 3592。WS 帳號負責進場與
-結算；官方 BattleMainServer 只在獨立的 B 計算頁計算傷害，不使用 ADB 或 UI。
+(13)，入口用 3597，戰鬥結果用 3592，主頁 DONE 收尾用 6593。WS 帳號負責
+進場與結算；官方 BattleMainServer 只在獨立的 B 計算頁計算傷害，不使用 ADB 或 UI。
 """
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ CMD_RESULT = 3592             # dungeon.dungeon_battle_result_c2s/s2c (H5)
 CMD_GENERIC_RESULT = 3587     # dungeon.dungeon_result_c2s/s2c；僅保留相容解析
 CMD_WORLD_BOSS_INFO = 3594    # dungeon.dungeon_world_boss_info_c2s/s2c
 CMD_BATTLE_MORE_START = 3597  # dungeon.dungeon_battle_more_start_c2s/s2c
+CMD_FINISH_WORLD_BOSS = 6593  # act_cross_limited_rank：主頁 DONE 收尾，空 body
 CMD_ERROR = 0x0201
 
 _RESULT_ACK_TIMEOUT_SEC = 3.0
@@ -49,6 +50,7 @@ class WorldBossInfo:
     my_hurt: str = "0"
     times: int = 0
     is_first: int = 0
+    pending_result: int = 0
     error_code: int | None = None
     error: str | None = None
     fields: dict = field(default_factory=dict, compare=False)
@@ -117,6 +119,9 @@ class WorldBossRun:
             "after_times": self.after_info.times if self.after_info else None,
             "after_my_hurt": self.after_info.my_hurt if self.after_info else None,
             "after_my_rank": self.after_info.my_rank if self.after_info else None,
+            "after_pending_result": (
+                self.after_info.pending_result if self.after_info else None
+            ),
             "after_info_error": self.after_info_error,
         }
 
@@ -217,6 +222,7 @@ def parse_info(cmd: int, body: bytes) -> WorldBossInfo:
         my_hurt=_as_string(fields.get(9), "0"),
         times=_as_int(fields.get(10)),
         is_first=_as_int(fields.get(11)),
+        pending_result=_as_int(fields.get(12)),
         fields=fields,
     )
 
@@ -276,8 +282,9 @@ def parse_result(cmd: int, body: bytes) -> WorldBossResult:
         )
     code = _as_int(fields.get(1))
     rewards: dict[int, int] = {}
+    reward_field = 5 if cmd == CMD_RESULT else 6
     for number, raw in codec.walk(body):
-        if number != 5 or not isinstance(raw, (bytes, bytearray)):
+        if number != reward_field or not isinstance(raw, (bytes, bytearray)):
             continue
         reward = codec.walk_dict(bytes(raw))
         rewards[_as_int(reward.get(1))] = _as_int(reward.get(2))
@@ -290,7 +297,7 @@ def parse_result(cmd: int, body: bytes) -> WorldBossResult:
         dungeon_id=_as_int(fields.get(3 if cmd == CMD_RESULT else 2)),
         result=_as_int(fields.get(4)),
         rewards=rewards,
-        ext=_parse_key_values(body, 6),
+        ext=_parse_key_values(body, 6) if cmd == CMD_RESULT else (),
         sext=_parse_key_strings(body, 7),
         error_code=code or None,
         error=None if code == 0 else f"dungeon_battle_result code={code}",
@@ -378,6 +385,22 @@ def submit_result(
             fields={"sent": True},
         )
     return parse_result(cmd, response)
+
+
+def finish_worldboss(
+    client: WSGameClient,
+    *,
+    timeout: float | None = None,
+) -> WorldBossResult:
+    """觸發主頁 ``DONE`` 的官方收尾：6593 空 body -> 3587 結算獎勵。"""
+
+    cmd, body = client.call_for(
+        CMD_FINISH_WORLD_BOSS,
+        b"",
+        expect_cmds=(CMD_GENERIC_RESULT, CMD_ERROR),
+        timeout=timeout,
+    )
+    return parse_result(cmd, body)
 
 
 def _counter_int(value: object) -> int:
@@ -570,29 +593,62 @@ def _run_after_start(
         reported.error_code is None
         and _result_state_changed(before_info, after_info, result=0)
     )
-    confirmed_result = WorldBossResult(
-        success=confirmed,
-        type=started.type,
-        dungeon_id=started.dungeon_id,
-        result=0,
-        rewards=reported.rewards,
-        ext=reported.ext,
-        sext=reported.sext,
-        error=None if confirmed else (
-            reported.error or after_info_error or "settlement not confirmed"
-        ),
-        error_code=reported.error_code if not confirmed else None,
-        fields=reported.fields,
-    )
+    if not confirmed:
+        confirmed_result = WorldBossResult(
+            success=False,
+            type=started.type,
+            dungeon_id=started.dungeon_id,
+            result=0,
+            rewards=reported.rewards,
+            ext=reported.ext,
+            sext=reported.sext,
+            error=reported.error or after_info_error or "settlement not confirmed",
+            error_code=reported.error_code,
+            fields=reported.fields,
+        )
+        return WorldBossRun(
+            success=False,
+            info=before_info,
+            start=started,
+            result=confirmed_result,
+            after_info=after_info,
+            after_info_error=after_info_error,
+            simulation=simulation,
+            error=confirmed_result.error,
+        )
+    try:
+        finished = finish_worldboss(client, timeout=timeout)
+    except Exception as exc:  # noqa: BLE001 — DONE 未收尾時不得宣稱整輪完成
+        return WorldBossRun(
+            success=False,
+            info=before_info,
+            start=started,
+            result=reported,
+            after_info=after_info,
+            after_info_error=after_info_error,
+            simulation=simulation,
+            error=f"finish 6593 failed: {exc}",
+        )
+    if not finished.success:
+        return WorldBossRun(
+            success=False,
+            info=before_info,
+            start=started,
+            result=finished,
+            after_info=after_info,
+            after_info_error=after_info_error,
+            simulation=simulation,
+            error=finished.error or "finish 6593 rejected",
+        )
     return WorldBossRun(
-        success=confirmed,
+        success=True,
         info=before_info,
         start=started,
-        result=confirmed_result,
+        result=finished,
         after_info=after_info,
         after_info_error=after_info_error,
         simulation=simulation,
-        error=confirmed_result.error,
+        error=None,
     )
 
 
