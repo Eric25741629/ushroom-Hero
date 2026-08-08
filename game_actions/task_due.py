@@ -26,13 +26,15 @@ def _resolve_now(now: Optional[datetime.datetime]) -> datetime.datetime:
 # predicates（每個對照現有邏輯 1:1）
 # --------------------------------------------------------------------------
 def _due_hellgate(ip: str, now: datetime.datetime) -> bool:
-    # 對照 game_actions/daily_pipeline.py:225-230
+    # 每日一次；時段窗 01:00~23:00（00:00~01:00 不跑，避開跨日重置窗）。
+    # 2026-08-09 使用者要求：地獄之門已不再限每小時 0~20 分，任一時刻皆可打，
+    # 故只保留時段下限（hour>=1），移除原 minute<20 限制。
     record = json_manager.return_time(ip, name="地獄之門")
     if record is None:
         should_execute = True
     else:
         should_execute = record.get("is_next_day", False)
-    return bool(should_execute and now.minute < 20)
+    return bool(should_execute and now.hour >= 1)
 
 
 def _due_daily_acceleration(ip: str, now: datetime.datetime) -> bool:

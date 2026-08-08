@@ -12,38 +12,8 @@ from ._helpers import _resolve_device_id
 
 
 def hell_door(d, ip):
-    click_speed = False
-    for i in range(10):
-        if 'fc65396d' in ip:
-            d.click(random.randint(160, 190), random.randint(145, 179))  # 首頁加速的按鈕
-        else:
-            d.click(178 + random.randint(-5, 5), 114 + random.randint(-5, 5))  # 首頁加速的按鈕
-        time.sleep(1)
-        img = d.screenshot(format='opencv')[239:277, 197:340]
-        result = img_tools.analyze_skill_via_http(img)
-        if result.get('success') is False:
-            return
-        if result is None or result.get("success") == False:
-            print("未識別到文字，請檢查截圖或服務狀態")
-            continue
-        if result is not None and (result.get('ocr_results')[0].get("text", None) == "戰鬥加速"):
-            print("找到戰鬥加速")
-            click_speed = True
-            break
-        img = d.screenshot(format='opencv')[421:470, 173:374]
-        result = img_tools.analyze_skill_via_http(img)
-        print(result)
-        if result is None or result.get("success") == False:
-            print("未識別到文字，請檢查截圖或服務狀態")
-            continue
-        if result is not None and result.get('ocr_results')[0] == "游荡哥布林":
-            print("游荡哥布林")
-            d.click(270, 685)  # 點擊領取
-            time.sleep(1)
-            d.click(525, 10)  # 關閉
-    if click_speed:
-        d.click(random.randint(196, 338), random.randint(485, 515))  # 觀看廣告的按鈕
-        time.sleep(2 + random.random() * 5)
+    # 2026-08-09 使用者要求：取消加速環節（看廣告開 2x 戰鬥加速）。web_h5 已透過
+    # battle_speed_scale=4（官方 battleMain.timeScale）實現 4x，無需再看廣告 2x。
     d.click(random.randint(191, 256), random.randint(886, 946))  # 點擊副本
     time.sleep(0.5)
     d.swipe(0.5 - random.random() * 0.2, 0.2, 0.3 + random.random() * 0.2, 0.8, 0.1)
