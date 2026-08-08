@@ -92,6 +92,13 @@ def test_any_client_due_false_when_nothing_due(monkeypatch):
     assert task_due.any_client_due("ip", now=_dt(2026, 7, 6)) is False
 
 
+def test_any_client_due_keeps_browser_for_due_escort(monkeypatch):
+    _patch_cfg(monkeypatch, _base_cfg(enable_escort=True))
+    _stub_delegated(monkeypatch)
+    _patch_is_due(monkeypatch, due_tasks=("賞金之路",))
+    assert task_due.any_client_due("ip", now=_dt(2026, 7, 11, 11)) is True
+
+
 def test_any_client_due_true_when_always_on_task_due(monkeypatch):
     # 航海 無 enable flag（恆啟用）→ 只要 is_due 說 due 就該做
     _patch_cfg(monkeypatch, _base_cfg())

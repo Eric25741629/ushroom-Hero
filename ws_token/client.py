@@ -51,7 +51,7 @@ def normalize_kick_reason(reason: object) -> Optional[str]:
     value = getattr(reason, "value", reason)
     if value in (None, ""):
         return None
-    if value == 20 or str(value) == "20":
+    if value == 20:
         return KICK_REASON_EXPLICIT
     return str(value)
 

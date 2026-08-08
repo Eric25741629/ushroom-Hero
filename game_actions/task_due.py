@@ -203,6 +203,19 @@ def _due_fannaoxiao(ip: str, now: datetime.datetime) -> bool:
     return bool(fx._is_due(ip))
 
 
+def _due_escort(ip: str, now: datetime.datetime) -> bool:
+    """賞金之路週末 H5 任務是否仍需保留瀏覽器喚醒機會。
+
+    這裡只鏡像 ``escort_scheduler`` 的純時間/記錄閘門，不進入頁面，也不
+    發送 WS。若不把它列入 ``any_client_due``，瀏覽器 skip 閘門會在到達
+    Task 14.65 前把整輪跳掉，導致賞金之路永遠沒有機會執行。
+    """
+    if now.weekday() not in (5, 6) or now.hour < 11:
+        return False
+    record = json_manager.return_time(ip, name="escort_last_run")
+    return bool(json_manager.is_record_expired(record, 20 * 3600))
+
+
 def _due_gacha_skill_partner(ip: str, now: datetime.datetime) -> bool:
     # 對照 ws_token/runner.py:_run_gacha_free 的每日 gate（ws_state 的
     # gacha_free.last_date）。== 今天(台北) → 本日已跑客戶端抽 → not due；
@@ -236,6 +249,7 @@ _REGISTRY: Dict[str, Callable[[str, datetime.datetime], bool]] = {
     "菇菇雕像每週": _due_statue_weekly,
     "龍骸聖域": _due_dragon_realm,
     "煩惱消": _due_fannaoxiao,
+    "賞金之路": _due_escort,
     "抽技能夥伴": _due_gacha_skill_partner,
 }
 
@@ -274,6 +288,7 @@ def is_due(task: str, ip: str, now: Optional[datetime.datetime] = None) -> bool:
 #   菇菇雕像每週   | statue_weekly._is_enabled(cfg)（nested statue_weekly.enabled 預設 False）
 #   龍骸聖域       | dragon_realm.use_dragon_realm(ip, load_config()) 預設 True（per-device 覆寫 global）
 #   煩惱消        | fannaoxiao_scheduler._is_enabled(ip)（enable_fannaoxiao 預設 False AND backend==web_h5）
+#   賞金之路      | cfg.enable_escort AND backend==web_h5（escort_scheduler.py:36）
 #
 # **排除** 抽技能夥伴（遊戲自理，唯一靠截圖紅點）與車位（WS 自足，無 predicate）。
 # --------------------------------------------------------------------------
@@ -336,6 +351,13 @@ def _en_fannaoxiao(ip: str, cfg: dict) -> bool:
     return bool(fx._is_enabled(ip))
 
 
+def _en_escort(ip: str, cfg: dict) -> bool:
+    """賞金之路只由 web_h5 pipeline 執行；WS runner 走自己的 gate。"""
+    return bool(cfg.get("enable_escort", False)) and (
+        str(cfg.get("backend", "adb")).strip().lower() == "web_h5"
+    )
+
+
 # task → enable predicate（審核對照表，順序即 any_client_due 的短路順序）。
 _CLIENT_ENABLE: Dict[str, Callable[[str, dict], bool]] = {
     "地獄之門": _en_hellgate,
@@ -351,13 +373,14 @@ _CLIENT_ENABLE: Dict[str, Callable[[str, dict], bool]] = {
     "菇菇雕像每週": _en_statue,
     "龍骸聖域": _en_dragon,
     "煩惱消": _en_fannaoxiao,
+    "賞金之路": _en_escort,
 }
 
 
 def any_client_due(ip: str, now: Optional[datetime.datetime] = None) -> bool:
     """本輪是否還有任何『需要開瀏覽器客戶端』的任務該做。
 
-    = OR over 13 個任務的 ``(enable gate) AND is_due(task, ip, now)``。
+    = OR over 14 個任務的 ``(enable gate) AND is_due(task, ip, now)``。
     **fail-safe**：讀 config / 任一 enable / 任一 predicate raise → 該任務保守當
     「due」→ 回 True（寧可開瀏覽器，絕不誤跳過而漏做任務）。
     """

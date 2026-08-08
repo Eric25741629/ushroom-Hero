@@ -37,6 +37,10 @@
 - **正確做法**：
   - `WS_TO_PIPELINE_SKIPS["gacha"]` → `("抽技能夥伴",)`（付費抽做完→跳過 ADB `weekend_to_buy`）
   - `_run_gacha` 加 `weekend_only` gate；config default `mode=fixed, count=35, batches=3`
+  - WS 離線備援會隨手機每小時喚醒，付費抽必須另加 per-device、per-day 的
+    at-most-once gate；每種類型要在送協議前先落盤，避免回包後程序崩潰造成重複扣券。
+  - 同日 gate 命中時仍要回報為「實質完成」（不可只回 `{"skipped": ...}`），
+    否則手機 ADB 後來回線時，pipeline 可能再次執行 `weekend_to_buy`。
   - `free_daily` 永遠保持 `False`（不動每日廣告流程）
 - **Rule**：遇到「這個功能改用 WS」，先確認是哪條協議（付費 0x0902 / 免費 0x1602 / 其他），
   不要從「時序相似」就猜對應。每個 WS cmd 都有獨立語義，映射前要驗證。

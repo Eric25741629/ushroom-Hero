@@ -80,7 +80,7 @@ def _run_local_sim_fights(d, ip: str, n: int, gap_sec: float) -> bool:
         set_block_result(page, True)
         cocos = _cocos_arena(d)
         if cocos is not None:
-            if not cocos.ui.click_text("挑戰"):
+            if not cocos.challenge(occurrence=1):
                 return False
         else:
             img_tools.click_str_by_server(d, "挑戰", y_range=(592, 674), wait_timeout=5)
@@ -206,7 +206,7 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
                 set_block_result(page, True)
                 cocos = _cocos_arena(d)
                 if cocos is not None:
-                    if not cocos.ui.click_text("挑戰"):
+                    if not cocos.challenge(occurrence=1):
                         ok = False
                         break
                 else:

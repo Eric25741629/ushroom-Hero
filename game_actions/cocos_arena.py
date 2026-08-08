@@ -15,12 +15,12 @@ class CocosArena:
             return False
         if not self.ui.wait_for_text(("挑戰",), timeout=8):
             return False
-        if not self.ui.click_text("挑戰"):
+        if not self.ui.click_text("挑戰", occurrence=1):
             return False
         return bool(self.ui.wait_for_text(("刷新", "記錄", "挑戰"), timeout=8))
 
-    def challenge(self) -> bool:
-        if not self.ui.click_text("挑戰"):
+    def challenge(self, occurrence: int = 1) -> bool:
+        if not self.ui.click_text("挑戰", occurrence=occurrence):
             return False
         return bool(self.ui.wait_for_text(("跳過", "勝利", "對決"), timeout=12))
 

@@ -4,7 +4,7 @@
 差異在**閘門本質同跨服戰**（雙周末活動、與跨服戰交錯、平常關閉）：
 
   * 旗標 ``enable_escort``（device cfg，預設 False）— 關閉時完全 no-op。
-  * 只在 ``backend == web_h5`` 跑（NPC 挑戰是 client 端 battleMain，需 live page）。
+  * 本檔只在 ``backend == web_h5`` 跑（H5 fallback；純 WS 由 ws_token runner 執行）。
   * 週末/時段閘（使用者指定）：僅**週六/週日**且本地時間 **>= 11:00** 才動作，
     否則直接 return（不讀 page、不導航）→ 週一~五「無須每日尋找」。
   * 開放偵測交給 driver（選擇器 item date=="當前開啟"，處理與跨服戰交錯的關週末）。

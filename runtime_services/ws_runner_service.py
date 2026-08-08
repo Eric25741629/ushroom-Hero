@@ -440,6 +440,10 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     # 秘寶預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
     if secret_jewel_config is not None:
         extra_kwargs["secret_jewel_config"] = secret_jewel_config
+    # 守護靈免費召喚預設開（維持既有無條件行為）→ 只在關閉時才附上，
+    # 避免對沒有 **kwargs 的測試 fake 多傳關鍵字。
+    if _ws_nested.get("spirit_draw_free") is False:
+        extra_kwargs["spirit_draw_free"] = False
     # 跨服戰閒置獎勵預設關 → 只在啟用時才附上 (避免對沒有 **kwargs 的測試 fake 多傳關鍵字)。
     if xwar_idle_enabled:
         extra_kwargs["xwar_idle_enabled"] = True

@@ -1,4 +1,4 @@
-﻿{
+{
     "devices": {
         "emulator-5554": {
             "enable_escort": true,
@@ -1963,8 +1963,8 @@
                 },
                 "sea_season": null,
                 "secret_jewel": {
-                    "buy_daily": false,
-                    "draw_free": false
+                    "buy_daily": true,
+                    "draw_free": true
                 }
             },
             "web_debug_port": 9229,
@@ -2003,7 +2003,7 @@
             "web_viewport_height": 960,
             "web_manual_viewport_width": 0,
             "web_manual_viewport_height": 0,
-            "web_stop_mode": "keep_page",
+            "web_stop_mode": "close_browser",
             "web_screenshot_method": "playwright",
             "web_screenshot_jpeg_quality": null,
             "web_reload_after_goto": false,
@@ -2160,11 +2160,11 @@
                         15
                     ]
                 },
+                "sea_season": null,
                 "secret_jewel": {
-                    "draw_free": false,
-                    "buy_daily": false
-                },
-                "sea_season": null
+                    "buy_daily": true,
+                    "draw_free": true
+                }
             },
             "web_debug_port": 9231,
             "online_check_interval": 5,

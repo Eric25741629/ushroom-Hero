@@ -426,6 +426,28 @@ def test_gacha_due_when_state_read_raises(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# 賞金之路 — 週末 H5 skip 閘門
+# --------------------------------------------------------------------------
+def test_escort_due_on_weekend_after_start_when_record_expired(monkeypatch):
+    _patch_records(monkeypatch, {})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda record, seconds: True)
+    assert task_due.is_due("賞金之路", "ip", now=_dt(2026, 7, 11, 11, 0)) is True
+
+
+def test_escort_not_due_before_start_or_on_weekday(monkeypatch):
+    _patch_records(monkeypatch, {})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda record, seconds: True)
+    assert task_due.is_due("賞金之路", "ip", now=_dt(2026, 7, 11, 10, 59)) is False
+    assert task_due.is_due("賞金之路", "ip", now=_dt(2026, 7, 13, 11, 0)) is False
+
+
+def test_escort_not_due_when_record_is_fresh(monkeypatch):
+    _patch_records(monkeypatch, {"escort_last_run": {"timestamp": 1}})
+    monkeypatch.setattr(json_manager, "is_record_expired", lambda record, seconds: False)
+    assert task_due.is_due("賞金之路", "ip", now=_dt(2026, 7, 11, 11, 0)) is False
+
+
+# --------------------------------------------------------------------------
 # unknown task
 # --------------------------------------------------------------------------
 def test_unknown_task_raises_keyerror(monkeypatch):

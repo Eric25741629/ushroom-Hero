@@ -1728,8 +1728,9 @@ def run_device(device: str, *, spend: bool = False,
                tycoon: bool = False,
                tycoon_max_rolls: int = 50,
                ad_reward_config_ids: Optional[Iterable[int]] = None,
-               gacha_config: Optional[dict] = None,
-               secret_jewel_config: Optional[dict] = None,
+                gacha_config: Optional[dict] = None,
+                secret_jewel_config: Optional[dict] = None,
+                spirit_draw_free: bool = True,
                 mining_config: Optional[dict] = None,
                 sea_config: Optional[dict] = None,
                arena_config: Optional[dict] = None,
@@ -2068,7 +2069,8 @@ def run_device(device: str, *, spend: bool = False,
         if kungfu_worship:
             _step("kungfu_worship", lambda: _run_kungfu_worship(client))
         _step("pay_mall", lambda: _run_pay_mall(client))
-        _step("spirit", lambda: _run_spirit(client))
+        if spirit_draw_free:
+            _step("spirit", lambda: _run_spirit(client))
         _sj_cfg = secret_jewel_config or {}
         if _sj_cfg.get("draw_free") or _sj_cfg.get("buy_daily"):
             _step("secret_jewel",

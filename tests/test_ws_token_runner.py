@@ -217,7 +217,7 @@ def patched(monkeypatch):
     )
     monkeypatch.setattr(runner, "_load_lamp", lambda: fake_lamp)
 
-    # spirit (free draws; always runs)
+    # spirit (free draws; runs by default, gated on spirit_draw_free)
     monkeypatch.setattr(runner.spirit, "draw_all_free",
                         lambda c, **k: (calls.append(("spirit", "draw_all_free"))
                                         or {"pools_drawn": 0, "rewards": {}, "results": []}))
@@ -2222,6 +2222,19 @@ def test_run_spirit_draws_free(monkeypatch):
     monkeypatch.setattr(runner.spirit, "draw_all_free",
                         lambda c: {"pools_drawn": 2, "rewards": {}, "results": []})
     assert runner._run_spirit(object())["pools_drawn"] == 2
+
+
+def test_run_spirit_gated_by_spirit_draw_free(patched):
+    """spirit_draw_free=False 時 spirit 任務不執行；預設(True)維持既有無條件行為。"""
+    _calls, _ = patched
+    rep_off = run_device("dev", spend=False, spirit_draw_free=False)
+    assert "spirit" not in rep_off.tasks
+    assert not any(name == "spirit" for name, _ in _calls)
+
+    _calls.clear()
+    rep_on = run_device("dev", spend=False)
+    assert "spirit" in rep_on.tasks
+    assert any(name == "spirit" for name, _ in _calls)
 
 
 # --- progress callback --------------------------------------------------------

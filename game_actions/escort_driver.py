@@ -2,10 +2,10 @@
 running Cocos H5 client via ``emit('click')``.
 
 賞金之路 = the biweekly weekend Escort event (alternates with 跨服戰). Its NPC
-challenges run a client-side 護送戰鬥 (deterministic battleMain + anti-cheat),
-so the whole flow is UI-driven — there is NO pure-WS path. All navigation and
-combat here go through cocos node clicks; the game emits the same WS a real
-touch would.
+challenges run a client-side 護送戰鬥 (deterministic battleMain + anti-cheat).
+本檔保留 H5 UI fallback；純 WS 主流程由 ``ws_token.escort`` /
+``ws_token.escort_fight`` 負責，A 端直接走 Escort API，B 端載入官方
+BattleMainServer 計算。這裡的 navigation/combat 仍全部走 cocos node clicks。
 
 LIVE-verified end-to-end (emulator-5556 / CDP 9223, 2026-07-04; see memory
 ``reference_escort_bounty_road`` and docs/protocol notes):

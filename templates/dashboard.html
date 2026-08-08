@@ -2069,6 +2069,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             <label class="checkbox-item"><input type="checkbox" id="chkGachaSkill">抽技能</label>
             <label class="checkbox-item"><input type="checkbox" id="chkGachaPartner">抽同伴</label>
             <div class="ws-field-note">「付費抽卡一鍵抽到券盡」請到上方「工具」面板手動執行。</div>
+            <div class="ws-subhead">守護靈</div>
+            <div class="ws-schema-slot" data-slot="spirit"></div>
             <div class="ws-subhead">秘寶（塵世尋寶）</div>
             <div class="ws-schema-slot" data-slot="secret_jewel"></div>
           </div>
@@ -4161,6 +4163,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       { slot:'gacha', path:'ws_token.gacha.mode', type:'select', label:'抽卡模式（fixed＝固定批數安全；drain＝抽到券盡，會用光抽卡券！）', options:[['fixed','固定批數（安全）'],['drain','抽到券盡（危險）']], def:'fixed' },
       { slot:'secret_jewel', path:'ws_token.secret_jewel.draw_free', type:'bool', label:'每日免費尋寶（只吃免費次數 2/日，不花鑽）', def:false },
       { slot:'secret_jewel', path:'ws_token.secret_jewel.buy_daily', type:'bool', label:'每日買尋寶圖（補到 10 張／日，消耗粉鑽 600/張）', def:false },
+      { slot:'spirit', path:'ws_token.spirit_draw_free', type:'bool', label:'每日免費召喚守護靈（只吃免費次數，不花費）', def:true },
+      { slot:'spirit', path:'ws_token.spirit_buy', type:'bool', label:'每日購買招喚貨幣（未支援：官方購買路徑未驗證）', def:false, disabled:true },
       { slot:'carpark', path:'ws_token.carpark_target', type:'intnull', label:'舊版單一停車目標 master_id（空＝不用）', def:null },
       { slot:'carpark', path:'ws_token.carpark_auto', type:'bool', label:'舊版自動掃停可停車位', def:false },
     ];
@@ -4320,7 +4324,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         const wrap = document.createElement('div');
         if (f.type === 'bool') {
           wrap.className = 'ws-field';
-          wrap.innerHTML = '<label class="checkbox-item"><input type="checkbox" id="' + id + '">' + f.label + '</label>';
+          wrap.innerHTML = '<label class="checkbox-item"><input type="checkbox" id="' + id + '"' + (f.disabled ? ' disabled' : '') + '>' + f.label + '</label>';
         } else if (f.type === 'select') {
           wrap.className = 'ws-field ws-field-row';
           const opts = (f.options || []).map(o => '<option value="' + o[0] + '">' + o[1] + '</option>').join('');
@@ -4525,6 +4529,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
     // payload.ws_token 主體(Object.assign)建好之後呼叫,只覆寫各自的 key。
     function collectTaskTabs(payload) {
       WS_EXTRA_FIELDS.forEach(f => {
+        if (f.disabled) return;
         const el = document.getElementById(_wsFieldId(f.path));
         if (!el) return;
         let v;

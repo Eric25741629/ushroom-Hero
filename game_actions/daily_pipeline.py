@@ -469,7 +469,7 @@ def _run_tasks(ctx: DailyContext) -> None:
     except Exception:
         logger.exception("[%s] 煩惱消 任務異常", ip)
 
-    # Task 14.65: 賞金之路（flag 預設 off；H5 only、六日>=11點、清一輪 NPC；adb 自行跳過）
+    # Task 14.65: 賞金之路 H5 fallback（flag 預設 off；六日>=11點、清一輪 NPC；adb 自行跳過）
     _force_sleep_checkpoint()
     try:
         run_escort_if_due(d, ip)

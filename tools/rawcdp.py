@@ -7,9 +7,14 @@ from __future__ import annotations
 import io, json, sys, urllib.request
 import websocket  # websocket-client (sync)
 
-if hasattr(sys.stdout, "buffer"):
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 GAME_HOST = "mushroomh5.acenetgame.com"
+
+
+def _configure_stdout() -> None:
+    """CLI 輸出才需要包成 UTF-8；import 作為 runtime helper 時不要改全域。"""
+
+    if hasattr(sys.stdout, "buffer"):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
 
 def get_page_ws(port: int, host: str = GAME_HOST) -> str:
@@ -89,4 +94,5 @@ def main():
 
 
 if __name__ == "__main__":
+    _configure_stdout()
     main()
