@@ -293,11 +293,27 @@ def _run_pure_ws_wanshen(
 def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
     """萬神試煉Beta：進副本 → 入場 → 跑滿 rounds 局(每局打到第一次失敗→結束本局)→ 祕寶閣。
 
-    回傳是否「跑滿 rounds 局」,供排程決定要不要寫本週記錄(跑滿才算完成;否則下次重試)。
+    回傳是否完成；until-cap 模式只在確認達本週上限時完成，否則跑滿 rounds 才算完成。
     rounds 由 device config `wanshen_rounds` 帶入(預設 8);傳小值供測試。
     """
     page = getattr(d, "_page", None)
     is_web = getattr(d, "backend_kind", None) == "web_h5" and page is not None
+    ip = str(getattr(d, "device_id", "") or "")
+    until_cap = True
+    wanshen_mode = "pure_ws"
+    cfg: dict = {}
+    try:
+        import config_manager
+        from battle_calc.config import coerce_wanshen_battle_mode
+
+        cfg = config_manager.get_device_config(ip)
+        until_cap = bool(cfg.get("wanshen_until_cap", True))
+        wanshen_mode = coerce_wanshen_battle_mode(
+            cfg.get("wanshen_battle_mode", "pure_ws"),
+            default="pure_ws",
+        )
+    except Exception:
+        pass
     # rogue 結算 / 秘寶閣面板不會自動回主頁；不主動返回的話，本輪後續任務
     # (雲端戰鬥/好友禮物/開神燈/轉盤金幣) 會全部因「不在主頁面」被跳過。
     # 進『副本』後一律在收尾返回主頁（成功與中止路徑皆然）。
@@ -334,81 +350,68 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
                 return False
             time.sleep(2)
 
-        # 依後端分派：web_h5 走 node-emit 路徑(cocos 狀態判斷，繞過遮罩/座標飄移 →
-        # 治好開局遮罩吞點擊的 150s 空燒 + 結算紅箭頭打偏)；adb 維持 OCR。
-        # 入場也已分家：web_h5 直開 RogueView(上面)，adb 才捲副本清單 OCR。
+        # pure_ws 是所有 backend 的預設主路徑；失敗時才依 backend 回退：
+        # web_h5 走 node-emit animation，ADB 走既有 OCR。
+        # 入場仍分家：web_h5 直開 RogueView(上面)，ADB 捲副本清單 OCR。
         # 見 docs/superpowers/plans/2026-07-17-wanshen-h5-node-ws-plan.md
         cap_reached = False  # until_cap 模式下是否已達本周獲取上限(達標=本週完成)
-        if is_web:
-            # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
-            until_cap = True
-            wanshen_mode = "pure_ws"
-            cfg: dict = {}
-            try:
-                import config_manager
-                cfg = config_manager.get_device_config(getattr(d, "device_id", "") or "")
-                until_cap = bool(cfg.get("wanshen_until_cap", True))
-                # wanshen_battle_mode：animation / local_sim / remote_calc / pure_ws。
-                # 未通過 coerce_wanshen_battle_mode 的值退回 pure_ws，避免缺設定時退回動畫。
-                from battle_calc.config import coerce_wanshen_battle_mode
-                wanshen_mode = coerce_wanshen_battle_mode(
-                    cfg.get("wanshen_battle_mode", "pure_ws"),
-                    default="pure_ws",
+        if wanshen_mode == "pure_ws":
+            report = _run_pure_ws_wanshen(
+                d, ip, rounds, cfg, until_cap=until_cap
+            )
+            if report is not None and report.success:
+                completed = report.rounds_completed
+                cap_reached = bool(report.cap_reached)
+            elif is_web:
+                logger.warning(
+                    "[萬神試煉][%s] pure_ws 失敗或未跑滿 → fallback animation 收尾本輪", ip
                 )
-            except Exception:
-                pass
-
-            ip = str(getattr(d, "device_id", "") or "")
-            if wanshen_mode == "pure_ws":
-                report = _run_pure_ws_wanshen(
-                    d, ip, rounds, cfg, until_cap=until_cap
-                )
-                if report is not None and report.success:
-                    completed = report.rounds_completed
-                    cap_reached = bool(report.cap_reached)
-                else:
-                    logger.warning(
-                        "[萬神試煉][%s] pure_ws 失敗或未跑滿 → fallback animation 收尾本輪", ip
-                    )
-                    from battle import rogue_h5
-                    try:
-                        completed = rogue_h5.run_rounds(
-                            page, rounds=rounds, until_cap=until_cap,
-                            mode="animation", ip=ip,
-                        )
-                        if until_cap:
-                            cap = rogue_h5.read_blessing_cap(page)
-                            cap_reached = bool(cap and cap[0] >= cap[1])
-                    except Exception:
-                        logger.exception("[萬神試煉] pure_ws fallback animation 例外 → 中止本輪")
-                        completed = 0
-                if not until_cap and completed < rounds:
-                    aborted = True
-            else:
+                from battle import rogue_h5
                 try:
-                    from battle import rogue_h5
                     completed = rogue_h5.run_rounds(
-                        page,
-                        rounds=rounds,
-                        until_cap=until_cap,
-                        mode=wanshen_mode,
-                        ip=ip,
+                        page, rounds=rounds, until_cap=until_cap,
+                        mode="animation", ip=ip,
                     )
                     if until_cap:
-                        cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
+                        cap = rogue_h5.read_blessing_cap(page)
                         cap_reached = bool(cap and cap[0] >= cap[1])
-                except rogue_h5.LossResultSyncError:
-                    preserve_page_state = True
-                    logger.exception(
-                        "[萬神試煉] 失敗結果彈窗未同步，保留現場並停止所有後續動作"
-                    )
-                    return False
                 except Exception:
-                    logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
+                    logger.exception("[萬神試煉] pure_ws fallback animation 例外 → 中止本輪")
                     completed = 0
-                # until_cap 模式：達本周上限而提早結束(completed<rounds)屬正常，不算 aborted
-                if not until_cap and completed < rounds:
+            else:
+                logger.warning(
+                    "[萬神試煉][%s] pure_ws 失敗或未跑滿 → fallback ADB OCR 收尾本輪", ip
+                )
+                completed, ocr_aborted = _fight_rounds_ocr(d, rounds)
+                if ocr_aborted:
                     aborted = True
+            if not until_cap and completed < rounds:
+                aborted = True
+        elif is_web:
+            try:
+                from battle import rogue_h5
+                completed = rogue_h5.run_rounds(
+                    page,
+                    rounds=rounds,
+                    until_cap=until_cap,
+                    mode=wanshen_mode,
+                    ip=ip,
+                )
+                if until_cap:
+                    cap = rogue_h5.read_blessing_cap(page)  # 回主面板後複讀確認是否達標
+                    cap_reached = bool(cap and cap[0] >= cap[1])
+            except rogue_h5.LossResultSyncError:
+                preserve_page_state = True
+                logger.exception(
+                    "[萬神試煉] 失敗結果彈窗未同步，保留現場並停止所有後續動作"
+                )
+                return False
+            except Exception:
+                logger.exception("[萬神試煉] H5 node 路徑例外 → 中止本輪")
+                completed = 0
+            # until_cap 模式：達本周上限而提早結束(completed<rounds)屬正常，不算 aborted
+            if not until_cap and completed < rounds:
+                aborted = True
         else:
             completed, ocr_aborted = _fight_rounds_ocr(d, rounds)
             if ocr_aborted:
@@ -419,8 +422,8 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         except Exception:
             logger.exception("[萬神試煉] 祕寶閣購買流程異常")
 
-        # until_cap：達本周上限即算本週完成(即使 completed<rounds)；否則沿用「跑滿 rounds」。
-        done = cap_reached or completed >= rounds
+        # until_cap 必須由權威上限值確認；安全局數耗盡或 fallback 跑滿都不能誤寫本週完成。
+        done = cap_reached if until_cap else completed >= rounds
         logger.info("[萬神試煉] 結束：完成 %d/%d 局，跑滿=%s", completed, rounds, done)
         return done
     finally:

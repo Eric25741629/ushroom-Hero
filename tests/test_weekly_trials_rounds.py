@@ -48,7 +48,17 @@ def wt():
 @pytest.fixture
 def harness(monkeypatch, wt):
     """Mock the 3 per-round sub-functions + IO; record call order."""
+    import config_manager
+
     calls: list[str] = []
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda _ip: {
+            "wanshen_battle_mode": "animation",
+            "wanshen_until_cap": False,
+        },
+    )
     monkeypatch.setattr(wt.time, "sleep", lambda *_a, **_k: None)
     monkeypatch.setattr(wt, "buy_god_everyweek", lambda d: True)
     recovered: list[object] = []
@@ -163,6 +173,96 @@ def test_pure_ws_worker_forwards_until_cap(wt, monkeypatch):
 
     assert captured["args"] == ("web-001", 10, {"web_debug_port": 9223})
     assert captured["kwargs"] == {"until_cap": True}
+
+
+def test_adb_device_uses_pure_ws_and_weekly_cap_by_default(
+    wt, monkeypatch, harness
+):
+    import config_manager
+    from ws_token.rogue_fight import RogueFightReport
+
+    dev = types.SimpleNamespace(
+        backend_kind="adb",
+        device_id="adb-phone",
+        swipe=lambda *a, **k: None,
+        click=lambda *a, **k: None,
+    )
+    captured = {}
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda _ip: {
+            "wanshen_battle_mode": "pure_ws",
+            "wanshen_until_cap": True,
+        },
+    )
+
+    def fake_pure_ws(_d, ip, rounds, cfg, *, until_cap):
+        captured.update(
+            ip=ip, rounds=rounds, cfg=cfg, until_cap=until_cap
+        )
+        return RogueFightReport(
+            success=True,
+            rounds_completed=0,
+            cap_reached=True,
+            cap_current=5000,
+            cap_max=5000,
+        )
+
+    monkeypatch.setattr(wt, "_run_pure_ws_wanshen", fake_pure_ws)
+    monkeypatch.setattr(
+        wt,
+        "_fight_rounds_ocr",
+        lambda *_a, **_k: (_ for _ in ()).throw(
+            AssertionError("ADB default must not use OCR combat")
+        ),
+    )
+
+    assert wt.fight_test(dev, rounds=10) is True
+    assert captured == {
+        "ip": "adb-phone",
+        "rounds": 10,
+        "cfg": {
+            "wanshen_battle_mode": "pure_ws",
+            "wanshen_until_cap": True,
+        },
+        "until_cap": True,
+    }
+
+
+def test_until_cap_does_not_complete_from_adb_fallback_round_count(
+    wt, monkeypatch, harness
+):
+    import config_manager
+    from ws_token.rogue_fight import RogueFightReport
+
+    dev = types.SimpleNamespace(
+        backend_kind="adb",
+        device_id="adb-phone",
+        swipe=lambda *a, **k: None,
+        click=lambda *a, **k: None,
+    )
+    monkeypatch.setattr(
+        config_manager,
+        "get_device_config",
+        lambda _ip: {
+            "wanshen_battle_mode": "pure_ws",
+            "wanshen_until_cap": True,
+        },
+    )
+    monkeypatch.setattr(
+        wt,
+        "_run_pure_ws_wanshen",
+        lambda *_a, **_k: RogueFightReport(
+            success=False,
+            rounds_completed=0,
+            cap_reached=False,
+            error="weekly cap read failed",
+        ),
+    )
+    monkeypatch.setattr(wt, "_fight_rounds_ocr", lambda *_a, **_k: (10, False))
+
+    assert wt.fight_test(dev, rounds=10) is False
 
 
 def test_local_sim_loss_sync_error_preserves_page_without_followup_actions(

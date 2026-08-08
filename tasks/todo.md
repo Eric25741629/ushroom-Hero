@@ -1,5 +1,20 @@
 # tasks/todo.md（2026-06-20 壓縮）
 
+## 2026-08-08 所有裝置預設走萬神 pure WS until-cap
+
+- [x] 預設設定已是 `wanshen_battle_mode=pure_ws`、`wanshen_until_cap=true`。
+- [x] 現有明確覆寫已統一為 pure_ws/true。
+- [x] 修正 ADB 分派：pure WS 成為所有 backend 主路徑，失敗才回退 OCR。
+- [x] 補 ADB 預設 pure WS 且達上限不進 OCR 戰鬥的回歸測試。
+
+### Review
+
+- web_h5 與 ADB 都會讀同一 device config；pure WS 成功時共用 `0x4C16` until-cap。
+- fallback 維持原行為：web_h5 animation、ADB OCR，不影響故障時可用性。
+- until-cap 完成條件只接受權威 `cap_reached`；fallback 跑滿安全局數不會誤寫本週完成。
+- 驗證：萬神 WS/排程/設定/runtime/API 共 88 passed；dashboard 三項預設測試 3 passed；
+  目標 `py_compile` 通過。dashboard 全檔另有 1 個中文亂碼斷言失敗，已在未修改 main 重現。
+
 ## 2026-08-08 萬神 pure WS 刷到本周獲取上限
 
 - [x] 5556 CDP 確認神樹祝福 `costTips/limit` 顯示 `5000/5000`。
