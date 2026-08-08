@@ -331,6 +331,32 @@ def test_progress_branch_maps_harvest_card_to_chinese_label(monkeypatch):
     assert ("dev", "WS 任務完成: 豐收卡") in steps
 
 
+def test_progress_success_detail_is_visible_on_dashboard(monkeypatch):
+    """每日任務數量摘要要進中控 step，不只留在檔案 log。"""
+    _cfg(monkeypatch, {"enabled": True})
+    import bot_state
+    steps: list[tuple] = []
+    monkeypatch.setattr(bot_state, "update_state",
+                        lambda ip, **k: steps.append((ip, k.get("step"))))
+
+    captured = {}
+
+    def fake_run_device(ip, cfg, progress=None, **_kw):
+        captured["progress"] = progress
+        return _report({"main_tasks": {}})
+
+    monkeypatch.setattr(ws_phase, "_run_device", fake_run_device)
+    ws_phase.run_ws_phase("dev")
+
+    captured["progress"](
+        "main_tasks", "ok", "每日任務 15/15，總獎勵 1/1，本輪新領 3"
+    )
+    assert (
+        "dev",
+        "WS 任務完成: main_tasks（每日任務 15/15，總獎勵 1/1，本輪新領 3）",
+    ) in steps
+
+
 def test_run_device_passes_carpark_plan_and_auto(monkeypatch):
     captured = {}
 

@@ -110,6 +110,10 @@ def patched(monkeypatch):
                         lambda c, st, **k: (calls.append(("main_tasks", "claim_weekly_box")) or False))
     monkeypatch.setattr(runner.main_tasks, "claim_achievement",
                         lambda c, **k: (calls.append(("main_tasks", "claim_achievement")) or {"claimed": 0}))
+    monkeypatch.setattr(
+        runner.main_tasks, "summarize_daily_progress",
+        lambda st, **k: {"detail": "每日任務 0/15，總獎勵 0/1，本輪新領 0"},
+    )
 
     # league_solo
     monkeypatch.setattr(runner.league_solo, "claim_available",
@@ -377,6 +381,8 @@ def test_main_tasks_runs_every_wake(monkeypatch):
     monkeypatch.setattr(runner.main_tasks, "claim_daily_box", lambda c, s, **k: False)
     monkeypatch.setattr(runner.main_tasks, "claim_weekly_box", lambda c, s, **k: False)
     monkeypatch.setattr(runner.main_tasks, "claim_achievement", lambda c, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "summarize_daily_progress",
+                        lambda s, **k: {"detail": "ok"})
 
     day = datetime(2026, 7, 5, 9, 0, 0)
     runner._run_main_tasks(object(), object(), now=day)
@@ -386,8 +392,8 @@ def test_main_tasks_runs_every_wake(monkeypatch):
     assert len(collects) == 4
 
 
-def test_main_tasks_before_8_skips(monkeypatch):
-    """The >= 08:00 gate is retained: an early wake claims nothing."""
+def test_main_tasks_before_8_still_claims(monkeypatch):
+    """每次腳本執行都要補領；08:00 前也依伺服器狀態安全執行。"""
     from datetime import datetime
 
     from ws_token import runner
@@ -395,12 +401,43 @@ def test_main_tasks_before_8_skips(monkeypatch):
     collects = []
     monkeypatch.setattr(runner.main_tasks, "collect_state",
                         lambda c, col, **k: collects.append(1) or "STATE")
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_tasks",
+                        lambda c, s, **k: {"claimed": 0})
+    monkeypatch.setattr(runner.main_tasks, "claim_marry_tasks", lambda c, s, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_box", lambda c, s, **k: False)
+    monkeypatch.setattr(runner.main_tasks, "claim_weekly_box", lambda c, s, **k: False)
+    monkeypatch.setattr(runner.main_tasks, "claim_achievement", lambda c, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "summarize_daily_progress",
+                        lambda s, **k: {"detail": "ok"})
 
     out = runner._run_main_tasks(object(), object(),
                                  now=datetime(2026, 7, 5, 7, 0, 0))
 
-    assert out == {"skipped": "before 08:00"}
-    assert collects == []
+    assert out["daily_progress"]["detail"] == "ok"
+    assert len(collects) == 2
+
+
+def test_main_tasks_refreshes_snapshot_after_claiming_activity_box(monkeypatch):
+    """活躍度領取成功後再讀一次，摘要必須使用伺服器最終狀態。"""
+    from ws_token import runner
+
+    states = iter(("before", "after_tasks", "after_box"))
+    monkeypatch.setattr(runner.main_tasks, "collect_state",
+                        lambda c, col, **k: next(states))
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_tasks",
+                        lambda c, s, **k: {"claimed": 3})
+    monkeypatch.setattr(runner.main_tasks, "claim_marry_tasks", lambda c, s, **k: {})
+    monkeypatch.setattr(runner.main_tasks, "claim_daily_box", lambda c, s, **k: True)
+    monkeypatch.setattr(runner.main_tasks, "claim_weekly_box", lambda c, s, **k: False)
+    monkeypatch.setattr(runner.main_tasks, "claim_achievement", lambda c, **k: {})
+    monkeypatch.setattr(
+        runner.main_tasks, "summarize_daily_progress",
+        lambda state, **k: {"detail": state, "newly_claimed": k["newly_claimed"]},
+    )
+
+    out = runner._run_main_tasks(object(), object())
+
+    assert out["daily_progress"] == {"detail": "after_box", "newly_claimed": 3}
 
 
 def test_main_tasks_late_runs_after_mining_lamp(patched, monkeypatch):
