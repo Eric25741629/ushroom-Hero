@@ -9,6 +9,16 @@ def test_device_config_has_expected_defaults():
     assert cfg.enable_mining is True
 
 
+def test_wanshen_defaults_use_pure_ws_and_weekly_cap():
+    """萬神新預設走純 WS，並依神樹祝福本週上限停止。"""
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+
+    assert DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"] == "pure_ws"
+    assert DEFAULT_DEVICE_CONFIG["wanshen_until_cap"] is True
+    assert DeviceConfig().wanshen_battle_mode == "pure_ws"
+    assert DeviceConfig().wanshen_until_cap is True
+
+
 def test_device_config_granular_dungeon_flags_default_true():
     """New granular 副本/任務 toggles default True in both dict and dataclass."""
     from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
@@ -68,6 +78,12 @@ def test_no_legacy_keys_granular_defaults_true(monkeypatch):
     merged = _raw_config_for(monkeypatch, {})
     for key in ("enable_hellgate", "enable_wanshen", "enable_cloud_battle", "enable_biweekly"):
         assert merged[key] is True, f"{key} should default True"
+
+
+def test_missing_wanshen_settings_use_new_defaults(monkeypatch):
+    merged = _raw_config_for(monkeypatch, {})
+    assert merged["wanshen_battle_mode"] == "pure_ws"
+    assert merged["wanshen_until_cap"] is True
 
 
 def test_device_config_from_dict():

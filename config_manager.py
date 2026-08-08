@@ -58,7 +58,7 @@ DEFAULT_DEVICE_CONFIG = {
     # remote_calc=B 免洗頁秒算; pure_ws=純 WS 開戰+B 算+WS 回報
     "arena_battle_mode": "animation",
     "arena_fight_gap_sec": 7,  # 競技場兩場間隔下限（秒，硬下限 7）
-    "wanshen_battle_mode": "animation",  # 萬神關卡：animation / local_sim / remote_calc
+    "wanshen_battle_mode": "pure_ws",  # 萬神關卡預設走純 WS；仍可明確選 animation / local_sim / remote_calc
     "enable_farm": True,  # 啟用農場
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
@@ -96,7 +96,7 @@ DEFAULT_DEVICE_CONFIG = {
     "special_wanshen_account": False,  # 寶兒/暴哥專用：只允許萬神排程，不跑一般腳本
     "special_wanshen_enabled": False,  # 萬神專用排程獨立開關
     "special_wanshen_rounds": 10,  # 積分判斷完成前暫定每次 10 局(until_cap 時當安全上限)
-    "wanshen_until_cap": False,  # H5:改由『神樹祝福 本周獲取上限』決定刷幾局(刷到達標為止);ADB 無場景樹讀不到,維持固定次數
+    "wanshen_until_cap": True,  # 依『神樹祝福 本周獲取上限』刷到達標為止
     "sleep_min_hours": 1.0,  # 每輪喚醒最短間隔（小時）
     "sleep_max_hours": 1.0,  # 每輪喚醒最長間隔（小時）
     "ws_token": {  # WS-first 階段 (game_actions/ws_phase.py)；enabled=False 完全不影響舊行為
@@ -244,7 +244,7 @@ class DeviceConfig:
     battle_speed_scale: float = 4  # web_h5 battle timeScale (1=off, official ad path is 2)
     arena_battle_mode: str = "animation"
     arena_fight_gap_sec: float = 7
-    wanshen_battle_mode: str = "animation"
+    wanshen_battle_mode: str = "pure_ws"
 
     # Feature flags
     enable_farm: bool = True
@@ -282,7 +282,7 @@ class DeviceConfig:
     special_wanshen_account: bool = False
     special_wanshen_enabled: bool = False
     special_wanshen_rounds: int = 10
-    wanshen_until_cap: bool = False
+    wanshen_until_cap: bool = True
 
     # Sleep schedule
     sleep_min_hours: float = 1.0
@@ -1213,12 +1213,13 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
                 current.get("arena_fight_gap_sec", DEFAULT_DEVICE_CONFIG["arena_fight_gap_sec"])
             )
             current["wanshen_battle_mode"] = coerce_wanshen_battle_mode(
-                current.get("wanshen_battle_mode", DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"])
+                current.get("wanshen_battle_mode", DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"]),
+                default=DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"],
             )
         except Exception:
             current["arena_battle_mode"] = "animation"
             current["arena_fight_gap_sec"] = 7.0
-            current["wanshen_battle_mode"] = "animation"
+            current["wanshen_battle_mode"] = DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"]
         current["web_viewport_width"] = _clamp_int(
             current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]
         )
@@ -1290,6 +1291,10 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             1,
             50,
             DEFAULT_DEVICE_CONFIG["special_wanshen_rounds"],
+        )
+        current["wanshen_until_cap"] = _to_bool(
+            current.get("wanshen_until_cap"),
+            DEFAULT_DEVICE_CONFIG["wanshen_until_cap"],
         )
         _sleep_min = _clamp_float(
             current.get("sleep_min_hours"), 0.25, 24.0, DEFAULT_DEVICE_CONFIG["sleep_min_hours"]
