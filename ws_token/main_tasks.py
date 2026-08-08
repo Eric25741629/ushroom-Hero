@@ -67,6 +67,10 @@ TYPE_FLYPET = 10
 BOX_CLAIMABLE = 1     # 可領未領
 BOX_CLAIMED = 2       # 已領
 
+# 對外用「15 個每日任務 + 1 個總獎勵」呈現；伺服器實際筆數仍保留在摘要中。
+EXPECTED_DAILY_TASK_COUNT = 15
+EXPECTED_DAILY_BOX_COUNT = 6
+
 # weekly status
 WEEKLY_CLAIMABLE = 1
 
@@ -103,6 +107,50 @@ class TaskState:
     daily_point: int = 0                                   # 活躍度
     daily_boxes: list = field(default_factory=list)        # list[(box_id, state)]
     weekly_status: int = 0                                 # 1 => claimable
+
+
+def summarize_daily_progress(
+    state: TaskState,
+    *,
+    newly_claimed: int = 0,
+    expected_tasks: int = EXPECTED_DAILY_TASK_COUNT,
+) -> dict:
+    """將每日任務伺服器快照壓成只含數量的 15+1 摘要。"""
+    daily_tasks = [task for task in state.tasks if task.type == TYPE_DAILY]
+    server_total = len(daily_tasks)
+    completed = sum(
+        task.state in (STATE_CLAIMABLE, STATE_CLAIMED) for task in daily_tasks
+    )
+    rewards_claimed = sum(task.state == STATE_CLAIMED for task in daily_tasks)
+    boxes_total = len(state.daily_boxes)
+    boxes_claimed = sum(
+        box_state == BOX_CLAIMED for _box_id, box_state in state.daily_boxes
+    )
+    activity_reward = int(
+        completed >= expected_tasks and boxes_claimed >= EXPECTED_DAILY_BOX_COUNT
+    )
+    display_total = server_total or expected_tasks
+    mismatch = (
+        f"（期望 {expected_tasks}）"
+        if server_total and server_total != expected_tasks
+        else ""
+    )
+    detail = (
+        f"每日任務 {completed}/{display_total}{mismatch}，"
+        f"總獎勵 {activity_reward}/1，本輪新領 {int(newly_claimed or 0)}"
+    )
+    return {
+        "expected_tasks": expected_tasks,
+        "server_total": server_total,
+        "completed": completed,
+        "rewards_claimed": rewards_claimed,
+        "pending": max(0, server_total - completed),
+        "activity_reward": activity_reward,
+        "activity_boxes_claimed": boxes_claimed,
+        "activity_boxes_total": boxes_total,
+        "newly_claimed": int(newly_claimed or 0),
+        "detail": detail,
+    }
 
 
 # --- parsers ----------------------------------------------------------------

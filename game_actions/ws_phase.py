@@ -257,6 +257,7 @@ def _log_ws_progress(log, ip: str, name: str, status: str,
     elif status == "ok":
         step = f"WS 任務完成: {label}"
         if detail:
+            step = f"{step}（{detail}）"
             log.info("[%s] WS 任務完成: %s（%s）", ip, label, detail)
         else:
             log.info("[%s] WS 任務完成: %s", ip, label)

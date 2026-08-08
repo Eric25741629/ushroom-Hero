@@ -50,6 +50,7 @@ from ws_token.main_tasks import (  # noqa: E402
     parse_daily_point,
     parse_task_all,
     parse_weekly_box,
+    summarize_daily_progress,
 )
 from tests.fakes.ws_fakes import (  # noqa: E402
     CREDS,
@@ -139,6 +140,50 @@ def test_parse_daily_point_decodes_point_and_boxes():
 def test_parse_daily_point_no_boxes():
     point, boxes = parse_daily_point(_daily_point_body(0, []))
     assert point == 0 and boxes == []
+
+
+def test_summarize_daily_progress_reports_expected_15_plus_one():
+    state = TaskState(
+        tasks=[
+            *[Task(i, 3, 1, TYPE_DAILY) for i in range(1, 13)],
+            *[Task(i, 2, 1, TYPE_DAILY) for i in range(13, 15)],
+            Task(15, 1, 0, TYPE_DAILY),
+            Task(99, 3, 1, 1),  # 非每日任務不可混入統計
+        ],
+        daily_point=100,
+        daily_boxes=[(i, 2) for i in range(1, 7)],
+        weekly_status=0,
+    )
+
+    summary = summarize_daily_progress(state, newly_claimed=2)
+
+    assert summary == {
+        "expected_tasks": 15,
+        "server_total": 15,
+        "completed": 14,
+        "rewards_claimed": 12,
+        "pending": 1,
+        "activity_reward": 0,
+        "activity_boxes_claimed": 6,
+        "activity_boxes_total": 6,
+        "newly_claimed": 2,
+        "detail": "每日任務 14/15，總獎勵 0/1，本輪新領 2",
+    }
+
+
+def test_summarize_daily_progress_uses_server_total_and_flags_expected_mismatch():
+    state = TaskState(
+        tasks=[Task(i, 3, 1, TYPE_DAILY) for i in range(1, 17)],
+        daily_point=160,
+        daily_boxes=[(i, 2) for i in range(1, 7)],
+        weekly_status=0,
+    )
+
+    summary = summarize_daily_progress(state)
+
+    assert summary["server_total"] == 16
+    assert summary["activity_reward"] == 1
+    assert summary["detail"] == "每日任務 16/16（期望 15），總獎勵 1/1，本輪新領 0"
 
 
 # --- parse_weekly_box: status -----------------------------------------------

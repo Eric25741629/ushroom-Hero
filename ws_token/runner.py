@@ -197,17 +197,12 @@ def _run_main_tasks(client, collector: main_tasks.TaskCollector, *,
                     now=None) -> dict:
     """Free: snapshot login-push state, then claim every free reward.
 
-    Gated only by time (>= 08:00): runs on EVERY wake (no once-per-day gate).
+    Runs on EVERY wake, including before 08:00 (no once-per-day/time gate).
     Each claim function is state-gated — it claims only STATE_CLAIMABLE /
     BOX_CLAIMABLE items and sends no commit frame when nothing is claimable — so
-    re-running within the same day is safe and catches rewards that only became
-    claimable later (arena at 20:00, mining, lamp, etc.). Repeated wakes before
-    8 AM still skip; their claimables are picked up by the first wake after 8.
+    re-running is safe and catches rewards that only became claimable later.
+    ``now`` remains test/caller-compatible but is intentionally not a gate.
     """
-    from datetime import datetime
-    now = datetime.now() if now is None else now
-    if now.hour < 8:
-        return {"skipped": "before 08:00"}
     state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily = main_tasks.claim_daily_tasks(client, state)
     marry = main_tasks.claim_marry_tasks(client, state)  # 默契考驗 好感週任務 (type 6)
@@ -215,14 +210,22 @@ def _run_main_tasks(client, collector: main_tasks.TaskCollector, *,
     # task_daily_point_s2c，故重新快照再領寶箱（否則用領取前的舊快照會漏領）。
     state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     daily_box = main_tasks.claim_daily_box(client, state)
+    # 真的送出寶箱領取後，再等 server push 最終狀態，摘要不可拿領取前快照猜測。
+    if daily_box:
+        state = main_tasks.collect_state(client, collector, settle=_PUSH_SETTLE_S)
     weekly_box = main_tasks.claim_weekly_box(client, state)
     achievement = main_tasks.claim_achievement(client)
+    progress = main_tasks.summarize_daily_progress(
+        state, newly_claimed=daily.get("claimed", 0)
+    )
+    logger.info("ws_token tasks: %s", progress["detail"])
     return {
         "daily_tasks": daily,
         "marry_tasks": marry,
         "daily_box": daily_box,
         "weekly_box": weekly_box,
         "achievement": achievement,
+        "daily_progress": progress,
     }
 
 
@@ -2194,6 +2197,9 @@ def _ok_summary(result) -> str:
              if result.get(k)]
     if "keys" in result:
         parts.append(f"keys={result['keys']}")
+    daily_progress = result.get("daily_progress")
+    if isinstance(daily_progress, dict) and daily_progress.get("detail"):
+        parts.append(str(daily_progress["detail"]))
     return ", ".join(parts)
 
 
