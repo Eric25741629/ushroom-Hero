@@ -452,3 +452,10 @@ def test_battle_mode_options_explain_themselves_and_hide_h5_only_paths_for_adb()
     assert "option.disabled = !isH5" in html
     assert "h5OnlyModes.includes(select.value)" in html
     assert "updateBattleModeOptions();" in html
+
+
+def test_wanshen_battle_mode_defaults_to_pure_ws():
+    html = _html()
+    assert "純 WS + B 計算（預設）" in html
+    assert "config.wanshen_battle_mode || 'pure_ws'" in html
+    assert "wanshen_battle_mode: (document.getElementById('selWanshenBattleMode') || {}).value || 'pure_ws'" in html

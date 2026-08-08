@@ -341,18 +341,19 @@ def fight_test(d, rounds: int = _DEFAULT_ROUNDS) -> bool:
         cap_reached = False  # until_cap 模式下是否已達本周獲取上限(達標=本週完成)
         if is_web:
             # wanshen_until_cap=True → 改由『神樹祝福 本周獲取上限』決定刷幾局(rounds 當安全上限)
-            until_cap = False
-            wanshen_mode = "animation"
+            until_cap = True
+            wanshen_mode = "pure_ws"
             cfg: dict = {}
             try:
                 import config_manager
                 cfg = config_manager.get_device_config(getattr(d, "device_id", "") or "")
-                until_cap = bool(cfg.get("wanshen_until_cap", False))
+                until_cap = bool(cfg.get("wanshen_until_cap", True))
                 # wanshen_battle_mode：animation / local_sim / remote_calc / pure_ws。
-                # 未通過 coerce_wanshen_battle_mode 的值退回 animation，config_manager 已保護。
+                # 未通過 coerce_wanshen_battle_mode 的值退回 pure_ws，避免缺設定時退回動畫。
                 from battle_calc.config import coerce_wanshen_battle_mode
                 wanshen_mode = coerce_wanshen_battle_mode(
-                    cfg.get("wanshen_battle_mode", "animation")
+                    cfg.get("wanshen_battle_mode", "pure_ws"),
+                    default="pure_ws",
                 )
             except Exception:
                 pass
