@@ -29,6 +29,7 @@ def test_worldboss_constants_are_not_daily_abyss_constants():
     assert hellgate.CMD_RESULT == 3592
     assert hellgate.CMD_GENERIC_RESULT == 3587
     assert hellgate.CMD_BATTLE_MORE_START == 3597
+    assert hellgate.CMD_FINISH_WORLD_BOSS == 6593
 
 
 def test_build_start_body_is_type_then_level():
@@ -99,6 +100,7 @@ def test_parse_worldboss_info_decodes_gate_and_string_counters():
         + codec.pb_str(9, "1234")
         + codec.pb_uint(10, 1)
         + codec.pb_uint(11, 0)
+        + codec.pb_uint(12, 1)
     )
     info = hellgate.parse_info(hellgate.CMD_WORLD_BOSS_INFO, body)
     assert info.success is True
@@ -106,6 +108,7 @@ def test_parse_worldboss_info_decodes_gate_and_string_counters():
     assert info.role_name == "冠軍"
     assert info.total_hurt == "12345678901234567890"
     assert info.my_hurt == "1234"
+    assert info.pending_result == 1
 
 
 def test_parse_start_counts_roles_and_keeps_raw_body():
@@ -144,6 +147,49 @@ def test_parse_result_preserves_rewards_ext_and_sext():
     assert result.rewards == {9001: 3}
     assert result.ext == ((4, 456),)
     assert result.sext == ((1, "500000"),)
+
+
+def test_parse_generic_finish_result_reads_live_field_six_rewards():
+    reward = codec.pb_uint(1, 9) + codec.pb_uint(2, 243481)
+    sext = codec.pb_uint(1, 1) + codec.pb_str(2, "52202652322156975787")
+    body = (
+        codec.pb_uint(1, 0)
+        + codec.pb_uint(2, 100)
+        + codec.pb_uint(3, 13)
+        + codec.pb_uint(4, 0)
+        + codec.pb_msg(6, reward)
+        + codec.pb_msg(7, sext)
+    )
+
+    result = hellgate.parse_result(hellgate.CMD_GENERIC_RESULT, body)
+
+    assert result.success is True
+    assert (result.type, result.dungeon_id, result.result) == (13, 100, 0)
+    assert result.rewards == {9: 243481}
+    assert result.ext == ()
+    assert result.sext == ((1, "52202652322156975787"),)
+
+
+def test_finish_worldboss_sends_empty_6593_and_waits_for_3587():
+    body = (
+        codec.pb_uint(1, 0)
+        + codec.pb_uint(2, 100)
+        + codec.pb_uint(3, 13)
+        + codec.pb_uint(4, 0)
+    )
+    client, fake = _client({
+        hellgate.CMD_FINISH_WORLD_BOSS: lambda sent: [
+            s2c(hellgate.CMD_GENERIC_RESULT, body) if sent == b"" else None
+        ],
+    })
+    try:
+        result = hellgate.finish_worldboss(client)
+        assert result.success is True
+        sent = [b for _sid, cmd, b in fake.framed_sent()
+                if cmd == hellgate.CMD_FINISH_WORLD_BOSS]
+        assert sent == [b""]
+    finally:
+        client.close()
 
 
 def test_run_with_b_skips_before_start_when_event_is_closed(monkeypatch):
@@ -262,6 +308,13 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
         + codec.pb_uint(5, 42)
     )
     result_body = codec.pb_uint(1, 0) + codec.pb_uint(2, 13) + codec.pb_uint(3, 1) + codec.pb_uint(4, 0)
+    finish_body = (
+        codec.pb_uint(1, 0)
+        + codec.pb_uint(2, 100)
+        + codec.pb_uint(3, 13)
+        + codec.pb_uint(4, 0)
+        + codec.pb_msg(6, codec.pb_uint(1, 9) + codec.pb_uint(2, 88))
+    )
     info_replies = iter((info_body, after_info_body))
     client, fake = _client({
         hellgate.CMD_WORLD_BOSS_INFO: lambda _b: [
@@ -269,6 +322,9 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
         ],
         hellgate.CMD_BATTLE_MORE_START: lambda _b: [s2c(hellgate.CMD_BATTLE_MORE_START, start_body)],
         hellgate.CMD_RESULT: lambda _b: [s2c(hellgate.CMD_RESULT, result_body)],
+        hellgate.CMD_FINISH_WORLD_BOSS: lambda _b: [
+            s2c(hellgate.CMD_GENERIC_RESULT, finish_body)
+        ],
     })
     monkeypatch.setattr(hellgate, "open_raw_cdp_runtime", lambda _port: (
         None, None, object(), "raw_cdp"
@@ -292,9 +348,12 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
         assert report.after_info is not None
         assert report.after_info.times == 0
         assert report.after_info.my_hurt == "12"
+        assert report.result is not None
+        assert report.result.rewards == {9: 88}
         sent = [body for _sid, cmd, body in fake.framed_sent() if cmd == hellgate.CMD_RESULT]
         args = [codec.walk_dict(bytes(v)) for n, v in codec.walk(sent[0]) if n == 6]
         assert args == [{1: 1, 2: 12}, {1: 4, 2: 3456}]
+        assert hellgate.CMD_FINISH_WORLD_BOSS in fake.sent_cmds()
     finally:
         client.close()
 
@@ -360,6 +419,15 @@ def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
         ],
         hellgate.CMD_BATTLE_MORE_START: lambda _b: [
             s2c(hellgate.CMD_BATTLE_MORE_START, start_body)
+        ],
+        hellgate.CMD_FINISH_WORLD_BOSS: lambda _b: [
+            s2c(
+                hellgate.CMD_GENERIC_RESULT,
+                codec.pb_uint(1, 0)
+                + codec.pb_uint(2, 100)
+                + codec.pb_uint(3, 13)
+                + codec.pb_uint(4, 0),
+            )
         ],
     })
     monkeypatch.setattr(hellgate, "open_raw_cdp_runtime", lambda _port: (
