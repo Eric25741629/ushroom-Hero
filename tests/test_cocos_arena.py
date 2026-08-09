@@ -18,6 +18,7 @@ def test_arena_enter_uses_cocos_text_and_verifies_result_list():
 
     assert arena.enter() is True
     assert arena.ui.click_text.call_args_list[0].args == ("競技場",)
+    assert arena.ui.click_text.call_args_list[1].kwargs["occurrence"] == 0
 
 
 def test_web_h5_animation_fight_does_not_call_ocr():
