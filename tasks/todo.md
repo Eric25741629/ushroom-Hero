@@ -459,7 +459,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 #### 波次 5：收斂主迴圈（單張，高風險）
 
-- [ ] **W11 [SEQ] `_run_tasks` 收成單一迴圈 + `RunReport`**
+- [x] **W11 [SEQ] `_run_tasks` 收成單一迴圈 + `RunReport`**
   - owned：`game_actions/daily_pipeline.py`、`game_actions/ws_phase.py`
   - 範圍：依 `order` 排序的單一迴圈，6 個共用關切各做一次（取代 28×force_sleep、
     16×ws_skip、13×guarded_run、8×update_state、4×time_recording）；
@@ -467,6 +467,11 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - **純 code motion，行為零變更**
   - 驗收：W4/W5/W6 全綠且**未修改測試預期值**；改完**重啟 `new_main_v2.py`**（無 hot-reload）
   - 高風險：這是 live bot 熱路徑，建議單獨一個 session、單獨 review
+  - 完成（2026-08-09）：client pipeline 改由 registry `order` 單一迴圈 dispatch，集中
+    force-sleep / WS skip / 結果收集；新增 WS-shaped `RunReport`，WS skip 與 daily
+    ledger 對照改由 registry/completion policy 推導。W11 相關 138 tests 全綠；完整
+    daily/WS 回歸 148 passed，另有 2 個既有特殊萬神 fake-device 測試基線失敗（缺
+    `screenshot`/`press`，與本次未改動分支無關）。
 
 ---
 

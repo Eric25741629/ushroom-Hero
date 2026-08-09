@@ -16,6 +16,10 @@ import logging
 import time
 
 import config_manager
+from game_actions.task_registry import (
+    iter_task_definitions,
+    ws_to_pipeline_skip_mapping,
+)
 from ws_token.client import (
     KICK_REASON_EXPLICIT,
     KICK_REASON_TRANSPORT_DROP,
@@ -24,46 +28,31 @@ from ws_token.client import (
 
 logger = logging.getLogger(__name__)
 
-# RunReport 任務鍵 → 該鍵成功時 daily_pipeline 可跳過的任務名（無條件部分）。
-WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = {
-    "mount_sprint": ("坐騎強化",),
-    "redpack": ("紅包檢查",),
-    "idle_reward": ("點擊寶箱",),
-    "guild": ("家族任務",),
-    "spirit": ("領取守護靈",),
-    "steward": ("商店購買",),       # 使用者確認 Store == 管家代購
-    "main_tasks": ("所有日常任務",),
-    "couple": ("好友每日禮物",),     # 使用者確認 == 伴侶送禮
-    "lamp": ("開神燈",),
-    "turntable": ("轉盤金幣",),
-    "mining": ("挖礦/Oracle",),
-    "gacha": ("抽技能夥伴",),
-    "sea_season": ("航海任務 (Sea)",),
-    "arena": ("競技場挑戰",),
-    "ladder_reward": ("天梯每週獎勵",),
-    "seven_login": ("七日登入獎勵",),
-    "cloud_ladder": ("雲端戰鬥",),
-    "kungfu_worship": ("菇菇武道會",),
-    "hellgate": ("地獄之門",),
-    "escort": ("賞金之路",),
-}
+# W11 的兩張對照表由 task registry 產生，不再在 WS 階段維護第二份任務表。
 
-# pipeline skip 名 → dashboard /api/daily_progress 追蹤的 JsonDataManager 當日 key。
-# WS 做完 → ADB/Playwright 跳過 → 舊實作不會寫紀錄 → 徽章永遠 ⏳，
-# 所以 WS 成功時要替它回寫。只列 record-dict schema 的 key；
-# `mission_timestamp`（每日任務）是 flat scalar schema（Mission.py），
-# time_recording 會把它巢狀化破壞讀側，刻意不回寫。
-SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = {
-    "商店購買": ("Store",),
-    "家族任務": ("donate_family",),
-    "挖礦/Oracle": ("挖礦",),
-    "萬神試煉": ("萬神試煉",),
-    "地獄之門": ("地獄之門",),
-    "競技場挑戰": ("arena_challenges",),
-    "菇菇武道會": ("mushroom_arena_cycle_start", "mushroom_arena_daily"),
-    "賞金之路": ("escort_last_run",),
-    "七日登入獎勵": ("七日登入",),
-}
+
+def _registry_ws_to_pipeline_skips() -> dict[str, tuple[str, ...]]:
+    """由 registry 產生 WS→client skip 對照，排除條件式任務。"""
+    return dict(ws_to_pipeline_skip_mapping())
+
+
+def _registry_daily_record_mapping() -> dict[str, tuple[str, ...]]:
+    """由 completion policy 產生 dashboard daily-record 回寫對照。"""
+    mapping: dict[str, tuple[str, ...]] = {}
+    for definition in iter_task_definitions():
+        if definition.completion_policy.schema != "daily_record":
+            continue
+        names = definition.skip_when_ws_done
+        if not isinstance(names, tuple):
+            continue
+        for name in names:
+            mapping[name] = definition.completion_policy.record_keys
+    return mapping
+
+
+# W11：runtime 一律使用 registry projection，避免 WS/client 各自維護任務表。
+WS_TO_PIPELINE_SKIPS: dict[str, tuple[str, ...]] = _registry_ws_to_pipeline_skips()
+SKIP_TO_DAILY_RECORD: dict[str, tuple[str, ...]] = _registry_daily_record_mapping()
 
 
 def _record_daily_done(ip: str, skips: set[str], log) -> None:

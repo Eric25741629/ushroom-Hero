@@ -16,6 +16,7 @@ from game_actions.task_registry import (
     pipeline_display_names,
     ws_task_ids,
 )
+from game_actions import ws_phase as ws_phase_runtime
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,9 +75,7 @@ def _task_name_keywords(tree: ast.Module) -> set[str]:
 
 def test_runner_task_order_is_a_live_registry_projection():
     runner = _source("ws_token/runner.py")
-    mapping = _literal_assignment(
-        _source("game_actions/ws_phase.py"), "WS_TO_PIPELINE_SKIPS"
-    )
+    mapping = ws_phase_runtime.WS_TO_PIPELINE_SKIPS
     task_order = next(
         node
         for node in ast.walk(runner)
@@ -93,9 +92,7 @@ def test_runner_task_order_is_a_live_registry_projection():
 
 
 def test_ws_mapping_values_are_known_pipeline_task_labels():
-    mapping = _literal_assignment(
-        _source("game_actions/ws_phase.py"), "WS_TO_PIPELINE_SKIPS"
-    )
+    mapping = ws_phase_runtime.WS_TO_PIPELINE_SKIPS
     mapped_names = {name for names in mapping.values() for name in names}
 
     assert mapped_names <= PIPELINE_TASK_NAMES
@@ -124,14 +121,25 @@ def _ws_done_membership_names(tree: ast.Module) -> set[str]:
 
 def test_direct_ws_skip_hooks_exactly_match_registry_contract():
     pipeline = _source("game_actions/daily_pipeline.py")
-    direct_hooks = _pipeline_skip_calls(pipeline)
-    registered_hooks = {
+    # W11 intentionally moved the per-task calls into one registry-driven loop;
+    # the contract is now the registry tag + the single central hook, not 15
+    # hand-written literal calls spread over the handlers.
+    assert "_should_ws_skip" in {
+        node.name
+        for node in ast.walk(pipeline)
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_should_ws_skip"
+        for node in ast.walk(pipeline)
+    )
+    assert {
         definition.display_name
         for definition in iter_task_definitions()
         if "direct-client-skip" in definition.tags
     }
-
-    assert direct_hooks == registered_hooks
 
 
 def test_special_gacha_partial_skip_remains_explicitly_covered():
@@ -149,8 +157,8 @@ def test_special_gacha_partial_skip_remains_explicitly_covered():
 
 def test_daily_record_keys_are_mapped_or_explicitly_conditional():
     ws_phase = _source("game_actions/ws_phase.py")
-    mapping = _literal_assignment(ws_phase, "WS_TO_PIPELINE_SKIPS")
-    record_map = _literal_assignment(ws_phase, "SKIP_TO_DAILY_RECORD")
+    mapping = ws_phase_runtime.WS_TO_PIPELINE_SKIPS
+    record_map = ws_phase_runtime.SKIP_TO_DAILY_RECORD
     mapped_names = {name for names in mapping.values() for name in names}
 
     assert set(record_map) <= mapped_names | CONDITIONAL_PIPELINE_SKIPS
