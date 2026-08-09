@@ -32,6 +32,46 @@ def _safe(value: Any) -> Any:
     return str(value)
 
 
+_KNOWN_OUTCOMES = {
+    "COMPLETED", "SKIPPED", "RETRYABLE_FAILURE", "PERMANENT_FAILURE",
+    "INTERRUPTED", "UNKNOWN",
+}
+
+
+def normalize_task_payload(value: Any) -> dict[str, Any]:
+    """把既有 action payload 轉成 dashboard 可判定的統一 outcome。"""
+    safe = _safe(value)
+    if isinstance(safe, Mapping):
+        payload = {str(k): v for k, v in safe.items()}
+        outcome = str(payload.get("outcome", "")).upper()
+        if outcome in _KNOWN_OUTCOMES:
+            return payload
+
+        status = str(payload.get("status", "")).lower()
+        if payload.get("skipped") or status in {"skipped", "skip"}:
+            detail = payload.get("skipped") or payload.get("detail") or status
+            return {"outcome": "SKIPPED", "detail": str(detail)}
+        if payload.get("error") or status in {"error", "failed", "failure"}:
+            detail = payload.get("error") or payload.get("detail") or status
+            return {"outcome": "PERMANENT_FAILURE", "detail": str(detail)}
+        if payload.get("success") is False or payload.get("ok") is False:
+            detail = payload.get("detail") or payload.get("reason") or "執行失敗"
+            return {"outcome": "PERMANENT_FAILURE", "detail": str(detail)}
+        if payload.get("success") is True or payload.get("ok") is True \
+                or status in {"ok", "completed", "success"}:
+            return {"outcome": "COMPLETED",
+                    "detail": str(payload.get("detail") or "完成")}
+        if not payload:
+            return {"outcome": "UNKNOWN", "detail": "無結果"}
+        return {"outcome": "UNKNOWN", "detail": "無法判定", "raw": payload}
+
+    if safe is False:
+        return {"outcome": "PERMANENT_FAILURE", "detail": "執行失敗"}
+    if safe is None:
+        return {"outcome": "UNKNOWN", "detail": "無結果"}
+    return {"outcome": "UNKNOWN", "detail": str(safe)}
+
+
 def publish(device: str, report: Any, *, source: str = "client") -> None:
     """Publish a bounded diagnostic snapshot for one device."""
     if not device or report is None:
@@ -45,7 +85,10 @@ def publish(device: str, report: Any, *, source: str = "client") -> None:
         "login_ok": bool(getattr(report, "login_ok", True)),
         "aborted": bool(getattr(report, "aborted", False)),
         "kicked": bool(getattr(report, "kicked", False)),
-        "tasks": _safe(tasks),
+        "tasks": {
+            str(task_id): normalize_task_payload(payload)
+            for task_id, payload in tasks.items()
+        } if isinstance(tasks, Mapping) else {},
         "errors": _safe(errors),
     }
     with _LOCK:

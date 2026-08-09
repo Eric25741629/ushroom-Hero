@@ -610,6 +610,11 @@ def get_status():
             info["task_report"] = get_report(real_ip)
         except Exception:
             info["task_report"] = None
+        try:
+            from runtime_services.runtime_fsm_shadow import runtime_shadow_snapshot
+            info["runtime_shadow"] = runtime_shadow_snapshot(real_ip)
+        except Exception:
+            info["runtime_shadow"] = None
 
     # 把「已停用且還沒跑起來」的裝置 (剛註冊、尚未啟用) 也補進來，否則它沒有
     # runtime state → 不會出現在儀表板 → 使用者找不到卡片去按「啟用」。
@@ -699,3 +704,17 @@ def get_task_report(ip):
         logger.debug("task report unavailable for %s: %s", real_ip, exc)
         report = None
     return jsonify({"status": "ok", "device": real_ip, "report": report})
+
+
+@bp.route("/api/runtime_shadow/<ip>", methods=["GET"])
+def get_runtime_shadow(ip):
+    """Return the read-only lifecycle shadow counters for one device."""
+    require_device_access(ip)
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    try:
+        from runtime_services.runtime_fsm_shadow import runtime_shadow_snapshot
+        snapshot = runtime_shadow_snapshot(real_ip)
+    except Exception as exc:  # noqa: BLE001 — telemetry is advisory
+        logger.debug("runtime shadow unavailable for %s: %s", real_ip, exc)
+        snapshot = None
+    return jsonify({"status": "ok", "device": real_ip, "shadow": snapshot})
