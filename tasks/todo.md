@@ -202,7 +202,298 @@ C 貢獻了 A 與 B 都漏掉的最有價值設計：`TaskResult` / `TaskOutcome
 - [ ] 新抽象的**唯一消費者是 live 路徑**（A §4：`farm_v2/states.py` 已移除、`task_sandbox/`
       與 `bootstrap/api_services.py` 至今未接線 — 實測確認；`page_detector` 已接線，A 此處誤判）。
 
-### 待拍板（C §12，動工前需使用者決定）
+### 拍板決議（2026-08-09，依現有程式碼實證裁定）
+
+**裁定原則：現有程式碼已經用行為回答了大半問題。凡是 code 裡已有可運作語意的，
+一律「形式化既有行為」，不重新發明。** 以下 6 題全部定案，階段 3 可動工。
+
+#### 1. 暫停 = control mode（不是 phase）✅ 定案
+
+證據：`bot_state.check_pause()`（`:320`）是**阻塞式**的 — thread 卡在 `event.wait(1.0)`
+迴圈直到恢復，恢復後原地繼續。這本質上就是 control mode：phase 不變，只是暫時凍結。
+若做成 phase 就必須記「暫停前在哪」再跳回去，等於把現成語意複雜化。
+
+- **暫停 WS 是原地續跑還是重跑本輪 ledger？** → **原地續跑，靠既有 `ws_resume` ledger**
+  （`ws_phase.py:228` `_RESUME_KEY`，TTL 30 分 + 同日，逾時/隔日視為 stale 全跑；
+  `_RESUME_EXEMPT = {carpark, idle_reward}` 這兩個累積收益/時間窗任務 resume 仍重跑）。
+  **不要新設計 resume 機制**，這套已有 spec 與測試（`tests/test_ws_phase_resume.py`）。
+- **暫停 client task 可否從當前 task 續？** → **可以，且已是現況**：`check_pause()`
+  在任務邊界阻塞，恢復後續跑同一輪。registry 化後 checkpoint 位置不變。
+- **暫停期間是否保留瀏覽器與 WS session？** → **保留**。現況阻塞在原地、資源未釋放，
+  且暫停常是為了手動接管看畫面，關掉反而違反使用者意圖。
+
+#### 2. 手動接管 = 獨立 phase（`MANUAL`）✅ 定案
+
+C 傾向 phase，這點對，理由在 code：手動接管有**明確的資源進出動作**
+（`request_web_launch` / `consume_web_launch_request` / `complete_web_launch_request` /
+`set_manual_release`，`bot_state.py:763-848`），而且 `check_pause()` 內部**特地為它開後門**
+（`:333` 偵測 `has_pending_web_launch_request` 就 `return True` 讓它插隊）。有獨立資源
+生命週期 + 能打斷 pause = phase，不是 mode。
+
+- **退出後 resume policy 從休眠 vs 從 client task 進入是否一樣？** → **一樣，統一回休眠**。
+  現況兩處都寫 `resume_sleep_reason = "手動操作結束後返回休眠"`
+  （`new_main_v2.py:435` 與 `:686`）— 已經是一致的，形式化時保留。
+
+#### 3. 事件優先級 ✅ 採納候選順序，一處修正
+
+```text
+SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
+```
+
+`MANUAL_LAUNCH > PAUSE` 與 `check_pause():333` 的既有後門一致，非新設計。
+`LOGIN_CONFLICT` 排在 `MANUAL_LAUNCH` 前的理由：異地登入會強制 30 分休眠
+（既有 `mark_login_conflict_sleep`），此時開瀏覽器只會再撞一次衝突。
+
+- **丟棄政策** → **三分法**：`SHUTDOWN`/`FORCE_SLEEP`/`LOGIN_CONFLICT` 為
+  **latching**（一旦收到必須被消費，不可丟）；`MANUAL_LAUNCH` **保留到新 phase**
+  （已有 pending/consume/complete 三段式，天生 latching）；`WAKE_OVERRIDE` 在
+  非 `SLEEPING` phase **直接丟棄**（已經醒著，喚醒無意義）並記 log，不回報 conflict。
+
+#### 4. 中斷 = cooperative cancellation ✅ 定案，且已實作
+
+**不需要新機制** — `runner.py` 已把 `should_abort` callable 貫穿到每個任務
+（`:1820` "polled at every task boundary"、`:1936` 主迴圈檢查，`aborted` 時
+剩餘任務留 **pending** 而非 failed）。這正是 C §5.3 要的 `INTERRUPTED` 語意，已存在。
+
+- **最大允許多久回應強制休眠？** → **以任務邊界為單位，目標 ≤ 60 秒**；
+  超過 60 秒的單一呼叫（戰鬥模擬、mining plan、OCR 等待）必須自帶可取消 timeout。
+  不設更嚴格的數字，因為 Python thread 不可強制 kill，硬性 SLA 只會逼出 busy-wait。
+- **哪些長呼叫必須可取消？** → 已有 timeout 常數的（`_ROGUE_PROBE_S`、`_TREASURE_PROBE_S`、
+  `_HUMAN_WAIT_POLL_SEC`、`_UNDETERMINED_MAX_POLLS`）沿用；新增任務若單步 > 60 秒必須傳 `should_abort`。
+- **被中斷時如何寫 ledger？** → **一律寫 pending / `INTERRUPTED`，絕不寫完成**
+  （現況 `aborted` 已如此）。這是階段 2.2 的 review 紅線。
+
+#### 5. 休眠 = 保留 `SLEEPING` phase，但等待由 scheduler 做 ✅ 定案
+
+理由與 C 一致且有 code 支持：休眠是可觀測（dashboard 顯示 next wake）、可中斷
+（`SKIP_SLEEP`）、有 `resume_sleep_until_ts` 的長期階段（`new_main_v2.py:186`）。
+但 `transition()` 必須是純函式，**不得阻塞** — 等待留在既有 `run_sleep_cycle()` effect 內。
+
+#### 6. 是否凍結新功能一週 ❌ 不凍結，改用「表格優先」規則
+
+凍結一週對這個 repo 不現實（單人 + 多 AI session 併行 + bot 每天在跑）。
+改採較弱但可執行的護欄：**階段 2 期間新增任務一律直接寫成 registry entry**，
+不再往 `_run_tasks` 插小數編號。這樣新功能反而變成 registry 的驗證案例，而非衝突源。
+搭配 worktree 隔離 + 階段 1 的一致性測試，衝突風險可控。
+
+### 設計邊界（防過度設計；本節為硬約束，違反者 review 直接退回）
+
+你的疑慮成立，而且**這個 repo 有可驗證的過度設計前科**：`farm_v2/states.py`
+（狀態機，2026-07-05 移除，從未接線）、`task_sandbox/`（實測 0 個 live 消費者）、
+`bootstrap/api_services.py`（實測只有測試在 import）。三個抽象、三個沒進 live path。
+所以邊界不是理論潔癖，是針對已發生兩次的失敗模式。
+
+#### B0. 唯一鐵則：先接消費者，後建框架
+
+任何新模組的**第一個 PR 就必須有 live 路徑消費者**。不允許「先建框架，下一個 PR 接線」——
+這正是上述三個死抽象的產生方式。無法在同一個 PR 內接上 live 路徑的抽象，**不要建**。
+
+#### B1. 數量預算（超過即停下重新評估，不得靜默放寬）
+
+| 項目 | 上限 | 超過時的意義 |
+|---|---|---|
+| `RuntimePhase` 成員 | 10 | 可能把 control mode / observation / retry counter 誤當 phase |
+| `RuntimeEvent` 成員 | 12 | 可能把「任務結果」當成 runtime 事件 |
+| `TaskDefinition` 欄位 | 18 | 抽象邊界錯了，該收成 policy |
+| 新增檔案數（階段 2） | 6 | registry 不該長成一個子系統 |
+| 新增檔案數（階段 3 試點） | 3 | 試點就該是 3 個檔案能講完的東西 |
+| 單檔行數 | 400（硬上限 800） | 既有專案規範 |
+| policy 類別數 | 5 | `DuePolicy`/`CompletionPolicy`/`RetryPolicy` + 最多 2 個 |
+
+#### B2. 禁止清單（明確不做）
+
+- **禁止**為頂層任務序列引入 FSM library / actor framework / asyncio 重寫。
+- **禁止**引入任何新的第三方套件（含 `transitions`）— 階段 3 用純函式 + Enum。
+  要引入必須先達 C §12.8 門檻並單獨提案。
+- **禁止**把任務做成 class-based State Pattern（一堆只包一個 `run()` 的小 class）。
+- **禁止**新建 orchestrator / engine / framework 命名的模組。改造既有 `daily_pipeline`。
+- **禁止**同一輪同時動 UI 導航狀態機與任務註冊表。
+- **禁止**為「未來可能的任務」預留欄位 / hook / plugin 機制（YAGNI）。
+- **禁止**用 `dict[str, Any]` 當設定容器取代可驗證的 dataclass。
+- **禁止**把大量 lambda 與隱性副作用塞進資料表。
+- **禁止**讓 registry 兼任 scheduler（避免新的上帝物件）。
+- **禁止**讓 dashboard 顯示字串反向推斷執行狀態（方向只能 context → snapshot）。
+- **禁止**在 `transition()` 內做 I/O（不連 ADB / 不開瀏覽器 / 不連 WS 即可測）。
+- **禁止**強迫 WS / ADB / Playwright 三個實作長得一樣；統一的只有輸入輸出合約。
+
+#### B3. 抽象正當性三問（每個新類別/協議都要能回答）
+
+1. **現在有幾個真實呼叫點？** 少於 2 個 → 不要抽象，直接寫在使用處。
+2. **移除它會讓程式碼變長還是變短？** 變長才留。變短或持平 → 是儀式，不是抽象。
+3. **它能在不啟動 bot 的情況下被測試嗎？** 不能 → 邊界劃錯了。
+
+#### B4. 每階段的「不值得繼續」出口（必須真的可以喊停）
+
+- **階段 2 出口**：若遷完 3 個代表性任務後，`TaskDefinition` 已需要第 4 個
+  單一任務專屬欄位 → 停止擴大，只保留這 3 個 + 一致性測試（1.3）的成果。
+- **階段 3 出口**：若 shadow mode 跑滿一週，transition 模型與實際行為的分歧
+  **全部**是模型漏設而非真實 bug → FSM 沒有發現任何東西，**放棄階段 3**，
+  保留 registry。這個結論是合法且可接受的產出。
+- **階段 4 出口**：若某任務三後端收斂會讓行為出現不可測的差異 → 該任務維持三份實作，
+  只在 registry 登記，不強行合併。
+
+#### B5. 判定「這是過度設計」的即時信號
+
+- 寫了一個介面，但只有一個實作，且看不到第二個。
+- 為了測新抽象，必須先寫 50 行 mock。
+- 解釋這個設計需要畫圖，而它取代的舊 code 不需要。
+- 新增一個任務時，要碰的檔案數**沒有變少**（registry 的唯一目的就是讓它變少）。
+- 出現 `Base*` / `Abstract*` / `*Manager` / `*Factory` 命名而該層只有一種行為。
+
+### 可分派 TODOLIST（含併行標記）
+
+**圖例**：`[P-n]` = 併行群組 n，同群組內可同時派給不同 agent／session；
+`[SEQ]` = 必須等前置完成。每張工單標了 **owned files**（該 agent 唯一可寫的檔案），
+避免多 session 互相覆寫。全部走 worktree 隔離。
+
+> 依賴總覽：`W1 ∥ W2 ∥ W3` → `W4 ∥ W5 ∥ W6` → `W7` → `W8 ∥ W9 ∥ W10` → `W11` → `W12` → `W13 ∥ W14`
+
+---
+
+#### 波次 1：衛生 + 事實校正（3 張工單全可併行）
+
+- [ ] **W1 [P-1] 清工作目錄 sync-conflict 噪音**
+  - owned：無原始碼（純刪檔）
+  - 範圍：`ws_token/*.sync-conflict-*`、`game_actions/equipment_scheme.sync-conflict-*`、
+    `battle/rogue_h5.sync-conflict-*`、`dragon_realm/client.sync-conflict-*`、
+    `.superpowers/*.sync-conflict-*`、`ws_state/*.sync-conflict-*.json`、
+    `docs/**/*.sync-conflict-*`、根目錄 `finish.sync-conflict-*`、`_wf_indexDoc.sync-conflict-*`
+  - 前置確認：git 追蹤數為 0（已驗證），故純檔案刪除
+  - 驗收：`find . -name "*sync-conflict*" -not -path "./.git/*" --exclude vendored` 在原始碼目錄歸零
+  - **注意**：`.ruff_cache/` 與 `logs/` 內的可一併刪但非必要；勿刪 `.conda/`、`OCR/` 內 vendored
+
+- [ ] **W2 [P-1] 清 stale worktree + 未提交垃圾**
+  - owned：`.gitignore`
+  - 範圍：80 個 worktree（`.worktrees/` 26、`worktree/` 8、`.claude/worktrees/` 46）
+    **逐一確認已 merge 才刪**；`NUL`、`_check_devices.py`、`emu-test.json`、`web-002/003/004.json`
+  - **必做前置**：`.worktrees/state-machine-registry-v2-gpt/狀態機與註冊表說明意見v2-gpt.md`
+    先搬回主樹（本次分析來源文件）再刪該 worktree
+  - 驗收：`git worktree list` 只剩 in-flight 的；`git status` 無上列垃圾
+
+- [ ] **W3 [P-1] 文件事實校正**
+  - owned：`game_actions/daily_pipeline.py`（僅 docstring 一行）、`docs/INDEX.md`、`CLAUDE.md`
+  - 範圍：① `daily_pipeline.py:171` docstring「20 tasks」→ 29
+    ② `CLAUDE.md` / `docs/INDEX.md` 若記載 `page_detector` 為 experimental 未接線 → 更正為
+    **已接線**（`stage_guard.py:45`、`game_initialization.py`、`utils/cocos_navigator.py`，per-device flag-gated）
+  - 驗收：`py_compile` 通過；無行為變更
+
+---
+
+#### 波次 2：特徵化測試安全網（3 張併行；W4 為最高優先）
+
+- [ ] **W4 [P-2] ⭐ `TASK_ORDER` ↔ `WS_TO_PIPELINE_SKIPS` ↔ `ws_done` 三方一致性測試**
+  - owned：`tests/test_ws_pipeline_consistency.py`（新檔）
+  - **這是目前零保護的最高風險項，且可獨立於整個 registry 交付 — 建議第一個做**
+  - 範圍：斷言 `WS_TO_PIPELINE_SKIPS` 的 key 全在 `TASK_ORDER`（40 項）內；
+    value 的中文任務名全部能對上 `_run_tasks` 內實際使用的 `_ws_skip(...)` 字串（16 處）；
+    `SKIP_TO_DAILY_RECORD` 的 key 全在 `WS_TO_PIPELINE_SKIPS` 的 value 集合內
+  - 驗收：故意改錯一個字串，測試必須紅
+
+- [ ] **W5 [P-2] `_run_tasks` 順序與 gating 特徵化測試**
+  - owned：`tests/test_daily_pipeline_order.py`（新檔；**勿改** `tests/test_daily_pipeline.py`）
+  - 範圍：釘住 29 個任務的執行順序與 4 種 gating（flag / due / backend / ws_done）；
+    以 fake `DailyContext` + 記錄呼叫序列的 spy 實作，不連真實 device
+  - 隱性契約（實測確認，必須有測試）：Task 4 `stage` 被 5/6 復用（`:300/:311`）；
+    Task 18 後刷新 `stage` 供 Task 19（`:512`）；Task 12 限 20:00-23:00（`:404`）；
+    Task 1 用 pipeline 開頭 `current_time` 而非即時 `now`；`_DEVICE_SKIP_GUARDIAN` 5558（`:71`）；
+    尾端 5558 / fc65396d 清理分支（`:253/:547`）
+  - 驗收：測試在**未改動** `daily_pipeline.py` 的情況下全綠（這是基線，不是 TDD 紅燈）
+
+- [ ] **W6 [P-2] 中斷情境特徵化測試**
+  - owned：`tests/test_runtime_interrupts.py`（新檔）
+  - 範圍：休眠中收立即喚醒、WS 階段收強制休眠（驗證剩餘任務留 **pending** 非 failed）、
+    暫停後收手動開網頁（驗證 `check_pause():333` 後門插隊）、手動結束後恢復原休眠
+    （`new_main_v2.py:435/:686` 兩路徑同語意）、瀏覽器關閉不影響 ADB 裝置、
+    初始化/WS fallback/運行中三時機的異地登入、master 經 worker 下同一命令的等價性
+  - 驗收：全綠且不連真實 ADB/Playwright/WS
+
+---
+
+#### 波次 3：registry 資料模型（單張，需 W4-W6 全綠）
+
+- [ ] **W7 [SEQ] 定義 `TaskDefinition` / `TaskOutcome` / `TaskResult` + 讀取層**
+  - owned：`game_actions/task_registry.py`（新檔）、`tests/test_task_registry.py`（新檔）
+  - 範圍：資料模型（欄位見上方「Code Review 欄位」A 表，**上限 18 欄**）+ 三個 policy 物件
+    + registry 表；**執行層完全不動**
+  - `DuePolicy` 必須包裝既有 `task_due._REGISTRY` predicate，**不重寫 due 邏輯**
+  - `TaskOutcome`：`COMPLETED / SKIPPED / RETRYABLE_FAILURE / PERMANENT_FAILURE / INTERRUPTED`
+  - **B0 鐵則**：本 PR 必須至少有一個 live 消費者（可先讓 W4 的一致性測試改讀 registry）
+  - 驗收：W4-W6 全綠（證明零行為變更）；`TaskDefinition` 欄位數 ≤ 18
+
+---
+
+#### 波次 4：遷 3 個代表性任務（3 張併行，各自 owned 不重疊）
+
+> 三張都只改 registry 表的**自己那幾列** + 自己的 executor 檔，**禁止**任何人改 `_run_tasks` 主體。
+
+- [ ] **W8 [P-4] 遷「有 WS↔client 對照」任務（`lamp` 開神燈）**
+  - owned：`game_actions/executors/lamp_executor.py`（新檔）、`tests/test_lamp_executor.py`
+  - 重點：`skip_when_ws_done` 欄位取代內聯 `_ws_skip("開神燈")`；`batch_cap` 收 `_LAMP_BATCH_NUM`
+  - 保留隱性契約：Task 19 依賴 Task 18 刷新過的 `stage`
+
+- [ ] **W9 [P-4] 遷「單一後端」任務（Task 14.5 龍骸聖域 或 Task 14.6 煩惱消，H5 only）**
+  - owned：`game_actions/executors/single_backend_executor.py`（新檔）+ 對應測試
+  - 重點：驗證 `executors` 只登記 `web_h5` 時，adb 裝置**乾淨跳過**而非 abort
+
+- [ ] **W10 [P-4] 遷「特殊 due/completion schema」任務（農場 / 每日任務）**
+  - owned：`game_actions/executors/farm_executor.py`（新檔）+ 對應測試
+  - 重點：`CompletionPolicy` 要能同時表達 `mission_timestamp`（flat scalar）與
+    `farm_plant_click`（dict）兩種 schema（`ws_phase.py:98-123`），**不新增 optional field**
+  - 這張是 **B4 階段 2 出口的判定點**：若表達不了，喊停
+
+---
+
+#### 波次 5：收斂主迴圈（單張，高風險）
+
+- [ ] **W11 [SEQ] `_run_tasks` 收成單一迴圈 + `RunReport`**
+  - owned：`game_actions/daily_pipeline.py`、`game_actions/ws_phase.py`
+  - 範圍：依 `order` 排序的單一迴圈，6 個共用關切各做一次（取代 28×force_sleep、
+    16×ws_skip、13×guarded_run、8×update_state、4×time_recording）；
+    pipeline 側產出與 WS 側同型的 `RunReport`；`ws_phase` 兩張 dict 改由 registry 推導
+  - **純 code motion，行為零變更**
+  - 驗收：W4/W5/W6 全綠且**未修改測試預期值**；改完**重啟 `new_main_v2.py`**（無 hot-reload）
+  - 高風險：這是 live bot 熱路徑，建議單獨一個 session、單獨 review
+
+---
+
+#### 波次 6：後續（2 張併行，各自有獨立出口）
+
+- [ ] **W12 [SEQ, 需 W11] 8 個 scheduler 的 `_is_enabled/_is_due/_mark_done` 收斂為 policy**
+  - owned：`game_actions/*_scheduler.py`（8 檔）
+  - 驗收：每個 scheduler 的既有測試全綠；行為零變更
+
+- [ ] **W13 [P-6] Runtime FSM 最小試點（shadow mode，不接管行為）**
+  - owned：`runtime_services/runtime_fsm.py`（新檔）、`tests/test_runtime_fsm.py`
+  - 範圍嚴格限定：4 phase（`WS_PHASE / WAKING_CLIENT / CLIENT_TASKS / SLEEPING`）
+    × 5 event（`WS_COMPLETED / CLIENT_READY / TASKS_COMPLETED / WAKE_DUE / FORCE_SLEEP`）
+  - 依上方拍板決議實作：pause = control mode（正交欄位）、manual = 獨立 phase、
+    優先級 `SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE`、
+    `WAKE_OVERRIDE` 非 SLEEPING 時丟棄
+  - `transition()` 純函式、零 I/O；`FORCE_SLEEP` 覆蓋全部 3 個活躍 phase；
+    table-driven test 列出合法與非法轉移；fake effect executor
+  - **shadow mode**：只記 log 不改行為，跑滿一週
+  - **B4 出口**：若分歧全是模型漏設而非真實 bug → 放棄階段 3，這是合法產出
+  - 上限：新增檔案 ≤ 3、phase ≤ 10、event ≤ 12、不引入任何套件
+
+- [ ] **W14 [P-6] `RunReport` 上儀表板**
+  - owned：`control_panel/routes_status.py` + 對應前端 template
+  - 範圍：本輪哪些任務跑了／被哪個條件（flag/due/backend/ws_done）跳過，從「讀 log」變「看表」
+  - 依既有慣例：新功能必須有 dashboard 控制項，不可只有 config
+
+---
+
+#### 派工建議
+
+- **想最快見效、只做一件事** → **W4**（零保護的最高風險，可獨立交付，不動任何生產碼）。
+- **可同時開 3 個 session** → 波次 1 全部（W1/W2/W3 互不衝突）。
+- **W11 不要與任何工單併行**：它改 live bot 熱路徑，且 W8-W10 的 executor 檔案是它的輸入。
+- **W13 可全程與波次 4-6 併行**：shadow mode 不改行為，唯一寫的是新檔 + log。
+- 每張工單完成即 commit（只 stage owned files，絕不 `git add -A`），
+  驗收通過後 merge 回 main 並刪 worktree + branch。
+
+
+
+
 
 1. **暫停是 phase 還是 control mode？** 傾向 control mode（恢復時保留原 phase）。
    需確認：暫停 WS 是原地續跑還是重跑本輪 ledger？暫停 client task 可否從當前 task 續？
