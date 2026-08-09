@@ -385,7 +385,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 #### 波次 2：特徵化測試安全網（3 張併行；W4 為最高優先）
 
-- [ ] **W4 [P-2] ⭐ `TASK_ORDER` ↔ `WS_TO_PIPELINE_SKIPS` ↔ `ws_done` 三方一致性測試**
+- [x] **W4 [P-2] ⭐ `TASK_ORDER` ↔ `WS_TO_PIPELINE_SKIPS` ↔ `ws_done` 三方一致性測試**
   - owned：`tests/test_ws_pipeline_consistency.py`（新檔）
   - **這是目前零保護的最高風險項，且可獨立於整個 registry 交付 — 建議第一個做**
   - 範圍：斷言 `WS_TO_PIPELINE_SKIPS` 的 key 全在 `TASK_ORDER`（40 項）內；
@@ -393,7 +393,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
     `SKIP_TO_DAILY_RECORD` 的 key 全在 `WS_TO_PIPELINE_SKIPS` 的 value 集合內
   - 驗收：故意改錯一個字串，測試必須紅
 
-- [ ] **W5 [P-2] `_run_tasks` 順序與 gating 特徵化測試**
+- [x] **W5 [P-2] `_run_tasks` 順序與 gating 特徵化測試**
   - owned：`tests/test_daily_pipeline_order.py`（新檔；**勿改** `tests/test_daily_pipeline.py`）
   - 範圍：釘住 28 個任務的執行順序與 4 種 gating（flag / due / backend / ws_done）；
     以 fake `DailyContext` + 記錄呼叫序列的 spy 實作，不連真實 device
@@ -403,7 +403,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
     尾端 5558 / fc65396d 清理分支（`:253/:547`）
   - 驗收：測試在**未改動** `daily_pipeline.py` 的情況下全綠（這是基線，不是 TDD 紅燈）
 
-- [ ] **W6 [P-2] 中斷情境特徵化測試**
+- [x] **W6 [P-2] 中斷情境特徵化測試**
   - owned：`tests/test_runtime_interrupts.py`（新檔）
   - 範圍：休眠中收立即喚醒、WS 階段收強制休眠（驗證剩餘任務留 **pending** 非 failed）、
     暫停後收手動開網頁（驗證 `check_pause():333` 後門插隊）、手動結束後恢復原休眠
@@ -415,7 +415,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 #### 波次 3：registry 資料模型（單張，需 W4-W6 全綠）
 
-- [ ] **W7 [SEQ] 定義 `TaskDefinition` / `TaskOutcome` / `TaskResult` + 讀取層**
+- [x] **W7 [SEQ] 定義 `TaskDefinition` / `TaskOutcome` / `TaskResult` + 讀取層**
   - owned：`game_actions/task_registry.py`（新檔）、`tests/test_task_registry.py`（新檔）
   - 範圍：資料模型（欄位見上方「Code Review 欄位」A 表，**上限 18 欄**）+ 三個 policy 物件
     + registry 表；**執行層完全不動**
