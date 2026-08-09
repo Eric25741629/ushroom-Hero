@@ -499,6 +499,78 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - 範圍：本輪哪些任務跑了／被哪個條件（flag/due/backend/ws_done）跳過，從「讀 log」變「看表」
   - 依既有慣例：新功能必須有 dashboard 控制項，不可只有 config
 
+- [ ] **W15 [SEQ, 條件式；需 W13 shadow 決策關卡通過] `new_main_v2.main()` 裝置生命週期瘦身**
+  - 現況（2026-08-09 AST 實測）：`main()` :146-701 共 556 行，含 47 個 `if`、
+    10 個 `try`、17 個 `except`、11 個 `continue`、8 個 `return`；同時承擔後端分流、
+    初始化重試、WS-first、控制訊號、Phase D1、喚醒/OCR、App 啟動、pipeline、
+    例外→休眠 policy、手機離線降級、萬神 one-shot 與 thread cleanup。
+  - 已核實的回長原因：舊 `todolist.md` 曾把檔案 1187→406 行，但後續功能重新內聯；
+    `game_actions/manager_factory.py`（Phase 9）與 `bootstrap/api_services.py`（Phase 10）
+    都有測試卻無 production 呼叫者，`main()`／`__main__` 已再次維護重複邏輯。
+  - **啟動條件**：W13 shadow mode 跑滿一週後，必須證明集中 transition 能抓到真實
+    分歧或能降低新增中斷事件的修改點；若只是把相同數量的 `if/except` 搬家，取消 W15。
+  - **目標**：`new_main_v2.py` 只保留入口、薄 `main()` 與組裝；流程一眼可讀為
+    「初始化 → WS/pre-client gates → wake/ensure-ready → daily pipeline → cleanup/sleep」。
+    LOC 200–300 僅為方向，真正驗收是政策真相來源與修改點數收斂，不以行數單獨判定。
+
+  **分階段執行（每階段獨立 worktree／commit／review，不混 runtime 行為修改）：**
+
+  1. **W15-A [低風險] 修復既有抽取層接線**
+     - `main()` 改用 `game_actions.manager_factory._init_runtime_managers()`，刪除六個 manager／
+       classifier／RL recorder 的重複建置碼；沿用既有 `tests/test_manager_factory.py`。
+     - 更新並接回 `bootstrap.api_services.start_all()`／`scan_loop()`；先補齊目前 master-only
+       `online_check`、`online_monitor`、`mount_tracker` 與 scan-loop 行為測試。torch 分流、
+       模型載入仍是入口組裝責任，不為縮 LOC 強塞進 service。
+     - `Skill`／`park` wildcard import 經 caller 與 import-side-effect 測試證實無用後直接刪除，
+       不把 dead import 改寫成另一組 explicit dead import。
+
+  2. **W15-B [安全網] 補 wake-loop 行為型 characterization tests**
+     - 不只 AST pinning；以 fake device 驗正常 wake、WS-before-H5、force-sleep、
+       `MANUAL_LAUNCH > PAUSE`、manual launch > Phase D1、startup/runtime login conflict、
+       PhoneUnreachable WS-only、萬神 one-shot 四個 exit、resume-sleep 與 web_h5 cleanup。
+     - 既有預期值不得在重構 PR 內修改；若測試難以建立，表示抽取邊界仍太大，先停。
+
+  3. **W15-C [中風險] 建立窄 context 與 typed directive（先 shadow，不接管）**
+     - `DeviceRuntimeContext` 只收跨 cycle 狀態：device/backend、manager、
+       `pre_runtime_ws_done`、resume-sleep、one-shot；禁止變成任意 dependency bag。
+     - 使用 `CycleDirective`／W13 `TransitionDecision` 表達 `RESTART_CYCLE / SLEEP /
+       REINITIALIZE / TERMINATE` 與 `sleep_policy/reason/forced_wake_ts/skip_cleanup`；
+       禁止用 `_handle_xxx() -> bool` 混合多種 `continue/return/sleep` 語意。
+     - 例外不能直接做 `{ExceptionType: policy}` 的扁平查表：`ForceSleepRequested`、
+       `WakeLoopInterrupted`、`PhoneUnreachableError`、兩種 login conflict 含不同 side effect；
+       先純分類成 directive，再由單一 effect layer 執行 stop/cleanup/sleep。
+
+  4. **W15-D [中風險] 逐塊搬回既有 owner，不先建四個新模組**
+     - 瀏覽器／初始化留在 `web_session_service`，遊戲 ready 流程優先擴充
+       `game_initialization.py`，sleep/stop/直連裝置睡前清理收進 `sleep_service`，
+       生命週期 policy 才放既有 `device_runtime_service`，任務仍由 `daily_pipeline` 負責。
+     - 不新增 `device_loop.py + sleep_policy.py + game_launcher.py + device_cleanup.py` 四層
+       薄包裝；只有能回答 B3 三問、且同一 PR 接上 live `main()` 的 cohesive helper 才可抽。
+     - `_refresh_h5_ws_credentials` 同時服務「既有 session 已在遊戲」與「冷啟完成」兩路，
+       若搬移應歸 `web_session_service`，不可只塞進 launcher 而漏掉前者。
+
+  5. **W15-E [高風險] live loop 切換與瘦身收尾**
+     - `main()` 僅負責依序呼叫 phase、套用 directive、決定重跑／休眠／結束；不得再含
+       backend-specific App 啟動細節或六份分散 sleep-policy mapping。
+     - 合併回 main 後重跑目標測試與 `py_compile`，重啟 `new_main_v2.py`，分別做 ADB／
+       web_h5 live 驗證；先單裝置 canary，再恢復全裝置。
+
+  **搬移時不可破壞的隱性契約：**
+  - 順序固定：WS → pause gate → Phase D1 → wake → ensure game ready → pipeline → cleanup → sleep。
+  - `pre_runtime_ws_done` 只在無 pending web-launch 且未 pause 時快取；resume-sleep 兩欄跨輪保存。
+  - Playwright thread-affine；web_h5 cleanup 不可套 Android-only `app_stop`。
+  - `FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE`；manual launch
+    必須壓過 Phase D1 skip-browser。
+  - startup/runtime login conflict 都維持 30 分鐘，但 policy 名稱與 stop side effect 不混用。
+  - PhoneUnreachable 跳過直連手機 cleanup；萬神 one-shot 不進一般 hourly sleep，所有 exit
+    都要正確 stop runtime 並清 `web_browser_open`。
+
+  **完成驗收：**
+  - 新控制事件只需修改集中 transition/effect mapping，不再追 10+ 個 `continue/return` 出口。
+  - `manager_factory`／`api_services` 均有 production caller，或經驗證後刪除；不得再留測試-only 抽象。
+  - 目標行為測試未改預期全綠；`git diff --check`、指定檔案 `py_compile` 通過。
+  - 若任一階段增加的抽象比刪除的分支更多，依 B4 出口停止，不為達 LOC 目標硬拆。
+
 ---
 
 #### 派工建議
