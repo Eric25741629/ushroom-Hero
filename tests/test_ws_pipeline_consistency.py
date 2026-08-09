@@ -10,35 +10,18 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from game_actions.task_registry import (
+    get_task_definition,
+    iter_task_definitions,
+    pipeline_display_names,
+    ws_task_ids,
+)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# 這是 daily_pipeline 現行公開給交接層的中文 task label；改名時必須同時
-# 更新 WS_TO_PIPELINE_SKIPS，否則 WS 成功後會靜默漏跑或重跑 client 任務。
-PIPELINE_TASK_NAMES = frozenset({
-    "坐騎強化",
-    "紅包檢查",
-    "點擊寶箱",
-    "家族任務",
-    "領取守護靈",
-    "商店購買",
-    "所有日常任務",
-    "好友每日禮物",
-    "開神燈",
-    "轉盤金幣",
-    "挖礦/Oracle",
-    "抽技能夥伴",
-    "航海任務 (Sea)",
-    "競技場挑戰",
-    "天梯每週獎勵",
-    "七日登入獎勵",
-    "雲端戰鬥",
-    "菇菇武道會",
-    "地獄之門",
-    "賞金之路",
-    "農場任務",
-    "萬神試煉",
-})
+# 中文 task label 改由 registry 產生；新增/改名時不再維護第二張手抄清單。
+PIPELINE_TASK_NAMES = frozenset(pipeline_display_names())
 
 # `萬神試煉` 是既有條件式 skip：只有配置 dungeon_sweeps 時才由
 # ws_phase.run_ws_phase 額外加入，不會出現在無條件對照表。
@@ -89,15 +72,24 @@ def _task_name_keywords(tree: ast.Module) -> set[str]:
     return names
 
 
-def test_ws_task_keys_are_a_subset_of_the_40_task_order_entries():
-    runner = _literal_assignment(_source("ws_token/runner.py"), "TASK_ORDER")
+def test_runner_task_order_is_a_live_registry_projection():
+    runner = _source("ws_token/runner.py")
     mapping = _literal_assignment(
         _source("game_actions/ws_phase.py"), "WS_TO_PIPELINE_SKIPS"
     )
+    task_order = next(
+        node
+        for node in ast.walk(runner)
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "TASK_ORDER"
+    )
 
-    assert len(runner) == 40
-    assert len(set(runner)) == len(runner)
-    assert set(mapping).issubset(set(runner)), sorted(set(mapping) - set(runner))
+    assert isinstance(task_order.value, ast.Call)
+    assert isinstance(task_order.value.func, ast.Name)
+    assert task_order.value.func.id == "ws_task_ids"
+    assert len(set(ws_task_ids())) == len(ws_task_ids())
+    assert set(mapping).issubset(set(ws_task_ids())), sorted(set(mapping) - set(ws_task_ids()))
 
 
 def test_ws_mapping_values_are_known_pipeline_task_labels():
@@ -110,20 +102,48 @@ def test_ws_mapping_values_are_known_pipeline_task_labels():
     assert mapped_names, "WS 對照表不可退化成空表"
 
 
-def test_direct_ws_skip_hooks_and_special_gacha_hook_are_covered():
-    pipeline = _source("game_actions/daily_pipeline.py")
-    mapping = _literal_assignment(
-        _source("game_actions/ws_phase.py"), "WS_TO_PIPELINE_SKIPS"
-    )
-    mapped_names = {name for names in mapping.values() for name in names}
+def _ws_done_membership_names(tree: ast.Module) -> set[str]:
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        if not any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+            continue
+        if not any(
+            isinstance(child, ast.Attribute) and child.attr == "ws_done"
+            for child in ast.walk(node)
+        ):
+            continue
+        names.update(
+            child.value
+            for child in ast.walk(node)
+            if isinstance(child, ast.Constant) and isinstance(child.value, str)
+        )
+    return names
 
+
+def test_direct_ws_skip_hooks_exactly_match_registry_contract():
+    pipeline = _source("game_actions/daily_pipeline.py")
     direct_hooks = _pipeline_skip_calls(pipeline)
+    registered_hooks = {
+        definition.display_name
+        for definition in iter_task_definitions()
+        if "direct-client-skip" in definition.tags
+    }
+
+    assert direct_hooks == registered_hooks
+
+
+def test_special_gacha_partial_skip_remains_explicitly_covered():
+    pipeline = _source("game_actions/daily_pipeline.py")
     # gacha intentionally skips only the paid weekend draw, so it uses a direct
     # membership check instead of `_ws_skip()` and must remain separately pinned.
     special_gacha = "抽技能夥伴"
+    definition = get_task_definition("gacha")
 
-    assert direct_hooks <= mapped_names | {"農場任務", "點擊寶箱", "萬神試煉"}
-    assert special_gacha in mapped_names
+    assert "partial-client-skip" in definition.tags
+    assert special_gacha in definition.skip_when_ws_done
+    assert special_gacha in _ws_done_membership_names(pipeline)
     assert "抽技能夥伴" in _task_name_keywords(pipeline)
 
 

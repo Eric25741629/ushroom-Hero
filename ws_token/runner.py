@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional, Sequence
 
 import json_manager
+from game_actions.task_registry import ws_task_ids
 from ws_token import (
     ad_reward, arena_fight, carpark, cloud_ladder, couple, dragon_realm, dungeon,
     escort_fight,
@@ -87,15 +88,9 @@ _WORKSHOP_ROTATE_S: float = 12 * 3600.0
 LOGIN_TASK = "login"
 # carpark 排第一：跨界車位要搶（10:00 開窗即被掃空），登入後最先送停車，
 # 不等其他任務（plan 關閉時 carpark 會立刻 skip，不影響其他裝置）。
-TASK_ORDER: tuple[str, ...] = (
-    "carpark", "mount_sprint", "main_tasks", "league_solo", "redpack", "mail", "idle_reward",
-    "ad_rewards", "turntable", "tycoon", "farm", "harvest_card", "dungeon",
-    "hellgate", "rogue", "ladder_reward", "seven_login",
-    "cloud_ladder", "arena", "escort", "statue", "guild",
-    "steward", "relic", "relic_sprint",
-    "gacha", "gacha_free", "kungfu_store", "kungfu_worship", "pay_mall", "spirit", "secret_jewel",
-    "workshop", "couple", "dragon_realm", "sea_season", "mining", "lamp",
-    "main_tasks_late", "main_chapter_kills")
+# 單一真相來源：registry 的 WS projection 已由 AST 測試釘住實際 `_step`
+# 順序，並包含主連線關閉後才執行的尾端 main_chapter_kills。
+TASK_ORDER: tuple[str, ...] = ws_task_ids()
 
 # 開神燈 API 單次上限是 20；總量靠單線程連續批次累積。
 _LAMP_BATCH_NUM: int = 20
