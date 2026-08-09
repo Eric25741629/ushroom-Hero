@@ -15,7 +15,9 @@ class CocosArena:
             return False
         if not self.ui.wait_for_text(("挑戰",), timeout=8):
             return False
-        if not self.ui.click_text("挑戰", occurrence=1):
+        # PvpMainView 只有一個入口挑戰按鈕；occurrence=1 會把它誤判成
+        # 不存在，讓已成功進場的 Cocos 流程錯誤退回 OCR fallback。
+        if not self.ui.click_text("挑戰", occurrence=0):
             return False
         return bool(self.ui.wait_for_text(("刷新", "記錄", "挑戰"), timeout=8))
 
