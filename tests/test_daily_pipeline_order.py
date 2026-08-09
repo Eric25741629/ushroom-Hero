@@ -340,6 +340,20 @@ def test_registry_loop_returns_ws_shaped_run_report(patched_pipeline):
     assert len(report.tasks) == len(EXPECTED_ORDER)
 
 
+def test_run_report_keeps_guarded_action_result(monkeypatch, patched_pipeline):
+    expected = {"ok": True, "source": "seven-login"}
+    monkeypatch.setattr(
+        pipeline,
+        "run_seven_login_if_due",
+        lambda *_args, **_kwargs: expected,
+    )
+    ctx, _unused, _device = _build_context()
+
+    report = pipeline.run(ctx)
+
+    assert report.tasks["seven_login"] is expected
+
+
 def test_backend_gate_cleanly_skips_h5_only_task_on_adb(
     monkeypatch,
     patched_pipeline,
@@ -362,6 +376,41 @@ def test_backend_gate_cleanly_skips_h5_only_task_on_adb(
     assert isinstance(result, TaskResult)
     assert result.outcome is TaskOutcome.SKIPPED
     assert "煩惱消" not in patched_pipeline
+
+
+def test_ws_skip_is_reported_before_unsupported_backend_gate(
+    monkeypatch,
+    patched_pipeline,
+):
+    farm_executor = importlib.import_module("game_actions.executors.farm_executor")
+    lamp_executor = importlib.import_module("game_actions.executors.lamp_executor")
+    state_updates: list[dict[str, object]] = []
+    monkeypatch.setattr(farm_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(farm_executor, "run_daily_client", lambda *a, **k: None)
+    monkeypatch.setattr(lamp_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pipeline.bot_state,
+        "update_state",
+        lambda _ip, **kwargs: state_updates.append(kwargs),
+    )
+    monkeypatch.setattr(
+        pipeline.config_manager,
+        "get_device_config",
+        lambda _ip: {"backend": "adb", "enable_shop_manager": True},
+    )
+    ctx, _unused, _device = _build_context(ws_done=frozenset({"紅包檢查"}))
+
+    report = pipeline.run(ctx)
+
+    result = report.tasks["redpack"]
+    assert isinstance(result, TaskResult)
+    assert result.outcome is TaskOutcome.SKIPPED
+    assert result.detail == "WS 已完成，跳過"
+    assert "紅包檢查" not in patched_pipeline
+    assert {
+        "task": "紅包檢查",
+        "step": "WS 已完成，跳過",
+    } in state_updates
 
 
 def test_web_h5_backend_consumes_single_backend_executor(
