@@ -1,0 +1,86 @@
+{
+    "general_lamp_last_execution": {
+        "timestamp": 1786202752.007379,
+        "date": "2026-08-08",
+        "datetime": "2026-08-08 23:25:52"
+    },
+    "cloud_fighting_weekly": {
+        "timestamp": 1785981559.84697,
+        "date": "2026-08-06",
+        "datetime": "2026-08-06 09:59:19"
+    },
+    "Store": {
+        "timestamp": 1786259430.392652,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:10:30"
+    },
+    "donate_family": {
+        "timestamp": 1786259430.401651,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:10:30"
+    },
+    "挖礦": {
+        "timestamp": 1786259430.409484,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:10:30"
+    },
+    "mission_timestamp": 1786259430.4174838,
+    "farm_plant_click": {
+        "timestamp": 1786259430.424483,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:10:30",
+        "count": 1
+    },
+    "地獄之門": {
+        "timestamp": 1786260119.01365,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:21:59"
+    },
+    "farm_seed_purchase": {
+        "timestamp": 1786260136.131406,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:22:16"
+    },
+    "farm_visit": {
+        "timestamp": 1786260225.3261,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:23:45"
+    },
+    "daily_acceleration": {
+        "timestamp": 1786205597.159518,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 00:13:17"
+    },
+    "arena_challenges": {
+        "timestamp": 1786205646.086031,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 00:14:06"
+    },
+    "dragon_realm_last_run": {
+        "timestamp": 1786069673.738038,
+        "date": "2026-08-07",
+        "datetime": "2026-08-07 10:27:53"
+    },
+    "萬神_秘寶閣": {
+        "count": 0,
+        "last_time_utc": "2026-08-06T03:25:39.162944Z",
+        "last_time": "2026-08-06 03:25:39",
+        "last_time_local": "2026-08-06T11:25:39.162944+08:00",
+        "_schema": "utc_v1"
+    },
+    "萬神試煉": {
+        "timestamp": 1785986741.970354,
+        "date": "2026-08-06",
+        "datetime": "2026-08-06 11:25:41"
+    },
+    "statue_weekly_last_execution": {
+        "timestamp": 1786032986.531326,
+        "date": "2026-08-07",
+        "datetime": "2026-08-07 00:16:26"
+    },
+    "七日登入": {
+        "timestamp": 1786259456.287193,
+        "date": "2026-08-09",
+        "datetime": "2026-08-09 15:10:56"
+    }
+}

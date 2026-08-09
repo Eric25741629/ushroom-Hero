@@ -1,7 +1,7 @@
-"""Daily task pipeline — per-wake 20-task sequence for one device.
+"""Daily task pipeline — per-wake task sequence for one device.
 
 Extracted verbatim from `new_main_v2.py` (`_run_daily_tasks`) as Phase 7
-of the slim-down plan (plan A — conservative). The 20 tasks run in the
+of the slim-down plan (plan A — conservative). The 28 tasks run in the
 same order, with the same implicit contracts preserved:
 
 - Task 4's stage is reused by Tasks 5 and 6 (guardian / skill partner).
@@ -168,7 +168,7 @@ def run(ctx: DailyContext) -> None:
 
 
 def _run_tasks(ctx: DailyContext) -> None:
-    """Execute the full per-wake task sequence (29 tasks) for one device."""
+    """Execute the full per-wake task sequence (28 tasks) for one device."""
     d = ctx.d
     ip = ctx.ip
     Cnn_model = ctx.Cnn_model

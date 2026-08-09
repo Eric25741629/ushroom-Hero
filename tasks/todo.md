@@ -23,7 +23,7 @@ C 貢獻了 A 與 B 都漏掉的最有價值設計：`TaskResult` / `TaskOutcome
 |---|---|---|---|
 | `daily_pipeline.py` 557 行、`_run_tasks` 388 行 | A | 556 行；`_run_tasks` :170-556 ≈ 387 行 | **對** |
 | 每個任務重抄 6 個關切 | A | `_force_sleep_checkpoint`×28、`_ws_skip`×16、`_guarded_run`×13、`update_state`×8、`time_recording`×4、`is_due`×2 | **對** |
-| 任務編號破表到 14.65、docstring 仍寫 20 | A | 註解編號確實到 `14.65`；`:171` docstring 寫 "20 tasks"，實際 29 個 Task 註解 | **對** |
+| 任務編號破表到 14.65、docstring 仍寫 20 | A | 註解編號確實到 `14.65`；`:171` docstring 寫 "20 tasks"，實際 28 個 distinct task（Task 5 & 6 共用一行註解） | **對** |
 | `TASK_ORDER` 是已驗證可行的正確形狀 | A | `runner.py:90`，40 項 tuple + registry 分派 | **對** |
 | `task_due` 只收斂了「due」一個維度 | A | pipeline 內 `is_due` 僅 2 處，其餘 5 維仍內聯 | **對** |
 | `ws_done` 是同一份清單維護兩次的症狀 | A | `daily_pipeline.py:119` + `ws_phase.py:28/56` 兩張 dict，靠字串比對 | **對** |
@@ -74,13 +74,13 @@ C 貢獻了 A 與 B 都漏掉的最有價值設計：`TaskResult` / `TaskOutcome
 - [ ] 0.2 清 stale worktree（80 個：`.worktrees/` 26 + `worktree/` 8 + `.claude/worktrees/` 46）。
       **逐一確認已 merge 才刪**；`state-machine-registry-v2-gpt` 內含本次來源文件 C，先搬回主樹再刪。
 - [ ] 0.3 移除未提交垃圾：`NUL`、`_check_devices.py`、`emu-test.json`、`web-002/003/004.json`。
-- [ ] 0.4 修 `daily_pipeline.py:171` docstring「20 tasks」→ 實際數（29）。
+- [ ] 0.4 修 `daily_pipeline.py:171` docstring「20 tasks」→ 實際數（28）。
 - [ ] 0.5 修正三份意見書的實測數字（記錄於本節「誰說錯了」，不改原文件）；
       `ws_state/` 與 git-tracked sync-conflict 兩項標記為**已解決**，勿重做。
 
 #### 階段 1：特徵化測試（安全網，未完成前禁止搬 `_run_tasks`）
 
-- [ ] 1.1 釘住 `_run_tasks` 現行 29 個任務的**順序**與**gating 條件**（flag / due / backend / ws_done）。
+- [ ] 1.1 釘住 `_run_tasks` 現行 28 個任務的**順序**與**gating 條件**（flag / due / backend / ws_done）。
 - [ ] 1.2 釘住隱性契約（A §2 清單，實測全部確認存在）：
       Task 4 `stage` 被 5/6 復用（`:300/:311`）；Task 18 後刷新 `stage` 供 Task 19（`:512`）；
       Task 12 限 20:00-23:00（`:404`）；Task 1 用 pipeline 開頭的 `current_time` 而非即時 `now`；
@@ -375,7 +375,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 - [x] **W3 [P-1] 文件事實校正**
   - owned：`game_actions/daily_pipeline.py`（僅 docstring 一行）、`docs/INDEX.md`、`CLAUDE.md`
-  - 範圍：① `daily_pipeline.py:171` docstring「20 tasks」→ 29
+  - 範圍：① `daily_pipeline.py:171` docstring「20 tasks」→ 28
     ② `CLAUDE.md` / `docs/INDEX.md` 若記載 `page_detector` 為 experimental 未接線 → 更正為
     **已接線**（`stage_guard.py:45`、`game_initialization.py`、`utils/cocos_navigator.py`，per-device flag-gated）
   - 驗收：`py_compile` 通過；無行為變更
@@ -394,7 +394,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 - [ ] **W5 [P-2] `_run_tasks` 順序與 gating 特徵化測試**
   - owned：`tests/test_daily_pipeline_order.py`（新檔；**勿改** `tests/test_daily_pipeline.py`）
-  - 範圍：釘住 29 個任務的執行順序與 4 種 gating（flag / due / backend / ws_done）；
+  - 範圍：釘住 28 個任務的執行順序與 4 種 gating（flag / due / backend / ws_done）；
     以 fake `DailyContext` + 記錄呼叫序列的 spy 實作，不連真實 device
   - 隱性契約（實測確認，必須有測試）：Task 4 `stage` 被 5/6 復用（`:300/:311`）；
     Task 18 後刷新 `stage` 供 Task 19（`:512`）；Task 12 限 20:00-23:00（`:404`）；
