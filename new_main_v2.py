@@ -154,14 +154,15 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     except Exception as ws_exc:
         logger_obj.warning(f"[{ip}] WS 階段未預期錯誤（降級，全跑 Playwright）: {ws_exc}")
         result = frozenset()
+    if ws_completed:
+        # WS 已返回後再檢查控制訊號；即使隨即要求休眠，也要保留完成事件。
+        _shadow("WS_COMPLETED", "WAKING_CLIENT")
     # 強制休眠在 WS 階段到達 → run_ws_phase 已在任務邊界 abort 並寫 ledger
     # （下輪續做）。這裡消費信號並 raise，三個呼叫端（init 迴圈 / 主迴圈 /
     # ws_fallback）各自把它轉成休眠，絕不能繼續開瀏覽器跑 pipeline。
     if bot_state.check_force_sleep(ip):
         _shadow("FORCE_SLEEP", "SLEEPING")
         raise ForceSleepRequested(f"[{ip}] force sleep requested during ws phase")
-    if ws_completed:
-        _shadow("WS_COMPLETED", "WAKING_CLIENT")
     return result
 
 
