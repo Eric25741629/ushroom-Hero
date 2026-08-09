@@ -16,10 +16,26 @@ from types import SimpleNamespace
 
 import pytest
 
-import bot_state
-
-
 ROOT = Path(__file__).resolve().parents[1]
+
+def _clear_sibling_test_stubs() -> None:
+    """W5 在收集期建立的 fake modules 不可污染本檔的 runtime 測試。"""
+    prefixes = (
+        "bot_state", "config_manager", "daily_gift_task", "new_battle", "rank_events",
+        "Store", "Skill", "Sea", "everyday_mission", "farm_v2", "game_actions",
+        "runtime_services", "json_manager", "tools", "utils",
+    )
+    for name, module in list(sys.modules.items()):
+        if name == "game_actions" or name.startswith("game_actions."):
+            in_scope = True
+        else:
+            in_scope = any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+        if in_scope and not getattr(module, "__file__", None):
+            sys.modules.pop(name, None)
+
+
+_clear_sibling_test_stubs()
+import bot_state
 
 
 def _cleanup(ip: str) -> None:
