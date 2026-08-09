@@ -83,6 +83,7 @@ Each device thread runs an independent automation loop with:
 | Device wrapper | `device_wrapper.py` | `MonitoredDevice` wraps adb/web backends |
 | State tracking | `bot_state.py` | Per-device state, pause/skip flags, web launch requests |
 | Wake-up handler | `utils/wake_up_handler.py` | Screen wake/ unlock, connection locking |
+| Page detector | `utils/page_detector.py` | cocos-first / OCR-fallback 頁面辨識；已接線至 `stage_guard.py`、`game_initialization.py`、`utils/cocos_navigator.py`，由 per-device flag 控制 |
 | OCR | `img_tools.py` | Multi-server fallback with circuit breaker |
 | Lamp (開神燈) | `opengold_v2/` | 唯一 live 路徑：`game_actions/lamp_scheduler.py` → `opengold_v2.LampService`。V1 `Open_gold_paddle_ocr.py` 已廢棄 |
 | Mining AI | `miner/` | screenshot → CNN classify → plan → execute；planner 預設 **v1**（A*），v1/v3/v4 可切（`mining_planner_version`）。分析見 [`docs/MINING_ALGORITHM_ANALYSIS.md`](docs/MINING_ALGORITHM_ANALYSIS.md) |

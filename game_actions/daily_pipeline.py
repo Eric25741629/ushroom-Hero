@@ -168,7 +168,7 @@ def run(ctx: DailyContext) -> None:
 
 
 def _run_tasks(ctx: DailyContext) -> None:
-    """Execute the full per-wake task sequence (20 tasks) for one device."""
+    """Execute the full per-wake task sequence (29 tasks) for one device."""
     d = ctx.d
     ip = ctx.ip
     Cnn_model = ctx.Cnn_model

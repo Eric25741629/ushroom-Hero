@@ -62,7 +62,7 @@
 | `WebGameAPI.call_raw` / `is_in_game` | `utils/web_game_api.py` | web_h5 後端 RPC 基元：對 live WS 送任意 game cmd 拿解密 body，外加 WS/game-readiness 判定 |
 | `_walk_pb` / `decode_equip_template` | `utils/web_game_api.py` | 最小 protobuf wire walker + 裝備 template 解碼；解析 game WS body 的正典所在（redpack_detector 有重複版，待整併） |
 | `WSFrameTracker` | `utils/ws_listener.py` | per-device WS frame 擷取（device_wrapper 為每個 web_h5 裝置實例化）；高價值 cmd body 自動落盤供協議分析 |
-| `PageDetector` / `try_detect_main_page_fast` | `utils/page_detector.py` | cocos-first / OCR-fallback 頁面辨識 + 共用 `PageState` enum；新 web_h5 導航/狀態機的建議基石（目前 flag-gated experimental） |
+| `PageDetector` / `try_detect_main_page_fast` | `utils/page_detector.py` | cocos-first / OCR-fallback 頁面辨識 + 共用 `PageState` enum；已接線至 `stage_guard.py`、`game_initialization.py`、`utils/cocos_navigator.py`，由 per-device flag 控制 |
 | `MuMuController` / `HangDetector` / `EmulatorRecoveryOrchestrator` | `utils/mumu_control.py` + `utils/emulator_watchdog.py` + `utils/emulator_recovery.py` | ADB 模擬器自癒堆疊：偵測 hang（heartbeat+frozen-frame+adb strikes）→ throttle+restart via MuMuManager.exe → 驗 health。純邏輯、已單元測試 |
 
 ### 4.2 中等復用價值（active，多為 web_h5）
