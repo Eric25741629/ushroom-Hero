@@ -101,20 +101,52 @@ atexit.register(lambda: shutdown_web_devices(logger))
 
 def _run_ws_phase_for_wake(ip, logger_obj):
     """執行單輪 WS-first 階段，並寫入裝置專屬 log。"""
+    def _shadow(event_name, phase_name):
+        """載入旁路 adapter；測試 stub 或 telemetry 失敗都安全忽略。"""
+        try:
+            from runtime_services.runtime_fsm import (
+                ControlMode, RuntimeEvent, RuntimePhase,
+            )
+            from runtime_services.runtime_fsm_shadow import observe_runtime_event
+            paused_fn = getattr(bot_state, "is_paused", None)
+            paused = bool(paused_fn(ip)) if callable(paused_fn) else False
+            mode = ControlMode.PAUSED if paused else ControlMode.RUNNING
+            return observe_runtime_event(
+                ip,
+                RuntimeEvent(event_name),
+                RuntimePhase(phase_name),
+                control_mode=mode,
+            )
+        except Exception:  # noqa: BLE001 — shadow mode is best-effort
+            return None
+
+    # 初始化 callback / offline fallback 也可能直接進入 WS；補記 wake edge
+    # 讓 shadow context 不會把第一個 WS_COMPLETED 誤判成非法起點。
+    try:
+        from runtime_services.runtime_fsm_shadow import runtime_shadow_snapshot
+        shadow = runtime_shadow_snapshot(ip)
+        if not shadow or shadow.get("phase") == "SLEEPING":
+            _shadow("WAKE_DUE", "WS_PHASE")
+    except Exception:  # noqa: BLE001 — shadow only
+        pass
     # 先取得 SCHEDULER lease：搶回背景借用者、等待 dashboard 工具釋放。
     # 放在 enabled 檢查前：未啟用 WS 的裝置接著開 H5/APP 一樣需要登記。
     acquire_scheduler_lease(ip, logger_obj)
     device_cfg = config_manager.get_device_config(ip)
     if (device_cfg.get("special_wanshen_account", False)
             and device_cfg.get("special_wanshen_enabled", False)):
+        _shadow("WS_COMPLETED", "WAKING_CLIENT")
         return frozenset()
     ws_cfg = device_cfg.get("ws_token") or {}
     if not ws_cfg.get("enabled", False):
+        _shadow("WS_COMPLETED", "WAKING_CLIENT")
         return frozenset()
+    ws_completed = False
     try:
         bot_state.update_state(ip, task="WS 階段", step="純 WS 任務執行中")
         logger_obj.info(f"[{ip}] WS 階段開始（純 WS，開 H5/APP 前）")
         result = run_ws_phase(ip, logger_obj=logger_obj)
+        ws_completed = True
     except LoginConflictError:
         # 這是控制訊號，不是 WS 的一般降級錯誤；必須交給 main 的既有
         # runtime_login_conflict_30m handler，避免繼續開 H5/ADB pipeline。
@@ -126,7 +158,10 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     # （下輪續做）。這裡消費信號並 raise，三個呼叫端（init 迴圈 / 主迴圈 /
     # ws_fallback）各自把它轉成休眠，絕不能繼續開瀏覽器跑 pipeline。
     if bot_state.check_force_sleep(ip):
+        _shadow("FORCE_SLEEP", "SLEEPING")
         raise ForceSleepRequested(f"[{ip}] force sleep requested during ws phase")
+    if ws_completed:
+        _shadow("WS_COMPLETED", "WAKING_CLIENT")
     return result
 
 
@@ -144,6 +179,25 @@ def _refresh_h5_ws_credentials(d, ip, logger_obj):
 
 
 def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
+    def _shadow(event_name, phase_name):
+        """只記錄旁路 FSM 觀察，不執行 effect 或改 live state。"""
+        try:
+            from runtime_services.runtime_fsm import (
+                ControlMode, RuntimeEvent, RuntimePhase,
+            )
+            from runtime_services.runtime_fsm_shadow import observe_runtime_event
+            paused_fn = getattr(bot_state, "is_paused", None)
+            paused = bool(paused_fn(ip)) if callable(paused_fn) else False
+            mode = ControlMode.PAUSED if paused else ControlMode.RUNNING
+            return observe_runtime_event(
+                ip,
+                RuntimeEvent(event_name),
+                RuntimePhase(phase_name),
+                control_mode=mode,
+            )
+        except Exception:  # noqa: BLE001 — shadow mode is best-effort
+            return None
+
     # ws_token 純 WS 後端分支：設了 use_ws_runner 的裝置不連 ADB/Playwright、
     # 不啟動遊戲、不走 daily_pipeline，改由 ws_token.runner.run_device 每次喚醒跑
     # 一輪純 WS 任務，沿用既有睡眠/喚醒/暫停/強制休眠機制 (schedule parity 同樣適用)。
@@ -230,6 +284,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 break
             except ForceSleepRequested as e:
                 force_sleep_now = True
+                _shadow("FORCE_SLEEP", "SLEEPING")
                 device_logger.warning(f"[{ip}] 初始化期間收到強制休眠，暫停啟動並進入休眠: {e}")
                 stop_runtime_device_for_sleep(d_orig, ip, backend_kind, device_logger)
                 if special_wanshen_one_shot:
@@ -372,6 +427,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 
                 # --- WS 階段：純 WS 先跑（瀏覽器啟動前；WS 登入會踢頁面，順序不可反）---
                 # ws_token.enabled=False 時 run_ws_phase 直接回空集合，零影響。
+                if pre_runtime_ws_done is None:
+                    _shadow("WAKE_DUE", "WS_PHASE")
                 if pre_runtime_ws_done is not None:
                     ws_done = pre_runtime_ws_done
                     pre_runtime_ws_done = None
@@ -414,6 +471,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     bot_state.update_state(
                         ip, task="純WS掛機",
                         step="今日客戶端任務已完成，跳過喚醒瀏覽器")
+                    _shadow("TASKS_COMPLETED", "SLEEPING")
                     # 沿用既有結尾休眠機制：瀏覽器此時通常未開（喚醒被跳過），若仍開著
                     # 則用既有停止邏輯關閉（相容 web_stop_mode=close_browser；本來就沒開
                     # 則 should_stop_runtime_device_for_sleep 為真時 stop 也是安全 no-op）。
@@ -484,6 +542,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         unlock_screen(d)
                     in_game = check_in_game(d)
 
+                client_ready = False
                 if in_game:
                     logger.debug(f"[{ip}] 已確認在遊戲中")
                     # 即使在遊戲中，也要檢查是否有「放置獎勵」或「領取」彈窗阻擋
@@ -494,6 +553,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         time.sleep(2)
                     if backend_kind == "web_h5":
                         _refresh_h5_ws_credentials(d, ip, device_logger)
+                    client_ready = True
                 else:
                     logger.debug(f"[{ip}] 未確認在遊戲中，準備啟動")
                     bot_state.update_state(ip, task="啟動遊戲", step="正在啟動 APP")
@@ -532,6 +592,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     )
                     if result:
                         logger.info(f"[{ip}] 遊戲已進入可操作狀態")
+                        client_ready = True
                         if backend_kind == "web_h5":
                             _refresh_h5_ws_credentials(d, ip, device_logger)
                         elif backend_kind == "adb":
@@ -549,6 +610,8 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                         
                         # 拋出啟動避讓例外，交給外層套用固定休眠策略
                         raise StartupBypassError("啟動失敗避讓")
+                if client_ready:
+                    _shadow("CLIENT_READY", "CLIENT_TASKS")
                                     # img = d.screenshot(format='opencv')
                 # if red_envelope.check_red_in_pic(img):
                 # red_envelope.open_red_envelope(d)
@@ -573,6 +636,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     ws_done=ws_done,
                     special_wanshen_claimed=special_wanshen_claimed,
                 ))
+                _shadow("TASKS_COMPLETED", "SLEEPING")
                 if special_wanshen_one_shot:
                     if handle_pending_web_launch(ip, d, backend_kind, device_logger):
                         continue
@@ -595,6 +659,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                 force_sleep_now = True
                 sleep_policy = "force_sleep"
                 sleep_reason = "強制休眠"
+                _shadow("FORCE_SLEEP", "SLEEPING")
                 logger.warning(f"[{ip}] 收到強制休眠請求，終止當前任務並進入休眠: {e}")
                 stop_runtime_device_for_sleep(d, ip, backend_kind, logger)
 

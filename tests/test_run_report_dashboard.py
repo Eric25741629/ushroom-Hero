@@ -39,6 +39,30 @@ def test_report_store_publishes_json_safe_task_result():
     report_store.clear()
 
 
+def test_report_store_normalizes_legacy_skip_error_and_unknown_payloads():
+    from runtime_services import report_store
+
+    class _LegacyReport:
+        tasks = {
+            "no_page": {"skipped": "no_page"},
+            "disabled": {"status": "skipped", "detail": "flag_off"},
+            "network": {"error": "連線失敗"},
+            "empty": {},
+            "success": {"ok": True},
+        }
+        errors = {}
+
+    report_store.clear()
+    report_store.publish("legacy-device", _LegacyReport())
+    tasks = report_store.get("legacy-device")["tasks"]
+    assert tasks["no_page"]["outcome"] == "SKIPPED"
+    assert tasks["disabled"]["outcome"] == "SKIPPED"
+    assert tasks["network"]["outcome"] == "PERMANENT_FAILURE"
+    assert tasks["empty"]["outcome"] == "UNKNOWN"
+    assert tasks["success"]["outcome"] == "COMPLETED"
+    report_store.clear()
+
+
 def test_dashboard_renders_report_and_read_only_endpoint():
     from pathlib import Path
 
@@ -46,5 +70,6 @@ def test_dashboard_renders_report_and_read_only_endpoint():
     routes = Path("control_panel/routes_status.py").read_text(encoding="utf-8-sig")
     assert 'id="report-${ip}"' in template
     assert "task_report" in template
+    assert "UNKNOWN" in template
     assert '@bp.route("/api/task_report/<ip>"' in routes
 

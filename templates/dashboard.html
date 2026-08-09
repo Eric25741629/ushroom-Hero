@@ -634,6 +634,7 @@ h1 {
 .run-report-row .name { min-width: 8em; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .run-report-row .skip { color: var(--status-warn-text, #8a6210); }
 .run-report-row .fail { color: var(--status-danger-text, #a53c4a); }
+.run-report-row .unknown { color: var(--ink-faint); }
 .run-report-empty { color: var(--ink-faint); }
 .label {
   color: var(--ink-faint);
@@ -3383,10 +3384,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             const source = report.source === 'ws' ? 'WS' : 'Client';
             const rows = Object.entries(report.tasks).map(([name, result]) => {
               const obj = (result && typeof result === 'object') ? result : {};
-              const outcome = String(obj.outcome || obj.status || (obj.success === false ? 'FAIL' : 'DONE')).toUpperCase();
+              const outcome = String(obj.outcome || obj.status || (obj.success === false ? 'FAIL' : 'UNKNOWN')).toUpperCase();
               const detail = obj.detail || obj.reason || (obj.error_code != null ? `code=${obj.error_code}` : '');
-              const cls = outcome === 'SKIPPED' ? 'skip' : (outcome.includes('FAIL') ? 'fail' : '');
-              const icon = outcome === 'SKIPPED' ? '⏭' : (cls === 'fail' ? '❌' : '✅');
+              const failed = outcome.includes('FAIL') || outcome === 'ERROR' || outcome === 'ERR';
+              const cls = (outcome === 'SKIPPED' || outcome === 'INTERRUPTED') ? 'skip' : (failed ? 'fail' : (outcome === 'UNKNOWN' ? 'unknown' : ''));
+              const icon = outcome === 'SKIPPED' ? '⏭' : (outcome === 'INTERRUPTED' ? '⏸' : (cls === 'fail' ? '❌' : (cls === 'unknown' ? '❔' : '✅')));
               return `<div class="run-report-row"><span class="name" title="${escapeHtml(name)}">${icon} ${escapeHtml(name)}</span><span class="${cls}">${escapeHtml(detail || outcome)}</span></div>`;
             }).join('');
             const flags = report.aborted ? ' · 已中斷' : (report.kicked ? ' · 被踢下線' : '');
