@@ -361,6 +361,8 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - 前置確認：git 追蹤數為 0（已驗證），故純檔案刪除
   - 驗收：`find . -name "*sync-conflict*" -not -path "./.git/*" --exclude vendored` 在原始碼目錄歸零
   - **注意**：`.ruff_cache/` 與 `logs/` 內的可一併刪但非必要；勿刪 `.conda/`、`OCR/` 內 vendored
+  - **保留**：`playwright_profile/` 內的 Cookies、Login Data、Local State、Preferences、session/auth
+    與任何 `sync-conflict` 副本都是登入驗證資料，不得移動或刪除。
 
 - [x] **W2 [P-1] 清 stale worktree + 未提交垃圾**
   - owned：`.gitignore`
