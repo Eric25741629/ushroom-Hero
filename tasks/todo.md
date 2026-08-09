@@ -430,20 +430,23 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 > 三張都只改 registry 表的**自己那幾列** + 自己的 executor 檔，**禁止**任何人改 `_run_tasks` 主體。
 
-- [ ] **W8 [P-4] 遷「有 WS↔client 對照」任務（`lamp` 開神燈）**
+- [x] **W8 [P-4] 遷「有 WS↔client 對照」任務（`lamp` 開神燈）**
   - owned：`game_actions/executors/lamp_executor.py`（新檔）、`tests/test_lamp_executor.py`
   - 重點：`skip_when_ws_done` 欄位取代內聯 `_ws_skip("開神燈")`；`batch_cap` 收 `_LAMP_BATCH_NUM`
   - 保留隱性契約：Task 19 依賴 Task 18 刷新過的 `stage`
+  - 完成：`6187bd55`；未修改 `_run_tasks`／`ws_phase.py`
 
 - [ ] **W9 [P-4] 遷「單一後端」任務（Task 14.5 龍骸聖域 或 Task 14.6 煩惱消，H5 only）**
   - owned：`game_actions/executors/single_backend_executor.py`（新檔）+ 對應測試
   - 重點：驗證 `executors` 只登記 `web_h5` 時，adb 裝置**乾淨跳過**而非 abort
+  - 阻塞（2026-08-09）：`fannaoxiao` 是 client-only registry row，目前沒有 live consumer 讀取其 executor；新增 adapter 會形成死抽象，待 W11 接線範圍明確後再做。
 
-- [ ] **W10 [P-4] 遷「特殊 due/completion schema」任務（農場 / 每日任務）**
+- [x] **W10 [P-4] 遷「特殊 due/completion schema」任務（農場 / 每日任務）**
   - owned：`game_actions/executors/farm_executor.py`（新檔）+ 對應測試
   - 重點：`CompletionPolicy` 要能同時表達 `mission_timestamp`（flat scalar）與
     `farm_plant_click`（dict）兩種 schema（`ws_phase.py:98-123`），**不新增 optional field**
   - 這張是 **B4 階段 2 出口的判定點**：若表達不了，喊停
+  - 完成：`8e57ebbb`；12 個 executor／一致性測試與 11 個 pipeline order 測試通過
 
 ---
 
