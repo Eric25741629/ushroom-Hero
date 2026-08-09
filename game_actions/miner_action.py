@@ -43,11 +43,21 @@ def oracle(d: u2.Device, easyocr_reader=None, ip=None, clf: ClassifierCNN=None, 
     d.click(101, 158)
     time.sleep(3)
     try:
-        run_mining(d, ip, clf, rl_recorder=rl_recorder, max_duration_minutes=max_duration_minutes)
-        # 成功後記錄進度
-        from json_manager import time_recording
-        time_recording(ip, name="挖礦")
-        logger.info(f"[{ip}] 挖礦任務已完成並記錄。")
+        outcome = run_mining(
+            d,
+            ip,
+            clf,
+            rl_recorder=rl_recorder,
+            max_duration_minutes=max_duration_minutes,
+        )
+        if outcome is not None and bool(getattr(outcome, "success", False)):
+            # 只有 service 明確確認成功才更新冷卻記錄。
+            from json_manager import time_recording
+            time_recording(ip, name="挖礦")
+            logger.info(f"[{ip}] 挖礦任務已完成並記錄。")
+        else:
+            reason = getattr(outcome, "stopped_reason", "unknown")
+            logger.warning(f"[{ip}] 挖礦未完成（reason={reason}），不寫入挖礦記錄。")
     except ForceSleepRequested as e:
         logger.warning(f"[{ip}] 挖礦收到強制休眠請求，略過挖礦失敗復原流程: {e}")
         raise

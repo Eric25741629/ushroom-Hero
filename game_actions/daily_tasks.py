@@ -85,9 +85,12 @@ def click_arena_challenges(d, ip):
         try:
             from game_actions.arena_battle import run_arena_challenges
 
-            run_arena_challenges(d, ip)
-            time_recording(ip, name="arena_challenges")
-            logger.info(f"[{ip}] 競技場每日挑戰完成")
+            completed = run_arena_challenges(d, ip)
+            if completed:
+                time_recording(ip, name="arena_challenges")
+                logger.info(f"[{ip}] 競技場每日挑戰完成")
+            else:
+                logger.warning(f"[{ip}] 競技場收尾未驗證回主頁，不寫入每日完成記錄")
         except Exception as e:
             logger.error(f"[{ip}] 競技場挑戰執行失敗: {e}")
     else:
