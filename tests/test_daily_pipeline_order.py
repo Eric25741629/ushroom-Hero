@@ -16,12 +16,67 @@ import types
 import pytest
 
 
+def _RECORDED_NOOP(*_args, **_kwargs) -> None:
+    """取代真實 `json_manager.time_recording`：絕不寫入裝置 ledger。"""
+
+
+def _IS_DUE_STUB(*_args, **_kwargs) -> bool:
+    """取代真實 `task_due.is_due`：順序斷言不得依賴當下時間。"""
+    return True
+
+
+_STUBBED: list[tuple[str, types.ModuleType | None, tuple[object, str] | None]] = []
+
+
 def _stub_module(name: str, **attrs):
+    """強制安裝 stub，並記錄原狀以便 import 後還原。
+
+    早期版本用 ``sys.modules.setdefault``：若同一個 pytest session 內有其他
+    測試檔（例如 `test_farm_executor.py`）先載入真實 `json_manager` /
+    `game_actions.task_due`，setdefault 會靜默變成 no-op，`daily_pipeline`
+    於是綁到真實模組 — 真實 `time_recording` 會寫進 repo 根目錄的裝置 ledger
+    （如 `fc65396d.json`），而真實 `task_due.is_due` 讓任務順序隨當下時間浮動。
+    因此改為強制覆寫；`daily_pipeline` 以 from-import 綁住 stub 物件後，
+    `_restore_stubbed_modules()` 再把 sys.modules 與父套件屬性還原，避免污染
+    後續測試檔。
+    """
     module = types.ModuleType(name)
     for key, value in attrs.items():
         setattr(module, key, value)
-    sys.modules.setdefault(name, module)
-    return sys.modules[name]
+
+    previous = sys.modules.get(name)
+    parent_state: tuple[object, str] | None = None
+    if "." in name:
+        parent_name, _, child = name.rpartition(".")
+        parent = sys.modules.get(parent_name)
+        if parent is not None:
+            # `from pkg import mod` 優先讀父套件屬性，光改 sys.modules 不夠。
+            parent_state = (parent, child)
+            _STUBBED.append((name, previous, parent_state))
+            setattr(parent, child, module)
+            sys.modules[name] = module
+            return module
+
+    _STUBBED.append((name, previous, parent_state))
+    sys.modules[name] = module
+    return module
+
+
+def _restore_stubbed_modules() -> None:
+    """還原被強制覆寫的模組，避免 stub 洩漏到其他測試檔。"""
+    for name, previous, parent_state in reversed(_STUBBED):
+        if previous is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = previous
+        if parent_state is not None:
+            parent, child = parent_state
+            if previous is None:
+                if hasattr(parent, child):
+                    delattr(parent, child)
+            else:
+                setattr(parent, child, previous)
+    _STUBBED.clear()
 
 
 def _install_lightweight_dependencies() -> None:
@@ -89,7 +144,7 @@ def _install_lightweight_dependencies() -> None:
         _run_at_main_page=lambda *a, **k: "主頁面",
         get_stage_with_check=lambda *a, **k: "主頁面",
     )
-    _stub_module("game_actions.task_due", is_due=lambda *a, **k: True)
+    _stub_module("game_actions.task_due", is_due=_IS_DUE_STUB)
     _stub_module("game_actions.special_wanshen")
 
     runtime = _stub_module("runtime_services")
@@ -102,24 +157,42 @@ def _install_lightweight_dependencies() -> None:
         is_record_expired=lambda *a, **k: True,
         return_time=lambda *a, **k: None,
         should_execute_sea_with_cooldown=lambda *a, **k: True,
-        time_recording=lambda *a, **k: None,
+        time_recording=_RECORDED_NOOP,
     )
     _stub_module("tools", click_white=lambda *a, **k: None)
-    logging_utils = _stub_module(
+    # `utils` 是 namespace package（無 __init__.py）。先載入真實套件再掛 stub
+    # 子模組：早期版本用 setdefault 塞一個裸 ModuleType，該假物件沒有
+    # `__path__`，後續測試檔 import `utils.mumu_control` 就會炸
+    # `'utils' is not a package`。這裡只覆寫兩個子模組，父套件保持真實。
+    importlib.import_module("utils")
+    _stub_module(
         "utils.logging_utils", logger=logging.getLogger("test_daily_pipeline_order")
     )
-    screenshot_helpers = _stub_module(
+    _stub_module(
         "utils.screenshot_helpers",
         log_main_page_mismatch=lambda *a, **k: None,
         save_error_screenshot=lambda *a, **k: None,
     )
-    utils = sys.modules.setdefault("utils", types.ModuleType("utils"))
-    utils.logging_utils = logging_utils
-    utils.screenshot_helpers = screenshot_helpers
 
 
 _install_lightweight_dependencies()
-pipeline = importlib.import_module("game_actions.daily_pipeline")
+try:
+    # daily_pipeline 以 from-import 取用這些符號，import 完成後就已綁定 stub
+    # 函式物件；此時把 sys.modules 還原，stub 不會外洩給其他測試檔。
+    sys.modules.pop("game_actions.daily_pipeline", None)
+    pipeline = importlib.import_module("game_actions.daily_pipeline")
+finally:
+    _restore_stubbed_modules()
+    # 本檔這份 daily_pipeline 綁的是 stub（含 stub 的 ForceSleepRequested）。
+    # 留在 sys.modules 會讓 tests/test_daily_pipeline.py 沿用同一份而與真實
+    # 例外類別對不起來，因此撤出快取，讓其他測試檔各自 import 自己的版本。
+    sys.modules.pop("game_actions.daily_pipeline", None)
+    _game_actions_pkg = sys.modules.get("game_actions")
+    if _game_actions_pkg is not None:
+        try:
+            delattr(_game_actions_pkg, "daily_pipeline")
+        except AttributeError:
+            pass
 
 
 EXPECTED_ORDER = [
@@ -350,3 +423,23 @@ def test_cleanup_for_fc6536d_restores_chrome_and_stops_game(patched_pipeline):
         ("app_start", "com.android.chrome"),
         ("app_stop", "com.mxdzz.tw.and"),
     ]
+
+
+def test_pipeline_under_test_never_binds_real_ledger_or_due_modules():
+    """釘住 stub 隔離契約：本檔的 pipeline 不得綁到真實 json_manager／task_due。
+
+    這是回歸守衛。原本 `_stub_module` 用 `sys.modules.setdefault`，若同 session
+    有其他測試檔先載入真實模組，stub 就靜默失效，`time_recording` 會把時間戳
+    寫進 repo 根目錄的真實裝置 ledger（`fc65396d.json`），且 `task_due.is_due`
+    改用當下時間，讓順序斷言隨執行時刻浮動。直接斷言綁定對象，不依賴
+    測試執行順序或當天時間。
+    """
+    assert pipeline.time_recording is _RECORDED_NOOP
+    assert pipeline.task_due.is_due is _IS_DUE_STUB
+    # sys.modules 已還原：真實模組不該被本檔的 stub 取代。
+    for name in ("json_manager", "game_actions.task_due"):
+        module = sys.modules.get(name)
+        if module is not None:
+            assert getattr(module, "__file__", None) is not None, (
+                f"{name} 仍是本檔的 stub，會外洩到其他測試檔"
+            )
