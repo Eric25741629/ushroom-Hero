@@ -440,6 +440,13 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - owned：`game_actions/executors/single_backend_executor.py`（新檔）+ 對應測試
   - 重點：驗證 `executors` 只登記 `web_h5` 時，adb 裝置**乾淨跳過**而非 abort
   - 阻塞（2026-08-09）：`fannaoxiao` 是 client-only registry row，目前沒有 live consumer 讀取其 executor；新增 adapter 會形成死抽象，待 W11 接線範圍明確後再做。
+  - 審查更正（2026-08-09）：上述理由**不足以單獨排除 W9** — W8（lamp）與 W10（farm）
+    的 executor 同樣沒有 live consumer（`grep` 主樹確認：僅 registry 字串與測試引用，
+    `daily_pipeline` / `ws_phase` 都沒 import），三者的死抽象風險等級相同。真正的差別是
+    W8/W10 是薄轉接層（呼叫既有 `LampService` / `farm_v2.manager`），而 W9 要驗的
+    「adb 裝置乾淨跳過」語意在 W11 之前無處可驗。**結論：暫緩成立，但理由要改成
+    「缺可驗證的 skip 路徑」，不是「唯一沒有 consumer」。** W11 接線時三個 executor
+    必須同批接上，否則 B0 規則對 W8/W10 一樣不成立。
 
 - [x] **W10 [P-4] 遷「特殊 due/completion schema」任務（農場 / 每日任務）**
   - owned：`game_actions/executors/farm_executor.py`（新檔）+ 對應測試

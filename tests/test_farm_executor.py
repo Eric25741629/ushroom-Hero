@@ -140,3 +140,30 @@ def test_client_adapters_are_lazy_and_preserve_existing_call_signatures(monkeypa
     )
     assert farm_executor.run_daily_client(mission) == "daily-ok"
     assert mission_calls == ["daily"]
+
+
+def test_farm_seed_ad_name_follows_the_ad_reward_table_not_a_hardcoded_string(
+    monkeypatch,
+) -> None:
+    """釘住查表同源：`AD_NAMES[15]` 改名時 executor 必須跟著改。
+
+    回歸守衛。原本硬編 `"農場種子廣告"`，改名後 `_farm_seed_ad_claimed` 找不到
+    entry，`completion_updates_for` 靜默回空 mapping — 不拋錯、測試全過，但
+    dashboard「農場種植」徽章會永遠停在未完成。live `ws_phase._ad_seed_claimed`
+    走的是 `ad_reward.AD_NAMES.get(15)`，本 executor 必須同源。
+    """
+    from ws_token import ad_reward
+
+    assert farm_executor._AD_FARM_SEED_CONFIG_ID == 15
+    assert farm_executor._farm_seed_ad_name() == ad_reward.AD_NAMES[15]
+
+    renamed = "農場種子廣告-renamed"
+    monkeypatch.setitem(ad_reward.AD_NAMES, 15, renamed)
+    payload = {"results": {renamed: {"claimed": 3}}}
+
+    assert farm_executor._farm_seed_ad_name() == renamed
+    assert farm_executor._farm_seed_ad_claimed(payload) is True
+    updates = farm_executor.completion_updates_for(
+        farm_executor.FARM_PLANT_TASK_ID, payload
+    )
+    assert updates == {"farm_plant_click": {"count": 1}}
