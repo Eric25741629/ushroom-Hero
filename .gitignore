@@ -28,6 +28,7 @@ ocr_fails/
 .planning/*.bak-*
 *.sync-conflict-*
 .claude/
+worktree/
 */utils/__pycache__/*
 */__pycache__/*
 miner/core/__pycache__/*
@@ -90,6 +91,12 @@ tools/adb-*.json
 tools/emulator-*.json
 
 # accidental script-output dumps at repo root
+/NUL
+/_check_devices.py
+/emu-test.json
+/web-002.json
+/web-003.json
+/web-004.json
 /127.0.0.1
 /250
 /300
