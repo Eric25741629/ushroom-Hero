@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import bot_state
 import config_manager
+from game_actions.scheduler_policy import SchedulerPolicy
 from utils.logging_utils import logger
 
 
@@ -17,6 +18,30 @@ def _ws_owns_warehouse_claim(cfg: dict) -> bool:
     ws_cfg = cfg.get("ws_token") or {}
     plan_cfg = ws_cfg.get("carpark_plan") or {}
     return bool(ws_cfg.get("enabled") and plan_cfg.get("enabled"))
+
+
+def _carpark_enabled(ip: str) -> bool:
+    """保留車位原有的實驗旗標；其餘 cfg gate 留在原執行流程。"""
+    from utils.cocos_navigator import _device_flag_enabled
+
+    return bool(_device_flag_enabled(ip))
+
+
+_POLICY = SchedulerPolicy(enabled_hook=_carpark_enabled)
+
+
+def _is_enabled(ip: str) -> bool:
+    return _POLICY.is_enabled(ip, get_device_config=config_manager.get_device_config)
+
+
+def _is_due(ip: str) -> bool:
+    # 車位沒有 ledger；每次通過 gate 都維持原本的 reconcile 機會。
+    return _POLICY.is_due(ip)
+
+
+def _mark_done(ip: str) -> None:
+    # reconcile 的 snapshot/target 是即時狀態，不寫 time record。
+    _POLICY.mark_done(ip)
 
 
 def run_carpark_check_if_due(d, ip: str) -> None:
@@ -31,8 +56,7 @@ def run_carpark_check_if_due(d, ip: str) -> None:
 
     Other devices skip entirely — no cost, no behavior change.
     """
-    from utils.cocos_navigator import _device_flag_enabled
-    if not _device_flag_enabled(ip):
+    if not _is_enabled(ip) or not _is_due(ip):
         return
     cfg = config_manager.get_device_config(ip) or {}
     if str(cfg.get("backend", "")).lower() != "web_h5":

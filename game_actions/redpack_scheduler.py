@@ -9,7 +9,29 @@ from __future__ import annotations
 
 import bot_state
 import config_manager
+from game_actions.scheduler_policy import SchedulerPolicy
 from utils.logging_utils import logger
+
+
+def _redpack_enabled(ip: str) -> bool:
+    cfg = config_manager.get_device_config(ip) or {}
+    return str(cfg.get("backend", "")).lower() == "web_h5"
+
+
+_POLICY = SchedulerPolicy(enabled_hook=_redpack_enabled)
+
+
+def _is_enabled(ip: str) -> bool:
+    return _POLICY.is_enabled(ip, get_device_config=config_manager.get_device_config)
+
+
+def _is_due(ip: str) -> bool:
+    # 紅包狀態由 WS 即時查詢，沒有本地完成記錄。
+    return _POLICY.is_due(ip)
+
+
+def _mark_done(ip: str) -> None:
+    _POLICY.mark_done(ip)
 
 
 def run_redpack_check_if_due(d, ip: str) -> None:
@@ -24,8 +46,7 @@ def run_redpack_check_if_due(d, ip: str) -> None:
         2. try grab on each via 0x2603
     Failures and "already-claimed" errors are logged but non-fatal.
     """
-    cfg = config_manager.get_device_config(ip) or {}
-    if str(cfg.get("backend", "")).lower() != "web_h5":
+    if not _is_enabled(ip) or not _is_due(ip):
         return
     page = getattr(d, "_page", None)
     if page is None:
