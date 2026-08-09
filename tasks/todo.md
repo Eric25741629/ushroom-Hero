@@ -73,7 +73,8 @@ C 貢獻了 A 與 B 都漏掉的最有價值設計：`TaskResult` / `TaskOutcome
       **先確認 git 追蹤數為 0（已確認）**，故為純檔案刪除、不影響版控。
 - [ ] 0.2 清 stale worktree（80 個：`.worktrees/` 26 + `worktree/` 8 + `.claude/worktrees/` 46）。
       **逐一確認已 merge 才刪**；`state-machine-registry-v2-gpt` 內含本次來源文件 C，先搬回主樹再刪。
-- [ ] 0.3 移除未提交垃圾：`NUL`、`_check_devices.py`、`emu-test.json`、`web-002/003/004.json`。
+- [ ] 0.3 移除未提交垃圾：`NUL`、`_check_devices.py`、`emu-test.json`。
+      `web-001.json`～`web-004.json` 是 tracked/live ledger，禁止列入垃圾清理。
 - [ ] 0.4 修 `daily_pipeline.py:171` docstring「20 tasks」→ 實際數（28）。
 - [ ] 0.5 修正三份意見書的實測數字（記錄於本節「誰說錯了」，不改原文件）；
       `ws_state/` 與 git-tracked sync-conflict 兩項標記為**已解決**，勿重做。
