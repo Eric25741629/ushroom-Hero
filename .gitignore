@@ -94,9 +94,6 @@ tools/emulator-*.json
 /NUL
 /_check_devices.py
 /emu-test.json
-/web-002.json
-/web-003.json
-/web-004.json
 /127.0.0.1
 /250
 /300

@@ -365,7 +365,8 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 - [x] **W2 [P-1] 清 stale worktree + 未提交垃圾**
   - owned：`.gitignore`
   - 範圍：80 個 worktree（`.worktrees/` 26、`worktree/` 8、`.claude/worktrees/` 46）
-    **逐一確認已 merge 才刪**；`NUL`、`_check_devices.py`、`emu-test.json`、`web-002/003/004.json`
+    **逐一確認已 merge 才刪**；`NUL`、`_check_devices.py`、`emu-test.json`
+  - **保留資料**：`web-001.json`～`web-004.json` 是紀錄檔；cookies、登入驗證、`auth_state`、session 與 browser profile 一律不列入垃圾清理。
   - **必做前置**：`.worktrees/state-machine-registry-v2-gpt/狀態機與註冊表說明意見v2-gpt.md`
     先搬回主樹（本次分析來源文件）再刪該 worktree
   - 驗收：`git worktree list` 只剩 in-flight 的；`git status` 無上列垃圾
