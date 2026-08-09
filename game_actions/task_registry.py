@@ -175,14 +175,15 @@ def _executors(
     pipeline_label: str | None = None,
     client_backends: tuple[BackendKind, ...] = ("adb", "web_h5"),
     include_ws: bool = True,
+    client_executor: str | None = None,
 ) -> Mapping[BackendKind, TaskExecutor]:
-    # W7 先登記現行共享 entrypoint；W8-W10 再換成各任務專用 executor。
+    # W7 先登記現行共享 entrypoint；已遷移任務改登記專用 executor。
     refs: dict[BackendKind, TaskExecutor] = {}
     if include_ws:
         refs["ws"] = "ws_token.runner:run_device"
     if pipeline_label is not None:
         for backend in client_backends:
-            refs[backend] = "game_actions.daily_pipeline:run"
+            refs[backend] = client_executor or "game_actions.daily_pipeline:run"
     return MappingProxyType(refs)
 
 
@@ -207,6 +208,7 @@ def _task(
     batch_cap: int | None = None,
     tags: frozenset[str] = frozenset(),
     include_ws: bool = True,
+    client_executor: str | None = None,
 ) -> TaskDefinition:
     if conditional_skip:
         tags = tags | {"conditional-ws-skip"}
@@ -218,7 +220,11 @@ def _task(
         enabled_key=enabled_key,
         due_policy=DuePolicy(due_key),
         executors=_executors(
-            task_id, pipeline_label, client_backends, include_ws=include_ws
+            task_id,
+            pipeline_label,
+            client_backends,
+            include_ws=include_ws,
+            client_executor=client_executor,
         ),
         completion_policy=completion,
         skip_when_ws_done=skip or False,
@@ -278,16 +284,16 @@ _TASKS: tuple[TaskDefinition, ...] = (
     ),
     _task("harvest_card", "豐收卡", 0),
     _task("dungeon", "萬神試煉", 230, ws_display_name="副本管家", pipeline_label="萬神試煉", skip=("萬神試煉",), conditional_skip=True, enabled_key="enable_wanshen", due_key="萬神試煉", completion=_daily("萬神試煉"), needs_main_page=True, tags=_DIRECT_SKIP),
-    _task("hellgate", "地獄之門", 40, pipeline_label="地獄之門", skip=("地獄之門",), enabled_key="enable_hellgate", due_key="地獄之門", completion=_daily("地獄之門"), needs_main_page=True),
+    _task("hellgate", "地獄之門", 40, pipeline_label="地獄之門", skip=("地獄之門",), enabled_key="enable_hellgate", due_key="地獄之門", completion=_daily("地獄之門"), record_name="地獄之門"),
     _task("rogue", "萬神試煉週獎勵", 0, timeout_sec=6.0),
     _task("ladder_reward", "天梯每週獎勵", 220, pipeline_label="天梯每週獎勵", skip=("天梯每週獎勵",), due_key="天梯每週獎勵", client_backends=("web_h5",), tags=_DIRECT_SKIP),
-    _task("seven_login", "七日登入獎勵", 20, pipeline_label="七日登入獎勵", skip=("七日登入獎勵",), completion=_daily("七日登入"), tags=_DIRECT_SKIP),
+    _task("seven_login", "七日登入獎勵", 20, pipeline_label="七日登入獎勵", skip=("七日登入獎勵",), completion=_daily("七日登入"), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("cloud_ladder", "雲端戰鬥", 240, ws_display_name="雲纏天梯", pipeline_label="雲端戰鬥", skip=("雲端戰鬥",), enabled_key="enable_cloud_battle", due_key="雲端戰鬥", needs_main_page=True, tags=_DIRECT_SKIP),
     _task("arena", "競技場挑戰", 130, pipeline_label="競技場挑戰", skip=("競技場挑戰",), enabled_key="enable_arena", due_key="競技場挑戰", completion=_daily("arena_challenges"), needs_main_page=True),
     _task("escort", "賞金之路", 210, pipeline_label="賞金之路", skip=("賞金之路",), enabled_key="enable_escort", due_key="賞金之路", completion=_daily("escort_last_run"), client_backends=("web_h5",)),
-    _task("statue", "菇菇雕像每週", 170, ws_display_name="菇菇雕像", pipeline_label="菇菇雕像每週", due_key="菇菇雕像每週"),
+    _task("statue", "菇菇雕像每週", 170, ws_display_name="菇菇雕像", pipeline_label="菇菇雕像每週", due_key="菇菇雕像每週", needs_main_page=True),
     _task("guild", "家族任務", 70, pipeline_label="家族任務", skip=("家族任務",), completion=_daily("donate_family"), needs_main_page=True, tags=_DIRECT_SKIP),
-    _task("steward", "商店購買", 100, ws_display_name="管家", pipeline_label="商店購買", skip=("商店購買",), completion=_daily("Store"), needs_main_page=True, tags=_DIRECT_SKIP),
+    _task("steward", "商店購買", 100, ws_display_name="管家", pipeline_label="商店購買", skip=("商店購買",), completion=_daily("Store"), record_name="Store", tags=_DIRECT_SKIP),
     _task("relic", "遺物強化", 0),
     _task("relic_sprint", "遺物衝刺", 0),
     _task("gacha", "抽技能夥伴", 90, ws_display_name="技能夥伴抽獎", pipeline_label="抽技能夥伴", skip=("抽技能夥伴",), device_excludes=frozenset({"emulator-5558"}), tags=_PARTIAL_SKIP),
@@ -295,11 +301,11 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("kungfu_store", "武道會競猜商店", 0),
     _task("kungfu_worship", "菇菇武道會", 160, pipeline_label="菇菇武道會", skip=("菇菇武道會",), due_key="菇菇武道會", completion=_daily("mushroom_arena_cycle_start", "mushroom_arena_daily"), needs_main_page=True),
     _task("pay_mall", "付費商城免費領取", 0),
-    _task("spirit", "領取守護靈", 80, pipeline_label="領取守護靈", skip=("領取守護靈",), needs_main_page=True, device_excludes=frozenset({"emulator-5558"}), tags=_DIRECT_SKIP),
+    _task("spirit", "領取守護靈", 80, pipeline_label="領取守護靈", skip=("領取守護靈",), device_excludes=frozenset({"emulator-5558"}), record_name="guardian_spirit", tags=_DIRECT_SKIP),
     _task("secret_jewel", "神秘寶石", 0),
     _task("workshop", "加工坊", 0),
     _task("couple", "好友每日禮物", 260, ws_display_name="伴侶", pipeline_label="好友每日禮物", skip=("好友每日禮物",), needs_main_page=True, tags=_DIRECT_SKIP),
-    _task("dragon_realm", "龍骸聖域", 190, pipeline_label="龍骸聖域", due_key="龍骸聖域", client_backends=("web_h5",)),
+    _task("dragon_realm", "龍骸聖域", 190, pipeline_label="龍骸聖域", due_key="龍骸聖域", client_backends=("web_h5",), client_executor="game_actions.executors.single_backend_executor:run_dragon_realm"),
     _task("xwar_idle", "跨服戰放置獎勵", 0, enabled_key="xwar_idle"),
     _task("sea_season", "航海任務 (Sea)", 180, ws_display_name="航海賽季", pipeline_label="航海任務 (Sea)", skip=("航海任務 (Sea)",), due_key="航海", needs_main_page=True),
     _task("mining", "挖礦/Oracle", 140, pipeline_label="挖礦/Oracle", skip=("挖礦/Oracle",), enabled_key="enable_mining", completion=_daily("挖礦"), needs_main_page=True, record_name="挖礦", tags=_DIRECT_SKIP),
@@ -315,14 +321,13 @@ _TASKS: tuple[TaskDefinition, ...] = (
             "web_h5": "game_actions.executors.lamp_executor:run_client",
         },
         skip_when_ws_done=("開神燈",),
-        needs_main_page=True,
         batch_cap=20,
         tags=_DIRECT_SKIP,
     ),
     _task("main_tasks_late", "每日任務尾端補領", 0),
     _task("main_chapter_kills", "主線擊敗敵人", 0, enabled_key="main_chapter_kills.enabled"),
     _task("daily_acceleration", "每日加速", 120, pipeline_label="每日加速", due_key="每日加速", include_ws=False),
-    _task("fannaoxiao", "煩惱消", 200, pipeline_label="煩惱消", due_key="煩惱消", client_backends=("web_h5",), include_ws=False),
+    _task("fannaoxiao", "煩惱消", 200, pipeline_label="煩惱消", due_key="煩惱消", client_backends=("web_h5",), include_ws=False, client_executor="game_actions.executors.single_backend_executor:run_fannaoxiao"),
     _task("biweekly", "雙週副本", 250, pipeline_label="雙週副本", enabled_key="enable_biweekly", due_key="雙週副本", include_ws=False, tags=frozenset({"emulator-5556-only"})),
 )
 

@@ -1,7 +1,7 @@
 """WS runner 與 daily pipeline 交接清單的特徵化安全網。
 
 這組測試只讀 production source，不啟動 ADB、Playwright 或 WS client。
-`WS_TO_PIPELINE_SKIPS` 同時包含三種既有語意：直接 `_ws_skip()`、gacha
+`WS_TO_PIPELINE_SKIPS` 同時包含三種既有語意：registry direct skip、gacha
 的特殊 `ctx.ws_done` 判斷，以及 H5-only/條件式任務；測試因此分層核對，
 避免把合法的 backend fallback 誤判成清單錯誤。
 """
@@ -12,7 +12,6 @@ from pathlib import Path
 
 from game_actions.task_registry import (
     get_task_definition,
-    iter_task_definitions,
     pipeline_display_names,
     ws_task_ids,
 )
@@ -48,29 +47,6 @@ def _literal_assignment(tree: ast.Module, name: str):
         if any(isinstance(target, ast.Name) and target.id == name for target in targets):
             return ast.literal_eval(value)
     raise AssertionError(f"找不到靜態設定 {name}")
-
-
-def _pipeline_skip_calls(tree: ast.Module) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        if isinstance(node.func, ast.Name) and node.func.id == "_ws_skip":
-            if len(node.args) == 1 and isinstance(node.args[0], ast.Constant):
-                names.add(node.args[0].value)
-    return names
-
-
-def _task_name_keywords(tree: ast.Module) -> set[str]:
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        for keyword in node.keywords:
-            if keyword.arg in {"task", "task_name", "display_name"}:
-                if isinstance(keyword.value, ast.Constant) and isinstance(keyword.value.value, str):
-                    names.add(keyword.value.value)
-    return names
 
 
 def test_runner_task_order_is_a_live_registry_projection():
@@ -119,40 +95,20 @@ def _ws_done_membership_names(tree: ast.Module) -> set[str]:
     return names
 
 
-def test_direct_ws_skip_hooks_exactly_match_registry_contract():
-    pipeline = _source("game_actions/daily_pipeline.py")
-    # W11 intentionally moved the per-task calls into one registry-driven loop;
-    # the contract is now the registry tag + the single central hook, not 15
-    # hand-written literal calls spread over the handlers.
-    assert "_should_ws_skip" in {
-        node.name
-        for node in ast.walk(pipeline)
-        if isinstance(node, ast.FunctionDef)
-    }
-    assert any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_should_ws_skip"
-        for node in ast.walk(pipeline)
-    )
-    assert {
-        definition.display_name
-        for definition in iter_task_definitions()
-        if "direct-client-skip" in definition.tags
-    }
-
-
 def test_special_gacha_partial_skip_remains_explicitly_covered():
     pipeline = _source("game_actions/daily_pipeline.py")
-    # gacha intentionally skips only the paid weekend draw, so it uses a direct
-    # membership check instead of `_ws_skip()` and must remain separately pinned.
+    # gacha intentionally skips only the paid weekend draw, so its direct
+    # membership check remains separately pinned.
     special_gacha = "抽技能夥伴"
     definition = get_task_definition("gacha")
 
     assert "partial-client-skip" in definition.tags
     assert special_gacha in definition.skip_when_ws_done
     assert special_gacha in _ws_done_membership_names(pipeline)
-    assert "抽技能夥伴" in _task_name_keywords(pipeline)
+    assert any(
+        isinstance(node, ast.Constant) and node.value == "抽技能夥伴"
+        for node in ast.walk(pipeline)
+    )
 
 
 def test_daily_record_keys_are_mapped_or_explicitly_conditional():

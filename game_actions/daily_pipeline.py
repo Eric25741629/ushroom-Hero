@@ -16,6 +16,7 @@ entry point is `run(ctx)`.
 from __future__ import annotations
 
 import datetime
+import importlib
 import logging
 import random
 import time
@@ -98,6 +99,22 @@ class _ConsecutiveMismatchAbort(Exception):
     啟動重試（而非讓未攔截的例外冒泡到 new_main_v2 外層 handler 被當成
     「未預期錯誤」，把整條 device thread 拆掉）。
     """
+
+    def __init__(self, message: str, *, report: RunReport | None = None):
+        super().__init__(message)
+        self.report = report
+
+
+@dataclass
+class _GuardedAction:
+    """描述需要由 registry loop 統一執行的主頁面 action。"""
+
+    task_name: str
+    mismatch_reason: str
+    fn: Any
+    step: str = "執行中"
+    log: str | None = None
+    after: Any = None
 
 
 @dataclass
@@ -191,6 +208,8 @@ def run(ctx: DailyContext) -> RunReport:
             f"[{ctx.ip}] 本輪 pipeline 已中止並關閉 app（{exc}）；"
             "等待下次對齊喚醒重新啟動"
         )
+        if exc.report is not None:
+            return exc.report
         return RunReport(device=ctx.ip, aborted=True)
 
 def _run_tasks(ctx: DailyContext) -> RunReport:
@@ -219,14 +238,6 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             report.aborted = True
             raise ForceSleepRequested("force sleep requested from dashboard")
 
-    def _ws_skip(task_name: str) -> bool:
-        """WS 階段已完成 → 記 log + 更新狀態並跳過。"""
-        if task_name in ctx.ws_done:
-            logger.info(f"[{ip}] {task_name}: WS 階段已完成，跳過")
-            bot_state.update_state(ip, task=task_name, step="WS 已完成，跳過")
-            return True
-        return False
-
     def _ws_result() -> TaskResult:
         return TaskResult(TaskOutcome.SKIPPED, detail="WS 已完成，跳過")
 
@@ -249,23 +260,67 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                     pass
                 report.aborted = True
                 raise _ConsecutiveMismatchAbort(
-                    f"連續 {count} 個任務不在主頁面"
+                    f"連續 {count} 個任務不在主頁面",
+                    report=report,
                 )
         return current_stage
 
-    def _guarded_run(task_name, mismatch_reason, fn, *, step="執行中", log=None):
-        return _track(
-            _run_at_main_page(
-                d, ip, Cnn_model, task_name, mismatch_reason, fn,
-                step=step, log=log,
-            )
+    def _configured_backend() -> str | None:
+        """讀取目前裝置 backend；缺省設定保留舊測試／呼叫點語意。"""
+        try:
+            device_cfg = config_manager.get_device_config(ip)
+        except Exception:
+            return None
+        backend = device_cfg.get("backend") if hasattr(device_cfg, "get") else None
+        if backend in {"adb", "web_h5"}:
+            return backend
+        return None
+
+    backend = _configured_backend()
+    effective_backend = backend or (
+        "web_h5" if getattr(d, "_page", None) is not None else "adb"
+    )
+    definitions = {
+        definition.task_id: definition
+        for definition in iter_pipeline_task_definitions()
+    }
+    generic_pipeline_ref = "game_actions.daily_pipeline:run"
+    missing_executor = object()
+
+    def _invoke_registered(
+        task_id: str,
+        *args: Any,
+        fallback: Any = None,
+    ) -> Any:
+        """依 registry/backend 消費專用 executor；共享 entrypoint 留給 handler。"""
+        definition = definitions[task_id]
+        reference = definition.executors.get(effective_backend)
+        if not reference or reference == generic_pipeline_ref:
+            if fallback is None:
+                return missing_executor
+            return fallback()
+        module_name, symbol = reference.split(":", 1)
+        executor = getattr(importlib.import_module(module_name), symbol)
+        # 有明確 backend 的 live config 必須走 adapter 的預設實作；沒有
+        # backend 的舊呼叫點才保留傳入的 legacy callable 作為相容 fallback。
+        callback = fallback if backend is None else None
+        kwargs = {"action": callback} if callback is not None else {}
+        return executor(*args, **kwargs)
+
+    def _record_ws_skip(definition) -> None:
+        logger.info(f"[{ip}] {definition.display_name}: WS 階段已完成，跳過")
+        bot_state.update_state(
+            ip, task=definition.display_name, step="WS 已完成，跳過"
         )
+
+    def _record_task_start(definition, step: str = "執行中") -> None:
+        bot_state.update_state(ip, task=definition.display_name, step=step)
 
     def _task_redpack():
         return run_redpack_check_if_due(d, ip)
 
     def _task_seven_login():
-        return _guarded_run(
+        return _GuardedAction(
             "七日登入獎勵", "七日登入獎勵前不在主頁面",
             lambda: run_seven_login_if_due(d, ip), step="查詢/領取中",
         )
@@ -293,9 +348,8 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             "地獄之門", ip, datetime.datetime(*current_time[:6])
         ):
             if current_stage == "主頁面":
-                bot_state.update_state(ip, task="地獄之門", step="戰鬥執行中")
                 new_battle.hell_door(d, ip)
-                time_recording(ip, name="地獄之門")
+                return TaskResult(TaskOutcome.COMPLETED, detail="地獄之門已執行")
             else:
                 log_main_page_mismatch(
                     d, ip, current_stage, "地獄之門",
@@ -303,11 +357,16 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                 )
         else:
             logger.info("地獄之門: 尚未到達執行時間或已執行過")
+        return TaskResult(TaskOutcome.SKIPPED, detail="尚未到達執行時間或不在主頁面")
 
     def _task_farm():
-        return _guarded_run(
+        return _GuardedAction(
             "農場任務", "農場任務前不在主頁面",
-            lambda: farm_manager.farm(d, ip, Cnn_model), step="準備進入",
+            lambda: _invoke_registered(
+                "farm", d, ip, Cnn_model,
+                fallback=lambda: farm_manager.farm(d, ip, Cnn_model),
+            ),
+            step="準備進入",
         )
 
     def _task_idle_reward():
@@ -317,18 +376,20 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             reward(d)
             time.sleep(3)
 
-        return _guarded_run(
+        return _GuardedAction(
             "點擊寶箱", "點擊寶箱前不在主頁面", _tap_chest,
             step="領取獎勵",
         )
 
     def _task_guild():
-        nonlocal stage
-        stage = _guarded_run(
+        def _save_stage(result):
+            nonlocal stage
+            stage = result
+
+        return _GuardedAction(
             "家族任務", "家族任務前不在主頁面",
-            family_manager.go_to_family, step="執行中",
+            family_manager.go_to_family, step="執行中", after=_save_stage,
         )
-        return stage
 
     def _task_spirit():
         if ip == "emulator-5558":
@@ -339,9 +400,8 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             if guardian_record is not None:
                 should_get_guardian = guardian_record.get("is_next_day", False)
             if should_get_guardian:
-                bot_state.update_state(ip, task="領取守護靈", step="領取中")
                 get_Guardian_Spirit(d)
-                time_recording(ip, name="guardian_spirit")
+                return TaskResult(TaskOutcome.COMPLETED, detail="守護靈已領取")
         else:
             log_main_page_mismatch(
                 d, ip, stage, "領取守護靈", "領取守護靈前不在主頁面"
@@ -357,7 +417,6 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                     f"[{ip}] 抽技能夥伴: WS 付費抽已完成，"
                     "跳過週末購買（免費紅點抽照跑）"
                 )
-            bot_state.update_state(ip, task="抽技能夥伴", step="領取中")
             get_skill_and_partner(d, skip_weekend_draw=skip_weekend_draw)
             time.sleep(3)
         else:
@@ -377,15 +436,13 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                     or current_time.tm_hour == 23
                 )
                 if should_check_store:
-                    bot_state.update_state(ip, task="商店購買", step="執行中")
                     Store.buy_store(d, Cnn_model)
-                    time_recording(ip, name="Store")
+                    return TaskResult(TaskOutcome.COMPLETED, detail="商店已檢查")
                 else:
                     logger.info("商店購買: 尚未過期且非23點，跳過")
             else:
                 logger.info(f"[{ip}] 購物管家已停用，跳過商店購買")
         else:
-            bot_state.update_state(ip, task="商店購買", step=f"未在主頁面: {stage}")
             screenshot_path = save_error_screenshot(
                 d, ip, stage, "商店購買前不在主頁面"
             )
@@ -393,24 +450,27 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                 f"[{ip}] 商店購買前不在主頁面，stage={stage}, "
                 f"screenshot={screenshot_path}"
             )
+        return TaskResult(TaskOutcome.SKIPPED, detail="商店未執行")
 
     def _task_mount():
-        nonlocal stage
-        stage = _guarded_run(
+        def _save_stage(result):
+            nonlocal stage
+            stage = result
+
+        return _GuardedAction(
             "坐騎強化", "坐騎強化前不在主頁面",
             lambda: rank_events.park_spring(d, ip),
+            after=_save_stage,
         )
-        return stage
 
     def _task_daily_acceleration():
-        bot_state.update_state(ip, task="每日加速", step="領取中")
         return daily_acceleration(d, ip, Cnn_model)
 
     def _task_arena():
         if not ctx.enable_arena:
             logger.info("[%s] 競技場：已停用，跳過", ip)
             return TaskResult(TaskOutcome.SKIPPED, detail="功能已停用")
-        return _guarded_run(
+        return _GuardedAction(
             "競技場挑戰", "競技場挑戰前不在主頁面",
             lambda: click_arena_challenges(d, ip), step="領取中",
         )
@@ -419,7 +479,7 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
         if not ctx.enable_mining:
             logger.info("[%s] 挖礦/Oracle：已停用，跳過", ip)
             return TaskResult(TaskOutcome.SKIPPED, detail="功能已停用")
-        return _guarded_run(
+        return _GuardedAction(
             "挖礦/Oracle", "挖礦/Oracle 前不在主頁面",
             lambda: oracle(
                 d, None, ip=ip, clf=clf, rl_recorder=rl_recorder,
@@ -433,16 +493,18 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
 
     def _task_main_tasks():
         if 20 <= current_time.tm_hour < 23:
-            return _run_at_main_page(
-                d, ip, Cnn_model,
-                task_name="所有日常任務",
-                mismatch_reason="所有日常任務執行前不在主頁面",
-                fn=lambda: mission_manager.do_allmission(),
+            return _GuardedAction(
+                "所有日常任務", "所有日常任務執行前不在主頁面",
+                lambda: _invoke_registered(
+                    "main_tasks",
+                    mission_manager,
+                    fallback=mission_manager.do_allmission,
+                ),
                 step="檢查/執行中",
             )
 
     def _task_kungfu():
-        return _guarded_run(
+        return _GuardedAction(
             "菇菇武道會", "菇菇武道會前不在主頁面",
             lambda: _run_periodic_cycle(
                 ip,
@@ -457,13 +519,13 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
         )
 
     def _task_statue():
-        return _guarded_run(
+        return _GuardedAction(
             "菇菇雕像每週", "菇菇雕像每週執行前不在主頁面",
             lambda: run_statue_weekly_if_due(d, ip), step="週五檢查/執行",
         )
 
     def _task_sea():
-        return _guarded_run(
+        return _GuardedAction(
             "航海任務 (Sea)", "航海任務前不在主頁面",
             lambda: _run_periodic_cycle(
                 ip,
@@ -487,12 +549,20 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
 
     def _task_dragon():
         return _safe_scheduler(
-            "dragon_realm", "龍骸聖域", lambda: run_dragon_realm_if_due(ip, d)
+            "dragon_realm", "龍骸聖域",
+            lambda: _invoke_registered(
+                "dragon_realm", d, ip,
+                fallback=lambda: run_dragon_realm_if_due(ip, d),
+            ),
         )
 
     def _task_fannaoxiao():
         return _safe_scheduler(
-            "fannaoxiao", "煩惱消", lambda: run_fannaoxiao_if_due(d, ip)
+            "fannaoxiao", "煩惱消",
+            lambda: _invoke_registered(
+                "fannaoxiao", d, ip,
+                fallback=lambda: run_fannaoxiao_if_due(d, ip),
+            ),
         )
 
     def _task_escort():
@@ -516,11 +586,9 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
         if not ctx.enable_cloud_battle:
             logger.info(f"[{ip}] 雲端戰鬥已停用，跳過")
             return TaskResult(TaskOutcome.SKIPPED, detail="功能已停用")
-        return _run_at_main_page(
-            d, ip, Cnn_model,
-            task_name="雲端戰鬥",
-            mismatch_reason="雲端戰鬥前不在主頁面",
-            fn=lambda: new_battle.run_weekly_cloud_fighting_single(d, ip),
+        return _GuardedAction(
+            "雲端戰鬥", "雲端戰鬥前不在主頁面",
+            lambda: new_battle.run_weekly_cloud_fighting_single(d, ip),
             step="領取中",
         )
 
@@ -532,18 +600,27 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
         )
 
     def _task_couple():
-        nonlocal stage
-        stage = _guarded_run(
+        def _buy_gift():
+            return daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1)
+
+        def _save_stage(result):
+            nonlocal stage
+            stage = result
+            if stage == "主頁面":
+                stage = get_stage_with_check(d, ip, Cnn_model)
+
+        return _GuardedAction(
             "好友每日禮物", "好友每日禮物前不在主頁面",
-            lambda: daily_gift_task.buy_gift_for_friend_daily(d, ip, times=1),
-            step="領取中",
+            _buy_gift,
+            step="領取中", after=_save_stage,
         )
-        if stage == "主頁面":
-            stage = get_stage_with_check(d, ip, Cnn_model)
-        return stage
 
     def _task_lamp():
-        return _run_lamp_if_due(d, ip, stage)
+        result = _invoke_registered(
+            "lamp", d, ip, stage,
+            fallback=lambda: _run_lamp_if_due(d, ip, stage),
+        )
+        return result if result is not missing_executor else None
 
     def _task_turntable():
         def _spin_wheel():
@@ -553,7 +630,7 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             else:
                 logger.info(f"[{ip}] 轉盤金幣本次未執行或未偵測到紅點，已略過")
 
-        return _guarded_run(
+        return _GuardedAction(
             "轉盤金幣", "轉盤金幣執行前不在主頁面", _spin_wheel,
             step="執行中",
         )
@@ -605,21 +682,68 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             20 <= current_time.tm_hour < 23
         ):
             return False
-        return _ws_skip(definition.display_name)
+        return definition.display_name in ctx.ws_done
+
+    task_steps = {
+        "hellgate": "戰鬥執行中",
+        "gacha": "領取中",
+        "daily_acceleration": "領取中",
+    }
 
     for definition in iter_pipeline_task_definitions():
         _force_sleep_checkpoint()
+        if backend is not None and backend not in definition.executors:
+            logger.info(
+                "[%s] %s: backend=%s 沒有可用 executor，乾淨跳過",
+                ip, definition.display_name, backend,
+            )
+            report.tasks[definition.task_id] = TaskResult(
+                TaskOutcome.SKIPPED,
+                detail=f"backend {backend} 不支援此任務",
+            )
+            continue
         if _should_ws_skip(definition):
+            _record_ws_skip(definition)
             if definition.task_id == "guild":
                 stage = _track(get_stage_with_check(d, ip, Cnn_model))
             elif definition.task_id == "couple":
                 stage = get_stage_with_check(d, ip, Cnn_model)
             report.tasks[definition.task_id] = _ws_result()
             continue
-        result = handlers[definition.task_id]()
+        if not definition.needs_main_page:
+            _record_task_start(
+                definition, task_steps.get(definition.task_id, "執行中")
+            )
+        invocation = handlers[definition.task_id]()
+        if isinstance(invocation, _GuardedAction):
+            if definition.needs_main_page:
+                result = _track(
+                    _run_at_main_page(
+                        d,
+                        ip,
+                        Cnn_model,
+                        invocation.task_name,
+                        invocation.mismatch_reason,
+                        invocation.fn,
+                        step=invocation.step,
+                        log=invocation.log,
+                    )
+                )
+            else:
+                result = invocation.fn()
+            if invocation.after is not None:
+                invocation.after(result)
+        else:
+            result = invocation
         report.tasks[definition.task_id] = (
             result if result is not None else {}
         )
+        if (
+            definition.record_name
+            and isinstance(result, TaskResult)
+            and result.outcome is TaskOutcome.COMPLETED
+        ):
+            time_recording(ip, name=definition.record_name)
 
     # Device cleanup：沿用原本在所有 client 任務後才執行的順序。
     if ip == "emulator-5558":

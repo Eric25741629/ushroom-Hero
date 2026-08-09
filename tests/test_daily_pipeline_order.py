@@ -15,6 +15,12 @@ import types
 
 import pytest
 
+from game_actions.task_registry import (
+    TaskOutcome,
+    TaskResult,
+    iter_pipeline_task_definitions,
+)
+
 
 def _RECORDED_NOOP(*_args, **_kwargs) -> None:
     """取代真實 `json_manager.time_recording`：絕不寫入裝置 ledger。"""
@@ -203,6 +209,12 @@ EXPECTED_ORDER = [
     "萬神試煉", "雲端戰鬥", "雙週副本", "好友每日禮物", "開神燈", "轉盤金幣",
 ]
 
+DIRECT_WS_SKIP_CASES = tuple(
+    (definition.task_id, definition.display_name)
+    for definition in iter_pipeline_task_definitions()
+    if "direct-client-skip" in definition.tags
+)
+
 
 class _Device:
     def __init__(self):
@@ -328,6 +340,81 @@ def test_registry_loop_returns_ws_shaped_run_report(patched_pipeline):
     assert len(report.tasks) == len(EXPECTED_ORDER)
 
 
+def test_backend_gate_cleanly_skips_h5_only_task_on_adb(
+    monkeypatch,
+    patched_pipeline,
+):
+    farm_executor = importlib.import_module("game_actions.executors.farm_executor")
+    lamp_executor = importlib.import_module("game_actions.executors.lamp_executor")
+    monkeypatch.setattr(farm_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(farm_executor, "run_daily_client", lambda *a, **k: None)
+    monkeypatch.setattr(lamp_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pipeline.config_manager,
+        "get_device_config",
+        lambda _ip: {"backend": "adb", "enable_shop_manager": True},
+    )
+    ctx, _unused, _device = _build_context()
+
+    report = pipeline.run(ctx)
+
+    result = report.tasks["fannaoxiao"]
+    assert isinstance(result, TaskResult)
+    assert result.outcome is TaskOutcome.SKIPPED
+    assert "煩惱消" not in patched_pipeline
+
+
+def test_web_h5_backend_consumes_single_backend_executor(
+    monkeypatch,
+    patched_pipeline,
+):
+    seen: list[tuple[object, str]] = []
+    farm_executor = importlib.import_module("game_actions.executors.farm_executor")
+    lamp_executor = importlib.import_module("game_actions.executors.lamp_executor")
+    executor = importlib.import_module(
+        "game_actions.executors.single_backend_executor"
+    )
+    monkeypatch.setattr(farm_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(farm_executor, "run_daily_client", lambda *a, **k: None)
+    monkeypatch.setattr(lamp_executor, "run_client", lambda *a, **k: None)
+    monkeypatch.setattr(executor, "run_dragon_realm", lambda *a, **k: None)
+    monkeypatch.setattr(
+        pipeline.config_manager,
+        "get_device_config",
+        lambda _ip: {"backend": "web_h5", "enable_shop_manager": True},
+    )
+    monkeypatch.setattr(
+        executor,
+        "run_fannaoxiao",
+        lambda device, ip, **_kwargs: seen.append((device, ip)) or "done",
+    )
+    ctx, _unused, _device = _build_context()
+
+    report = pipeline.run(ctx)
+
+    assert seen == [(ctx.d, ctx.ip)]
+    assert report.tasks["fannaoxiao"] == "done"
+
+
+def test_consecutive_page_abort_keeps_completed_report_entries(
+    monkeypatch,
+    patched_pipeline,
+):
+    monkeypatch.setattr(
+        pipeline,
+        "_run_at_main_page",
+        lambda *_args, **_kwargs: "彈窗頁面",
+    )
+    ctx, _unused, _device = _build_context()
+
+    report = pipeline.run(ctx)
+
+    assert report.aborted is True
+    assert report.device == ctx.ip
+    assert report.tasks
+    assert "redpack" in report.tasks
+
+
 @pytest.mark.parametrize(
     ("flag", "task"),
     [
@@ -371,6 +458,23 @@ def test_ws_done_gates_tasks_without_short_circuiting(patched_pipeline):
 
     assert not (set(patched_pipeline) & set(skipped))
     assert "坐騎強化" in patched_pipeline
+
+
+@pytest.mark.parametrize(("task_id", "task_name"), DIRECT_WS_SKIP_CASES)
+def test_each_direct_ws_skip_returns_skipped_without_running_handler(
+    patched_pipeline,
+    task_id,
+    task_name,
+):
+    """每個 registry direct-skip row 都必須走 live loop 的安全網。"""
+    ctx, _unused, _device = _build_context(ws_done=frozenset({task_name}))
+
+    report = pipeline.run(ctx)
+
+    result = report.tasks[task_id]
+    assert isinstance(result, TaskResult)
+    assert result.outcome is TaskOutcome.SKIPPED
+    assert task_name not in patched_pipeline
 
 
 def test_task_4_stage_is_reused_for_guardian_and_skill(monkeypatch, patched_pipeline):
