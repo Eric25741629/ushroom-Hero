@@ -200,11 +200,37 @@ def test_run_unexpected_exception_still_finishes_recorders(monkeypatch):
 
     result = service.run(_Device(), "test-device", object(), rl_recorder=rl)
 
-    assert result is None
+    assert result.success is False
+    assert result.stopped_reason == "exception"
     assert len(recorder.end_calls) == 1
     assert recorder.end_calls[0]["totals"]["fatal_error"]["type"] == "RuntimeError"
     assert rl.flush_calls == 1
     assert logger.exception_calls
+
+
+def test_run_config_preflight_accepts_typed_device_config(monkeypatch):
+    from config_manager import DeviceConfig
+
+    recorder = _FakeMapRecorder()
+    logger = _FakeLogger()
+    monkeypatch.setattr(service, "setup_miner_logger", lambda _ip: logger)
+    monkeypatch.setattr(
+        service.config_manager,
+        "get_device_config",
+        lambda _ip: DeviceConfig(backend="web_h5", mining_planner_version="v1"),
+    )
+    monkeypatch.setattr(service, "check_pickaxe_count", lambda *_a, **_kw: 4)
+    monkeypatch.setattr(
+        service,
+        "MiningMapRecorder",
+        types.SimpleNamespace(for_device=lambda *_a, **_kw: recorder),
+    )
+
+    result = service.run(object(), "typed-config-device", object())
+
+    assert result.success is False
+    assert result.stopped_reason == "insufficient_pickaxe"
+    assert result.rounds == 0
 
 
 def test_run_main_exception_emits_exception_round_and_one_summary(monkeypatch):
@@ -346,8 +372,11 @@ def test_run_telemetry_counts_round_overlay_and_session_screenshots(monkeypatch)
     )
     device = _ScreenshotDevice()
 
-    service.run(device, "telemetry-device", clf)
+    result = service.run(device, "telemetry-device", clf)
 
+    assert result.success is True
+    assert result.stopped_reason == "completed"
+    assert result.rounds == 1
     summary = _telemetry_json_lines(logger, "session_summary")[0]
     assert summary["rounds"] == 1
     assert summary["overlay_ocr_calls"] == 1

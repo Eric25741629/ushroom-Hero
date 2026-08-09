@@ -24,8 +24,9 @@ def _cocos_arena(d):
     return CocosArena(page)
 
 
-def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool = True) -> None:
+def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool = True) -> bool:
     cocos = _cocos_arena(d) if use_cocos else None
+    cocos_path_active = cocos is not None
     last = 0.0
     for i in range(n):
         last = enforce_gap(last, gap_sec)
@@ -34,6 +35,7 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
             if not cocos.challenge():
                 logger.warning(f"[{ip}] Cocos 挑戰未驗證，該場退回 OCR")
                 cocos = None
+                cocos_path_active = False
         if cocos is None:
             img_tools.click_str_by_server(d, "挑戰", y_range=(592, 674), wait_timeout=5)
         start_time = time.time()
@@ -43,6 +45,7 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
                 if check_str is None:
                     logger.warning(f"[{ip}] Cocos 結果未驗證，該場退回 OCR")
                     cocos = None
+                    cocos_path_active = False
                     check_str = img_tools.wait_for_any_text(
                         d, ["勝利", "對決", "跳過"], y_range=(100, 800), timeout=3
                     )
@@ -60,9 +63,12 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
                 logger.warning(f"[{ip}] 挑戰 {i+1} 逾時，強制結束")
                 break
         last = time.monotonic()
+    return cocos_path_active
 
 
-def _run_local_sim_fights(d, ip: str, n: int, gap_sec: float) -> bool:
+def _run_local_sim_fights(
+    d, ip: str, n: int, gap_sec: float, *, use_cocos: bool = True
+) -> bool:
     """H5：UI 點挑戰 + 本頁 BattleMainServer + 回 result（無動畫等待）。"""
     page = _page(d)
     if page is None:
@@ -78,7 +84,7 @@ def _run_local_sim_fights(d, ip: str, n: int, gap_sec: float) -> bool:
         logger.info(f"[{ip}] 競技場挑戰 {i+1}/{n} (local_sim)")
         clear_combat(page, "arena")
         set_block_result(page, True)
-        cocos = _cocos_arena(d)
+        cocos = _cocos_arena(d) if use_cocos else None
         if cocos is not None:
             if not cocos.challenge(occurrence=1):
                 return False
@@ -158,7 +164,35 @@ def _run_pure_ws_fights(ip: str, n: int, gap_sec: float, cfg: Optional[dict] = N
         return False
 
 
-def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
+def _finish_with_ocr(d, ip: str) -> bool:
+    """用既有 OCR 錨點離場，並在 web_h5 上驗證已回到主頁。
+
+    OCR 文字只作為舊版底部離場按鈕的定位錨點；位移點擊不會直接按下
+    「記錄」文字本身，避免重新打開對戰記錄彈窗。
+    """
+    try:
+        refreshed = img_tools.click_str_by_server(
+            d, "刷新", y_range=(711, 782), shift_y=60, wait_timeout=5
+        )
+        time.sleep(1)
+        exited = img_tools.click_str_by_server(
+            d, "記錄", y_range=(831, 865), x_range=(437, 521),
+            shift_y=60, wait_timeout=5,
+        )
+        time.sleep(1)
+        if not (refreshed and exited):
+            return False
+        page = _page(d)
+        if page is None:
+            return True
+        from utils.cocos_navigator import CocosNavigator
+
+        return CocosNavigator(page).current_view() == "main"
+    except Exception:
+        return False
+
+
+def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
     """進入競技場並打 3 場（模式由 cfg.arena_battle_mode 決定）。"""
     import config_manager
 
@@ -167,6 +201,7 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
     gap = coerce_arena_gap_sec(cfg.get("arena_fight_gap_sec", 7))
     n = 3
     cocos = None
+    cocos_path_active = False
 
     # 進競技場 UI（pure_ws 不需 UI，但進場可刷新對手；pure_ws 直接協議）
     if mode != "pure_ws":
@@ -179,15 +214,19 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
             time.sleep(0.5)
             img_tools.click_str_by_server(d, "挑戰", wait_timeout=5, y_range=(789, 855))
             cocos = None
+        else:
+            cocos_path_active = True
 
     ok = False
     if mode == "pure_ws":
         logger.info(f"[{ip}] 競技場 pure_ws（B=ephemeral 全新瀏覽器，無 profile）")
         ok = _run_pure_ws_fights(ip, n, gap, cfg)
         if ok:
-            return
+            return True
     elif mode == "local_sim":
-        ok = _run_local_sim_fights(d, ip, n, gap)
+        ok = _run_local_sim_fights(d, ip, n, gap, use_cocos=cocos_path_active)
+        if not ok:
+            cocos_path_active = False
     elif mode == "remote_calc":
         # 與 local_sim 相同入口，sim 走 remote；失敗 fallback local
         page = _page(d)
@@ -204,10 +243,11 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
                 last = enforce_gap(last, gap)
                 logger.info(f"[{ip}] 競技場挑戰 {i+1}/{n} (remote_calc)")
                 set_block_result(page, True)
-                cocos = _cocos_arena(d)
+                cocos = _cocos_arena(d) if cocos_path_active else None
                 if cocos is not None:
                     if not cocos.challenge(occurrence=1):
                         ok = False
+                        cocos_path_active = False
                         break
                 else:
                     img_tools.click_str_by_server(d, "挑戰", y_range=(592, 674), wait_timeout=5)
@@ -215,6 +255,7 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
                 set_block_result(page, False)
                 if not out.get("ok"):
                     ok = False
+                    cocos_path_active = False
                     break
                 last = time.monotonic()
 
@@ -229,19 +270,11 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> None:
                     img_tools.click_str_by_server(d, "挑戰", wait_timeout=5, y_range=(789, 855))
                 except Exception:
                     pass
-        _run_animation_fights(d, ip, n, gap, use_cocos=(cocos is not None))
+        cocos_path_active = _run_animation_fights(
+            d, ip, n, gap, use_cocos=cocos_path_active
+        )
 
     # 收尾
-    try:
-        cocos = _cocos_arena(d)
-        if cocos is not None:
-            cocos.finish()
-        else:
-            img_tools.click_str_by_server(d, "刷新", y_range=(711, 782), shift_y=60)
-            time.sleep(1)
-            img_tools.click_str_by_server(
-                d, "記錄", y_range=(831, 865), x_range=(437, 521), shift_y=60, wait_timeout=5
-            )
-            time.sleep(1)
-    except Exception:
-        pass
+    if cocos_path_active and cocos is not None:
+        return bool(cocos.finish())
+    return _finish_with_ocr(d, ip)

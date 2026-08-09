@@ -269,6 +269,15 @@ class MiningTelemetryCounters:
         }
 
 
+@dataclass(frozen=True)
+class MiningRunResult:
+    """挖礦 service 的明確結果，避免 ``None`` 同時代表成功與失敗。"""
+
+    success: bool
+    stopped_reason: str
+    rounds: int
+
+
 class _TelemetryDeviceProxy:
     """Delegate a device while counting screenshots made by the executor."""
 
@@ -858,7 +867,7 @@ def run(
     clf: ClassifierCNN,
     rl_recorder: Optional[RLRecorder] = None,
     max_duration_minutes: float = 6.0,
-) -> None:
+) -> MiningRunResult:
     """主挖礦流程：截圖 → 分類 → 規劃 → 執行，並支援逾時與鏟子檢查。"""
     miner_logger = setup_miner_logger(ip)
     telemetry = MiningTelemetryCounters()
@@ -871,10 +880,17 @@ def run(
     round_active = False
     # Start with safe defaults so a config-loader exception still gets a
     # complete, typed session_start/exception/session_summary sequence.
-    device_cfg: Dict[str, Any] = {}
+    device_cfg: Any = {}
     planner_version = "v1"
     shadow_version: Optional[str] = None
     mining_save_samples = False
+
+    def _result(success: bool, stopped_reason: str) -> MiningRunResult:
+        return MiningRunResult(
+            success=bool(success),
+            stopped_reason=str(stopped_reason),
+            rounds=int(telemetry.rounds),
+        )
 
     def _safe_end_map_recorder(totals: Optional[Dict[str, Any]]) -> None:
         """End a recorder at most once, including a partially-started one."""
@@ -959,7 +975,9 @@ def run(
 
     try:
         loaded_cfg = config_manager.get_device_config(ip)
-        device_cfg = dict(loaded_cfg or {})
+        # get_device_config() 是 typed DeviceConfig；需要 raw mapping 時才用
+        # get_device_config_dict()，不要在 dataclass 上強制轉 dict。
+        device_cfg = loaded_cfg or {}
     except ForceSleepRequested:
         _emit_session_start()
         _emit_session_summary("force_sleep")
@@ -975,7 +993,7 @@ def run(
         _emit_exception_event("config_preflight", exc)
         miner_logger.exception("[MiningService] 設定前置檢查例外，停止挖礦: %s", exc)
         _emit_session_summary("exception")
-        return
+        return _result(False, "exception")
 
     # Default planner is v1 (A*). Real-board eval at the recalibrated 3.6%
     # density (docs/.../2026-06-18-...top-pileup-fix.md): v1 is the most
@@ -1013,11 +1031,11 @@ def run(
         _emit_exception_event("session_start", exc)
         miner_logger.exception("[MiningService] session-start 前置檢查例外，停止挖礦: %s", exc)
         _emit_session_summary("exception")
-        return
+        return _result(False, "exception")
     if count < 5:
         miner_logger.info("鏟子數量過少，停止挖礦")
         _emit_session_summary("insufficient_pickaxe")
-        return
+        return _result(False, "insufficient_pickaxe")
 
     items_available: Dict[str, int] = {"drill": 0, "bomb": 0}
     item_blacklist: Set[str] = set()
@@ -1092,7 +1110,7 @@ def run(
         miner_logger.exception("[MiningService] map recorder 啟動例外，停止挖礦: %s", exc)
         _safe_end_map_recorder(fatal_totals)
         _emit_session_summary("exception")
-        return
+        return _result(False, "exception")
     # Only the executor receives proxies; the rest of the service keeps the
     # original uiautomator2 objects, while all executor screenshots/classifier
     # calls are included in the same session counters.
@@ -1222,6 +1240,7 @@ def run(
             _check_force_sleep(ip)
             if time.time() - start_time > max_duration_seconds:
                 miner_logger.info(f"[MiningService] 已達到時間限制 ({max_duration_minutes} 分鐘)，停止挖礦")
+                stopped_reason = "time_limit"
                 break
 
             iterations += 1
@@ -1383,6 +1402,7 @@ def run(
                     miner_logger.warning(
                         f"[MiningService] 連續 {consecutive_empty_plans} 次取得空 plan，中止挖礦迴圈"
                     )
+                    stopped_reason = "no_progress"
                     break
                 continue
 
@@ -1425,6 +1445,7 @@ def run(
                     miner_logger.warning(
                         f"[MiningService] 連續 {consecutive_empty_plans} 次取得空 plan，中止挖礦迴圈"
                     )
+                    stopped_reason = "no_progress"
                     break
                 continue
 
@@ -1559,6 +1580,7 @@ def run(
                     f"[MiningService] 版面連續 {identical_board_count} 次無變化（非空 plan），"
                     f"判定死結，中止挖礦迴圈"
                 )
+                stopped_reason = "deadlock"
                 break
 
     except ForceSleepRequested as exc:
@@ -1604,6 +1626,12 @@ def run(
             except Exception as exc:
                 miner_logger.warning("[MiningService] RL recorder 收尾失敗: %s", exc)
 
+    # 只有至少完成一輪且以可預期的正常原因停止，才允許外層寫入冷卻記錄。
+    return _result(
+        telemetry.rounds > 0 and stopped_reason in {"completed", "time_limit"},
+        stopped_reason,
+    )
+
 if __name__ == "__main__":  # pragma: no cover - manual trigger only
     ip = "adb-fc65396d-4LPqmI._adb-tls-connect._tcp"
     device = u2.connect(ip)
@@ -1620,6 +1648,7 @@ if __name__ == "__main__":  # pragma: no cover - manual trigger only
 
 __all__ = [
     "run",
+    "MiningRunResult",
     "MiningTelemetryCounters",
     "_dismiss_mining_overlay_if_needed",
     "print_plan_result",

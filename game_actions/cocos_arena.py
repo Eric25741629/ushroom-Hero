@@ -31,8 +31,18 @@ class CocosArena:
             return self.ui.wait_for_text(("勝利", "對決", "失敗"), timeout=timeout)
         return result
 
-    def finish(self) -> None:
-        if self.ui.has_text("刷新"):
-            self.ui.click_text("刷新")
-        if self.ui.has_text("記錄"):
-            self.ui.click_text("記錄")
+    def finish(self) -> bool:
+        """關閉結算/競技場 overlay，並確認最後回到主頁。
+
+        「記錄」是競技場內的功能按鈕，不是離場按鈕；直接點擊會把
+        對戰記錄彈窗留給下一個任務。共用 navigator 會依 active view 的
+        ``btnClose``/``btnBack`` 節點逐層關閉，再驗證主頁狀態。
+        """
+        try:
+            from utils.cocos_navigator import CocosNavigator
+
+            navigator = CocosNavigator(self.ui.page)
+            navigator.dismiss_blocking_popups()
+            return bool(navigator.goto_main())
+        except Exception:
+            return False
