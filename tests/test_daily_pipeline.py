@@ -192,6 +192,10 @@ def fake_all(monkeypatch, pipeline_mod):
     monkeypatch.setattr(pipeline_mod, "get_stage_with_check", _stage_check)
     monkeypatch.setattr(pipeline_mod, "_run_at_main_page", _at_main_page)
     monkeypatch.setattr(pipeline_mod, "_run_lamp_if_due", _lamp)
+    # Registry loop now consumes the W8 adapter directly. Keep this fixture's
+    # existing lamp spy as the adapter's live test double as well.
+    from game_actions.executors import lamp_executor
+    monkeypatch.setattr(lamp_executor, "run_client", _lamp)
     monkeypatch.setattr(pipeline_mod, "_run_weekly_dungeon", _weekly)
     monkeypatch.setattr(pipeline_mod, "_run_biweekly_dungeon", _biweekly)
 

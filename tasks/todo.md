@@ -100,8 +100,8 @@ C 貢獻了 A 與 B 都漏掉的最有價值設計：`TaskResult` / `TaskOutcome
 - [ ] 2.4 先遷 3 個代表性任務建模板（B §7 / C §10 共識）：
       ① 有 WS↔client 對照的（如 `lamp`）② 單一後端的 ③ 特殊 due/completion schema 的
       （`mission_timestamp` flat scalar、`farm_plant_click` dict — `ws_phase.py:98-123`）。
-- [ ] 2.5 `_run_tasks` 收成單一迴圈（依 `order` 排序，6 個共用關切各做一次）。**純 code motion**。
-- [ ] 2.6 pipeline 側產出 `RunReport`，與 WS 側同型。
+- [x] 2.5 `_run_tasks` 收成單一迴圈（依 `order` 排序，6 個共用關切各做一次）。**純 code motion**。
+- [x] 2.6 pipeline 側產出 `RunReport`，與 WS 側同型。
 - [ ] 2.7 `ws_phase.py` 兩張 dict + 兩個特例函式改由 registry 欄位推導。
 - [ ] 2.8 8 個 scheduler 的 `_is_enabled/_is_due/_mark_done` 複製貼上收斂為 policy 物件。
 - [ ] 2.9 AGENTS.md 補規範：新任務必須以 registry entry 註冊。
@@ -436,17 +436,12 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - 保留隱性契約：Task 19 依賴 Task 18 刷新過的 `stage`
   - 完成：`6187bd55`；未修改 `_run_tasks`／`ws_phase.py`
 
-- [ ] **W9 [P-4] 遷「單一後端」任務（Task 14.5 龍骸聖域 或 Task 14.6 煩惱消，H5 only）**
+- [x] **W9 [P-4] 遷「單一後端」任務（Task 14.5 龍骸聖域 或 Task 14.6 煩惱消，H5 only）**
   - owned：`game_actions/executors/single_backend_executor.py`（新檔）+ 對應測試
   - 重點：驗證 `executors` 只登記 `web_h5` 時，adb 裝置**乾淨跳過**而非 abort
-  - 阻塞（2026-08-09）：`fannaoxiao` 是 client-only registry row，目前沒有 live consumer 讀取其 executor；新增 adapter 會形成死抽象，待 W11 接線範圍明確後再做。
-  - 審查更正（2026-08-09）：上述理由**不足以單獨排除 W9** — W8（lamp）與 W10（farm）
-    的 executor 同樣沒有 live consumer（`grep` 主樹確認：僅 registry 字串與測試引用，
-    `daily_pipeline` / `ws_phase` 都沒 import），三者的死抽象風險等級相同。真正的差別是
-    W8/W10 是薄轉接層（呼叫既有 `LampService` / `farm_v2.manager`），而 W9 要驗的
-    「adb 裝置乾淨跳過」語意在 W11 之前無處可驗。**結論：暫緩成立，但理由要改成
-    「缺可驗證的 skip 路徑」，不是「唯一沒有 consumer」。** W11 接線時三個 executor
-    必須同批接上，否則 B0 規則對 W8/W10 一樣不成立。
+  - 完成（2026-08-09）：新增 `single_backend_executor.py`，`dragon_realm` /
+    `fannaoxiao` 的 H5 executor 已由 W11 registry loop live consume；明確設定為
+    `web_h5` 時，ADB 裝置在 loop 入口以 `TaskOutcome.SKIPPED` 乾淨跳過。
 
 - [x] **W10 [P-4] 遷「特殊 due/completion schema」任務（農場 / 每日任務）**
   - owned：`game_actions/executors/farm_executor.py`（新檔）+ 對應測試
@@ -460,16 +455,18 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 #### 波次 5：收斂主迴圈（單張，高風險）
 
 - [x] **W11 [SEQ] `_run_tasks` 收成單一迴圈 + `RunReport`**
-  - owned：`game_actions/daily_pipeline.py`、`game_actions/ws_phase.py`
-  - 範圍：依 `order` 排序的單一迴圈，6 個共用關切各做一次（取代 28×force_sleep、
-    16×ws_skip、13×guarded_run、8×update_state、4×time_recording）；
+  - owned：`game_actions/daily_pipeline.py`、`game_actions/ws_phase.py`、
+    `game_actions/task_registry.py`、`game_actions/executors/`
+  - 範圍：依 `order` 排序的單一迴圈，六項共用關切各集中一次（force-sleep、
+    backend/executor gate、WS skip、主頁面 guard、狀態更新、結果/ledger 收集）；
     pipeline 側產出與 WS 側同型的 `RunReport`；`ws_phase` 兩張 dict 改由 registry 推導
-  - **純 code motion，行為零變更**
+  - **保留既有 action 與順序；新增 registry/backend routing 與 review 要求的結果安全網**
   - 驗收：W4/W5/W6 全綠且**未修改測試預期值**；改完**重啟 `new_main_v2.py`**（無 hot-reload）
   - 高風險：這是 live bot 熱路徑，建議單獨一個 session、單獨 review
   - 完成（2026-08-09）：client pipeline 改由 registry `order` 單一迴圈 dispatch，集中
-    force-sleep / WS skip / 結果收集；新增 WS-shaped `RunReport`，WS skip 與 daily
-    ledger 對照改由 registry/completion policy 推導。W11 相關 138 tests 全綠；完整
+    backend/executor routing、force-sleep / WS skip / 狀態 / 結果收集；新增 WS-shaped
+    `RunReport`，WS skip 與 daily ledger 對照改由 registry/completion policy 推導，
+    並保留中途 abort 前已完成的 `RunReport`。W11 相關 157 tests 全綠；完整
     daily/WS 回歸 148 passed，另有 2 個既有特殊萬神 fake-device 測試基線失敗（缺
     `screenshot`/`press`，與本次未改動分支無關）。
 

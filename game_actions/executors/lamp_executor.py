@@ -6,15 +6,23 @@ W8 只提供給後續 registry runner 使用的薄轉接層：client 路徑仍�
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 
-def run_client(device: Any, ip: str, stage: str) -> Any:
+def run_client(
+    device: Any,
+    ip: str,
+    stage: str,
+    *,
+    action: Callable[[], Any] | None = None,
+) -> Any:
     """以既有 client lamp scheduler 執行一次開神燈任務。
 
     延遲 import 是為了讓 registry 讀取與契約測試不載入 cv2、ADB 或其他
     client runtime 依賴；Task 18 傳入的 ``stage`` 原樣交給既有 scheduler。
     """
+    if action is not None:
+        return action()
     from game_actions.lamp_scheduler import _run_lamp_if_due
 
     return _run_lamp_if_due(device, ip, stage)

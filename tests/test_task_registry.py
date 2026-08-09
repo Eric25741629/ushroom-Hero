@@ -272,6 +272,8 @@ def test_executor_references_are_resolvable_shared_and_specialized_entrypoints()
         "game_actions.executors.lamp_executor:run_client",
         "game_actions.executors.farm_executor:run_client",
         "game_actions.executors.farm_executor:run_daily_client",
+        "game_actions.executors.single_backend_executor:run_dragon_realm",
+        "game_actions.executors.single_backend_executor:run_fannaoxiao",
     }
 
     for definition in iter_task_definitions():

@@ -13,7 +13,7 @@ from __future__ import annotations
 import datetime
 import time
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Callable
 
 from game_actions.task_registry import (
     CompletionPolicy,
@@ -190,15 +190,29 @@ def execute_ws_result(
     )
 
 
-def run_client(device: Any, ip: str, cnn_model: Any) -> Any:
+def run_client(
+    device: Any,
+    ip: str,
+    cnn_model: Any,
+    *,
+    action: Callable[[], Any] | None = None,
+) -> Any:
     """W11 client executor：延遲委派既有 farm_v2 action。"""
+    if action is not None:
+        return action()
     from farm_v2 import manager as farm_manager
 
     return farm_manager.farm(device, ip, cnn_model)
 
 
-def run_daily_client(mission_manager: Any) -> Any:
+def run_daily_client(
+    mission_manager: Any,
+    *,
+    action: Callable[[], Any] | None = None,
+) -> Any:
     """W11 client executor：延遲委派既有 Mission action。"""
+    if action is not None:
+        return action()
     return mission_manager.do_allmission()
 
 
