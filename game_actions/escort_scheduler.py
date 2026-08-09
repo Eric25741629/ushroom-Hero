@@ -19,6 +19,7 @@ import datetime
 from typing import Any, Optional
 
 import config_manager
+from game_actions.scheduler_policy import SchedulerPolicy
 from json_manager import is_record_expired, return_time, time_recording
 from utils.logging_utils import logger
 
@@ -27,6 +28,13 @@ _COOLDOWN_SECONDS = 20 * 3600  # 20h：確保六日每天最多一輪且不重�
 _START_HOUR = 11               # 使用者指定：11:00 後才開打
 _WEEKEND = (5, 6)             # datetime.weekday(): 5=Sat, 6=Sun
 
+_POLICY = SchedulerPolicy(
+    enabled_key="enable_escort",
+    backend="web_h5",
+    record_key=_RECORD_KEY,
+    cooldown_seconds=_COOLDOWN_SECONDS,
+)
+
 
 def _local_now() -> datetime.datetime:
     """本地時間（測試可 monkeypatch 此函式模擬星期/時段）。"""
@@ -34,10 +42,7 @@ def _local_now() -> datetime.datetime:
 
 
 def _is_enabled(ip: str) -> bool:
-    cfg = config_manager.get_device_config(ip)
-    if not bool(cfg.get("enable_escort", False)):
-        return False
-    return str(cfg.get("backend", "")).lower() == "web_h5"
+    return _POLICY.is_enabled(ip, get_device_config=config_manager.get_device_config)
 
 
 def _in_window() -> bool:
@@ -46,12 +51,15 @@ def _in_window() -> bool:
 
 
 def _is_due(ip: str) -> bool:
-    record = return_time(ip, name=_RECORD_KEY)
-    return is_record_expired(record, _COOLDOWN_SECONDS)
+    return _POLICY.is_due(
+        ip,
+        return_time=return_time,
+        is_record_expired=is_record_expired,
+    )
 
 
 def _mark_done(ip: str) -> None:
-    time_recording(ip, name=_RECORD_KEY)
+    _POLICY.mark_done(ip, time_recording=time_recording)
 
 
 def run_escort_if_due(d: Any, ip: str, driver: Optional[Any] = None) -> None:

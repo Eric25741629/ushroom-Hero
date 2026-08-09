@@ -19,6 +19,7 @@ import bot_state
 import config_manager
 import new_battle
 from game_actions import task_due
+from game_actions.scheduler_policy import SchedulerPolicy
 from json_manager import time_recording
 from utils.logging_utils import logger
 from utils.screenshot_helpers import log_main_page_mismatch
@@ -30,6 +31,24 @@ def _struct_to_dt(t) -> datetime.datetime:
     只用到 weekday()/hour（與 tm_wday/tm_hour 一致），tz 不影響週副本判斷。
     """
     return datetime.datetime(*t[:6])
+
+
+def _wanshen_due(ip: str, now: datetime.datetime | None) -> bool:
+    return task_due.is_due("萬神試煉", ip, now)
+
+
+def _biweekly_due(ip: str, now: datetime.datetime | None) -> bool:
+    return task_due.is_due("雙週副本", ip, now)
+
+
+_WEEKLY_POLICY = SchedulerPolicy(
+    record_key="萬神試煉",
+    due_hook=_wanshen_due,
+)
+_BIWEEKLY_POLICY = SchedulerPolicy(
+    record_key="雙週副本",
+    due_hook=_biweekly_due,
+)
 
 
 def _wanshen_rounds(ip: str) -> int:
@@ -49,7 +68,7 @@ def _run_weekly_dungeon(
 ) -> None:
     """Run 萬神試煉 if scheduled for this week and appropriate day/time."""
     # due 判斷唯一來源：task_due.is_due("萬神試煉")（record.is_next_week + 星期時間窗）。
-    due = task_due.is_due("萬神試煉", ip, _struct_to_dt(current_time))
+    due = _WEEKLY_POLICY.is_due(ip, _struct_to_dt(current_time))
     logger.info(
         "[%s] 萬神試煉檢查: 頁面=%s 時間=%02d:%02d wday=%d 啟用=%s due=%s",
         ip, stage, current_time.tm_hour, current_time.tm_min,
@@ -69,7 +88,7 @@ def _run_weekly_dungeon(
     bot_state.update_state(ip, task="萬神試煉", step="執行中")
     ok = new_battle.fight_test(d, rounds=rounds)
     if ok:
-        time_recording(ip, name="萬神試煉")
+        _WEEKLY_POLICY.mark_done(ip, time_recording=time_recording)
         logger.info("[%s] 萬神試煉：完成(跑滿 %d 局)，已寫入本週記錄", ip, rounds)
     else:
         logger.warning("[%s] 萬神試煉：未跑滿 %d 局(入場/進場/結算失敗)，不寫記錄，下次重試", ip, rounds)
@@ -86,7 +105,7 @@ def _run_biweekly_dungeon(
     # 裝置範圍(5556)/enable 是呼叫端閘門，維持在此；純 due（record.is_next_biweek +
     # 週六/日 20:xx 時間窗）唯一來源 = task_due.is_due("雙週副本")。
     if ip == "emulator-5556" and enable_biweekly:
-        due = task_due.is_due("雙週副本", ip, _struct_to_dt(now_local))
+        due = _BIWEEKLY_POLICY.is_due(ip, _struct_to_dt(now_local))
         logger.info(
             "[%s] 雙週副本檢查: 頁面=%s wday=%d hour=%02d due=%s",
             ip, stage, now_local.tm_wday, now_local.tm_hour, due,
@@ -100,6 +119,6 @@ def _run_biweekly_dungeon(
                     logger_obj=logger,
                     should_stop=lambda: bot_state.check_pause(ip) or bot_state.check_skip_sleep(ip),
                 )
-                time_recording(ip, name="雙週副本")
+                _BIWEEKLY_POLICY.mark_done(ip, time_recording=time_recording)
             else:
                 log_main_page_mismatch(d, ip, stage, "雙週副本", "雙週副本到達執行時間但不在主頁面")

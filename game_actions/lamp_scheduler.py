@@ -14,6 +14,7 @@ import time
 
 import bot_state
 import config_manager
+from game_actions.scheduler_policy import SchedulerPolicy
 from json_manager import return_time, time_recording
 from opengold_v2.lamp_service import LampService as _LampServiceV2
 from runtime_services.device_scan_service import use_phone_ocr_lamp_mode
@@ -82,6 +83,44 @@ def _evaluate_lamp_interval(ip: str, lamp_interval: float, lamp_record):
     return False, f"elapsed<threshold, remaining={remaining_sec/60:.1f}m", last_dt_str, elapsed_sec
 
 
+def _lamp_enabled(ip: str) -> bool:
+    # 5558 的排除是既有 dispatch gate；phone-OCR/5560 分支不經此 policy。
+    return ip != "emulator-5558"
+
+
+def _lamp_due(
+    ip: str,
+    _now: datetime.datetime | None = None,
+    *,
+    lamp_interval: float,
+    lamp_record,
+) -> bool:
+    return _evaluate_lamp_interval(ip, lamp_interval, lamp_record)[0]
+
+
+_POLICY = SchedulerPolicy(
+    enabled_hook=_lamp_enabled,
+    record_key="general_lamp_last_execution",
+    due_hook=_lamp_due,
+)
+
+
+def _is_enabled(ip: str) -> bool:
+    return _POLICY.is_enabled(ip, get_device_config=config_manager.get_device_config)
+
+
+def _is_due(ip: str, lamp_interval: float, lamp_record) -> bool:
+    return _POLICY.is_due(
+        ip,
+        lamp_interval=lamp_interval,
+        lamp_record=lamp_record,
+    )
+
+
+def _mark_done(ip: str) -> None:
+    _POLICY.mark_done(ip, time_recording=time_recording)
+
+
 def _run_general_lamp(d, ip: str, stage: str) -> None:
     if stage != "主頁面":
         logger.info(f"[{ip}] 本輪跳過一般開神燈: stage={stage} (需主頁面)")
@@ -97,8 +136,10 @@ def _run_general_lamp(d, ip: str, stage: str) -> None:
         logger.warning(f"[{ip}] lamp_check_interval={lamp_interval}h 非法，改用 2h")
         lamp_interval = 2.0
 
-    should_run, reason, last_dt_str, elapsed_sec = _evaluate_lamp_interval(
-        ip, lamp_interval, return_time(ip, name=lamp_record_name)
+    lamp_record = return_time(ip, name=lamp_record_name)
+    should_run = _is_due(ip, lamp_interval, lamp_record)
+    _, reason, last_dt_str, elapsed_sec = _evaluate_lamp_interval(
+        ip, lamp_interval, lamp_record
     )
 
     elapsed_h_text = "N/A" if elapsed_sec is None else f"{elapsed_sec/3600.0:.2f}"
@@ -116,7 +157,7 @@ def _run_general_lamp(d, ip: str, stage: str) -> None:
         f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
     )
     _run_lamp(d, ip, lamp_dur)
-    time_recording(ip, name=lamp_record_name)
+    _mark_done(ip)
     logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
 
 
@@ -131,6 +172,6 @@ def _run_lamp_if_due(d, ip: str, stage: str) -> None:
         _run_phone_ocr_lamp(d, ip, stage)
     elif 'emulator-5560' in ip:
         _run_5560_lamp(d, ip, stage)
-    elif ip != "emulator-5558":
+    elif _is_enabled(ip):
         _run_general_lamp(d, ip, stage)
     # else: emulator-5558 → no-op

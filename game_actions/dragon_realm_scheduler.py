@@ -5,6 +5,7 @@ import datetime
 
 import config_manager
 from dragon_realm import use_dragon_realm
+from game_actions.scheduler_policy import SchedulerPolicy
 from json_manager import is_record_expired, return_time, time_recording
 from utils.logging_utils import logger
 
@@ -17,6 +18,11 @@ _CYCLE_DAYS = 21  # 3 weeks
 _ACTIVE_WEEKDAYS = (2, 3, 4)  # Wed, Thu, Fri (Python weekday)
 _OPEN_HOUR = 10
 _CLOSE_HOUR = 22
+
+
+def _is_enabled(ip: str) -> bool:
+    """保留龍骸既有的 global/per-device 設定語意。"""
+    return use_dragon_realm(ip, config_manager.load_config())
 
 
 def _is_dragon_week(today: datetime.date | None = None) -> bool:
@@ -41,7 +47,7 @@ def is_dragon_open(now: datetime.datetime | None = None) -> bool:
     return _is_dragon_week(now.date()) and _within_open_window(now)
 
 
-def _is_due(ip: str, now: datetime.datetime | None = None) -> bool:
+def _dragon_due(ip: str, now: datetime.datetime | None = None) -> bool:
     now = now or datetime.datetime.now()
     if not _is_dragon_week(now.date()):
         return False
@@ -51,8 +57,20 @@ def _is_due(ip: str, now: datetime.datetime | None = None) -> bool:
     return is_record_expired(record, _COOLDOWN_SECONDS)
 
 
+_POLICY = SchedulerPolicy(
+    record_key=_RECORD_KEY,
+    cooldown_seconds=_COOLDOWN_SECONDS,
+    enabled_hook=_is_enabled,
+    due_hook=_dragon_due,
+)
+
+
+def _is_due(ip: str, now: datetime.datetime | None = None) -> bool:
+    return _POLICY.is_due(ip, now)
+
+
 def _mark_done(ip: str) -> None:
-    time_recording(ip, name=_RECORD_KEY)
+    _POLICY.mark_done(ip, time_recording=time_recording)
 
 
 def _record_date(record: dict) -> datetime.date | None:
@@ -103,8 +121,7 @@ def _cycle_completed(ip: str, now: datetime.datetime | None = None) -> bool:
 
 
 def run_dragon_realm_if_due(ip: str, d) -> None:
-    config = config_manager.load_config()
-    if not use_dragon_realm(ip, config):
+    if not _is_enabled(ip):
         return
     if not _is_due(ip):
         return

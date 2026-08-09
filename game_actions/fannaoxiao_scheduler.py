@@ -18,6 +18,7 @@ from typing import Any, Optional
 
 import config_manager
 from json_manager import is_record_expired, return_time, time_recording
+from game_actions.scheduler_policy import SchedulerPolicy
 from utils.logging_utils import logger
 
 _RECORD_KEY = "fannaoxiao_last_run"
@@ -32,20 +33,28 @@ _MAX_MOVES = 80
 _MOVE_PAUSE = 0.75
 
 
+_POLICY = SchedulerPolicy(
+    enabled_key="enable_fannaoxiao",
+    backend="web_h5",
+    record_key=_RECORD_KEY,
+    cooldown_seconds=_COOLDOWN_SECONDS,
+)
+
+
 def _is_enabled(ip: str) -> bool:
-    cfg = config_manager.get_device_config(ip)
-    if not bool(cfg.get("enable_fannaoxiao", False)):
-        return False
-    return str(cfg.get("backend", "")).lower() == "web_h5"
+    return _POLICY.is_enabled(ip, get_device_config=config_manager.get_device_config)
 
 
 def _is_due(ip: str) -> bool:
-    record = return_time(ip, name=_RECORD_KEY)
-    return is_record_expired(record, _COOLDOWN_SECONDS)
+    return _POLICY.is_due(
+        ip,
+        return_time=return_time,
+        is_record_expired=is_record_expired,
+    )
 
 
 def _mark_done(ip: str) -> None:
-    time_recording(ip, name=_RECORD_KEY)
+    _POLICY.mark_done(ip, time_recording=time_recording)
 
 
 def run_fannaoxiao_if_due(d: Any, ip: str, driver: Optional[Any] = None) -> None:
