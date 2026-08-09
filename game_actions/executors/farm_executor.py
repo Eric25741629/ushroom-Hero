@@ -28,7 +28,8 @@ DAILY_TASK_ID = "main_tasks"
 # 「農場種植」徽章的真實 WS owner 是 ad_rewards（config 15），不是 farm。
 FARM_PLANT_TASK_ID = "ad_rewards"
 FARM_BUY_TASK_ID = "farm"
-_FARM_SEED_AD_NAME = "農場種子廣告"
+# ad_reward config_id：農場種子廣告。與 ws_phase._AD_FARM_SEED_CONFIG_ID 同源。
+_AD_FARM_SEED_CONFIG_ID = 15
 _FARM_SEED_SHOP_ID = 407
 _TPE = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -78,12 +79,24 @@ def _record_time_value(timestamp: float) -> dict[str, str | float]:
     }
 
 
+def _farm_seed_ad_name() -> str | None:
+    """由 `ad_reward.AD_NAMES` 查表取名，與 live `ws_phase._ad_seed_claimed` 同源。
+
+    原本硬編 `"農場種子廣告"`：`AD_NAMES[15]` 一改名，本模組就查不到那筆
+    entry，`completion_updates_for` 會靜默回傳空 mapping（dashboard 徽章永遠
+    停在未完成，且不拋錯）。延遲 import 讓 registry 契約測試不必載入 ws_token。
+    """
+    from ws_token import ad_reward
+
+    return ad_reward.AD_NAMES.get(_AD_FARM_SEED_CONFIG_ID)
+
+
 def _farm_seed_ad_claimed(payload: Mapping[str, Any]) -> bool:
     """沿用 ws_phase 的 config 15 成功／maxed 語意。"""
     results = payload.get("results")
     if not isinstance(results, Mapping):
         return False
-    entry = results.get(_FARM_SEED_AD_NAME)
+    entry = results.get(_farm_seed_ad_name())
     if not isinstance(entry, Mapping):
         return False
     claimed = entry.get("claimed")
