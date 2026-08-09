@@ -473,13 +473,14 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 ---
 
-#### 波次 6：後續（2 張併行，各自有獨立出口）
+#### 波次 6：後續（W12/W13/W14 已完成；W15 為條件式後續）
 
-- [ ] **W12 [SEQ, 需 W11] 8 個 scheduler 的 `_is_enabled/_is_due/_mark_done` 收斂為 policy**
+- [x] **W12 [SEQ, 需 W11] 8 個 scheduler 的 `_is_enabled/_is_due/_mark_done` 收斂為 policy**
   - owned：`game_actions/*_scheduler.py`（8 檔）
   - 驗收：每個 scheduler 的既有測試全綠；行為零變更
+  - 完成：`game_actions/scheduler_policy.py` + 7 個有 gate 的 scheduler 接線；目標測試 53 passed
 
-- [ ] **W13 [P-6] Runtime FSM 最小試點（shadow mode，不接管行為）**
+- [x] **W13 [P-6] Runtime FSM 最小試點（shadow mode，不接管行為）**
   - owned：`runtime_services/runtime_fsm.py`（新檔）、`tests/test_runtime_fsm.py`
   - 範圍嚴格限定：4 phase（`WS_PHASE / WAKING_CLIENT / CLIENT_TASKS / SLEEPING`）
     × 5 event（`WS_COMPLETED / CLIENT_READY / TASKS_COMPLETED / WAKE_DUE / FORCE_SLEEP`）
@@ -491,11 +492,13 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - **shadow mode**：只記 log 不改行為，跑滿一週
   - **B4 出口**：若分歧全是模型漏設而非真實 bug → 放棄階段 3，這是合法產出
   - 上限：新增檔案 ≤ 3、phase ≤ 10、event ≤ 12、不引入任何套件
+  - 完成：純 `transition()` + effect intents + `ShadowObserver`，21 passed、1 skipped；未接管 `new_main_v2`
 
-- [ ] **W14 [P-6] `RunReport` 上儀表板**
+- [x] **W14 [P-6] `RunReport` 上儀表板**
   - owned：`control_panel/routes_status.py` + 對應前端 template
   - 範圍：本輪哪些任務跑了／被哪個條件（flag/due/backend/ws_done）跳過，從「讀 log」變「看表」
   - 依既有慣例：新功能必須有 dashboard 控制項，不可只有 config
+  - 完成：新增 ephemeral report store、`/api/status` 與 `/api/task_report/<ip>` 欄位、dashboard 任務結果面板；2 個契約測試通過
 
 - [ ] **W15 [SEQ, 條件式；需 W13 shadow 決策關卡通過] `new_main_v2.main()` 裝置生命週期瘦身**
   - 現況（2026-08-09 AST 實測）：`main()` :146-701 共 556 行，含 47 個 `if`、
