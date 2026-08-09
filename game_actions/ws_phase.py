@@ -681,6 +681,14 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     ``now`` / ``state_dir`` 供測試注入（預設 ``time.time()`` / 預設 ws_state 路徑）。
     """
     log = logger_obj or logger
+
+    def _publish_report(report) -> None:
+        """Expose the latest WS report to the dashboard on a best-effort basis."""
+        try:
+            from runtime_services.report_store import publish
+            publish(ip, report, source="ws")
+        except Exception:  # noqa: BLE001
+            log.debug("[%s] publish WS RunReport failed", ip, exc_info=True)
     # 交接訊號必須早於設定讀取重置；設定損壞或讀取例外時也不可沿用上一輪 True。
     try:
         import bot_state
@@ -1050,6 +1058,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
         report.kicked, getattr(report, "close_reason", None),
         getattr(report, "close_detail", None) or "", report.aborted,
         sorted(skips))
+    _publish_report(report)
     if not report.kicked and not report.aborted:
         try:
             import bot_state

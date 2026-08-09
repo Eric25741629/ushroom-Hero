@@ -619,6 +619,22 @@ h1 {
   margin-bottom: 16px;
   padding: 4px 0;
 }
+.run-report {
+  margin: -4px 0 16px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  background: var(--tile-sunk);
+  color: var(--ink-soft);
+  font-size: .76em;
+  line-height: 1.5;
+}
+.run-report-title { font-weight: 800; color: var(--ink); margin-bottom: 3px; }
+.run-report-row { display: flex; gap: 7px; align-items: baseline; }
+.run-report-row .name { min-width: 8em; color: var(--ink-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-report-row .skip { color: var(--status-warn-text, #8a6210); }
+.run-report-row .fail { color: var(--status-danger-text, #a53c4a); }
+.run-report-empty { color: var(--ink-faint); }
 .label {
   color: var(--ink-faint);
   font-family: var(--body);
@@ -2360,6 +2376,12 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
     }
 
+    function escapeHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, function(ch) {
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch];
+      });
+    }
+
 
 
     async function fetchProgress(ip, lastUpdate) {
@@ -3189,6 +3211,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             </div>
             ${info.carpark_plan_enabled ? `<div class="carpark-detail" id="carpark-detail-${ip}" style="display:none; font-size:0.75em; color:var(--text-secondary); padding:4px 8px; line-height:1.5;"></div>` : ''}
             <div class="progress-container" id="progress-${ip}"><span class="task-badge">讀取每日進度中...</span></div>
+            <div class="run-report" id="report-${ip}"><span class="run-report-empty">尚無本輪任務報告</span></div>
             <div class="log-box" id="log-${ip}">${logsHtml || '<div>尚無日誌</div>'}</div>
             <div class="action-bar" id="actions-${ip}"></div>
           `;
@@ -3348,6 +3371,26 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           } else {
             countdownEl.innerText = _wDone ? '本週完成' : '執行中';
             countdownEl.style.color = 'var(--safe-color)'; setDial(ip, 1, 'var(--safe-color)');
+          }
+        }
+
+        const reportEl = document.getElementById(`report-${ip}`);
+        if (reportEl) {
+          const report = info.task_report;
+          if (!report || !report.tasks || Object.keys(report.tasks).length === 0) {
+            reportEl.innerHTML = '<span class="run-report-empty">尚無本輪任務報告</span>';
+          } else {
+            const source = report.source === 'ws' ? 'WS' : 'Client';
+            const rows = Object.entries(report.tasks).map(([name, result]) => {
+              const obj = (result && typeof result === 'object') ? result : {};
+              const outcome = String(obj.outcome || obj.status || (obj.success === false ? 'FAIL' : 'DONE')).toUpperCase();
+              const detail = obj.detail || obj.reason || (obj.error_code != null ? `code=${obj.error_code}` : '');
+              const cls = outcome === 'SKIPPED' ? 'skip' : (outcome.includes('FAIL') ? 'fail' : '');
+              const icon = outcome === 'SKIPPED' ? '⏭' : (cls === 'fail' ? '❌' : '✅');
+              return `<div class="run-report-row"><span class="name" title="${escapeHtml(name)}">${icon} ${escapeHtml(name)}</span><span class="${cls}">${escapeHtml(detail || outcome)}</span></div>`;
+            }).join('');
+            const flags = report.aborted ? ' · 已中斷' : (report.kicked ? ' · 被踢下線' : '');
+            reportEl.innerHTML = `<div class="run-report-title">最近一輪 ${source}${flags}</div>${rows}`;
           }
         }
 

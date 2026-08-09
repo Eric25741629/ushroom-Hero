@@ -174,13 +174,24 @@ def run(ctx: DailyContext) -> RunReport:
     as 「未預期錯誤」 and tore the device thread down → set_offline + scanner
     respawn → immediate re-run with no sleep).
     """
+    def _publish(report: RunReport) -> RunReport:
+        # Dashboard diagnostics are best-effort and must never affect the task
+        # pipeline (including worker processes where the UI is not present).
+        try:
+            from runtime_services.report_store import publish
+            publish(ctx.ip, report, source="client")
+        except Exception:  # noqa: BLE001
+            logger.debug("[%s] publish client RunReport failed", ctx.ip,
+                         exc_info=True)
+        return report
+
     cfg = config_manager.get_device_config(ctx.ip)
     special_active = bool(cfg.get("special_wanshen_account", False)) and bool(
         cfg.get("special_wanshen_enabled", False)
     )
     if special_active:
         if not ctx.special_wanshen_claimed:
-            return RunReport(device=ctx.ip)
+            return _publish(RunReport(device=ctx.ip))
         # 跟一般玩家喚醒相同：復用 handle_game_startup_pages 清公告/未知等彈窗、
         # back/重啟、主頁面雙確認，避免特殊模式單次讀到「未知」就整天放棄。
         from adb_operations import start_game_by_icon
@@ -195,22 +206,22 @@ def run(ctx: DailyContext) -> RunReport:
             bot_state.update_state(
                 ctx.ip, task="萬神試煉", step="未到達主頁面，順延下一個有效日"
             )
-            return RunReport(device=ctx.ip)
+            return _publish(RunReport(device=ctx.ip))
         special_wanshen.run_claimed(
             ctx.d, ctx.ip, cfg=cfg, fight_fn=new_battle.fight_test
         )
-        return RunReport(device=ctx.ip, tasks={"special_wanshen": {}})
+        return _publish(RunReport(device=ctx.ip, tasks={"special_wanshen": {}}))
 
     try:
-        return _run_tasks(ctx)
+        return _publish(_run_tasks(ctx))
     except _ConsecutiveMismatchAbort as exc:
         logger.info(
             f"[{ctx.ip}] 本輪 pipeline 已中止並關閉 app（{exc}）；"
             "等待下次對齊喚醒重新啟動"
         )
         if exc.report is not None:
-            return exc.report
-        return RunReport(device=ctx.ip, aborted=True)
+            return _publish(exc.report)
+        return _publish(RunReport(device=ctx.ip, aborted=True))
 
 def _run_tasks(ctx: DailyContext) -> RunReport:
     """依 registry 順序執行 client 任務，集中處理共用生命週期關切。
