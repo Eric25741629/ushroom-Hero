@@ -258,7 +258,7 @@ def test_order_sentinel_rejects_mismatched_executor_scope():
         )
 
 
-def test_executor_references_are_resolvable_shared_entrypoints():
+def test_executor_references_are_resolvable_shared_and_specialized_entrypoints():
     symbol_cache: dict[str, set[str]] = {}
     references = {
         reference
@@ -269,6 +269,9 @@ def test_executor_references_are_resolvable_shared_entrypoints():
     assert references == {
         "game_actions.daily_pipeline:run",
         "ws_token.runner:run_device",
+        "game_actions.executors.lamp_executor:run_client",
+        "game_actions.executors.farm_executor:run_client",
+        "game_actions.executors.farm_executor:run_daily_client",
     }
 
     for definition in iter_task_definitions():
