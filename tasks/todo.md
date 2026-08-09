@@ -466,7 +466,8 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - 完成（2026-08-09）：client pipeline 改由 registry `order` 單一迴圈 dispatch，集中
     backend/executor routing、force-sleep / WS skip / 狀態 / 結果收集；新增 WS-shaped
     `RunReport`，WS skip 與 daily ledger 對照改由 registry/completion policy 推導，
-    並保留中途 abort 前已完成的 `RunReport`。W11 相關 157 tests 全綠；完整
+    並保留中途 abort 前已完成的 `RunReport`、guarded action 原始回傳值與 WS skip
+    可觀測性。W11 相關 159 tests 全綠；完整
     daily/WS 回歸 148 passed，另有 2 個既有特殊萬神 fake-device 測試基線失敗（缺
     `screenshot`/`press`，與本次未改動分支無關）。
 

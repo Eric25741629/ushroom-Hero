@@ -692,6 +692,14 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
 
     for definition in iter_pipeline_task_definitions():
         _force_sleep_checkpoint()
+        if _should_ws_skip(definition):
+            _record_ws_skip(definition)
+            if definition.task_id == "guild":
+                stage = _track(get_stage_with_check(d, ip, Cnn_model))
+            elif definition.task_id == "couple":
+                stage = get_stage_with_check(d, ip, Cnn_model)
+            report.tasks[definition.task_id] = _ws_result()
+            continue
         if backend is not None and backend not in definition.executors:
             logger.info(
                 "[%s] %s: backend=%s 沒有可用 executor，乾淨跳過",
@@ -702,37 +710,41 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
                 detail=f"backend {backend} 不支援此任務",
             )
             continue
-        if _should_ws_skip(definition):
-            _record_ws_skip(definition)
-            if definition.task_id == "guild":
-                stage = _track(get_stage_with_check(d, ip, Cnn_model))
-            elif definition.task_id == "couple":
-                stage = get_stage_with_check(d, ip, Cnn_model)
-            report.tasks[definition.task_id] = _ws_result()
-            continue
         if not definition.needs_main_page:
             _record_task_start(
                 definition, task_steps.get(definition.task_id, "執行中")
             )
         invocation = handlers[definition.task_id]()
         if isinstance(invocation, _GuardedAction):
+            action_result = missing_executor
+
+            def _capture_action_result():
+                nonlocal action_result
+                action_result = invocation.fn()
+                return action_result
+
             if definition.needs_main_page:
-                result = _track(
+                stage_result = _track(
                     _run_at_main_page(
                         d,
                         ip,
                         Cnn_model,
                         invocation.task_name,
                         invocation.mismatch_reason,
-                        invocation.fn,
+                        _capture_action_result,
                         step=invocation.step,
                         log=invocation.log,
                     )
                 )
             else:
-                result = invocation.fn()
+                stage_result = invocation.fn()
             if invocation.after is not None:
-                invocation.after(result)
+                invocation.after(stage_result)
+            result = (
+                action_result
+                if action_result is not missing_executor
+                else stage_result
+            )
         else:
             result = invocation
         report.tasks[definition.task_id] = (
