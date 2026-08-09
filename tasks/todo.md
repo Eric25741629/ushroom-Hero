@@ -352,7 +352,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
 
 #### 波次 1：衛生 + 事實校正（3 張工單全可併行）
 
-- [ ] **W1 [P-1] 清工作目錄 sync-conflict 噪音**
+- [x] **W1 [P-1] 清工作目錄 sync-conflict 噪音**
   - owned：無原始碼（純刪檔）
   - 範圍：`ws_token/*.sync-conflict-*`、`game_actions/equipment_scheme.sync-conflict-*`、
     `battle/rogue_h5.sync-conflict-*`、`dragon_realm/client.sync-conflict-*`、
@@ -362,7 +362,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
   - 驗收：`find . -name "*sync-conflict*" -not -path "./.git/*" --exclude vendored` 在原始碼目錄歸零
   - **注意**：`.ruff_cache/` 與 `logs/` 內的可一併刪但非必要；勿刪 `.conda/`、`OCR/` 內 vendored
 
-- [ ] **W2 [P-1] 清 stale worktree + 未提交垃圾**
+- [x] **W2 [P-1] 清 stale worktree + 未提交垃圾**
   - owned：`.gitignore`
   - 範圍：80 個 worktree（`.worktrees/` 26、`worktree/` 8、`.claude/worktrees/` 46）
     **逐一確認已 merge 才刪**；`NUL`、`_check_devices.py`、`emu-test.json`、`web-002/003/004.json`
@@ -370,7 +370,7 @@ SHUTDOWN > FORCE_SLEEP > LOGIN_CONFLICT > MANUAL_LAUNCH > PAUSE > WAKE_OVERRIDE
     先搬回主樹（本次分析來源文件）再刪該 worktree
   - 驗收：`git worktree list` 只剩 in-flight 的；`git status` 無上列垃圾
 
-- [ ] **W3 [P-1] 文件事實校正**
+- [x] **W3 [P-1] 文件事實校正**
   - owned：`game_actions/daily_pipeline.py`（僅 docstring 一行）、`docs/INDEX.md`、`CLAUDE.md`
   - 範圍：① `daily_pipeline.py:171` docstring「20 tasks」→ 29
     ② `CLAUDE.md` / `docs/INDEX.md` 若記載 `page_detector` 為 experimental 未接線 → 更正為
