@@ -317,6 +317,17 @@ def test_run_tasks_preserves_the_28_task_order(patched_pipeline):
     assert patched_pipeline == EXPECTED_ORDER
 
 
+def test_registry_loop_returns_ws_shaped_run_report(patched_pipeline):
+    ctx, _unused, _device = _build_context()
+
+    report = pipeline.run(ctx)
+
+    assert isinstance(report, pipeline.RunReport)
+    assert report.device == ctx.ip
+    assert report.errors == {}
+    assert len(report.tasks) == len(EXPECTED_ORDER)
+
+
 @pytest.mark.parametrize(
     ("flag", "task"),
     [

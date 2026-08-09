@@ -178,9 +178,9 @@ def test_due_policy_delegates_to_the_existing_task_due_predicate(monkeypatch):
 
 
 def test_registry_keeps_existing_ws_skip_mapping_and_conditional_labels():
-    existing = _literal_assignment(
-        "game_actions/ws_phase.py", "WS_TO_PIPELINE_SKIPS"
-    )
+    from game_actions import ws_phase
+
+    existing = ws_phase.WS_TO_PIPELINE_SKIPS
 
     assert ws_to_pipeline_skip_mapping() == existing
     assert ws_to_pipeline_skip_mapping(include_conditional=True) | existing == {
