@@ -275,7 +275,22 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("xwar_idle", "跨服戰放置獎勵", 0, enabled_key="xwar_idle"),
     _task("sea_season", "航海任務 (Sea)", 180, ws_display_name="航海賽季", pipeline_label="航海任務 (Sea)", skip=("航海任務 (Sea)",), due_key="航海", needs_main_page=True),
     _task("mining", "挖礦/Oracle", 140, pipeline_label="挖礦/Oracle", skip=("挖礦/Oracle",), enabled_key="enable_mining", completion=_daily("挖礦"), needs_main_page=True, record_name="挖礦", tags=_DIRECT_SKIP),
-    _task("lamp", "開神燈", 270, pipeline_label="開神燈", skip=("開神燈",), needs_main_page=True, batch_cap=20, tags=_DIRECT_SKIP),
+    # W8：保留 WS runner 的 live 入口，client 兩後端改由 lamp adapter 接管；
+    # skip/batch metadata 供後續 W11 registry loop 消費，這輪不搬 _run_tasks。
+    TaskDefinition(
+        task_id="lamp",
+        display_name="開神燈",
+        order=270,
+        executors={
+            "ws": "ws_token.runner:run_device",
+            "adb": "game_actions.executors.lamp_executor:run_client",
+            "web_h5": "game_actions.executors.lamp_executor:run_client",
+        },
+        skip_when_ws_done=("開神燈",),
+        needs_main_page=True,
+        batch_cap=20,
+        tags=_DIRECT_SKIP,
+    ),
     _task("main_tasks_late", "每日任務尾端補領", 0),
     _task("main_chapter_kills", "主線擊敗敵人", 0, enabled_key="main_chapter_kills.enabled"),
     _task("daily_acceleration", "每日加速", 120, pipeline_label="每日加速", due_key="每日加速", include_ws=False),
