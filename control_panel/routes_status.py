@@ -605,6 +605,11 @@ def get_status():
             and cfg.get("web_debug_port")
             and sock is not None
         )
+        try:
+            from runtime_services.report_store import get as get_report
+            info["task_report"] = get_report(real_ip)
+        except Exception:
+            info["task_report"] = None
 
     # 把「已停用且還沒跑起來」的裝置 (剛註冊、尚未啟用) 也補進來，否則它沒有
     # runtime state → 不會出現在儀表板 → 使用者找不到卡片去按「啟用」。
@@ -675,3 +680,22 @@ def get_status():
         {"bots": states, "ocr_server": ocr_alive, "ocr_runtime": ocr_runtime,
          "online_monitor": _online_monitor_status()}
     )
+
+
+@bp.route("/api/task_report/<ip>", methods=["GET"])
+def get_task_report(ip):
+    """Return the latest in-memory RunReport diagnostics for one device.
+
+    This is intentionally read-only and ephemeral: reports are snapshots for
+    the dashboard, not a second completion ledger.  Missing reports are a
+    normal response before a device has completed its first WS/client round.
+    """
+    require_device_access(ip)
+    real_ip = ip.split(":")[-1] if ":" in ip else ip
+    try:
+        from runtime_services.report_store import get as get_report
+        report = get_report(real_ip)
+    except Exception as exc:  # noqa: BLE001 — status endpoint is advisory
+        logger.debug("task report unavailable for %s: %s", real_ip, exc)
+        report = None
+    return jsonify({"status": "ok", "device": real_ip, "report": report})
