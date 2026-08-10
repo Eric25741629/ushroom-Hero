@@ -128,22 +128,23 @@ def extract_lamp_count(body: bytes) -> int | None:
 
 def compute_lamp_target(total: int, *, lamp_percent: float, lamp_min_keep: int,
                         max_open: int,
-                        lamp_daily_min: int = 0, opened_today: int = 0) -> int:
+                        lamp_daily_min: int = 0, opened_today: int = 0,
+                        lamp_daily_target: int = 0) -> int:
     """Lamps to open this run: a multiple of 20 clamped to ``[0, max_open]``.
 
-    floor_cap = max(0, total - lamp_min_keep)
-    - both percent & min_keep set -> raw = min(percent_amt, floor_cap)
-    - percent only                -> raw = percent_amt
-    - min_keep only               -> raw = floor_cap
-    - neither                     -> raw = total (open the whole lot)
-
-    ``lamp_daily_min`` (>0) is a HARD daily floor: if today's opened count has
-    not reached the daily minimum, the target is boosted to cover the remaining
-    daily quota. This OVERRIDES both the percentage limit and the
-    ``lamp_min_keep`` reserve (it may dig below the reserve), capped only by
-    ``max_open``.
+    ``lamp_daily_target`` is a fixed quota and takes precedence over the
+    percentage/reserve heuristics.
     """
+    if lamp_daily_target > 0:
+        remaining_daily = max(0, lamp_daily_target - opened_today)
+        return min(total, max_open,
+                   max(0, round_to_nearest_20(remaining_daily)))
+
     floor_cap = max(0, total - lamp_min_keep)
+    # both percent & min_keep set -> raw = min(percent_amt, floor_cap)
+    # percent only                -> raw = percent_amt
+    # min_keep only               -> raw = floor_cap
+    # neither                     -> raw = total (open the whole lot)
     if lamp_percent > 0 and lamp_min_keep > 0:
         raw: float = min(total * lamp_percent / 100.0, floor_cap)
     elif lamp_percent > 0:
@@ -295,7 +296,7 @@ def decide_v2(drop: dict, set_map: dict, worn: dict, lian_shan_tabs: set,
         # not one of the player's sets -> fall back to the unwanted heuristic
         if len(codes) == 2 and codes in config.unwanted_combos:
             return Decision("sell", f"unmapped unwanted combo {''.join(sorted(codes))}")
-        return Decision("leave", f"no 套裝 for combo {''.join(sorted(codes)) or '-'}")
+        return Decision("sell", f"unknown combo {''.join(sorted(codes)) or '-'}")
 
     worn_item = worn.get(tab, {}).get(drop.get("slot"))
     if worn_item is None:
@@ -387,6 +388,7 @@ def open_lamp(
     lamp_percent: float = 0.0,
     lamp_min_keep: int = 0,
     lamp_daily_min: int = 0,
+    lamp_daily_target: int = 0,
     opened_today: int = 0,
     initial_count: int | None = None,
     on_progress: Callable[[int, int], None] | None = None,
@@ -399,8 +401,9 @@ def open_lamp(
     left:[(uid,combo)], dry_run, target, initial_count, remaining}. dry_run
     (default) computes + logs everything but sends no wear/sell/choose-tab.
 
-    Percent / min-keep (feature ON when ``lamp_percent > 0`` OR
-    ``lamp_min_keep > 0`` OR ``lamp_daily_min > 0``):
+    Percent / min-keep / daily-target mode is enabled when any corresponding
+    value is greater than zero. ``lamp_daily_target`` is an exact daily quota
+    and overrides the percentage and reserve calculations.
       - ``target`` = how many lamps to open this run, a multiple of 20 capped
         at ``max_batches * batch_num`` (see :func:`compute_lamp_target`).
       - ``total`` comes from ``initial_count`` when given; otherwise it is
@@ -428,7 +431,8 @@ def open_lamp(
     parser = OCRParser(config)
     log = _resolve_logger(device_id)
 
-    feature_on = lamp_percent > 0 or lamp_min_keep > 0 or lamp_daily_min > 0
+    feature_on = (lamp_percent > 0 or lamp_min_keep > 0
+                  or lamp_daily_min > 0 or lamp_daily_target > 0)
     max_open = max_batches * batch_num
     # remaining = last-known 神燈 現量 from a 0x0402 push (None until first seen).
     remaining: int | None = None
@@ -443,7 +447,8 @@ def open_lamp(
                                      lamp_min_keep=lamp_min_keep,
                                      max_open=max_open,
                                      lamp_daily_min=lamp_daily_min,
-                                     opened_today=opened_today)
+                                     opened_today=opened_today,
+                                     lamp_daily_target=lamp_daily_target)
     else:
         target = -1  # derive lazily from the first batch's 1001006 push
 
@@ -546,7 +551,8 @@ def open_lamp(
                         total, lamp_percent=lamp_percent,
                         lamp_min_keep=lamp_min_keep, max_open=max_open,
                         lamp_daily_min=lamp_daily_min,
-                        opened_today=opened_today)
+                        opened_today=opened_today,
+                        lamp_daily_target=lamp_daily_target)
                 else:  # no count ever arrived — fall back to opening once
                     total = opened
                     target = opened
@@ -557,7 +563,8 @@ def open_lamp(
                 with lock:
                     detail = drops.get(uid)
                 if detail is None:
-                    left.append((uid, "no drop detail"))
+                    batch_sells.append(uid)
+                    sold.append((uid, "unknown drop detail"))
                     continue
                 d = decide_v2(detail, set_map, worn, lian_shan_tabs, config, parser)
                 if d.action == "equip":
@@ -573,9 +580,9 @@ def open_lamp(
                     sold.append((uid, d.reason))
                     batch_sells.append(uid)
                 else:
-                    log.debug("ws_token lamp uid=%s -> LEAVE (%s)", uid, d.reason)
-                    left.append((uid, "".join(sorted(
-                        frozenset(e.code for e in drop_to_equipment(detail, parser).entries)))))
+                    log.debug("ws_token lamp uid=%s -> SELL (%s)", uid, d.reason)
+                    sold.append((uid, d.reason))
+                    batch_sells.append(uid)
 
             if not dry_run:
                 for tab, uid in batch_equips:  # equip first so the old piece frees up
@@ -598,11 +605,11 @@ def open_lamp(
             # Per-batch stop conditions (any one ends the run).
             if feature_on and target >= 0 and opened >= target:
                 break
-            # The min_keep reserve stop is suspended while today's daily floor
-            # is still unmet — lamp_daily_min is a hard guarantee that overrides
-            # the reserve (the target stop above caps it at the daily quota).
-            daily_unmet = (lamp_daily_min > 0
-                           and opened_today + opened < lamp_daily_min)
+            # 每日最低量或固定配額未完成時，舊的庫存保留門檻不能提早中止。
+            daily_unmet = ((lamp_daily_min > 0
+                            and opened_today + opened < lamp_daily_min)
+                           or (lamp_daily_target > 0
+                               and opened_today + opened < lamp_daily_target))
             if (lamp_min_keep > 0 and not daily_unmet and remaining is not None
                     and remaining <= lamp_min_keep):
                 log.info("ws_token lamp: remaining=%d <= min_keep=%d; stop",

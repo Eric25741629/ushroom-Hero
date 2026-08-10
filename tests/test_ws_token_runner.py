@@ -722,6 +722,30 @@ def test_lamp_opened_for_real_with_bounded_batch(patched, monkeypatch):
     assert captured.get("batch_delay") == runner._LAMP_BATCH_DELAY_SEC
 
 
+def test_lamp_uses_weekday_and_weekend_daily_targets(monkeypatch):
+    import datetime
+
+    captured = []
+
+    def spy_open(_client, **kwargs):
+        captured.append(kwargs)
+        return {"opened": 0}
+
+    monkeypatch.setattr(runner, "_load_lamp",
+                        lambda: types.SimpleNamespace(open_lamp=spy_open))
+    monkeypatch.setattr("json_manager.check_json", lambda *_args, **_kwargs: None)
+
+    runner._run_lamp(object(), lamp_daily_target=200,
+                     lamp_weekend_target=8000,
+                     today=datetime.date(2026, 8, 10))  # Monday
+    runner._run_lamp(object(), lamp_daily_target=200,
+                     lamp_weekend_target=8000,
+                     today=datetime.date(2026, 8, 15))  # Saturday
+
+    assert captured[0]["lamp_daily_target"] == 200
+    assert captured[1]["lamp_daily_target"] == 8000
+
+
 def test_lamp_percent_min_keep_passed_with_initial_count_and_progress(
         patched, monkeypatch):
     """run_device(open_lamp=True, lamp_percent, lamp_min_keep) must forward the

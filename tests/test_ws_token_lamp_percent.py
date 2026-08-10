@@ -212,6 +212,15 @@ def test_compute_lamp_target_daily_min_no_override_when_normal_higher():
         lamp_daily_min=100, opened_today=0) == 5000
 
 
+def test_compute_lamp_target_daily_target_is_fixed_and_tracks_progress():
+    assert lamp.compute_lamp_target(
+        500000, lamp_percent=1.0, lamp_min_keep=500000, max_open=10000,
+        lamp_daily_target=200, opened_today=0) == 200
+    assert lamp.compute_lamp_target(
+        500000, lamp_percent=1.0, lamp_min_keep=500000, max_open=10000,
+        lamp_daily_target=8000, opened_today=7960) == 40
+
+
 # --- open_lamp fake-client harness ------------------------------------------
 
 def _client(extra):
@@ -355,6 +364,30 @@ def test_open_lamp_daily_min_digs_below_min_keep_floor():
         assert res["target"] == 80                # daily floor, not reserve-clamped
         assert res["opened"] == 80                # dug below the 500 reserve
         assert batches["n"] == 4
+    finally:
+        c.close()
+
+
+def test_open_lamp_daily_target_ignores_min_keep_until_quota():
+    batches = {"n": 0}
+
+    def open_reply(_b):
+        batches["n"] += 1
+        first = 1800 + batches["n"] * 100
+        uids = list(range(first, first + 20))
+        remaining = 500000 - batches["n"] * 20
+        return [s2c(CMD_OPEN_ALL, _open_all_s2c(uids)),
+                s2c(CMD_INVENTORY_PUSH,
+                    _inv_push(EVT_LAMP_CONSUME,
+                              [_inv_item(lamp.ITEM_LAMP, remaining)]))]
+
+    c, _fake = _client(_base_extra(open_reply))
+    try:
+        res = lamp.open_lamp(c, dry_run=True, batch_num=20, max_batches=10,
+                             lamp_min_keep=500000, lamp_daily_target=40,
+                             initial_count=500000, push_wait=0.5)
+        assert res["opened"] == 40
+        assert batches["n"] == 2
     finally:
         c.close()
 

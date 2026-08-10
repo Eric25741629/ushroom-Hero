@@ -246,12 +246,15 @@ def test_run_device_passes_lamp_percent_and_min_keep(monkeypatch):
     monkeypatch.setattr(runner_mod, "run_device", fake_run_device)
 
     cfg = {"enabled": True, "open_lamp": True,
-           "lamp_percent": 1.0, "lamp_min_keep": 500000, "lamp_daily_min": 60}
+           "lamp_percent": 1.0, "lamp_min_keep": 500000, "lamp_daily_min": 60,
+           "lamp_daily_target": 200, "lamp_weekend_target": 8000}
     ws_phase._run_device("dev", cfg)
 
     assert captured["lamp_percent"] == 1.0
     assert captured["lamp_min_keep"] == 500000
     assert captured["lamp_daily_min"] == 60
+    assert captured["lamp_daily_target"] == 200
+    assert captured["lamp_weekend_target"] == 8000
 
 
 def test_run_device_lamp_knobs_default_zero(monkeypatch):
