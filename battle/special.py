@@ -11,6 +11,39 @@ from json_manager import create_store_manager
 from ._helpers import _resolve_device_id
 
 
+def _hellgate_result_visible(d) -> bool:
+    """H5 直接讀取地獄之門結算 View；ADB 維持既有 OCR 路徑。"""
+    if getattr(d, "backend_kind", None) != "web_h5":
+        return False
+    page = getattr(d, "_page", None)
+    if page is None:
+        return False
+    try:
+        return bool(page.evaluate(
+            """() => {
+              const scene = cc && cc.director && cc.director.getScene();
+              if (!scene) return false;
+              let node = scene;
+              for (const name of ['UIRoot', 'NormalView', 'WorldBossCrossRewardView']) {
+                node = node && node.getChildByName(name);
+              }
+              if (!node || !node.activeInHierarchy) return false;
+              let hasTitle = false;
+              const walk = (n, depth) => {
+                if (!n || depth > 8 || hasTitle) return;
+                for (const comp of (n._components || [])) {
+                  if (comp && comp.string === '討伐結束') { hasTitle = true; return; }
+                }
+                for (const child of (n.children || [])) walk(child, depth + 1);
+              };
+              walk(node, 0);
+              return hasTitle;
+            }"""
+        ))
+    except Exception:
+        return False
+
+
 def hell_door(d, ip):
     # 2026-08-09 使用者要求：取消加速環節（看廣告開 2x 戰鬥加速）。web_h5 已透過
     # battle_speed_scale=4（官方 battleMain.timeScale）實現 4x，無需再看廣告 2x。
@@ -24,16 +57,23 @@ def hell_door(d, ip):
     time.sleep(0.8 + random.random() * 2)
     d.click(random.randint(200, 339), random.randint(764, 799))  # 挑戰按鈕
     start = time.time()
-    while time.time() - start < 10 * 60 + 30:
-        d.screenshot(format='opencv')[9:39, 208:383]
-        if img_tools.click_str_by_server(d, '討伐結束', y_range=(0, 308)):
-            print("討伐結束")
-            break
-    while time.time() - start < 10 * 60 + 30:
-        d.screenshot(format='opencv')[9:39, 208:383]
-        if img_tools.click_str_by_server(d, '恭喜獲得', y_range=(0, 308)):
-            print("恭喜獲得")
-            break
+    if getattr(d, "backend_kind", None) == "web_h5":
+        while time.time() - start < 10 * 60 + 30:
+            if _hellgate_result_visible(d):
+                print("討伐結束")
+                break
+            time.sleep(0.5)
+    else:
+        while time.time() - start < 10 * 60 + 30:
+            d.screenshot(format='opencv')[9:39, 208:383]
+            if img_tools.click_str_by_server(d, '討伐結束', y_range=(0, 308)):
+                print("討伐結束")
+                break
+        while time.time() - start < 10 * 60 + 30:
+            d.screenshot(format='opencv')[9:39, 208:383]
+            if img_tools.click_str_by_server(d, '恭喜獲得', y_range=(0, 308)):
+                print("恭喜獲得")
+                break
     time.sleep(1)
     d.click(521, 17)
     d.click(521, 17)
