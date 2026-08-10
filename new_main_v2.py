@@ -1,53 +1,46 @@
-import sys
+import atexit
 import os
+import random
+import sys
+import time
 
 # 方案四：優化 SMB/NAS 執行效率
 # 關閉 .pyc 檔案寫入，避免在網路路徑產生大量 I/O 導致卡頓
 sys.dont_write_bytecode = True
 
-from adb_operations import (
-    connect_u2_with_retries, unlock_screen,
-    start_game_by_icon, check_in_game, set_screen_for_game, reset_screen_settings,
-)
-import time
-from device import open_notification
-from adb_devices import launch_clone
-from Skill import *
-from park import *
-from family import Family_manager
-import random
-from Spin_Wheel import spin_wheel
-from Mission import mission
-from State import state
-import atexit
-#引入log 通知 不使用print
-import threading
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
 
-from utils.logging_utils import (
-    setup_logger_for_device,
-    set_thread_logger,
-    logger,
-    rotate_existing_logs_once,
+urllib3.disable_warnings(InsecureRequestWarning)
+
+from adb_devices import launch_clone
+from adb_operations import (
+    check_in_game,
+    connect_u2_with_retries,
+    reset_screen_settings,
+    set_screen_for_game,
+    start_game_by_icon,
+    unlock_screen,
 )
+from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
+from device import open_notification
+from family import Family_manager
 from game_actions.reward_manager import reward
 from game_initialization import (
-    handle_game_startup_pages,
     StartupLoginConflictError,
+    handle_game_startup_pages,
 )
-import new_cnn.cnn_model as cnn_model
-# 導入新的JSON管理器，保持向後兼容
-from miner.models.classifier import ClassifierCNN, load_cnn_model as load_miner_cnn_model
-from miner.rl.rl_recorder import RLRecorder
-import urllib3
-import warnings
-from urllib3.exceptions import InsecureRequestWarning
-urllib3.disable_warnings(InsecureRequestWarning)
-warnings.filterwarnings('ignore', category=InsecureRequestWarning)
-import requests
-requests.packages.urllib3.disable_warnings()
-from utils.wake_up_handler import handle_device_wakeup
+from Mission import mission
+from Spin_Wheel import spin_wheel
+from State import state
 from utils.log_paths import LogPaths
-from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
+from utils.logging_utils import (
+    logger,
+    rotate_existing_logs_once,
+    set_thread_logger,
+    setup_logger_for_device,
+)
+from utils.wake_up_handler import handle_device_wakeup
 import config_manager
 
 import bot_state
@@ -389,11 +382,17 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
         family_manager = Family_manager(device=d, ip=ip, cnn_model=Cnn_model)
         state_manager = state(device=d, cnn_model=Cnn_model)
         # assistant_manager = assistant(d=d, cnn_model=Cnn_model)
+        ClassifierCNN = globals().get("ClassifierCNN")
+        if ClassifierCNN is None:
+            from miner.models.classifier import ClassifierCNN
         clf = ClassifierCNN(model=oracle_cnn_model, classes=oracle_classes, dataset_root=DATASET_LOW_CONFIDENCE_DIR_STR)
 
         # 建立 RL 記錄器（記錄但不自動訓練）
         rl_logs_dir = os.path.join("miner", "rl_logs", LogPaths.safe_device_id(ip))
         os.makedirs(rl_logs_dir, exist_ok=True)
+        RLRecorder = globals().get("RLRecorder")
+        if RLRecorder is None:
+            from miner.rl.rl_recorder import RLRecorder
         rl_recorder = RLRecorder(
             log_dir=rl_logs_dir,
             auto_train=False,  # 不自動訓練
@@ -786,7 +785,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
 _running_threads = {} # {ip: Thread}
 
 if __name__ == "__main__":
-    import config_manager
     # 讓外部 auto-reload wrapper 用 CTRL_BREAK 請求乾淨重啟，重用 Ctrl+C 的 shutdown 路徑。
     # ponytail: dev 便利用途；正常執行不受影響。
     import signal as _signal
@@ -816,6 +814,9 @@ if __name__ == "__main__":
     )
     # 確保模型在本機 SSD
     from utils.model_sync import ensure_local_model
+    import new_cnn.cnn_model as cnn_model
+    from miner.models.classifier import load_cnn_model as load_miner_cnn_model
+
     local_pth = ensure_local_model("cnn_model.pth")
     Cnn_model = cnn_model.load_cnn_model(local_pth)
     oracle_cnn_model, oracle_classes, resolved_device = load_miner_cnn_model()
