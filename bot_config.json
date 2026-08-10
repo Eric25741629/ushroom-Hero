@@ -2173,6 +2173,7 @@
     },
     "global": {
         "mode": "master",
+        "dashboard_port": 5002,
         "sea_v2_enabled": true,
         "master_url": "http://127.0.0.1:5002",
         "worker_id": "unknown_worker",

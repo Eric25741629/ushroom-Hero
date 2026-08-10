@@ -72,6 +72,15 @@ def api_mod():
     return importlib.import_module("bootstrap.api_services")
 
 
+@pytest.fixture(autouse=True)
+def isolate_master_background_services(api_mod, monkeypatch):
+    """啟動 helper 測試不可真的建立 monitor/checker/tracker daemon。"""
+    monkeypatch.setattr(api_mod, "_start_online_check_service", lambda: True)
+    monkeypatch.setattr(api_mod, "_start_online_monitor", lambda: True)
+    monkeypatch.setattr(api_mod, "_start_mount_tracker", lambda: True)
+    monkeypatch.setattr(api_mod, "_service_threads", {})
+
+
 # ---------------------------------------------------------------------------
 # start_all — master mode
 # ---------------------------------------------------------------------------
@@ -90,7 +99,7 @@ def test_start_all_master_starts_flask_thread(api_mod, monkeypatch):
     started: list = []
     monkeypatch.setattr(api_mod, "ensure_push_server_started", lambda base_dir: None)
 
-    def fake_thread(target, args=(), daemon=False):
+    def fake_thread(target, args=(), daemon=False, name=None):
         t = SimpleNamespace(target=target, args=args, daemon=daemon)
         t.start = lambda: started.append((target, args))
         return t
@@ -98,7 +107,7 @@ def test_start_all_master_starts_flask_thread(api_mod, monkeypatch):
     monkeypatch.setattr(threading, "Thread", fake_thread)
     api_mod.start_all("master", "/fake/base")
     assert len(started) == 1
-    assert started[0][1] == (5002,)
+    assert started[0][1][-1] == 5002
 
 
 def test_start_all_master_does_not_call_webhook_or_sync(api_mod, monkeypatch):
@@ -114,7 +123,13 @@ def test_start_all_master_does_not_call_webhook_or_sync(api_mod, monkeypatch):
         "ensure_worker_webhook_started",
         lambda: webhook_calls.append(True),
     )
-    monkeypatch.setattr(threading, "Thread", lambda target, args=(), daemon=False: SimpleNamespace(start=lambda: None))
+    monkeypatch.setattr(
+        threading,
+        "Thread",
+        lambda target, args=(), daemon=False, name=None: SimpleNamespace(
+            start=lambda: None, is_alive=lambda: True
+        ),
+    )
     api_mod.start_all("master", "/fake/base")
     assert webhook_calls == []
     assert sync_calls == []
@@ -149,6 +164,89 @@ def test_start_all_worker_calls_push_webhook_and_sync(api_mod, monkeypatch):
     assert len(webhook_calls) == 1
     assert len(sync_calls) == 1
     assert flask_threads == []
+
+
+def test_start_all_master_uses_configured_dashboard_port(api_mod, monkeypatch):
+    ports: list[int] = []
+    monkeypatch.setattr(api_mod, "ensure_push_server_started", lambda **kwargs: True)
+    monkeypatch.setattr(
+        api_mod, "_start_dashboard", lambda port: ports.append(port) or True
+    )
+
+    result = api_mod.start_all("master", "/fake/base", dashboard_port=5317)
+
+    assert ports == [5317]
+    assert result["control_panel"] is True
+
+
+def test_start_all_master_isolates_each_service_failure(api_mod, monkeypatch):
+    calls: list[str] = []
+
+    def fail_dashboard(port):
+        calls.append("dashboard")
+        raise RuntimeError("bind failed")
+
+    def fail_monitor():
+        calls.append("monitor")
+        raise RuntimeError("monitor unavailable")
+
+    monkeypatch.setattr(api_mod, "ensure_push_server_started", lambda **kwargs: True)
+    monkeypatch.setattr(api_mod, "_start_dashboard", fail_dashboard)
+    monkeypatch.setattr(
+        api_mod,
+        "_start_online_check_service",
+        lambda: calls.append("online_check") or False,
+    )
+    monkeypatch.setattr(api_mod, "_start_online_monitor", fail_monitor)
+    monkeypatch.setattr(
+        api_mod,
+        "_start_mount_tracker",
+        lambda: calls.append("mount_tracker") or True,
+    )
+
+    result = api_mod.start_all("master", "/fake/base", dashboard_port=5317)
+
+    assert calls == ["dashboard", "online_check", "monitor", "mount_tracker"]
+    assert result == {
+        "push_server": True,
+        "control_panel": False,
+        "online_check_service": False,
+        "online_monitor": False,
+        "mount_tracker": True,
+    }
+
+
+def test_start_all_keeps_dashboard_thread_for_health_check(api_mod, monkeypatch):
+    class FakeThread:
+        def __init__(self, *args, **kwargs):
+            self.alive = True
+
+        def start(self):
+            pass
+
+        def is_alive(self):
+            return self.alive
+
+    monkeypatch.setattr(api_mod.threading, "Thread", FakeThread)
+    monkeypatch.setattr(api_mod, "ensure_push_server_started", lambda **kwargs: True)
+    api_mod.start_all("master", "/fake/base")
+
+    status = api_mod.get_service_status()
+    assert status["control_panel"] == {"started": True, "alive": True}
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [(5317, 5317), ("bad", 5002), (0, 5002), (65536, 5002)],
+)
+def test_dashboard_port_config_is_validated(monkeypatch, raw, expected):
+    import config_manager
+
+    monkeypatch.setattr(
+        config_manager, "get_global_config", lambda: {"dashboard_port": raw}
+    )
+
+    assert config_manager.get_dashboard_port() == expected
 
 
 # ---------------------------------------------------------------------------

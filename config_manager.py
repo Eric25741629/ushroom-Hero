@@ -341,6 +341,7 @@ DEFAULT_OCR_CONFIG = {
 DEFAULT_GLOBAL_CONFIG = {
     # 預設值 (當找不到特定主機設定時使用)
     "mode": "master",
+    "dashboard_port": 5002,
     "master_url": "http://127.0.0.1:5002",
     "worker_id": "unknown_worker",
     "worker_sync_timeout_sec": 10.0,
@@ -367,6 +368,15 @@ DEFAULT_GLOBAL_CONFIG = {
         },
     },
 }
+
+
+def get_dashboard_port() -> int:
+    """取得本機中控板 port；設定錯誤時安全回到 5002。"""
+    try:
+        port = int(get_global_config().get("dashboard_port", 5002))
+    except (TypeError, ValueError):
+        return 5002
+    return port if 1 <= port <= 65535 else 5002
 
 
 def get_hostname() -> str:
