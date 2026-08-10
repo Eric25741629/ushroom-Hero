@@ -16,15 +16,18 @@ class CocosFamily:
             return False
         if not self.ui.wait_for_text(("捐獻", "家族商店"), timeout=8):
             return False
+        donated = False
         if self.ui.has_text("捐獻"):
+            # 先進入捐獻區；真正完成證據要看一鍵捐獻或項目按鈕是否點擊成功。
             self.ui.click_text("捐獻")
             # 優先使用遊戲提供的一鍵按鈕，沒有時再重複點擊可捐獻項目。
             if self.ui.has_text("一鍵捐獻"):
-                self.ui.click_text("一鍵捐獻")
+                donated = self.ui.click_text("一鍵捐獻") or donated
             else:
                 for _ in range(10):
                     if not self.ui.click_text("捐獻"):
                         break
+                    donated = True
                     time.sleep(0.15)
         for _ in range(10):
             if self.ui.has_text("一鍵領取") and self.ui.click_text("一鍵領取"):
@@ -33,7 +36,7 @@ class CocosFamily:
                 continue
             break
         self.close()
-        return True
+        return donated
 
     def snow_country(self, max_wait: float = 180.0) -> bool:
         """以 Cocos label 驅動雪國危機；無法辨識時回 False 讓 ADB fallback。"""

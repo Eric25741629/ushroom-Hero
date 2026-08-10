@@ -63,7 +63,7 @@ if "opengold_v2.lamp_service" not in sys.modules:
     _ls = types.ModuleType("opengold_v2.lamp_service")
     class _FakeLampSvc:
         def __init__(self, *a, **kw): pass
-        def run(self, *a, **kw): pass
+        def run(self, *a, **kw): return True
     _ls.LampService = _FakeLampSvc
     sys.modules["opengold_v2.lamp_service"] = _ls
 
@@ -135,6 +135,7 @@ def captured_lamp_calls(monkeypatch, lamp_mod):
 
     def _fake_run_lamp(d, ip, lamp_dur, is_compare=True):
         calls.append({"ip": ip, "lamp_dur": lamp_dur, "is_compare": is_compare})
+        return True
 
     monkeypatch.setattr(lamp_mod, "_run_lamp", _fake_run_lamp)
     return calls
@@ -271,6 +272,24 @@ def test_general_branch_runs_when_no_prior_record(
 
     assert captured_lamp_calls == [{"ip": "emulator-5554", "lamp_dur": 300, "is_compare": True}]
     assert recorded == [{"ip": "emulator-5554", "name": "general_lamp_last_execution"}]
+
+
+def test_general_branch_does_not_record_when_lamp_service_fails(
+    lamp_mod, fake_config, fake_bot_state, monkeypatch,
+):
+    fake_config["emulator-5554"] = {"lamp_check_interval": 2, "lamp_duration_sec": 300}
+    monkeypatch.setattr(lamp_mod, "use_phone_ocr_lamp_mode", lambda ip: False)
+    monkeypatch.setattr(lamp_mod, "return_time", lambda ip, name: None)
+    monkeypatch.setattr(lamp_mod, "_run_lamp", lambda *args, **kwargs: False)
+    recorded: list[dict] = []
+    monkeypatch.setattr(
+        lamp_mod, "time_recording",
+        lambda ip, name: recorded.append({"ip": ip, "name": name}),
+    )
+
+    lamp_mod._run_lamp_if_due(SimpleNamespace(), "emulator-5554", "主頁面")
+
+    assert recorded == []
 
 
 def test_general_branch_skips_when_within_interval(

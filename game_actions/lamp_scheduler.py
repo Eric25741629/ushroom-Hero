@@ -36,7 +36,7 @@ def _run_lamp(d, ip: str, lamp_dur: int, is_compare: bool = True):
     except (TypeError, ValueError):
         min_keep = 0
     svc = _LampServiceV2(d, device_ip=ip)
-    svc.run(times=duration, is_compare=is_compare, min_keep=min_keep)
+    return bool(svc.run(times=duration, is_compare=is_compare, min_keep=min_keep))
 
 
 def _run_phone_ocr_lamp(d, ip: str, stage: str) -> None:
@@ -156,7 +156,9 @@ def _run_general_lamp(d, ip: str, stage: str) -> None:
     logger.info(
         f"[{ip}] 觸發一般開神燈: duration={lamp_dur}s, interval_h={lamp_interval:.2f}, record={lamp_record_name}"
     )
-    _run_lamp(d, ip, lamp_dur)
+    if not _run_lamp(d, ip, lamp_dur):
+        logger.warning(f"[{ip}] 一般開神燈未確認成功，不更新執行時間記錄")
+        return
     _mark_done(ip)
     logger.info(f"[{ip}] 一般開神燈完成，已更新執行時間記錄: {lamp_record_name}")
 

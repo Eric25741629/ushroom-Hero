@@ -18,6 +18,7 @@ import os
 import sys
 import types
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
 import pytest
 
@@ -72,6 +73,32 @@ def test_daily_acceleration_returns_home_when_cannot_enter_homeplace(monkeypatch
 
     daily_tasks.navigate_to_main_page.assert_called_once()
     assert daily_tasks.navigate_to_main_page.call_args.args[0] is d
+
+
+def test_daily_acceleration_does_not_record_when_final_home_check_fails(monkeypatch):
+    from game_actions import daily_tasks
+
+    monkeypatch.setattr(daily_tasks, "is_due", lambda *a, **k: True)
+    monkeypatch.setattr(daily_tasks.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(
+        daily_tasks,
+        "navigate_to_main_page",
+        MagicMock(return_value=False),
+    )
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        daily_tasks,
+        "time_recording",
+        lambda ip, name: recorded.append(name),
+    )
+
+    result = daily_tasks.daily_acceleration(
+        MagicMock(), "emulator-5554", Cnn_model=None
+    )
+
+    assert result is False
+    assert recorded == []
+    daily_tasks.navigate_to_main_page.assert_called_once()
 
 
 # --- B7: 萬神試煉Beta fight_test ------------------------------------------------
@@ -137,6 +164,17 @@ def test_fight_test_success_path_does_not_force_navigation(monkeypatch, weekly_t
     monkeypatch.setattr(wt, "_advance_to_stage", lambda d: True)
     monkeypatch.setattr(wt, "_battle_loop", lambda d: 3)
     monkeypatch.setattr(wt, "_settle_run", lambda d: True)
+    # pure_ws is the production default; keep this unit test independent from
+    # local credentials and exercise the authoritative successful report.
+    monkeypatch.setattr(
+        wt,
+        "_run_pure_ws_wanshen",
+        lambda *a, **k: SimpleNamespace(
+            success=True,
+            rounds_completed=2,
+            cap_reached=True,
+        ),
+    )
 
     d = MagicMock()
     result = wt.fight_test(d, rounds=2)

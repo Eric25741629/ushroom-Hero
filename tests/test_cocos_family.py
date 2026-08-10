@@ -23,3 +23,12 @@ def test_h5_family_flow_has_no_screenshot_or_ocr_dependency():
     fake.ui.has_text.return_value = False
     with patch("game_actions.cocos_family.CocosFamily", return_value=fake):
         assert run_family_h5(page) is True
+
+
+def test_family_donate_without_donation_action_is_not_completed():
+    driver = CocosFamily(MagicMock())
+    driver.ui = MagicMock()
+    driver.ui.wait_for_text.return_value = "家族商店"
+    driver.ui.has_text.return_value = False
+
+    assert driver.donate_and_claim() is False
