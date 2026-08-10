@@ -639,7 +639,7 @@ class LampService:
                 self.ui.exit_lamp()
             except Exception as exc:
                 logger.warning(f"[LampService] 收尾失敗: {exc}")
-            return
+            return False
 
         # 剩餘 <= 保留量(min_keep，0 含「沒燈」)→ 清完殘留就離開，不啟動自動開裝。
         keep_floor = max(0, int(min_keep or 0))
@@ -653,7 +653,7 @@ class LampService:
                 self.ui.exit_lamp()
             except Exception as exc:
                 logger.warning(f"[LampService] exit_lamp 失敗: {exc}")
-            return
+            return True
 
         # 就緒(自動點燈設定窗) → 按「開始」啟動連續自動開燈
         # (live 驗證: 按一次開始即連續自動開+自動賣, ~1批/秒, 不需逐件處理)
@@ -676,6 +676,7 @@ class LampService:
             except Exception as exc:
                 logger.warning(f"[LampService] exit_lamp 失敗: {exc}")
             self.state.is_running = False
+        return True
 
     _STALL_RESTART_SEC = 8.0
     _EXHAUSTED_STOP_TICKS = 2  # 連續讀到剩餘神燈為 0 幾次後判定開完並停止本輪

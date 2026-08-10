@@ -53,6 +53,23 @@ def test_cocos_finish_closes_overlay_and_never_clicks_battle_record():
     )
 
 
+def test_cocos_finish_closes_result_mask_before_navigating_home(monkeypatch):
+    arena = CocosArena(MagicMock())
+    arena.ui = MagicMock()
+
+    with patch("utils.cocos_navigator.CocosNavigator") as navigator_cls:
+        navigator = navigator_cls.return_value
+        navigator.current_view.return_value = "unknown"
+        navigator.goto_main.return_value = True
+        monkeypatch.setattr("game_actions.cocos_arena.time.sleep", lambda *_: None)
+
+        assert arena.finish() is True
+
+    navigator._click_path.assert_called_once_with(
+        "/UIRoot/NormalView/PvpResultView/imgMask"
+    )
+
+
 def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     cocos = MagicMock()

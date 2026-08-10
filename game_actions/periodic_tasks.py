@@ -15,19 +15,23 @@ def should_execute_mushroom_arena(ip: str) -> tuple:
     return should_execute, False
 
 
-def mushroom_arena(ip, d):
+def mushroom_arena(ip, d) -> bool:
     """菇菇武道會主流程（每3週執行1週）。"""
     try:
-        img_tools.click_str_by_server(d, '菇菇武道會', shift_y=-20)
+        if not img_tools.click_str_by_server(d, '菇菇武道會', shift_y=-20):
+            return False
         time.sleep(1)
-        img_tools.click_str_by_server(d,'膜拜冠軍')
+        if not img_tools.click_str_by_server(d, '膜拜冠軍'):
+            return False
         time.sleep(1)
         click_white(d)
         time.sleep(1)
         d.click(490,919)#點擊退出
         time.sleep(1)
+        return True
     except Exception as exc:
         logger.error(f"[{ip}] 菇菇武道會流程失敗: {exc}")
+        return False
 
 
 def _run_periodic_cycle(ip, record_name, should_execute_fn, action_fn, display_name, d, daily_limit_name=None, cycle_record_name=None):
@@ -41,20 +45,23 @@ def _run_periodic_cycle(ip, record_name, should_execute_fn, action_fn, display_n
             if daily_record and not daily_record.get("is_next_day", False):
                 logger.info(f"[{ip}] {display_name} 今日已執行過，跳過。")
                 return
-        if need_record:
-            # 如果有 cycle_record_name，同時記錄週期開始
-            if cycle_record_name:
-                time_recording(ip, name=cycle_record_name)
-            time_recording(ip, name=record_name)
-        else:
-            # 即使不需要週期記錄，也要更新執行時間
-            time_recording(ip, name=record_name)
+        if need_record and cycle_record_name:
+            # cycle_record_name 的語意是週期開始，可以在 action 前記錄。
+            time_recording(ip, name=cycle_record_name)
         
         logger.info(f"[{ip}] {display_name}: 開始執行")
-        action_fn(ip=ip, d=d)
+        result = action_fn(ip=ip, d=d)
+        if result is False:
+            logger.warning(f"[{ip}] {display_name}: action 未確認成功，不寫入完成記錄")
+            return False
+
+        # action 回傳 None 是既有成功契約；只有明確 False 才視為失敗。
+        time_recording(ip, name=record_name)
         
         if daily_limit_name:
             time_recording(ip, name=daily_limit_name)
         time.sleep(3)
+        return True
     else:
         logger.info(f"[{ip}] {display_name} 被排程跳過（未到週期或已過期）")
+        return False

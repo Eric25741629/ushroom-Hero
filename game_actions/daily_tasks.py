@@ -48,7 +48,7 @@ def daily_acceleration(d, ip, Cnn_model=None):
             # 失敗時遊戲可能停在未知頁面，先導回主頁面再返回，
             # 否則後續任務會連鎖判為「不在主頁面」而中止整條 pipeline。
             navigate_to_main_page(d, Cnn_model, ip, label="daily_accel")
-            return
+            return False
 
         # 2. 執行研究中心加速
         logger.info(f"[{ip}] 進入研究中心")
@@ -64,11 +64,17 @@ def daily_acceleration(d, ip, Cnn_model=None):
         time.sleep(1.5)
         d.click(321, 919) # 點擊家園返回 (回到主介面)
         time.sleep(1)
+
+        if not navigate_to_main_page(d, Cnn_model, ip, label="daily_accel"):
+            logger.warning(f"[{ip}] 每日加速後未確認回到主頁面，不寫入完成記錄")
+            return False
         
         time_recording(ip, name="daily_acceleration")
         logger.info(f"[{ip}] 每日加速完成")
+        return True
     else:
         logger.info("今日已執行過每日加速，跳過")
+        return False
 
 
 def click_arena_challenges(d, ip):

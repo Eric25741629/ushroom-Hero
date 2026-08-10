@@ -1,9 +1,13 @@
 """競技場 web_h5 UI driver；正常路徑不截圖、不呼叫 OCR。"""
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
 from utils.cocos_ui import CocosUI
+
+
+_ARENA_RESULT_MASK_PATH = "/UIRoot/NormalView/PvpResultView/imgMask"
 
 
 class CocosArena:
@@ -45,6 +49,11 @@ class CocosArena:
 
             navigator = CocosNavigator(self.ui.page)
             navigator.dismiss_blocking_popups()
+            # PvpResultView 的「點擊任意位置關閉」不是 btnClose/btnBack，
+            # 共用 navigator 的泛用 close 掃描找不到它；先點掉遮罩再離場。
+            if navigator.current_view() == "unknown":
+                navigator._click_path(_ARENA_RESULT_MASK_PATH)
+                time.sleep(0.5)
             return bool(navigator.goto_main())
         except Exception:
             return False
