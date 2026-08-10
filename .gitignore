@@ -1,4 +1,5 @@
 .worktrees/
+.pytest-tmp-*/
 __pycache__/*
 *.pyc
 *.pyo

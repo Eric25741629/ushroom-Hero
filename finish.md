@@ -11577,3 +11577,382 @@ worktree 沒有 runtime log；改查 main tree 與 session registry / 工具頁�
 
 ---
 
+## 2026-08-09 15:33:06  ·  session 5528c470
+
+先講結論：**不需要狀態機。** 你的瓶頸不是狀態轉移，而是任務中介資料（metadata）寫成了程式碼。
+
+## 診斷
+
+我讀了 `game_actions/daily_pipeline.py`、`ws_token/runner.py`、`game_actions/task_due.py` 和兩份重構文件。三個具體證據：
+
+**1. 頂層流程本來就是線性的**
+
+`SCAN → WAKE_UP → CHECK_STAGE → 任務序列 → SLEEP`，沒有分支圖。狀態機的價值在於「多狀態 x 多合法轉移，而你常掉進非法轉移」。你唯一的非法狀態是「不在主頁面」，而它已經有守衛了：`_track()` 的 4 次連續失敗中止 + `_run_at_main_page`（`daily_pipeline.py:205-229`）。這裡再套 FSM 只是換個寫法。
+
+**2. 真正的痛點：30 個任務各自重抄同 6 件事**
+
+`_run_tasks` 是 557 行檔案裡的一個約 390 行函式。每個任務內聯重複：force-sleep 檢查點、`_ws_skip(名稱)`、due 判斷、主頁守衛、`bot_state.update_state`、`time_recording`。客觀信號是任務編號已經破表：Task 0 / 0.1 / 0.5 / 13.5 / 14.5 / 14.6 / **14.65** / 14.7。要插新任務只能挑一個小數，這是清單已經超出原設計的鐵證。
+
+**3. 你已經有正確答案了，只是只用在一半**
+
+`ws_token/runner.py:90-98` 的 `TASK_ORDER` 是宣告式的 40 個名稱 tuple + registry 分派 + per-task try/except + `RunReport`。`task_due.py` 的 docstring 自己寫著「Phase A：把散在各 execute 函式內的 due 判斷收斂到這裡的純 predicate」。也就是說宣告化已經開工了，但只收斂了 due 這一個維度，其餘五個維度還留在 `_run_tasks` 裡內聯。
+
+而 `ctx.ws_done: frozenset` 這個橋接參數，本身就是「同一份任務清單維護了兩次」的症狀：WS 一份順序、pipeline 一份順序，靠字串比對對齊。
+
+## 建議做法：表格驅動的任務註冊表
+
+把 `daily_pipeline` 從命令式序列改成宣告表，直接沿用 `ws_token/runner.py` 已經驗證可行的形狀：
+
+```python
+@dataclass(frozen=True)
+class TaskSpec:
+    name: str                    # "地獄之門"，同時是 ws_done 的 key
+    order: float                 # 取代 13.5 / 14.65 這種註解編號
+    run: Callable[[DailyContext], None]
+    due: str | None = None       # task_due registry key；None = 每輪都跑
+    flag: str | None = None      # 對應的 config 開關
+    needs_main_page: bool = True
+    record: str | None = None    # time_recording 名稱
+    backends: frozenset = frozenset({"adb", "web_h5"})
+```
+
+`_run_tasks` 收縮成約 40 行的單一迴圈：依 order 排序，六個共用關切在迴圈裡各做一次。
+
+收益是複合的：
+
+- 新增任務 = 加一列表格，不是在 390 行函式裡找位置插小數編號
+- WS-skip 從 20 處散落的 `if not _ws_skip(...)` 變成兩張表的 join，兩邊順序不一致會在測試期就爆
+- 這張表可以直接餵儀表板：本輪哪些任務跑了、哪些被哪個條件跳過。你現在要回答這個問題只能 grep log
+- pipeline 側也能產出 `RunReport`，跟 WS 側同型
+
+**風險控制**：先寫特徵化測試釘住現行 30 個任務的順序與 gating 條件，再搬。搬的過程是純 code motion，行為零變更，跟 `REFACTOR_STATE_MANAGEMENT.md` 的 Phase 0 同一套打法。
+
+## 狀態機真正該用在哪
+
+值得注意的是任務**內部**的 UI 導航：「我現在在哪個頁面、要怎麼走到目標頁」，那才是真的圖結構。而這裡你已經有兩份現成資產：`utils/page_detector.py` 的 `PageState` enum，和 `task_sandbox/` 的 `NavTarget`。
+
+但這裡有個必須誠實面對的模式。依 CLAUDE.md 與 `docs/INDEX.md` 的記載，這個 repo 建過的抽象層：
+
+| 抽象 | 現況 |
+|---|---|
+| `farm_v2/states.py` 狀態機 | 2026-07-05 移除，從未接線 |
+| `task_sandbox/` | experimental，未接主迴圈 |
+| `utils/page_detector.py` | flag-gated experimental |
+| `bootstrap/api_services.py` | 已抽出，未接線 |
+
+四個抽象層，四個沒進 live path。所以**不要先建框架**。挑一個任務（建議神燈，`task_sandbox` 已經拿它當第一個實作），只為它接上 NavTarget，跑穩了再擴。框架的唯一消費者必須是 live 路徑，否則第五個死抽象。
+
+## 其他降複雜度的槓桿（按 ROI 排）
+
+1. **三後端平行實作是體積的真正乘數。** 同一個遊戲任務有 adb / h5 / ws 三份（`_sea_dispatch` 就是這個路由的縮影）。收斂到「WS 優先，UI 當 fallback」能砍掉的行數遠超任何重構。這也是為什麼上面那張表要有 `backends` 欄位。
+2. **每輪產出結構化 RunReport 上儀表板。** 把「它到底做了沒」從讀 log 變成看表。這直接減少你需要放在腦中的量，也是「無法應付」的直接解藥。
+3. `docs/REFACTORING_OPPORTUNITIES.md` 的 cx-2 / cx-4 / cx-5 / cx-7（carpark 內嵌 JS、`park_one_silver` 深巢、`_start` 150 行）都還開著，但那些是局部整潔，不是你現在感受到的那種壓力來源。優先序在表格驅動之後。
+
+要我把上面的遷移計畫（含特徵化測試清單與分階段順序）寫進 `tasks/todo.md` 嗎？照專案慣例這種改動要先讓你過目再動手。
+
+---
+
+## 2026-08-09 15:33:18  ·  session 5528c470
+
+1) 教訓：本次診斷有效的關鍵是先讀 repo 既有重構文件（`REFACTOR_STATE_MANAGEMENT.md`、`REFACTORING_OPPORTUNITIES.md`）再讀程式碼，避免重複既有分析。另一個可沉澱的模式：四個抽象層（farm_v2/states、task_sandbox、page_detector、bootstrap/api_services）都未接 live path，說明本 repo 的失敗模式是「先建框架後找消費者」，日後提案應強制先接單一 live 消費者。
+
+2) 風險：表格驅動遷移會動到 `daily_pipeline._run_tasks`（live bot 熱路徑），必須先補特徵化測試釘住 30 個任務順序與 gating，且改完要重啟 `new_main_v2.py` 才生效。另外 `ctx.ws_done` 字串橋接目前無測試保護，兩張表對不上會靜默漏做任務。
+
+計畫尚未寫入 `tasks/todo.md`，等你確認。
+
+---
+
+## 2026-08-09 15:45:17  ·  session 5528c470
+
+已寫入 `程式碼重購.md`（171 行）並 commit（`be710ef9`）。
+
+檔案結構：
+
+| 章節 | 內容 |
+|---|---|
+| 0. 結論 | 不需要 FSM，瓶頸是任務 metadata 寫成程式碼 |
+| 1. 三項證據 | 頂層流程線性、30 任務重抄 6 件事、宣告化只做一半 |
+| 2. 為何不是 FSM | 對照表：FSM 適用條件 vs 本專案現況 |
+| 3. 建議做法 | `TaskSpec` 宣告表 + 40 行單一迴圈，含收益與遷移四步 |
+| 4. FSM 真正該用在哪 | UI 導航；附四個死抽象表與「先接單一 live 消費者」守則 |
+| 5. 其他槓桿 | 三後端平行實作（最大乘數）、RunReport 上儀表板、cx-* 局部項 |
+| 6. 明確不做 | YAGNI 護欄六條 |
+
+兩點文件內已標註的事實修正：`daily_pipeline.py` docstring 寫「20 tasks」，實際數到約 29 個執行點（0.1 / 13.5 / 14.65 等小數編號累積所致）；`_run_tasks` 本體 388 行（`:170-557`）。
+
+Commit 只 stage 了這一個檔案，未動其他 WIP。`tasks/todo.md` 仍未寫入，等你決定要不要把遷移計畫排進去。
+
+---
+
+## 2026-08-09 16:01:01  ·  session 26dc9b9f
+
+三份意見書已統整並逐條核對程式碼，結果寫進 `tasks/todo.md` 開頭（已 commit `57b4e66c`）。
+
+## 裁決核心
+
+三份對「不要把整個系統改寫成巨型狀態機」、「該做任務註冊表」是共識。真正的分歧只有一條：**要不要為裝置生命週期做一個窄狀態機**。B 說不要（列觀察清單就好），C 說要 — 這點 **C 對**，但順序要排在註冊表之後。
+
+C 貢獻了 A、B 都漏掉的最有價值設計：`TaskResult`/`TaskOutcome` 標準化，尤其把 `INTERRUPTED`（使用者強制休眠）與任務失敗分開。這是註冊表能不能用通用執行器跑起來的前提。
+
+## 說錯的地方（實測）
+
+- **A §4 錯判死抽象**：說 `utils/page_detector.py` 未接線、「四個抽象層四個沒進 live path」。實際上它有三個 live 消費者（`game_actions/stage_guard.py:45`、`game_initialization.py`、`utils/cocos_navigator.py`），由 `get_stage_with_check()` 每次取 stage 都呼叫。應為「四個之中三個未接線」（`task_sandbox` 與 `bootstrap/api_services` 確實只有測試在用）。
+- **B 的數字全面漂移**：`TASK_ORDER` 是 40 不是 41；`runner.py` 2384 不是 2130；測試檔 2275 不是 1729。諷刺的是這讓 B 自己的「每月 +500 行且無收斂」趨勢論**更成立**。config 旗標也低估（實際 65 個頂層 key、32 個布林）。
+- **B §5 衛生主張結論對、理由錯**：git 追蹤的 sync-conflict 檔案數是 **0**，`ws_state/` 早已在 `.gitignore:147`。要清的是工作目錄噪音（污染 grep 導航），不是版控。
+- **B §3.2/§3.4 是最弱的一條**：說現有訊號機制已是足夠逃生閥、生命週期 FSM 邊際收益低。但 `main()` 實測 637 行、88 個控制分支、12 `try`/19 `except` 交錯 — 正是 C 所列問題（WS 階段收到強制休眠誰消費、暫停中收到手動開網頁誰優先）沒有權威答案的證據。
+- **C §2.1 自己低估**：說 `main()` 約 556 行、約 60 分支，實際 637 行 / 88 分支。
+- **C §10 順序錯**：把 FSM 接管 `main()` 排在 registry 之前。痛點密度在任務層（30 任務 × 6 個重複關切），且 registry 可獨立交付、風險更低。C 的排序會讓最大一筆投資走在最沒安全網的地方。
+
+## 驗證通過的關鍵主張
+
+A 的診斷幾乎全中：`_run_tasks` 387 行、`_force_sleep_checkpoint` 重複 28 次、`_ws_skip` 16 次、任務編號確實破表到 `14.65`、docstring 仍寫「20 tasks」而實際 29 個。A §5.1 的「三後端平行實作是最大槓桿」三方都同意。
+
+## 交付內容
+
+todolist 分 5 階段：階段 0 衛生校正 → 階段 1 特徵化測試（含目前**零保護**的 `TASK_ORDER`↔`ws_done` 三方一致性測試，這是最高風險）→ 階段 2 Task Registry → 階段 3 FSM 最小試點（含 shadow mode 與「不值得繼續就停」的決策關卡）→ 階段 4 三後端收斂。
+
+Code review 欄位分四組：`TaskDefinition` 16 個欄位（含我從程式碼補的兩個三份都漏的 — Task 12 的 20:00-23:00 時間窗、`_DEVICE_SKIP_GUARDIAN` 裝置排除）、`TaskResult`、Runtime FSM 檢查點、每個 PR 通用項。
+
+最後列了 6 個**待你拍板**的設計問題，其中最需要先決定的是暫停到底是 phase 還是 control mode，以及是否凍結新功能一週以避免遷移途中併入新任務。
+
+---
+
+## 2026-08-09 16:01:11  ·  session 26dc9b9f
+
+1) 教訓：意見書引用的行數/數量會隨時間漂移，這次三份文件在 `runner.py`、`main()`、`TASK_ORDER`、config 旗標數上都不準；「逐條回讀程式碼再裁決」是必要步驟，不能沿用文件自述數字。另外死抽象清單也要實際 grep 消費者，A 就誤判了 `page_detector`。
+
+2) 風險：`TASK_ORDER` ↔ `WS_TO_PIPELINE_SKIPS` ↔ `ws_done` 目前靠中文字串比對且**零測試保護**，名稱對不上會靜默漏做任務 — 建議這條（階段 1.3）先單獨做掉，不必等整個 registry。另 6 個待拍板問題中，暫停是 phase 還是 control mode 需你先定案，否則階段 3 無法動工。
+
+---
+
+## 2026-08-09 16:08:59  ·  session 26dc9b9f
+
+三件事都寫進 `tasks/todo.md` 了（commit `c358525f`）。
+
+## 待拍板問題的答案
+
+裁定原則是**現有程式碼已經用行為回答了大半問題**，凡是 code 裡已有可運作語意的就形式化既有行為，不重新發明。
+
+**1. 暫停 = control mode**。`bot_state.check_pause():320` 是阻塞式的，thread 卡在 `event.wait(1.0)` 迴圈直到恢復、原地繼續 — 這本質上就是 control mode。做成 phase 反而要記「暫停前在哪」再跳回去。WS 續跑用**既有的 `ws_resume` ledger**（`ws_phase.py:228`，TTL 30 分 + 同日，`_RESUME_EXEMPT = {carpark, idle_reward}` 這兩個仍重跑），別新設計。暫停期間保留瀏覽器與 WS session，因為暫停常是為了手動看畫面。
+
+**2. 手動接管 = 獨立 phase**。C 這點對，理由在 code：它有明確資源進出動作（`request/consume/complete_web_launch_request` + `set_manual_release`），而且 `check_pause():333` **特地為它開後門** — 偵測到 pending 就 `return True` 讓它插隊 pause。退出後統一回休眠，因為 `new_main_v2.py:435` 與 `:686` 兩處已經都寫同一個 reason。
+
+**3. 優先級採納候選順序**，`MANUAL_LAUNCH > PAUSE` 與既有後門一致，非新設計。丟棄政策用三分法：SHUTDOWN/FORCE_SLEEP/LOGIN_CONFLICT 為 latching 不可丟，MANUAL_LAUNCH 天生 latching（已有三段式），`WAKE_OVERRIDE` 在非 SLEEPING 時直接丟棄。
+
+**4. Cooperative cancellation 已經實作完了**。`runner.py:1820` 的 `should_abort` 已貫穿每個任務邊界，`:1936` 檢查後剩餘任務留 **pending 而非 failed** — 這正是 C 想要的 `INTERRUPTED` 語意。SLA 定在任務邊界 ≤ 60 秒，不設更嚴格數字，因為 Python thread 不可強制 kill，硬 SLA 只會逼出 busy-wait。
+
+**5. 保留 `SLEEPING` phase**，但等待留在既有 `run_sleep_cycle()` effect 內，`transition()` 不阻塞。
+
+**6. 不凍結新功能**。單人 + 多 AI session 併行 + bot 每天在跑，凍結一週不現實。改用較弱但可執行的規則：階段 2 期間新增任務一律直接寫成 registry entry，不再插小數編號 — 新功能反而變成 registry 的驗證案例。
+
+## 設計邊界
+
+你的疑慮成立，而且這個 repo 有可驗證的前科：`farm_v2/states.py`（狀態機，從未接線）、`task_sandbox/`（實測 0 個 live 消費者）、`bootstrap/api_services.py`（只有測試 import）。三個抽象三個沒進 live path，所以邊界不是理論潔癖。
+
+核心是 **B0 鐵則：任何新模組的第一個 PR 就必須有 live 消費者**，不允許「先建框架、下個 PR 接線」— 那正是三個死抽象的產生方式。另外有數量預算（phase ≤ 10、event ≤ 12、`TaskDefinition` 欄位 ≤ 18、階段 2 新檔 ≤ 6）、禁止清單（不引入任何套件含 `transitions`、不做 class-based State Pattern、不建 orchestrator/engine 命名模組、不為未來預留 hook）、抽象正當性三問，以及每階段的**「不值得繼續」出口** — 其中階段 3 若 shadow mode 跑一週分歧全是模型漏設而非真實 bug，就放棄 FSM，這是合法產出。
+
+## 派工
+
+14 張工單分 6 波，依賴鏈 `W1∥W2∥W3` → `W4∥W5∥W6` → `W7` → `W8∥W9∥W10` → `W11` → `W12∥W13∥W14`，每張標了 owned files 避免多 session 覆寫。
+
+兩個實務建議：**只想做一件事就做 W4** — `TASK_ORDER`↔`ws_done` 一致性測試，目前零保護、可獨立交付、不動任何生產碼。**W11 不要與任何工單併行**，它改 live bot 熱路徑且吃 W8-W10 的輸出。W13（FSM shadow mode）可以全程與波次 4-6 併行，因為它只寫新檔 + log。
+
+---
+
+## 2026-08-09 17:06:59  ·  session 26dc9b9f
+
+## Code Review：W1-W3
+
+整體方向對。用 `trash/` 隔離而非直接刪除是比我原本工單更好的判斷，而且你抓到 `web-00x.json` 是紀錄檔並回退 gitignore — 那是真的救回了資料。主樹 source 目錄的 sync-conflict 已歸零，`daily_pipeline.py` `py_compile` 通過。
+
+以下 5 項需要處理，前兩項建議現在就修。
+
+**1. `web-002/003/004.json` 的搶救不完整（最該修）**
+
+你把它們從 `.gitignore` 移除了，但**沒有 `git add`** — 現在 `git status` 顯示 `??` 未追蹤。對照 `web-001.json` 是 tracked 的，這三個處於「不被忽略、也不被保護」的狀態。它們是 `TimeRecordDataManager` 寫的 per-device 任務完成 ledger（`json_manager/time_record.py:13`，檔名即 `{device_id}.json`），內容是 `cloud_fighting_weekly`、`general_lamp_last_execution`、地獄之門等，日期到 2026-08-09 是 live 資料。下一輪 root-garbage 清理掃到未追蹤的 `web-00*.json` 會再刪一次，而這次連 gitignore 註記都沒了。建議 `git add web-002.json web-003.json web-004.json` 與 `web-001.json` 一致。
+
+**2. docstring 的 29 是錯的，實際 28**
+
+這個錯來自我上一輪的回報，我算錯了 — `# Task N` 註解共 27 行，但 `:311` 是「Task 5 & 6」一行含兩個任務，所以 distinct task id 是 **28**。修正文件漂移的動作引入了新的文件漂移。這個 docstring 正是階段 2 遷移時用來核對「有沒有漏搬任務」的基準，錯的基準會讓漏搬一個剛好看起來數字對得上。
+
+**3. `trash/` 有 279,121 個檔案還在 repo 內**
+
+隔離的安全性沒問題，`.gitignore:158` 也擋住了 git。但 W1 的目的是降低 grep/find 導航噪音，而 gitignore 不影響檔案系統掃描 — `trash/` 內仍有大量 sync-conflict 原始碼副本（`ws_token/rogue.sync-conflict-*.py`、`control_panel/routes_*.sync-conflict-*.py`）。我這次 `find` 掃到 `trash` 就直接 timeout 超過 2 分鐘。主樹本身已乾淨，所以只要把 `trash/` 移出 repo 根目錄（例如 `C:/tmp/`）就能真正收割效益。
+
+**4. `worktree/` 被 gitignore，但底下有 2 個 live worktree**
+
+`git worktree list` 顯示 `worktree/h5-live-validation-fix` 與 `worktree/protect-auth-doc` 仍註冊中，後者 HEAD 正是當前 main tip。worktree 本身不受 gitignore 影響不會壞掉，但在那些 worktree 內新增檔案時會被靜默忽略，`git add` 需要 `-f`，容易誤判成「已提交」。`protect-auth-doc` 剛好就是這次保護 auth 的工作分支，風險最直接。
+
+**5. `docs/INDEX.md` 未區分三處用的是不同 API（次要）**
+
+條目名是「PageDetector / `try_detect_main_page_fast`」，但 `game_initialization.py:206` 匯入的是 `PageState` 與 `detect_known_h5_page`，只有 `stage_guard.py:45` 用 `try_detect_main_page_fast`。讀者去 `game_initialization.py` 找後者會找不到，可能又誤判文件過期而把整條改回「未接線」。
+
+---
+
+修完 1、2 之後波次 2 就可以開工。提醒一下 **W4 是零保護的最高風險項**，且完全不動生產碼，適合第一個派出去。
+
+---
+
+## 2026-08-09 17:07:09  ·  session 26dc9b9f
+
+1) 教訓：我上一輪把「`# Task N` 註解行數」當成任務數回報 29，實際是 28（`:311` 一行含 Task 5 & 6），錯誤數字被寫進 docstring。凡要進入程式碼的計數，必須用 AST/去重腳本得出，不能用 `grep -c`。
+
+2) 風險：`web-002/003/004.json` 目前「不被 ignore 也不被追蹤」，是最危險的中間態，下一輪清理會再刪且無註記，建議立刻 `git add`。另 `trash/` 279k 檔案留在 repo 根會讓後續所有 grep/find（含 AI 協作）持續變慢，移出根目錄即可收割 W1 效益。
+
+---
+
+## 2026-08-09 17:30:36  ·  session 26dc9b9f
+
+四項已修好，一項仍在。
+
+**已確認修正**
+
+- **F1** `web-001`~`web-004.json` 全部 tracked，內容完整（23/7/17/22 keys，可正常 parse），`git status` 不再有 `??`。`9deafb2e` 還把「排除 web ledger」寫進清理範圍，避免下次再犯 — 這比我建議的做法更完整。
+- **F2** docstring 已改為 28 tasks。
+- **F3** `trash/` 已移出 repo 根目錄，導航噪音真正消除。
+- **F5** `docs/INDEX.md:65` 現在逐一標明三處各自的入口（`stage_guard.py:45` 用 `try_detect_main_page_fast`、`game_initialization.py:206` 用 `PageState`/`detect_known_h5_page`、`cocos_navigator.py:334` 建 `PageDetector` 呼叫 `detect()`），精確度超過我原本的要求。
+
+另外 `285b3cf0` 把 `playwright_profile/` 內的 Cookies、Login Data、session/auth 明列為不得刪除，`auth_state/` 與三個 `playwright_profile*` 目錄都在。
+
+**仍未處理：F4**
+
+`worktree/` 還在 `.gitignore:31`，而 `worktree/h5-live-validation-fix`（分支 `fix/h5-live-validation`）仍是註冊中的 live worktree。風險不變：在該 worktree 內新增檔案會被靜默忽略，`git add` 需要 `-f`，容易誤以為已提交。
+
+兩個選項：若那個 worktree 已無用，`git worktree remove` 後保留 gitignore；若還要用，把 `worktree/` 從 `.gitignore` 移除（stale 副本用 `git worktree prune` 管理即可，不需靠 gitignore）。我傾向後者 — gitignore 本來就不是管理 worktree 的正確工具。
+
+修掉這條，波次 2 就可以開工，建議 **W4** 第一個派出去。
+
+---
+
+## 2026-08-09 18:13:28  ·  session 26dc9b9f
+
+## Code Review：Wave 2 (W4/W5/W6)
+
+品質好，可以進波次 3。三個檔案都 tracked、22 passed 我重跑確認、`game_actions/` 無汙染、main WIP 完整保留、production code 零改動。
+
+最重要的是我做了**變異測試**驗證這些測試真的有效，而不只是綠燈：
+
+- 把 `daily_pipeline.py` 的 `"商店購買"` 改名但不更新 mapping → `test_direct_ws_skip_hooks...` **抓到**
+- 在 `ws_phase.py` 注入一個對映到不存在標籤的新 WS key → 兩個測試**同時抓到**
+
+兩個方向都失敗，這正是 W4 要防的靜默漏跑。安全網是真的。用 AST 讀 source 而非 import module 是關鍵判斷 — 完全避開 `cv2`/Playwright 依賴，0.25 秒跑完，也解釋了為什麼 pause routing 測試收不進來對這三個檔案沒影響。變異測試後我已確認兩個檔案都乾淨還原。
+
+**你報告的兩個失敗，確認為既有問題，與 Wave 2 無關**
+
+`test_daily_pipeline.py` 自 `07c1182f`（2026-07-30）後未被改動，Wave 2 沒碰它。根因是 `game_state/detector.py:136` 呼叫 `d.screenshot(format='opencv')`，而 fake device 是 `SimpleNamespace` 沒有 `screenshot`/`press`/`app_current`。你的判斷正確 — 這屬於 fake device 介面不足，不該在 W4 順手修。
+
+**一個值得收斂的點（不阻擋合併）**
+
+`test_ws_pipeline_consistency.py:18` 的 `PIPELINE_TASK_NAMES` 是手抄的 22 個標籤，而**沒有任何測試把它和真實 source 比對**。實測已有雙向漂移：
+
+- 清單有但 source AST 抓不到：`天梯每週獎勵`、`紅包檢查`、`賞金之路`、`開神燈`
+- source AST 有但清單沒有：`每日加速`、`菇菇雕像每週`、`sea`
+
+目前不會出錯，因為斷言方向是 `mapped_names <= PIPELINE_TASK_NAMES`（單向包含），而 20 個 mapped 標籤全在清單內。但這是「用手抄清單驗證手抄清單」的結構 — 正是 W4 想消除的那類漂移，只是搬到了測試檔。這也說明 `_task_name_keywords` 只抓 `task=`/`task_name=`/`display_name=` 三種 keyword，抓不到位置參數傳入的標籤。
+
+建議在波次 3 做 registry 時一併解決：`TaskDefinition` 落地後，`PIPELINE_TASK_NAMES` 應改為從 registry 動態產生，手抄清單自然消失。現階段不必動。
+
+**次要**：`test_ws_task_keys_are_a_subset_of_the_40_task_order_entries` 把 40 寫進函式名。數字變動時要同時改函式名，否則名稱會騙人。斷言裡的 `len(runner) == 40` 已足夠，名稱建議中性化。
+
+波次 3 只有 W7 一張（`TaskDefinition` 資料類別），是後續 W8-W10 的依賴，不能併行。
+
+---
+
+## 2026-08-09 19:07:05  ·  session 26dc9b9f
+
+## Code Review：Wave 3 (W7)
+
+通過，可以進波次 4。我把 W7 當成真正的 production change 來查，因為它確實是 — 這點你的摘要沒說明。
+
+**核對通過**
+
+- 44 / 41 / 28 三個數字我用真實 accessor API 重跑確認。client 28 與我先前修正的任務數一致。
+- `TaskDefinition` 17 欄，在我 ≤18 的預算內，且確實含 `time_window` 與 `device_excludes` — 三份意見書都漏、我從程式碼補的那兩個。
+- `TaskOutcome` 五態齊全，含 C 貢獻的 `INTERRUPTED`。
+- 無重複 `task_id`、`xwar_idle` 在列。
+- 39 passed 我重跑確認；registry 導出的 mapping 與 `ws_phase.WS_TO_PIPELINE_SKIPS` **byte-identical**（20 keys 全等）。
+- 匯出用 accessor 函式而非裸露 list，`MappingProxyType` + `frozenset` 做不可變保護 — 比我要求的更嚴謹。
+- **B0 規則達成**：`ws_token/runner.py:58` 是真實 live 消費者，不是只有測試在用。這正是我在 F5 抓過的死抽象陷阱，這次沒有重犯。
+
+**你的摘要漏報的一件事（結論安全，但該講）**
+
+W7 不是純新增檔案。`runner.py:93` 的 `TASK_ORDER` 從硬編 40 項改成 `ws_task_ids()`，長度變成 **41** — live WS runner 現在會多認一個先前不在清單裡的任務。
+
+我追下去確認安全：`xwar_idle` 早就是真實的 `_step`（`runner.py:2087`），gate 在 `xwar_idle_enabled`，**預設 `False`**。它只是漏登記在 `TASK_ORDER`。而且 registry 的 index 35 與實際 `_step` 呼叫順序的 index 35 完全一致，`main_chapter_kills` 則是舊清單本來就有的尾端任務（主連線關閉後才跑，所以不在 `_step` 序列內）。
+
+所以行為零變化，但這類「順手修好的既有漏洞」屬於 production 語意變更，下次請在摘要裡點出來 — 我需要自己去查才知道 41 這個數字的來歷，而不是從你的報告讀到。
+
+**先前 review 意見已落實**：`PIPELINE_TASK_NAMES` 手抄清單消失，改由 registry 動態產生，雙向 hook 驗證也補上了。這正是我建議在波次 3 一併解決的那條。
+
+波次 4 的 W8/W9/W10 可並行，三者都只讀 registry 不改它。派出去時記得沿用 W7 的 B0 紀律：每個新抽象都要有 live 消費者，否則就是我在 F5 抓到的那種死抽象。
+
+---
+
+## 2026-08-09 19:07:16  ·  session 26dc9b9f
+
+## Code Review：Wave 3 (W7)
+
+通過，可以進波次 4。我把 W7 當成真正的 production change 來查，因為它確實是 — 這點你的摘要沒說明。
+
+**核對通過**
+
+- 44 / 41 / 28 三個數字我用真實 accessor API 重跑確認。client 28 與我先前修正的任務數一致。
+- `TaskDefinition` 17 欄，在我 ≤18 的預算內，且確實含 `time_window` 與 `device_excludes` — 三份意見書都漏、我從程式碼補的那兩個。
+- `TaskOutcome` 五態齊全，含 C 貢獻的 `INTERRUPTED`。
+- 無重複 `task_id`、`xwar_idle` 在列。
+- 39 passed 我重跑確認；registry 導出的 mapping 與 `ws_phase.WS_TO_PIPELINE_SKIPS` **byte-identical**（20 keys 全等）。
+- 匯出用 accessor 函式而非裸露 list，`MappingProxyType` + `frozenset` 做不可變保護 — 比我要求的更嚴謹。
+- **B0 規則達成**：`ws_token/runner.py:58` 是真實 live 消費者，不是只有測試在用。這正是我在 F5 抓過的死抽象陷阱，這次沒有重犯。
+
+**你的摘要漏報的一件事（結論安全，但該講）**
+
+W7 不是純新增檔案。`runner.py:93` 的 `TASK_ORDER` 從硬編 40 項改成 `ws_task_ids()`，長度變成 **41** — live WS runner 現在會多認一個先前不在清單裡的任務。
+
+我追下去確認安全：`xwar_idle` 早就是真實的 `_step`（`runner.py:2087`），gate 在 `xwar_idle_enabled`，**預設 `False`**。它只是漏登記在 `TASK_ORDER`。而且 registry 的 index 35 與實際 `_step` 呼叫順序的 index 35 完全一致，`main_chapter_kills` 則是舊清單本來就有的尾端任務（主連線關閉後才跑，所以不在 `_step` 序列內）。
+
+所以行為零變化，但這類「順手修好的既有漏洞」屬於 production 語意變更，下次請在摘要裡點出來 — 我需要自己去查才知道 41 這個數字的來歷，而不是從你的報告讀到。
+
+**先前 review 意見已落實**：`PIPELINE_TASK_NAMES` 手抄清單消失，改由 registry 動態產生，雙向 hook 驗證也補上了。這正是我建議在波次 3 一併解決的那條。
+
+波次 4 的 W8/W9/W10 可並行，三者都只讀 registry 不改它。派出去時記得沿用 W7 的 B0 紀律：每個新抽象都要有 live 消費者，否則就是我在 F5 抓到的那種死抽象。
+
+---
+
+## 2026-08-09 20:16:31  ·  session 26dc9b9f
+
+Wave 4 審查完成，判定 **有條件通過**。發現兩個報告未提及的問題，都已修好並合併到 main。
+
+## 修掉的兩件事
+
+**1. `farm_executor` 硬編廣告名（真實缺陷，已修）**
+
+`farm_executor.py:31` 寫死 `"農場種子廣告"`，但 live 的 `ws_phase._ad_seed_claimed`（`ws_phase.py:139`）是從 `ad_reward.AD_NAMES.get(15)` 查表取名。突變測試證明這不是理論風險：把 `AD_NAMES[15]` 改名後，即使玩家真的領了獎（`claimed: 3`），executor 仍回報未完成、`completion_updates_for` 回空 mapping、不拋任何錯，而 7 個既有測試全過。dashboard「農場種植」徽章會永遠停在未完成。已改為同源查表，並補上會抓到硬編回退的回歸測試（突變驗證通過）。
+
+**2. 測試污染真實裝置 ledger（Wave 2 既有缺陷，這次才暴露）**
+
+`test_daily_pipeline_order.py` 用 `sys.modules.setdefault` 裝 stub。若同一 session 內有別的測試檔先載入真實 `json_manager`，setdefault 就靜默變成 no-op，於是真實 `time_recording` 把時間戳寫進 repo 根目錄的 `fc65396d.json`（我的手機裝置 ledger），且真實 `task_due.is_due` 讓任務順序隨當下時間浮動——組合執行時 `test_run_tasks_preserves_the_28_task_order` 會失敗。修正改為強制覆寫加事後還原，雙向順序都驗過 LEDGER CLEAN。
+
+這個修正原本停在 `fix/test-stub-isolation` worktree 沒合併進 main，我一併併入了。被污染的 `fc65396d.json` 已還原（`web-003/004.json` 是 live bot 19:10/19:21 的正常寫入，不是污染）。
+
+## 報告需要更正的地方
+
+W9 的暫緩理由「沒有 live consumer，會形成死抽象」站不住腳。主樹 grep 確認 `lamp_executor` 和 `farm_executor` 同樣沒有 live consumer——只有 registry 字串和測試引用它們，`daily_pipeline` 和 `ws_phase` 都沒 import。三者的死抽象風險等級相同。真正的差別是 W8/W10 只是薄轉接層（轉呼既有的 `LampService` / `farm_v2.manager`），而 W9 要驗的「adb 裝置乾淨跳過」在 W11 之前無處可驗。暫緩結論成立，但理由要改。已寫進 `tasks/todo.md`，並註明 W11 接線時三個 executor 必須同批接上，否則 B0 規則對 W8/W10 一樣不成立。
+
+另外報告說「未修改 production code」以外的部分也漏了：`task_registry.py` 被改了 49 行。我逐欄位機械比對過 44 個任務，實質改動只有 3 個 `executors` 欄位（lamp / farm / main_tasks 指向新 executor），其餘欄位與三個不變量（union 44 / ws 41 / client 28）完全不變，`farm` 的 `conditional_skip=True` 換成 tag 是等價展開。這部分安全。
+
+## 現況
+
+main 停在 `0dc7a9bd`，45 個 registry 相關測試通過，兩個 worktree 和分支已清理，原有 9 項未提交 WIP 保留。`test_daily_pipeline.py` 那 2 個失敗是既有的 fake-device 介面缺口（`SimpleNamespace` 缺 `screenshot`/`press`），與本輪無關。
+
+下一步是 W11 主迴圈接線。那是 live bot 熱路徑，且三個 executor 的 B0 規則都押在它身上，建議單獨一輪做、不要與其他工單併行。
+
+---
+
+## 2026-08-09 20:16:43  ·  session 26dc9b9f
+
+1) 教訓：「未修改 production code」這類報告聲明必須用 `git diff --stat` 對非測試檔獨立核對 — 這輪 `task_registry.py` 被改 49 行、上輪 `runner.py:93` 改 `TASK_ORDER`，兩次都沒被報告。另新測試除了跑綠燈，還要檢查是否污染 repo 內的真實資料檔（`fc65396d.json` 這次被寫入）。值得入 lessons.md。
+
+2) 風險：修好的 stub 隔離原本停在 worktree 未合併，說明「已完成」的工作可能沒進 main，建議每輪收尾用 `git worktree list` 掃一遍待併分支。W11 是 live bot 熱路徑且承載三個 executor 的 B0 驗證，請單獨一輪做；`AD_NAMES` 這類查表同源問題可能還存在於其他 executor，接線時值得順手掃一次。
+
+---
+

@@ -226,19 +226,12 @@ def _launch_with_profile_recovery(
 
 
 def _reset_thread_event_loop() -> None:
-    # Playwright sync API rejects start() when the calling thread's event loop
-    # reports is_running()==True. A previous _playwright.stop() whose dispatcher
-    # fiber didn't fully shut down (e.g. Chrome was force-killed, or an 異地-kicked
-    # tab went unresponsive) can leave that flag stuck, which then poisons every
-    # subsequent restart in the same thread — exactly the 5554 failure mode in
-    # logs/emulator-5554/main.log (260 "Sync API inside the asyncio loop" errors
-    # on 2026-06-13). Playwright reads asyncio.get_running_loop(); that is backed
-    # by asyncio's C-level _running_loop thread-state, which set_event_loop() does
-    # NOT touch. So we must clear _running_loop explicitly first — installing a
-    # fresh default loop alone never rescued the poisoned thread (proven against
-    # Python 3.10.18). Clearing the leftover loop is safe here: the device thread
-    # is always synchronous, and any loop still registered as "running" belongs to
-    # a dead/abandoned Playwright session we are about to replace.
+    # Clears asyncio's C-level _running_loop thread-state, which
+    # set_event_loop() does not touch. Needed because Playwright sync API
+    # refuses start() if get_running_loop() still reports running — which
+    # happens when a prior session died mid-dispatch (e.g. Chrome
+    # force-killed), poisoning all future restarts on this thread
+    # (see 5554, 2026-06-13). Safe here: this thread is always synchronous.
     try:
         asyncio.events._set_running_loop(None)
     except Exception as e:
