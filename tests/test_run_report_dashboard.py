@@ -121,6 +121,9 @@ def test_dashboard_renders_report_and_read_only_endpoint():
     routes = Path("control_panel/routes_status.py").read_text(encoding="utf-8-sig")
     assert 'id="report-${ip}"' in template
     assert "task_report" in template
+    assert 'class="run-report-details"' in template
+    assert "run-report-summary" in template
+    assert "const wasOpen" in template
     assert "UNKNOWN" in template
     assert '@bp.route("/api/task_report/<ip>"' in routes
 
