@@ -112,3 +112,50 @@ def test_run_returns_false_when_no_card_bought():
         ok = hc.run_harvest_card(d, device_ip="x")
     assert plant.call_count == 0
     assert ok is False
+
+
+def test_h5_cancel_uses_cocos_then_reopens_panel_to_verify_stopped():
+    """H5 先用 JavaScript 取消；面板自動關閉後重開，看到開始打工才成功。"""
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "work_panel_open",
+                      side_effect=[False, True, False, True]), \
+         patch("utils.cocos_ui.CocosUI.click_text", return_value=True) as click_text, \
+         patch.object(hc.web_farm, "work_status", side_effect=["running", "stopped"]), \
+         patch.object(hc.web_farm, "click_work_action", return_value=True) as click_action, \
+         patch.object(hc.web_farm, "close_work_panel", return_value=True), \
+         patch.object(hc, "check_if_parttime") as pixel_check, \
+         patch.object(hc.img_tools, "wait_for_any_text", return_value=False):
+        assert hc._cancel_work_if_active(d) is True
+    assert click_text.call_count == 2
+    click_action.assert_called_once_with(d._page, "cancel")
+    pixel_check.assert_not_called()
+
+
+def test_h5_cancel_falls_back_to_ocr_but_still_verifies_stopped():
+    """Cocos 找不到取消節點時保留 OCR；OCR 後仍以 JavaScript 驗證狀態。"""
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "work_panel_open", side_effect=[True, True, True]), \
+         patch.object(hc.web_farm, "work_status", side_effect=["unknown", "stopped"]), \
+         patch.object(hc.web_farm, "click_work_action", return_value=False), \
+         patch.object(hc.web_farm, "close_work_panel", return_value=True), \
+         patch.object(hc, "check_if_parttime") as pixel_check, \
+         patch.object(hc.img_tools, "wait_for_any_text", side_effect=[True, True]) as ocr:
+        assert hc._cancel_work_if_active(d) is True
+    assert ocr.call_count == 2
+    pixel_check.assert_not_called()
+
+
+def test_run_stops_before_clearing_or_buying_when_work_cancel_not_confirmed():
+    """取消打工未被確認時，禁止清場、買卡與種植。"""
+    d = MagicMock()
+    with _patch_sleep(), \
+         patch.object(hc, "_cancel_work_if_active", return_value=False), \
+         patch.object(hc, "_ensure_fields_empty") as clear_fields, \
+         patch.object(hc, "_navigate_farm_to_home") as leave_farm, \
+         patch.object(hc, "_buy_harvest_card_in_shop") as buy_card:
+        assert hc.run_harvest_card(d, device_ip="x") is False
+    clear_fields.assert_not_called()
+    leave_farm.assert_not_called()
+    buy_card.assert_not_called()
