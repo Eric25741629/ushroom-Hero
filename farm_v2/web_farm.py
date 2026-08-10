@@ -26,6 +26,7 @@ logger = logging.getLogger("farm_v2.web_farm")
 SETTLE = 0.4
 
 ONEKEY_NAMES = ("btnOneKeyPlant", "btnOneKeyGrow", "btnOneKeyPick", "btnOneKeyFetch")
+WORK_PANEL_VIEW = "FarmPlantView"
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +157,11 @@ def seed_dialog_open(page: Any) -> bool:
 
 def fert_dialog_open(page: Any) -> bool:
     return _view_active(page, "FertilizeSelectView")
+
+
+def work_panel_open(page: Any) -> bool:
+    """種植小隊（打工）視窗目前是否仍覆蓋在農場上。"""
+    return _view_active(page, WORK_PANEL_VIEW)
 
 
 def _view_active(page: Any, view_name: str) -> bool:
@@ -330,6 +336,45 @@ def close_reward(page: Any) -> bool:
 def close_seed_select(page: Any) -> bool:
     """Close the 種植選擇 dialog via uiMgr (verified)."""
     return _uimgr_close(page, "SeedSelectView")
+
+
+def close_work_panel(
+    page: Any,
+    retries: int = 3,
+    observe_for: float = 0.0,
+) -> bool:
+    """關閉種植小隊視窗，並確認它真的已從 active scene tree 消失。
+
+    ``FarmPlantView`` 的官方 ``btnClose`` 會呼叫 view.close()。優先透過
+    uiMgr 關閉，若遊戲當下的 view manager 沒反應，再點官方關閉節點。
+    """
+    observe_until = time.monotonic() + max(0.0, observe_for)
+
+    while True:
+        if not work_panel_open(page):
+            remaining = observe_until - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(0.2, remaining))
+            continue
+
+        for _ in range(max(1, retries)):
+            _uimgr_close(page, WORK_PANEL_VIEW)
+            time.sleep(SETTLE)
+            if not work_panel_open(page):
+                break
+
+            _tap_view_btn(page, WORK_PANEL_VIEW, "btnClose")
+            time.sleep(SETTLE)
+            if not work_panel_open(page):
+                break
+        else:
+            logger.warning("種植小隊視窗關閉失敗: %s 仍為 active", WORK_PANEL_VIEW)
+            return False
+
+        # 離場防護會繼續觀察一段時間，攔住點擊打工後延遲載入的 view。
+        if time.monotonic() >= observe_until:
+            return True
 
 
 def _uimgr_close(page: Any, view_name: str) -> bool:

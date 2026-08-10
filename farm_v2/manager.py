@@ -32,14 +32,21 @@ def _h5_work_is_active(d: "uiauto.Device") -> Optional[bool]:
     if page is None or getattr(d, "backend_kind", None) != "web_h5":
         return None
     from utils.cocos_ui import CocosUI
+    from farm_v2 import web_farm
+
+    if web_farm.work_panel_open(page):
+        logger.info("[farm_v2] 進場發現殘留種植小隊視窗，先行關閉")
+        if not web_farm.close_work_panel(page):
+            return None
+
     ui = CocosUI(page)
     if not ui.click_text("打工", root="PlantMainView"):
         return None
     state = ui.wait_for_text(("開始打工", "取消打工"), timeout=5)
-    for text in ("關閉", "返回"):
-        if ui.has_text(text):
-            ui.click_text(text)
-            break
+    closed = web_farm.close_work_panel(page)
+    logger.info("[farm_v2] 打工狀態=%s，種植小隊關閉=%s", state or "unknown", closed)
+    if not closed:
+        return None
     if state == "取消打工":
         return True
     if state == "開始打工":
@@ -52,6 +59,14 @@ def _ensure_work_active(d: "uiauto.Device") -> None:
     page = getattr(d, "_page", None)
     if page is not None and getattr(d, "backend_kind", None) == "web_h5":
         from utils.cocos_ui import CocosUI
+        from farm_v2 import web_farm
+
+        if web_farm.work_panel_open(page):
+            logger.info("[farm_v2] 啟動打工前關閉殘留種植小隊視窗")
+            if not web_farm.close_work_panel(page):
+                logger.warning("H5 無法關閉殘留種植小隊視窗")
+                return
+
         ui = CocosUI(page)
         if not ui.click_text("打工", root="PlantMainView"):
             logger.warning("H5 找不到打工入口")
@@ -64,10 +79,11 @@ def _ensure_work_active(d: "uiauto.Device") -> None:
             logger.info("H5 打工已在執行中")
         else:
             logger.warning("H5 無法確認打工狀態")
-        for text in ("關閉", "返回"):
-            if ui.has_text(text):
-                ui.click_text(text)
-                break
+        closed = web_farm.close_work_panel(page)
+        if closed:
+            logger.info("[farm_v2] 種植小隊視窗已關閉")
+        else:
+            logger.warning("[farm_v2] 種植小隊視窗仍開啟，禁止直接離開農場")
         return
 
     from farm_v2.config import COORD, TIMING
@@ -323,6 +339,21 @@ def farm(
     # collection so none of those steps fight an already-running worker (the
     # harvest card flow in particular needs 打工 off while it plants 特級種子).
     _ensure_work_active(d)
+
+    # 離開農場前做最後一道保證。種植小隊是獨立的 FarmPlantView，若只關
+    # PlantMainView，它可能留在畫面上並阻擋下一個任務。
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        from farm_v2 import web_farm
+
+        panel_was_open = web_farm.work_panel_open(page)
+        panel_closed = web_farm.close_work_panel(page, observe_for=3.0)
+        logger.info(
+            "[farm_v2] 離場前種植小隊檢查: was_open=%s closed=%s",
+            panel_was_open,
+            panel_closed,
+        )
+        if not panel_closed:
+            raise RuntimeError("離開農場前無法關閉 FarmPlantView")
 
     save_time += navigate_to_home(d, cnn_model, device_ip=device_ip)
 
