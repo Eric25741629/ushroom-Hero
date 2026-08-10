@@ -33,6 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ws_token import codec  # noqa: E402
+from ws_token import farm as farm_module  # noqa: E402
 from ws_token.client import WSGameClient  # noqa: E402
 from ws_token.farm import (  # noqa: E402
     CMD_ERROR,
@@ -708,3 +709,116 @@ def test_harvest_lands_counts_and_sums_rewards():
         assert [d.get(1) for d in sent] == [1, 2, 3]  # land_id#1
     finally:
         c.close()
+
+
+def _empty_farm_info(role_id=1):
+    lands = tuple(
+        FarmLand(id=land_id, has_crop=False, state=STATE_NOT_EXIT, end_time=0)
+        for land_id in range(1, 7)
+    )
+    return FarmInfo(role_id=role_id, name="test", level=1, exp=0, lands=lands)
+
+
+def test_harvest_cycle_aborts_before_purchase_when_cancel_not_verified(monkeypatch):
+    """WS 未讀到 stopped 時，禁止買肥料、買卡或種特級種子。"""
+    monkeypatch.setattr(
+        farm_module, "stop_work", lambda *_a, **_k: {"ok": False, "verified": False},
+    )
+    monkeypatch.setattr(
+        farm_module, "start_work_simple",
+        lambda *_a, **_k: {"ok": True, "verified": True},
+    )
+    purchases = []
+    monkeypatch.setattr(
+        farm_module, "buy_to_daily_target",
+        lambda *_a, **_k: purchases.append(True),
+    )
+
+    result = farm_module.run_harvest_card_cycle(object(), 1, spacing=0)
+
+    assert result["ok"] is False
+    assert result["failure"] == "work_cancel_not_verified"
+    assert purchases == []
+
+
+def test_stop_work_re_reads_status_and_requires_stopped(monkeypatch):
+    """18178 有回覆仍不夠，必須再讀到 worker_status=0。"""
+    client = type("Client", (), {
+        "call_for": lambda self, *_a, **_k: (farm_module.CMD_WORKER_STATE, b""),
+    })()
+    statuses = iter([
+        {"found": True, "running": True, "worker_status": 1},
+        {"found": True, "running": False, "worker_status": 0},
+    ])
+    monkeypatch.setattr(
+        farm_module, "read_work_status", lambda *_a, **_k: next(statuses),
+    )
+
+    result = farm_module.stop_work(client, role_id=1)
+
+    assert result["ok"] is True
+    assert result["verified"] is True
+
+
+def test_harvest_cycle_no_card_means_already_executed(monkeypatch):
+    """肥料步驟完成但卡買不到時，恢復打工並成功略過。"""
+    monkeypatch.setattr(
+        farm_module, "stop_work", lambda *_a, **_k: {"ok": True, "verified": True},
+    )
+    monkeypatch.setattr(
+        farm_module, "start_work_simple",
+        lambda *_a, **_k: {"ok": True, "verified": True},
+    )
+    monkeypatch.setattr(farm_module, "read_farm", lambda *_a, **_k: _empty_farm_info())
+    purchases = iter([
+        {"ok": True, "bought": 0},  # 高產肥料已達每日目標
+        {"ok": True, "bought": 0},  # 豐收卡買不到 = 已執行
+    ])
+    monkeypatch.setattr(
+        farm_module, "buy_to_daily_target", lambda *_a, **_k: next(purchases),
+    )
+    planted = []
+    monkeypatch.setattr(
+        farm_module, "plant_lands", lambda *_a, **_k: planted.append(True),
+    )
+
+    result = farm_module.run_harvest_card_cycle(object(), 1, spacing=0)
+
+    assert result["ok"] is True
+    assert result["already_executed"] is True
+    assert result["restarted_work"] is True
+    assert planted == []
+
+
+def test_harvest_cycle_requires_every_premium_seed_to_plant(monkeypatch):
+    """買到卡後只種成 5/6 塊時，不得繼續施肥或宣告 buff 用完。"""
+    monkeypatch.setattr(
+        farm_module, "stop_work", lambda *_a, **_k: {"ok": True, "verified": True},
+    )
+    monkeypatch.setattr(
+        farm_module, "start_work_simple",
+        lambda *_a, **_k: {"ok": True, "verified": True},
+    )
+    monkeypatch.setattr(farm_module, "read_farm", lambda *_a, **_k: _empty_farm_info())
+    purchases = iter([
+        {"ok": True, "bought": 4},
+        {"ok": True, "bought": 1},
+    ])
+    monkeypatch.setattr(
+        farm_module, "buy_to_daily_target", lambda *_a, **_k: next(purchases),
+    )
+    monkeypatch.setattr(
+        farm_module, "plant_lands", lambda *_a, **_k: {"planted": 5},
+    )
+    fertilized = []
+    monkeypatch.setattr(
+        farm_module, "fertilize_until_mature",
+        lambda *_a, **_k: fertilized.append(True),
+    )
+
+    result = farm_module.run_harvest_card_cycle(object(), 1, spacing=0)
+
+    assert result["ok"] is False
+    assert result["failure"] == "premium_seed_plant_incomplete"
+    assert result["buff_exhausted"] is False
+    assert fertilized == []

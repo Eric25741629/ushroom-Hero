@@ -470,10 +470,20 @@ class CocosNavigator:
         if self.current_view() == "main":
             return True
 
+        # PlantMainView 是可辨識的 farm 狀態，sweep_popups 會刻意保留它；
+        # 因此必須先點畫面底部真正的「關閉」，確認回到家園總覽。
+        if self.current_view() == "farm":
+            if not self._click_path(COCOS_PATHS["farm_close_btn"]):
+                return False
+            time.sleep(_SETTLE_SEC)
+            if self.current_view() != "home":
+                return False
+
         self.sweep_popups()
 
         if self.current_view() == "home":
-            self._click_path(COCOS_PATHS["home_tab"])
+            if not self._click_path(COCOS_PATHS["home_tab"]):
+                return False
             time.sleep(_SETTLE_SEC * 0.6)
 
         return self.current_view() == "main"

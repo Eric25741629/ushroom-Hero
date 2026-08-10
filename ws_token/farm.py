@@ -114,7 +114,7 @@ DEFAULT_TEAM_CFG_ID: Optional[int] = FARM_WORKER_TEAM_CFG_ID
 HARVEST_CARD_SHOP_TYPE: int = 11
 HARVEST_CARD_SHOP_ID: int = 1604
 SEED_ID_PREMIUM = 103         # 特級種子 (configGoods id=103, live-confirmed)
-# 豐收卡放大下 PLANTS_PER_CARD 株作物 2x 產量；rounds = cards_bought × (30 // lands)。
+# 豐收卡放大下 PLANTS_PER_CARD 株作物 2x 產量；本次買到的卡決定本輪上限。
 HARVEST_CARD_WEEKLY_LIMIT = 3  # 菜園豐收卡每週購買上限 (farm_v2.config HARVEST_CARD_BUY_COUNT)
 PLANTS_PER_CARD = 30           # 一張卡放大的株數 (2x 產量)
 # Simple start/cancel cmds (module 71; distinct from worker_setting 18689 which configures):
@@ -584,6 +584,7 @@ def start_work(
 def stop_work(
     client: WSGameClient,
     *,
+    role_id: Optional[int] = None,
     work_id: int = FARM_WORK_ID,
     timeout: Optional[float] = None,
     device_id: Optional[str] = None,
@@ -591,10 +592,17 @@ def stop_work(
     """Cancel farm 打工 (companion worker) via CMD_WORKER_CANCEL (18178).
 
     Live-verified 2026-06-15 on 7fe98fc6: clicking '取消打工' sends cmd=18178
-    with body {field1=1001}. Returns {ok, error_code}. Use start_work_simple()
-    to re-enable after the harvest-card flow completes.
+    with body {field1=1001}. When role_id is supplied, re-read worker status and
+    return ok only after stopped is observed.
     """
     log = _resolve_logger(device_id)
+    if role_id is not None:
+        before = read_work_status(
+            client, role_id, timeout=timeout, device_id=device_id,
+        )
+        if before.get('found') and not before.get('running'):
+            return {'ok': True, 'verified': True, 'already_stopped': True,
+                    'error_code': 0, 'status': before}
     reply_cmd, reply = client.call_for(
         CMD_WORKER_CANCEL,
         build_worker_start_cancel_body(work_id),
@@ -605,13 +613,22 @@ def stop_work(
         code = _as_int(codec.walk_dict(reply).get(1))
         log.warning('ws_token farm: stop_work rejected 0x0201 code=%s', code)
         return {'ok': False, 'error_code': code}
-    log.info('ws_token farm: stop_work ok')
-    return {'ok': True, 'error_code': 0}
+    if role_id is not None:
+        status = read_work_status(
+            client, role_id, timeout=timeout, device_id=device_id,
+        )
+        verified = bool(status.get('found')) and not bool(status.get('running'))
+        log.info('ws_token farm: stop_work verified=%s status=%s', verified, status)
+        return {'ok': verified, 'verified': verified, 'error_code': 0,
+                'status': status}
+    log.info('ws_token farm: stop_work ok (unverified: no role_id)')
+    return {'ok': True, 'verified': False, 'error_code': 0}
 
 
 def start_work_simple(
     client: WSGameClient,
     *,
+    role_id: Optional[int] = None,
     work_id: int = FARM_WORK_ID,
     timeout: Optional[float] = None,
     device_id: Optional[str] = None,
@@ -624,6 +641,13 @@ def start_work_simple(
     with body {field1=1001}.
     """
     log = _resolve_logger(device_id)
+    if role_id is not None:
+        before = read_work_status(
+            client, role_id, timeout=timeout, device_id=device_id,
+        )
+        if before.get('found') and before.get('running'):
+            return {'ok': True, 'verified': True, 'already_running': True,
+                    'error_code': 0, 'status': before}
     reply_cmd, reply = client.call_for(
         CMD_WORKER_START,
         build_worker_start_cancel_body(work_id),
@@ -634,8 +658,16 @@ def start_work_simple(
         code = _as_int(codec.walk_dict(reply).get(1))
         log.warning('ws_token farm: start_work_simple rejected 0x0201 code=%s', code)
         return {'ok': False, 'error_code': code}
-    log.info('ws_token farm: start_work_simple ok')
-    return {'ok': True, 'error_code': 0}
+    if role_id is not None:
+        status = read_work_status(
+            client, role_id, timeout=timeout, device_id=device_id,
+        )
+        verified = bool(status.get('found')) and bool(status.get('running'))
+        log.info('ws_token farm: start_work_simple verified=%s status=%s', verified, status)
+        return {'ok': verified, 'verified': verified, 'error_code': 0,
+                'status': status}
+    log.info('ws_token farm: start_work_simple ok (unverified: no role_id)')
+    return {'ok': True, 'verified': False, 'error_code': 0}
 
 
 def plant_lands(
@@ -817,6 +849,7 @@ def run_harvest_card_cycle(
     premium_seed_id: int = SEED_ID_PREMIUM,
     num_cards: int = HARVEST_CARD_WEEKLY_LIMIT,
     fertilizer_id: int = FERTILIZER_ID_HIGH_YIELD,
+    fertilizer_shop_target: int = 4,
     plants_per_card: int = PLANTS_PER_CARD,
     land_ids: Sequence[int] = (),
     inventory_tracker=None,
@@ -824,7 +857,7 @@ def run_harvest_card_cycle(
     timeout: Optional[float] = None,
     device_id: Optional[str] = None,
 ) -> dict:
-    """豐收卡 harvest-card cycle via pure WS — the validated 4-stage flow.
+    """豐收卡 harvest-card cycle via pure WS，逐階段驗證狀態。
 
     豐收卡 doubles the yield of the next ``plants_per_card`` (=30) crops, and the
     buff is spent at 收穫 (home_farm_harvest 3081), NOT at planting. So the field is
@@ -833,13 +866,13 @@ def run_harvest_card_cycle(
     rounds = cards_bought × (plants_per_card // lands).
 
     Stages (each 一鍵 button is per-land; live-verified 5554 2026-06-22):
-      1. 取消打工 (worker_cancel 18178 → 18184)
-      2. 讀農場一次 → land ids + which lands currently hold a crop
-      3. 清場: 施肥-到熟 → 收成(pick 3080) → 收穫(harvest 3081) the existing cheap crops
-      4. 買豐收卡 (shop_buy 6914 type11/id1604, deficit-only up to num_cards)
-      5. 賺取迴圈 × (cards_bought × plants_per_card // lands):
+      1. 取消打工，並重讀 worker_status=0
+      2. 買高產肥料到每日目標
+      3. 清場: 施肥到熟 → 收成(pick 3080) → 收穫(harvest 3081)
+      4. 買豐收卡並以成功購買回覆確認 buff；買不到視為已執行
+      5. 賺取迴圈 × (本次 cards_bought × plants_per_card // lands):
             種植103(3078) → 施肥(num=3 到熟) → 收成(3080) → 收穫(3081, 逾時重試)
-      6. 恢復打工 (worker_start 18177 → 18184)
+      6. 恢復打工，並重讀 worker_status>0
 
     ``inventory_tracker`` is accepted for runner back-compat but unused (cards are
     bought deficit-only via shop_info). ``land_ids`` overrides only when the opening
@@ -847,81 +880,167 @@ def run_harvest_card_cycle(
     """
     log = _resolve_logger(device_id)
     result: dict = {
-        'stopped_work': False, 'land_ids': [], 'clear_harvested': 0,
-        'cards_bought': 0, 'rounds': 0, 'planted': 0, 'earn_harvested': 0,
-        'restarted_work': False, 'ok': False,
+        'stopped_work': False, 'fertilizer_bought': 0, 'land_ids': [],
+        'clear_harvested': 0, 'cards_bought': 0, 'buff_confirmed': False,
+        'already_executed': False, 'rounds': 0, 'completed_rounds': 0,
+        'planted': 0, 'earn_harvested': 0, 'buff_exhausted': False,
+        'restarted_work': False, 'failure': None, 'ok': False,
     }
-    log.info('豐收卡循環(4階段): 開始 role_id=%s num_cards=%d', role_id, num_cards)
+    log.info('豐收卡循環: 開始 role_id=%s num_cards=%d', role_id, num_cards)
 
-    # 1. 取消打工 — must be off so it can't re-plant the field we clear / eat the quota.
-    sw = stop_work(client, timeout=timeout, device_id=device_id)
-    result['stopped_work'] = sw.get('ok', False)
-    log.info('豐收卡循環[1] 取消打工: ok=%s', result['stopped_work'])
-
-    # 2. 讀農場一次 → land ids + crop lands (3077 answers ~once/session, so read here only).
-    info: Optional[FarmInfo] = None
+    # 1. 取消打工後必須用 read_work_status 讀到 stopped。
     try:
-        info = read_farm(client, role_id, timeout=timeout)
+        sw = stop_work(
+            client, role_id=role_id, timeout=timeout, device_id=device_id,
+        )
+        result['stopped_work'] = bool(sw.get('ok') and sw.get('verified'))
     except Exception as exc:  # noqa: BLE001
-        log.info('豐收卡循環: read_farm 失敗 (%s) — 用預設 land 1..6', exc)
-    if info is not None and info.lands:
-        lands = [land.id for land in info.lands]
-        crop_lands = [land.id for land in info.lands if not land.is_empty]
-    elif land_ids:
-        lands = list(land_ids)
-        crop_lands = list(land_ids)
+        result['stopped_work'] = False
+        log.warning('豐收卡循環[1] 取消打工驗證例外: %s', exc)
+    if not result['stopped_work']:
+        result['failure'] = 'work_cancel_not_verified'
+        log.warning('豐收卡循環[1] 取消打工未驗證，禁止後續購買與種植')
     else:
-        lands = list(range(1, 7))
-        crop_lands = list(lands)
-    result['land_ids'] = lands
-    log.info('豐收卡循環[2] 讀農場: 地塊=%s 有作物=%s', lands, crop_lands)
+        log.info('豐收卡循環[1] 取消打工已驗證')
 
-    # 3. 清場 — cheap crops must be off the field before buying (they would consume
-    #    the card's 30-plant 2x quota). 施肥到熟 → 收成 → 收穫.
-    if crop_lands:
-        fertilize_until_mature(client, crop_lands, fertilizer_id=fertilizer_id,
-                               spacing=spacing, timeout=timeout, device_id=device_id)
-        pick_lands(client, crop_lands, spacing=spacing, timeout=timeout, device_id=device_id)
-        cleared = harvest_lands(client, crop_lands, spacing=spacing, timeout=timeout,
-                                device_id=device_id)
-        result['clear_harvested'] = cleared.get('harvested', 0)
-    log.info('豐收卡循環[3] 清場: 收穫 %d 塊舊作物', result['clear_harvested'])
+    try:
+        # 2. 先把高產肥料買到每日目標；已達目標也算成功。
+        if result['failure'] is None:
+            fert_res = buy_to_daily_target(
+                client, SHOP_ID_HIGH_YIELD_FERTILIZER, fertilizer_shop_target,
+                shop_type=FARM_SHOP_TYPE, timeout=timeout, device_id=device_id,
+            )
+            result['fertilizer_bought'] = int(fert_res.get('bought', 0))
+            if not fert_res.get('ok'):
+                result['failure'] = 'fertilizer_purchase_failed'
+            log.info('豐收卡循環[2] 高產肥料: bought=%d ok=%s',
+                     result['fertilizer_bought'], fert_res.get('ok'))
 
-    # 4. 買豐收卡 — deficit-only on the escalating ladder, up to num_cards (週上限).
-    card_res = buy_to_daily_target(
-        client, harvest_card_shop_id, num_cards,
-        shop_type=harvest_card_shop_type, timeout=timeout, device_id=device_id)
-    bought = card_res.get('bought', 0)
-    result['cards_bought'] = bought
-    log.info('豐收卡循環[4] 買卡: 買到 %d 張 (before=%s target=%d ok=%s)',
-             bought, card_res.get('before'), num_cards, card_res.get('ok'))
+        # 買卡前清掉打工留下的舊作物，且每一塊都必須完成施肥、收成、領取。
+        lands: list[int] = []
+        crop_lands: list[int] = []
+        if result['failure'] is None:
+            info: Optional[FarmInfo] = None
+            try:
+                info = read_farm(client, role_id, timeout=timeout)
+            except Exception as exc:  # noqa: BLE001
+                log.info('豐收卡循環: read_farm 失敗 (%s) — 使用指定地塊', exc)
+            if info is not None and info.lands:
+                lands = [land.id for land in info.lands]
+                crop_lands = [land.id for land in info.lands if not land.is_empty]
+            elif land_ids:
+                lands = list(land_ids)
+                crop_lands = list(land_ids)
+            else:
+                result['failure'] = 'farm_lands_unknown'
+            result['land_ids'] = lands
 
-    # 5. 賺取迴圈 — rounds = bought × (plants_per_card // lands). Buff spent at 收穫.
-    per_round = max(1, len(lands))
-    rounds = bought * (plants_per_card // per_round)
-    result['rounds'] = rounds
-    log.info('豐收卡循環[5] 賺取: %d 張 × (%d÷%d) = %d 輪',
-             bought, plants_per_card, per_round, rounds)
-    for r in range(1, rounds + 1):
-        pl = plant_lands(client, premium_seed_id, lands, spacing=spacing,
-                         timeout=timeout, device_id=device_id)
-        result['planted'] += pl.get('planted', 0)
-        fertilize_until_mature(client, lands, fertilizer_id=fertilizer_id,
-                               spacing=spacing, timeout=timeout, device_id=device_id)
-        pick_lands(client, lands, spacing=spacing, timeout=timeout, device_id=device_id)
-        hv = harvest_lands(client, lands, spacing=spacing, timeout=timeout,
-                           device_id=device_id)
-        result['earn_harvested'] += hv.get('harvested', 0)
-        log.info('豐收卡循環[5] 第 %d/%d 輪: 種%d 收穫%d',
-                 r, rounds, pl.get('planted', 0), hv.get('harvested', 0))
+        if result['failure'] is None and crop_lands:
+            grown = fertilize_until_mature(
+                client, crop_lands, fertilizer_id=fertilizer_id,
+                spacing=spacing, timeout=timeout, device_id=device_id,
+            )
+            picked = pick_lands(
+                client, crop_lands, spacing=spacing, timeout=timeout,
+                device_id=device_id,
+            )
+            cleared = harvest_lands(
+                client, crop_lands, spacing=spacing, timeout=timeout,
+                device_id=device_id,
+            )
+            result['clear_harvested'] = int(cleared.get('harvested', 0))
+            if (set(grown.get('mature', ())) != set(crop_lands)
+                    or picked.get('picked') != len(crop_lands)
+                    or result['clear_harvested'] != len(crop_lands)):
+                result['failure'] = 'field_clear_incomplete'
 
-    # 6. 恢復打工
-    rs = start_work_simple(client, timeout=timeout, device_id=device_id)
-    result['restarted_work'] = rs.get('ok', False)
-    result['ok'] = True
-    log.info('豐收卡循環(4階段): 完成 — 清場%d 買卡%d 輪%d 種%d 收穫%d 恢復打工=%s',
-             result['clear_harvested'], result['cards_bought'], result['rounds'],
-             result['planted'], result['earn_harvested'], result['restarted_work'])
+        # 3. 買不到卡依使用者規則視為本週已執行；買到才確認 buff 並往下。
+        bought = 0
+        if result['failure'] is None:
+            card_res = buy_to_daily_target(
+                client, harvest_card_shop_id, num_cards,
+                shop_type=harvest_card_shop_type, timeout=timeout,
+                device_id=device_id,
+            )
+            bought = int(card_res.get('bought', 0))
+            result['cards_bought'] = bought
+            if bought <= 0:
+                result['already_executed'] = True
+                log.info('豐收卡循環[3] 買不到卡，視為本週已執行')
+            else:
+                result['buff_confirmed'] = bool(card_res.get('ok'))
+                if not result['buff_confirmed']:
+                    result['failure'] = 'harvest_buff_not_confirmed'
+
+        # 4. 本次買到的 buff 必須完整用完；每輪明確使用特級種子 103。
+        if result['failure'] is None and bought > 0:
+            per_round = len(lands)
+            rounds = bought * (plants_per_card // per_round)
+            result['rounds'] = rounds
+            for round_no in range(1, rounds + 1):
+                planted = plant_lands(
+                    client, premium_seed_id, lands, spacing=spacing,
+                    timeout=timeout, device_id=device_id,
+                )
+                planted_count = int(planted.get('planted', 0))
+                result['planted'] += planted_count
+                if planted_count != per_round:
+                    result['failure'] = 'premium_seed_plant_incomplete'
+                    break
+
+                grown = fertilize_until_mature(
+                    client, lands, fertilizer_id=fertilizer_id,
+                    spacing=spacing, timeout=timeout, device_id=device_id,
+                )
+                if set(grown.get('mature', ())) != set(lands):
+                    result['failure'] = 'fertilize_incomplete'
+                    break
+                picked = pick_lands(
+                    client, lands, spacing=spacing, timeout=timeout,
+                    device_id=device_id,
+                )
+                if picked.get('picked') != per_round:
+                    result['failure'] = 'pick_incomplete'
+                    break
+                harvested = harvest_lands(
+                    client, lands, spacing=spacing, timeout=timeout,
+                    device_id=device_id,
+                )
+                harvested_count = int(harvested.get('harvested', 0))
+                result['earn_harvested'] += harvested_count
+                if harvested_count != per_round:
+                    result['failure'] = 'harvest_incomplete'
+                    break
+                result['completed_rounds'] = round_no
+                log.info('豐收卡循環[4] 第 %d/%d 輪完成: 特級種子%d 收穫%d',
+                         round_no, rounds, planted_count, harvested_count)
+            result['buff_exhausted'] = (
+                result['failure'] is None
+                and result['completed_rounds'] == result['rounds']
+            )
+    except Exception as exc:  # noqa: BLE001
+        if result['failure'] is None:
+            result['failure'] = f'ws_stage_exception:{type(exc).__name__}'
+        log.exception('豐收卡循環執行例外: %s', exc)
+    finally:
+        # 不論中途哪一步失敗，都嘗試恢復並重新讀取 running 狀態。
+        try:
+            rs = start_work_simple(
+                client, role_id=role_id, timeout=timeout, device_id=device_id,
+            )
+            result['restarted_work'] = bool(rs.get('ok') and rs.get('verified'))
+        except Exception as exc:  # noqa: BLE001
+            result['restarted_work'] = False
+            if result['failure'] is None:
+                result['failure'] = f'work_restart_exception:{type(exc).__name__}'
+            log.warning('豐收卡循環恢復打工例外: %s', exc)
+
+    result['ok'] = bool(
+        result['failure'] is None
+        and result['restarted_work']
+        and (result['already_executed'] or result['buff_exhausted'])
+    )
+    log.info('豐收卡循環: 完成 result=%s', result)
     log.info('ws_token farm: run_harvest_card_cycle %s', result)
     return result
 

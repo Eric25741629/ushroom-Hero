@@ -76,7 +76,7 @@ def _patch_run_harvest_card_helpers(cards_bought: int):
         patch.object(hc, "_fertilize_until_mature", return_value=True),
         patch.object(hc, "_harvest_crops", return_value=True),
         patch.object(hc, "_card_buff_exhausted", return_value=False),
-        patch.object(hc, "_enable_work"),
+        patch.object(hc, "_enable_work", return_value=True),
     ]
 
 
@@ -85,7 +85,7 @@ def test_plant_cycles_follow_cards_bought():
     2 cards must plant 2*5=10 cycles, not the old fixed 15."""
     import contextlib
 
-    d = MagicMock()
+    d = MagicMock(_page=None)
     expected_cycles = 2 * (hc.PLANTS_PER_CARD // hc.CROPS_PER_CYCLE)
     with contextlib.ExitStack() as stack:
         for cm in _patch_run_harvest_card_helpers(cards_bought=2):
@@ -98,11 +98,11 @@ def test_plant_cycles_follow_cards_bought():
     assert ok is True
 
 
-def test_run_returns_false_when_no_card_bought():
-    """Zero cards bought → bail out (no planting), report failure."""
+def test_run_treats_no_card_bought_as_already_executed():
+    """買不到卡代表本週已執行；不種植，恢復打工後回報成功。"""
     import contextlib
 
-    d = MagicMock()
+    d = MagicMock(_page=None)
     with contextlib.ExitStack() as stack:
         for cm in _patch_run_harvest_card_helpers(cards_bought=0):
             stack.enter_context(cm)
@@ -111,7 +111,7 @@ def test_run_returns_false_when_no_card_bought():
         )
         ok = hc.run_harvest_card(d, device_ip="x")
     assert plant.call_count == 0
-    assert ok is False
+    assert ok is True
 
 
 def test_h5_cancel_uses_cocos_then_reopens_panel_to_verify_stopped():
@@ -159,3 +159,82 @@ def test_run_stops_before_clearing_or_buying_when_work_cancel_not_confirmed():
     clear_fields.assert_not_called()
     leave_farm.assert_not_called()
     buy_card.assert_not_called()
+
+
+def test_h5_premium_seed_requires_inventory_drop_and_grow_button():
+    """特級種子只有在庫存下降且一鍵施肥出現後才算真的種下。"""
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    before = {"premium": "1040", "onekey": {}}
+    after = {
+        "premium": "1034",
+        "onekey": {"btnOneKeyGrow": {"active": True}},
+    }
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "read_farm_state", side_effect=[before, after]), \
+         patch.object(hc.web_farm, "tap_onekey", return_value=True), \
+         patch.object(hc.web_farm, "seed_dialog_open", side_effect=[True, False]), \
+         patch.object(hc.web_farm, "select_seed_by_name", return_value=True), \
+         patch.object(hc.web_farm, "tap_seed_confirm", return_value=True), \
+         patch("tools.click_white"):
+        assert hc._plant_premium_seed(d) is True
+
+
+def test_h5_premium_seed_rejects_confirm_without_inventory_drop():
+    """按到確認但特級種子數量沒變，不得誤報成功。"""
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    unchanged = {
+        "premium": "1040",
+        "onekey": {"btnOneKeyGrow": {"active": True}},
+    }
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "read_farm_state", return_value=unchanged), \
+         patch.object(hc.web_farm, "tap_onekey", return_value=True), \
+         patch.object(hc.web_farm, "seed_dialog_open", return_value=False), \
+         patch.object(hc.web_farm, "select_seed_by_name", return_value=True), \
+         patch.object(hc.web_farm, "tap_seed_confirm", return_value=True):
+        assert hc._plant_premium_seed(d) is False
+
+
+def test_h5_fertilizer_requires_count_drop_before_next_pass():
+    """選高產並確認後，要看到肥料扣除；下一次讀到無施肥按鈕才完成。"""
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    before = {"putong": "0", "gaochan": "100", "onekey": {}}
+    after = {
+        "putong": "0",
+        "gaochan": "94",
+        "onekey": {"btnOneKeyGrow": {"active": True}},
+    }
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "onekey_active", side_effect=[True, False]), \
+         patch.object(hc.web_farm, "read_farm_state", side_effect=[before, after]), \
+         patch.object(hc, "_claim_free_fertilizer", return_value=False), \
+         patch.object(hc.web_farm, "tap_onekey", return_value=True), \
+         patch.object(hc.web_farm, "fert_dialog_open", return_value=True), \
+         patch.object(hc.web_farm, "select_fertilizer_by_name", return_value=True), \
+         patch.object(hc.web_farm, "tap_fert_confirm", return_value=True):
+        assert hc._fertilize_until_mature_web(d, page, cap=2) is True
+
+
+def test_h5_view_button_prefers_javascript_listener():
+    """btnUse 有 listener 時直接 emit，不再送滑鼠座標點擊。"""
+    page = MagicMock()
+    page.evaluate.return_value = {"clicked": True, "name": "btnUse"}
+    with patch.object(hc.web_farm.time, "sleep"):
+        assert hc.web_farm.tap_seed_confirm(page) is True
+    page.mouse.click.assert_not_called()
+
+
+def test_h5_harvest_requires_fetch_not_only_pick():
+    """采摘不會消耗 buff；15 秒內沒有領取就必須回報失敗。"""
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    fake_clock = MagicMock()
+    fake_clock.time.side_effect = [0.0, 16.0]
+    with patch.object(hc, "time", fake_clock), \
+         patch.object(hc.web_farm, "tap_onekey", side_effect=[True, False]), \
+         patch.object(hc.web_farm, "onekey_active", return_value=False), \
+         patch("tools.click_white"):
+        assert hc._harvest_crops(d) is False
