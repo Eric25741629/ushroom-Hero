@@ -45,6 +45,7 @@ def normalize_task_payload(value: Any) -> dict[str, Any]:
         payload = {str(k): v for k, v in safe.items()}
         outcome = str(payload.get("outcome", "")).upper()
         if outcome in _KNOWN_OUTCOMES:
+            payload["outcome"] = outcome
             return payload
 
         status = str(payload.get("status", "")).lower()
