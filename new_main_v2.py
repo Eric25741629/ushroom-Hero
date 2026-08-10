@@ -263,6 +263,10 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
             if not special_wanshen_claimed:
                 device_logger.info(f"[{ip}] 萬神一次性排程目前不需執行，結束執行緒")
                 return
+            if special_wanshen.uses_pure_ws(cfg):
+                device_logger.info(f"[{ip}] 萬神一次性排程使用 pure WS，跳過 H5/runtime 初始化")
+                special_wanshen.run_claimed_pure_ws(ip, cfg=cfg)
+                return
 
         _handle_startup_sleep(ip, device_logger)
 

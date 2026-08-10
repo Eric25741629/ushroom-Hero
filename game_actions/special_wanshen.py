@@ -183,6 +183,51 @@ def claim_if_due(
     return True
 
 
+def uses_pure_ws(cfg: Any) -> bool:
+    """萬神專用模式是否可完全跳過 H5 初始化。"""
+    try:
+        from battle_calc.config import coerce_wanshen_battle_mode
+
+        mode = coerce_wanshen_battle_mode(
+            cfg.get("wanshen_battle_mode", "pure_ws"), default="pure_ws"
+        )
+    except Exception:
+        mode = "pure_ws"
+    return mode == "pure_ws"
+
+
+def run_claimed_pure_ws(
+    ip: str,
+    *,
+    cfg: Any = None,
+    now: Optional[datetime.datetime] = None,
+    manager: Any = None,
+) -> dict:
+    """直接執行已 claim 的 pure WS 萬神，不建立一般 H5 runtime。"""
+    cfg = cfg or config_manager.get_device_config(ip)
+
+    def _fight(_device: Any, rounds: int) -> bool:
+        from battle.weekly_trials import _run_pure_ws_wanshen
+
+        report = _run_pure_ws_wanshen(
+            None,
+            ip,
+            rounds,
+            cfg,
+            until_cap=bool(cfg.get("wanshen_until_cap", True)),
+        )
+        return bool(report is not None and report.success)
+
+    return run_claimed(
+        None,
+        ip,
+        cfg=cfg,
+        now=now,
+        manager=manager,
+        fight_fn=_fight,
+    )
+
+
 def run_claimed(
     d: Any,
     ip: str,

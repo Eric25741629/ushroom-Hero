@@ -241,7 +241,8 @@ def _base_main_namespace(calls, cfg):
         "setup_logger_for_device": lambda ip: logging.getLogger("test-main"),
         "set_thread_logger": lambda logger_obj: None,
         "special_wanshen": SimpleNamespace(
-            claim_if_due=lambda ip, cfg=None: calls.append("claim") or True
+            claim_if_due=lambda ip, cfg=None: calls.append("claim") or True,
+            uses_pure_ws=lambda cfg: False,
         ),
         "_handle_startup_sleep": lambda ip, logger_obj: None,
         "connect_u2_with_retries": lambda *a, **k: None,
@@ -251,6 +252,26 @@ def _base_main_namespace(calls, cfg):
         "stop_runtime_device_for_sleep": lambda *a, **k: calls.append("stop"),
         "ForceSleepRequested": _StubForceSleep,
     }
+
+
+def test_one_shot_pure_ws_runs_before_runtime_init():
+    calls = []
+    cfg = _one_shot_cfg("web_h5") | {"wanshen_battle_mode": "pure_ws"}
+    namespace = _base_main_namespace(calls, cfg)
+    namespace["special_wanshen"] = SimpleNamespace(
+        claim_if_due=lambda ip, cfg=None: calls.append("claim") or True,
+        uses_pure_ws=lambda cfg: True,
+        run_claimed_pure_ws=lambda ip, cfg=None: calls.append(("pure_ws", ip)),
+    )
+    namespace["initialize_runtime_device"] = (
+        lambda *args, **kwargs: calls.append("init")
+    )
+
+    result = _load_main_function(namespace)("web-001", None, None, None, None)
+
+    assert result is None
+    assert calls.index("claim") < calls.index(("pure_ws", "web-001"))
+    assert "init" not in calls
 
 
 def test_one_shot_force_sleep_during_init_exits_and_clears_browser_flag():

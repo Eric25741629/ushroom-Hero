@@ -1,5 +1,7 @@
 import json
 import datetime
+import sys
+from types import SimpleNamespace
 
 import config_manager
 import pytest
@@ -219,3 +221,32 @@ def test_claim_records_attempt_before_browser_start_and_rejects_second_claim():
     assert special_wanshen.claim_if_due(
         "web-001", cfg=cfg, now=now, manager=manager
     ) is False
+
+
+def test_run_claimed_pure_ws_uses_device_id_without_h5(monkeypatch):
+    now = datetime.datetime(2026, 7, 10, 3, 0, tzinfo=TAIPEI)
+    manager = FakeManager(now)
+    cfg = {
+        "special_wanshen_account": True,
+        "special_wanshen_enabled": True,
+        "special_wanshen_rounds": 10,
+        "wanshen_battle_mode": "pure_ws",
+        "wanshen_until_cap": True,
+    }
+    calls = []
+
+    weekly_trials = SimpleNamespace(
+        _run_pure_ws_wanshen=lambda d, ip, rounds, passed_cfg, *, until_cap: calls.append(
+            (d, ip, rounds, passed_cfg, until_cap)
+        ) or SimpleNamespace(success=True)
+    )
+    monkeypatch.setitem(sys.modules, "battle", SimpleNamespace(weekly_trials=weekly_trials))
+    monkeypatch.setitem(sys.modules, "battle.weekly_trials", weekly_trials)
+
+    result = special_wanshen.run_claimed_pure_ws(
+        "web-001", cfg=cfg, now=now, manager=manager
+    )
+
+    assert calls == [(None, "web-001", 10, cfg, True)]
+    assert manager.recorded == [special_wanshen.COMPLETE_RECORD]
+    assert result["completed_this_week"] is True
