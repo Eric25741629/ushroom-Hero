@@ -100,6 +100,7 @@ def run_ws_fallback_wait_round(
     *,
     run_ws_phase_fn: Callable[[str, object], object],
     enable_dungeon_manager: bool,
+    run_offline_tasks_fn: Callable[[str, object], object] | None = None,
 ) -> None:
     """Run one offline WS round: status update -> WS phase -> aligned sleep.
 
@@ -122,6 +123,12 @@ def run_ws_fallback_wait_round(
             # WS 失敗繼續本輪休眠，否則控制訊號會遺失。
             raise
         logger_obj.warning(f"[{ip}] WS 備援階段未預期錯誤（忽略，照常排程休眠）: {exc}")
+
+    if run_offline_tasks_fn is not None:
+        try:
+            run_offline_tasks_fn(ip, logger_obj)
+        except Exception as exc:
+            logger_obj.warning(f"[{ip}] 離線 WS 排程任務失敗（忽略，照常休眠）: {exc}")
 
     try:
         _load_run_sleep_cycle()(

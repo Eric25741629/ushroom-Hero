@@ -151,6 +151,23 @@ def test_round_runs_ws_then_sleeps(monkeypatch):
     assert sleep_entry[1].get("enable_dungeon_manager") is False
 
 
+def test_round_runs_offline_tasks_between_ws_and_sleep(monkeypatch):
+    svc = _import_service()
+    order = []
+    monkeypatch.setattr(svc.bot_state, "update_state", lambda *a, **k: order.append("state"))
+    monkeypatch.setattr(
+        svc, "_load_run_sleep_cycle",
+        lambda: (lambda ip, lg, **k: order.append("sleep")),
+    )
+    svc.run_ws_fallback_wait_round(
+        "phone", _NullLogger(),
+        run_ws_phase_fn=lambda ip, lg: order.append("ws"),
+        run_offline_tasks_fn=lambda ip, lg: order.append("offline"),
+        enable_dungeon_manager=False,
+    )
+    assert order.index("ws") < order.index("offline") < order.index("sleep")
+
+
 def test_round_sleeps_even_when_ws_phase_raises(monkeypatch):
     svc = _import_service()
     slept = []
