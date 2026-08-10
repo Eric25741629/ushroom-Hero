@@ -292,6 +292,39 @@ def test_daily_context_can_be_instantiated(pipeline_mod):
     assert hasattr(ctx, "clf")
 
 
+def test_sea_v2_aborted_report_is_failure_and_not_recorded(monkeypatch, pipeline_mod):
+    """Sea V2 aborts must not become a successful periodic completion."""
+    fake_sea_v2 = types.ModuleType("sea_v2")
+    fake_sea_v2.use_sea_v2 = lambda ip, config: True
+    fake_sea_v2.sea = lambda ip, device: SimpleNamespace(
+        aborted_reason="home base not found"
+    )
+    monkeypatch.setitem(sys.modules, "sea_v2", fake_sea_v2)
+    monkeypatch.setattr(pipeline_mod.config_manager, "load_config", lambda: {})
+
+    from game_actions import periodic_tasks
+
+    records: list[str] = []
+    monkeypatch.setattr(
+        periodic_tasks,
+        "time_recording",
+        lambda ip, name: records.append(name),
+    )
+    result = periodic_tasks._run_periodic_cycle(
+        "emulator-5554",
+        "sea_last_execution",
+        lambda _ip: (True, False),
+        lambda **kwargs: pipeline_mod._sea_dispatch(
+            "emulator-5554", kwargs["d"]
+        ),
+        "sea",
+        SimpleNamespace(_page=object()),
+    )
+
+    assert result is False
+    assert records == []
+
+
 def test_wanshen_mode_requires_main_page_then_runs_claimed(monkeypatch, pipeline_mod):
     ctx = _build_ctx(pipeline_mod, "web-001")
     ctx.special_wanshen_claimed = True

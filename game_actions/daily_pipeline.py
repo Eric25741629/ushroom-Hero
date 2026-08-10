@@ -87,7 +87,12 @@ def _sea_dispatch(ip, d, **kwargs):
     if getattr(d, "_page", None) is not None:
         from sea_v2 import sea as sea_v2_sea, use_sea_v2
         if use_sea_v2(ip, config_manager.load_config()):
-            return sea_v2_sea(ip, d)
+            report = sea_v2_sea(ip, d)
+            aborted_reason = getattr(report, "aborted_reason", None)
+            if aborted_reason:
+                logger.warning("[sea] Sea V2 中止，不寫入完成記錄: %s", aborted_reason)
+                return False
+            return report
     return sea(ip, d)
 
 

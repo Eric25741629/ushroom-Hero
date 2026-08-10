@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from game_actions import periodic_tasks
+from game_actions.task_registry import TaskOutcome, TaskResult
 
 
 def test_periodic_cycle_does_not_record_completion_when_action_fails(monkeypatch):
@@ -51,3 +52,25 @@ def test_periodic_cycle_records_completion_after_action(monkeypatch):
 
     assert result is True
     assert records == ["arena_completed", "arena_daily"]
+
+
+def test_periodic_cycle_reports_schedule_skip_as_task_result(monkeypatch):
+    records: list[str] = []
+    monkeypatch.setattr(
+        periodic_tasks,
+        "time_recording",
+        lambda ip, name: records.append(name),
+    )
+
+    result = periodic_tasks._run_periodic_cycle(
+        "emulator-5554",
+        "arena_completed",
+        lambda _ip: (False, False),
+        lambda **_kwargs: True,
+        "競技活動",
+        object(),
+    )
+
+    assert isinstance(result, TaskResult)
+    assert result.outcome is TaskOutcome.SKIPPED
+    assert records == []

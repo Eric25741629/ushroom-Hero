@@ -101,6 +101,19 @@ def test_daily_acceleration_does_not_record_when_final_home_check_fails(monkeypa
     daily_tasks.navigate_to_main_page.assert_called_once()
 
 
+def test_daily_acceleration_reports_due_skip_as_task_result(monkeypatch):
+    from game_actions import daily_tasks
+    from game_actions.task_registry import TaskOutcome, TaskResult
+
+    monkeypatch.setattr(daily_tasks, "is_due", lambda *a, **k: False)
+    result = daily_tasks.daily_acceleration(
+        MagicMock(), "emulator-5554", Cnn_model=None
+    )
+
+    assert isinstance(result, TaskResult)
+    assert result.outcome is TaskOutcome.SKIPPED
+
+
 # --- B7: 萬神試煉Beta fight_test ------------------------------------------------
 @pytest.fixture(scope="module")
 def weekly_trials_mod():
