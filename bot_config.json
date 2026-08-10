@@ -97,7 +97,10 @@
                             "shop_id": 408,
                             "target": 4
                         }
-                    ]
+                    ],
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
                 },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -349,7 +352,11 @@
                 "lamp_daily_min": 0,
                 "lamp_daily_target": 200,
                 "lamp_weekend_target": 8000,
-                "farm": null,
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "carpark_auto": false,
@@ -572,7 +579,11 @@
                 "lamp_daily_min": 0,
                 "lamp_daily_target": 200,
                 "lamp_weekend_target": 8000,
-                "farm": null,
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "carpark_auto": false,
@@ -738,7 +749,11 @@
                 "lamp_min_keep": 0,
                 "lamp_daily_target": 200,
                 "lamp_weekend_target": 8000,
-                "farm": null,
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "carpark_target": null,
                 "carpark_auto": false,
@@ -1482,7 +1497,11 @@
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
-                "farm": null,
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "hellgate": {
                     "enabled": true,
@@ -1672,7 +1691,11 @@
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
-                "farm": {},
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "hellgate": {
                     "enabled": true,
@@ -1880,7 +1903,11 @@
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
-                "farm": {},
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "hellgate": {
                     "b_mode": "cdp",
@@ -2079,7 +2106,11 @@
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
-                "farm": {},
+                "farm": {
+                    "harvest_card_cycle": {
+                        "enabled": true
+                    }
+                },
                 "dungeon_sweeps": [],
                 "hellgate": {
                     "b_mode": "cdp",

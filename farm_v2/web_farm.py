@@ -53,20 +53,28 @@ _JS_READ_STATE = r"""
       const w = n.worldPosition;
       out.onekey[n.name] = {active: n.activeInHierarchy, wx: w.x, wy: w.y};
     }
-    if (n.name === "SpecialBuff") out.buff_active = n.activeInHierarchy;
+    // 場景裡可能同時殘留 hidden duplicate；只能讓 active 節點把狀態設為 true，
+    // 不能讓後掃到的 hidden 節點覆寫真正仍生效的 buff。
+    if (n.name === "SpecialBuff" && n.activeInHierarchy) out.buff_active = true;
     const par = n.parent ? n.parent.name : "";
-    if (n.name === "num"      && par === "SpecialBuff")       out.buff_num = lblOf(n);
-    if (n.name === "txtCoin"  && par === "btnSeedRare")       out.premium  = lblOf(n);
-    if (n.name === "txtCoin"  && par === "btnSeedBuy")        out.high     = lblOf(n);
-    if (n.name === "txtCoin"  && par === "btnFertilizerBuy")  out.gaochan  = lblOf(n);
-    if (n.name === "txtCoin"  && par === "btnFertilizerGet")  out.putong   = lblOf(n);
+    if (n.name === "num" && par === "SpecialBuff" && n.activeInHierarchy && n.parent.activeInHierarchy)
+      out.buff_num = lblOf(n);
+    if (n.activeInHierarchy && n.name === "txtCoin" && par === "btnSeedRare")
+      out.premium = lblOf(n);
+    if (n.activeInHierarchy && n.name === "txtCoin" && par === "btnSeedBuy")
+      out.high = lblOf(n);
+    if (n.activeInHierarchy && n.name === "txtCoin" && par === "btnFertilizerBuy")
+      out.gaochan = lblOf(n);
+    if (n.activeInHierarchy && n.name === "txtCoin" && par === "btnFertilizerGet")
+      out.putong = lblOf(n);
   }
   return out;
 }
 """
 
-# Find a selectable item inside a dialog by its Label text, climb to the
-# clickable ancestor (btnSeed / btnFertilize…), return its worldPosition.
+# Find a selectable item inside a dialog by Label text. The real click listener
+# is commonly on the descendant itemGrid (not the outer btnFertilizeBuy), so emit
+# on the listener node first and only return a coordinate fallback when needed.
 _JS_LABEL_ITEM = r"""
 (args) => {
   const [viewName, labelText, climbPrefix] = args;
@@ -77,6 +85,24 @@ _JS_LABEL_ITEM = r"""
       (n.children||[]).forEach(c=>st.push(c));} return null;
   })();
   if (!view) return {err: "no " + viewName};
+  const clickable = (n) => {
+    if (!n || !n.activeInHierarchy) return false;
+    const button = n.getComponent ? n.getComponent(cc.Button) : null;
+    const listener = n.hasEventListener ? n.hasEventListener("click") : false;
+    return !!(button || listener);
+  };
+  const findClickable = (root) => {
+    let fallback = null;
+    const q=[root];
+    while(q.length){const n=q.pop(); if(!n)continue;
+      if(clickable(n)){
+        if(n.name==="itemGrid") return n;
+        if(!fallback) fallback=n;
+      }
+      (n.children||[]).forEach(c=>q.push(c));
+    }
+    return fallback;
+  };
   let target = null;
   const st=[view];
   while(st.length){const n=st.pop(); if(!n)continue;
@@ -84,7 +110,14 @@ _JS_LABEL_ITEM = r"""
       const l = n.getComponent(cc.Label);
       if(l && String(l.string).trim()===labelText){
         let p=n; while(p && !(p.name||"").startsWith(climbPrefix)) p=p.parent;
-        if(p && p.worldPosition){const w=p.worldPosition; target={wx:w.x, wy:w.y};}
+        if(p){
+          const clickNode=findClickable(p) || (clickable(p) ? p : null);
+          if(clickNode && clickNode.emit){
+            clickNode.emit("click", clickNode);
+            return {clicked:true, name:clickNode.name};
+          }
+          if(p.worldPosition){const w=p.worldPosition; target={wx:w.x, wy:w.y};}
+        }
       }
     }
     (n.children||[]).forEach(c=>st.push(c));
@@ -93,7 +126,8 @@ _JS_LABEL_ITEM = r"""
 }
 """
 
-# Return worldPosition of a named button inside an active view.
+# Emit a named button inside an active view when it has a real listener/Button;
+# return worldPosition only as the fallback for editor-wired buttons.
 _JS_VIEW_BTN = r"""
 (args) => {
   const [viewName, btnName] = args;
@@ -107,10 +141,18 @@ _JS_VIEW_BTN = r"""
   let target=null;
   const st=[view];
   while(st.length){const n=st.pop(); if(!n)continue;
-    if(n.name===btnName && n.worldPosition){const w=n.worldPosition; target={wx:w.x, wy:w.y}; break;}
+    if(n.name===btnName && n.worldPosition){target=n; break;}
     (n.children||[]).forEach(c=>st.push(c));
   }
-  return target ? target : {err: btnName + " not found in " + viewName};
+  if (!target) return {err: btnName + " not found in " + viewName};
+  const button = target.getComponent ? target.getComponent(cc.Button) : null;
+  const listener = target.hasEventListener ? target.hasEventListener("click") : false;
+  if ((button || listener) && target.emit) {
+    target.emit("click", target);
+    return {clicked:true, name:target.name};
+  }
+  const w=target.worldPosition;
+  return w ? {wx:w.x, wy:w.y} : {err: btnName + " has no position"};
 }
 """
 
@@ -263,6 +305,9 @@ def _select_item_by_label(page: Any, view_name: str, label_text: str, climb_pref
     if not r or r.get("err"):
         logger.warning("select '%s' in %s: %s", label_text, view_name, (r or {}).get("err"))
         return False
+    if r.get("clicked"):
+        time.sleep(SETTLE)
+        return True
     _click_world(page, r["wx"], r["wy"])
     return True
 
@@ -276,6 +321,9 @@ def _tap_view_btn(page: Any, view_name: str, btn_name: str) -> bool:
     if not r or r.get("err"):
         logger.warning("tap %s/%s: %s", view_name, btn_name, (r or {}).get("err"))
         return False
+    if r.get("clicked"):
+        time.sleep(SETTLE)
+        return True
     _click_world(page, r["wx"], r["wy"])
     return True
 

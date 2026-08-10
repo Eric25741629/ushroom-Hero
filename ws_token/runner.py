@@ -632,8 +632,10 @@ def _run_harvest_card(client, *, role_id: int, farm_config: Optional[dict],
 
     num_cards = int(hcc_cfg.get("num_cards", 3))
     fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
+    fert_shop_target = int(hcc_cfg.get("fertilizer_shop_target", 4))
     result = farm.run_harvest_card_cycle(
         client, role_id, num_cards=num_cards, fertilizer_id=fert_id,
+        fertilizer_shop_target=fert_shop_target,
         inventory_tracker=inventory_tracker, device_id=device)
 
     if device and result.get("ok", True):

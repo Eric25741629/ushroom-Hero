@@ -135,20 +135,58 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
 
 
 def _enable_work(d: "uiauto.Device") -> bool:
-    """Open work panel, find and click 開始打工."""
-    click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
-    time.sleep(wait_jitter(TIMING["very_long"]))
+    """Open work panel, start 打工, and verify 取消打工 is the resulting state."""
+    page = _page_of(d)
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        from utils.cocos_ui import CocosUI
+
+        ui = CocosUI(page)
+
+        def _open_panel() -> bool:
+            if web_farm.work_panel_open(page):
+                return True
+            if not ui.click_text("打工", root="PlantMainView"):
+                return False
+            time.sleep(wait_jitter(TIMING["very_long"]))
+            return web_farm.work_panel_open(page)
+
+        def _verify_running() -> bool:
+            if not _open_panel():
+                return False
+            running = web_farm.work_status(page) == "running"
+            web_farm.close_work_panel(page)
+            return running
+
+        if not _open_panel():
+            logger.warning("[harvest_card] H5 找不到打工入口，恢復失敗")
+            return False
+        status = web_farm.work_status(page)
+        if status == "running":
+            web_farm.close_work_panel(page)
+            return True
+        if status == "stopped" and web_farm.click_work_action(page, "start"):
+            time.sleep(wait_jitter(TIMING["long"]))
+            running = _verify_running()
+            logger.info("[harvest_card] H5 JavaScript 恢復打工驗證=%s", running)
+            return running
+        logger.warning("[harvest_card] H5 JavaScript 無法恢復打工，改用 OCR fallback")
+
+    if page is None or not web_farm.work_panel_open(page):
+        click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
+        time.sleep(wait_jitter(TIMING["very_long"]))
 
     found = img_tools.wait_for_any_text(
         d, ["開始打工", "开始打工"],
         timeout=5, click_if_found=True,
     )
     if found:
-        logger.info("[harvest_card] work re-enabled")
+        logger.info("[harvest_card] OCR 已點擊開始打工，等待狀態驗證")
         time.sleep(wait_jitter(TIMING["long"]))
-        # panel auto-closes or show 取消打工, close it
+        if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+            running = _verify_running()
+            logger.info("[harvest_card] H5 OCR 恢復打工驗證=%s", running)
+            return running
         click_with_jitter(d, COORD["close"][0], COORD["close"][1], jitter=5)
-        time.sleep(wait_jitter(TIMING["medium"]))
         return True
 
     cancel_visible = img_tools.wait_for_any_text(
@@ -162,7 +200,7 @@ def _enable_work(d: "uiauto.Device") -> bool:
 
     click_with_jitter(d, COORD["close"][0], COORD["close"][1], jitter=5)
     time.sleep(wait_jitter(TIMING["medium"]))
-    return True
+    return bool(cancel_visible)
 
 
 # ---------------------------------------------------------------------------
@@ -477,6 +515,11 @@ def _plant_premium_seed(d: "uiauto.Device") -> bool:
     page = _page_of(d)
 
     if page is not None:
+        before = web_farm.read_farm_state(page)
+        premium_before = _maybe_count(before.get("premium"))
+        if premium_before is None or premium_before <= 0:
+            logger.error("[harvest_card] 無法確認特級種子庫存，禁止種植")
+            return False
         if not web_farm.tap_onekey(page, "btnOneKeyPlant"):
             logger.warning("[harvest_card] btnOneKeyPlant 不可點（無空地？）")
             return False
@@ -484,13 +527,38 @@ def _plant_premium_seed(d: "uiauto.Device") -> bool:
         if not web_farm.seed_dialog_open(page):
             logger.warning("[harvest_card] SeedSelectView 未開啟")
             return False
-        if not web_farm.select_seed_by_name(page, "特級種子"):
+        selected = web_farm.select_seed_by_name(page, "特級種子")
+        if not selected:
+            logger.warning("[harvest_card] JavaScript 找不到特級種子，改用 OCR fallback")
+            selected = bool(img_tools.click_str_by_server(
+                d, "特級", wait_timeout=3, shift_y=-20,
+            ))
+        if not selected:
             logger.error("[harvest_card] 找不到特級種子，放棄本輪種植（避免種到低階種子）")
-            web_farm.tap_seed_confirm(page)  # close dialog cleanly is not guaranteed; best-effort
+            web_farm.close_seed_select(page)
             return False
         time.sleep(wait_jitter(TIMING["medium"]))
-        web_farm.tap_seed_confirm(page)
+        if not web_farm.tap_seed_confirm(page):
+            logger.error("[harvest_card] 特級種子確認按鈕未成功點擊")
+            return False
         time.sleep(wait_jitter(TIMING["very_long"]))
+
+        planted = False
+        for _ in range(12):
+            after = web_farm.read_farm_state(page)
+            premium_after = _maybe_count(after.get("premium"))
+            grow = after.get("onekey", {}).get("btnOneKeyGrow") or {}
+            if (premium_after is not None and premium_after < premium_before
+                    and grow.get("active") and not web_farm.seed_dialog_open(page)):
+                planted = True
+                break
+            time.sleep(0.5)
+        if not planted:
+            logger.error(
+                "[harvest_card] 特級種子未實際扣除或一鍵施肥未出現（before=%s）",
+                premium_before,
+            )
+            return False
     else:
         # adb fallback: OCR the one-key plant button, OCR-select 特級, confirm coord.
         if not img_tools.click_str_by_server(d, "一鍵種植", wait_timeout=3):
@@ -541,6 +609,16 @@ def _lead_int(s) -> int:
         return int(str(s).split("/")[0])
     except Exception:
         return 0
+
+
+def _maybe_count(value) -> Optional[int]:
+    """解析資源數量；讀不到時回傳 None，避免把 OCR/節點失敗誤當成 0。"""
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip().split("/")[0].replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 def _read_fertilizer_counts_web(page) -> tuple:
@@ -621,13 +699,39 @@ def _fertilize_until_mature_web(d: "uiauto.Device", page, cap: int) -> bool:
         if not web_farm.fert_dialog_open(page):
             logger.warning("[harvest_card] FertilizeSelectView 未開啟")
             return False
-        if not web_farm.select_fertilizer_by_name(page, kind):
+        selected = web_farm.select_fertilizer_by_name(page, kind)
+        if not selected:
+            logger.warning("[harvest_card] JavaScript 選肥料失敗，改用 OCR：%s", kind)
+            selected = bool(img_tools.click_str_by_server(d, kind, wait_timeout=3))
+        if not selected:
             logger.warning(f"[harvest_card] 選肥料失敗：{kind}")
             return False
         time.sleep(wait_jitter(TIMING["medium"]))
-        web_farm.tap_fert_confirm(page)
+        selected_before = putong if kind == PUTONG_FERTILIZER else gaochan
+        if not web_farm.tap_fert_confirm(page):
+            logger.warning("[harvest_card] 肥料確認按鈕未成功點擊：%s", kind)
+            return False
         logger.info(f"[harvest_card] 施肥第 {rnd + 1} 趟，使用 {kind}")
         time.sleep(wait_jitter(TIMING["farm_wait"]))  # 施肥約需 5s 結算
+
+        applied = False
+        for _ in range(12):
+            after = web_farm.read_farm_state(page)
+            current = _maybe_count(
+                after.get("putong" if kind == PUTONG_FERTILIZER else "gaochan")
+            )
+            grow = after.get("onekey", {}).get("btnOneKeyGrow") or {}
+            if ((current is not None and current < selected_before)
+                    or not grow.get("active")):
+                applied = True
+                break
+            time.sleep(0.5)
+        if not applied:
+            logger.warning(
+                "[harvest_card] 肥料未實際扣除且作物仍未成熟：%s before=%s",
+                kind, selected_before,
+            )
+            return False
 
     logger.warning(f"[harvest_card] 施肥達上限 {cap} 趟仍未全熟")
     return not web_farm.onekey_active(page, "btnOneKeyGrow")
@@ -671,7 +775,6 @@ def _harvest_crops(d: "uiauto.Device") -> bool:
     if page is not None:
         picked = web_farm.tap_onekey(page, "btnOneKeyPick")  # 采摘
         if picked:
-            harvested = True
             time.sleep(wait_jitter(TIMING["very_long"]))
         # 領取 collects the picked crops AND consumes the 豐收 buff. It only
         # activates AFTER the 采摘 pickup animation + server round-trip settles,
@@ -686,13 +789,13 @@ def _harvest_crops(d: "uiauto.Device") -> bool:
             fetched_any = False
             while time.time() < deadline:
                 if web_farm.tap_onekey(page, "btnOneKeyFetch"):
-                    harvested = True
                     fetched_any = True
                     time.sleep(wait_jitter(TIMING["very_long"]))
                     continue
                 if fetched_any:
                     break  # 領取 fired and is now gone → nothing left to collect
                 time.sleep(wait_jitter(TIMING["medium"]))  # not active yet — wait
+            harvested = fetched_any
     else:
         for _ in range(6):
             if img_tools.click_str_by_server(d, "采摘", wait_timeout=2):
@@ -731,7 +834,7 @@ def _card_buff_exhausted(d: "uiauto.Device") -> bool:
 # Field-clearing precondition
 # ---------------------------------------------------------------------------
 
-def _ensure_fields_empty(d: "uiauto.Device") -> None:
+def _ensure_fields_empty(d: "uiauto.Device") -> bool:
     """Clear all 6 plots BEFORE buying/activating the harvest card.
 
     Two reasons the field must be empty at this point:
@@ -748,8 +851,27 @@ def _ensure_fields_empty(d: "uiauto.Device") -> None:
     would re-plant the plots we just cleared.
     """
     logger.info("[harvest_card] 清空菜田（如有作物先施肥+收成）後再種特級種子")
-    _fertilize_until_mature(d)
-    _harvest_crops(d)
+    if not _fertilize_until_mature(d):
+        return False
+    page = _page_of(d)
+    if page is not None and web_farm.onekey_active(page, "btnOneKeyGrow"):
+        return False
+    if _harvest_crops(d):
+        # H5 收穫必須包含「領取」；_harvest_crops 已對此 fail-closed。
+        pass
+    if page is not None:
+        st = web_farm.read_farm_state(page)
+        empty = (
+            bool((st.get("onekey", {}).get("btnOneKeyPlant") or {}).get("active"))
+            and not any(
+                bool((st.get("onekey", {}).get(name) or {}).get("active"))
+                for name in ("btnOneKeyGrow", "btnOneKeyPick", "btnOneKeyFetch")
+            )
+        )
+        if not empty:
+            logger.warning("[harvest_card] 清場後仍有未完成地塊")
+        return empty
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -783,7 +905,10 @@ def run_harvest_card(
     # next 30 plants (2x yield); any crops the 打工 worker already planted would
     # consume that quota, so fertilize them to maturity, harvest, and claim to
     # empty all plots before the card is purchased/activated.
-    _ensure_fields_empty(d)
+    if not _ensure_fields_empty(d):
+        logger.error("[harvest_card] 清場未完成，停止買卡")
+        _enable_work(d)
+        return False
 
     # Step 3: navigate to carpark shop and buy harvest card(s)
     _navigate_farm_to_home(d, device_ip)
@@ -803,12 +928,11 @@ def run_harvest_card(
 
     cards_bought = _buy_harvest_card_in_shop(d)
     if cards_bought == 0:
-        logger.error("[harvest_card] failed to buy harvest card")
+        logger.info("[harvest_card] 買不到豐收卡，依規則視為本週已執行")
         _close_carpark_shop(d)
         _navigate_carpark_to_home(d, device_ip)
         _navigate_home_to_farm(d, device_ip, cnn_model)
-        _enable_work(d)
-        return False
+        return _enable_work(d)
 
     _close_carpark_shop(d)
 
@@ -859,7 +983,7 @@ def run_harvest_card(
             break
 
     # Step 6: re-enable work
-    _enable_work(d)
+    restarted = _enable_work(d)
 
     total_crops = completed * CROPS_PER_CYCLE
     logger.info(
@@ -869,4 +993,10 @@ def run_harvest_card(
     # Success = consumed the whole buff early OR ran every cycle with no op
     # failing. Only a real plant/fertilize/harvest failure returns False so the
     # weekly flow retries next wake (and doesn't needlessly re-buy cards).
+    if not restarted:
+        logger.error("[harvest_card] 打工恢復驗證失敗")
+        failed = True
+    if not failed and _page_of(d) is not None and not _card_buff_exhausted(d):
+        logger.error("[harvest_card] 迴圈結束但豐收 buff 仍存在，拒絕宣告完成")
+        failed = True
     return not failed
