@@ -356,7 +356,7 @@
 - `tests/fixtures/miner_production_boards/` 已有真實 board fixtures
 - AGENTS.md 明言不要整包 pytest(重依賴)
 
-**影響**: 
+**影響**:
 - 多數 scripts 是一次性除錯工具,重複性低、職責不清;board fixtures 齊全但似乎主要給 replay 用,planner 行為測試覆蓋可能不足。
 - 新增 regression 測試容易被忽略(沒集中地方)。
 
