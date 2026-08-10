@@ -3,6 +3,7 @@ from json_manager import is_mushroom_arena_week, time_recording, return_time
 from utils.logging_utils import logger
 import img_tools
 from tools import click_white
+from game_actions.task_registry import TaskOutcome, TaskResult
 
 # 武道會週期為 3 週；實際活動週由 json_manager.scheduling 的固定日曆錨點判斷。
 MUSHROOM_ARENA_CYCLE_WEEKS = 3
@@ -44,7 +45,7 @@ def _run_periodic_cycle(ip, record_name, should_execute_fn, action_fn, display_n
             daily_record = return_time(ip, name=daily_limit_name)
             if daily_record and not daily_record.get("is_next_day", False):
                 logger.info(f"[{ip}] {display_name} 今日已執行過，跳過。")
-                return
+                return TaskResult(TaskOutcome.SKIPPED, detail="今日已執行過")
         if need_record and cycle_record_name:
             # cycle_record_name 的語意是週期開始，可以在 action 前記錄。
             time_recording(ip, name=cycle_record_name)
@@ -64,4 +65,4 @@ def _run_periodic_cycle(ip, record_name, should_execute_fn, action_fn, display_n
         return True
     else:
         logger.info(f"[{ip}] {display_name} 被排程跳過（未到週期或已過期）")
-        return False
+        return TaskResult(TaskOutcome.SKIPPED, detail="未到活動週期或已過期")

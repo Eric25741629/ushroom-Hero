@@ -5,6 +5,7 @@ import new_cnn.cnn_model as cnn_model_module
 import img_tools
 from game_actions.navigation import navigate_to_main_page
 from game_actions.task_due import is_due
+from game_actions.task_registry import TaskOutcome, TaskResult
 
 def daily_acceleration(d, ip, Cnn_model=None):
     """
@@ -74,7 +75,7 @@ def daily_acceleration(d, ip, Cnn_model=None):
         return True
     else:
         logger.info("今日已執行過每日加速，跳過")
-        return False
+        return TaskResult(TaskOutcome.SKIPPED, detail="今日已執行過")
 
 
 def click_arena_challenges(d, ip):
