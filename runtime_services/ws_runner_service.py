@@ -419,6 +419,14 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         lamp_daily_min = max(0, int(_ws_nested.get("lamp_daily_min", 0) or 0))
     except (TypeError, ValueError):
         lamp_daily_min = 0
+    try:
+        lamp_daily_target = max(0, int(_ws_nested.get("lamp_daily_target", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_daily_target = 0
+    try:
+        lamp_weekend_target = max(0, int(_ws_nested.get("lamp_weekend_target", 0) or 0))
+    except (TypeError, ValueError):
+        lamp_weekend_target = 0
 
     run_device = _load_run_device()
     # 看廣告獎勵預設關 → 不傳此參數 (run_device 走預設 None)，維持既有 wiring 行為；
@@ -496,6 +504,12 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
         except Exception:  # noqa: BLE001 — 狀態回報失敗不影響任務
             logger_obj.debug(f"[{ip}] ws_token update_state 失敗", exc_info=True)
 
+    lamp_target_kwargs = {}
+    if lamp_daily_target > 0:
+        lamp_target_kwargs["lamp_daily_target"] = lamp_daily_target
+    if lamp_weekend_target > 0:
+        lamp_target_kwargs["lamp_weekend_target"] = lamp_weekend_target
+
     try:
         report = run_device(ip, spend=spend, sweep_list=sweep_list,
                             progress=_progress,
@@ -523,7 +537,8 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                             mining_config=mining_config,
                             sea_config=sea_config,
                             only_tasks=only_tasks,
-                            **extra_kwargs)
+                            **extra_kwargs,
+                            **lamp_target_kwargs)
     except Exception as exc:  # noqa: BLE001 — one bad pass must not kill the thread
         logger_obj.error(f"[{ip}] ws_token run_device 例外: {exc}", exc_info=True)
         bot_state.update_state(ip, task="WS 任務失敗", step=f"run_device 例外: {exc}")

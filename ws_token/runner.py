@@ -1355,8 +1355,10 @@ def _run_couple(client, *, gifts: bool, forge_ring: bool,
 
 def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
               lamp_min_keep: int = 0, lamp_daily_min: int = 0,
+              lamp_daily_target: int = 0, lamp_weekend_target: int = 0,
               initial_count: Optional[int] = None, on_progress=None,
-              should_abort: Optional[Callable[[], bool]] = None) -> dict:
+              should_abort: Optional[Callable[[], bool]] = None,
+              today: Optional[object] = None) -> dict:
     """開神燈: sequentially open up to 10000 boxes and auto-equip/sell drops.
 
     Only reached when ``open_lamp=True`` (gated by run_device); it consumes 神燈
@@ -1376,8 +1378,12 @@ def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
     from json_manager import check_json, record_json
 
     opened_today = 0
-    today_str = _dt.date.today().strftime("%Y-%m-%d")
-    if lamp_daily_min > 0 and ip:
+    current_date = today or _dt.date.today()
+    today_str = current_date.strftime("%Y-%m-%d")
+    effective_target = lamp_daily_target
+    if current_date.weekday() >= 5 and lamp_weekend_target > 0:
+        effective_target = lamp_weekend_target
+    if (lamp_daily_min > 0 or effective_target > 0) and ip:
         rec = check_json(ip, "ws_lamp_daily_opened")
         if rec and isinstance(rec, dict) and rec.get("date") == today_str:
             opened_today = max(0, int(rec.get("count", 0) or 0))
@@ -1391,6 +1397,7 @@ def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
         lamp_percent=lamp_percent,
         lamp_min_keep=lamp_min_keep,
         lamp_daily_min=lamp_daily_min,
+        lamp_daily_target=effective_target,
         opened_today=opened_today,
         initial_count=initial_count,
         on_progress=on_progress,
@@ -1398,7 +1405,7 @@ def _run_lamp(client, *, ip: str = "", lamp_percent: float = 0.0,
         device_id=ip or None,
     )
 
-    if lamp_daily_min > 0 and ip and result.get("opened", 0) > 0:
+    if (lamp_daily_min > 0 or effective_target > 0) and ip and result.get("opened", 0) > 0:
         record_json(ip, "ws_lamp_daily_opened", {
             "date": today_str,
             "count": opened_today + result["opened"],
@@ -1717,6 +1724,8 @@ def run_device(device: str, *, spend: bool = False,
                lamp_percent: float = 0.0,
                lamp_min_keep: int = 0,
                lamp_daily_min: int = 0,
+               lamp_daily_target: int = 0,
+               lamp_weekend_target: int = 0,
                farm_config: Optional[dict] = None,
                dungeon_sweeps: Optional[Iterable[Sequence[int]]] = None,
                carpark_target: Optional[int] = None,
@@ -2122,6 +2131,8 @@ def run_device(device: str, *, spend: bool = False,
                                     lamp_percent=lamp_percent,
                                     lamp_min_keep=lamp_min_keep,
                                     lamp_daily_min=lamp_daily_min,
+                                    lamp_daily_target=lamp_daily_target,
+                                    lamp_weekend_target=lamp_weekend_target,
                                     initial_count=lamp_count_holder["count"],
                                     on_progress=_lamp_progress,
                                     should_abort=should_abort))

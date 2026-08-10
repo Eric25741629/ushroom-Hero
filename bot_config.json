@@ -84,7 +84,9 @@
                 "open_lamp": true,
                 "lamp_percent": 1.0,
                 "lamp_min_keep": 500000,
-                "lamp_daily_min": 4000,
+                "lamp_daily_min": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "farm": {
                     "buy": [
                         {
@@ -344,7 +346,9 @@
                 "open_lamp": true,
                 "lamp_percent": 1.0,
                 "lamp_min_keep": 100000,
-                "lamp_daily_min": 4000,
+                "lamp_daily_min": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -566,6 +570,8 @@
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -730,6 +736,8 @@
                 "open_lamp": true,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "farm": null,
                 "dungeon_sweeps": [],
                 "carpark_target": null,
@@ -965,7 +973,9 @@
                 "open_lamp": true,
                 "lamp_percent": 1.0,
                 "lamp_min_keep": 500000,
-                "lamp_daily_min": 8000,
+                "lamp_daily_min": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "kungfu_worship": true,
                 "farm": {
                     "harvest_card_cycle": {
@@ -1204,7 +1214,9 @@
                 "open_lamp": true,
                 "lamp_percent": 1.0,
                 "lamp_min_keep": 500000,
-                "lamp_daily_min": 4000,
+                "lamp_daily_min": 0,
+                "lamp_daily_target": 200,
+                "lamp_weekend_target": 8000,
                 "kungfu_worship": true,
                 "farm": {
                     "buy": [

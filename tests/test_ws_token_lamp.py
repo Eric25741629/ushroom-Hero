@@ -170,10 +170,10 @@ def test_decide_v2_unmapped_unwanted_sells():
     assert d.action == "sell"
 
 
-def test_decide_v2_unmapped_not_unwanted_leaves():
-    # 技回: not in this account's sets (SET_MAP) and not in the unwanted list -> leave
+def test_decide_v2_unmapped_not_unwanted_sells_as_unknown():
+    # 技回不屬於帳號套裝，未知結果直接賣出，不再保留。
     d = lamp.decide_v2(_drop(11, 1, {A_K: 300, A_H: 300}), SET_MAP, {}, LIAN, CFG, PARSER)
-    assert d.action == "leave"
+    assert d.action == "sell" and "unknown" in d.reason
 
 
 def test_decide_v2_win_equips_and_marks_displaced():
