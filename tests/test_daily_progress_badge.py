@@ -276,7 +276,7 @@ def test_seven_login_badge_visible_without_record():
     assert res["七日登入"] is False
 
 
-# ── 競技場：固定每日徽章，今天打過即 ✅，沒打過 ⏳；進行中顯示「已打 n/3」 ──
+# ── 競技場：每日目標可依裝置設定，預設 9 場 ──
 def _stub_arena_fought(monkeypatch, eids, date="2026-06-22"):
     """替換 ws_token.state.load_state，讓競技場進度讀側確定性。"""
     import ws_token.state
@@ -306,11 +306,30 @@ def test_arena_badge_visible_without_record():
 
 
 def test_arena_badge_in_progress_shows_fought_count(monkeypatch):
-    """今天打了 2 場（ws_state arena_fought 2 個 eid）→ 未完成但顯示「已打 2/3」。"""
+    """今天打了 2 場（ws_state arena_fought 2 個 eid）→ 未完成但顯示「已打 2/9」。"""
     _stub_arena_fought(monkeypatch, [101, 202])
     mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
     res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["競技場"] == {"done": False, "detail": "已打 2/9"}
+
+
+def test_arena_badge_uses_device_target_override(monkeypatch):
+    _stub_arena_fought(monkeypatch, [101, 202])
+    monkeypatch.setattr(
+        routes_status.config_manager,
+        "get_device_config_dict",
+        lambda _device: {"arena_daily_fights": 3},
+    )
+    mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
     assert res["競技場"] == {"done": False, "detail": "已打 2/3"}
+
+
+def test_arena_badge_is_done_when_fought_count_reaches_target(monkeypatch):
+    _stub_arena_fought(monkeypatch, list(range(13)))
+    mgr = _FakeManager({}, now=datetime.datetime(2026, 6, 22, 12, tzinfo=_TZ))
+    res = routes_status._compute_daily_progress(mgr, "dev", today=_SEA_WEEK_DAY)
+    assert res["競技場"] == {"done": True, "detail": "已打 13/9"}
 
 
 def test_arena_badge_ignores_yesterday_fought(monkeypatch):

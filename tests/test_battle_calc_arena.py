@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from battle_calc.config import (
+    coerce_arena_daily_fights,
     coerce_arena_gap_sec,
     coerce_battle_mode,
     coerce_wanshen_battle_mode,
@@ -31,6 +32,14 @@ def test_arena_gap_min_7():
     assert coerce_arena_gap_sec(7) == 7.0
     assert coerce_arena_gap_sec(10) == 10.0
     assert coerce_arena_gap_sec("bad") == 7.0
+
+
+def test_arena_daily_fights_defaults_to_nine_and_clamps():
+    assert coerce_arena_daily_fights(None) == 9
+    assert coerce_arena_daily_fights("bad") == 9
+    assert coerce_arena_daily_fights(3) == 3
+    assert coerce_arena_daily_fights(0) == 1
+    assert coerce_arena_daily_fights(99) == 10
 
 
 def test_build_sim_request_arena():

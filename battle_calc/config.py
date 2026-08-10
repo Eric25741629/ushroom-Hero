@@ -7,6 +7,8 @@ ARENA_MODES = ("animation", "local_sim", "remote_calc", "pure_ws")
 WANSHEN_MODES = ("animation", "local_sim", "remote_calc", "pure_ws")
 MIN_ARENA_GAP_SEC = 7.0
 DEFAULT_ARENA_GAP_SEC = 7.0
+DEFAULT_ARENA_DAILY_FIGHTS = 9
+MAX_ARENA_DAILY_FIGHTS = 10
 
 _DEFAULT_GLOBAL = {
     "enabled": True,  # pure_ws 預設用免洗 B
@@ -41,6 +43,15 @@ def coerce_arena_gap_sec(raw: Any) -> float:
     if v > 120:
         return 120.0
     return v
+
+
+def coerce_arena_daily_fights(raw: Any) -> int:
+    """競技場每日場次預設 9，允許裝置設定覆寫為 1..10。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = DEFAULT_ARENA_DAILY_FIGHTS
+    return max(1, min(MAX_ARENA_DAILY_FIGHTS, value))
 
 
 def get_battle_calc_global(cfg: Dict[str, Any] | None = None) -> Dict[str, Any]:

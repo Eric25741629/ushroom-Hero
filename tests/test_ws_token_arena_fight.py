@@ -109,6 +109,7 @@ def test_blacklist_add_contains(tmp_path, monkeypatch):
     bl.add(99)
     assert bl.contains(99)
     assert 99 in bl.as_set()
+    assert bl.count() == 1
 
 
 def test_blacklist_persists_and_loads(tmp_path):
@@ -137,6 +138,60 @@ def test_blacklist_skip_persist_without_device(tmp_path):
     bl.add(99)
     assert bl.contains(99)
     assert not (tmp_path / "None.json").exists()
+
+
+# ─── runner 跨輪補打與每日上限 ───
+
+
+def test_runner_arena_only_fights_remaining_to_target(monkeypatch):
+    from ws_token import arena_fight as af
+    from ws_token import runner
+
+    seen = {}
+    monkeypatch.setattr(af, "daily_fight_plan", lambda device, target: (6, 3))
+
+    def fake_run_with_b(_client, **kwargs):
+        seen.update(kwargs)
+        return ArenaFightReport(success=True, fought=3, wins=2)
+
+    monkeypatch.setattr(af, "run_with_b", fake_run_with_b)
+    result = runner._run_arena(
+        object(),
+        arena_config={"enabled": True, "fights": 9, "b_mode": "ephemeral"},
+        device="dev",
+    )
+
+    assert seen["fights"] == 3
+    assert result["success"] is True
+    assert result["fought_today"] == result["target"] == 9
+
+
+def test_runner_arena_reaching_target_skips_b_page(monkeypatch):
+    from ws_token import arena_fight as af
+    from ws_token import runner
+
+    monkeypatch.setattr(af, "daily_fight_plan", lambda device, target: (13, 0))
+    monkeypatch.setattr(
+        af,
+        "run_with_b",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("已達標不應開啟 B 頁")
+        ),
+    )
+
+    result = runner._run_arena(
+        object(),
+        arena_config={"enabled": True, "fights": 9},
+        device="dev",
+    )
+
+    assert result == {
+        "success": True,
+        "fought": 0,
+        "fought_today": 13,
+        "target": 9,
+        "already_done": True,
+    }
 
 
 # ─── fight_once 黑名單 ───────────────────────────────────────────────────────

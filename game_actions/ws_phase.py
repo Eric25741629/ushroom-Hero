@@ -763,6 +763,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
     # 競技場 pure_ws：裝置層 arena_battle_mode → cfg.arena（B 預設 ephemeral 全新瀏覽器）
     try:
         from battle_calc.config import (
+            coerce_arena_daily_fights,
             coerce_arena_gap_sec,
             coerce_battle_mode,
             get_battle_calc_global,
@@ -784,7 +785,9 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
             **cfg,
             "arena": {
                 "enabled": _can,
-                "fights": 3,
+                "fights": coerce_arena_daily_fights(
+                    device_cfg.get("arena_daily_fights", 9)
+                ),
                 "gap_sec": coerce_arena_gap_sec(device_cfg.get("arena_fight_gap_sec", 7)),
                 "b_mode": _b_mode if _b_mode in ("ephemeral", "cdp") else "ephemeral",
                 "cdp_port": _b_port,

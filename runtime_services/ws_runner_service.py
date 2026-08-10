@@ -318,6 +318,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
     arena_config = None
     try:
         from battle_calc.config import (
+            coerce_arena_daily_fights,
             coerce_arena_gap_sec,
             coerce_battle_mode,
             get_battle_calc_global,
@@ -335,7 +336,9 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
             if _b_mode != "cdp" or _b:
                 arena_config = {
                     "enabled": True,
-                    "fights": 3,
+                    "fights": coerce_arena_daily_fights(
+                        cfg.get("arena_daily_fights", 9)
+                    ),
                     "gap_sec": coerce_arena_gap_sec(cfg.get("arena_fight_gap_sec", 7)),
                     "b_mode": _b_mode if _b_mode in ("ephemeral", "cdp") else "ephemeral",
                     "cdp_port": _b,

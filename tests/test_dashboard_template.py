@@ -229,6 +229,13 @@ def test_outer_task_toggles_host_moved_master_switches():
         assert html.count(f'id="{cid}"') == 1, f"duplicate master toggle id={cid}"
 
 
+def test_arena_daily_fights_setting_round_trips():
+    html = _html()
+    assert html.count('id="editArenaDailyFights"') == 1
+    assert "config.arena_daily_fights" in html
+    assert "arena_daily_fights:" in html
+
+
 def test_farm_buy_seed_fertilizer_independent_checkboxes():
     """農場買種子(407)/肥料(408)改成獨立勾選：勾了才顯示數量欄，collect 依勾選寫入。"""
     html = _html()

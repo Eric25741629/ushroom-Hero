@@ -212,6 +212,13 @@ def test_shadow_planner_defaults_off():
     assert DeviceConfig().mining_shadow_planner_version == ""
 
 
+def test_arena_daily_fights_default_is_nine():
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+
+    assert DEFAULT_DEVICE_CONFIG["arena_daily_fights"] == 9
+    assert DeviceConfig().arena_daily_fights == 9
+
+
 def test_device_config_all_defaults_match_default_dict():
     """DeviceConfig defaults must match DEFAULT_DEVICE_CONFIG for the fields it covers."""
     from config_manager import DeviceConfig, DEFAULT_DEVICE_CONFIG
@@ -220,7 +227,8 @@ def test_device_config_all_defaults_match_default_dict():
         "backend", "web_url", "web_canvas_selector", "web_profile_dir",
         "web_state_file", "web_channel", "web_headless", "web_clear_cookies_on_start",
         "web_viewport_width", "web_viewport_height", "web_stop_mode",
-        "web_screenshot_method", "web_reload_after_goto", "enable_farm", "enable_arena", "enable_mining",
+        "web_screenshot_method", "web_reload_after_goto", "arena_daily_fights",
+        "enable_farm", "enable_arena", "enable_mining",
         "enable_dungeon", "is_real_phone", "keep_screen_on", "screenshot_debug",
         "online_check_interval_sec", "lamp_check_interval", "lamp_duration_sec",
         "mining_duration_min", "mining_planner_version", "mining_shadow_planner_version",

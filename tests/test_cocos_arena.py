@@ -93,3 +93,17 @@ def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
     assert make_cocos.call_count == 1
     cocos.finish.assert_not_called()
     assert [call.args[1] for call in click_ocr.call_args_list[-2:]] == ["刷新", "記錄"]
+
+
+def test_pure_ws_arena_already_at_target_does_not_login(monkeypatch):
+    from ws_token import arena_fight
+    from ws_token import creds
+
+    monkeypatch.setattr(arena_fight, "daily_fight_plan", lambda _ip, _n: (9, 0))
+    monkeypatch.setattr(
+        creds,
+        "load_creds",
+        lambda _ip: (_ for _ in ()).throw(AssertionError("已達標不應登入")),
+    )
+
+    assert arena_battle._run_pure_ws_fights("dev", 9, 7, {}) is True
