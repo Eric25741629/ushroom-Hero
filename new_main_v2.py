@@ -52,7 +52,6 @@ import config_manager
 
 import bot_state
 from device_wrapper import MonitoredDevice
-from worker_webhook_api import ensure_worker_webhook_started
 from runtime_services.device_scan_service import (
     refresh_adb_server,
     scan_and_start_devices,
@@ -66,8 +65,6 @@ from runtime_services.device_runtime_service import (
     is_recoverable_connect_error,
     reset_connect_failure,
 )
-from runtime_services.push_server_service import ensure_push_server_started
-from runtime_services.worker_sync_service import ensure_worker_sync_started
 from runtime_services.web_session_service import (
     LOGIN_CONFLICT_SLEEP_SEC,
     handle_pending_web_launch,
@@ -785,29 +782,16 @@ if __name__ == "__main__":
     if hasattr(_signal, "SIGBREAK"):
         _signal.signal(_signal.SIGBREAK, _signal.default_int_handler)
     rotate_existing_logs_once()
-    ensure_push_server_started(base_dir=os.path.dirname(os.path.abspath(__file__)))
-    import control_panel_app
-    import threading
-    # 只有 Master 模式才啟動網頁伺服器
-    if config_manager.get_global_config().get("mode", "master") == "master":
-        server_thread = threading.Thread(target=control_panel_app.run_server, args=(5002,), daemon=True)
-        server_thread.start()
-        # 跨裝置上線互檢：純 WS 背景服務（master-only），用空閒 checker 的 creds 查線，
-        # 裝置永遠不為互檢被叫醒（解 web_h5 每 30s 冷啟重登的重啟迴圈）。
-        from runtime_services.online_check_service import ensure_online_check_service_started
-        ensure_online_check_service_started()
-        try:
-            from ws_token.online_monitor import ensure_started as _start_monitor
-            _start_monitor()
-        except Exception:
-            logger.debug("online_monitor start failed", exc_info=True)
-        # 坐騎追蹤器：hourly 背景掃描（master-only、依 dashboard 開關）。
-        from runtime_services.mount_tracker_service import ensure_mount_tracker_started
-        ensure_mount_tracker_started()
-    else:
-        logger.info("[Info] Worker 模式：不啟動本地網頁伺服器，將回報至 Master。")
-        ensure_worker_webhook_started()
-        ensure_worker_sync_started()
+    from bootstrap.api_services import start_all as start_api_services
+
+    # 背景服務彼此獨立：單一服務啟動失敗只留下 warning/error 與狀態，
+    # 不可讓整個裝置掃描主流程一起中止。
+    _startup_mode = config_manager.get_global_config().get("mode", "master")
+    start_api_services(
+        _startup_mode,
+        os.path.dirname(os.path.abspath(__file__)),
+        dashboard_port=config_manager.get_dashboard_port(),
+    )
     # 分流：限制 torch intra-op 執行緒 + 共用模型推論併發上限，
     # 避免多裝置同時挖礦時 GPU/CPU 擠在一起。皆可由 bot_config global.compute 覆寫。
     from utils.torch_runtime import configure_torch_runtime, set_inference_concurrency

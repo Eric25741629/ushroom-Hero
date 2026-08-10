@@ -202,13 +202,14 @@ def _run_loop() -> None:
         time.sleep(_POLL_SEC)
 
 
-def ensure_online_check_service_started() -> None:
+def ensure_online_check_service_started() -> bool:
     """Start the single background server thread (master-only, idempotent)."""
     global _thread, _started
     with _start_lock:
         if _started and _thread is not None and _thread.is_alive():
-            return
+            return True
         _thread = threading.Thread(
             target=_run_loop, name="online-check-service", daemon=True)
         _thread.start()
         _started = True
+        return True

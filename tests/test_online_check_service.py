@@ -249,8 +249,8 @@ def test_ensure_started_is_idempotent(monkeypatch):
     monkeypatch.setattr(svc, "_thread", None)
     monkeypatch.setattr(svc, "_started", False)
 
-    svc.ensure_online_check_service_started()
-    svc.ensure_online_check_service_started()
+    assert svc.ensure_online_check_service_started() is True
+    assert svc.ensure_online_check_service_started() is True
     assert len(threads) == 1               # second call is a no-op
 
 

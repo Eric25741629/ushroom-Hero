@@ -117,8 +117,8 @@ def test_ensure_started_idempotent(monkeypatch):
     monkeypatch.setattr(mt, "_started", False)
     monkeypatch.setattr(mt.threading, "Thread", FakeThread)
 
-    mt.ensure_mount_tracker_started()
-    mt.ensure_mount_tracker_started()
+    assert mt.ensure_mount_tracker_started() is True
+    assert mt.ensure_mount_tracker_started() is True
 
     assert len(created) == 1                          # 只起一條 thread
 

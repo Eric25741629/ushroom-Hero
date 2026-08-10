@@ -1105,13 +1105,14 @@ def _run_loop() -> None:
         _wake.clear()
 
 
-def ensure_mount_tracker_started() -> None:
+def ensure_mount_tracker_started() -> bool:
     """啟動單一背景 daemon thread（master-only、冪等）。"""
     global _thread, _started
     with _start_lock:
         if _started and _thread is not None and _thread.is_alive():
-            return
+            return True
         _thread = threading.Thread(
             target=_run_loop, name="mount-tracker", daemon=True)
         _thread.start()
         _started = True
+        return True
