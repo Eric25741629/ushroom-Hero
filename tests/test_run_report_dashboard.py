@@ -39,6 +39,25 @@ def test_report_store_publishes_json_safe_task_result():
     report_store.clear()
 
 
+def test_report_store_normalizes_real_task_result_outcome_to_uppercase():
+    from game_actions.task_registry import TaskOutcome, TaskResult
+    from runtime_services import report_store
+
+    result = TaskResult(TaskOutcome.SKIPPED, detail="x")
+    assert report_store.normalize_task_payload(result) == {
+        "outcome": "SKIPPED", "detail": "x"
+    }
+
+    class _Report:
+        tasks = {"lamp": result}
+        errors = {}
+
+    report_store.clear()
+    report_store.publish("enum-device", _Report())
+    assert report_store.get("enum-device")["tasks"]["lamp"]["outcome"] == "SKIPPED"
+    report_store.clear()
+
+
 def test_report_store_normalizes_legacy_skip_error_and_unknown_payloads():
     from runtime_services import report_store
 
