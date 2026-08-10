@@ -50,13 +50,62 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
     no panel, no cross-scene 總覽) so we don't pop the work panel for nothing when
     no worker is active.
     """
-    if not check_if_parttime(d):
-        logger.info("[harvest_card] 未在打工，無需取消")
-        return False
+    page = _page_of(d)
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        # H5 優先讀 Cocos 狀態；OCR 只作 fallback，不能把「找到文字」當成
+        # 取消成功，點擊後一定要重新確認面板已變成「開始打工」。
+        from utils.cocos_ui import CocosUI
 
-    # Open the in-scene work panel (modal on PlantMainView) and cancel.
-    click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
-    time.sleep(wait_jitter(TIMING["very_long"]))
+        ui = CocosUI(page)
+
+        def _open_work_panel() -> bool:
+            if web_farm.work_panel_open(page):
+                return True
+            if not ui.click_text("打工", root="PlantMainView"):
+                return False
+            time.sleep(wait_jitter(TIMING["very_long"]))
+            return web_farm.work_panel_open(page)
+
+        def _verify_stopped() -> bool:
+            # 取消後面板可能自動關閉；重新開啟再看「開始打工」才是真正成功。
+            if not _open_work_panel():
+                return False
+            stopped = web_farm.work_status(page) == "stopped"
+            web_farm.close_work_panel(page)
+            return stopped
+
+        if not _open_work_panel():
+            logger.warning("[harvest_card] H5 找不到打工入口，取消失敗")
+            return False
+
+        status = web_farm.work_status(page)
+        if status == "stopped":
+            web_farm.close_work_panel(page)
+            logger.info("[harvest_card] H5 打工原本未啟動")
+            return True
+        if status == "running" and web_farm.click_work_action(page, "cancel"):
+            time.sleep(wait_jitter(TIMING["long"]))
+            # 遊戲可能出現確認框；保留 OCR 只處理確認框，不負責判斷工作狀態。
+            img_tools.wait_for_any_text(
+                d, ["確認", "確定"], timeout=3, click_if_found=True,
+            )
+            time.sleep(wait_jitter(TIMING["medium"]))
+            stopped = _verify_stopped()
+            logger.info("[harvest_card] H5 Cocos 取消打工驗證=%s", stopped)
+            return stopped
+
+        # JS 找不到節點時才退回既有 OCR 流程。
+        logger.warning("[harvest_card] H5 Cocos 無法取消，改用 OCR fallback")
+
+    if page is None and not check_if_parttime(d):
+        logger.info("[harvest_card] 未在打工，無需取消")
+        return True
+
+    # Open the in-scene work panel (modal on PlantMainView) and cancel. H5 的
+    # JS fallback 到這裡時面板通常已開，不能再點一次入口把它切掉。
+    if page is None or not web_farm.work_panel_open(page):
+        click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
+        time.sleep(wait_jitter(TIMING["very_long"]))
 
     # Step 2: look for 取消打工 inside the panel
     found = img_tools.wait_for_any_text(
@@ -64,7 +113,7 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
         timeout=5, click_if_found=True,
     )
     if found:
-        logger.info("[harvest_card] cancelled active work")
+        logger.info("[harvest_card] OCR 已點擊取消打工，等待狀態驗證")
         time.sleep(wait_jitter(TIMING["long"]))
         # dismiss any confirmation
         img_tools.wait_for_any_text(
@@ -72,6 +121,10 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
             timeout=3, click_if_found=True,
         )
         time.sleep(wait_jitter(TIMING["medium"]))
+        if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+            stopped = _verify_stopped()
+            logger.info("[harvest_card] H5 OCR 取消打工驗證=%s", stopped)
+            return stopped
         return True
 
     logger.info("[harvest_card] work not active, nothing to cancel")
@@ -722,7 +775,9 @@ def run_harvest_card(
     # Step 1: cancel work FIRST. The 打工 worker auto-plants the plots, so it
     # must be off before we clear the field — otherwise it re-fills the plots we
     # just emptied, and its crops would compete for the harvest card's quota.
-    _cancel_work_if_active(d)
+    if not _cancel_work_if_active(d):
+        logger.error("[harvest_card] 打工未成功取消，停止豐收卡流程")
+        return False
 
     # Step 2: clear the field BEFORE buying the card. The card only boosts the
     # next 30 plants (2x yield); any crops the 打工 worker already planted would

@@ -124,6 +124,47 @@ _JS_VIEW_ACTIVE = r"""
 }
 """
 
+_JS_WORK_ACTION = r"""
+(action) => {
+  const sc = cc.director.getScene();
+  let view = null;
+  const st = [sc];
+  while (st.length) {
+    const n = st.pop(); if (!n) continue;
+    if (n.name === "FarmPlantView" && n.activeInHierarchy) { view = n; break; }
+    (n.children || []).forEach(c => st.push(c));
+  }
+  if (!view) return {status: "closed"};
+  let status = null, target = null;
+  const q = [view];
+  while (q.length) {
+    const n = q.pop(); if (!n || !n.activeInHierarchy) continue;
+    const label = n.getComponent ? n.getComponent(cc.Label) : null;
+    const text = label ? String(label.string || "").trim() : "";
+    if (text === "取消打工" || text === "取消工作") {
+      status = "running";
+      if (!target && action === "cancel" && n.worldPosition) target = n;
+    } else if (text === "開始打工" || text === "开始打工" || text === "開始工作") {
+      status = "stopped";
+      if (!target && action === "start" && n.worldPosition) target = n;
+    }
+    (n.children || []).forEach(c => q.push(c));
+  }
+  if (target && action !== "read") {
+    let btn = target;
+    for (let i = 0; i < 8 && btn; i++, btn = btn.parent) {
+      const button = btn.getComponent ? btn.getComponent(cc.Button) : null;
+      const hasClick = btn.hasEventListener ? btn.hasEventListener("click") : false;
+      if (btn.activeInHierarchy && (button || hasClick || String(btn.name || "").startsWith("btn"))) {
+        btn.emit("click", btn);
+        return {status, clicked: true, name: btn.name};
+      }
+    }
+  }
+  return {status: status || "unknown", clicked: false};
+}
+""";
+
 
 # ---------------------------------------------------------------------------
 # Reads
@@ -169,6 +210,26 @@ def _view_active(page: Any, view_name: str) -> bool:
         return bool(page.evaluate(_JS_VIEW_ACTIVE, view_name))
     except Exception as e:  # pragma: no cover
         logger.warning("_view_active(%s) failed: %s", view_name, e)
+        return False
+
+
+def work_status(page: Any, action: str = "read") -> str:
+    """讀取或操作 H5 打工面板；回傳 running/stopped/unknown/closed。"""
+    try:
+        result = page.evaluate(_JS_WORK_ACTION, action) or {}
+        return str(result.get("status") or "unknown")
+    except Exception as e:  # pragma: no cover
+        logger.warning("work_status(%s) failed: %s", action, e)
+        return "unknown"
+
+
+def click_work_action(page: Any, action: str) -> bool:
+    """用 Cocos 節點 emit 點擊取消/開始打工。"""
+    try:
+        result = page.evaluate(_JS_WORK_ACTION, action) or {}
+        return bool(result.get("clicked"))
+    except Exception as e:  # pragma: no cover
+        logger.warning("click_work_action(%s) failed: %s", action, e)
         return False
 
 
