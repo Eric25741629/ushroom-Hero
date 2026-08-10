@@ -373,17 +373,32 @@ def _arena_fought_today(device_id: str, today) -> int:
         return 0
 
 
+def _arena_daily_target(device_id: str) -> int:
+    """讀裝置的競技場每日目標；未設定時使用全局預設 9。"""
+    from battle_calc.config import coerce_arena_daily_fights
+
+    try:
+        cfg = config_manager.get_device_config_dict(device_id)
+    except Exception:  # noqa: BLE001 — 徽章讀取失敗不可影響狀態 API
+        cfg = {}
+    return coerce_arena_daily_fights((cfg or {}).get("arena_daily_fights", 9))
+
+
 def _arena_progress(manager, data, device_id, today) -> object:
     """競技場徽章值：已完成 → ``{"done": True}``；進行中 → ``{"done": False,
-    "detail": "已打 n/3"}``；未打 → ``False``。
+    "detail": "已打 n/target"}``；未打 → ``False``。
 
-    前端支援 dict 值渲染 detail（「已完成」/「已打 n/3」），其餘任務仍是 bool。
+    即使完成紀錄暫未回寫，已打場次達標也應顯示完成，避免 13/9
+    仍被視為未完成。
     """
     if _record_is_today(manager, data, "arena_challenges"):
         return {"done": True, "detail": "已完成"}
     fought = _arena_fought_today(device_id, today)
+    target = _arena_daily_target(device_id)
+    if fought >= target:
+        return {"done": True, "detail": f"已打 {fought}/{target}"}
     if fought > 0:
-        return {"done": False, "detail": f"已打 {fought}/3"}
+        return {"done": False, "detail": f"已打 {fought}/{target}"}
     return False
 
 

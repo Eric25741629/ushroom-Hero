@@ -58,6 +58,7 @@ DEFAULT_DEVICE_CONFIG = {
     # remote_calc=B 免洗頁秒算; pure_ws=純 WS 開戰+B 算+WS 回報
     "arena_battle_mode": "animation",
     "arena_fight_gap_sec": 7,  # 競技場兩場間隔下限（秒，硬下限 7）
+    "arena_daily_fights": 9,  # 競技場每日目標場次，可由單台裝置覆寫
     "wanshen_battle_mode": "pure_ws",  # 萬神關卡預設走純 WS；仍可明確選 animation / local_sim / remote_calc
     "enable_farm": True,  # 啟用農場
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
@@ -244,6 +245,7 @@ class DeviceConfig:
     battle_speed_scale: float = 4  # web_h5 battle timeScale (1=off, official ad path is 2)
     arena_battle_mode: str = "animation"
     arena_fight_gap_sec: float = 7
+    arena_daily_fights: int = 9
     wanshen_battle_mode: str = "pure_ws"
 
     # Feature flags
@@ -1212,6 +1214,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         try:
             from battle_calc.config import (
                 coerce_arena_gap_sec,
+                coerce_arena_daily_fights,
                 coerce_battle_mode,
                 coerce_wanshen_battle_mode,
             )
@@ -1222,6 +1225,9 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             current["arena_fight_gap_sec"] = coerce_arena_gap_sec(
                 current.get("arena_fight_gap_sec", DEFAULT_DEVICE_CONFIG["arena_fight_gap_sec"])
             )
+            current["arena_daily_fights"] = coerce_arena_daily_fights(
+                current.get("arena_daily_fights", DEFAULT_DEVICE_CONFIG["arena_daily_fights"])
+            )
             current["wanshen_battle_mode"] = coerce_wanshen_battle_mode(
                 current.get("wanshen_battle_mode", DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"]),
                 default=DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"],
@@ -1229,6 +1235,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
         except Exception:
             current["arena_battle_mode"] = "animation"
             current["arena_fight_gap_sec"] = 7.0
+            current["arena_daily_fights"] = DEFAULT_DEVICE_CONFIG["arena_daily_fights"]
             current["wanshen_battle_mode"] = DEFAULT_DEVICE_CONFIG["wanshen_battle_mode"]
         current["web_viewport_width"] = _clamp_int(
             current.get("web_viewport_width"), 200, 4096, DEFAULT_DEVICE_CONFIG["web_viewport_width"]

@@ -84,6 +84,7 @@ def click_arena_challenges(d, ip):
 
     路徑由 device config ``arena_battle_mode`` 決定：
     animation / local_sim / remote_calc / pure_ws；兩場間隔 ``arena_fight_gap_sec``（≥7s）。
+    每日目標由 ``arena_daily_fights`` 決定（預設 9，可依裝置覆寫）。
     """
     should_execute = is_due("競技場挑戰", ip)
 

@@ -706,7 +706,7 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None,
     arena_config::
       {
         "enabled": bool,
-        "fights": 3,
+        "fights": 9,
         "gap_sec": 7,
         "b_mode": "ephemeral",   # ephemeral=全新無 profile；cdp=既有 CDP
         "cdp_port": 0,           # b_mode=cdp 時
@@ -717,6 +717,20 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None,
     cfg = arena_config or {}
     if not cfg.get("enabled"):
         return {"skipped": "arena pure_ws disabled"}
+    target = arena_fight.coerce_arena_daily_fights(
+        cfg.get("fights") or arena_fight.DEFAULT_FIGHTS
+    )
+    fought_before, remaining = arena_fight.daily_fight_plan(
+        device or None, target
+    )
+    if remaining == 0:
+        return {
+            "success": True,
+            "fought": 0,
+            "fought_today": fought_before,
+            "target": target,
+            "already_done": True,
+        }
     b_mode = str(cfg.get("b_mode") or "ephemeral").strip().lower()
     prefer_ephemeral = b_mode != "cdp"
     cdp = cfg.get("cdp_port")
@@ -724,7 +738,7 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None,
         return {"skipped": "no B cdp_port", "success": False}
     report = arena_fight.run_with_b(
         client,
-        fights=int(cfg.get("fights") or arena_fight.DEFAULT_FIGHTS),
+        fights=remaining,
         gap_sec=float(cfg.get("gap_sec") or 7),
         should_abort=should_abort,
         prefer_ephemeral=prefer_ephemeral,
@@ -735,6 +749,11 @@ def _run_arena(client, *, arena_config: Optional[dict], should_abort=None,
         device=device or None,
     )
     out = report.as_dict()
+    fought_today = fought_before + report.fought
+    out.update({"fought_today": fought_today, "target": target})
+    if fought_today >= target:
+        out["success"] = True
+        return out
     if not report.success:
         raise RuntimeError(report.error or f"arena pure_ws incomplete fought={report.fought}")
     return out

@@ -272,8 +272,9 @@ def patched_runner(monkeypatch):
                         ladder_reward_enabled=False,
                         seven_login_enabled=False,
                         progress=None,
-                        should_abort=None):
-        calls.append({"ip": ip, "spend": spend, "sweep_list": sweep_list,
+                        should_abort=None,
+                        **extra):
+        call = {"ip": ip, "spend": spend, "sweep_list": sweep_list,
                       "open_lamp": open_lamp, "lamp_percent": lamp_percent,
                       "lamp_min_keep": lamp_min_keep,
                       "lamp_daily_min": lamp_daily_min, "farm_config": farm_config,
@@ -299,7 +300,10 @@ def patched_runner(monkeypatch):
                       "only_tasks": only_tasks,
                       "cloud_ladder_enabled": cloud_ladder_enabled,
                       "ladder_reward_enabled": ladder_reward_enabled,
-                      "seven_login_enabled": seven_login_enabled})
+                      "seven_login_enabled": seven_login_enabled}
+        if "arena_config" in extra:
+            call["arena_config"] = extra["arena_config"]
+        calls.append(call)
         return types.SimpleNamespace(
             device=ip, login_ok=True, spend=spend, tasks={"main_tasks": {}}, errors={}
         )
@@ -352,6 +356,20 @@ def test_run_ws_device_cycle_excludes_5558_weekly_ladder(
     svc.run_ws_device_cycle("emulator-5558", cfg, _NullLogger())
     assert calls[0]["cloud_ladder_enabled"] is False
     assert calls[0]["ladder_reward_enabled"] is False
+
+
+def test_run_ws_device_cycle_passes_configured_arena_daily_fights(patched_runner):
+    svc, calls = patched_runner
+    cfg = config_manager.DeviceConfig.from_dict({
+        "use_ws_runner": True,
+        "enable_arena": True,
+        "arena_battle_mode": "pure_ws",
+        "arena_daily_fights": 3,
+    })
+
+    svc.run_ws_device_cycle("ws-arena", cfg, _NullLogger())
+
+    assert calls[0]["arena_config"]["fights"] == 3
 
 
 def test_run_ws_device_cycle_passes_kungfu_guess(patched_runner):

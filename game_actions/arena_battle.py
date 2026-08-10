@@ -8,7 +8,11 @@ from typing import Any, Optional
 import img_tools
 from utils.logging_utils import logger
 
-from battle_calc.config import coerce_arena_gap_sec, coerce_battle_mode
+from battle_calc.config import (
+    coerce_arena_daily_fights,
+    coerce_arena_gap_sec,
+    coerce_battle_mode,
+)
 from battle_calc.runner import enforce_gap
 
 
@@ -134,13 +138,17 @@ def _run_pure_ws_fights(ip: str, n: int, gap_sec: float, cfg: Optional[dict] = N
         if not prefer_ephemeral and not cdp:
             logger.warning(f"[{ip}] pure_ws b_mode=cdp 但無 CDP port")
             return False
+        fought_before, remaining = af.daily_fight_plan(ip, n)
+        if remaining == 0:
+            logger.info(f"[{ip}] pure_ws arena 今日已達標 {fought_before}/{n}")
+            return True
         creds = load_creds(ip)
         client = WSGameClient(creds)
         client.connect()
         try:
             report = af.run_with_b(
                 client,
-                fights=n,
+                fights=remaining,
                 gap_sec=gap_sec,
                 prefer_ephemeral=prefer_ephemeral,
                 cdp_port=cdp,
@@ -151,9 +159,10 @@ def _run_pure_ws_fights(ip: str, n: int, gap_sec: float, cfg: Optional[dict] = N
             )
             logger.info(
                 f"[{ip}] pure_ws arena success={report.success} fought={report.fought} "
-                f"wins={report.wins} err={report.error}"
+                f"today={fought_before + report.fought}/{n} wins={report.wins} "
+                f"err={report.error}"
             )
-            return bool(report.success)
+            return fought_before + report.fought >= n
         finally:
             try:
                 client.close()
@@ -193,13 +202,13 @@ def _finish_with_ocr(d, ip: str) -> bool:
 
 
 def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
-    """進入競技場並打 3 場（模式由 cfg.arena_battle_mode 決定）。"""
+    """進入競技場並打每日目標場次（預設 9，可依裝置覆寫）。"""
     import config_manager
 
     cfg = cfg or config_manager.get_device_config_dict(ip)
     mode = coerce_battle_mode(cfg.get("arena_battle_mode", "animation"))
     gap = coerce_arena_gap_sec(cfg.get("arena_fight_gap_sec", 7))
-    n = 3
+    n = coerce_arena_daily_fights(cfg.get("arena_daily_fights", 9))
     cocos = None
     cocos_path_active = False
 

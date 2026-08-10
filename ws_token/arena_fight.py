@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Optional
 
 from battle_calc.b_page_sim import simulate_combat_body
-from battle_calc.config import coerce_arena_gap_sec
+from battle_calc.config import (
+    DEFAULT_ARENA_DAILY_FIGHTS,
+    coerce_arena_daily_fights,
+    coerce_arena_gap_sec,
+)
 from battle_calc.runner import enforce_gap
 from ws_token import arena as arena_mod
 from ws_token import state as ws_state
@@ -30,7 +34,7 @@ from ws_token.client import WSGameClient
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FIGHTS = 3
+DEFAULT_FIGHTS = DEFAULT_ARENA_DAILY_FIGHTS
 
 _TPE = datetime.timezone(datetime.timedelta(hours=8))
 
@@ -106,6 +110,18 @@ class DailyFoughtBlacklist:
 
     def as_set(self) -> frozenset[int]:
         return frozenset(self._eids)
+
+    def count(self) -> int:
+        """回傳今日已成功結算的不重複對手數。"""
+        self.reset_if_new_day()
+        return len(self._eids)
+
+
+def daily_fight_plan(device: Optional[str], target: int) -> tuple[int, int]:
+    """回傳（今日已打，本輪待補）；無裝置時視為從 0 開始。"""
+    target = coerce_arena_daily_fights(target)
+    fought = DailyFoughtBlacklist(device).count() if device else 0
+    return fought, max(0, target - fought)
 
 
 @dataclass
@@ -313,12 +329,12 @@ def run_daily_challenges(
     should_abort=None,
     blacklist: Optional[DailyFoughtBlacklist] = None,
 ) -> ArenaFightReport:
-    """連續打 N 場（預設每日 3 場），間隔 ≥ gap_sec。
+    """連續打 N 場（預設每日 9 場），間隔 ≥ gap_sec。
 
     遇到「所有對手都在今日黑名單」時先刷新一次對手列表再重試；刷新後仍
     無可用對手才中止（避免整天反覆打同一人，也避免誤刷浪費次數）。
     """
-    fights = max(1, min(10, int(fights or DEFAULT_FIGHTS)))
+    fights = coerce_arena_daily_fights(fights or DEFAULT_FIGHTS)
     gap_sec = coerce_arena_gap_sec(gap_sec)
     report = ArenaFightReport(success=False)
     last = 0.0

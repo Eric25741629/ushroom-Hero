@@ -976,6 +976,25 @@ def test_ws_skip_mapping_contains_weekly_ladder_tasks():
     assert ws_phase.WS_TO_PIPELINE_SKIPS["kungfu_worship"] == ("菇菇武道會",)
     assert ws_phase.SKIP_TO_DAILY_RECORD["菇菇武道會"] == (
         "mushroom_arena_cycle_start", "mushroom_arena_daily")
+    assert ws_phase.WS_TO_PIPELINE_SKIPS["arena"] == ("競技場挑戰",)
+    assert ws_phase.SKIP_TO_DAILY_RECORD["競技場挑戰"] == (
+        "arena_challenges",
+    )
+
+
+def test_arena_already_done_result_is_substantive_completion():
+    report = types.SimpleNamespace(
+        tasks={
+            "arena": {
+                "success": True,
+                "fought_today": 13,
+                "target": 9,
+                "already_done": True,
+            }
+        }
+    )
+
+    assert ws_phase._substantive_done(report) == {"arena"}
 
 
 def test_run_device_passes_kungfu_guess(monkeypatch):

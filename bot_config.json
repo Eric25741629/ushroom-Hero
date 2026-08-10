@@ -533,6 +533,7 @@
             "web_stop_mode": "close_browser",
             "enable_farm": true,
             "enable_arena": true,
+            "arena_daily_fights": 3,
             "enable_mining": true,
             "enable_dungeon": true,
             "enable_shop_manager": true,

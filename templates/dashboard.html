@@ -1939,6 +1939,10 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             競技場間隔(秒)≥7
             <input type="number" id="editArenaFightGap" min="7" max="120" step="1" value="7" class="form-control" style="width:4.5em;height:auto;padding:2px 6px">
           </label>
+          <label class="checkbox-item" style="display:flex;align-items:center;gap:6px">
+            競技場每日場次
+            <input type="number" id="editArenaDailyFights" min="1" max="10" step="1" value="9" class="form-control" style="width:4.5em;height:auto;padding:2px 6px">
+          </label>
 
           <label class="checkbox-item"><input type="checkbox" id="chkMining">挖礦</label>
 
@@ -4811,6 +4815,11 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             const g = Number(config.arena_fight_gap_sec);
             gapEl.value = (Number.isFinite(g) && g >= 7) ? String(Math.min(120, Math.floor(g))) : '7';
           }
+          const fightsEl = document.getElementById('editArenaDailyFights');
+          if (fightsEl) {
+            const n = Number(config.arena_daily_fights);
+            fightsEl.value = (Number.isFinite(n) && n >= 1) ? String(Math.min(10, Math.floor(n))) : '9';
+          }
         }
 
         document.getElementById('chkMining').checked = config.enable_mining !== false;
@@ -4992,6 +5001,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         enable_arena: document.getElementById('chkArena').checked,
         arena_battle_mode: (document.getElementById('selArenaBattleMode') || {}).value || 'animation',
         arena_fight_gap_sec: Math.max(7, parseInt((document.getElementById('editArenaFightGap') || {}).value || '7', 10) || 7),
+        arena_daily_fights: Math.max(1, Math.min(10, parseInt((document.getElementById('editArenaDailyFights') || {}).value || '9', 10) || 9)),
 
         enable_mining: document.getElementById('chkMining').checked,
 
