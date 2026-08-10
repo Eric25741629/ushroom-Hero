@@ -60,8 +60,10 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
                 )
             if check_str == "跳過":
                 time.sleep(1)
-            elif check_str in ("勝利", "對決"):
-                logger.info(f"[{ip}] 挑戰 {i+1} 完成")
+            elif check_str in ("勝利", "對決", "失敗"):
+                # Cocos 結果窗同樣會顯示「失敗」；它代表本場已結束，
+                # 不應再等待到逾時或退回 OCR。收尾仍由 CDP 關閉彈窗。
+                logger.info(f"[{ip}] 挑戰 {i+1} 完成 (結果={check_str})")
                 break
             if time.time() - start_time > 60:
                 logger.warning(f"[{ip}] 挑戰 {i+1} 逾時，強制結束")
