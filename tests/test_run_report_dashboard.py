@@ -124,6 +124,9 @@ def test_dashboard_renders_report_and_read_only_endpoint():
     assert 'class="run-report-details"' in template
     assert "run-report-summary" in template
     assert "const wasOpen" in template
+    assert "完成 ${counts.completed} 個" in template
+    assert "跳過 ${counts.skipped} 個" in template
+    assert "錯誤 ${counts.error} 個" in template
     assert "UNKNOWN" in template
     assert '@bp.route("/api/task_report/<ip>"' in routes
 

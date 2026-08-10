@@ -3398,6 +3398,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           } else {
             const source = report.source === 'ws' ? 'WS' : 'Client';
             const taskEntries = Object.entries(report.tasks);
+            const counts = { completed: 0, skipped: 0, error: 0, interrupted: 0, unknown: 0 };
             const rows = taskEntries.map(([name, result]) => {
               const obj = (result && typeof result === 'object') ? result : {};
               const outcome = String(obj.outcome || obj.status || (obj.success === false ? 'FAIL' : 'UNKNOWN')).toUpperCase();
@@ -3405,10 +3406,22 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
               const failed = outcome.includes('FAIL') || outcome === 'ERROR' || outcome === 'ERR';
               const cls = (outcome === 'SKIPPED' || outcome === 'INTERRUPTED') ? 'skip' : (failed ? 'fail' : (outcome === 'UNKNOWN' ? 'unknown' : ''));
               const icon = outcome === 'SKIPPED' ? '⏭' : (outcome === 'INTERRUPTED' ? '⏸' : (cls === 'fail' ? '❌' : (cls === 'unknown' ? '❔' : '✅')));
+              if (outcome === 'COMPLETED') counts.completed += 1;
+              else if (outcome === 'SKIPPED') counts.skipped += 1;
+              else if (outcome === 'INTERRUPTED') counts.interrupted += 1;
+              else if (failed) counts.error += 1;
+              else counts.unknown += 1;
               return `<div class="run-report-row"><span class="name" title="${escapeHtml(name)}">${icon} ${escapeHtml(name)}</span><span class="${cls}">${escapeHtml(detail || outcome)}</span></div>`;
             }).join('');
             const flags = report.aborted ? ' · 已中斷' : (report.kicked ? ' · 被踢下線' : '');
-            reportEl.innerHTML = `<details class="run-report-details"><summary class="run-report-title run-report-summary"><span>最近一輪 ${source}${flags}</span><span class="run-report-count">${taskEntries.length} 項</span></summary><div class="run-report-body">${rows}</div></details>`;
+            const summaryParts = [
+              counts.completed ? `完成 ${counts.completed} 個` : '',
+              counts.skipped ? `跳過 ${counts.skipped} 個` : '',
+              counts.error ? `錯誤 ${counts.error} 個` : '',
+              counts.interrupted ? `中斷 ${counts.interrupted} 個` : '',
+              counts.unknown ? `未判定 ${counts.unknown} 個` : '',
+            ].filter(Boolean);
+            reportEl.innerHTML = `<details class="run-report-details"><summary class="run-report-title run-report-summary"><span>最近一輪 ${source}${flags}</span><span class="run-report-count">${summaryParts.map(escapeHtml).join(' · ')}</span></summary><div class="run-report-body">${rows}</div></details>`;
             if (wasOpen) {
               const details = reportEl.querySelector('.run-report-details');
               if (details) details.open = true;
