@@ -82,6 +82,38 @@ def test_report_store_normalizes_legacy_skip_error_and_unknown_payloads():
     report_store.clear()
 
 
+def test_report_store_treats_returned_ws_summaries_as_completed():
+    from runtime_services import report_store
+
+    class _WsReport:
+        tasks = {
+            "empty_success": {},
+            "summary_success": {"claimed": 1, "rewards": {2: 150}},
+            "pay_mall": {"success": False, "error_code": 173},
+            "real_failure": {"success": False, "error_code": 7},
+        }
+        errors = {}
+
+    report_store.clear()
+    report_store.publish("ws-device", _WsReport(), source="ws")
+    tasks = report_store.get("ws-device")["tasks"]
+
+    assert tasks["empty_success"] == {"outcome": "COMPLETED", "detail": "完成"}
+    assert tasks["summary_success"]["outcome"] == "COMPLETED"
+    assert tasks["summary_success"]["raw"] == {
+        "claimed": 1, "rewards": {"2": 150}
+    }
+    assert tasks["pay_mall"] == {
+        "outcome": "SKIPPED",
+        "detail": "already claimed or expired (code=173)",
+        "error_code": 173,
+    }
+    assert tasks["real_failure"] == {
+        "outcome": "PERMANENT_FAILURE", "detail": "執行失敗 (code=7)"
+    }
+    report_store.clear()
+
+
 def test_dashboard_renders_report_and_read_only_endpoint():
     from pathlib import Path
 

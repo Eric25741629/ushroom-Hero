@@ -179,6 +179,17 @@ def test_start_all_master_uses_configured_dashboard_port(api_mod, monkeypatch):
     assert result["control_panel"] is True
 
 
+def test_start_all_reports_push_server_failure(api_mod, monkeypatch):
+    monkeypatch.setattr(
+        api_mod, "ensure_push_server_started", lambda **kwargs: False
+    )
+    monkeypatch.setattr(api_mod, "_start_dashboard", lambda port: True)
+
+    result = api_mod.start_all("master", "/fake/base")
+
+    assert result["push_server"] is False
+
+
 def test_start_all_master_isolates_each_service_failure(api_mod, monkeypatch):
     calls: list[str] = []
 
