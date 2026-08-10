@@ -32,11 +32,12 @@ See: .planning/PROJECT.md
 
 ### Pending Todos
 
-- 4 pending, ordered by priority:
+- 5 pending, ordered by priority:
   1. [P0] Diagnose recurring 5560 WS socket closure
   2. [P0] Route hybrid WS kick to login conflict cooldown
-  3. [P1] Build unauthenticated headless H5 battle calculator
-  4. [P1] Complete web H5 WS credential bootstrap
+  3. [P1] Refactor device runtime orchestrator in layers
+  4. [P1] Build unauthenticated headless H5 battle calculator
+  5. [P1] Complete web H5 WS credential bootstrap
 
 ### Completed Todos
 
