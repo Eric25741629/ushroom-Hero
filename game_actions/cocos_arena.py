@@ -28,7 +28,7 @@ class CocosArena:
     def challenge(self, occurrence: int = 1) -> bool:
         if not self.ui.click_text("挑戰", occurrence=occurrence):
             return False
-        return bool(self.ui.wait_for_text(("跳過", "勝利", "對決"), timeout=12))
+        return bool(self.ui.wait_for_text(("跳過", "勝利", "對決", "失敗"), timeout=12))
 
     def wait_result(self, timeout: float = 60.0) -> Optional[str]:
         result = self.ui.wait_for_text(("勝利", "對決", "失敗", "跳過"), timeout=timeout)
