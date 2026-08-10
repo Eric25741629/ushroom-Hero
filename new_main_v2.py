@@ -163,6 +163,12 @@ def _run_ws_phase_for_wake(ip, logger_obj):
     return result
 
 
+def _run_offline_scheduled_ws_tasks(ip, logger_obj):
+    from game_actions.dungeon_scheduler import run_offline_wanshen_if_due
+
+    return run_offline_wanshen_if_due(ip, logger_obj)
+
+
 def _refresh_h5_ws_credentials(d, ip, logger_obj):
     """H5 已可操作時，被動回寫同一頁面的 WS credentials。"""
     try:
@@ -346,6 +352,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                             device_logger,
                             run_ws_phase_fn=_run_ws_phase_for_wake,
                             enable_dungeon_manager=enable_dungeon_manager,
+                            run_offline_tasks_fn=_run_offline_scheduled_ws_tasks,
                         )
                     except LoginConflictError as conflict:
                         # fallback helper 不能吞掉控制訊號；此時仍未完成 ADB

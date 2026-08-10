@@ -59,6 +59,41 @@ def _wanshen_rounds(ip: str) -> int:
         return 8
 
 
+def run_offline_wanshen_if_due(ip: str, logger_obj=None) -> bool:
+    """手機 ADB 離線時，若萬神到期則直接執行 pure WS。"""
+    log = logger_obj or logger
+    cfg = config_manager.get_device_config(ip)
+    if not bool(cfg.get("enable_wanshen", True)):
+        log.info("[%s] 離線萬神：功能已停用，跳過", ip)
+        return False
+    try:
+        from battle_calc.config import coerce_wanshen_battle_mode
+        mode = coerce_wanshen_battle_mode(
+            cfg.get("wanshen_battle_mode", "pure_ws"), default="pure_ws"
+        )
+    except Exception:
+        mode = "pure_ws"
+    if mode != "pure_ws":
+        log.info("[%s] 離線萬神：模式=%s，跳過（離線只支援 pure_ws）", ip, mode)
+        return False
+    now = datetime.datetime.now()
+    if not _WEEKLY_POLICY.is_due(ip, now):
+        return False
+
+    from battle.weekly_trials import _run_pure_ws_wanshen
+
+    rounds = _wanshen_rounds(ip)
+    until_cap = bool(cfg.get("wanshen_until_cap", True))
+    log.info("[%s] 離線萬神：到期，開始 pure WS（目標 %d 局）", ip, rounds)
+    report = _run_pure_ws_wanshen(None, ip, rounds, cfg, until_cap=until_cap)
+    if report is not None and report.success:
+        _WEEKLY_POLICY.mark_done(ip, time_recording=time_recording)
+        log.info("[%s] 離線萬神：pure WS 完成，已寫入本週紀錄", ip)
+        return True
+    log.warning("[%s] 離線萬神：pure WS 未完成，本週紀錄保留未完成", ip)
+    return False
+
+
 def _run_weekly_dungeon(
     d,
     ip: str,
