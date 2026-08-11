@@ -2029,7 +2029,7 @@
             "use_ws_runner": false,
             "ws_token_spend": true,
             "ws_token_sweep_list": [],
-            "ws_token_open_lamp": false,
+            "ws_token_open_lamp": true,
             "ws_token_kungfu_guess": false,
             "ws_token_mining": {
                 "enabled": true,
@@ -2102,7 +2102,7 @@
                     "persist_every": 10
                 },
                 "spend": true,
-                "open_lamp": false,
+                "open_lamp": true,
                 "lamp_percent": 0.0,
                 "lamp_min_keep": 0,
                 "lamp_daily_min": 0,
