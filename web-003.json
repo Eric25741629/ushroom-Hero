@@ -1,8 +1,8 @@
 {
     "general_lamp_last_execution": {
-        "timestamp": 1786377837.937673,
+        "timestamp": 1786425094.464008,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 00:03:57"
+        "datetime": "2026-08-11 13:11:34"
     },
     "cloud_fighting_weekly": {
         "timestamp": 1786354672.357678,
@@ -10,41 +10,41 @@
         "datetime": "2026-08-10 17:37:52"
     },
     "Store": {
-        "timestamp": 1786392090.303179,
+        "timestamp": 1786424733.138958,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 04:01:30"
+        "datetime": "2026-08-11 13:05:33"
     },
     "donate_family": {
-        "timestamp": 1786392090.295171,
+        "timestamp": 1786424733.130943,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 04:01:30"
+        "datetime": "2026-08-11 13:05:33"
     },
     "挖礦": {
-        "timestamp": 1786392090.313201,
+        "timestamp": 1786429399.321915,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 04:01:30"
+        "datetime": "2026-08-11 14:23:19"
     },
-    "mission_timestamp": 1786392090.3222153,
+    "mission_timestamp": 1786424733.1551685,
     "farm_plant_click": {
-        "timestamp": 1786392090.33026,
+        "timestamp": 1786424733.161691,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 04:01:30",
+        "datetime": "2026-08-11 13:05:33",
         "count": 1
     },
     "地獄之門": {
-        "timestamp": 1786291993.860869,
-        "date": "2026-08-10",
-        "datetime": "2026-08-10 00:13:13"
+        "timestamp": 1786397613.298845,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 05:33:33"
     },
     "farm_seed_purchase": {
-        "timestamp": 1786292673.69077,
-        "date": "2026-08-10",
-        "datetime": "2026-08-10 00:24:33"
+        "timestamp": 1786403889.905584,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 07:18:09"
     },
     "farm_visit": {
-        "timestamp": 1786354761.340404,
-        "date": "2026-08-10",
-        "datetime": "2026-08-10 17:39:21"
+        "timestamp": 1786404142.012141,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 07:22:22"
     },
     "daily_acceleration": {
         "timestamp": 1786377972.586634,
@@ -52,9 +52,9 @@
         "datetime": "2026-08-11 00:06:12"
     },
     "arena_challenges": {
-        "timestamp": 1786378301.059128,
+        "timestamp": 1786424733.121979,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 00:11:41"
+        "datetime": "2026-08-11 13:05:33"
     },
     "dragon_realm_last_run": {
         "timestamp": 1786069673.738038,
@@ -79,13 +79,55 @@
         "datetime": "2026-08-07 00:16:26"
     },
     "七日登入": {
-        "timestamp": 1786392090.339462,
+        "timestamp": 1786429223.267527,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 04:01:30"
+        "datetime": "2026-08-11 14:20:23"
     },
     "衝刺-發條": {
         "timestamp": 1786377899.894266,
         "date": "2026-08-11",
         "datetime": "2026-08-11 00:04:59"
+    },
+    "farm_harvest_card": {
+        "timestamp": 1786404136.045863,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 07:22:16"
+    },
+    "雪國危機": {
+        "count": 1,
+        "check_times": 1,
+        "week": "2026-33",
+        "note": "win",
+        "last_time_utc": "2026-08-11T06:21:55.260739Z",
+        "last_time": "2026-08-11 06:21:55",
+        "last_time_local": "2026-08-11T14:21:55.260739+08:00",
+        "_schema": "utc_v1"
+    },
+    "go_to_family_cooldown": {
+        "timestamp": 1786429318.364195,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 14:21:58"
+    },
+    "guardian_spirit": {
+        "timestamp": 1786429347.082089,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 14:22:27"
+    },
+    "daily_gift_friend": {
+        "timestamp": 1786429434.259698,
+        "date": "2026-08-11",
+        "datetime": "2026-08-11 14:23:54",
+        "status": "completed",
+        "total_count": 1,
+        "success_count": 1,
+        "fail_count": 0
+    },
+    "daily_mail_claim": {
+        "purchased": true,
+        "last_time_utc": "2026-08-11T06:24:05.775614Z",
+        "last_time": "2026-08-11 06:24:05",
+        "last_time_local": "2026-08-11T14:24:05.775614+08:00",
+        "count": 1,
+        "_schema": "utc_v1"
     }
 }
