@@ -1,6 +1,6 @@
 """Unit tests for the carpark_rob route (control_panel.routes_control).
 
-route 只接受小寶 (ip == "7fe98fc6")；驗 pos/queue_type；合法時晚綁定呼叫
+route 只接受已啟用車位手動操作的 web_h5 裝置；驗 pos/queue_type；合法時晚綁定呼叫
 control_panel_app._cdp_json_response。測試用 minimal Flask app 註冊 bp，
 monkeypatch require_device_access 為 no-op，並以 sys.modules 注入 stub
 control_panel_app 以攔截 _cdp_json_response（避免載入真實 dashboard 模組）。
@@ -23,11 +23,34 @@ def client(monkeypatch):
     return app.test_client()
 
 
-def test_rejects_non_xiaobao_device(client):
+def test_rejects_unsupported_device(client):
     resp = client.post(
-        "/api/carpark_rob/emulator-5554", json={"pos": 1, "queue_type": 1}
+        "/api/carpark_rob/emulator-5558", json={"pos": 1, "queue_type": 1}
     )
     assert resp.status_code == 403
+
+
+@pytest.mark.parametrize(
+    "device_id",
+    ["emulator-5554", "emulator-5556", "emulator-5560", "web-003", "web-004"],
+)
+def test_all_enabled_devices_can_join(client, monkeypatch, device_id):
+    calls = []
+
+    def fake_cdp_json_response(ip, expression, **kwargs):
+        calls.append((ip, expression, kwargs))
+        return jsonify({"status": "ok", "reply": {"ok": True}}), 200
+
+    fake_cpa = types.ModuleType("control_panel_app")
+    fake_cpa._cdp_json_response = fake_cdp_json_response
+    monkeypatch.setitem(sys.modules, "control_panel_app", fake_cpa)
+
+    resp = client.post(
+        f"/api/carpark_rob/{device_id}", json={"pos": 3, "queue_type": 1}
+    )
+
+    assert resp.status_code == 200
+    assert calls and calls[0][0] == device_id
 
 
 def test_rejects_missing_pos(client):

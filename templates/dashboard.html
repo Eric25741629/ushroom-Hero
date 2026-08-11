@@ -3589,7 +3589,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
-            ${ip === '7fe98fc6' ? `
+            ${info.carpark_rob_enabled ? `
               <span class="carpark-rob-group" style="display:inline-flex;gap:4px;align-items:center;margin-left:6px;">
                 <input type="number" min="1" id="carparkRobPos-${ip}" placeholder="pos" style="width:56px;">
                 <select id="carparkRobType-${ip}">
@@ -4061,7 +4061,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       }
     }
 
-    // 小寶專用：車位「加入搶佔/駐守」— 讀 pos/queue_type，confirm 後打後端 route
+    // 車位手動「加入搶佔/駐守」— 讀 pos/queue_type，confirm 後打後端 route
     // (POST /api/carpark_rob/<ip>，走 CDP live session 發 server_car_join 12861)。
     async function carparkRob(ip) {
       const posEl = document.getElementById(`carparkRobPos-${ip}`);

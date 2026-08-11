@@ -18,6 +18,7 @@ import config_manager
 import json_manager
 import new_cnn.cnn_model as cnn_model_module
 from control_panel.shared.auth import filter_visible_states, require_device_access
+from control_panel.shared.carpark import carpark_rob_enabled
 from game_actions import special_wanshen
 from game_state.detector import stage_by_str
 from utils import battle_speed
@@ -608,6 +609,7 @@ def get_status():
         info["ws_enabled"] = bool((cfg.get("ws_token") or {}).get("enabled"))
         info["carpark_plan_enabled"] = bool(
             ((cfg.get("ws_token") or {}).get("carpark_plan") or {}).get("enabled"))
+        info["carpark_rob_enabled"] = carpark_rob_enabled(real_ip)
         info["web_stop_mode"] = cfg.get("web_stop_mode", "keep_page")
         info["mining_planner_version"] = cfg.get("mining_planner_version", "v1")
         info["battle_speed_scale"] = battle_speed.coerce_battle_speed_scale(

@@ -7,6 +7,7 @@ from flask import Blueprint, jsonify, request
 import config_manager  # 新增設定管理器
 from adb_operations import run_adb
 from control_panel.shared.auth import require_device_access
+from control_panel.shared.carpark import carpark_rob_enabled
 from control_panel.shared.command_queue import (
     _is_local_command_target,
     queue_command,
@@ -132,8 +133,8 @@ def recover_screen(ip):
 @bp.route("/api/carpark_rob/<ip>", methods=["POST"])
 def carpark_rob(ip):
     require_device_access(ip)
-    if ip != "7fe98fc6":
-        return jsonify({"status": "error", "message": "此功能僅限小寶"}), 403
+    if not carpark_rob_enabled(ip):
+        return jsonify({"status": "error", "message": "此設備未啟用車位搶佔功能"}), 403
     payload = request.get_json(silent=True) or {}
     try:
         pos = int(payload.get("pos"))
