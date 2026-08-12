@@ -190,6 +190,8 @@ DEFAULT_DEVICE_CONFIG = {
             "weekend_only": False, # True=只在週六/日執行（解周任務用，同 ADB weekend_to_buy 行為）
             "target_draws": 8000,  # target 模式目標抽數（技能衝刺）
             "interval_days": 28,   # target 模式同一帳號兩次執行的最短間隔
+            "skill_sprint_weekdays": [1, 2],  # 週二至週三（Python weekday）
+            "skill_sprint_end_hour": 22,  # 週三 22:00 起停止本窗口執行
             "excluded_devices": [],  # target 模式不參與的裝置 ID
             "free_daily": False,  # 每日免費召喚 (0x1602)；遊戲本身已自動處理，不歸 bot 管
         },
@@ -549,6 +551,24 @@ def _sanitize_gacha_config(v: Any, default: dict) -> dict:
                                       default["target_draws"])
     out["interval_days"] = _clamp_int(v.get("interval_days"), 1, 3650,
                                        default["interval_days"])
+    weekdays = v.get("skill_sprint_weekdays")
+    if isinstance(weekdays, (list, tuple)):
+        clean_days = []
+        for value in weekdays:
+            if isinstance(value, bool):
+                continue
+            try:
+                day = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= day <= 6 and day not in clean_days:
+                clean_days.append(day)
+        if clean_days:
+            out["skill_sprint_weekdays"] = sorted(clean_days)
+    out["skill_sprint_end_hour"] = _clamp_int(
+        v.get("skill_sprint_end_hour"), 0, 23,
+        default["skill_sprint_end_hour"],
+    )
     excluded = v.get("excluded_devices")
     if isinstance(excluded, (list, tuple)):
         out["excluded_devices"] = [str(device).strip() for device in excluded

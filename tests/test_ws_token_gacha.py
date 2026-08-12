@@ -236,6 +236,8 @@ def test_config_default_has_gacha_block():
     ws = config_manager.DEFAULT_DEVICE_CONFIG["ws_token"]
     assert ws["gacha"]["enabled"] is False
     assert ws["gacha"]["types"] == [1, 2]
+    assert ws["gacha"]["skill_sprint_weekdays"] == [1, 2]
+    assert ws["gacha"]["skill_sprint_end_hour"] == 22
 
 
 def test_merge_ws_token_sanitizes_gacha():
@@ -249,6 +251,18 @@ def test_merge_ws_token_sanitizes_gacha():
     assert g["mode"] == default["mode"]       # bogus -> default
     assert g["count"] == default["count"]     # 7 not a bundle -> default
     assert g["batches"] == 2000               # clamped to max
+
+
+def test_merge_ws_token_sanitizes_skill_sprint_window():
+    merged = config_manager._merge_ws_token_phase_config({
+        "gacha": {
+            "skill_sprint_weekdays": [2, 9, 2, "bad"],
+            "skill_sprint_end_hour": 99,
+        }
+    })
+    g = merged["gacha"]
+    assert g["skill_sprint_weekdays"] == [2]
+    assert g["skill_sprint_end_hour"] == 23
 
 
 def test_merge_ws_token_keeps_skill_sprint_config():

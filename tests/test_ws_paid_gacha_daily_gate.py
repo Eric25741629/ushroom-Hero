@@ -24,6 +24,8 @@ SKILL_SPRINT_CONFIG = {
     "weekend_only": False,
     "target_draws": 8000,
     "interval_days": 28,
+    "skill_sprint_weekdays": [1, 2],
+    "skill_sprint_end_hour": 22,
 }
 
 
@@ -178,9 +180,89 @@ def test_skill_sprint_uses_server_progress_as_remaining_target(monkeypatch, tmp_
         state_dir=tmp_path, now=datetime.datetime(2026, 8, 12, 10, 0),
     )
 
-    assert [call["target_draws"] for call in calls] == [7790, 1000]
+    assert [call["target_draws"] for call in calls] == [7790]
     assert first["技能"]["drawn"] == 105
-    assert second["技能"]["drawn"] == 105
+    assert second["already_attempted"] is True
+    assert second["window"] == "2026-08-11"
+    assert second["progress"] == 7000
+
+
+def test_skill_sprint_runs_once_between_tuesday_and_wednesday_22(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(
+        runner.skill_sprint,
+        "read_progress",
+        lambda client: {"open": True, "act_type": 270, "draws": 0},
+    )
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda client, tracker, **kwargs: (
+            calls.append(kwargs["draw_type"]) or _report(kwargs["draw_type"])
+        ),
+    )
+
+    first = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 11, 0, 0),
+    )
+    second = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 12, 21, 59),
+    )
+
+    assert calls == [1]
+    assert first["技能"]["drawn"] == 105
+    assert second["already_attempted"] is True
+    assert second["window"] == "2026-08-11"
+
+
+def test_skill_sprint_skips_outside_tuesday_wednesday_window(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("技能衝刺不應在窗口外抽卡")
+        ),
+    )
+
+    for current in (
+        datetime.datetime(2026, 8, 10, 23, 59),  # Monday
+        datetime.datetime(2026, 8, 12, 22, 0),   # Wednesday cutoff
+        datetime.datetime(2026, 8, 13, 9, 0),    # Thursday
+    ):
+        result = runner._run_gacha(
+            object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+            state_dir=tmp_path, now=current,
+        )
+        assert result == {"skipped": "skill_sprint: outside Tue-Wed 22:00 window"}
+
+    assert ws_state.load_state("phone", state_dir=tmp_path) == {}
+
+
+def test_skill_sprint_new_window_resets_local_gate_without_server_precheck(
+    monkeypatch, tmp_path
+):
+    calls = []
+    config = {**SKILL_SPRINT_CONFIG, "check_activity": False}
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda client, tracker, **kwargs: (
+            calls.append(kwargs["draw_type"]) or _report(kwargs["draw_type"])
+        ),
+    )
+
+    runner._run_gacha(
+        object(), object(), gacha_config=config, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 11, 9, 0),
+    )
+    runner._run_gacha(
+        object(), object(), gacha_config=config, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 18, 9, 0),
+    )
+
+    assert calls == [1, 1]
 
 
 def test_skill_sprint_complete_skips_without_spending(monkeypatch, tmp_path):

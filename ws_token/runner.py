@@ -382,6 +382,44 @@ def _run_tycoon(client, *, enabled: bool, max_rolls: int) -> dict:
     return tycoon.auto_play(client, max_rolls=max_rolls)
 
 
+def _skill_sprint_window_key(current, gacha_config: dict) -> Optional[str]:
+    """Return the current Tue-Wed skill-sprint window, or ``None`` outside it.
+
+    Weekdays use Python's convention (Monday=0). The default window is all of
+    Tuesday through Wednesday 21:59:59, using the host's local timezone (the
+    bot hosts are configured for Asia/Taipei). Both days share a Tuesday key so
+    the persistent at-most-once marker covers the whole window.
+    """
+    raw_days = gacha_config.get("skill_sprint_weekdays", (1, 2))
+    days: list[int] = []
+    if isinstance(raw_days, (list, tuple, set)):
+        for value in raw_days:
+            if isinstance(value, bool):
+                continue
+            try:
+                day = int(value)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= day <= 6 and day not in days:
+                days.append(day)
+    days.sort()
+    if not days:
+        days = [1, 2]
+    try:
+        end_hour = int(gacha_config.get("skill_sprint_end_hour", 22))
+    except (TypeError, ValueError):
+        end_hour = 22
+    end_hour = min(23, max(0, end_hour))
+
+    if current.weekday() not in days:
+        return None
+    if current.weekday() == days[-1] and current.hour >= end_hour:
+        return None
+    from datetime import timedelta
+    anchor = current.date() - timedelta(days=current.weekday() - days[0])
+    return anchor.isoformat()
+
+
 def _run_gacha(client, inventory_tracker, *,
                gacha_config: Optional[dict], device: str,
                state_dir=None, now=None) -> dict:
@@ -432,13 +470,17 @@ def _run_gacha(client, inventory_tracker, *,
     if not valid_types:
         return {"skipped": "no valid gacha types"}
 
-    # target 模式就是技能衝刺模式。先讀遊戲端活動計數，避免只依賴本機
+    # target 模式就是技能衝刺模式，只在週二至週三 22:00 前執行一次。
+    # 先讀遊戲端活動計數，避免只依賴本機
     # gacha_paid：例如手動抽過、程序重啟遺失 state，或上次只抽到一半時，
     # 都能以伺服器實際進度決定「已完成」或「還差多少」。查詢失敗時保守
     # 不花券；不讓活動查詢失敗退回盲抽。
     check_activity = bool(gacha_config.get("check_activity", True))
-    if mode == "target" and not check_activity and current.weekday() != 1:
-        return {"skipped": "skill_sprint: Tuesday only"}
+    window_key = None
+    if mode == "target":
+        window_key = _skill_sprint_window_key(current, gacha_config)
+        if window_key is None:
+            return {"skipped": "skill_sprint: outside Tue-Wed 22:00 window"}
     server_progress: Optional[dict] = None
     draw_target = target_draws
     if mode == "target" and check_activity:
@@ -471,6 +513,8 @@ def _run_gacha(client, inventory_tracker, *,
             draw_target,
         )
 
+    server_progress_checked = mode == "target" and server_progress is not None
+
     # 付費抽會在手機 ADB 離線時由 WS 備援每小時重跑，因此必須用持久化
     # at-most-once 閘門。每種類型在送協議前先記 attempted，避免抽完後程序
     # 崩潰／WS 斷線，下一輪又重複扣同一種券。
@@ -501,6 +545,51 @@ def _run_gacha(client, inventory_tracker, *,
             "target_draws": target_draws,
             "interval_days": interval_days,
         }
+    previous_window = paid.get("skill_sprint_window") if isinstance(paid, dict) else None
+    if mode == "target" and window_key and not previous_window:
+        # 舊版尚未寫入 window marker 時，用既有 last_date 還原當週窗口，
+        # 避免程式更新後同一個週二/週三又重抽一次。
+        try:
+            previous_date = _dt.date.fromisoformat(last_date)
+            previous_window = _skill_sprint_window_key(
+                _dt.datetime.combine(previous_date, _dt.time()),
+                gacha_config,
+            )
+        except (TypeError, ValueError):
+            previous_window = None
+    if mode == "target" and window_key == previous_window:
+        logger.info(
+            "[%s] 技能衝刺本窗口已執行，跳過重複抽卡: %s",
+            device,
+            window_key,
+        )
+        result = {
+            "already_attempted": True,
+            "last_date": today,
+            "window": window_key,
+        }
+        if server_progress_checked:
+            result.update({
+                "progress": int(server_progress.get("draws", 0) or 0),
+                "target": target_draws,
+                "act_type": server_progress.get("act_type"),
+                "claimed_rounds": claimed_before,
+            })
+        return result
+
+    new_window = mode == "target" and window_key and window_key != previous_window
+    if new_window:
+        # 即使舊設定關閉活動預檢，也要讓下一個週期重新具備一次抽卡資格；
+        # 預設的伺服器進度預檢則會另外依活動實際進度決定剩餘抽數。
+        paid["last_date"] = today
+        paid["attempted_types"] = []
+        paid["results"] = {}
+        paid["count"] = count
+        paid["batches"] = batches
+        paid["target_draws"] = target_draws
+        paid["interval_days"] = interval_days
+    if mode == "target" and window_key:
+        paid["skill_sprint_window"] = window_key
     attempted = {
         int(value)
         for value in (paid.get("attempted_types") or [])
@@ -509,7 +598,6 @@ def _run_gacha(client, inventory_tracker, *,
     # target 模式的完成判斷以伺服器進度為準。若上次 WS 請求只完成一部分，
     # 即使本機已寫入 attempted，也要允許下一輪補足；fixed 模式仍維持原有
     # at-most-once 保護。
-    server_progress_checked = mode == "target" and server_progress is not None
     if not server_progress_checked and all(draw_type in attempted for draw_type in valid_types):
         logger.info("[%s] WS 抽卡本期已嘗試，跳過重複扣券", device)
         # 這仍算「實質完成」，讓後續 ADB pipeline 繼續跳過 weekend_to_buy。
