@@ -15,6 +15,17 @@ WEEKEND_CONFIG = {
     "weekend_only": True,
 }
 
+SKILL_SPRINT_CONFIG = {
+    "enabled": True,
+    "types": [1],
+    "mode": "target",
+    "count": 35,
+    "batches": 3,
+    "weekend_only": False,
+    "target_draws": 8000,
+    "interval_days": 28,
+}
+
 
 def _report(draw_type):
     return SimpleNamespace(
@@ -108,6 +119,32 @@ def test_paid_gacha_skips_friday_without_writing_gate(monkeypatch, tmp_path):
 
     assert result == {"skipped": "weekend_only: not Sat/Sun"}
     assert ws_state.load_state("phone", state_dir=tmp_path) == {}
+
+
+def test_skill_sprint_mode_change_ignores_old_weekend_gate(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_run(client, tracker, **kwargs):
+        calls.append(kwargs)
+        return _report(kwargs["draw_type"])
+
+    monkeypatch.setattr(runner.gacha, "run_gacha", fake_run)
+
+    # 舊週末抽卡已留下 gacha_paid；切到技能衝刺時必須開新週期，不能被舊紀錄擋掉。
+    runner._run_gacha(
+        object(), object(), gacha_config=WEEKEND_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 8, 9, 0),
+    )
+    result = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 11, 9, 0),
+    )
+
+    assert len(calls) == 3  # 週末技能/同伴兩次 + 週二技能衝刺一次
+    assert calls[-1]["draw_type"] == 1
+    assert calls[-1]["mode"] == "target"
+    assert calls[-1]["target_draws"] == 8000
+    assert result["技能"]["drawn"] == 105
 
 
 def test_paid_gacha_error_is_recorded_and_other_type_continues(
