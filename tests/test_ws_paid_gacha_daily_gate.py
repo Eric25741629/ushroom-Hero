@@ -155,7 +155,7 @@ def test_skill_sprint_mode_change_ignores_old_weekend_gate(monkeypatch, tmp_path
 
 def test_skill_sprint_uses_server_progress_as_remaining_target(monkeypatch, tmp_path):
     calls = []
-    progress = iter((210, 7000))
+    progress = iter((210, 210, 7000, 7000))
 
     monkeypatch.setattr(
         runner.skill_sprint,
@@ -207,6 +207,7 @@ def test_skill_sprint_complete_skips_without_spending(monkeypatch, tmp_path):
         "progress": 8000,
         "target": 8000,
         "act_type": 270,
+        "claimed_rounds": [],
     }
     assert ws_state.load_state("phone", state_dir=tmp_path) == {}
 

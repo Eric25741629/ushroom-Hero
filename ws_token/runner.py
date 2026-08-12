@@ -445,6 +445,7 @@ def _run_gacha(client, inventory_tracker, *,
         server_progress = skill_sprint.read_progress(client)
         if not server_progress.get("open"):
             return {"skipped": "skill_sprint: no active sprint"}
+        claimed_before = skill_sprint.claim_completed_rounds(client, server_progress)
         accrued = int(server_progress.get("draws", 0) or 0)
         if accrued >= target_draws:
             logger.info(
@@ -458,6 +459,7 @@ def _run_gacha(client, inventory_tracker, *,
                 "progress": accrued,
                 "target": target_draws,
                 "act_type": server_progress.get("act_type"),
+                "claimed_rounds": claimed_before,
             }
         draw_target = max(1, target_draws - accrued)
         logger.info(
@@ -558,6 +560,14 @@ def _run_gacha(client, inventory_tracker, *,
         paid.setdefault("results", {})[str(dt)] = result
         state["gacha_paid"] = paid
         ws_state.save_state(device, state, **state_kw)
+
+    if server_progress_checked:
+        # 抽卡後重新讀取一次，四輪逐一檢查；同一輪若在本次抽卡中達標，
+        # 立即領取，下一次喚醒仍會以伺服器狀態做冪等補檢。
+        server_progress_after = skill_sprint.read_progress(client)
+        claimed_after = skill_sprint.claim_completed_rounds(client, server_progress_after)
+        if claimed_after:
+            logger.info("[%s] 技能衝刺抽卡後領取輪次: %s", device, claimed_after)
     return out
 
 
