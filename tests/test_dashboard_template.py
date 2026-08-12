@@ -57,6 +57,14 @@ def test_dashboard_has_device_enable_toggle():
     assert "toggleDeviceEnabled" in html
 
 
+def test_carpark_manual_controls_refresh_when_status_flag_arrives():
+    """車位手動控制旗標變動時，卡片 action bar 必須重建。"""
+    html = _html()
+    assert "function carparkRobAvailable(ip, info)" in html
+    assert "${canCarparkRob ? `" in html
+    assert "${canCarparkRob}-force`" in html
+
+
 def test_special_wanshen_dashboard_controls_exist():
     html = _html()
 
