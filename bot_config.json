@@ -481,15 +481,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
-                    "count": 999,
-                    "batches": 1,
+                    "mode": "target",
+                    "count": 35,
+                    "batches": 3,
                     "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {
@@ -636,15 +637,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
+                    "mode": "target",
                     "count": 35,
                     "batches": 3,
                     "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {
@@ -874,14 +876,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "drain",
-                    "count": 999,
-                    "batches": 1
+                    "mode": "target",
+                    "count": 35,
+                    "batches": 3,
+                    "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28
                 },
                 "ad_rewards": {
                     "enabled": true,
@@ -1113,15 +1117,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
+                    "mode": "target",
                     "count": 35,
                     "batches": 3,
                     "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {
