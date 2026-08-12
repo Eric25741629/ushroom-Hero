@@ -17,7 +17,7 @@ Cmd map::
 
 This module owns the shared brain (ladder + cost + result parse) used by BOTH the
 dashboard (web_h5 page) and this headless ws_token path. The headless ``run_gacha``
-drains/fixed-draws via :class:`WSGameClient`, stepping the bundle ladder and
+drains/fixed/target-draws via :class:`WSGameClient`, stepping the bundle ladder and
 stopping on the server's immediate 0x0201 reject (no timeout-probing).
 """
 from __future__ import annotations
@@ -65,6 +65,22 @@ _MIN_COST = 15
 # Runaway guards for 一鍵抽完.
 _MAX_BUNDLES = 5000          # 5000 × 999 draws is far past any real balance
 _DEFAULT_MAX_TOTAL = 1_000_000
+
+
+def bundle_plan_for_target(target_draws: int) -> tuple[int, ...]:
+    """計算達標且超額最少的抽卡批次組合。"""
+    target = max(1, int(target_draws))
+    best: tuple[int, ...] | None = None
+    for n999 in range(target // 999 + 3):
+        for n35 in range(30):
+            for n15 in range(30):
+                total = n999 * 999 + n35 * 35 + n15 * 15
+                if total < target:
+                    continue
+                plan = (999,) * n999 + (35,) * n35 + (15,) * n15
+                if best is None or (total, len(plan)) < (sum(best), len(best)):
+                    best = plan
+    return best or (15,)
 
 
 def largest_affordable(remaining: int) -> Optional[int]:
@@ -192,6 +208,7 @@ def run_gacha(
     count: int = 999,
     batches: int = 1,
     max_total: int = _DEFAULT_MAX_TOTAL,
+    target_draws: int = 8000,
     timeout: float | None = None,
 ) -> GachaReport:
     """Headless pure-WS gacha.
@@ -202,6 +219,7 @@ def run_gacha(
                       available to skip doomed leading attempts, and corrects against
                       the server's immediate 0x0201 reject.
     mode ``fixed``  : draw ``count`` (15/35/999) × ``batches`` times.
+    mode ``target`` : draw the cheapest-overage bundle plan up to ``target_draws``.
 
     Stops cleanly on 0x0201 (insufficient / invalid) — no timeout-probing.
     """
@@ -215,6 +233,34 @@ def run_gacha(
     total = 0
     bundles = 0
     stopped: str | None = None
+
+    if mode == "target":
+        plan = bundle_plan_for_target(target_draws)
+        ticket_id = TICKET_ITEM.get(draw_type)
+        if (inventory_tracker is not None and ticket_id is not None
+                and inventory_tracker.has_item(ticket_id)):
+            available = int(inventory_tracker.counts.get(ticket_id, 0))
+            required = sum(BUNDLE_COST[cnt] for cnt in plan)
+            if available < required:
+                return GachaReport(
+                    draw_type, name, mode, skipped=True,
+                    stopped_reason=f"insufficient_target_tickets:{available}/{required}",
+                )
+        for cnt in plan:
+            if total >= max_total:
+                stopped = "max_total"
+                break
+            r = draw_once(client, draw_type, cnt, timeout=timeout)
+            if not r.success or r.drawn <= 0:
+                stopped = (f"reject:code={r.error_code}" if r.rejected
+                           else f"empty:cmd=0x{r.response_cmd:04x}")
+                break
+            total += r.drawn
+            bundles += 1
+        logger.info("ws_token gacha[%s] target %s -> drawn=%s (%s)",
+                    name, target_draws, total, stopped or "done")
+        return GachaReport(draw_type, name, mode, total, bundles,
+                           stopped_reason=stopped)
 
     if mode == "fixed":
         if count not in BUNDLE_COST:

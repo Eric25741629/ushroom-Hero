@@ -412,6 +412,16 @@ def _run_gacha(client, inventory_tracker, *,
         batches = int(gacha_config.get("batches", 1))
     except (TypeError, ValueError):
         batches = 1
+    try:
+        target_draws = int(gacha_config.get("target_draws", 8000))
+    except (TypeError, ValueError):
+        target_draws = 8000
+
+    if mode == "target" and current.weekday() != 1:
+        return {"skipped": "skill_sprint: Tuesday only"}
+    excluded_devices = set(gacha_config.get("excluded_devices") or ())
+    if mode == "target" and device in excluded_devices:
+        return {"skipped": "skill_sprint: excluded device"}
 
     valid_types: list[int] = []
     for value in raw_types:
@@ -431,7 +441,19 @@ def _run_gacha(client, inventory_tracker, *,
     state = ws_state.load_state(device, **state_kw)
     today = current.date().isoformat()
     paid = state.get("gacha_paid")
-    if not isinstance(paid, dict) or paid.get("last_date") != today:
+    try:
+        interval_days = max(1, int(gacha_config.get("interval_days", 28)))
+    except (TypeError, ValueError):
+        interval_days = 28
+    last_date = paid.get("last_date") if isinstance(paid, dict) else None
+    try:
+        elapsed_days = (current.date() - _dt.date.fromisoformat(last_date)).days
+    except (TypeError, ValueError):
+        elapsed_days = interval_days
+    mode_changed = isinstance(paid, dict) and paid.get("mode") != mode
+    cycle_days = interval_days if mode == "target" else 1
+    if (not isinstance(paid, dict) or mode_changed
+            or elapsed_days >= cycle_days):
         paid = {
             "last_date": today,
             "attempted_types": [],
@@ -439,6 +461,8 @@ def _run_gacha(client, inventory_tracker, *,
             "mode": mode,
             "count": count,
             "batches": batches,
+            "target_draws": target_draws,
+            "interval_days": interval_days,
         }
     attempted = {
         int(value)
@@ -446,7 +470,7 @@ def _run_gacha(client, inventory_tracker, *,
         if str(value).isdigit()
     }
     if all(draw_type in attempted for draw_type in valid_types):
-        logger.info("[%s] WS 週末抽卡今日已嘗試，跳過重複扣券", device)
+        logger.info("[%s] WS 抽卡本期已嘗試，跳過重複扣券", device)
         # 這仍算「實質完成」，讓後續 ADB pipeline 繼續跳過 weekend_to_buy。
         # 若回傳 skipped，手機由離線恢復 ADB 後可能在同日再付費抽一次。
         return {"already_attempted": True, "last_date": today}
@@ -464,7 +488,7 @@ def _run_gacha(client, inventory_tracker, *,
 
         name = gacha.DRAW_TYPE_NAME.get(dt, str(dt))
         logger.info(
-            "[%s] WS 週末抽卡開始: %s，%s×%s（mode=%s）",
+            "[%s] WS 抽卡開始: %s，%s×%s（mode=%s）",
             device, name, count, batches, mode,
         )
         try:
@@ -476,6 +500,7 @@ def _run_gacha(client, inventory_tracker, *,
                 mode=mode,
                 count=count,
                 batches=batches,
+                target_draws=target_draws,
             )
             result = {
                 "drawn": rep.total_drawn,
@@ -483,13 +508,13 @@ def _run_gacha(client, inventory_tracker, *,
                 "stopped": rep.stopped_reason,
             }
             logger.info(
-                "[%s] WS 週末抽卡完成: %s drawn=%s stopped=%s",
+                "[%s] WS 抽卡完成: %s drawn=%s stopped=%s",
                 device, name, rep.total_drawn, rep.stopped_reason,
             )
         except Exception as exc:  # noqa: BLE001
             # attempted 已先落盤；不在同日自動重試不確定是否已扣券的請求。
             result = {"error": f"{type(exc).__name__}: {exc}"}
-            logger.exception("[%s] WS 週末抽卡失敗: %s（本日不重試）", device, name)
+            logger.exception("[%s] WS 抽卡失敗: %s（本期不重試）", device, name)
         out[name] = result
         paid.setdefault("results", {})[str(dt)] = result
         state["gacha_paid"] = paid

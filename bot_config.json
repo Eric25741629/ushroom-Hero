@@ -1194,6 +1194,7 @@
             "arena_battle_mode": "pure_ws",
             "arena_fight_gap_sec": 7.0,
             "enable_mining": true,
+            "enable_mount_sprint": false,
             "enable_dungeon": true,
             "enable_shop_manager": true,
             "enable_dungeon_manager": true,
@@ -1378,13 +1379,14 @@
                 "gacha": {
                     "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
+                    "mode": "target",
                     "count": 35,
                     "batches": 3,
-                    "weekend_only": true,
+                    "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {
@@ -1857,7 +1859,7 @@
             "enable_harvest_card": true,
             "enable_arena": true,
             "enable_mining": true,
-            "enable_mount_sprint": true,
+            "enable_mount_sprint": false,
             "mount_sprint_quantity": 3200,
             "enable_dungeon": true,
             "enable_hellgate": true,
@@ -1984,15 +1986,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
+                    "mode": "target",
                     "count": 35,
                     "batches": 3,
                     "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {
@@ -2060,7 +2063,7 @@
             "enable_harvest_card": true,
             "enable_arena": true,
             "enable_mining": true,
-            "enable_mount_sprint": true,
+            "enable_mount_sprint": false,
             "mount_sprint_quantity": 3200,
             "enable_dungeon": true,
             "enable_hellgate": true,
@@ -2187,15 +2190,16 @@
                     "max_steps": 200
                 },
                 "gacha": {
-                    "enabled": false,
+                    "enabled": true,
                     "types": [
-                        1,
-                        2
+                        1
                     ],
-                    "mode": "fixed",
+                    "mode": "target",
                     "count": 35,
                     "batches": 3,
                     "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
                     "free_daily": false
                 },
                 "ad_rewards": {

@@ -213,6 +213,23 @@ def test_run_gacha_fixed_stops_on_reject():
     assert rep.stopped_reason and rep.stopped_reason.startswith("reject")
 
 
+def test_run_gacha_target_reaches_target_with_minimal_overage():
+    target = 8000
+    plan = gacha.bundle_plan_for_target(target)
+    client = FakeClient(sum(gacha.BUNDLE_COST[cnt] for cnt in plan))
+    rep = gacha.run_gacha(
+        client,
+        FakeTracker({gacha.TICKET_ITEM[1]: client.budget}),
+        enabled=True,
+        draw_type=1,
+        mode="target",
+        target_draws=target,
+    )
+    assert rep.total_drawn == sum(plan)
+    assert rep.total_drawn >= target
+    assert rep.stopped_reason is None
+
+
 # --- config sanitizer --------------------------------------------------------
 
 def test_config_default_has_gacha_block():
@@ -232,6 +249,23 @@ def test_merge_ws_token_sanitizes_gacha():
     assert g["mode"] == default["mode"]       # bogus -> default
     assert g["count"] == default["count"]     # 7 not a bundle -> default
     assert g["batches"] == 2000               # clamped to max
+
+
+def test_merge_ws_token_keeps_skill_sprint_config():
+    merged = config_manager._merge_ws_token_phase_config({
+        "gacha": {
+            "enabled": True,
+            "types": [1],
+            "mode": "target",
+            "target_draws": 8000,
+            "interval_days": 28,
+        }
+    })
+    g = merged["gacha"]
+    assert g["types"] == [1]
+    assert g["mode"] == "target"
+    assert g["target_draws"] == 8000
+    assert g["interval_days"] == 28
 
 
 def test_merge_ws_token_gacha_defaults_when_absent():

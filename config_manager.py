@@ -184,10 +184,13 @@ DEFAULT_DEVICE_CONFIG = {
         "gacha": {              # WS 抽卡；預設關
             "enabled": False,   # 付費抽（消耗抽卡券 1012/1013）
             "types": [1, 2],    # 1=技能, 2=同伴
-            "mode": "fixed",    # drain=抽到券盡 | fixed=每批 count×batches
+            "mode": "fixed",    # drain=抽到券盡 | fixed=固定批次 | target=技能衝刺
             "count": 35,        # fixed 模式每批抽數 (15/35/999)；週末 35×3 = 105 抽
             "batches": 3,       # fixed 模式批數
             "weekend_only": False, # True=只在週六/日執行（解周任務用，同 ADB weekend_to_buy 行為）
+            "target_draws": 8000,  # target 模式目標抽數（技能衝刺）
+            "interval_days": 28,   # target 模式同一帳號兩次執行的最短間隔
+            "excluded_devices": [],  # target 模式不參與的裝置 ID
             "free_daily": False,  # 每日免費召喚 (0x1602)；遊戲本身已自動處理，不歸 bot 管
         },
         "ad_rewards": {         # 看廣告獎勵自動領取 (鑽石/種子)；is_free=1 純 WS 領；預設關
@@ -525,7 +528,7 @@ def _sanitize_mining_config(v: Any) -> Optional[dict]:
 def _sanitize_gacha_config(v: Any, default: dict) -> dict:
     """Coerce WS gacha config; malformed input degrades to defaults (disabled).
 
-    types kept only as a list of 1/2 (技能/同伴); mode clamped to drain|fixed;
+    types kept only as a list of 1/2 (技能/同伴); mode clamped to drain|fixed|target;
     count to the server-known bundles 15/35/999; batches to 1..2000.
     """
     out = copy.deepcopy(default)
@@ -537,11 +540,19 @@ def _sanitize_gacha_config(v: Any, default: dict) -> dict:
         clean = [int(t) for t in types if t in (1, 2)]
         out["types"] = clean or list(default["types"])
     mode = v.get("mode")
-    out["mode"] = mode if mode in ("drain", "fixed") else default["mode"]
+    out["mode"] = mode if mode in ("drain", "fixed", "target") else default["mode"]
     count = _to_int(v.get("count"), default["count"])
     out["count"] = count if count in (15, 35, 999) else default["count"]
     out["batches"] = _clamp_int(v.get("batches"), 1, 2000, default["batches"])
     out["weekend_only"] = _to_bool(v.get("weekend_only"), default["weekend_only"])
+    out["target_draws"] = _clamp_int(v.get("target_draws"), 1, 1_000_000,
+                                      default["target_draws"])
+    out["interval_days"] = _clamp_int(v.get("interval_days"), 1, 3650,
+                                       default["interval_days"])
+    excluded = v.get("excluded_devices")
+    if isinstance(excluded, (list, tuple)):
+        out["excluded_devices"] = [str(device).strip() for device in excluded
+                                    if str(device).strip()]
     out["free_daily"] = _to_bool(v.get("free_daily"), default["free_daily"])
     return out
 
