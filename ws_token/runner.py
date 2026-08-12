@@ -62,7 +62,7 @@ from ws_token import (
     farm, gacha, guild, hellgate, idle_reward, kungfu_race, kungfu_store, ladder_reward, league_solo,
     main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
     seven_login,
-    secret_jewel, spirit, statue, steward, turntable, tycoon, workshop,
+    secret_jewel, skill_sprint, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
     xwar_idle,
 )
@@ -417,8 +417,6 @@ def _run_gacha(client, inventory_tracker, *,
     except (TypeError, ValueError):
         target_draws = 8000
 
-    if mode == "target" and current.weekday() != 1:
-        return {"skipped": "skill_sprint: Tuesday only"}
     excluded_devices = set(gacha_config.get("excluded_devices") or ())
     if mode == "target" and device in excluded_devices:
         return {"skipped": "skill_sprint: excluded device"}
@@ -433,6 +431,43 @@ def _run_gacha(client, inventory_tracker, *,
             valid_types.append(draw_type)
     if not valid_types:
         return {"skipped": "no valid gacha types"}
+
+    # target 模式就是技能衝刺模式。先讀遊戲端活動計數，避免只依賴本機
+    # gacha_paid：例如手動抽過、程序重啟遺失 state，或上次只抽到一半時，
+    # 都能以伺服器實際進度決定「已完成」或「還差多少」。查詢失敗時保守
+    # 不花券；不讓活動查詢失敗退回盲抽。
+    check_activity = bool(gacha_config.get("check_activity", True))
+    if mode == "target" and not check_activity and current.weekday() != 1:
+        return {"skipped": "skill_sprint: Tuesday only"}
+    server_progress: Optional[dict] = None
+    draw_target = target_draws
+    if mode == "target" and check_activity:
+        server_progress = skill_sprint.read_progress(client)
+        if not server_progress.get("open"):
+            return {"skipped": "skill_sprint: no active sprint"}
+        accrued = int(server_progress.get("draws", 0) or 0)
+        if accrued >= target_draws:
+            logger.info(
+                "[%s] 技能衝刺伺服器進度已達標，跳過抽卡: %s/%s",
+                device,
+                accrued,
+                target_draws,
+            )
+            return {
+                "skipped": "skill_sprint: already complete",
+                "progress": accrued,
+                "target": target_draws,
+                "act_type": server_progress.get("act_type"),
+            }
+        draw_target = max(1, target_draws - accrued)
+        logger.info(
+            "[%s] 技能衝刺伺服器預檢: act_type=%s progress=%s/%s，剩餘抽數=%s",
+            device,
+            server_progress.get("act_type"),
+            accrued,
+            target_draws,
+            draw_target,
+        )
 
     # 付費抽會在手機 ADB 離線時由 WS 備援每小時重跑，因此必須用持久化
     # at-most-once 閘門。每種類型在送協議前先記 attempted，避免抽完後程序
@@ -469,7 +504,11 @@ def _run_gacha(client, inventory_tracker, *,
         for value in (paid.get("attempted_types") or [])
         if str(value).isdigit()
     }
-    if all(draw_type in attempted for draw_type in valid_types):
+    # target 模式的完成判斷以伺服器進度為準。若上次 WS 請求只完成一部分，
+    # 即使本機已寫入 attempted，也要允許下一輪補足；fixed 模式仍維持原有
+    # at-most-once 保護。
+    server_progress_checked = mode == "target" and server_progress is not None
+    if not server_progress_checked and all(draw_type in attempted for draw_type in valid_types):
         logger.info("[%s] WS 抽卡本期已嘗試，跳過重複扣券", device)
         # 這仍算「實質完成」，讓後續 ADB pipeline 繼續跳過 weekend_to_buy。
         # 若回傳 skipped，手機由離線恢復 ADB 後可能在同日再付費抽一次。
@@ -477,7 +516,7 @@ def _run_gacha(client, inventory_tracker, *,
 
     out: dict = {}
     for dt in valid_types:
-        if dt in attempted:
+        if not server_progress_checked and dt in attempted:
             continue
 
         attempted.add(dt)
@@ -500,7 +539,7 @@ def _run_gacha(client, inventory_tracker, *,
                 mode=mode,
                 count=count,
                 batches=batches,
-                target_draws=target_draws,
+                target_draws=draw_target,
             )
             result = {
                 "drawn": rep.total_drawn,

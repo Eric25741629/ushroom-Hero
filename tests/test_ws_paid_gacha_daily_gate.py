@@ -124,6 +124,12 @@ def test_paid_gacha_skips_friday_without_writing_gate(monkeypatch, tmp_path):
 def test_skill_sprint_mode_change_ignores_old_weekend_gate(monkeypatch, tmp_path):
     calls = []
 
+    monkeypatch.setattr(
+        runner.skill_sprint,
+        "read_progress",
+        lambda client: {"open": True, "act_type": 270, "draws": 0},
+    )
+
     def fake_run(client, tracker, **kwargs):
         calls.append(kwargs)
         return _report(kwargs["draw_type"])
@@ -145,6 +151,64 @@ def test_skill_sprint_mode_change_ignores_old_weekend_gate(monkeypatch, tmp_path
     assert calls[-1]["mode"] == "target"
     assert calls[-1]["target_draws"] == 8000
     assert result["技能"]["drawn"] == 105
+
+
+def test_skill_sprint_uses_server_progress_as_remaining_target(monkeypatch, tmp_path):
+    calls = []
+    progress = iter((210, 7000))
+
+    monkeypatch.setattr(
+        runner.skill_sprint,
+        "read_progress",
+        lambda client: {"open": True, "act_type": 270, "draws": next(progress)},
+    )
+
+    def fake_run(client, tracker, **kwargs):
+        calls.append(kwargs)
+        return _report(kwargs["draw_type"])
+
+    monkeypatch.setattr(runner.gacha, "run_gacha", fake_run)
+
+    first = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 12, 9, 0),
+    )
+    second = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 12, 10, 0),
+    )
+
+    assert [call["target_draws"] for call in calls] == [7790, 1000]
+    assert first["技能"]["drawn"] == 105
+    assert second["技能"]["drawn"] == 105
+
+
+def test_skill_sprint_complete_skips_without_spending(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner.skill_sprint,
+        "read_progress",
+        lambda client: {"open": True, "act_type": 270, "draws": 8000},
+    )
+    monkeypatch.setattr(
+        runner.gacha,
+        "run_gacha",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("技能衝刺已達標，不應抽卡")
+        ),
+    )
+
+    result = runner._run_gacha(
+        object(), object(), gacha_config=SKILL_SPRINT_CONFIG, device="phone",
+        state_dir=tmp_path, now=datetime.datetime(2026, 8, 11, 9, 0),
+    )
+
+    assert result == {
+        "skipped": "skill_sprint: already complete",
+        "progress": 8000,
+        "target": 8000,
+        "act_type": 270,
+    }
+    assert ws_state.load_state("phone", state_dir=tmp_path) == {}
 
 
 def test_paid_gacha_error_is_recorded_and_other_type_continues(
