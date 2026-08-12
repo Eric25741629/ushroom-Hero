@@ -53,6 +53,26 @@ def test_all_enabled_devices_can_join(client, monkeypatch, device_id):
     assert calls and calls[0][0] == device_id
 
 
+def test_worker_prefixed_device_can_join(client, monkeypatch):
+    calls = []
+
+    def fake_cdp_json_response(ip, expression, **kwargs):
+        calls.append(ip)
+        return jsonify({"status": "ok", "reply": {"ok": True}}), 200
+
+    fake_cpa = types.ModuleType("control_panel_app")
+    fake_cpa._cdp_json_response = fake_cdp_json_response
+    monkeypatch.setitem(sys.modules, "control_panel_app", fake_cpa)
+
+    resp = client.post(
+        "/api/carpark_rob/worker-a:emulator-5554",
+        json={"pos": 3, "queue_type": 1},
+    )
+
+    assert resp.status_code == 200
+    assert calls == ["worker-a:emulator-5554"]
+
+
 def test_rejects_missing_pos(client):
     resp = client.post("/api/carpark_rob/7fe98fc6", json={"queue_type": 1})
     assert resp.status_code == 400

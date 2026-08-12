@@ -3109,6 +3109,19 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       return pool[h % pool.length];
     }
 
+    // 舊版中控後端尚未重啟時沒有 carpark_rob_enabled 欄位，先用同一組
+    // 裝置 ID 保持按鈕可見；後端回傳明確布林值後，以後端結果為準。
+    const CARPARK_ROB_DEVICES = new Set([
+      'emulator-5554', 'emulator-5556', 'emulator-5560',
+      '7fe98fc6', 'web-003', 'web-004',
+    ]);
+    function carparkRobAvailable(ip, info) {
+      if (info && typeof info.carpark_rob_enabled === 'boolean') {
+        return info.carpark_rob_enabled;
+      }
+      return CARPARK_ROB_DEVICES.has(String(ip).split(':').pop());
+    }
+
     var _DIAL_C = 169.646;
     function setDial(ip, frac, color){
       var el = document.getElementById('dial-' + ip);
@@ -3145,6 +3158,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
       ips.forEach(ip => {
 
         const info = bots[ip];
+        const canCarparkRob = carparkRobAvailable(ip, info);
 
         const specialWanshen = info.special_wanshen_account === true;
         const specialMode = specialWanshen
@@ -3501,7 +3515,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
           webOpen = _webOpenState[ip] === true;    // 尚無權威值 (undefined): 退回純樂觀
         }
 
-        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${specialMode}-${specialWanshenDone}-${info.wanshen_until_cap}-force`;
+        const actionKey = `${isPaused}-${showRecover}-${showWebLaunch}-${showLiveView}-${isDisabled}-${webOpen}-${_dragonOpen}-${specialWanshen}-${specialMode}-${specialWanshenDone}-${info.wanshen_until_cap}-${canCarparkRob}-force`;
 
         if (card.dataset.actionKey !== actionKey) {
 
@@ -3589,7 +3603,7 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
             ${showRecover ? `<button class="btn btn-recover" onclick="recoverScreen('${ip}')">恢復畫面</button>` : ''}
 
-            ${info.carpark_rob_enabled ? `
+            ${canCarparkRob ? `
               <span class="carpark-rob-group" style="display:inline-flex;gap:4px;align-items:center;margin-left:6px;">
                 <input type="number" min="1" id="carparkRobPos-${ip}" placeholder="pos" style="width:56px;">
                 <select id="carparkRobType-${ip}">

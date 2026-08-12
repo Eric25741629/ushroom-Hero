@@ -672,6 +672,7 @@ def get_status():
                 "step": step,
                 "logs": [],
                 "live_view_available": False,
+                "carpark_rob_enabled": carpark_rob_enabled(dev_id),
                 "battle_speed_scale": battle_speed.coerce_battle_speed_scale(
                     dcfg.get("battle_speed_scale", 4)
                 ),
@@ -689,6 +690,7 @@ def get_status():
             "step": "登入並設定完成後,按「啟用掛機」才會開始",
             "logs": [],
             "live_view_available": False,
+            "carpark_rob_enabled": carpark_rob_enabled(dev_id),
             "battle_speed_scale": battle_speed.coerce_battle_speed_scale(
                 (dcfg or {}).get("battle_speed_scale", 4)
             ),

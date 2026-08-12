@@ -13,6 +13,11 @@ CARPARK_ROB_DEVICES = frozenset(
 )
 
 
+def normalize_device_id(device_id: str) -> str:
+    """移除 worker 傳來的主機前綴，取得設定檔使用的裝置 ID。"""
+    return str(device_id).rsplit(":", 1)[-1]
+
+
 def carpark_rob_enabled(device_id: str) -> bool:
     """判斷裝置是否啟用 dashboard 車位搶佔/駐守操作。"""
-    return device_id in CARPARK_ROB_DEVICES
+    return normalize_device_id(device_id) in CARPARK_ROB_DEVICES
