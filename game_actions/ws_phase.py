@@ -410,6 +410,7 @@ def _run_device(ip: str, cfg: dict, progress=None, *,
         spirit_draw_free=bool(cfg.get("spirit_draw_free", True)),
         mining_config=cfg.get("mining") or None,
         sea_config=cfg.get("sea_season") or None,
+        star_explore_config=cfg.get("star_explore") or None,
         arena_config=cfg.get("arena") or None,
         escort_config=(cfg.get("escort")
                        if isinstance(cfg.get("escort"), dict)

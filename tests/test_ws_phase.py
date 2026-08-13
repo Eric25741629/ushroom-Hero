@@ -217,6 +217,15 @@ def test_run_device_passes_mining_config(monkeypatch):
     assert captured["mining_config"] == {"enabled": True, "allow_drill": True}
 
 
+def test_run_device_passes_star_explore_config(monkeypatch):
+    cap = _capture_run_device(monkeypatch)
+    star_cfg = {"enabled": True, "max_steps": 100, "advance_floor": True}
+
+    ws_phase._run_device("dev", {"enabled": True, "star_explore": star_cfg})
+
+    assert cap["star_explore_config"] == star_cfg
+
+
 def test_run_device_passes_housekeeper_sweep_list(monkeypatch):
     captured = {}
 
