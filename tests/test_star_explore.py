@@ -16,11 +16,14 @@ def _event(x: int, y: int, event_id: int, *choices: int) -> bytes:
 
 
 def _enter(*, positions: list[int], events: list[bytes] = (), floor: int = 29,
-           floor_status: int = 1) -> bytes:
+           floor_status: int = 1, boxes: list[int] = (),
+           box_times: list[int] = ()) -> bytes:
     body = codec.pb_uint(2, floor) + codec.pb_uint(3, floor_status)
     body += b"".join(codec.pb_uint(4, value) for value in positions)
     body += codec.pb_msg(5, _member(7, 1, 1))
     body += b"".join(codec.pb_msg(6, event) for event in events)
+    body += b"".join(codec.pb_uint(7, value) for value in boxes)
+    body += b"".join(codec.pb_uint(8, value) for value in box_times)
     return body
 
 
@@ -36,6 +39,15 @@ def test_parse_enter_handles_positions_members_and_events():
     assert state.events[0].pos == (2, 1)
     assert state.events[0].event_id == se.SELECT
     assert state.events[0].choice_ids == (11, 12)
+
+
+def test_parse_enter_pairs_final_floor_boxes_with_global_open_counts():
+    state = se.parse_enter(_enter(
+        positions=[1, 1], floor=30,
+        boxes=[0, 1], box_times=[4, 0]))
+
+    assert [(box.position, box.open_times) for box in state.boxes] == [
+        ((1, 1), 4), ((2, 1), 0)]
 
 
 def test_parse_info_reads_completed_floor_list():
@@ -62,16 +74,28 @@ def test_frontier_path_sends_only_the_next_cell():
     assert se._frontier_step((1, 1), (1, 1, 2)) == ((1, 1), (2, 1))
 
 
-def test_runner_treats_all_floors_finished_as_normal_completion():
-    class CompleteClient:
+def test_runner_uses_final_floor_unopened_box_even_when_info_is_at_cap():
+    class FinalFloorClient:
+        _creds = SimpleNamespace(role_id=7)
+
         def call_for(self, cmd, body, *, expect_cmds, timeout=None):
-            assert cmd == se.CMD_INFO
-            return cmd, codec.pb_uint(8, se.MAX_FLOOR)
+            if cmd == se.CMD_INFO:
+                return cmd, codec.pb_uint(8, se.MAX_FLOOR)
+            if cmd == se.CMD_ENTER:
+                return cmd, _enter(positions=[1, 1], floor=30,
+                                    boxes=[0, 1], box_times=[6, 0])
+            if cmd == se.CMD_GRID:
+                return cmd, codec.pb_msg(1, se.build_pos(2, 1))
+            raise AssertionError(cmd)
 
-    result = se.run(CompleteClient(), pace=0)
+        def send(self, cmd, body=b""):
+            raise AssertionError((cmd, body))
 
-    assert result["stop_reason"] == "activity_complete"
-    assert result["actions"] == 0
+    result = se.run(FinalFloorClient(), pace=0)
+
+    assert result["stop_reason"] == "final_box_opened"
+    assert result["box_position"] == (2, 1)
+    assert result["actions"] == 1
 
 
 def test_runner_opens_adjacent_unexplored_cell_then_stops_at_frontier():

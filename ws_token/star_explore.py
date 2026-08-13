@@ -7,6 +7,7 @@ live client, so the task can run while the page is not on the exploration view.
 from __future__ import annotations
 
 import logging
+import random
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -69,6 +70,15 @@ class Event:
 
 
 @dataclass(frozen=True)
+class Box:
+    """第 30 層寶箱及其全服開啟次數。"""
+
+    position: tuple[int, int] | None
+    open_times: int
+    box_id: int = 0
+
+
+@dataclass(frozen=True)
 class State:
     floor: int
     floor_status: int
@@ -76,6 +86,7 @@ class State:
     members: tuple[Member, ...]
     events: tuple[Event, ...]
     code: int = 0
+    boxes: tuple[Box, ...] = ()
 
 
 class StarExploreServerError(RuntimeError):
@@ -154,6 +165,42 @@ def _event(value: object) -> Event:
     return Event(pos, event_id, tuple(choice_ids))
 
 
+def _box(value: object) -> Box:
+    """解析單一寶箱；兼容 p_pos 子訊息及線性格索引兩種實抓格式。"""
+    if isinstance(value, int):
+        return Box(_index_to_pos(int(value)), 0, int(value))
+    if not isinstance(value, (bytes, bytearray)):
+        return Box(None, 0)
+
+    fields = codec.walk(bytes(value))
+    pos = None
+    scalar_fields: dict[int, int] = {}
+    for field, item in fields:
+        if isinstance(item, int):
+            scalar_fields[field] = int(item)
+        elif isinstance(item, (bytes, bytearray)) and pos is None:
+            pos = _pos(item)
+
+    # p_box 常見格式為 {pos#1, open_times#2}；若是直接的 p_pos，
+    # 則 field 1/2 就是 x/y，不應把 y 誤當成開啟次數。
+    if pos is None and 1 in scalar_fields and 2 in scalar_fields:
+        pos = (scalar_fields[1], scalar_fields[2])
+        times = 0
+    else:
+        times = (scalar_fields.get(2) or scalar_fields.get(3)
+                 or scalar_fields.get(4) or 0)
+    return Box(pos, int(times), int(scalar_fields.get(1) or 0))
+
+
+def _parse_boxes(values: list[object], times: tuple[int, ...]) -> tuple[Box, ...]:
+    """把 box 與 box_times 的平行欄位配回同一個寶箱。"""
+    boxes = [_box(value) for value in values]
+    if len(times) == len(boxes):
+        boxes = [Box(box.position, int(open_times), box.box_id)
+                 for box, open_times in zip(boxes, times)]
+    return tuple(boxes)
+
+
 def parse_enter(body: bytes) -> State:
     """Parse ``star_pve_enter_s2c`` including repeated packed fields."""
     floor = 0
@@ -162,6 +209,8 @@ def parse_enter(body: bytes) -> State:
     positions: list[int] = []
     members: list[Member] = []
     events: list[Event] = []
+    box_values: list[object] = []
+    box_times: list[int] = []
     for field, value in codec.walk(body):
         if field == F_FLOOR and isinstance(value, int):
             floor = int(value)
@@ -173,10 +222,17 @@ def parse_enter(body: bytes) -> State:
             members.append(_member(value))
         elif field == F_EVENT:
             events.append(_event(value))
+        elif field == F_BOX:
+            if isinstance(value, (bytes, bytearray)):
+                box_values.append(value)
+            else:
+                box_values.extend(_repeated_uint(value))
+        elif field == F_BOX_TIMES:
+            box_times.extend(_repeated_uint(value))
         elif field == F_CODE and isinstance(value, int):
             code = int(value)
     return State(floor, floor_status, tuple(positions), tuple(members),
-                 tuple(events), code)
+                 tuple(events), code, _parse_boxes(box_values, tuple(box_times)))
 
 
 def parse_grid(body: bytes) -> tuple[tuple[int, int] | None, int, int, int]:
@@ -353,16 +409,13 @@ def run(client: WSGameClient, *, device: Optional[str] = None,
     stuck = 0
     last_signature = None
     pending_event: Event | None = None
+    # info/time 在跨服活動切換時可能暫時回 173；不能拿它們判斷活動結束。
+    # 真正可操作的狀態以同一條連線上的 star_pve_enter 為準。
     try:
-        info = _read_info(client)
+        _read_info(client)
     except StarExploreServerError as exc:
-        if exc.code == 173:
-            return {"stop_reason": "activity_closed", "actions": 0}
-        raise
-    if info["finish_floor"] >= MAX_FLOOR:
-        return {"stop_reason": "activity_complete",
-                "floor": info["finish_floor"], "actions": 0,
-                "floor_rewards": len(info["floor_rewards"])}
+        if exc.code != 173:
+            raise
 
     try:
         state = _read_state(client)
@@ -373,6 +426,29 @@ def run(client: WSGameClient, *, device: Optional[str] = None,
     if state.code:
         return {"stop_reason": f"enter_code_{state.code}", "floor": state.floor,
                 "actions": 0}
+
+    if state.floor == MAX_FLOOR:
+        if state.floor_status == 3:
+            return {"stop_reason": "final_floor_complete", "floor": state.floor,
+                    "actions": 0, "boxes": len(state.boxes)}
+        candidates = [box for box in state.boxes
+                      if box.position is not None and box.open_times == 0]
+        if not candidates:
+            reason = "final_floor_no_unopened_box" if state.boxes else \
+                "final_floor_boxes_unavailable"
+            return {"stop_reason": reason, "floor": state.floor,
+                    "actions": 0, "boxes": len(state.boxes)}
+        chosen = random.choice(candidates)
+        grid_body = _call(client, CMD_GRID, build_grid(chosen.position))
+        _grid_pos, event_id, _double_times, code = parse_grid(grid_body)
+        if code:
+            return {"stop_reason": f"final_box_code_{code}",
+                    "floor": state.floor, "actions": 1, "grids": 1,
+                    "box_position": chosen.position}
+        return {"stop_reason": "final_box_opened", "floor": state.floor,
+                "actions": 1, "grids": 1, "events": int(bool(event_id)),
+                "box_position": chosen.position,
+                "box_open_times": chosen.open_times}
 
     while actions < max(1, int(max_steps)):
         if state.floor_status == 3:
