@@ -341,6 +341,26 @@ def test_run_device_runs_tasks_in_fixed_order(patched):
     assert rep.login_ok is True
 
 
+def test_run_device_wires_star_explore_only_when_configured(patched, monkeypatch):
+    calls, _ = patched
+
+    monkeypatch.setattr(
+        runner, "_run_star_explore",
+        lambda client, *, device, star_explore_config: (
+            calls.append(("star_explore", "run"))
+            or {"stop_reason": "no_frontier"}
+        ),
+    )
+
+    rep = run_device(
+        "dev", spend=False,
+        star_explore_config={"enabled": True, "max_steps": 2},
+    )
+
+    assert "star_explore" in rep.tasks
+    assert ("star_explore", "run") in calls
+
+
 def test_run_device_main_tasks_collects_then_claims(patched):
     calls, _ = patched
 

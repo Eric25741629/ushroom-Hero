@@ -996,6 +996,14 @@
                 "lamp_daily_min": 0,
                 "lamp_daily_target": 200,
                 "lamp_weekend_target": 8000,
+                "star_explore": {
+                    "enabled": true,
+                    "max_steps": 100,
+                    "pace_sec": 0.4,
+                    "max_stuck": 4,
+                    "advance_floor": true,
+                    "ask_help": false
+                },
                 "kungfu_worship": true,
                 "farm": {
                     "harvest_card_cycle": {
@@ -1227,6 +1235,14 @@
                 "bootstrap_token": true,
                 "offline_fallback": true,
                 "fallback_host": "infinite",
+                "star_explore": {
+                    "enabled": true,
+                    "max_steps": 100,
+                    "pace_sec": 0.4,
+                    "max_stuck": 4,
+                    "advance_floor": true,
+                    "ask_help": false
+                },
                 "main_chapter_kills": {
                     "enabled": true,
                     "interval_sec": 3.0,

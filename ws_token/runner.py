@@ -64,7 +64,7 @@ from ws_token import (
     seven_login,
     secret_jewel, skill_sprint, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
-    xwar_idle,
+    star_explore, xwar_idle,
 )
 from ws_token import state as ws_state
 from ws_token.abort import WSRunAborted
@@ -1882,6 +1882,31 @@ def _run_sea_season(client, *, device: str, sea_config: Optional[dict],
     )
 
 
+def _run_star_explore(client, *, device: str,
+                      star_explore_config: Optional[dict]) -> dict:
+    """星際探索 pure WS；不依賴目前瀏覽器所在頁面。"""
+    cfg = star_explore_config or {}
+    def _int(name: str, default: int) -> int:
+        try:
+            return int(cfg.get(name, default))
+        except (TypeError, ValueError):
+            return default
+
+    return star_explore.run(
+        client,
+        device=device,
+        max_steps=max(1, _int("max_steps", 100)),
+        pace=max(0.0, float(cfg.get("pace_sec", 0.4))),
+        max_stuck=max(1, _int("max_stuck", 4)),
+        advance_floor=bool(cfg.get("advance_floor", False)),
+        select_choice=(
+            int(cfg["select_choice"])
+            if cfg.get("select_choice") is not None else None
+        ),
+        ask_help=bool(cfg.get("ask_help", False)),
+    )
+
+
 def run_device(device: str, *, spend: bool = False,
                sweep_list: Optional[Iterable[Sequence[int]]] = None,
                open_lamp: bool = False,
@@ -1920,6 +1945,7 @@ def run_device(device: str, *, spend: bool = False,
                 spirit_draw_free: bool = True,
                 mining_config: Optional[dict] = None,
                 sea_config: Optional[dict] = None,
+               star_explore_config: Optional[dict] = None,
                arena_config: Optional[dict] = None,
                escort_config: Optional[dict] = None,
                hellgate_config: Optional[dict] = None,
@@ -2283,6 +2309,11 @@ def run_device(device: str, *, spend: bool = False,
                   lambda: _run_sea_season(client, device=device,
                                           sea_config=sea_config,
                                           inventory_tracker=inventory_tracker))
+        if star_explore_config and star_explore_config.get("enabled", True):
+            _step("star_explore",
+                  lambda: _run_star_explore(
+                      client, device=device,
+                      star_explore_config=star_explore_config))
         if mining_config and mining_config.get("enabled"):
             _step("mining",
                   lambda: _run_mining(client, inventory_tracker,

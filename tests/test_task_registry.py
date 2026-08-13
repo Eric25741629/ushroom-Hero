@@ -84,7 +84,7 @@ def _runner_execution_order() -> tuple[str, ...]:
         for node in ast.walk(run_device)
     )
 
-    assert len(stepped) == 40
+    assert len(stepped) == 41
     assert tail_assignment and tail_safe_call
     return tuple(name for _line, name in stepped) + ("main_chapter_kills",)
 
@@ -92,10 +92,10 @@ def _runner_execution_order() -> tuple[str, ...]:
 def test_registry_is_the_union_of_client_and_actual_ws_tasks():
     definitions = iter_task_definitions()
 
-    assert len(definitions) == 44
-    assert len(task_ids()) == len(set(task_ids())) == 44
+    assert len(definitions) == 45
+    assert len(task_ids()) == len(set(task_ids())) == 45
     assert ws_task_ids() == _runner_execution_order()
-    assert len(ws_task_ids()) == 41
+    assert len(ws_task_ids()) == 42
     assert {"daily_acceleration", "fannaoxiao", "biweekly"} <= set(task_ids())
     assert "xwar_idle" in ws_task_ids()
     assert all(re.fullmatch(r"[a-z][a-z0-9_]*", task_id) for task_id in task_ids())
