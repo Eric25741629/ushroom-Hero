@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from ws_token.mining import GOODS_BOMB, GOODS_DRILL, GOODS_PICKAXE  # noqa: E402
 from ws_token.mining_h5_executor import H5MiningExecutor  # noqa: E402
+from utils.web_game_api import _build_dig_request_body  # noqa: E402
 
 
 class FakePage:
@@ -20,6 +21,8 @@ class FakePage:
 
     def evaluate(self, script, arg=None):
         self.calls.append((script, arg))
+        if "expectCmds" in script:
+            return {"cmd": 0x0C03, "body": []}
         return {"ok": True}
 
 
@@ -40,27 +43,52 @@ def test_use_pickaxe_sends_goods_id_and_block_id_to_h5():
     page = FakePage()
     result = H5MiningExecutor(page).use_pickaxe(16238803)
 
-    assert result == {"ok": True}
+    assert result["ok"] is True
+    assert result["response_cmd"] == 0x0C03
     script, arg = page.calls[-1]
-    assert "reqMineUseGoods" in script
-    assert arg == [GOODS_PICKAXE, 16238803]
+    assert "expectCmds" in script
+    assert arg[0] == 0x0C03
+    assert arg[1] == list(_build_dig_request_body(GOODS_PICKAXE, 16238803))
+    assert arg[-1] == [0x0C03, 0x0201]
 
 
 def test_use_bomb_sends_goods_id_and_block_id_to_h5():
     page = FakePage()
     result = H5MiningExecutor(page).use_bomb(16238804)
 
-    assert result == {"ok": True}
+    assert result["ok"] is True
+    assert result["response_cmd"] == 0x0C03
     script, arg = page.calls[-1]
-    assert "reqMineUseGoods" in script
-    assert arg == [GOODS_BOMB, 16238804]
+    assert "expectCmds" in script
+    assert arg[0] == 0x0C03
+    assert arg[1] == list(_build_dig_request_body(GOODS_BOMB, 16238804))
 
 
 def test_use_drill_sends_goods_id_and_block_id_to_h5():
     page = FakePage()
     result = H5MiningExecutor(page).use_drill(16238804)
 
-    assert result == {"ok": True}
+    assert result["ok"] is True
+    assert result["response_cmd"] == 0x0C03
     script, arg = page.calls[-1]
-    assert "reqMineUseGoods" in script
-    assert arg == [GOODS_DRILL, 16238804]
+    assert "expectCmds" in script
+    assert arg[0] == 0x0C03
+    assert arg[1] == list(_build_dig_request_body(GOODS_DRILL, 16238804))
+
+
+def test_use_goods_decodes_server_error_response():
+    class ErrorPage(FakePage):
+        def evaluate(self, script, arg=None):
+            self.calls.append((script, arg))
+            if "expectCmds" in script:
+                return {"cmd": 0x0201, "body": [0x08, 0x47]}
+            return {"ok": True}
+
+    result = H5MiningExecutor(ErrorPage()).use_pickaxe(16238803)
+
+    assert result == {
+        "ok": False,
+        "response_cmd": 0x0201,
+        "error_code": 71,
+        "raw_body_hex": "0847",
+    }

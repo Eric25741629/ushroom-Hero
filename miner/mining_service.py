@@ -1501,9 +1501,10 @@ def run(
                     miner_logger.warning(f"[MiningService] 鎬子操作後版面未變，將操作加入黑名單直到版面變化: {action_signature}")
                 miner_logger.info(
                     "[MiningTelemetry] planner=%s exec=rejected reason=no_board_change "
-                    "step=%s item=%s inv_before=%s inv_after=%s %s"
-                % (plan.get("planner_name", planner_version), action_signature, exc.item_type or "-",
-                       inv_before, {"pickaxe": count, **items_available},
+                    "detail=%s diagnostics=%s step=%s item=%s inv_before=%s inv_after=%s %s"
+                % (plan.get("planner_name", planner_version), exc.reason,
+                   exc.diagnostics, action_signature, exc.item_type or "-",
+                   inv_before, {"pickaxe": count, **items_available},
                        _telemetry_fields(
                            telemetry,
                            screenshots_per_round=max(0, telemetry.screenshot_calls - round_screenshot_start),
