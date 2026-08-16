@@ -793,6 +793,48 @@ def _run_harvest_card(client, *, role_id: int, farm_config: Optional[dict],
             return {"skipped": f"already done {week_key}"}
 
     num_cards = int(hcc_cfg.get("num_cards", 3))
+    # 先讀伺服器目前的豐收卡購買次數，再決定是否進入需要取消打工的流程。
+    # 本地 last_week 只是快取；若曾由 GUI 購買、狀態檔遺失或寫入失敗，仍要
+    # 以 shop_info 的實際次數為準，避免已達本週上限卻先送 18178。
+    try:
+        shop_counts = farm.read_shop_counts(
+            client, farm.HARVEST_CARD_SHOP_TYPE,
+        )
+    except WSError as exc:
+        logger.warning(
+            "[harvest_card] 無法查詢本週豐收卡購買次數，保留打工並下次重試: %s",
+            exc,
+        )
+        return {
+            "ok": False,
+            "skipped": "harvest card count unavailable",
+            "failure": "harvest_card_count_unavailable",
+        }
+
+    existing_cards = int(shop_counts.get(farm.HARVEST_CARD_SHOP_ID, 0) or 0)
+    if existing_cards >= num_cards:
+        result = {
+            "ok": True,
+            "skipped": f"already bought {existing_cards}/{num_cards}",
+            "already_executed": True,
+            "cards_bought": 0,
+            "existing_cards": existing_cards,
+        }
+        if device:
+            state["harvest_card"] = {
+                "last_week": week_key,
+                "last_ts": ts,
+                "num_cards": num_cards,
+                "cards_bought": existing_cards,
+            }
+            ws_state.save_state(device, state, **kw)
+        logger.info(
+            "[harvest_card] 本週已買 %d/%d 張，略過取消打工流程",
+            existing_cards,
+            num_cards,
+        )
+        return result
+
     fert_id = int(hcc_cfg.get("fertilizer_id", farm.FERTILIZER_ID_HIGH_YIELD))
     fert_shop_target = int(hcc_cfg.get("fertilizer_shop_target", 4))
     result = farm.run_harvest_card_cycle(
@@ -800,7 +842,9 @@ def _run_harvest_card(client, *, role_id: int, farm_config: Optional[dict],
         fertilizer_shop_target=fert_shop_target,
         inventory_tracker=inventory_tracker, device_id=device)
 
-    if device and result.get("ok", True):
+    # 買不到卡代表本週已無需再執行；即使恢復打工本身回報失敗，也要寫入
+    # 本週 gate，避免下一次喚醒再次取消打工重試同一個無效流程。
+    if device and (result.get("ok") or result.get("already_executed")):
         state["harvest_card"] = {
             "last_week": week_key,
             "last_ts": ts,

@@ -173,6 +173,8 @@ def patched(monkeypatch):
     monkeypatch.setattr(runner.farm, "buy_farm_shop",
                         lambda c, bl, **k: (calls.append(("farm", "buy_farm_shop"))
                                             or [{"shop_id": 407, "bought": 0, "ok": True}]))
+    monkeypatch.setattr(runner.farm, "read_shop_counts",
+                        lambda c, shop_type, **k: {})
     monkeypatch.setattr(runner.farm, "run_harvest_card_cycle",
                         lambda c, rid, **k: (
                             calls.append(("harvest_card", "run_harvest_card_cycle"))
@@ -1354,6 +1356,7 @@ def test_harvest_card_weekly_gate_records_success(monkeypatch, tmp_path):
         runner.farm, "run_harvest_card_cycle",
         lambda c, rid, **k: calls.append(k) or {"ok": True, "cards_bought": 3},
     )
+    monkeypatch.setattr(runner.farm, "read_shop_counts", lambda _c, _t: {})
     cfg = {"harvest_card_cycle": {"enabled": True}}
     now = datetime(2026, 6, 22, 9, 0, 0)
 
@@ -1369,6 +1372,94 @@ def test_harvest_card_weekly_gate_records_success(monkeypatch, tmp_path):
     assert first["cards_bought"] == 3
     assert second["skipped"] == "already done 2026-W26"
     assert len(calls) == 1
+
+
+def test_harvest_card_preflight_skips_when_weekly_limit_reached(monkeypatch, tmp_path):
+    """本週已買滿 3 張時，先略過，不得進入取消打工流程。"""
+    from datetime import datetime
+
+    cycle_calls = []
+    monkeypatch.setattr(
+        runner.farm, "read_shop_counts",
+        lambda _client, _shop_type: {runner.farm.HARVEST_CARD_SHOP_ID: 3},
+    )
+    monkeypatch.setattr(
+        runner.farm, "run_harvest_card_cycle",
+        lambda *_a, **_k: cycle_calls.append(True),
+    )
+
+    result = runner._run_harvest_card(
+        object(), role_id=1,
+        farm_config={"harvest_card_cycle": {"enabled": True}},
+        device="dev", state_dir=tmp_path,
+        now=datetime(2026, 6, 22, 9, 0, 0),
+    )
+
+    assert result["ok"] is True
+    assert result["existing_cards"] == 3
+    assert cycle_calls == []
+    saved = runner.ws_state.load_state("dev", state_dir=tmp_path)
+    assert saved["harvest_card"]["last_week"] == "2026-W26"
+
+
+def test_harvest_card_count_failure_does_not_cancel_or_mark_week(monkeypatch, tmp_path):
+    """查不到購買次數時保留打工，不能冒險進入取消流程。"""
+    from datetime import datetime
+
+    cycle_calls = []
+    monkeypatch.setattr(
+        runner.farm,
+        "read_shop_counts",
+        lambda _client, _shop_type: (_ for _ in ()).throw(
+            runner.WSTimeoutError("shop_info timeout")
+        ),
+    )
+    monkeypatch.setattr(
+        runner.farm,
+        "run_harvest_card_cycle",
+        lambda *_a, **_k: cycle_calls.append(True),
+    )
+
+    result = runner._run_harvest_card(
+        object(), role_id=1,
+        farm_config={"harvest_card_cycle": {"enabled": True}},
+        device="dev", state_dir=tmp_path,
+        now=datetime(2026, 6, 22, 9, 0, 0),
+    )
+
+    assert result["ok"] is False
+    assert result["failure"] == "harvest_card_count_unavailable"
+    assert cycle_calls == []
+    assert runner.ws_state.load_state("dev", state_dir=tmp_path) == {}
+
+
+def test_harvest_card_no_purchase_still_records_weekly_gate(monkeypatch, tmp_path):
+    """買不到卡時即使恢復回報失敗，也不得下次再次取消打工。"""
+    from datetime import datetime
+
+    monkeypatch.setattr(
+        runner.farm, "read_shop_counts", lambda _client, _shop_type: {},
+    )
+    monkeypatch.setattr(
+        runner.farm, "run_harvest_card_cycle",
+        lambda *_a, **_k: {
+            "ok": False,
+            "already_executed": True,
+            "cards_bought": 0,
+            "restarted_work": False,
+        },
+    )
+
+    result = runner._run_harvest_card(
+        object(), role_id=1,
+        farm_config={"harvest_card_cycle": {"enabled": True}},
+        device="dev", state_dir=tmp_path,
+        now=datetime(2026, 6, 22, 9, 0, 0),
+    )
+
+    assert result["already_executed"] is True
+    saved = runner.ws_state.load_state("dev", state_dir=tmp_path)
+    assert saved["harvest_card"]["last_week"] == "2026-W26"
 
 
 def test_dungeon_sweep_runs_with_config(patched):
