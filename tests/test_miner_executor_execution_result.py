@@ -253,6 +253,143 @@ def test_h5_dispatch_uses_javascript_executor_instead_of_pixel_click(monkeypatch
     assert dev.clicks == []
 
 
+def test_h5_dig_rejects_non_active_target_before_sending(monkeypatch):
+    calls = []
+    dev = _FakeDevice(_blank_frame())
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    before = types.SimpleNamespace(
+        baseline=100, actives=[9804], blocks=[], holes=[], area=1
+    )
+
+    class FakeH5Executor:
+        def __init__(self, _page):
+            pass
+
+        def use_pickaxe(self, block_id):
+            calls.append(block_id)
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "ws_token.mining_h5_executor.H5MiningExecutor", FakeH5Executor
+    )
+
+    with pytest.raises(NoBoardChangeError) as excinfo:
+        executor._dispatch_h5_ws_action(
+            dev,
+            before,
+            {"type": "dig", "target": (3, 4)},
+        )
+
+    assert calls == []
+    assert excinfo.value.diagnostics == {
+        "phase": "h5_preflight",
+        "validation": "not_active",
+        "block_id": 9805,
+        "baseline": 100,
+        "active_count": 1,
+        "block_count": None,
+    }
+
+
+def test_h5_dig_rejects_already_dug_active_target_before_sending(monkeypatch):
+    calls = []
+    dev = _FakeDevice(_blank_frame())
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    before = types.SimpleNamespace(
+        baseline=100,
+        actives=[9804],
+        blocks=[types.SimpleNamespace(block_id=9804, count=0)],
+        holes=[],
+        area=1,
+    )
+
+    class FakeH5Executor:
+        def __init__(self, _page):
+            pass
+
+        def use_pickaxe(self, block_id):
+            calls.append(block_id)
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "ws_token.mining_h5_executor.H5MiningExecutor", FakeH5Executor
+    )
+
+    with pytest.raises(NoBoardChangeError) as excinfo:
+        executor._dispatch_h5_ws_action(
+            dev,
+            before,
+            {"type": "dig", "target": (3, 3)},
+        )
+
+    assert calls == []
+    assert excinfo.value.diagnostics["validation"] == "already_dug"
+    assert excinfo.value.diagnostics["block_count"] == 0
+
+
+def test_h5_dig_surfaces_server_error_without_fallback_click(monkeypatch):
+    calls = []
+    dev = _FakeDevice(_blank_frame())
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    before = types.SimpleNamespace(
+        baseline=100, actives=[9804], blocks=[], holes=[], area=1
+    )
+
+    class FakeH5Executor:
+        def __init__(self, _page):
+            pass
+
+        def use_pickaxe(self, block_id):
+            calls.append(block_id)
+            return {
+                "ok": False,
+                "response_cmd": 0x0201,
+                "error_code": 71,
+                "raw_body_hex": "0847",
+            }
+
+    monkeypatch.setattr(
+        "ws_token.mining_h5_executor.H5MiningExecutor", FakeH5Executor
+    )
+
+    with pytest.raises(NoBoardChangeError) as excinfo:
+        executor._dispatch_h5_ws_action(
+            dev,
+            before,
+            {"type": "dig", "target": (3, 3)},
+        )
+
+    assert calls == [9804]
+    assert excinfo.value.diagnostics["phase"] == "h5_server_response"
+    assert excinfo.value.diagnostics["error_code"] == 71
+    assert excinfo.value.diagnostics["raw_body_hex"] == "0847"
+
+
+def test_h5_does_not_pixel_fallback_when_authoritative_board_is_unavailable(monkeypatch):
+    frame = _blank_frame()
+    dev = _FakeDevice(frame)
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    board = _empty_board()
+    board[3][3] = "dirt"
+    clf = _FakeClassifier(board)
+    _stub_animation(monkeypatch, frame)
+    monkeypatch.setattr(executor, "read_ws_mine_board", lambda _d: None)
+    monkeypatch.setattr(executor, "tap_cell", lambda *a, **kw: pytest.fail("H5 不應退回像素點擊"))
+
+    with pytest.raises(NoBoardChangeError) as excinfo:
+        execute_plan_steps(dev, clf, board, [{
+            "type": "dig", "pos": (3, 3), "target": (3, 3),
+            "action": "dig", "dig_list": [(3, 3)], "step_cost": 1.0,
+        }])
+
+    assert excinfo.value.partial_result.shovels_used == 0
+    assert excinfo.value.diagnostics["validation"] == "board_unavailable"
+
+
 # ---------------------------------------------------------------------------
 # Empty plan
 # ---------------------------------------------------------------------------

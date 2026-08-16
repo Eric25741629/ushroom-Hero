@@ -90,6 +90,7 @@ class NoBoardChangeError(Exception):
         board_before: Optional[List[List[str]]] = None,
         board_after: Optional[List[List[str]]] = None,
         partial_result: Optional[ExecutionResult] = None,
+        diagnostics: Optional[Dict[str, Any]] = None,
     ):
         self.step = step
         self.reason = reason
@@ -98,6 +99,8 @@ class NoBoardChangeError(Exception):
         self.board_after = board_after
         # Resources consumed before the exception — see ExecutionResult.
         self.partial_result = partial_result
+        # H5 前置檢查／伺服器回覆細節，供 telemetry 與偵錯使用。
+        self.diagnostics = diagnostics
         super().__init__(reason)
 
 
@@ -250,6 +253,34 @@ def get_live_item_count(d: DeviceLike, item_type: str) -> int:
     return 0
 
 
+def _h5_page(d: DeviceLike) -> Any:
+    """裝置使用 H5 時回傳 Playwright page。"""
+    inner = getattr(d, "_d", d)
+    return getattr(inner, "_page", None)
+
+
+def _raise_h5_board_unavailable(
+    d: DeviceLike,
+    step: Dict[str, Any],
+    partial_result: ExecutionResult,
+    *,
+    item_type: Optional[str] = None,
+) -> None:
+    """H5 缺少 authoritative 狀態時，不退回像素點擊。"""
+    if _h5_page(d) is None:
+        return
+    raise NoBoardChangeError(
+        step=step,
+        reason="H5 authoritative 0x0c01 board unavailable; skip pixel fallback",
+        item_type=item_type,
+        partial_result=partial_result,
+        diagnostics={
+            "phase": "h5_preflight",
+            "validation": "board_unavailable",
+        },
+    )
+
+
 def _dispatch_h5_ws_action(
     d: DeviceLike,
     before_board: Any,
@@ -258,8 +289,7 @@ def _dispatch_h5_ws_action(
     hits: int = 1,
 ) -> bool:
     """H5 直接呼叫 JavaScript 挖礦控制器；非 H5/無 page 回 ``False``。"""
-    inner = getattr(d, "_d", d)
-    page = getattr(inner, "_page", None)
+    page = _h5_page(d)
     if page is None:
         return False
     from ws_token.mining_h5_executor import H5MiningExecutor
@@ -269,19 +299,72 @@ def _dispatch_h5_ws_action(
     block_id = int(step.get("block_id") or grid_pos_to_block_id(
         int(getattr(before_board, "baseline", 0) or 0), r, c
     ))
+
+    if step.get("type") == "dig":
+        from ws_token.mining_supervised import _is_diggable
+
+        actives = {
+            int(value) for value in (getattr(before_board, "actives", None) or [])
+        }
+        blocks = {
+            int(getattr(block, "block_id")): block
+            for block in (getattr(before_board, "blocks", None) or [])
+            if getattr(block, "block_id", None) is not None
+        }
+        block = blocks.get(block_id)
+        block_count = None if block is None else int(getattr(block, "count", 0) or 0)
+        if not _is_diggable(actives, blocks, block_id):
+            validation = "not_active" if block_id not in actives else "already_dug"
+            details = {
+                "phase": "h5_preflight",
+                "validation": validation,
+                "block_id": block_id,
+                "baseline": int(getattr(before_board, "baseline", 0) or 0),
+                "active_count": len(actives),
+                "block_count": block_count,
+            }
+            raise NoBoardChangeError(
+                step=step,
+                reason=(
+                    f"H5 伺服器前緣拒絕目標 {block_id}: "
+                    f"{validation} count={block_count}"
+                ),
+                diagnostics=details,
+            )
+
     h5 = H5MiningExecutor(page)
+    response: Any
     if step.get("type") == "use":
         if step.get("item") == "drill":
-            h5.use_drill(block_id)
+            response = h5.use_drill(block_id)
         elif step.get("item") == "bomb":
-            h5.use_bomb(block_id)
+            response = h5.use_bomb(block_id)
         else:
             return False
     else:
         for index in range(max(1, int(hits))):
-            h5.use_pickaxe(block_id)
+            response = h5.use_pickaxe(block_id)
+            if isinstance(response, dict) and response.get("ok") is False:
+                break
             if index + 1 < hits:
                 time.sleep(0.25)
+    if isinstance(response, dict) and response.get("ok") is False:
+        diagnostics = {
+            "phase": "h5_server_response",
+            "block_id": block_id,
+            "response_cmd": response.get("response_cmd"),
+            "error_code": response.get("error_code"),
+            "raw_body_hex": response.get("raw_body_hex"),
+        }
+        raise NoBoardChangeError(
+            step=step,
+            reason=(
+                f"H5 伺服器拒絕 block_id={block_id} "
+                f"error_code={response.get('error_code')}"
+            ),
+            item_type=step.get("item") if step.get("type") == "use" else None,
+            diagnostics=diagnostics,
+        )
     return True
 
 
@@ -419,6 +502,9 @@ def execute_plan_steps(
                 r, c = step["target"]
                 ws_board_before = read_ws_mine_board(d)
                 ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
+                _raise_h5_board_unavailable(
+                    d, step, acc, item_type=item_type
+                )
                 target_label = board[r][c]
                 if not is_placeable_label(target_label):
                     print(
@@ -539,6 +625,7 @@ def execute_plan_steps(
             for (r, c) in step["dig_list"]:
                 ws_board_before = read_ws_mine_board(d)
                 ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
+                _raise_h5_board_unavailable(d, step, acc)
                 label = board[r][c]
                 hits = required_hits(label)
                 cell_cost = int(enter_cost(label) or 0)
