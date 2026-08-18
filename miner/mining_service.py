@@ -41,6 +41,7 @@ from miner.rl.rl_recorder import RLRecorder
 from miner.core.vision_utils import check_points
 from utils.logging_utils import logger, setup_miner_logger
 from utils.mining_map_recorder import MiningMapRecorder
+from utils.cocos_view import web_page
 from config.paths import DATASET_LOW_CONFIDENCE_DIR_STR
 from tools import click_white
 
@@ -51,6 +52,32 @@ _EMPTY_CELL_LABELS = {
     "empty", "void", "dug_pit",
     "unreachable_empty", "unreachable_void",
 }
+
+# web_h5 的礦洞獎勵遮罩是 Cocos view，不需要把畫面送進 OCR。
+_MINING_OVERLAY_VIEW_NAME = "MysteryHoleResultView"
+_MINING_OVERLAY_ACTIVE_JS = r"""
+() => {
+  if (typeof cc === "undefined" || !cc.director || !cc.director.getScene) {
+    return false;
+  }
+  const scene = cc.director.getScene();
+  if (!scene) return false;
+  const pending = [scene];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    if (node.name === "MysteryHoleResultView" && node.activeInHierarchy) {
+      return true;
+    }
+    if (node.children) {
+      for (let i = 0; i < node.children.length; i += 1) {
+        pending.push(node.children[i]);
+      }
+    }
+  }
+  return false;
+}
+"""
 
 
 def _log_inventory_validation(
@@ -481,8 +508,15 @@ def _check_force_sleep(ip: str) -> None:
         raise ForceSleepRequested(f"[{ip}] force sleep requested during mining")
 
 
-def _dismiss_mining_overlay_if_needed(d: u2.Device, frame, miner_logger) -> bool:
-    """Reuse existing OCR helpers to dismiss the mine title overlay."""
+def _detect_mining_overlay(d: u2.Device, frame, miner_logger) -> Tuple[bool, str]:
+    """判斷礦洞獎勵遮罩，web_h5 優先讀 Cocos，其他後端才用 OCR。"""
+    page = web_page(d)
+    if page is not None:
+        try:
+            return bool(page.evaluate(_MINING_OVERLAY_ACTIVE_JS)), "js"
+        except Exception as exc:
+            miner_logger.debug(f"[Mining JS] overlay check failed, fallback to OCR: {exc}")
+
     try:
         # Limit OCR scan area to avoid false positives and extra OCR load.
         # Requested range: y=210..550 (full width).
@@ -493,14 +527,32 @@ def _dismiss_mining_overlay_if_needed(d: u2.Device, frame, miner_logger) -> bool
         texts = img_tools.get_all_text(roi, max_servers=1)
     except Exception as exc:
         miner_logger.debug(f"[Mining OCR] overlay check failed: {exc}")
-        return False
+        return False, "ocr"
 
-    if any("礦洞" in text for text in texts):
+    return any("礦洞" in text for text in texts), "ocr"
+
+
+def _dismiss_detected_mining_overlay(d: u2.Device, miner_logger, source: str) -> None:
+    """關閉已確認的礦洞獎勵遮罩。"""
+    if source == "js":
+        miner_logger.info(
+            f"[Mining JS] detected {_MINING_OVERLAY_VIEW_NAME}, clicking blank area"
+        )
+    else:
         miner_logger.info("[Mining OCR] detected '礦洞', clicking blank area")
-        click_white(d)
-        time.sleep(0.6)
+    click_white(d)
+    time.sleep(0.6)
+
+
+def _dismiss_mining_overlay_if_needed(d: u2.Device, frame, miner_logger) -> bool:
+    """關閉礦洞獎勵遮罩；web_h5 走 Cocos，ADB 保留 OCR fallback。"""
+    detected, source = _detect_mining_overlay(d, frame, miner_logger)
+    if detected:
+        _dismiss_detected_mining_overlay(d, miner_logger, source)
         return True
     return False
+
+
 def get_visual_board(board: List[List[str]]) -> str:
     """將棋盤轉成易讀的文字格狀圖。"""
     symbols = {
@@ -1259,11 +1311,11 @@ def run(
             round_event_logged = False
             # Shared frame for this loop: pickaxe/item OCR + board classification.
             shared_frame = _counted_screenshot(d, telemetry, format="opencv")
-            # Count the service-level OCR probe even when it finds no overlay;
-            # this is the expensive call P1-09 asks us to quantify.
-            telemetry.overlay_ocr_calls += 1
+            # web_h5 正常直接讀 Cocos view；ADB 才計入昂貴的 OCR 次數。
+            if web_page(d) is None:
+                telemetry.overlay_ocr_calls += 1
             # 礦洞彈窗在「挖到 pit」後可能被遮蓋，executor 的本地清理不一定夠 —
-            # 每輪重新做一次 OCR 檢查並 click_white，避免主迴圈被卡在彈窗上。
+            # 每輪重新確認並 click_white，避免主迴圈被卡在彈窗上。
             if _dismiss_mining_overlay_if_needed(d, shared_frame, miner_logger):
                 shared_frame = _counted_screenshot(d, telemetry, format="opencv")
             # Internal counter is the source of truth; OCR is a periodic
