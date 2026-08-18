@@ -119,7 +119,7 @@ def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
     assert [call.args[1] for call in click_ocr.call_args_list[-2:]] == ["刷新", "記錄"]
 
 
-def test_pure_ws_failure_reconnects_cocos_before_animation_fallback(monkeypatch):
+def test_pure_ws_config_uses_h5_animation_without_second_ws(monkeypatch):
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     cocos = MagicMock()
     cocos.enter.return_value = True
@@ -135,13 +135,18 @@ def test_pure_ws_failure_reconnects_cocos_before_animation_fallback(monkeypatch)
             "arena_daily_fights": 1,
         },
     )
-    with patch.object(arena_battle, "_run_pure_ws_fights", return_value=False), \
+    with patch.object(
+        arena_battle,
+        "_run_pure_ws_fights",
+        side_effect=AssertionError("H5 arena must not open a second WS"),
+    ) as pure_ws, \
          patch.object(arena_battle, "_cocos_arena", return_value=cocos), \
          patch.object(arena_battle.img_tools, "click_str_by_server") as click_ocr, \
          patch.object(arena_battle.img_tools, "wait_for_any_text", create=True) as wait_ocr, \
          patch.object(arena_battle, "enforce_gap", return_value=0):
         assert arena_battle.run_arena_challenges(d, "7fe98fc6") is True
 
+    pure_ws.assert_not_called()
     cocos.enter.assert_called_once_with()
     cocos.challenge.assert_called_once_with()
     cocos.wait_result.assert_called_once()
