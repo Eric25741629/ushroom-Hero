@@ -40,6 +40,7 @@ class _FakeBotState:
         self.updated = []
         self.completed = []
         self.browser_open = []
+        self.skip_sleep = []
         self.manual_release = False
         self.web_close = False
 
@@ -69,6 +70,9 @@ class _FakeBotState:
 
     def set_web_browser_open(self, ip, is_open):
         self.browser_open.append((ip, bool(is_open)))
+
+    def set_skip_sleep(self, ip):
+        self.skip_sleep.append(ip)
 
 
 class _FakeDevice:
@@ -154,6 +158,7 @@ def test_manual_hold_restores_configured_headless_after_release(monkeypatch, web
     assert handled is True
     assert len(fake_device.restore_calls) == 1
     assert fake_device.restore_calls[0]["reason"] == "manual web launch completed"
+    assert fake_state.skip_sleep == ["emu-1"]
 
 
 def test_manual_hold_consumes_web_close_request(monkeypatch, web_session_service):
@@ -175,3 +180,4 @@ def test_manual_hold_consumes_web_close_request(monkeypatch, web_session_service
     assert handled is True
     assert fake_device.close_calls == 1
     assert ("emu-1", False) in fake_state.browser_open
+    assert fake_state.skip_sleep == ["emu-1"]
