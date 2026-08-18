@@ -708,7 +708,11 @@ def _run_farm(client, *, role_id: int, farm_config: Optional[dict],
     """
     cfg = farm_config or {}
     seed_id = cfg.get("seed_id")
+    # 有農場設定就要能在手動操作後自動恢復打工；未填隊伍 ID 時使用
+    # 已驗證的預設隊伍。farm_config=None 仍代表未啟用打工，避免擴大影響。
     team_cfg_id = cfg.get("team_cfg_id")
+    if farm_config is not None and not team_cfg_id:
+        team_cfg_id = farm.DEFAULT_TEAM_CFG_ID
     buy_list = cfg.get("buy")
     summary: dict = {"work_status": None, "harvest": None, "plant": None,
                      "work": None, "buy": None}

@@ -1226,6 +1226,25 @@ def test_farm_plant_and_work_run_with_config(patched):
     assert ("farm", "start_work") in actions
 
 
+def test_farm_stopped_with_config_uses_default_team_id(patched, monkeypatch):
+    """有農場設定但未填 team_cfg_id 時，停止狀態要用預設隊伍恢復打工。"""
+    seen = {}
+
+    def fake_start_work(_client, team_cfg_id, **_kwargs):
+        seen["team_cfg_id"] = team_cfg_id
+        return {"running": True, "worker_status": 1, "raw": {}}
+
+    monkeypatch.setattr(
+        runner.farm,
+        "start_work",
+        fake_start_work,
+    )
+
+    run_device("dev", spend=False, farm_config={"buy": []})
+
+    assert seen["team_cfg_id"] == runner.farm.DEFAULT_TEAM_CFG_ID
+
+
 def test_farm_does_not_run_harvest_card_cycle_inside_farm(patched):
     """豐收卡是獨立 tag，farm 子流程不得再內嵌執行，避免同輪重複買/用卡。"""
     calls, _ = patched

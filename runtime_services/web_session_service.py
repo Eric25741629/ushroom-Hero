@@ -322,6 +322,12 @@ def handle_pending_web_launch(ip: str, device_obj, backend_kind: str, logger_obj
                         f"[{ip}] restore configured headless mode failed: {restore_err}"
                     )
 
+        # 手動頁面通常是在休眠期間被中控提前喚醒；結束接管後要立即跑一次
+        # WS，讓農場打工等可自動修復的狀態先被重新確認，不要等原定喚醒時間。
+        if manual_hold_until_closed:
+            bot_state.set_skip_sleep(ip)
+            logger_obj.info(f"[{ip}] 手動操作結束，跳過原定休眠並立即恢復自動檢查")
+
         time.sleep(1)
     except ForceSleepRequested:
         raise
