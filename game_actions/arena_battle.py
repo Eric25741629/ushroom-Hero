@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""競技場每日挑戰：依 arena_battle_mode 走 animation / local_sim / pure_ws。"""
+"""競技場每日挑戰：H5 端走 animation / local_sim / remote_calc。
+
+``pure_ws`` 由 ``game_actions.ws_phase`` 的 WS-first 階段負責；本模組只在
+WS 未完成競技場時，於 H5 端處理剩餘場次，不再重新建立第二條 WS 連線。
+"""
 from __future__ import annotations
 
 import time
@@ -209,12 +213,20 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
 
     cfg = cfg or config_manager.get_device_config_dict(ip)
     mode = coerce_battle_mode(cfg.get("arena_battle_mode", "animation"))
+    if mode == "pure_ws":
+        # pure_ws 是 WS-first 階段的唯一責任。能走到 H5 代表 WS 未完成、
+        # 或 WS 階段未啟用；此處只補做剩餘競技場，避免同帳號再次登入 WS。
+        logger.info(
+            f"[{ip}] 競技場 pure_ws 已由 WS 階段處理，H5 剩餘流程改走 animation"
+        )
+        mode = "animation"
     gap = coerce_arena_gap_sec(cfg.get("arena_fight_gap_sec", 7))
     n = coerce_arena_daily_fights(cfg.get("arena_daily_fights", 9))
     cocos = None
     cocos_path_active = False
 
-    # 進競技場 UI（pure_ws 不需 UI，但進場可刷新對手；pure_ws 直接協議）
+    # H5 只處理 WS 未完成的剩餘競技場；pure_ws 已在上方降級成 animation，
+    # 因此這裡一定先進入 H5/Cocos UI，不會再建立 WS client。
     if mode != "pure_ws":
         cocos = _cocos_arena(d)
         entered_cocos = cocos is not None and cocos.enter()
