@@ -131,6 +131,45 @@ def test_dismiss_mining_overlay_when_ocr_finds_mine_text(monkeypatch):
     assert clicked["value"] is True
 
 
+def test_dismiss_mining_overlay_uses_cocos_view_for_web_h5(monkeypatch):
+    clicked = {"value": False}
+
+    class _Page:
+        def __init__(self):
+            self.scripts = []
+
+        def evaluate(self, script):
+            self.scripts.append(script)
+            return True
+
+    class _WebDevice:
+        backend_kind = "web_h5"
+
+        def __init__(self):
+            self._page = _Page()
+
+    class _Logger:
+        def info(self, _msg):
+            return None
+
+        def debug(self, _msg):
+            return None
+
+    def fail_if_ocr_called(*_args, **_kwargs):
+        raise AssertionError("web_h5 overlay detection should not call OCR")
+
+    monkeypatch.setattr("miner.mining_service.img_tools.get_all_text", fail_if_ocr_called)
+    monkeypatch.setattr(
+        "miner.mining_service.click_white",
+        lambda _device: clicked.__setitem__("value", True),
+    )
+
+    handled = _dismiss_mining_overlay_if_needed(_WebDevice(), None, _Logger())
+
+    assert handled is True
+    assert clicked["value"] is True
+
+
 
 def test_top_row_pit_must_be_prioritized():
     board = [["empty" for _ in range(6)] for _ in range(7)]
