@@ -266,7 +266,7 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("mail", "郵件領取", 0, enabled_key="mail_claim"),
     _task("idle_reward", "點擊寶箱", 60, ws_display_name="離線收益", pipeline_label="點擊寶箱", skip=("點擊寶箱",), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("ad_rewards", "廣告獎勵", 0, completion=_FARM_PLANT),
-    _task("turntable", "轉盤金幣", 270, pipeline_label="轉盤金幣", skip=("轉盤金幣",), needs_main_page=True, tags=_DIRECT_SKIP),
+    _task("turntable", "轉盤金幣", 280, pipeline_label="轉盤金幣", skip=("轉盤金幣",), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("tycoon", "傳奇大亨", 0, enabled_key="tycoon"),
     TaskDefinition(
         task_id="farm",
@@ -289,7 +289,7 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("ladder_reward", "天梯每週獎勵", 210, pipeline_label="天梯每週獎勵", skip=("天梯每週獎勵",), due_key="天梯每週獎勵", client_backends=("web_h5",), tags=_DIRECT_SKIP),
     _task("seven_login", "七日登入獎勵", 20, pipeline_label="七日登入獎勵", skip=("七日登入獎勵",), completion=_daily("七日登入"), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("cloud_ladder", "雲端戰鬥", 230, ws_display_name="雲纏天梯", pipeline_label="雲端戰鬥", skip=("雲端戰鬥",), enabled_key="enable_cloud_battle", due_key="雲端戰鬥", needs_main_page=True, tags=_DIRECT_SKIP),
-    _task("arena", "競技場挑戰", 280, pipeline_label="競技場挑戰", skip=("競技場挑戰",), enabled_key="enable_arena", due_key="競技場挑戰", completion=_daily("arena_challenges"), needs_main_page=True),
+    _task("arena", "競技場挑戰", 270, pipeline_label="競技場挑戰", skip=("競技場挑戰",), enabled_key="enable_arena", due_key="競技場挑戰", completion=_daily("arena_challenges"), needs_main_page=True),
     _task("escort", "賞金之路", 200, pipeline_label="賞金之路", skip=("賞金之路",), enabled_key="enable_escort", due_key="賞金之路", completion=_daily("escort_last_run"), client_backends=("web_h5",)),
     _task("statue", "菇菇雕像每週", 160, ws_display_name="菇菇雕像", pipeline_label="菇菇雕像每週", due_key="菇菇雕像每週", needs_main_page=True),
     _task("guild", "家族任務", 70, pipeline_label="家族任務", skip=("家族任務",), completion=_daily("donate_family"), needs_main_page=True, tags=_DIRECT_SKIP),
