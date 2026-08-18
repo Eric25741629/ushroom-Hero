@@ -8,6 +8,30 @@ from utils.cocos_ui import CocosUI
 
 
 _ARENA_RESULT_MASK_PATH = "/UIRoot/NormalView/PvpResultView/imgMask"
+_ARENA_RESULT_TEXTS = (
+    "勝利",
+    "战斗胜利",
+    "胜利",
+    "對決",
+    "对决",
+    "失敗",
+    "战斗失败",
+    "失败",
+)
+_ARENA_SKIP_TEXTS = ("跳過", "跳过")
+
+
+def _normalise_result(text: Optional[str]) -> Optional[str]:
+    """將遊戲簡繁結果文案統一成流程使用的繁體值。"""
+    if not text:
+        return None
+    if "勝利" in text or "胜利" in text:
+        return "勝利"
+    if "對決" in text or "对决" in text:
+        return "對決"
+    if "失敗" in text or "失败" in text:
+        return "失敗"
+    return text
 
 
 class CocosArena:
@@ -28,14 +52,18 @@ class CocosArena:
     def challenge(self, occurrence: int = 1) -> bool:
         if not self.ui.click_text("挑戰", occurrence=occurrence):
             return False
-        return bool(self.ui.wait_for_text(("跳過", "勝利", "對決", "失敗"), timeout=12))
+        return bool(
+            self.ui.wait_for_text(_ARENA_SKIP_TEXTS + _ARENA_RESULT_TEXTS, timeout=12)
+        )
 
     def wait_result(self, timeout: float = 60.0) -> Optional[str]:
-        result = self.ui.wait_for_text(("勝利", "對決", "失敗", "跳過"), timeout=timeout)
-        if result == "跳過":
-            self.ui.click_text("跳過")
-            return self.ui.wait_for_text(("勝利", "對決", "失敗"), timeout=timeout)
-        return result
+        result = self.ui.wait_for_text(
+            _ARENA_RESULT_TEXTS + _ARENA_SKIP_TEXTS, timeout=timeout
+        )
+        if result in _ARENA_SKIP_TEXTS:
+            self.ui.click_text(result)
+            result = self.ui.wait_for_text(_ARENA_RESULT_TEXTS, timeout=timeout)
+        return _normalise_result(result)
 
     def finish(self) -> bool:
         """關閉結算/競技場 overlay，並確認最後回到主頁。
