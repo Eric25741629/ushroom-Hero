@@ -28,7 +28,25 @@ def test_arena_challenge_accepts_failure_result_from_cdp():
     arena.ui.wait_for_text.return_value = "失敗"
 
     assert arena.challenge() is True
-    assert arena.ui.wait_for_text.call_args.args[0] == ("跳過", "勝利", "對決", "失敗")
+    assert "跳過" in arena.ui.wait_for_text.call_args.args[0]
+    assert "战斗胜利" in arena.ui.wait_for_text.call_args.args[0]
+
+
+def test_arena_wait_result_normalises_simplified_battle_result():
+    arena = CocosArena(MagicMock())
+    arena.ui = MagicMock()
+    arena.ui.wait_for_text.return_value = "战斗胜利"
+
+    assert arena.wait_result(timeout=3) == "勝利"
+
+
+def test_arena_wait_result_skips_simplified_skip_button():
+    arena = CocosArena(MagicMock())
+    arena.ui = MagicMock()
+    arena.ui.wait_for_text.side_effect = ["跳过", "战斗失败"]
+
+    assert arena.wait_result(timeout=3) == "失敗"
+    arena.ui.click_text.assert_called_once_with("跳过")
 
 
 def test_web_h5_animation_fight_does_not_call_ocr():
