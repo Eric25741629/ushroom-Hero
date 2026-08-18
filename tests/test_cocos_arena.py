@@ -119,6 +119,37 @@ def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
     assert [call.args[1] for call in click_ocr.call_args_list[-2:]] == ["刷新", "記錄"]
 
 
+def test_pure_ws_failure_reconnects_cocos_before_animation_fallback(monkeypatch):
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    cocos = MagicMock()
+    cocos.enter.return_value = True
+    cocos.challenge.return_value = True
+    cocos.wait_result.return_value = "勝利"
+    cocos.finish.return_value = True
+
+    monkeypatch.setattr(
+        "config_manager.get_device_config_dict",
+        lambda _ip: {
+            "arena_battle_mode": "pure_ws",
+            "arena_fight_gap_sec": 7,
+            "arena_daily_fights": 1,
+        },
+    )
+    with patch.object(arena_battle, "_run_pure_ws_fights", return_value=False), \
+         patch.object(arena_battle, "_cocos_arena", return_value=cocos), \
+         patch.object(arena_battle.img_tools, "click_str_by_server") as click_ocr, \
+         patch.object(arena_battle.img_tools, "wait_for_any_text", create=True) as wait_ocr, \
+         patch.object(arena_battle, "enforce_gap", return_value=0):
+        assert arena_battle.run_arena_challenges(d, "7fe98fc6") is True
+
+    cocos.enter.assert_called_once_with()
+    cocos.challenge.assert_called_once_with()
+    cocos.wait_result.assert_called_once()
+    cocos.finish.assert_called_once_with()
+    click_ocr.assert_not_called()
+    wait_ocr.assert_not_called()
+
+
 def test_pure_ws_arena_already_at_target_does_not_login(monkeypatch):
     from ws_token import arena_fight
     from ws_token import creds

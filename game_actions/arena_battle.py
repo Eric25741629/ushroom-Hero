@@ -274,13 +274,20 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
         if mode != "animation":
             logger.warning(f"[{ip}] 競技場 mode={mode} 失敗 → animation fallback")
             if mode == "pure_ws":
-                # pure_ws 失敗時嘗試進 UI
-                try:
+                # pure_ws 失敗後，web_h5 優先重新接回 Cocos/JS UI 路徑。
+                # 這裡若直接走 OCR，動畫等待結果會在每場持續輪詢 OCR。
+                cocos = _cocos_arena(d)
+                entered_cocos = cocos is not None and cocos.enter()
+                if entered_cocos:
+                    cocos_path_active = True
+                else:
+                    if cocos is not None:
+                        logger.warning(f"[{ip}] pure_ws fallback 的 Cocos 進場未驗證，退回 OCR")
+                    cocos = None
+                    cocos_path_active = False
                     img_tools.click_str_by_server(d, "競技場", shift_y=-20, x_range=(0, 160))
                     time.sleep(0.5)
                     img_tools.click_str_by_server(d, "挑戰", wait_timeout=5, y_range=(789, 855))
-                except Exception:
-                    pass
         cocos_path_active = _run_animation_fights(
             d, ip, n, gap, use_cocos=cocos_path_active
         )
