@@ -1,12 +1,12 @@
 # H5 JavaScript 判斷遷移任務索引
 
-目標：降低 `web_h5` 的截圖與 OCR 呼叫，保留既有 OCR 作為容錯，不影響 ADB。
+目標：`web_h5` 的正常流程全部使用 WebSocket、runtime 或 Cocos，只有 `adb` 保留 OCR。完整盤點與遷移 TODO 見 [11-all-ocr-cocos-migration.md](11-all-ocr-cocos-migration.md)。
 
 ## 共通執行順序
 
 1. 已有純 WS 任務：純 WS 成功後直接跳過 UI 任務。
 2. 純 WS 未覆蓋或失敗：`web_h5` 透過 Playwright `page.evaluate()` 讀取 Cocos/runtime 狀態並操作。
-3. JavaScript 找不到節點、頁面尚未載入、版本更新或執行例外：記錄原因後走原 OCR 路徑。
+3. JavaScript/Cocos 找不到節點、頁面尚未載入、版本更新或執行例外：`web_h5` 記錄原因後有限重試、回安全頁或重新排程；不得走 OCR。
 4. `adb`：維持現有 OCR、影像與座標路徑。
 
 禁止把「取到 `_page`」視為 JavaScript 成功。只有讀到可驗證狀態或完成操作才可略過 OCR。
@@ -14,10 +14,10 @@
 ## 共用交付要求
 
 - 抽出共用 helper，優先重用 `utils/cocos_view.py`、`utils/cocos_navigator.py`、`utils/page_detector.py`。
-- 每個判斷回傳來源：`ws`、`cocos`、`runtime`、`ocr_fallback` 或 `unavailable`。
+- 每個判斷回傳來源：`ws`、`cocos`、`runtime`、`adb_ocr` 或 `unavailable`。`ocr_fallback` 僅可存在於 ADB 分支的語意，不可出現在 web_h5。
 - JavaScript 例外、節點不存在與 timeout 都必須可觀測，不能靜默宣稱成功。
-- fallback 必須呼叫原有函式，避免複製一套 OCR 邏輯。
-- 測試至少覆蓋：H5 JS 成功、H5 JS 失敗轉 OCR、ADB 直接 OCR。
+- web_h5 失敗必須使用 bounded retry/safe stop/requeue；ADB 才可呼叫原有 OCR 函式。
+- 測試至少覆蓋：H5 Cocos 成功、H5 Cocos 失敗且不呼叫 OCR、ADB 直接 OCR。
 - action trace 應能比較遷移前後 OCR 次數。
 
 ## 建議分派順序
