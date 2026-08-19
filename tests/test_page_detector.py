@@ -29,6 +29,28 @@ def test_cocos_classify_home():
     assert state == PageState.HOME
 
 
+def test_cocos_global_notice_wins_over_underlying_page():
+    from utils.page_detector import _classify_cocos_scan, PageState
+    state = _classify_cocos_scan({
+        "active_global_overlays": ["NoticeView"],
+        "active_overlays": ["ParkingMainView"], "home_active": True,
+        "selected_tab_name": "4",
+        "guide_inner_active": False, "loading_inner_active": False,
+    })
+    assert state == PageState.NOTICE
+
+
+def test_cocos_unknown_global_overlay_does_not_become_main():
+    from utils.page_detector import _classify_cocos_scan, PageState
+    state = _classify_cocos_scan({
+        "active_global_overlays": ["SomeTopLevelModal"],
+        "active_overlays": [], "home_active": False,
+        "selected_tab_name": None,
+        "guide_inner_active": False, "loading_inner_active": False,
+    })
+    assert state == PageState.UNKNOWN
+
+
 @pytest.mark.parametrize("overlay,expected", [
     ("PlantMainView", "FARM"),
     ("MysteryMineView", "MINE"),

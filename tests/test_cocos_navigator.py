@@ -14,6 +14,26 @@ import pytest
 # ──────────────────────────────────────────────────────────────────────
 
 
+def test_close_open_notice_clicks_and_verifies_inactive():
+    from utils.cocos_navigator import close_open_notice
+
+    returns = iter([{"found": True, "clicked": True}, False])
+    page = _make_page(eval_side_effect=lambda *a, **kw: next(returns))
+    with patch("utils.cocos_navigator.time.sleep"):
+        assert close_open_notice(page) is True
+    assert page.evaluate.call_count == 2
+
+
+def test_close_open_notice_returns_false_when_close_button_missing():
+    from utils.cocos_navigator import close_open_notice
+
+    page = _make_page(eval_return={
+        "found": True, "clicked": False, "err": "notice_close_button_unavailable",
+    })
+    with patch("utils.cocos_navigator.time.sleep"):
+        assert close_open_notice(page) is False
+
+
 def _make_page(eval_return=None, eval_side_effect=None):
     """Build a fake Playwright page whose .evaluate(...) returns canned data."""
     page = MagicMock()

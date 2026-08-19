@@ -63,6 +63,17 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
         return True
 
     if stage == "公告":
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            logger.info(f"[{ip}] Cocos 偵測到全域公告，直接點擊 NoticeView.btnClose")
+            from utils.cocos_navigator import close_open_notice
+
+            if not close_open_notice(page):
+                logger.warning(f"[{ip}] Cocos 公告關閉失敗，保留 stage 供上層有限重試")
+                return False
+            time.sleep(1)
+            return True
+
         logger.info(f"[{ip}] 偵測到公告彈窗，嘗試自動關閉")
         try:
             d.tap(248, 812)
@@ -243,6 +254,7 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 if known_page == PageState.MAIN:
                     current_stage = "主頁面"
                 elif known_page in (
+                    PageState.NOTICE,
                     PageState.OFFLINE_REWARD,
                     PageState.CARPARK_WAREHOUSE,
                     PageState.GOODS_REWARD,

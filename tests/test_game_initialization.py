@@ -72,6 +72,44 @@ class _FakeCocosWebDevice(_FakeWebDevice):
     device_id = "7fe98fc6"
 
 
+def test_h5_notice_uses_cocos_close_without_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup, "click_white", lambda _device: events.append("white"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.cocos_navigator as cocos_navigator
+
+    monkeypatch.setattr(
+        cocos_navigator,
+        "close_open_notice",
+        lambda page: events.append(("cocos_notice_close", page)) or True,
+    )
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "公告") is True
+    assert events == [("cocos_notice_close", device._page)]
+
+
+def test_h5_notice_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup, "click_white", lambda _device: events.append("white"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.cocos_navigator as cocos_navigator
+
+    monkeypatch.setattr(cocos_navigator, "close_open_notice", lambda _page: False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "公告") is False
+    assert events == []
+
+
 def test_carpark_warehouse_popup_uses_web_cleanup(monkeypatch):
     startup = _startup_module(monkeypatch)
     events = []
