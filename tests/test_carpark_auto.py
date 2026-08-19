@@ -6,7 +6,7 @@ import pytest
 import utils.carpark_auto as carpark_auto
 from utils.carpark_auto import (
     POOL_TYPE_TO_ID, SILVER_LOT_COUNT, CarparkSnapshot, CarparkTarget,
-    claim_warehouse, is_daytime_window, target_state,
+    claim_open_warehouse, claim_warehouse, is_daytime_window, target_state,
 )
 from utils.carpark_state import DeployedCar
 
@@ -170,15 +170,45 @@ class _WarehousePage:
         return True
 
 
+class _OpenWarehousePage:
+    def __init__(self):
+        self.events = []
+
+    def evaluate(self, script, *args):
+        if "rewardBtn" in str(script):
+            self.events.append("reward_emit")
+            return {"ok": True, "node": "rewardBtn"}
+        return True
+
+
+def test_claim_open_warehouse_closes_goods_reward_popup(monkeypatch):
+    page = _OpenWarehousePage()
+    monkeypatch.setattr(carpark_auto.time, "sleep", lambda _sec: None)
+    monkeypatch.setattr(
+        carpark_auto,
+        "_close_claim_reward_popup",
+        lambda _page: page.events.append("close_reward") or True,
+    )
+
+    assert claim_open_warehouse(page) is True
+    assert page.events == ["reward_emit", "close_reward"]
+
+
 def test_claim_warehouse_closes_popups_after_reward_click(monkeypatch):
     page = _WarehousePage()
     monkeypatch.setattr(carpark_auto, "_ensure_parking_main_open", lambda _page: True)
     monkeypatch.setattr(carpark_auto.time, "sleep", lambda _sec: None)
+    monkeypatch.setattr(
+        carpark_auto,
+        "_close_claim_reward_popup",
+        lambda _page: page.events.append(("close_reward",)) or True,
+    )
 
     assert claim_warehouse(page) is True
 
     assert ("click", 10, 20) in page.events
     reward_click_idx = page.events.index(("click", 30, 40))
+    assert ("close_reward",) in page.events[reward_click_idx + 1:]
     close_after_reward = [
         e for e in page.events[reward_click_idx + 1:]
         if e[0] == "close_views" and "ParkingWareHouseView" in e[1] and "GoodsGetView" in e[1]
