@@ -756,6 +756,47 @@ def park_one_silver(
     return None
 
 
+def claim_open_warehouse(page: Any) -> bool:
+    """直接由 Cocos node 領取目前已開啟的車位倉庫。
+
+    這個 helper 不負責導航，也不使用 OCR；呼叫端必須先確認目前是
+    ``ParkingWareHouseView``。找不到 node 或 click listener 時回 False，
+    讓 web_h5 呼叫端安全停止/重試，不回退到 OCR。
+    """
+    try:
+        result = page.evaluate(r"""() => {
+          const find=(r,p)=>{
+            let n=r;
+            for(const x of p){
+              if(!n||!n.children)return null;
+              n=n.children.find(c=>(c.name||'')===x);
+              if(!n)return null;
+            }
+            return n;
+          };
+          const b=find(cc.director.getScene(),
+            ['UIRoot','NormalView','ParkingWareHouseView','root','content','rewardBtn']);
+          if(!b || !b.activeInHierarchy)
+            return {ok:false,err:'rewardBtn_not_active'};
+          if(typeof b.hasEventListener === 'function' && !b.hasEventListener('click'))
+            return {ok:false,err:'rewardBtn_click_listener_missing'};
+          b.emit('click', b);
+          return {ok:true,node:b.name,label:(b.children||[]).map(c=>{
+            const l=c.getComponent && cc.Label ? c.getComponent(cc.Label) : null;
+            return l ? String(l.string||'') : '';
+          }).filter(Boolean)};
+        }""") or {}
+    except Exception as exc:
+        logger.warning("[carpark_auto] Cocos 領取車位倉庫例外: %s", exc)
+        return False
+    if not result.get("ok"):
+        logger.warning("[carpark_auto] Cocos 領取車位倉庫失敗: %s", result.get("err"))
+        return False
+    time.sleep(3.5)
+    logger.info("[carpark_auto] Cocos 領取車位倉庫成功: %s", result)
+    return True
+
+
 def claim_warehouse(page: Any) -> bool:
     """Claim all unclaimed rewards in the parking warehouse (倉庫).
 
