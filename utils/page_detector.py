@@ -67,6 +67,7 @@ class PageState(str, Enum):
     EQUIP_EDIT = "equip_edit"     # EquipEditView (equipment editing modal)
 
     # Top-level non-game states
+    NOTICE = "notice"             # TopView/NoticeView 全域公告遮罩
     LOADING = "loading"           # GameLoadingView
     RECONNECT = "reconnect"       # ReconnectView (also active in normal state but children=0)
     GUIDE = "guide"               # GuideView/GuideView inner
@@ -114,6 +115,7 @@ _TAB_NAME_TO_STATE: dict[str, PageState] = {
 
 # JS to scan the scene tree. Returns:
 #   {
+#     "active_global_overlays": [view_name, ...],  # active children of TopView
 #     "active_overlays": [view_name, ...],   # active children of NormalView (excluding MainView)
 #     "home_active": bool,                    # inner MysteryMainView active
 #     "selected_tab_name": str | null,        # name of selected tab cell, e.g. "4"
@@ -135,8 +137,20 @@ _SCAN_JS = r"""
     return n;
   };
 
-  const out = {active_overlays: [], home_active: false, selected_tab_name: null,
-               guide_inner_active: false, loading_inner_active: false};
+  const out = {active_global_overlays: [], active_overlays: [], home_active: false,
+               selected_tab_name: null, guide_inner_active: false,
+               loading_inner_active: false};
+
+  // 0. TopView sits above every NormalView page. MessageView is a persistent
+  // toast/fight-tip container, not a blocking modal; other active children
+  // must win over the page underneath them.
+  const topView = find(scene, ['UIRoot', 'TopView']);
+  if (topView) {
+    for (const v of topView.children || []) {
+      if (!v.active || v.name === 'MessageView') continue;
+      out.active_global_overlays.push(v.name || '');
+    }
+  }
 
   // 1. Overlay views under NormalView (active children other than MainView).
   const normalView = find(scene, ['UIRoot', 'NormalView']);
@@ -291,13 +305,21 @@ class PageDetector:
 
 def _classify_cocos_scan(scan: dict) -> PageState:
     """Translate a `_SCAN_JS` result dict into a PageState."""
-    # 1. Highest-priority states (must check before overlays).
+    # 1. TopView sits above every NormalView page. Never misclassify a covered
+    # page as MAIN/HOME just because its underlying page remains active.
+    global_overlays = scan.get("active_global_overlays") or []
+    if global_overlays:
+        if "NoticeView" in global_overlays:
+            return PageState.NOTICE
+        return PageState.UNKNOWN
+
+    # 2. Highest-priority states (must check before NormalView overlays).
     if scan.get("loading_inner_active"):
         return PageState.LOADING
     if scan.get("guide_inner_active"):
         return PageState.GUIDE
 
-    # 2. Overlays (NormalView children excluding MainView) — topmost wins.
+    # 3. Overlays (NormalView children excluding MainView) — topmost wins.
     overlays = scan.get("active_overlays") or []
     # Prefer the topmost known overlay. Cocos children are ordered from back
     # to front; live 7fe98fc6 has ParkingWareHouseView followed by
@@ -314,18 +336,18 @@ def _classify_cocos_scan(scan: dict) -> PageState:
     if overlays:
         return PageState.UNKNOWN
 
-    # 3. Home (MysteryMainView) trumps tab content when active.
+    # 4. Home (MysteryMainView) trumps tab content when active.
     if scan.get("home_active"):
         return PageState.HOME
 
-    # 4. Tab cell selection → role/pet/dungeon/guild/shop.
+    # 5. Tab cell selection → role/pet/dungeon/guild/shop.
     tab_name = scan.get("selected_tab_name")
     if tab_name:
         st = _TAB_NAME_TO_STATE.get(str(tab_name))
         if st is not None:
             return st
 
-    # 5. Default: main page (no overlay, no MysteryMainView, no tab matched).
+    # 6. Default: main page (no overlay, no MysteryMainView, no tab matched).
     return PageState.MAIN
 
 
@@ -415,6 +437,7 @@ def detect_known_h5_page(d: Any, device_ip: Optional[str]) -> Optional[PageState
 
 _COCOS_STAGE_MAP = {
     PageState.MAIN: "主頁面",
+    PageState.NOTICE: "公告",
     PageState.CARPARK_WAREHOUSE: "車位倉庫",
     PageState.OFFLINE_REWARD: "放置獎勵",
     PageState.GOODS_REWARD: "恭喜獲得",

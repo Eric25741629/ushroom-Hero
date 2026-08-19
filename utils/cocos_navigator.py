@@ -314,6 +314,68 @@ _FIND_CLOSE_BTN_JS = r"""
 _SETTLE_SEC = 1.5  # how long to wait after a click for cocos to update state
 
 
+def close_open_notice(page: Any, timeout: float = 5.0) -> bool:
+    """關閉全域 ``TopView/NoticeView`` 公告並驗證已消失。"""
+    try:
+        result = page.evaluate(r"""() => {
+          if (typeof cc === 'undefined' || !cc.director)
+            return {found:false, clicked:false, err:'no_cc'};
+          const scene = cc.director.getScene();
+          const find = (root, parts) => {
+            let n = root;
+            for (const p of parts) {
+              if (!n || !n.children) return null;
+              n = n.children.find(c => (c.name || '') === p);
+              if (!n) return null;
+            }
+            return n;
+          };
+          const view = find(scene, ['UIRoot','TopView','NoticeView']);
+          if (!view || !view.active) return {found:false, clicked:false};
+          const btn = find(view, ['btnClose']);
+          if (!btn || !btn.activeInHierarchy || typeof btn.emit !== 'function')
+            return {found:true, clicked:false, err:'notice_close_button_unavailable'};
+          btn.emit('click', btn);
+          return {found:true, clicked:true};
+        }""") or {}
+    except Exception as exc:
+        logger.warning("[cocos_nav] 關閉公告例外: %s", exc)
+        return False
+
+    if not result.get("found"):
+        return True
+    if not result.get("clicked"):
+        logger.warning("[cocos_nav] 公告關閉按鈕不可用: %s", result.get("err"))
+        return False
+
+    deadline = time.monotonic() + max(0.5, float(timeout))
+    while time.monotonic() < deadline:
+        try:
+            active = page.evaluate(r"""() => {
+              const um = window.uiMgr;
+              if (um && typeof um.getView === 'function') {
+                const v = um.getView('NoticeView');
+                if (v && v.node) return !!v.node.active;
+              }
+              const scene = (typeof cc !== 'undefined' && cc.director)
+                ? cc.director.getScene() : null;
+              const top = scene && scene.children && scene.children.find(c => c.name === 'UIRoot');
+              const tv = top && top.children && top.children.find(c => c.name === 'TopView');
+              const nv = tv && tv.children && tv.children.find(c => c.name === 'NoticeView');
+              return !!(nv && nv.active);
+            }""")
+        except Exception as exc:
+            logger.warning("[cocos_nav] 驗證公告關閉失敗: %s", exc)
+            return False
+        if not active:
+            logger.info("[cocos_nav] 已關閉全域公告")
+            return True
+        time.sleep(0.2)
+
+    logger.warning("[cocos_nav] 公告關閉 timeout")
+    return False
+
+
 class CocosNavigator:
     def __init__(self, page: Any) -> None:
         self.page = page

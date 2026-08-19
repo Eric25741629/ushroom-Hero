@@ -25,6 +25,9 @@
 - 實際點擊 `ParkingWareHouseView/root/content/rewardBtn` 後約 0.8 秒，
   `ParkingWareHouseView=false`、`GoodsGetView=true`；呼叫 `uiMgr.close` 後約
   1.2 秒兩者皆 inactive，證明車位領取也必須等待並驗證獎勵 popup 關閉。
+- 回到首頁後仍觀察到 `/UIRoot/TopView/NoticeView`、`imgMask` 與 `btnClose`
+  active，而底層 `MainView` 也 active；因此公告必須是高於所有 `NormalView`
+  page 的全域 `NOTICE` 狀態，不能只掃 `NormalView` 後誤判為主頁面。
 
 這份紀錄只代表 7fe98fc6 的 live fingerprint；其他 H5 裝置仍需逐台確認
 view 層級與點擊後 transition，不能直接複製成通用結論。
