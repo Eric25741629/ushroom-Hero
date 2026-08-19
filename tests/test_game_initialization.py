@@ -154,6 +154,36 @@ def test_h5_offline_reward_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
     assert events == []
 
 
+def test_h5_goods_reward_uses_cocos_close_without_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    reward_manager = sys.modules["game_actions.reward_manager"]
+    monkeypatch.setattr(reward_manager, "close_goods_reward", lambda page: events.append(("cocos_close", page)) or True, raising=False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "恭喜獲得") is True
+    assert events == [("cocos_close", device._page)]
+
+
+def test_h5_goods_reward_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    reward_manager = sys.modules["game_actions.reward_manager"]
+    monkeypatch.setattr(reward_manager, "close_goods_reward", lambda _page: False, raising=False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "恭喜獲得") is False
+    assert events == []
+
+
 def _install_cocos_navigator_stub(monkeypatch, return_value):
     """Stub utils.cocos_navigator.try_cocos_navigate before the lazy import.
 

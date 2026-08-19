@@ -72,6 +72,22 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
         time.sleep(1)
         return True
 
+    if stage == "恭喜獲得":
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            logger.info(f"[{ip}] Cocos 偵測到恭喜獲得，直接關閉 GoodsGetView")
+            from game_actions.reward_manager import close_goods_reward
+
+            if not close_goods_reward(page):
+                logger.warning(f"[{ip}] Cocos 恭喜獲得 popup 關閉失敗，保留 stage 供上層有限重試")
+                return False
+            time.sleep(1)
+            return True
+        # ADB 維持既有 reward()，由原本的 OCR/座標流程處理。
+        reward_fn(d)
+        time.sleep(1)
+        return True
+
     if stage in ("離線獎勵", "放置獎勵", "獎勵"):
         page = getattr(d, "_page", None)
         if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
@@ -226,8 +242,12 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 known_page = detect_known_h5_page(d, ip)
                 if known_page == PageState.MAIN:
                     current_stage = "主頁面"
-                elif known_page in (PageState.OFFLINE_REWARD, PageState.CARPARK_WAREHOUSE):
-                    # 這兩個 view 是可領取的前景 popup；不能直接 goto_main
+                elif known_page in (
+                    PageState.OFFLINE_REWARD,
+                    PageState.CARPARK_WAREHOUSE,
+                    PageState.GOODS_REWARD,
+                ):
+                    # 這些 view 是需要先處理的前景 popup；不能直接 goto_main
                     # 把獎勵跳掉，必須交給 Cocos stage handler 處理。
                     current_stage = resolve_stage_until_stable(
                         d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger

@@ -19,6 +19,9 @@
   行為一致。
 - `ParkingWareHouseView/root/content/rewardBtn` 也已確認 active 且有
   click listener；正式 handler 會在 Cocos 點擊失敗時有限重試，不回 OCR。
+- 同一 live session 後續出現 `GoodsGetView`（標題圖像顯示「恭喜獲得」）；
+  直接呼叫 `uiMgr.close('GoodsGetView')` 後 2 秒確認該 view inactive，
+  `ParkingWareHouseView` 仍 active。此 popup 已納入下一個 Cocos stage adapter。
 
 這份紀錄只代表 7fe98fc6 的 live fingerprint；其他 H5 裝置仍需逐台確認
 view 層級與點擊後 transition，不能直接複製成通用結論。
