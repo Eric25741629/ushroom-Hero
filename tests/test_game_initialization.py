@@ -67,6 +67,11 @@ class _FakeWebDevice:
         self.clicks.append((x, y))
 
 
+class _FakeCocosWebDevice(_FakeWebDevice):
+    backend_kind = "web_h5"
+    device_id = "7fe98fc6"
+
+
 def test_carpark_warehouse_popup_uses_web_cleanup(monkeypatch):
     startup = _startup_module(monkeypatch)
     events = []
@@ -83,6 +88,70 @@ def test_carpark_warehouse_popup_uses_web_cleanup(monkeypatch):
 
     assert startup._handle_known_stage_popup(device, "emulator-5554", "車位倉庫") is True
     assert events == ["claim", ("close", device._page), ("main", device._page)]
+
+
+def test_h5_carpark_warehouse_uses_cocos_claim_without_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.carpark_auto as carpark_auto
+
+    monkeypatch.setattr(carpark_auto, "claim_open_warehouse", lambda page: events.append(("cocos", page)) or True)
+    monkeypatch.setattr(carpark_auto, "_close_carpark_transient_views", lambda page: events.append(("close", page)) or True)
+    monkeypatch.setattr(carpark_auto, "_return_parking_to_main", lambda page: events.append(("main", page)) or True)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "車位倉庫") is True
+    assert events == [("cocos", device._page), ("close", device._page), ("main", device._page)]
+
+
+def test_h5_carpark_warehouse_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.carpark_auto as carpark_auto
+
+    monkeypatch.setattr(carpark_auto, "claim_open_warehouse", lambda _page: False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "車位倉庫") is False
+    assert events == []
+
+
+def test_h5_offline_reward_uses_cocos_claim_without_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    reward_manager = sys.modules["game_actions.reward_manager"]
+    monkeypatch.setattr(reward_manager, "claim_open_reward", lambda page: events.append(("cocos", page)) or True, raising=False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "放置獎勵") is True
+    assert events == [("cocos", device._page)]
+
+
+def test_h5_offline_reward_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    reward_manager = sys.modules["game_actions.reward_manager"]
+    monkeypatch.setattr(reward_manager, "claim_open_reward", lambda _page: False, raising=False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "放置獎勵") is False
+    assert events == []
 
 
 def _install_cocos_navigator_stub(monkeypatch, return_value):

@@ -34,6 +34,8 @@ def test_cocos_classify_home():
     ("MysteryMineView", "MINE"),
     ("StatueView", "STATUE"),
     ("ParkingMainView", "CARPARK"),
+    ("ParkingWareHouseView", "CARPARK_WAREHOUSE"),
+    ("outlinePopView", "OFFLINE_REWARD"),
     ("WorkShopView", "WORKSHOP"),
     ("MarryMainView", "MARRY"),
     ("ScienceView", "SCIENCE"),
@@ -57,6 +59,29 @@ def test_cocos_classify_unknown_overlay_returns_unknown_not_main():
     state = _classify_cocos_scan({
         "active_overlays": ["BrandNewViewWeDontKnow"],
         "home_active": False, "selected_tab_name": None,
+        "guide_inner_active": False, "loading_inner_active": False,
+    })
+    assert state == PageState.UNKNOWN
+
+
+def test_cocos_known_overlay_wins_over_persistent_outline_overlay():
+    from utils.page_detector import _classify_cocos_scan, PageState
+
+    state = _classify_cocos_scan({
+        "active_overlays": ["ParkingWareHouseView", "outlinePopView"],
+        "home_active": True,
+        "selected_tab_name": "4",
+        "guide_inner_active": False, "loading_inner_active": False,
+    })
+    assert state == PageState.OFFLINE_REWARD
+
+
+def test_cocos_unknown_overlay_still_returns_unknown():
+    from utils.page_detector import _classify_cocos_scan, PageState
+
+    state = _classify_cocos_scan({
+        "active_overlays": ["BrandNewViewWeDontKnow"], "home_active": False,
+        "selected_tab_name": None,
         "guide_inner_active": False, "loading_inner_active": False,
     })
     assert state == PageState.UNKNOWN

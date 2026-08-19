@@ -57,6 +57,8 @@ class PageState(str, Enum):
     MINE = "mine"                 # MysteryMineView (from home/Mine)
     STATUE = "statue"             # StatueView (from home/FarmStatue)
     CARPARK = "carpark"           # ParkingMainView (from home/CarPark)
+    CARPARK_WAREHOUSE = "carpark_warehouse"  # ParkingWareHouseView popup
+    OFFLINE_REWARD = "offline_reward"       # outlinePopView popup
     WORKSHOP = "workshop"         # WorkShopView (from home/WorkShop)
     MARRY = "marry"               # MarryMainView (from home/Marry)
     SCIENCE = "science"           # ScienceView (from home/Science)
@@ -82,6 +84,8 @@ _OVERLAY_TO_STATE: dict[str, PageState] = {
     "MysteryMineView":      PageState.MINE,
     "StatueView":           PageState.STATUE,
     "ParkingMainView":      PageState.CARPARK,
+    "ParkingWareHouseView": PageState.CARPARK_WAREHOUSE,
+    "outlinePopView":       PageState.OFFLINE_REWARD,
     "WorkShopView":         PageState.WORKSHOP,
     "MarryMainView":        PageState.MARRY,
     "ScienceView":          PageState.SCIENCE,
@@ -290,12 +294,18 @@ def _classify_cocos_scan(scan: dict) -> PageState:
     if scan.get("guide_inner_active"):
         return PageState.GUIDE
 
-    # 2. Overlays (NormalView children excluding MainView) — first known wins.
+    # 2. Overlays (NormalView children excluding MainView) — topmost wins.
     overlays = scan.get("active_overlays") or []
-    for ov in overlays:
-        st = _OVERLAY_TO_STATE.get(ov)
-        if st is not None:
-            return st
+    # Prefer the topmost known overlay. Cocos children are ordered from back
+    # to front; live 7fe98fc6 has ParkingWareHouseView followed by
+    # outlinePopView, so the visible offline-reward popup must win.
+    known_states = [
+        _OVERLAY_TO_STATE[ov]
+        for ov in overlays
+        if ov in _OVERLAY_TO_STATE
+    ]
+    if known_states:
+        return known_states[-1]
     # If any overlay was active but unrecognized, return UNKNOWN — better than
     # silently misclassifying as MAIN.
     if overlays:
@@ -398,6 +408,24 @@ def detect_known_h5_page(d: Any, device_ip: Optional[str]) -> Optional[PageState
     if state in (None, PageState.UNKNOWN, PageState.LOADING, PageState.GUIDE):
         return None
     return state
+
+
+_COCOS_STAGE_MAP = {
+    PageState.MAIN: "主頁面",
+    PageState.CARPARK_WAREHOUSE: "車位倉庫",
+    PageState.OFFLINE_REWARD: "放置獎勵",
+}
+
+
+def detect_known_h5_stage(d: Any, device_ip: Optional[str]) -> Optional[str]:
+    """Return a legacy stage name from a verified Cocos page state.
+
+    This is deliberately a small bridge for legacy callers. It only returns
+    stages whose Cocos fingerprint has been live-verified; unknown H5 states
+    still return ``None`` until their adapter is implemented.
+    """
+    state = detect_known_h5_page(d, device_ip)
+    return _COCOS_STAGE_MAP.get(state)
 
 
 def _legacy_fast_path_enabled(device_ip: Optional[str]) -> bool:

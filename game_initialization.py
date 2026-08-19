@@ -73,17 +73,36 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
         return True
 
     if stage in ("離線獎勵", "放置獎勵", "獎勵"):
-        logger.info(f"[{ip}] 偵測到 {stage}，執行 reward()")
-        reward_fn(d)
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            logger.info(f"[{ip}] Cocos 偵測到 {stage}，直接領取離線獎勵")
+            from game_actions.reward_manager import claim_open_reward
+
+            if not claim_open_reward(page):
+                logger.warning(f"[{ip}] Cocos 離線獎勵領取失敗，保留 stage 供上層有限重試")
+                return False
+        else:
+            logger.info(f"[{ip}] 偵測到 {stage}，執行既有 reward()")
+            reward_fn(d)
         time.sleep(1)
         return True
 
     if stage == "車位倉庫":
         logger.info(f"[{ip}] 偵測到車位倉庫，嘗試領取並關閉彈窗返回主頁")
-        img_tools.click_str_by_server(d, '領取', y_range=(697, 737))
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            # 已由 Cocos stage fingerprint 確認是倉庫；直接點同一個
+            # rewardBtn，不再用 OCR 找「領取」。失敗時不偷偷回 OCR。
+            from utils.carpark_auto import claim_open_warehouse
+
+            if not claim_open_warehouse(page):
+                logger.warning(f"[{ip}] Cocos 車位倉庫領取失敗，保留 stage 供上層有限重試")
+                return False
+        else:
+            # ADB 維持既有 OCR 路徑。
+            img_tools.click_str_by_server(d, '領取', y_range=(697, 737))
         time.sleep(2)
         closed_by_js = False
-        page = getattr(d, "_page", None)
         if page is not None:
             try:
                 from utils.carpark_auto import _close_carpark_transient_views, _return_parking_to_main
@@ -207,6 +226,12 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 known_page = detect_known_h5_page(d, ip)
                 if known_page == PageState.MAIN:
                     current_stage = "主頁面"
+                elif known_page in (PageState.OFFLINE_REWARD, PageState.CARPARK_WAREHOUSE):
+                    # 這兩個 view 是可領取的前景 popup；不能直接 goto_main
+                    # 把獎勵跳掉，必須交給 Cocos stage handler 處理。
+                    current_stage = resolve_stage_until_stable(
+                        d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
+                    )
                 elif known_page is not None:
                     from utils.cocos_navigator import CocosNavigator
                     page = getattr(d, "_page", None)

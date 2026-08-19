@@ -2,6 +2,27 @@
 
 狀態：規劃中
 
+## Live 實測紀錄：7fe98fc6 / CDP 9226
+
+2026-08-19 已用現有登入中的 H5 頁面做第一個安全切片驗證：
+
+- 同一畫面存在兩層 view：底層 `ParkingWareHouseView`，上層
+  `outlinePopView`（離線獎勵）。OCR 回傳「離線獎勵」，Cocos scene
+  path 也確認上層為 `outlinePopView`，因此以最上層 Cocos view 作 stage
+  判斷，避免誤先處理底層倉庫。
+- 分支上的 `get_stage()` 以 Cocos 回傳 `放置獎勵`，fake screenshot
+  會直接失敗，證明此已知狀態沒有進 screenshot/OCR。
+- 直接呼叫同一個遷移 helper 的 node：
+  `UIRoot/NormalView/outlinePopView/root/content/btnStart.emit('click')`。
+  點擊前 node 為 active；3 秒後 `outlinePopView` inactive、
+  `ParkingWareHouseView` 仍 active，與原本「領取離線獎勵後繼續處理下一層」的
+  行為一致。
+- `ParkingWareHouseView/root/content/rewardBtn` 也已確認 active 且有
+  click listener；正式 handler 會在 Cocos 點擊失敗時有限重試，不回 OCR。
+
+這份紀錄只代表 7fe98fc6 的 live fingerprint；其他 H5 裝置仍需逐台確認
+view 層級與點擊後 transition，不能直接複製成通用結論。
+
 ## 目標與邊界
 
 本文件是目前專案中 OCR 的完整遷移清單。目標不是把 OCR server 刪掉，而是把使用場景分流：

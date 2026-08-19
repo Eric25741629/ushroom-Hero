@@ -126,12 +126,25 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray, ocr_full=None) -> str:
 import img_tools
 
 def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = None):
-    """截圖並透過 OCR 文字判斷目前所在的頁面。
+    """先讀 web_h5 的已知 Cocos state，其他情況再用 OCR 判斷頁面。
 
     單次 OCR：整幀只打一次 OCR endpoint，texts 與 bbox 同源重用，取代過去同一幀
     重複 3-4 次的 ROI / 全幀 OCR 呼叫。優先序與舊版一致：
     公告(可操作) > 車位倉庫 > 異地登錄 > 主頁面 > ... > 未知。
     """
+    # web_h5 的已知 Cocos state 先行，避免「車位倉庫」這類覆蓋在主頁
+    # 上的 view 被 OCR 誤判成離線獎勵/主頁面。ADB 沒有 _page，維持原 OCR。
+    if getattr(d, "backend_kind", None) == "web_h5":
+        try:
+            from utils.page_detector import detect_known_h5_stage
+
+            cocos_stage = detect_known_h5_stage(d, getattr(d, "device_id", None))
+            if cocos_stage:
+                logger.info("Cocos stage=%s，跳過 web_h5 OCR", cocos_stage)
+                return cocos_stage
+        except Exception as exc:
+            logger.debug("web_h5 Cocos stage probe failed，保留既有 OCR 路徑: %s", exc)
+
     if img is None:
         img = d.screenshot(format='opencv')
 

@@ -5,6 +5,43 @@ import img_tools
 from tools import click_white
 from utils.logging_utils import logger
 
+
+def claim_open_reward(page) -> bool:
+    """直接由 Cocos node 領取目前已開啟的離線獎勵 popup。
+
+    只處理已由 PageDetector 確認的 ``outlinePopView``。找不到按鈕時
+    回 False 讓 web_h5 上層有限重試，不使用 OCR 猜座標。
+    """
+    try:
+        result = page.evaluate(r"""() => {
+          const find=(r,p)=>{
+            let n=r;
+            for(const x of p){
+              if(!n||!n.children)return null;
+              n=n.children.find(c=>(c.name||'')===x);
+              if(!n)return null;
+            }
+            return n;
+          };
+          const b=find(cc.director.getScene(),
+            ['UIRoot','NormalView','outlinePopView','root','content','btnStart']);
+          if(!b || !b.activeInHierarchy)
+            return {ok:false,err:'offline_reward_btn_not_active'};
+          if(typeof b.hasEventListener === 'function' && !b.hasEventListener('click'))
+            return {ok:false,err:'offline_reward_click_listener_missing'};
+          b.emit('click', b);
+          return {ok:true,node:b.name};
+        }""") or {}
+    except Exception as exc:
+        logger.warning("Cocos 領取離線獎勵例外: %s", exc)
+        return False
+    if not result.get("ok"):
+        logger.warning("Cocos 領取離線獎勵失敗: %s", result.get("err"))
+        return False
+    time.sleep(2)
+    logger.info("Cocos 領取離線獎勵成功: %s", result)
+    return True
+
 def reward(d, easyocr_reader=None):
     """
     領取獎勵邏輯 (維持硬座標，使用 PaddleOCR/大腦判定)
