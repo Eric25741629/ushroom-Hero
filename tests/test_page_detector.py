@@ -36,6 +36,8 @@ def test_cocos_classify_home():
     ("ParkingMainView", "CARPARK"),
     ("ParkingWareHouseView", "CARPARK_WAREHOUSE"),
     ("outlinePopView", "OFFLINE_REWARD"),
+    ("GoodsGetView", "GOODS_REWARD"),
+    ("GoodsGetView2", "GOODS_REWARD"),
     ("WorkShopView", "WORKSHOP"),
     ("MarryMainView", "MARRY"),
     ("ScienceView", "SCIENCE"),
