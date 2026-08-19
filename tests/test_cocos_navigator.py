@@ -34,6 +34,26 @@ def test_close_open_notice_returns_false_when_close_button_missing():
         assert close_open_notice(page) is False
 
 
+def test_close_open_welfare_popup_clicks_mask_and_verifies_inactive():
+    from utils.cocos_navigator import close_open_welfare_popup
+
+    returns = iter([{"found": True, "clicked": True}, False])
+    page = _make_page(eval_side_effect=lambda *a, **kw: next(returns))
+    with patch("utils.cocos_navigator.time.sleep"):
+        assert close_open_welfare_popup(page) is True
+    assert page.evaluate.call_count == 2
+
+
+def test_close_open_welfare_popup_returns_false_when_mask_missing():
+    from utils.cocos_navigator import close_open_welfare_popup
+
+    page = _make_page(eval_return={
+        "found": True, "clicked": False, "err": "welfare_close_mask_unavailable",
+    })
+    with patch("utils.cocos_navigator.time.sleep"):
+        assert close_open_welfare_popup(page) is False
+
+
 def _make_page(eval_return=None, eval_side_effect=None):
     """Build a fake Playwright page whose .evaluate(...) returns canned data."""
     page = MagicMock()
@@ -293,6 +313,24 @@ def test_sweep_popups_closes_one_overlay_then_stops_at_home():
     nav = CocosNavigator(page)
     with patch("utils.cocos_navigator.time.sleep"):
         assert nav.sweep_popups() == 1
+
+
+def test_sweep_popups_closes_welfare_mask_overlay():
+    from utils.cocos_navigator import CocosNavigator
+
+    state_welfare = {"main_active": True, "home_active": True,
+                     "farm_active": False, "tab_selected_idx": 4,
+                     "open_overlay_views": ["WelfareH5PopView"]}
+    state_home = {"main_active": True, "home_active": True,
+                  "farm_active": False, "tab_selected_idx": 4,
+                  "open_overlay_views": []}
+    returns = iter([state_welfare, state_home])
+    page = _make_page(eval_side_effect=lambda *a, **kw: next(returns))
+    nav = CocosNavigator(page)
+    with patch("utils.cocos_navigator.close_open_welfare_popup", return_value=True) as close:
+        with patch("utils.cocos_navigator.time.sleep"):
+            assert nav.sweep_popups() == 1
+    close.assert_called_once_with(page)
 
 
 def test_sweep_popups_keeps_tab_state_unlike_goto_main():

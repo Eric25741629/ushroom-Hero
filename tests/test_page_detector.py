@@ -60,6 +60,7 @@ def test_cocos_unknown_global_overlay_does_not_become_main():
     ("outlinePopView", "OFFLINE_REWARD"),
     ("GoodsGetView", "GOODS_REWARD"),
     ("GoodsGetView2", "GOODS_REWARD"),
+    ("WelfareH5PopView", "WELFARE"),
     ("WorkShopView", "WORKSHOP"),
     ("MarryMainView", "MARRY"),
     ("ScienceView", "SCIENCE"),

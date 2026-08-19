@@ -110,6 +110,44 @@ def test_h5_notice_cocos_failure_does_not_fallback_to_ocr(monkeypatch):
     assert events == []
 
 
+def test_h5_welfare_popup_uses_cocos_mask_without_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup, "click_white", lambda _device: events.append("white"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.cocos_navigator as cocos_navigator
+
+    monkeypatch.setattr(
+        cocos_navigator,
+        "close_open_welfare_popup",
+        lambda page: events.append(("cocos_welfare_close", page)) or True,
+    )
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "福利彈窗") is True
+    assert events == [("cocos_welfare_close", device._page)]
+
+
+def test_h5_welfare_popup_failure_does_not_fallback_to_ocr(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    events = []
+    device = _FakeCocosWebDevice()
+
+    monkeypatch.setattr(startup.img_tools, "click_str_by_server", lambda *args, **kwargs: events.append("ocr"))
+    monkeypatch.setattr(startup, "click_white", lambda _device: events.append("white"))
+    monkeypatch.setattr(startup.time, "sleep", lambda _sec: None)
+
+    import utils.cocos_navigator as cocos_navigator
+
+    monkeypatch.setattr(cocos_navigator, "close_open_welfare_popup", lambda _page: False)
+
+    assert startup._handle_known_stage_popup(device, "7fe98fc6", "福利彈窗") is False
+    assert events == []
+
+
 def test_carpark_warehouse_popup_uses_web_cleanup(monkeypatch):
     startup = _startup_module(monkeypatch)
     events = []

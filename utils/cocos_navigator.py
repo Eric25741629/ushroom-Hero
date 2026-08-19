@@ -376,6 +376,67 @@ def close_open_notice(page: Any, timeout: float = 5.0) -> bool:
     return False
 
 
+def close_open_welfare_popup(page: Any, timeout: float = 5.0) -> bool:
+    """關閉 ``WelfareH5PopView`` 儲值優惠彈窗並驗證已消失。
+
+    這個 popup 沒有 ``btnClose``，畫面外層 ``imgMask`` 才是官方關閉事件。
+    直接觸發該節點的 click handler，避免依賴 OCR 或固定座標。
+    """
+    try:
+        result = page.evaluate(r"""() => {
+          if (typeof cc === 'undefined' || !cc.director)
+            return {found:false, clicked:false, err:'no_cc'};
+          const scene = cc.director.getScene();
+          const find = (root, parts) => {
+            let n = root;
+            for (const p of parts) {
+              if (!n || !n.children) return null;
+              n = n.children.find(c => (c.name || '') === p);
+              if (!n) return null;
+            }
+            return n;
+          };
+          const view = find(scene, ['UIRoot','NormalView','WelfareH5PopView']);
+          if (!view || !view.active) return {found:false, clicked:false};
+          const mask = find(view, ['imgMask']);
+          if (!mask || !mask.activeInHierarchy || typeof mask.emit !== 'function')
+            return {found:true, clicked:false, err:'welfare_close_mask_unavailable'};
+          mask.emit('click', mask);
+          return {found:true, clicked:true};
+        }""") or {}
+    except Exception as exc:
+        logger.warning("[cocos_nav] 關閉福利彈窗例外: %s", exc)
+        return False
+
+    if not result.get("found"):
+        return True
+    if not result.get("clicked"):
+        logger.warning("[cocos_nav] 福利彈窗關閉遮罩不可用: %s", result.get("err"))
+        return False
+
+    deadline = time.monotonic() + max(0.5, float(timeout))
+    while time.monotonic() < deadline:
+        try:
+            active = page.evaluate(r"""() => {
+              const scene = (typeof cc !== 'undefined' && cc.director)
+                ? cc.director.getScene() : null;
+              const root = scene && scene.children && scene.children.find(c => c.name === 'UIRoot');
+              const normal = root && root.children && root.children.find(c => c.name === 'NormalView');
+              const view = normal && normal.children && normal.children.find(c => c.name === 'WelfareH5PopView');
+              return !!(view && view.active);
+            }""")
+        except Exception as exc:
+            logger.warning("[cocos_nav] 驗證福利彈窗關閉失敗: %s", exc)
+            return False
+        if not active:
+            logger.info("[cocos_nav] 已關閉福利彈窗")
+            return True
+        time.sleep(0.2)
+
+    logger.warning("[cocos_nav] 福利彈窗關閉 timeout")
+    return False
+
+
 class CocosNavigator:
     def __init__(self, page: Any) -> None:
         self.page = page
@@ -399,7 +460,7 @@ class CocosNavigator:
         return state
 
     def current_view(self) -> str:
-        """Returns 'main' | 'home' | 'farm' | 'unknown'.
+        """Returns 'main' | 'home' | 'farm' | 'welfare' | 'unknown'.
 
         Priority: farm > home > main. The bottom tab bar ALWAYS has one cell
         selected (角色/同伴/etc.), so tab selection is NOT used to identify
@@ -408,6 +469,7 @@ class CocosNavigator:
           - 主頁面: MainView active, MysteryMainView inactive, no overlay
           - 家園:   MainView + MysteryMainView active, no overlay
           - 農場:   家園 + PlantMainView (NormalView overlay) active
+          - 福利彈窗: WelfareH5PopView (NormalView overlay) active
         """
         try:
             st = self._view_state()
@@ -419,6 +481,8 @@ class CocosNavigator:
         if st.get("farm_active"):
             return "farm"
         overlays = st.get("open_overlay_views") or []
+        if "WelfareH5PopView" in overlays:
+            return "welfare"
         # Any open overlay (Mine/Statue/CarPark/etc.) puts us in a sub-state —
         # NOT home, NOT main. Return "unknown" so the goto_main close-loop
         # keeps closing instead of exiting early. (Earlier versions returned
@@ -484,6 +548,14 @@ class CocosNavigator:
             view = self.current_view()
             if view in {"main", "home", "farm"}:
                 break
+            # WelfareH5PopView 沒有 btnClose，必須點外層 imgMask；先處理
+            # 這個已知 popup，再交給通用 close-button 掃描。
+            if view == "welfare":
+                if not close_open_welfare_popup(self.page):
+                    break
+                closed += 1
+                time.sleep(_SETTLE_SEC * 0.6)
+                continue
             try:
                 res = self.page.evaluate(_FIND_CLOSE_BTN_JS) or {}
             except Exception as e:

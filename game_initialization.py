@@ -83,6 +83,22 @@ def _handle_known_stage_popup(d, ip: str, stage: str, reward_fn=None, logger: lo
         time.sleep(1)
         return True
 
+    if stage == "福利彈窗":
+        page = getattr(d, "_page", None)
+        if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
+            logger.info(f"[{ip}] Cocos 偵測到福利儲值彈窗，直接點擊 WelfareH5PopView.imgMask")
+            from utils.cocos_navigator import close_open_welfare_popup
+
+            if not close_open_welfare_popup(page):
+                logger.warning(f"[{ip}] Cocos 福利彈窗關閉失敗，保留 stage 供上層有限重試")
+                return False
+            time.sleep(1)
+            return True
+        logger.info(f"[{ip}] 偵測到福利彈窗，點擊空白關閉")
+        click_white(d)
+        time.sleep(1)
+        return True
+
     if stage == "恭喜獲得":
         page = getattr(d, "_page", None)
         if getattr(d, "backend_kind", None) == "web_h5" and page is not None:
@@ -258,6 +274,7 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                     PageState.OFFLINE_REWARD,
                     PageState.CARPARK_WAREHOUSE,
                     PageState.GOODS_REWARD,
+                    PageState.WELFARE,
                 ):
                     # 這些 view 是需要先處理的前景 popup；不能直接 goto_main
                     # 把獎勵跳掉，必須交給 Cocos stage handler 處理。
