@@ -60,6 +60,7 @@ class PageState(str, Enum):
     CARPARK_WAREHOUSE = "carpark_warehouse"  # ParkingWareHouseView popup
     OFFLINE_REWARD = "offline_reward"       # outlinePopView popup
     GOODS_REWARD = "goods_reward"           # GoodsGetView / 恭喜獲得 popup
+    WELFARE = "welfare"                     # WelfareH5PopView 儲值優惠 popup
     WORKSHOP = "workshop"         # WorkShopView (from home/WorkShop)
     MARRY = "marry"               # MarryMainView (from home/Marry)
     SCIENCE = "science"           # ScienceView (from home/Science)
@@ -90,6 +91,7 @@ _OVERLAY_TO_STATE: dict[str, PageState] = {
     "outlinePopView":       PageState.OFFLINE_REWARD,
     "GoodsGetView":         PageState.GOODS_REWARD,
     "GoodsGetView2":        PageState.GOODS_REWARD,
+    "WelfareH5PopView":     PageState.WELFARE,
     "WorkShopView":         PageState.WORKSHOP,
     "MarryMainView":        PageState.MARRY,
     "ScienceView":          PageState.SCIENCE,
@@ -441,6 +443,7 @@ _COCOS_STAGE_MAP = {
     PageState.CARPARK_WAREHOUSE: "車位倉庫",
     PageState.OFFLINE_REWARD: "放置獎勵",
     PageState.GOODS_REWARD: "恭喜獲得",
+    PageState.WELFARE: "福利彈窗",
 }
 
 
