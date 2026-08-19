@@ -136,6 +136,17 @@ def _close_carpark_transient_views(page: Any) -> bool:
         return False
 
 
+def _close_claim_reward_popup(page: Any) -> bool:
+    """關閉車位領取後的 GoodsGetView，並等待 node 確實 inactive。"""
+    try:
+        from game_actions.reward_manager import close_goods_reward
+
+        return bool(close_goods_reward(page))
+    except Exception as exc:
+        logger.warning("[carpark_auto] 關閉車位領取獎勵 popup 失敗: %s", exc)
+        return False
+
+
 def _return_parking_to_main(page: Any) -> bool:
     """Leave ParkingMainView through its known bottom close button."""
     _close_carpark_transient_views(page)
@@ -793,6 +804,9 @@ def claim_open_warehouse(page: Any) -> bool:
         logger.warning("[carpark_auto] Cocos 領取車位倉庫失敗: %s", result.get("err"))
         return False
     time.sleep(3.5)
+    if not _close_claim_reward_popup(page):
+        logger.warning("[carpark_auto] 車位領取後 GoodsGetView 未能確認關閉")
+        return False
     logger.info("[carpark_auto] Cocos 領取車位倉庫成功: %s", result)
     return True
 
@@ -867,6 +881,10 @@ def claim_warehouse(page: Any) -> bool:
         return False
     _click(page, rb_coords["x"], rb_coords["y"], action="warehouse.rewardBtn")
     time.sleep(3.5)
+    if not _close_claim_reward_popup(page):
+        logger.warning("[carpark_auto] claim_warehouse: GoodsGetView 未能確認關閉")
+        _close_carpark_transient_views(page)
+        return False
     _close_carpark_transient_views(page)
     time.sleep(0.8)
     logger.info("[carpark_auto] claim_warehouse: 領取 click sent")

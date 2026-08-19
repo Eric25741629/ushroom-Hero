@@ -22,6 +22,9 @@
 - 同一 live session 後續出現 `GoodsGetView`（標題圖像顯示「恭喜獲得」）；
   直接呼叫 `uiMgr.close('GoodsGetView')` 後 2 秒確認該 view inactive，
   `ParkingWareHouseView` 仍 active。此 popup 已納入下一個 Cocos stage adapter。
+- 實際點擊 `ParkingWareHouseView/root/content/rewardBtn` 後約 0.8 秒，
+  `ParkingWareHouseView=false`、`GoodsGetView=true`；呼叫 `uiMgr.close` 後約
+  1.2 秒兩者皆 inactive，證明車位領取也必須等待並驗證獎勵 popup 關閉。
 
 這份紀錄只代表 7fe98fc6 的 live fingerprint；其他 H5 裝置仍需逐台確認
 view 層級與點擊後 transition，不能直接複製成通用結論。
