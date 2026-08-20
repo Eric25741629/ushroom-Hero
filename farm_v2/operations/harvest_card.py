@@ -35,8 +35,26 @@ logger = logging.getLogger("farm_v2.harvest_card")
 
 
 def _page_of(d: "uiauto.Device"):
-    """Return the Playwright page for a web_h5 device, or None for adb."""
-    return getattr(d, "_page", None)
+    """取得實際綁定的 Playwright page；沒有綁定時回傳 None。"""
+    return getattr(d, "__dict__", {}).get("_page")
+
+
+def _h5_page_of(d: "uiauto.Device"):
+    """取得正式 H5 page；不要把 ADB 或 mock 的虛擬屬性誤判成 H5。"""
+    page = _page_of(d)
+    if page is not None and getattr(d, "backend_kind", None) == "web_h5":
+        return page
+    return None
+
+
+def _h5_unavailable(action: str, reason: str) -> bool:
+    """回報 H5 狀態不可用，供 bool 型農場操作 fail-closed。"""
+    logger.warning(
+        "[harvest_card] H5_STATE_UNAVAILABLE action=%s reason=%s",
+        action,
+        reason,
+    )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -52,8 +70,7 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
     """
     page = _page_of(d)
     if page is not None and getattr(d, "backend_kind", None) == "web_h5":
-        # H5 優先讀 Cocos 狀態；OCR 只作 fallback，不能把「找到文字」當成
-        # 取消成功，點擊後一定要重新確認面板已變成「開始打工」。
+        # H5 只讀 Cocos 狀態；點擊後一定要重新確認面板已變成「開始打工」。
         from utils.cocos_ui import CocosUI
 
         ui = CocosUI(page)
@@ -75,8 +92,7 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
             return stopped
 
         if not _open_work_panel():
-            logger.warning("[harvest_card] H5 找不到打工入口，取消失敗")
-            return False
+            return _h5_unavailable("cancel_work", "work_panel_not_open")
 
         status = web_farm.work_status(page)
         if status == "stopped":
@@ -85,24 +101,22 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
             return True
         if status == "running" and web_farm.click_work_action(page, "cancel"):
             time.sleep(wait_jitter(TIMING["long"]))
-            # 遊戲可能出現確認框；保留 OCR 只處理確認框，不負責判斷工作狀態。
-            img_tools.wait_for_any_text(
-                d, ["確認", "確定"], timeout=3, click_if_found=True,
+            # 確認框也只能由 Cocos Label/事件處理；找不到時交給狀態驗證判定。
+            web_farm.click_text_if_present(
+                page, ("確認", "確定"), root="TopView", timeout=3,
             )
             time.sleep(wait_jitter(TIMING["medium"]))
             stopped = _verify_stopped()
             logger.info("[harvest_card] H5 Cocos 取消打工驗證=%s", stopped)
             return stopped
 
-        # JS 找不到節點時才退回既有 OCR 流程。
-        logger.warning("[harvest_card] H5 Cocos 無法取消，改用 OCR fallback")
+        return _h5_unavailable("cancel_work", f"status={status}")
 
     if page is None and not check_if_parttime(d):
         logger.info("[harvest_card] 未在打工，無需取消")
         return True
 
-    # Open the in-scene work panel (modal on PlantMainView) and cancel. H5 的
-    # JS fallback 到這裡時面板通常已開，不能再點一次入口把它切掉。
+    # ADB：開啟 PlantMainView 內的打工面板並取消。
     if page is None or not web_farm.work_panel_open(page):
         click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
         time.sleep(wait_jitter(TIMING["very_long"]))
@@ -115,16 +129,11 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
     if found:
         logger.info("[harvest_card] OCR 已點擊取消打工，等待狀態驗證")
         time.sleep(wait_jitter(TIMING["long"]))
-        # dismiss any confirmation
+        # ADB 確認框維持既有 OCR；H5 已在上方正式分流返回。
         img_tools.wait_for_any_text(
-            d, ["確認", "確定"],
-            timeout=3, click_if_found=True,
+            d, ["確認", "確定"], timeout=3, click_if_found=True,
         )
         time.sleep(wait_jitter(TIMING["medium"]))
-        if page is not None and getattr(d, "backend_kind", None) == "web_h5":
-            stopped = _verify_stopped()
-            logger.info("[harvest_card] H5 OCR 取消打工驗證=%s", stopped)
-            return stopped
         return True
 
     logger.info("[harvest_card] work not active, nothing to cancel")
@@ -158,8 +167,7 @@ def _enable_work(d: "uiauto.Device") -> bool:
             return running
 
         if not _open_panel():
-            logger.warning("[harvest_card] H5 找不到打工入口，恢復失敗")
-            return False
+            return _h5_unavailable("enable_work", "work_panel_not_open")
         status = web_farm.work_status(page)
         if status == "running":
             web_farm.close_work_panel(page)
@@ -169,7 +177,7 @@ def _enable_work(d: "uiauto.Device") -> bool:
             running = _verify_running()
             logger.info("[harvest_card] H5 JavaScript 恢復打工驗證=%s", running)
             return running
-        logger.warning("[harvest_card] H5 JavaScript 無法恢復打工，改用 OCR fallback")
+        return _h5_unavailable("enable_work", f"status={status}")
 
     if page is None or not web_farm.work_panel_open(page):
         click_with_jitter(d, COORD["work_button"][0], COORD["work_button"][1], jitter=5)
@@ -207,19 +215,23 @@ def _enable_work(d: "uiauto.Device") -> bool:
 # Navigation helpers (dual-backend: cocos fast-path + coordinate fallback)
 # ---------------------------------------------------------------------------
 
-def _navigate_farm_to_home(d: "uiauto.Device", device_ip: Optional[str] = None) -> None:
+def _navigate_farm_to_home(d: "uiauto.Device", device_ip: Optional[str] = None) -> bool:
     """Exit farm (PlantMainView) and go to home tab."""
     from utils.cocos_navigator import try_cocos_navigate
 
     result = try_cocos_navigate(d, device_ip, "main")
     if result is True:
         time.sleep(1.0)
-        return
+        return True
+
+    if _h5_page_of(d) is not None:
+        return _h5_unavailable("navigate_farm_to_home", "cocos_main_failed")
 
     click_with_jitter(d, COORD["farm_tab"][0], COORD["farm_tab"][1], jitter=5)
     time.sleep(wait_jitter(TIMING["very_long"]))
     click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
     time.sleep(wait_jitter(TIMING["very_long"]))
+    return True
 
 
 def _navigate_home_to_carpark(d: "uiauto.Device", device_ip: Optional[str] = None) -> bool:
@@ -238,8 +250,9 @@ def _navigate_home_to_carpark(d: "uiauto.Device", device_ip: Optional[str] = Non
             if not nav.goto_main():
                 nav.dismiss_blocking_popups()
                 if not nav.goto_main():
-                    logger.warning("[harvest_card] 無法回到主頁面（彈窗未清除？），改用 OCR 進車位")
-                    raise RuntimeError("not on main after popup sweep")
+                    return _h5_unavailable(
+                        "navigate_home_to_carpark", "goto_main_failed"
+                    )
             nav._click_path(COCOS_PATHS["home_tab"])
             time.sleep(1.5)
             nav._click_path(COCOS_PATHS["carpark_node"])
@@ -247,13 +260,19 @@ def _navigate_home_to_carpark(d: "uiauto.Device", device_ip: Optional[str] = Non
             # Verify ParkingMainView actually opened — on server lag the
             # carpark_node click can silently no-op (node not yet loaded), and
             # returning True regardless would run the shop flow on the wrong
-            # screen. If it didn't open, fall through to the OCR fallback.
+            # screen.
             from utils.carpark_state import parking_view_is_open
             if parking_view_is_open(page):
                 return True
-            logger.warning("[harvest_card] carpark 未開啟，改用 OCR 進車位")
+            return _h5_unavailable(
+                "navigate_home_to_carpark", "parking_view_not_open"
+            )
         except Exception as e:
             logger.warning(f"[harvest_card] cocos carpark nav failed: {e}")
+            return _h5_unavailable("navigate_home_to_carpark", str(e))
+
+    if _h5_page_of(d) is not None:
+        return _h5_unavailable("navigate_home_to_carpark", "cocos_path_unavailable")
 
     found = img_tools.click_str_by_server(d, "車位", wait_timeout=5)
     if found:
@@ -269,7 +288,7 @@ def _open_carpark_shop(d: "uiauto.Device") -> bool:
     page = getattr(d, "_page", None)
     if page is not None:
         try:
-            page.evaluate(r"""() => {
+            opened = page.evaluate(r"""() => {
               const find = (root, parts) => {
                 let n = root;
                 for (const p of parts) {
@@ -281,12 +300,29 @@ def _open_carpark_shop(d: "uiauto.Device") -> bool:
               };
               const btn = find(cc.director.getScene(),
                 ['UIRoot','NormalView','ParkingMainView','bottom','btnShop']);
-              if (btn) btn.emit('click', btn);
+              if (!btn || !btn.activeInHierarchy) return false;
+              btn.emit('click', btn);
+              return true;
             }""")
             time.sleep(2.5)
-            return True
+            if page.evaluate(
+                """() => {
+                  const s=cc.director.getScene();
+                  const q=[s];
+                  while(q.length){const n=q.pop(); if(!n)continue;
+                    if(n.name==='ParkingShopView' && n.activeInHierarchy)return true;
+                    (n.children||[]).forEach(c=>q.push(c));}
+                  return false;
+                }"""
+            ):
+                return True
+            return _h5_unavailable("open_carpark_shop", f"button_clicked={opened}")
         except Exception as e:
             logger.warning(f"[harvest_card] cocos shop btn failed: {e}")
+            return _h5_unavailable("open_carpark_shop", str(e))
+
+    if _h5_page_of(d) is not None:
+        return _h5_unavailable("open_carpark_shop", "cocos_path_unavailable")
 
     if COORD["carpark_shop_btn"] != (0, 0):
         click_with_jitter(d, COORD["carpark_shop_btn"][0], COORD["carpark_shop_btn"][1], jitter=5)
@@ -350,9 +386,9 @@ def _buy_one_harvest_card(d: "uiauto.Device") -> bool:
             }""")
             if bought == "clicked":
                 time.sleep(2.0)
-                confirm = img_tools.wait_for_any_text(
-                    d, ["購買", "確認", "確定"],
-                    timeout=5, click_if_found=True,
+                confirm = web_farm.click_text_if_present(
+                    page, ("購買", "確認", "確定"),
+                    root="TopView", timeout=5,
                 )
                 if confirm:
                     time.sleep(wait_jitter(TIMING["long"]))
@@ -365,6 +401,8 @@ def _buy_one_harvest_card(d: "uiauto.Device") -> bool:
             logger.warning(f"[harvest_card] cocos buy failed: {bought}")
         except Exception as e:
             logger.warning(f"[harvest_card] cocos buy exception: {e}")
+
+        return _h5_unavailable("buy_harvest_card", "cocos_purchase_failed")
 
     # ADB fallback: scroll shop and OCR find the card
     for scroll_attempt in range(5):
@@ -427,7 +465,7 @@ def _close_carpark_shop(d: "uiauto.Device") -> None:
     page = getattr(d, "_page", None)
     if page is not None:
         try:
-            page.evaluate(r"""() => {
+            closed = page.evaluate(r"""() => {
               const find = (root, parts) => {
                 let n = root;
                 for (const p of parts) {
@@ -443,15 +481,27 @@ def _close_carpark_shop(d: "uiauto.Device") -> None:
                 for (const child of [...nv.children].reverse()) {
                   if (views.includes(child.name) && child.active) {
                     const btn = child.children && child.children.find(c => c.name === 'btnClose');
-                    if (btn) { btn.emit('click', btn); return; }
+                    if (btn && btn.activeInHierarchy) {
+                      btn.emit('click', btn);
+                      return true;
+                    }
                   }
                 }
               }
+              return false;
             }""")
             time.sleep(1.5)
+            if not closed:
+                _h5_unavailable("close_carpark_shop", "close_button_missing")
             return
         except Exception:
-            pass
+            if _h5_page_of(d) is not None:
+                _h5_unavailable("close_carpark_shop", "cocos_close_failed")
+                return
+
+    if _h5_page_of(d) is not None:
+        _h5_unavailable("close_carpark_shop", "cocos_path_unavailable")
+        return
 
     if COORD["carpark_close"] != (0, 0):
         click_with_jitter(d, COORD["carpark_close"][0], COORD["carpark_close"][1], jitter=5)
@@ -460,7 +510,7 @@ def _close_carpark_shop(d: "uiauto.Device") -> None:
     time.sleep(wait_jitter(TIMING["long"]))
 
 
-def _navigate_carpark_to_home(d: "uiauto.Device", device_ip: Optional[str] = None) -> None:
+def _navigate_carpark_to_home(d: "uiauto.Device", device_ip: Optional[str] = None) -> bool:
     """Close ParkingMainView and return to 主頁面.
 
     Clears purchase-reward popups (incl. TopView boxTips/獎勵) first so the
@@ -474,12 +524,22 @@ def _navigate_carpark_to_home(d: "uiauto.Device", device_ip: Optional[str] = Non
             nav.dismiss_blocking_popups()
             if nav.goto_main():
                 time.sleep(1.0)
-                return
+                return True
+            if _h5_page_of(d) is not None:
+                return _h5_unavailable(
+                    "navigate_carpark_to_home", "goto_main_failed"
+                )
         except Exception as e:
             logger.warning(f"[harvest_card] cocos carpark→home failed: {e}")
+            if _h5_page_of(d) is not None:
+                return _h5_unavailable("navigate_carpark_to_home", str(e))
+
+    if _h5_page_of(d) is not None:
+        return _h5_unavailable("navigate_carpark_to_home", "cocos_path_unavailable")
 
     click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
     time.sleep(wait_jitter(TIMING["very_long"]))
+    return True
 
 
 def _navigate_home_to_farm(
@@ -512,35 +572,26 @@ def _plant_premium_seed(d: "uiauto.Device") -> bool:
     adb: OCR-driven equivalent. Returns False (without planting) if the premium
     seed can't be selected, so we never silently plant a cheaper tier.
     """
-    page = _page_of(d)
+    page = _h5_page_of(d)
 
     if page is not None:
         before = web_farm.read_farm_state(page)
         premium_before = _maybe_count(before.get("premium"))
         if premium_before is None or premium_before <= 0:
-            logger.error("[harvest_card] 無法確認特級種子庫存，禁止種植")
-            return False
+            return _h5_unavailable("plant_premium_seed", "premium_inventory_unavailable")
         if not web_farm.tap_onekey(page, "btnOneKeyPlant"):
-            logger.warning("[harvest_card] btnOneKeyPlant 不可點（無空地？）")
-            return False
+            return _h5_unavailable("plant_premium_seed", "btnOneKeyPlant_unavailable")
         time.sleep(wait_jitter(TIMING["long"]))
         if not web_farm.seed_dialog_open(page):
-            logger.warning("[harvest_card] SeedSelectView 未開啟")
-            return False
+            return _h5_unavailable("plant_premium_seed", "seed_dialog_not_open")
         selected = web_farm.select_seed_by_name(page, "特級種子")
         if not selected:
-            logger.warning("[harvest_card] JavaScript 找不到特級種子，改用 OCR fallback")
-            selected = bool(img_tools.click_str_by_server(
-                d, "特級", wait_timeout=3, shift_y=-20,
-            ))
-        if not selected:
-            logger.error("[harvest_card] 找不到特級種子，放棄本輪種植（避免種到低階種子）")
+            logger.warning("[harvest_card] H5 Cocos 找不到特級種子")
             web_farm.close_seed_select(page)
-            return False
+            return _h5_unavailable("plant_premium_seed", "premium_seed_not_found")
         time.sleep(wait_jitter(TIMING["medium"]))
         if not web_farm.tap_seed_confirm(page):
-            logger.error("[harvest_card] 特級種子確認按鈕未成功點擊")
-            return False
+            return _h5_unavailable("plant_premium_seed", "seed_confirm_failed")
         time.sleep(wait_jitter(TIMING["very_long"]))
 
         planted = False
@@ -554,11 +605,10 @@ def _plant_premium_seed(d: "uiauto.Device") -> bool:
                 break
             time.sleep(0.5)
         if not planted:
-            logger.error(
-                "[harvest_card] 特級種子未實際扣除或一鍵施肥未出現（before=%s）",
-                premium_before,
+            return _h5_unavailable(
+                "plant_premium_seed",
+                f"inventory_or_grow_verification_failed:before={premium_before}",
             )
-            return False
     else:
         # adb fallback: OCR the one-key plant button, OCR-select 特級, confirm coord.
         if not img_tools.click_str_by_server(d, "一鍵種植", wait_timeout=3):
@@ -629,6 +679,19 @@ def _read_fertilizer_counts_web(page) -> tuple:
 
 def _claim_free_fertilizer(d: "uiauto.Device") -> bool:
     """Claim free fertilizer (user has ad-free card, so it's instant)."""
+    page = _h5_page_of(d)
+    if page is not None:
+        # PlantMainView/top/btnFertilizerGet 是 H5 正式節點；失敗直接停止，
+        # 不把免費肥料按鈕轉成 OCR/座標猜測。
+        from utils.cocos_ui import CocosUI
+
+        ui = CocosUI(page)
+        if not ui.click_node("btnFertilizerGet", root="PlantMainView"):
+            return _h5_unavailable("claim_free_fertilizer", "btnFertilizerGet_missing")
+        time.sleep(3.0)
+        logger.info("[harvest_card] H5 Cocos 已領取免費肥料")
+        return True
+
     found = img_tools.wait_for_any_text(
         d, ["看廣告", "免費領", "免費"],
         timeout=5, click_if_found=True,
@@ -661,7 +724,7 @@ def _fertilize_until_mature(d: "uiauto.Device", cap: int = 8) -> bool:
     free packs when out) and only spending 高產肥料 when 普通 is unavailable.
     Returns True when no immature crop remains.
     """
-    page = _page_of(d)
+    page = _h5_page_of(d)
     if page is not None:
         return _fertilize_until_mature_web(d, page, cap)
     return _fertilize_until_mature_adb(d, cap)
@@ -697,20 +760,15 @@ def _fertilize_until_mature_web(d: "uiauto.Device", page, cap: int) -> bool:
             return not web_farm.onekey_active(page, "btnOneKeyGrow")
         time.sleep(wait_jitter(TIMING["long"]))
         if not web_farm.fert_dialog_open(page):
-            logger.warning("[harvest_card] FertilizeSelectView 未開啟")
-            return False
+            return _h5_unavailable("fertilize", "fertilizer_dialog_not_open")
         selected = web_farm.select_fertilizer_by_name(page, kind)
         if not selected:
-            logger.warning("[harvest_card] JavaScript 選肥料失敗，改用 OCR：%s", kind)
-            selected = bool(img_tools.click_str_by_server(d, kind, wait_timeout=3))
-        if not selected:
-            logger.warning(f"[harvest_card] 選肥料失敗：{kind}")
-            return False
+            logger.warning("[harvest_card] H5 Cocos 選肥料失敗：%s", kind)
+            return _h5_unavailable("fertilize", f"fertilizer_not_found:{kind}")
         time.sleep(wait_jitter(TIMING["medium"]))
         selected_before = putong if kind == PUTONG_FERTILIZER else gaochan
         if not web_farm.tap_fert_confirm(page):
-            logger.warning("[harvest_card] 肥料確認按鈕未成功點擊：%s", kind)
-            return False
+            return _h5_unavailable("fertilize", f"fertilizer_confirm_failed:{kind}")
         logger.info(f"[harvest_card] 施肥第 {rnd + 1} 趟，使用 {kind}")
         time.sleep(wait_jitter(TIMING["farm_wait"]))  # 施肥約需 5s 結算
 
@@ -769,7 +827,7 @@ def _harvest_crops(d: "uiauto.Device") -> bool:
 
     領取 is the step that actually consumes the 豐收 buff (verified live). Returns
     True if either action fired."""
-    page = _page_of(d)
+    page = _h5_page_of(d)
     harvested = False
 
     if page is not None:
@@ -911,7 +969,9 @@ def run_harvest_card(
         return False
 
     # Step 3: navigate to carpark shop and buy harvest card(s)
-    _navigate_farm_to_home(d, device_ip)
+    if not _navigate_farm_to_home(d, device_ip):
+        _enable_work(d)
+        return False
 
     if not _navigate_home_to_carpark(d, device_ip):
         logger.error("[harvest_card] failed to navigate to carpark")

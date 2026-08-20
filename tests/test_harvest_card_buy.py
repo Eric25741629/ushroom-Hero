@@ -132,8 +132,8 @@ def test_h5_cancel_uses_cocos_then_reopens_panel_to_verify_stopped():
     pixel_check.assert_not_called()
 
 
-def test_h5_cancel_falls_back_to_ocr_but_still_verifies_stopped():
-    """Cocos 找不到取消節點時保留 OCR；OCR 後仍以 JavaScript 驗證狀態。"""
+def test_h5_cancel_failure_stops_without_ocr_fallback():
+    """Cocos 找不到取消節點時回報 unavailable，不得退回 OCR。"""
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     with _patch_sleep(), \
          patch.object(hc.web_farm, "work_panel_open", side_effect=[True, True, True]), \
@@ -141,9 +141,9 @@ def test_h5_cancel_falls_back_to_ocr_but_still_verifies_stopped():
          patch.object(hc.web_farm, "click_work_action", return_value=False), \
          patch.object(hc.web_farm, "close_work_panel", return_value=True), \
          patch.object(hc, "check_if_parttime") as pixel_check, \
-         patch.object(hc.img_tools, "wait_for_any_text", side_effect=[True, True]) as ocr:
-        assert hc._cancel_work_if_active(d) is True
-    assert ocr.call_count == 2
+         patch.object(hc.img_tools, "wait_for_any_text", side_effect=AssertionError("H5 OCR")) as ocr:
+        assert hc._cancel_work_if_active(d) is False
+    ocr.assert_not_called()
     pixel_check.assert_not_called()
 
 
@@ -197,6 +197,20 @@ def test_h5_premium_seed_rejects_confirm_without_inventory_drop():
         assert hc._plant_premium_seed(d) is False
 
 
+def test_h5_premium_seed_selection_failure_does_not_call_ocr():
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    state = {"premium": "1040", "onekey": {}}
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "read_farm_state", return_value=state), \
+         patch.object(hc.web_farm, "tap_onekey", return_value=True), \
+         patch.object(hc.web_farm, "seed_dialog_open", return_value=True), \
+         patch.object(hc.web_farm, "select_seed_by_name", return_value=False), \
+         patch.object(hc.web_farm, "close_seed_select"), \
+         patch.object(hc.img_tools, "click_str_by_server", side_effect=AssertionError("H5 OCR"), create=True):
+        assert hc._plant_premium_seed(d) is False
+
+
 def test_h5_fertilizer_requires_count_drop_before_next_pass():
     """選高產並確認後，要看到肥料扣除；下一次讀到無施肥按鈕才完成。"""
     page = MagicMock()
@@ -216,6 +230,29 @@ def test_h5_fertilizer_requires_count_drop_before_next_pass():
          patch.object(hc.web_farm, "select_fertilizer_by_name", return_value=True), \
          patch.object(hc.web_farm, "tap_fert_confirm", return_value=True):
         assert hc._fertilize_until_mature_web(d, page, cap=2) is True
+
+
+def test_h5_fertilizer_selection_failure_does_not_call_ocr():
+    page = MagicMock()
+    d = MagicMock(backend_kind="web_h5", _page=page)
+    with _patch_sleep(), \
+         patch.object(hc.web_farm, "onekey_active", return_value=True), \
+         patch.object(hc.web_farm, "read_farm_state", return_value={
+             "putong": "0", "gaochan": "100",
+         }), \
+         patch.object(hc, "_claim_free_fertilizer", return_value=False), \
+         patch.object(hc.web_farm, "tap_onekey", return_value=True), \
+         patch.object(hc.web_farm, "fert_dialog_open", return_value=True), \
+         patch.object(hc.web_farm, "select_fertilizer_by_name", return_value=False), \
+         patch.object(hc.img_tools, "click_str_by_server", side_effect=AssertionError("H5 OCR"), create=True):
+        assert hc._fertilize_until_mature_web(d, page, cap=1) is False
+
+
+def test_h5_free_fertilizer_failure_does_not_call_ocr():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with patch("utils.cocos_ui.CocosUI.click_node", return_value=False), \
+         patch.object(hc.img_tools, "wait_for_any_text", side_effect=AssertionError("H5 OCR")):
+        assert hc._claim_free_fertilizer(d) is False
 
 
 def test_h5_view_button_prefers_javascript_listener():
