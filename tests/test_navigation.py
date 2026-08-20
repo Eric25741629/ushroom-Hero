@@ -1,4 +1,7 @@
 from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 
@@ -51,3 +54,17 @@ def test_navigate_with_cnn_returns_false_on_timeout():
         mock_img.click_str_by_server.return_value = False
         result = navigate_to_main_page(d, cnn_model=MagicMock(), timeout=60.0)
     assert result is False
+
+
+@pytest.mark.parametrize("cocos_result", [None, False])
+def test_web_h5_navigation_never_falls_back_to_ocr(cocos_result):
+    from game_actions.navigation import navigate_to_main_page
+
+    d = SimpleNamespace(backend_kind="web_h5", _page=object())
+    with patch("game_actions.navigation.try_cocos_navigate", return_value=cocos_result), \
+         patch("game_actions.navigation.img_tools.click_str_by_server") as mock_ocr, \
+         patch("game_actions.navigation._click_with_jitter") as mock_click:
+        assert navigate_to_main_page(d, cnn_model=MagicMock()) is False
+
+    mock_ocr.assert_not_called()
+    mock_click.assert_not_called()

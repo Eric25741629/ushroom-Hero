@@ -51,8 +51,9 @@ def navigate_to_main_page(
     """從農場/挖礦頁面返回主頁面。
 
     策略：
-    1. 若無 cnn_model：盲點擊 farm_tab -> home，直接回 True。
-    2. 若有 cnn_model：
+    1. Web H5 僅使用 Cocos 導航；Cocos 未套用或失敗直接回 False。
+    2. ADB 若無 cnn_model：盲點擊 farm_tab -> home，直接回 True。
+    3. ADB 若有 cnn_model：
        a. 第一輪 sleep 等頁面穩定（避免剛退出時拍到過渡畫面）。
        b. OCR get_stage；若已是「主頁面」-> 成功。
        c. 否則：點 farm_tab -> 找「關閉」彈窗 -> 點 home。
@@ -75,6 +76,12 @@ def navigate_to_main_page(
     if cocos_result is True:
         logger.info(f"{prefix} cocos fast-path succeeded")
         return True
+    if getattr(d, "backend_kind", None) == "web_h5":
+        logger.warning(
+            f"{prefix} Web H5 Cocos navigation unavailable "
+            f"(result={cocos_result!r})，停止目前導航，禁止 OCR fallback"
+        )
+        return False
     if cocos_result is False:
         logger.warning(f"{prefix} cocos fast-path failed, falling back to click-based")
 

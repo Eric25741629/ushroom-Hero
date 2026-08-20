@@ -37,16 +37,36 @@ def get_stage_with_check(d, ip, Cnn_model, img=None):
     使用與啟動流程相同的狀態判斷器。
     先清掉已知首頁彈窗，再回傳穩定 stage。
 
-    Experimental: web_h5 devices with `experimental_cocos_navigation: true`
-    get a cocos-tree fast-path that confirms "主頁面" in single-digit ms
-    instead of ~1-3s of OCR. Non-main states still go through legacy OCR
-    (so 異地登錄/車位倉庫/家族戰/公告 etc. continue to be detected).
+    Web H5 uses the strict Cocos state contract. A known non-home state and a
+    Cocos probe failure are both returned explicitly; neither enters the ADB
+    OCR resolver. ADB devices keep the existing resolver unchanged.
     """
-    from utils.page_detector import try_detect_main_page_fast
-    fast_stage = try_detect_main_page_fast(d, ip)
-    if fast_stage:
-        logger.info(f"[{ip}] stage via cocos fast-path: {fast_stage}")
-        return fast_stage
+    from utils.page_detector import H5State, probe_h5_state
+
+    h5_result = probe_h5_state(d, ip)
+    if h5_result.state is not H5State.ADB_LEGACY:
+        if h5_result.state is H5State.H5_MAIN:
+            logger.info(f"[{ip}] stage via cocos state: 主頁面")
+            return "主頁面"
+        if h5_result.state is H5State.H5_STATE_UNAVAILABLE:
+            logger.warning(
+                f"[{ip}] Web H5 stage unavailable，停止目前任務，"
+                f"禁止 OCR fallback: {h5_result.reason or 'unknown'}"
+            )
+            return h5_result.legacy_stage()
+        if h5_result.state is H5State.H5_NON_HOME:
+            logger.info(
+                f"[{ip}] Web H5 非首頁狀態，停止目前任務: "
+                f"{getattr(h5_result.page_state, 'value', None)}"
+            )
+            return h5_result.legacy_stage()
+
+        # 已知前景 popup 仍交給既有 resolver 處理；resolver 內的 get_stage
+        # 也只會重做 Cocos probe，不會回到 OCR。
+        logger.info(
+            f"[{ip}] Web H5 已知 popup，使用 Cocos stage resolver: "
+            f"{getattr(h5_result.page_state, 'value', None)}"
+        )
 
     from game_actions.reward_manager import reward  # lazy — see module header
     stage = resolve_stage_until_stable(

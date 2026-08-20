@@ -12,6 +12,7 @@ Priority order under test (must be preserved EXACTLY):
 
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 import img_tools
 from game_state import detector
@@ -131,3 +132,52 @@ def test_ocr_failure_does_not_crash(monkeypatch):
     monkeypatch.setattr(img_tools, "analyze_skill_via_http", boom)
     result = detector.get_stage(None, None, img=_fake_img())
     assert result == "未知"
+
+
+def test_web_h5_main_state_never_calls_ocr(monkeypatch):
+    from utils.page_detector import PageState
+
+    d = SimpleNamespace(backend_kind="web_h5", device_id="web-main", _page=object())
+    monkeypatch.setattr(
+        "utils.page_detector.PageDetector.detect_via_cocos",
+        lambda self: PageState.MAIN,
+    )
+    monkeypatch.setattr(
+        img_tools,
+        "get_all_text_with_results",
+        lambda *_a, **_k: pytest.fail("Web H5 stage must not call OCR"),
+    )
+
+    assert detector.get_stage(d, None) == "主頁面"
+
+
+def test_web_h5_non_home_state_is_explicit_and_never_calls_ocr(monkeypatch):
+    from utils.page_detector import PageState
+
+    d = SimpleNamespace(backend_kind="web_h5", device_id="web-farm", _page=object())
+    monkeypatch.setattr(
+        "utils.page_detector.PageDetector.detect_via_cocos",
+        lambda self: PageState.FARM,
+    )
+    monkeypatch.setattr(
+        img_tools,
+        "get_all_text_with_results",
+        lambda *_a, **_k: pytest.fail("Web H5 non-home state must not call OCR"),
+    )
+
+    assert detector.get_stage(d, None) == "H5_NON_HOME"
+
+
+def test_web_h5_cocos_failure_is_unavailable_and_never_calls_ocr(monkeypatch):
+    d = SimpleNamespace(backend_kind="web_h5", device_id="web-down", _page=object())
+    monkeypatch.setattr(
+        "utils.page_detector.PageDetector.detect_via_cocos",
+        lambda self: None,
+    )
+    monkeypatch.setattr(
+        img_tools,
+        "get_all_text_with_results",
+        lambda *_a, **_k: pytest.fail("Web H5 unavailable state must not call OCR"),
+    )
+
+    assert detector.get_stage(d, None) == "H5_STATE_UNAVAILABLE"

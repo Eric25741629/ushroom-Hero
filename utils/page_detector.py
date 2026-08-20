@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable, List, Optional, Sequence, Tuple
 
@@ -74,6 +75,41 @@ class PageState(str, Enum):
     GUIDE = "guide"               # GuideView/GuideView inner
 
     UNKNOWN = "unknown"
+
+
+class H5State(str, Enum):
+    """Web H5 的正式狀態，不與舊版 stage 字串混用。"""
+
+    H5_MAIN = "h5_main"
+    H5_KNOWN_POPUP = "h5_known_popup"
+    H5_NON_HOME = "h5_non_home"
+    H5_STATE_UNAVAILABLE = "h5_state_unavailable"
+    ADB_LEGACY = "adb_legacy"
+
+
+@dataclass(frozen=True)
+class H5StateResult:
+    """Cocos 狀態探測結果。
+
+    `H5_STATE_UNAVAILABLE` 與「沒有偵測到文字」不同；正式 H5 流程必須
+    停止目前動作並回報 `reason`，不可把它轉成 OCR 或空結果繼續執行。
+    """
+
+    state: H5State
+    page_state: Optional[PageState] = None
+    reason: str = ""
+
+    def legacy_stage(self) -> str:
+        """提供給尚未完成型別遷移的舊呼叫端使用。"""
+        if self.state is H5State.H5_MAIN:
+            return "主頁面"
+        if self.state is H5State.H5_KNOWN_POPUP:
+            return _COCOS_STAGE_MAP.get(self.page_state, "H5_NON_HOME")
+        if self.state is H5State.H5_NON_HOME:
+            return "H5_NON_HOME"
+        if self.state is H5State.H5_STATE_UNAVAILABLE:
+            return "H5_STATE_UNAVAILABLE"
+        return "ADB_LEGACY"
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -246,6 +282,7 @@ class PageDetector:
     def __init__(self, page: Any, *, ocr_enabled: bool = True) -> None:
         self.page = page
         self.ocr_enabled = ocr_enabled
+        self.last_cocos_error: Optional[str] = None
 
     # ─── Public API ────────────────────────────────────────────────
 
@@ -261,12 +298,15 @@ class PageDetector:
         return PageState.UNKNOWN, "none"
 
     def detect_via_cocos(self) -> Optional[PageState]:
+        self.last_cocos_error = None
         try:
             scan = self.page.evaluate(_SCAN_JS) or {}
         except Exception as e:
+            self.last_cocos_error = str(e)
             logger.debug(f"[page_detector] cocos scan failed: {e}")
             return None
         if scan.get("err"):
+            self.last_cocos_error = str(scan.get("err"))
             return None
         return _classify_cocos_scan(scan)
 
@@ -389,11 +429,9 @@ def try_detect_main_page_fast(d: Any, device_ip: Optional[str]) -> Optional[str]
 
     Returns:
         "主頁面"  iff cocos confirms PageState.MAIN
-        None     in every other case — caller MUST fall back to the
-                 legacy OCR detector. Non-main cocos states (HOME, FARM,
-                 MINE, …) also return None: legacy detection can identify
-                 popups like 異地登錄/車位倉庫/家族戰 that cocos doesn't
-                 know about, so the OCR path must still run.
+        None     in every other case. This compatibility helper deliberately
+                 keeps its old Optional[str] shape; formal Web H5 callers
+                 must use `probe_h5_state()` so None cannot trigger OCR.
 
     Gated by:
         1. device_ip's config has `experimental_cocos_navigation: true`
@@ -405,13 +443,11 @@ def try_detect_main_page_fast(d: Any, device_ip: Optional[str]) -> Optional[str]
     page = getattr(d, "_page", None)
     if page is None:
         return None
-    try:
-        det = PageDetector(page, ocr_enabled=False)
-        state = det.detect_via_cocos()
-    except Exception as e:
-        logger.debug(f"[page_detector] fast-path probe failed for {device_ip}: {e}")
-        return None
-    if state == PageState.MAIN:
+    # 這個相容函式本身已由 `_legacy_fast_path_enabled` 確認是 Web H5；
+    # 不要求測試替身或舊呼叫端額外提供 backend_kind。正式 stage guard
+    # 不再使用它，而是使用 `probe_h5_state()` 的完整狀態結果。
+    det = PageDetector(page, ocr_enabled=False)
+    if det.detect_via_cocos() is PageState.MAIN:
         return "主頁面"
     return None
 
@@ -420,21 +456,17 @@ def detect_known_h5_page(d: Any, device_ip: Optional[str]) -> Optional[PageState
     """啟動流程用的唯讀 Cocos 探測。
 
     只回傳能由現有 fingerprint 明確辨識的狀態。未識別 overlay、Cocos 尚未
-    載入或非 web_h5 一律回 None，讓呼叫端保留 OCR 安全網。
+    載入或非 web_h5 一律回 None；正式 H5 呼叫端應改用 `probe_h5_state()`，
+    不可把 None 當成 OCR 安全網的訊號。
     """
-    if getattr(d, "backend_kind", None) != "web_h5":
+    result = probe_h5_state(d, device_ip)
+    if result.state not in (
+        H5State.H5_MAIN,
+        H5State.H5_KNOWN_POPUP,
+        H5State.H5_NON_HOME,
+    ):
         return None
-    page = getattr(d, "_page", None)
-    if page is None:
-        return None
-    try:
-        state = PageDetector(page, ocr_enabled=False).detect_via_cocos()
-    except Exception as exc:
-        logger.debug(f"[page_detector] known-page probe failed for {device_ip}: {exc}")
-        return None
-    if state in (None, PageState.UNKNOWN, PageState.LOADING, PageState.GUIDE):
-        return None
-    return state
+    return result.page_state
 
 
 _COCOS_STAGE_MAP = {
@@ -448,14 +480,65 @@ _COCOS_STAGE_MAP = {
 
 
 def detect_known_h5_stage(d: Any, device_ip: Optional[str]) -> Optional[str]:
-    """Return a legacy stage name from a verified Cocos page state.
+    """Return a legacy stage/status name from a verified Cocos page state.
 
-    This is deliberately a small bridge for legacy callers. It only returns
-    stages whose Cocos fingerprint has been live-verified; unknown H5 states
-    still return ``None`` until their adapter is implemented.
+    This bridge no longer returns None for a known non-home H5 page. It returns
+    ``H5_NON_HOME`` so legacy callers cannot mistake a known Cocos page for an
+    OCR miss. Probe failures return ``H5_STATE_UNAVAILABLE``.
     """
-    state = detect_known_h5_page(d, device_ip)
-    return _COCOS_STAGE_MAP.get(state)
+    result = probe_h5_state(d, device_ip)
+    if result.state is H5State.ADB_LEGACY:
+        return None
+    return result.legacy_stage()
+
+
+_H5_KNOWN_POPUP_STATES = frozenset({
+    PageState.NOTICE,
+    PageState.CARPARK_WAREHOUSE,
+    PageState.OFFLINE_REWARD,
+    PageState.GOODS_REWARD,
+    PageState.WELFARE,
+})
+
+
+def probe_h5_state(d: Any, device_ip: Optional[str] = None) -> H5StateResult:
+    """以 Cocos-only 方式取得正式 Web H5 狀態。
+
+    這是正式 H5 stage guard 的唯一入口。ADB 回傳 `ADB_LEGACY`，讓舊 OCR
+    流程維持原樣；Web H5 的 Cocos 失敗、未知 overlay、頁面不存在則回傳
+    `H5_STATE_UNAVAILABLE`，絕不執行 OCR。
+    """
+    if getattr(d, "backend_kind", None) != "web_h5":
+        return H5StateResult(H5State.ADB_LEGACY, reason="non_web_backend")
+
+    page = getattr(d, "_page", None)
+    if page is None:
+        return H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason="page_missing")
+
+    detector = PageDetector(page, ocr_enabled=False)
+    state = detector.detect_via_cocos()
+    if state is None:
+        reason = detector.last_cocos_error or "cocos_probe_returned_none"
+        logger.warning(
+            "[%s] Web H5 Cocos state unavailable，禁止 OCR fallback: %s",
+            device_ip or "unknown",
+            reason,
+        )
+        return H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason=reason)
+
+    if state is PageState.UNKNOWN:
+        reason = "unknown_cocos_state"
+        logger.warning(
+            "[%s] Web H5 Cocos state unknown，禁止 OCR fallback",
+            device_ip or "unknown",
+        )
+        return H5StateResult(H5State.H5_STATE_UNAVAILABLE, state, reason)
+
+    if state is PageState.MAIN:
+        return H5StateResult(H5State.H5_MAIN, state)
+    if state in _H5_KNOWN_POPUP_STATES:
+        return H5StateResult(H5State.H5_KNOWN_POPUP, state)
+    return H5StateResult(H5State.H5_NON_HOME, state)
 
 
 def _legacy_fast_path_enabled(device_ip: Optional[str]) -> bool:

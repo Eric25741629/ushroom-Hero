@@ -245,3 +245,30 @@ def test_clear_controls_reaches_main_page_and_polls_pause(monkeypatch):
     assert result is True
     # check_pause polled every iteration (2 main-page confirmations needed).
     assert counters["pause"] >= 2
+
+
+def test_h5_state_unavailable_stops_startup_without_legacy_resolver(monkeypatch):
+    """Web H5 unknown/Cocos failure must not be converted into OCR startup."""
+    startup = _startup_module(monkeypatch)
+    monkeypatch.setattr(startup.time, "sleep", lambda *_a, **_k: None)
+    _set_controls(monkeypatch, startup)
+
+    from utils.page_detector import H5State, H5StateResult
+
+    monkeypatch.setattr(
+        "utils.page_detector.probe_h5_state",
+        lambda *_a, **_k: H5StateResult(
+            H5State.H5_STATE_UNAVAILABLE,
+            reason="unknown_cocos_state",
+        ),
+    )
+
+    def _must_not_resolve(*_args, **_kwargs):
+        raise AssertionError("H5 startup must not enter legacy OCR resolver")
+
+    monkeypatch.setattr(startup, "resolve_stage_until_stable", _must_not_resolve)
+    d = _FakeDevice()
+    d.backend_kind = "web_h5"
+    d._page = object()
+
+    assert _run(startup, d, []) is False

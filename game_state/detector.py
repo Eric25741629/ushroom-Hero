@@ -126,24 +126,26 @@ def stage_by_str(d, ocr_str: list, img: np.ndarray, ocr_full=None) -> str:
 import img_tools
 
 def get_stage(d, Cnn_model, easyocr_reader=None, img: Optional[np.ndarray] = None):
-    """先讀 web_h5 的已知 Cocos state，其他情況再用 OCR 判斷頁面。
+    """取得目前 stage；Web H5 僅接受 Cocos 狀態，ADB 維持 OCR。
 
     單次 OCR：整幀只打一次 OCR endpoint，texts 與 bbox 同源重用，取代過去同一幀
     重複 3-4 次的 ROI / 全幀 OCR 呼叫。優先序與舊版一致：
     公告(可操作) > 車位倉庫 > 異地登錄 > 主頁面 > ... > 未知。
     """
-    # web_h5 的已知 Cocos state 先行，避免「車位倉庫」這類覆蓋在主頁
-    # 上的 view 被 OCR 誤判成離線獎勵/主頁面。ADB 沒有 _page，維持原 OCR。
+    # Web H5 的正式流程不能把 Cocos 的 None 當成 OCR 安全網。未知或探測
+    # 失敗直接回傳明確狀態，讓 stage guard 停止目前任務；ADB 才走舊 OCR。
     if getattr(d, "backend_kind", None) == "web_h5":
-        try:
-            from utils.page_detector import detect_known_h5_stage
+        from utils.page_detector import probe_h5_state
 
-            cocos_stage = detect_known_h5_stage(d, getattr(d, "device_id", None))
-            if cocos_stage:
-                logger.info("Cocos stage=%s，跳過 web_h5 OCR", cocos_stage)
-                return cocos_stage
-        except Exception as exc:
-            logger.debug("web_h5 Cocos stage probe failed，保留既有 OCR 路徑: %s", exc)
+        h5_result = probe_h5_state(d, getattr(d, "device_id", None))
+        stage = h5_result.legacy_stage()
+        logger.info(
+            "Web H5 Cocos state=%s page=%s reason=%s，跳過 OCR",
+            h5_result.state.value,
+            getattr(h5_result.page_state, "value", None),
+            h5_result.reason or "-",
+        )
+        return stage
 
     if img is None:
         img = d.screenshot(format='opencv')
