@@ -948,7 +948,7 @@
             "web_stop_mode": "close_browser",
             "enable_farm": true,
             "enable_harvest_card": false,
-            "enable_family": false,
+            "enable_family": true,
             "enable_arena": true,
             "arena_battle_mode": "pure_ws",
             "enable_mining": true,
