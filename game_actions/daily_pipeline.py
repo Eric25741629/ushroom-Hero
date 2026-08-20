@@ -140,6 +140,7 @@ class DailyContext:
     enable_hellgate: bool = True
     enable_arena: bool = True
     enable_mining: bool = True
+    enable_family: bool = True
     enable_wanshen: bool = True
     enable_cloud_battle: bool = True
     enable_biweekly: bool = True
@@ -398,6 +399,10 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
         )
 
     def _task_guild():
+        if not ctx.enable_family:
+            logger.info("[%s] 家族任務：已停用，跳過", ip)
+            return TaskResult(TaskOutcome.SKIPPED, detail="功能已停用")
+
         def _save_stage(result):
             nonlocal stage
             stage = result

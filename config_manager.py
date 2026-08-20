@@ -64,6 +64,7 @@ DEFAULT_DEVICE_CONFIG = {
     "enable_harvest_card": True,  # 啟用每週豐收卡(視覺農場 farm_v2);關掉只停豐收卡,其餘農場照跑
     "enable_arena": True,  # 啟用競技場
     "enable_mining": True,  # 啟用挖礦
+    "enable_family": True,  # 啟用家族任務
     "enable_mount_sprint": True,  # 啟用坐騎衝刺；WS 階段優先用 mount_levup
     "mount_sprint_quantity": 3200,  # 坐騎衝刺每輪餵養的無限時發條數量
     "enable_dungeon": True,  # 啟用副本(地獄/萬神) — legacy 總開關，向後相容 fallback 用
@@ -260,6 +261,7 @@ class DeviceConfig:
     enable_harvest_card: bool = True
     enable_arena: bool = True
     enable_mining: bool = True
+    enable_family: bool = True
     enable_dungeon: bool = True
     enable_hellgate: bool = True
     enable_wanshen: bool = True
@@ -1364,6 +1366,7 @@ def update_device_config(ip: str, new_settings: Dict[str, Any]):
             "enable_harvest_card",
             "enable_arena",
             "enable_mining",
+            "enable_family",
             "enable_dungeon",
             "enable_shop_manager",
             "enable_dungeon_manager",

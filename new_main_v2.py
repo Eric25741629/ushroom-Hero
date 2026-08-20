@@ -233,6 +233,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
     enable_biweekly = bool(cfg.get("enable_biweekly", True))
     enable_arena = bool(cfg.get("enable_arena", True))
     enable_mining = bool(cfg.get("enable_mining", True))
+    enable_family = bool(cfg.get("enable_family", True))
     d_orig = None
     resume_sleep_until_ts = None
     resume_sleep_reason = ""
@@ -635,6 +636,7 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                     enable_hellgate=enable_hellgate,
                     enable_arena=enable_arena,
                     enable_mining=enable_mining,
+                    enable_family=enable_family,
                     enable_wanshen=enable_wanshen,
                     enable_cloud_battle=enable_cloud_battle,
                     enable_biweekly=enable_biweekly,

@@ -29,6 +29,15 @@ def test_device_config_granular_dungeon_flags_default_true():
         assert cfg.get(key) is True, f"DeviceConfig().{key} should default True"
 
 
+def test_family_flag_defaults_true_and_is_typed():
+    from config_manager import DEFAULT_DEVICE_CONFIG, DeviceConfig
+
+    assert DEFAULT_DEVICE_CONFIG["enable_family"] is True
+    assert "enable_family" in DeviceConfig.__dataclass_fields__
+    assert DeviceConfig().get("enable_family") is True
+    assert DeviceConfig.from_dict({"enable_family": False}).get("enable_family") is False
+
+
 def _raw_config_for(monkeypatch, user_config):
     """monkeypatch load_config 餵假 config，回傳 _get_raw_device_config 的 merge 結果。"""
     import config_manager
