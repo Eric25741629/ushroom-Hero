@@ -25,6 +25,20 @@ def test_h5_navigate_to_farm_uses_cocos_without_cnn_or_screenshot():
     d.screenshot.assert_not_called()
 
 
+def test_h5_navigate_to_farm_failure_is_unavailable_without_coordinate_fallback():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with patch("utils.cocos_navigator.CocosNavigator.goto_farm", return_value=False), \
+         patch.object(manager, "click_with_jitter") as click:
+        try:
+            manager.navigate_to_farm(d, MagicMock(), "web")
+        except RuntimeError as exc:
+            assert "H5_STATE_UNAVAILABLE" in str(exc)
+        else:
+            raise AssertionError("H5 navigation failure must stop the task")
+    click.assert_not_called()
+    d.screenshot.assert_not_called()
+
+
 def test_h5_work_status_uses_cocos_without_ocr():
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     with patch("utils.cocos_ui.CocosUI.click_text", return_value=True), \

@@ -64,21 +64,35 @@ def _ensure_work_active(d: "uiauto.Device") -> None:
         if web_farm.work_panel_open(page):
             logger.info("[farm_v2] 啟動打工前關閉殘留種植小隊視窗")
             if not web_farm.close_work_panel(page):
-                logger.warning("H5 無法關閉殘留種植小隊視窗")
+                logger.warning(
+                    "[farm_v2] H5_STATE_UNAVAILABLE action=ensure_work_active "
+                    "reason=stale_work_panel_close_failed"
+                )
                 return
 
         ui = CocosUI(page)
         if not ui.click_text("打工", root="PlantMainView"):
-            logger.warning("H5 找不到打工入口")
+            logger.warning(
+                "[farm_v2] H5_STATE_UNAVAILABLE action=ensure_work_active "
+                "reason=work_entry_not_found"
+            )
             return
         state = ui.wait_for_text(("開始打工", "取消打工"), timeout=5)
         if state == "開始打工":
-            ui.click_text("開始打工")
+            if not ui.click_text("開始打工"):
+                logger.warning(
+                    "[farm_v2] H5_STATE_UNAVAILABLE action=ensure_work_active "
+                    "reason=start_work_click_failed"
+                )
+                return
             logger.info("H5 打工未啟動，已用 Cocos 開始打工")
         elif state == "取消打工":
             logger.info("H5 打工已在執行中")
         else:
-            logger.warning("H5 無法確認打工狀態")
+            logger.warning(
+                "[farm_v2] H5_STATE_UNAVAILABLE action=ensure_work_active "
+                "reason=work_status_unknown"
+            )
         closed = web_farm.close_work_panel(page)
         if closed:
             logger.info("[farm_v2] 種植小隊視窗已關閉")
@@ -148,6 +162,11 @@ def navigate_to_farm(d: "uiauto.Device", cnn_model=None, device_ip: Optional[str
         # Saved roughly the full OCR wait + two animations (≈8s) vs blind clicks.
         return 6.0
     if cocos_result is False:
+        if getattr(d, "backend_kind", None) == "web_h5":
+            raise RuntimeError(
+                f"[farm_v2] H5_STATE_UNAVAILABLE action=navigate_to_farm "
+                f"reason=cocos_navigation_failed device={device_ip}"
+            )
         logger.warning(f"[farm_v2] cocos fast-path failed for {device_ip}, falling back")
 
     click_with_jitter(d, COORD["home"][0], COORD["home"][1], jitter=5)
@@ -236,6 +255,11 @@ def farm(
     # card flow to cancel it again, and made `is_working` always True — which
     # silently gated out seed buying so 打工 eventually ran out of seeds.
     h5_working = _h5_work_is_active(d)
+    if getattr(d, "backend_kind", None) == "web_h5" and h5_working is None:
+        raise RuntimeError(
+            f"[farm_v2] H5_STATE_UNAVAILABLE action=read_work_status "
+            f"reason=cocos_work_probe_failed device={device_ip}"
+        )
     is_working = check_if_parttime(d) if h5_working is None else h5_working
     if is_working:
         logger.info("打工中，種植交給打工，本輪只補種子/收散落獎勵")

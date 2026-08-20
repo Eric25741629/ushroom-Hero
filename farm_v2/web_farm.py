@@ -255,6 +255,25 @@ def _view_active(page: Any, view_name: str) -> bool:
         return False
 
 
+def click_text_if_present(
+    page: Any,
+    texts: tuple[str, ...],
+    *,
+    root: Optional[str] = None,
+    timeout: float = 1.0,
+) -> bool:
+    """用 Cocos Label/事件點擊可選文字；找不到時只回 False。
+
+    這是 H5 確認框等短暫 UI 的正式入口。它不讀截圖，也不會退回 OCR；
+    呼叫端必須把 False 視為「未確認」而不是「文字不存在」。
+    """
+    from utils.cocos_ui import CocosUI
+
+    ui = CocosUI(page)
+    found = ui.wait_for_text(texts, root=root, timeout=timeout)
+    return bool(found and ui.click_text(found, root=root))
+
+
 def work_status(page: Any, action: str = "read") -> str:
     """讀取或操作 H5 打工面板；回傳 running/stopped/unknown/closed。"""
     try:
