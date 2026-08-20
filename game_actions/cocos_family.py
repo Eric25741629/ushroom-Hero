@@ -39,7 +39,7 @@ class CocosFamily:
         return donated
 
     def snow_country(self, max_wait: float = 180.0) -> bool:
-        """以 Cocos label 驅動雪國危機；無法辨識時回 False 讓 ADB fallback。"""
+        """以 Cocos label 驅動雪國危機；無法辨識時回 False 讓 H5 呼叫端停止。"""
         if not self.ui.click_text("雪國危機"):
             return False
         if not self.ui.wait_for_text(("入場",), timeout=8):

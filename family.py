@@ -15,6 +15,15 @@ import BUY
 import img_tools 
 import new_battle
 
+
+def _h5_unavailable(ip: str, reason: str) -> None:
+    """H5 家族 Cocos 狀態不可用時停止，不把它誤當成 OCR 沒找到文字。"""
+    print(
+        f"[{ip}] H5_STATE_UNAVAILABLE action=family reason={reason}; "
+        "停止家族流程，禁止 OCR fallback"
+    )
+
+
 class Family_manager(device):
     def __init__(self, device: u2.Device, ip: str, cnn_model: cnn_model.SimpleCNN):
         super().__init__(device)
@@ -106,18 +115,25 @@ class Family_manager(device):
                 print(f"{self.device_ip} 家族操作冷卻中 (上次執行: {record.get('datetime', 'unknown')})")
                 return
 
-        # web_h5：家族/寶箱/雪國由 Cocos Label 驅動；只有 Cocos 不可用時才
-        # 退回下面原有的 ADB OCR 流程。
-        page = getattr(self.device, "_page", None)
-        if page is not None and getattr(self.device, "backend_kind", None) == "web_h5":
+        # web_h5：家族/寶箱/雪國只走 Cocos Label；Cocos 不可用時停止，
+        # 不能把 H5 狀態誤當成 ADB OCR 未命中。
+        if getattr(self.device, "backend_kind", None) == "web_h5":
+            page = getattr(self.device, "_page", None)
+            if page is None:
+                _h5_unavailable(self.device_ip, "page_missing")
+                return
             try:
                 from game_actions.cocos_family import run_family_h5
                 if run_family_h5(page):
                     time_manager.record_time("donate_family")
                     time_manager.record_time("go_to_family_cooldown")
                     return
+                _h5_unavailable(self.device_ip, "cocos_flow_not_verified")
+                return
             except Exception as exc:
-                print(f"{self.device_ip} H5 家族 Cocos 流程失敗，退回 ADB fallback: {exc}")
+                print(f"{self.device_ip} H5 家族 Cocos 流程失敗: {exc}")
+                _h5_unavailable(self.device_ip, "cocos_flow_exception")
+                return
 
         time.sleep(0.3)
         self.device.click(391, 938)
