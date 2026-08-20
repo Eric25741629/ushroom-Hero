@@ -13,17 +13,34 @@ from utils.cocos_view import open_view, web_page
 LADDER_VIEW = "DoubleChapterMainView"
 
 
+def _is_h5(d) -> bool:
+    return getattr(d, "backend_kind", None) == "web_h5"
+
+
+def _h5_unavailable(action: str, reason: str, ip: str | None = None) -> bool:
+    """H5 Cocos 狀態不可用時停止，不把它誤當成 OCR 沒找到文字。"""
+    prefix = f"[{ip}]" if ip else "[cloud]"
+    logger.warning(
+        f"{prefix} H5_STATE_UNAVAILABLE action={action} reason={reason}; "
+        "停止雲外鏡流程，禁止 OCR fallback"
+    )
+    return False
+
+
 def into_cloud(d):
     """進雲纏天梯主面板。web_h5 直開 view；adb 走原本的副本清單捲動 + OCR。"""
-    page = web_page(d)
-    if page is not None:
+    if _is_h5(d):
+        page = web_page(d)
+        if page is None:
+            return _h5_unavailable("enter", "page_missing")
         try:
             from game_actions.cocos_cloud_battle import CocosCloudBattle
             if CocosCloudBattle(page).enter():
                 return True
-            logger.warning("[cloud] Cocos 進場未驗證成功，退回 OCR")
+            return _h5_unavailable("enter", "cocos_enter_not_verified")
         except Exception as exc:
-            logger.warning(f"[cloud] Cocos 進場失敗，退回 OCR: {exc}")
+            logger.warning(f"[cloud] Cocos 進場失敗: {exc}")
+            return _h5_unavailable("enter", "cocos_enter_exception")
 
     img_tools.click_str_by_server(d, '副本', y_range=(870, 973))
     time.sleep(2)
@@ -45,15 +62,18 @@ def into_cloud(d):
 
 def friend_help(d, name='大車輪'):
     """請求朋友幫助"""
-    page = web_page(d)
-    if page is not None:
+    if _is_h5(d):
+        page = web_page(d)
+        if page is None:
+            return _h5_unavailable("friend_help", "page_missing")
         try:
             from game_actions.cocos_cloud_battle import CocosCloudBattle
             if CocosCloudBattle(page).friend_help(name):
                 return True
-            logger.warning("[cloud] Cocos 戰友設置未完成，退回 OCR")
+            return _h5_unavailable("friend_help", "cocos_friend_help_not_verified")
         except Exception as exc:
-            logger.warning(f"[cloud] Cocos 戰友設置失敗，退回 OCR: {exc}")
+            logger.warning(f"[cloud] Cocos 戰友設置失敗: {exc}")
+            return _h5_unavailable("friend_help", "cocos_friend_help_exception")
     img_tools.click_str_by_server(d, '戰友設置', y_range=(726, 827))
     time.sleep(2)
     img_tools.click_str_by_server(d, '戰友招募', y_range=(583, 631))
@@ -71,15 +91,18 @@ def friend_help(d, name='大車輪'):
 
 def help_friend(d):
     """幫助朋友"""
-    page = web_page(d)
-    if page is not None:
+    if _is_h5(d):
+        page = web_page(d)
+        if page is None:
+            return _h5_unavailable("help_friend", "page_missing")
         try:
             from game_actions.cocos_cloud_battle import CocosCloudBattle
             if CocosCloudBattle(page).help_friend():
                 return True
-            logger.warning("[cloud] Cocos 助戰申請未完成，退回 OCR")
+            return _h5_unavailable("help_friend", "cocos_help_friend_not_verified")
         except Exception as exc:
-            logger.warning(f"[cloud] Cocos 助戰申請失敗，退回 OCR: {exc}")
+            logger.warning(f"[cloud] Cocos 助戰申請失敗: {exc}")
+            return _h5_unavailable("help_friend", "cocos_help_friend_exception")
     img_tools.click_str_by_server(d, '助戰設置', y_range=(726, 827))
     time.sleep(2)
     img = d.screenshot(format='opencv')
@@ -113,15 +136,19 @@ def cloud_fight_pre_help(d):
 
 
 def check_if_pass(d):
-    page = web_page(d)
-    if page is not None:
+    if _is_h5(d):
+        page = web_page(d)
+        if page is None:
+            return _h5_unavailable("check_if_pass", "page_missing")
         try:
             from game_actions.cocos_cloud_battle import CocosCloudBattle
             passed = CocosCloudBattle(page).is_passed()
             if passed is not None:
                 return passed
+            return _h5_unavailable("check_if_pass", "cocos_probe_unavailable")
         except Exception as exc:
-            logger.warning(f"[cloud] Cocos 最高難度判斷失敗，退回 OCR: {exc}")
+            logger.warning(f"[cloud] Cocos 最高難度判斷失敗: {exc}")
+            return _h5_unavailable("check_if_pass", "cocos_probe_exception")
     img = d.screenshot(format='opencv')
     result = img_tools.analyze_skill_via_http(img)
     if result['success'] != False:
@@ -133,15 +160,18 @@ def check_if_pass(d):
 
 
 def cloud_fighting(d, ip, name='大車輪'):
-    page = web_page(d)
-    if page is not None:
+    if _is_h5(d):
+        page = web_page(d)
+        if page is None:
+            return _h5_unavailable("cloud_fighting", "page_missing", ip)
         try:
             from game_actions.cocos_cloud_battle import CocosCloudBattle
             if CocosCloudBattle(page).cloud_fighting():
                 return True
-            logger.warning(f"[{ip}] cloud Cocos 流程未完成，退回 OCR")
+            return _h5_unavailable("cloud_fighting", "cocos_fighting_not_verified", ip)
         except Exception as exc:
-            logger.warning(f"[{ip}] cloud Cocos 流程失敗，退回 OCR: {exc}")
+            logger.warning(f"[{ip}] cloud Cocos 流程失敗: {exc}")
+            return _h5_unavailable("cloud_fighting", "cocos_fighting_exception", ip)
     state = into_cloud(d)
     if check_if_pass(d) and state:
         d.click(276, 888)

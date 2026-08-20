@@ -47,9 +47,43 @@ def test_production_friend_help_routes_web_h5_to_cocos_without_ocr():
     ocr_click.assert_not_called()
 
 
-def test_check_if_pass_falls_back_when_cocos_probe_is_unavailable():
+def test_check_if_pass_blocks_h5_ocr_when_cocos_probe_is_unavailable():
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
-    d.screenshot.return_value = object()
     with patch("game_actions.cocos_cloud_battle.CocosCloudBattle.is_passed", return_value=None), \
-         patch.object(cloud.img_tools, "analyze_skill_via_http", return_value={"success": False}):
+         patch.object(cloud.img_tools, "analyze_skill_via_http") as ocr:
         assert cloud.check_if_pass(d) is False
+    ocr.assert_not_called()
+
+
+def test_production_into_cloud_blocks_h5_ocr_when_cocos_enter_fails():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with patch("game_actions.cocos_cloud_battle.CocosCloudBattle.enter", return_value=False), \
+         patch.object(cloud.img_tools, "click_str_by_server") as ocr:
+        assert cloud.into_cloud(d) is False
+    ocr.assert_not_called()
+
+
+def test_production_h5_page_missing_blocks_ocr():
+    d = MagicMock(backend_kind="web_h5", _page=None)
+    with patch.object(cloud.img_tools, "click_str_by_server") as click_ocr, \
+         patch.object(cloud.img_tools, "analyze_skill_via_http") as analyze_ocr:
+        assert cloud.into_cloud(d) is False
+        assert cloud.check_if_pass(d) is False
+    click_ocr.assert_not_called()
+    analyze_ocr.assert_not_called()
+
+
+def test_production_help_friend_blocks_h5_ocr_when_cocos_fails():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with patch("game_actions.cocos_cloud_battle.CocosCloudBattle.help_friend", return_value=False), \
+         patch.object(cloud.img_tools, "click_str_by_server") as ocr:
+        assert cloud.help_friend(d) is False
+    ocr.assert_not_called()
+
+
+def test_production_cloud_fighting_blocks_h5_ocr_when_cocos_fails():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    with patch("game_actions.cocos_cloud_battle.CocosCloudBattle.cloud_fighting", return_value=False), \
+         patch.object(cloud.img_tools, "click_str_by_server") as ocr:
+        assert cloud.cloud_fighting(d, "web-001") is False
+    ocr.assert_not_called()
