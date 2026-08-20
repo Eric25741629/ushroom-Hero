@@ -481,6 +481,13 @@ def test_disabled_flags_gate_their_task(patched_pipeline, flag, task):
     assert task not in patched_pipeline
 
 
+def test_disabled_family_flag_skips_family_handler(patched_pipeline):
+    ctx, _unused, _device = _build_context(enable_family=False)
+    pipeline.run(ctx)
+
+    assert "家族任務" not in patched_pipeline
+
+
 def test_due_check_uses_pipeline_start_time(monkeypatch, patched_pipeline):
     seen: list[tuple[str, datetime.datetime]] = []
 
