@@ -262,46 +262,49 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                 except Exception as stop_err:
                     logger.warning(f"[{ip}] 達重啟上限後停止遊戲失敗: {stop_err}")
                 return False
-            # H5 已知頁面直接由 Cocos navigator 收回主頁，不為 HOME/FARM/MINE 等
-            # 可確定狀態做全幀 OCR。未知 overlay 與登入衝突仍交給下方舊 detector。
-            try:
-                from utils.page_detector import PageState, detect_known_h5_page
-                known_page = detect_known_h5_page(d, ip)
-                if known_page == PageState.MAIN:
-                    current_stage = "主頁面"
-                elif known_page in (
-                    PageState.NOTICE,
-                    PageState.OFFLINE_REWARD,
-                    PageState.CARPARK_WAREHOUSE,
-                    PageState.GOODS_REWARD,
-                    PageState.WELFARE,
-                ):
-                    # 這些 view 是需要先處理的前景 popup；不能直接 goto_main
-                    # 把獎勵跳掉，必須交給 Cocos stage handler 處理。
-                    current_stage = resolve_stage_until_stable(
-                        d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
-                    )
-                elif known_page is not None:
-                    from utils.cocos_navigator import CocosNavigator
-                    page = getattr(d, "_page", None)
-                    if page is not None and CocosNavigator(page).goto_main():
-                        logger.info(f"[{ip}] 啟動 Cocos 從 {known_page.value} 返回主頁")
-                        current_stage = "主頁面"
-                    else:
-                        current_stage = resolve_stage_until_stable(
-                            d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
-                        )
-                else:
-                    current_stage = resolve_stage_until_stable(
-                        d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
-                    )
-            except Exception as cocos_exc:
-                logger.debug(f"[{ip}] 啟動 Cocos 探測失敗，退回 OCR: {cocos_exc}")
+            # Web H5 啟動階段只接受 Cocos state。未知 overlay、頁面尚未綁定
+            # 或 probe 例外都直接標記不可用，不能退回全幀 OCR。
+            from utils.page_detector import H5State, probe_h5_state
+            h5_result = probe_h5_state(d, ip)
+            if h5_result.state is H5State.ADB_LEGACY:
+                # ADB 維持原本的 OCR/座標啟動流程。
                 current_stage = resolve_stage_until_stable(
                     d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
                 )
+            elif h5_result.state is H5State.H5_MAIN:
+                current_stage = "主頁面"
+            elif h5_result.state is H5State.H5_KNOWN_POPUP:
+                # 前景 popup 必須先處理，不能直接 goto_main 跳過獎勵或公告。
+                current_stage = resolve_stage_until_stable(
+                    d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
+                )
+            elif h5_result.state is H5State.H5_NON_HOME:
+                from utils.cocos_navigator import CocosNavigator
+
+                page = getattr(d, "_page", None)
+                if page is not None and CocosNavigator(page).goto_main():
+                    logger.info(
+                        f"[{ip}] 啟動 Cocos 從 "
+                        f"{getattr(h5_result.page_state, 'value', None)} 返回主頁"
+                    )
+                    current_stage = "主頁面"
+                else:
+                    current_stage = "H5_STATE_UNAVAILABLE"
+                    logger.warning(
+                        f"[{ip}] 啟動時 Web H5 非首頁且 Cocos 無法返回主頁，"
+                        f"停止本輪，禁止 OCR fallback"
+                    )
+            else:
+                current_stage = h5_result.legacy_stage()
+                logger.warning(
+                    f"[{ip}] 啟動時 Web H5 state unavailable，停止本輪，"
+                    f"禁止 OCR fallback: {h5_result.reason or 'unknown'}"
+                )
             last_stage = current_stage
             logger.info(f"[{ip}] 啟動狀態判定: {current_stage}")
+
+            if current_stage == "H5_STATE_UNAVAILABLE":
+                return False
 
             if current_stage != "主頁面":
                 main_confirm_count = 0

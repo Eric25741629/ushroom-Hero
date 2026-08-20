@@ -1,5 +1,6 @@
 """Unit tests for utils.page_detector — mock both Playwright page and OCR."""
 from __future__ import annotations
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -314,8 +315,11 @@ def test_fast_path_returns_main_string_when_cocos_says_main():
 
 
 def test_fast_path_returns_none_when_cocos_says_non_main():
-    """Non-main cocos states must NOT short-circuit OCR — popups like
-    異地登錄 are detected by OCR, never by cocos."""
+    """Legacy Optional[str] helper stays None for non-main states.
+
+    Formal Web H5 callers use ``probe_h5_state`` and receive H5_NON_HOME,
+    instead of interpreting this compatibility None as permission to use OCR.
+    """
     from utils import page_detector
     d = _make_web_device({
         "active_overlays": ["PlantMainView"], "home_active": True,
@@ -379,4 +383,60 @@ def test_fast_path_enabled_requires_both_flag_and_web_backend():
 def test_fast_path_enabled_handles_missing_ip():
     from utils import page_detector
     assert page_detector._legacy_fast_path_enabled(None) is False
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Strict Web H5 state contract
+# ──────────────────────────────────────────────────────────────────────
+
+
+def _strict_h5_device(scan_return):
+    return SimpleNamespace(
+        backend_kind="web_h5",
+        _page=_mk_page(scan_return),
+        device_id="web-test",
+    )
+
+
+def test_probe_h5_state_distinguishes_main_popup_and_non_home():
+    from utils.page_detector import H5State, PageState, probe_h5_state
+
+    base = {
+        "active_overlays": [], "home_active": False,
+        "selected_tab_name": None,
+        "guide_inner_active": False, "loading_inner_active": False,
+    }
+    assert probe_h5_state(_strict_h5_device(base)).state is H5State.H5_MAIN
+
+    popup = dict(base, active_overlays=["GoodsGetView"])
+    popup_result = probe_h5_state(_strict_h5_device(popup))
+    assert popup_result.state is H5State.H5_KNOWN_POPUP
+    assert popup_result.page_state is PageState.GOODS_REWARD
+
+    non_home = dict(base, home_active=True, selected_tab_name="4")
+    non_home_result = probe_h5_state(_strict_h5_device(non_home))
+    assert non_home_result.state is H5State.H5_NON_HOME
+    assert non_home_result.page_state is PageState.HOME
+
+
+def test_probe_h5_state_treats_unknown_or_cocos_failure_as_unavailable():
+    from utils.page_detector import H5State, probe_h5_state
+
+    unknown = _strict_h5_device({"active_overlays": ["NewView"]})
+    unknown_result = probe_h5_state(unknown, "web-unknown")
+    assert unknown_result.state is H5State.H5_STATE_UNAVAILABLE
+    assert unknown_result.reason == "unknown_cocos_state"
+
+    failed = _strict_h5_device({"err": "no_cc"})
+    failed_result = probe_h5_state(failed, "web-failed")
+    assert failed_result.state is H5State.H5_STATE_UNAVAILABLE
+    assert failed_result.reason == "no_cc"
+
+
+def test_probe_h5_state_keeps_adb_on_legacy_contract():
+    from utils import page_detector
+    from utils.page_detector import H5State, probe_h5_state
+
+    result = probe_h5_state(SimpleNamespace(backend_kind="adb"), "adb-test")
+    assert result.state is H5State.ADB_LEGACY
     assert page_detector._legacy_fast_path_enabled("") is False

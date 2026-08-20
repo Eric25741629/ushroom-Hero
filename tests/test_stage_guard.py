@@ -153,6 +153,41 @@ def test_get_stage_with_check_raises_on_login_conflict(
     assert fake_mark_conflict == ["emu-1"]
 
 
+def test_h5_state_unavailable_does_not_enter_legacy_resolver(monkeypatch, guard_mod):
+    from utils.page_detector import H5State, H5StateResult
+
+    d = SimpleNamespace(backend_kind="web_h5", _page=object())
+    monkeypatch.setattr(
+        "utils.page_detector.probe_h5_state",
+        lambda *_a, **_k: H5StateResult(
+            H5State.H5_STATE_UNAVAILABLE,
+            reason="page_closed",
+        ),
+    )
+
+    def _must_not_resolve(*_args, **_kwargs):
+        raise AssertionError("unavailable H5 state must not enter legacy resolver")
+
+    monkeypatch.setattr(guard_mod, "resolve_stage_until_stable", _must_not_resolve)
+    assert guard_mod.get_stage_with_check(d, "web-1", Cnn_model=object()) == "H5_STATE_UNAVAILABLE"
+
+
+def test_h5_non_home_does_not_enter_legacy_resolver(monkeypatch, guard_mod):
+    from utils.page_detector import H5State, H5StateResult, PageState
+
+    d = SimpleNamespace(backend_kind="web_h5", _page=object())
+    monkeypatch.setattr(
+        "utils.page_detector.probe_h5_state",
+        lambda *_a, **_k: H5StateResult(H5State.H5_NON_HOME, PageState.FARM),
+    )
+
+    def _must_not_resolve(*_args, **_kwargs):
+        raise AssertionError("known non-home H5 state must not enter legacy resolver")
+
+    monkeypatch.setattr(guard_mod, "resolve_stage_until_stable", _must_not_resolve)
+    assert guard_mod.get_stage_with_check(d, "web-1", Cnn_model=object()) == "H5_NON_HOME"
+
+
 # ---------------------------------------------------------------------------
 # _run_at_main_page
 # ---------------------------------------------------------------------------
