@@ -32,6 +32,19 @@ def _cocos_arena(d):
     return CocosArena(page)
 
 
+def _is_h5(d) -> bool:
+    return getattr(d, "backend_kind", None) == "web_h5"
+
+
+def _h5_unavailable(ip: str, action: str, reason: str) -> bool:
+    """H5 Cocos 狀態不可用時停止，不把它轉成 OCR 未命中。"""
+    logger.warning(
+        f"[{ip}] H5_STATE_UNAVAILABLE action={action} reason={reason}; "
+        "停止競技場，禁止 OCR fallback"
+    )
+    return False
+
+
 def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool = True) -> bool:
     cocos = _cocos_arena(d) if use_cocos else None
     cocos_path_active = cocos is not None
@@ -41,6 +54,8 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
         logger.info(f"[{ip}] 競技場挑戰 {i+1}/{n} (animation)")
         if cocos is not None:
             if not cocos.challenge():
+                if _is_h5(d):
+                    return _h5_unavailable(ip, "challenge", f"fight={i + 1}")
                 logger.warning(f"[{ip}] Cocos 挑戰未驗證，該場退回 OCR")
                 cocos = None
                 cocos_path_active = False
@@ -51,6 +66,8 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
             if cocos is not None:
                 check_str = cocos.wait_result(timeout=max(1, 60 - (time.time() - start_time)))
                 if check_str is None:
+                    if _is_h5(d):
+                        return _h5_unavailable(ip, "wait_result", f"fight={i + 1}")
                     logger.warning(f"[{ip}] Cocos 結果未驗證，該場退回 OCR")
                     cocos = None
                     cocos_path_active = False
@@ -58,6 +75,8 @@ def _run_animation_fights(d, ip: str, n: int, gap_sec: float, *, use_cocos: bool
                         d, ["勝利", "對決", "跳過"], y_range=(100, 800), timeout=3
                     )
             else:
+                if _is_h5(d):
+                    return _h5_unavailable(ip, "animation", f"fight={i + 1}")
                 time.sleep(1)
                 check_str = img_tools.wait_for_any_text(
                     d, ["勝利", "對決", "跳過"], y_range=(100, 800), timeout=3
@@ -82,6 +101,8 @@ def _run_local_sim_fights(
     """H5：UI 點挑戰 + 本頁 BattleMainServer + 回 result（無動畫等待）。"""
     page = _page(d)
     if page is None:
+        if _is_h5(d):
+            return _h5_unavailable(ip, "local_sim", "page_missing")
         logger.warning(f"[{ip}] local_sim 需要 web_h5 page → fallback animation")
         return False
     from battle_calc.page_hooks import clear_combat, install_hooks, set_block_result
@@ -96,7 +117,7 @@ def _run_local_sim_fights(
         set_block_result(page, True)
         cocos = _cocos_arena(d) if use_cocos else None
         if cocos is not None:
-            if not cocos.challenge(occurrence=1):
+            if not cocos.challenge(occurrence=0):
                 return False
         else:
             img_tools.click_str_by_server(d, "挑戰", y_range=(592, 674), wait_timeout=5)
@@ -185,6 +206,8 @@ def _finish_with_ocr(d, ip: str) -> bool:
     OCR 文字只作為舊版底部離場按鈕的定位錨點；位移點擊不會直接按下
     「記錄」文字本身，避免重新打開對戰記錄彈窗。
     """
+    if _is_h5(d):
+        return _h5_unavailable(ip, "finish", "cocos_finish_unavailable")
     try:
         refreshed = img_tools.click_str_by_server(
             d, "刷新", y_range=(711, 782), shift_y=60, wait_timeout=5
@@ -232,7 +255,11 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
         entered_cocos = cocos is not None and cocos.enter()
         if not entered_cocos:
             if cocos is not None:
+                if _is_h5(d):
+                    return _h5_unavailable(ip, "enter", "arena_panel_not_verified")
                 logger.warning(f"[{ip}] 競技場 Cocos 進場未驗證，退回 OCR")
+            elif _is_h5(d):
+                return _h5_unavailable(ip, "enter", "page_missing")
             img_tools.click_str_by_server(d, "競技場", shift_y=-20, x_range=(0, 160))
             time.sleep(0.5)
             img_tools.click_str_by_server(d, "挑戰", wait_timeout=5, y_range=(789, 855))
@@ -268,7 +295,7 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
                 set_block_result(page, True)
                 cocos = _cocos_arena(d) if cocos_path_active else None
                 if cocos is not None:
-                    if not cocos.challenge(occurrence=1):
+                    if not cocos.challenge(occurrence=0):
                         ok = False
                         cocos_path_active = False
                         break
@@ -294,6 +321,10 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
                     cocos_path_active = True
                 else:
                     if cocos is not None:
+                        if _is_h5(d):
+                            return _h5_unavailable(
+                                ip, "fallback_enter", "arena_panel_not_verified"
+                            )
                         logger.warning(f"[{ip}] pure_ws fallback 的 Cocos 進場未驗證，退回 OCR")
                     cocos = None
                     cocos_path_active = False
@@ -304,7 +335,17 @@ def run_arena_challenges(d, ip: str, cfg: Optional[dict] = None) -> bool:
             d, ip, n, gap, use_cocos=cocos_path_active
         )
 
+    if _is_h5(d) and not cocos_path_active and cocos is not None:
+        # Cocos 失敗也要盡力把已開啟的競技場／popup 收乾淨；回傳值仍是
+        # False，讓上層知道本輪不可用，不會把清理成功誤當成戰鬥成功。
+        try:
+            cocos.finish()
+        except Exception:
+            logger.debug(f"[{ip}] H5 競技場失敗後收尾例外", exc_info=True)
+
     # 收尾
     if cocos_path_active and cocos is not None:
         return bool(cocos.finish())
+    if _is_h5(d):
+        return _h5_unavailable(ip, "finish", "cocos_path_inactive")
     return _finish_with_ocr(d, ip)

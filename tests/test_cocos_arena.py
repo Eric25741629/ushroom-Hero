@@ -14,11 +14,15 @@ def test_arena_enter_uses_cocos_text_and_verifies_result_list():
     arena = CocosArena(MagicMock())
     arena.ui = MagicMock()
     arena.ui.click_text.return_value = True
-    arena.ui.wait_for_text.side_effect = ["挑戰", "刷新"]
+    arena.ui.wait_for_text.side_effect = ["挑戰", "挑戰"]
 
     assert arena.enter() is True
     assert arena.ui.click_text.call_args_list[0].args == ("競技場",)
+    assert arena.ui.click_text.call_args_list[0].kwargs["root"] == "MainView"
+    assert arena.ui.wait_for_text.call_args_list[0].kwargs["root"] == "PvpMainView"
+    assert arena.ui.click_text.call_args_list[1].kwargs["root"] == "PvpMainView"
     assert arena.ui.click_text.call_args_list[1].kwargs["occurrence"] == 0
+    assert arena.ui.wait_for_text.call_args_list[1].kwargs["root"] == "PvpChalleneView"
 
 
 def test_arena_challenge_accepts_failure_result_from_cdp():
@@ -28,6 +32,8 @@ def test_arena_challenge_accepts_failure_result_from_cdp():
     arena.ui.wait_for_text.return_value = "失敗"
 
     assert arena.challenge() is True
+    assert arena.ui.click_text.call_args.kwargs["root"] == "PvpChalleneView"
+    assert arena.ui.click_text.call_args.kwargs["occurrence"] == 0
     assert "跳過" in arena.ui.wait_for_text.call_args.args[0]
     assert "战斗胜利" in arena.ui.wait_for_text.call_args.args[0]
 
@@ -46,7 +52,20 @@ def test_arena_wait_result_skips_simplified_skip_button():
     arena.ui.wait_for_text.side_effect = ["跳过", "战斗失败"]
 
     assert arena.wait_result(timeout=3) == "失敗"
-    arena.ui.click_text.assert_called_once_with("跳过")
+    arena.ui.click_node.assert_called_once_with("btnExit", root="BattleHubView")
+
+
+def test_arena_challenge_accepts_refreshed_list_without_result_popup():
+    arena = CocosArena(MagicMock())
+    arena.ui = MagicMock()
+    arena.ui.wait_for_text.return_value = None
+    arena.ui.snapshot.side_effect = [
+        {"texts": ["舊對手"]},
+        {"texts": ["新對手"]},
+    ]
+
+    assert arena.challenge() is True
+    assert arena.wait_result() == "對決"
 
 
 def test_web_h5_animation_fight_does_not_call_ocr():
@@ -80,6 +99,7 @@ def test_web_h5_animation_failure_popup_finishes_without_ocr():
 def test_cocos_finish_closes_overlay_and_never_clicks_battle_record():
     arena = CocosArena(MagicMock())
     arena.ui = MagicMock()
+    arena.ui.has_text.return_value = False
 
     with patch("utils.cocos_navigator.CocosNavigator") as navigator_cls:
         navigator = navigator_cls.return_value
@@ -98,6 +118,7 @@ def test_cocos_finish_closes_overlay_and_never_clicks_battle_record():
 def test_cocos_finish_closes_result_mask_before_navigating_home(monkeypatch):
     arena = CocosArena(MagicMock())
     arena.ui = MagicMock()
+    arena.ui.has_text.return_value = False
 
     with patch("utils.cocos_navigator.CocosNavigator") as navigator_cls:
         navigator = navigator_cls.return_value
@@ -107,12 +128,29 @@ def test_cocos_finish_closes_result_mask_before_navigating_home(monkeypatch):
 
         assert arena.finish() is True
 
-    navigator._click_path.assert_called_once_with(
-        "/UIRoot/NormalView/PvpResultView/imgMask"
+    assert navigator._click_path.call_args_list[0].args == (
+        "/UIRoot/NormalView/ParkingWareHouseView/root/imgMask",
+    )
+    assert navigator._click_path.call_args_list[1].args == (
+        "/UIRoot/NormalView/PvpResultView/imgMask",
+    )
+    assert navigator._click_path.call_args_list[2].args == (
+        "/UIRoot/NormalView/PvpChalleneView/content/btnClose",
+    )
+    assert navigator._click_path.call_args_list[3].args == (
+        "/UIRoot/NormalView/PvpMainView/content/btnClose",
     )
 
 
-def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
+def test_cocos_finish_does_not_close_while_battle_is_active():
+    arena = CocosArena(MagicMock())
+    arena.ui = MagicMock()
+    arena.ui.has_text.side_effect = lambda text, **_: text == "正在挑戰"
+
+    assert arena.finish() is False
+
+
+def test_h5_cocos_enter_failure_stops_without_ocr(monkeypatch):
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     cocos = MagicMock()
     cocos.enter.return_value = False
@@ -122,19 +160,47 @@ def test_cocos_enter_failure_keeps_ocr_finish_path(monkeypatch):
         lambda _ip: {"arena_battle_mode": "animation", "arena_fight_gap_sec": 7},
     )
     with patch.object(arena_battle, "_cocos_arena", return_value=cocos) as make_cocos, \
-         patch.object(arena_battle.img_tools, "click_str_by_server", return_value=True) as click_ocr, \
-         patch.object(arena_battle.img_tools, "wait_for_any_text", return_value="勝利"), \
+         patch.object(arena_battle.img_tools, "click_str_by_server") as click_ocr, \
+         patch.object(arena_battle.img_tools, "wait_for_any_text") as wait_ocr, \
          patch.object(arena_battle, "enforce_gap", return_value=0), \
          patch.object(arena_battle.time, "sleep"), \
          patch("utils.cocos_navigator.CocosNavigator") as navigator_cls:
         navigator_cls.return_value.current_view.return_value = "main"
 
-        assert arena_battle.run_arena_challenges(d, "web-5558") is True
+        assert arena_battle.run_arena_challenges(d, "web-5558") is False
 
-    # Cocos enter failed: the three fights and finish must stay on the OCR path.
     assert make_cocos.call_count == 1
     cocos.finish.assert_not_called()
-    assert [call.args[1] for call in click_ocr.call_args_list[-2:]] == ["刷新", "記錄"]
+    click_ocr.assert_not_called()
+    wait_ocr.assert_not_called()
+
+
+def test_web_h5_animation_timeout_stops_without_ocr():
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    cocos = MagicMock()
+    cocos.challenge.return_value = True
+    cocos.wait_result.return_value = None
+    with patch.object(arena_battle, "_cocos_arena", return_value=cocos), \
+         patch.object(arena_battle.img_tools, "click_str_by_server") as click_ocr, \
+         patch.object(arena_battle.img_tools, "wait_for_any_text", create=True) as wait_ocr, \
+         patch.object(arena_battle, "enforce_gap", return_value=0):
+        assert arena_battle._run_animation_fights(d, "web", 1, 0) is False
+
+    click_ocr.assert_not_called()
+    wait_ocr.assert_not_called()
+
+
+def test_adb_animation_fight_keeps_ocr_path():
+    d = MagicMock(backend_kind="adb", _page=None)
+    with patch.object(arena_battle, "_cocos_arena", return_value=None), \
+         patch.object(arena_battle.img_tools, "click_str_by_server", return_value=True) as click_ocr, \
+         patch.object(arena_battle.img_tools, "wait_for_any_text", return_value="勝利") as wait_ocr, \
+         patch.object(arena_battle, "enforce_gap", return_value=0), \
+         patch.object(arena_battle.time, "sleep"):
+        assert arena_battle._run_animation_fights(d, "adb-1", 1, 0) is False
+
+    click_ocr.assert_called_once()
+    wait_ocr.assert_called_once()
 
 
 def test_pure_ws_config_uses_h5_animation_without_second_ws(monkeypatch):
