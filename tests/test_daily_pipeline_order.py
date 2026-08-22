@@ -143,7 +143,11 @@ def _install_lightweight_dependencies() -> None:
         mushroom_arena=lambda *a, **k: None,
         should_execute_mushroom_arena=lambda *a, **k: True,
     )
-    _stub_module("game_actions.reward_manager", reward=lambda *a, **k: None)
+    _stub_module(
+        "game_actions.reward_manager",
+        reward=lambda *a, **k: None,
+        run_web_idle_reward=lambda *a, **k: {"success": True},
+    )
     _stub_module("game_actions.skill_manager", switch_skill_h5=lambda *a, **k: None)
     _stub_module(
         "game_actions.stage_guard",
