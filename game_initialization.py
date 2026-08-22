@@ -223,6 +223,32 @@ def resolve_stage_until_stable(d, ip: str, Cnn_model=None, reward_fn=None, logge
         return stage
     return stage
 
+
+def _wait_for_h5_main(page, ip: str, logger: logging.Logger, max_attempts: int = 30) -> bool:
+    """等待 Cocos 導航完成，避免把轉場中的頁面誤判成啟動失敗。
+
+    舊 OCR 啟動流程會在每輪重新判斷並等待頁面穩定；strict H5 狀態流程
+    不應恢復整幀 OCR，但仍要保留這段等待。Cocos 導航本身可能已經點擊
+    成功，只是遊戲節點尚未在下一次 evaluate 時完成切換，因此在固定間隔
+    重試同一個無副作用的「返回主頁」操作。
+    """
+    from utils.cocos_navigator import CocosNavigator
+
+    navigator = CocosNavigator(page)
+    for attempt in range(1, max_attempts + 1):
+        if navigator.goto_main():
+            if attempt > 1:
+                logger.info(f"[{ip}] Cocos 返回主頁完成，等待 {attempt} 次")
+            return True
+        if attempt < max_attempts:
+            logger.info(
+                f"[{ip}] Cocos 返回主頁仍在轉場，等待後重試 "
+                f"({attempt}/{max_attempts})"
+            )
+            time.sleep(1)
+    return False
+
+
 def handle_game_startup_pages(d, ip: str,  start_game_fn, 
                                reward_fn, logger: logging.Logger = None) -> bool:
     """
@@ -279,10 +305,8 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
                     d, ip, Cnn_model=None, reward_fn=reward_fn, logger=logger
                 )
             elif h5_result.state is H5State.H5_NON_HOME:
-                from utils.cocos_navigator import CocosNavigator
-
                 page = getattr(d, "_page", None)
-                if page is not None and CocosNavigator(page).goto_main():
+                if page is not None and _wait_for_h5_main(page, ip, logger):
                     logger.info(
                         f"[{ip}] 啟動 Cocos 從 "
                         f"{getattr(h5_result.page_state, 'value', None)} 返回主頁"
