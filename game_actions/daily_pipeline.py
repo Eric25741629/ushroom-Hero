@@ -51,7 +51,7 @@ from game_actions.periodic_tasks import (
     mushroom_arena,
     should_execute_mushroom_arena,
 )
-from game_actions.reward_manager import reward
+from game_actions.reward_manager import reward, run_web_idle_reward
 from game_actions.skill_manager import switch_skill_h5
 from game_actions.stage_guard import _run_at_main_page, get_stage_with_check
 from game_actions import task_due
@@ -388,6 +388,12 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
 
     def _task_idle_reward():
         def _tap_chest():
+            if effective_backend == "web_h5":
+                page = getattr(d, "_page", None)
+                if page is None:
+                    logger.warning("[%s] web_h5 寶箱流程缺少 CDP page，禁止 OCR fallback", ip)
+                    return {"success": False, "error": "web_page_unavailable"}
+                return run_web_idle_reward(page)
             d.tap(random.randint(261, 271), 369)
             time.sleep(1)
             reward(d)
