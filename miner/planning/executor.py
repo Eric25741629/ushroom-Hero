@@ -126,6 +126,11 @@ BOMB_BTN_XY: Coordinate = (370, 910)     # 右邊炸彈按鈕
 # 收到下一個動作。
 H5_MINING_ACTION_INTERVAL_SEC = 0.5
 
+# H5 每個 dig 步驟執行前的等待時間：盤面滑動/獎勵動畫尚未收尾時，WS 回報的
+# actives 可能短暫對不上目標 block_id（h5_preflight 誤判 not_active / already_dug），
+# 先等畫面與伺服器狀態同步再抓盤面、執行點擊。
+H5_DIG_PRE_ACTION_DELAY_SEC = 1.0
+
 
 def cell_center_xy(r: int, c: int) -> Coordinate:
     """計算盤面第 r 列、第 c 欄格子的中心點座標。"""
@@ -630,6 +635,10 @@ def execute_plan_steps(
             step_board_before = [row[:] for row in board]
             cell_events: List[Dict[str, Any]] = []
             for (r, c) in step["dig_list"]:
+                if H5_DIG_PRE_ACTION_DELAY_SEC > 0 and _h5_page(d) is not None:
+                    # 僅 H5 後端需要等動畫收尾，避免 WS actives 與 block_id
+                    # 短暫不一致造成 preflight 誤擋（詳見常數說明）。
+                    time.sleep(H5_DIG_PRE_ACTION_DELAY_SEC)
                 ws_board_before = read_ws_mine_board(d)
                 ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
                 _raise_h5_board_unavailable(d, step, acc, ws_board_before)
