@@ -501,7 +501,12 @@ _H5_KNOWN_POPUP_STATES = frozenset({
 })
 
 
-def probe_h5_state(d: Any, device_ip: Optional[str] = None) -> H5StateResult:
+def probe_h5_state(
+    d: Any,
+    device_ip: Optional[str] = None,
+    *,
+    log_unavailable: bool = True,
+) -> H5StateResult:
     """以 Cocos-only 方式取得正式 Web H5 狀態。
 
     這是正式 H5 stage guard 的唯一入口。ADB 回傳 `ADB_LEGACY`，讓舊 OCR
@@ -519,19 +524,21 @@ def probe_h5_state(d: Any, device_ip: Optional[str] = None) -> H5StateResult:
     state = detector.detect_via_cocos()
     if state is None:
         reason = detector.last_cocos_error or "cocos_probe_returned_none"
-        logger.warning(
-            "[%s] Web H5 Cocos state unavailable，禁止 OCR fallback: %s",
-            device_ip or "unknown",
-            reason,
-        )
+        if log_unavailable:
+            logger.warning(
+                "[%s] Web H5 Cocos state unavailable，禁止 OCR fallback: %s",
+                device_ip or "unknown",
+                reason,
+            )
         return H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason=reason)
 
     if state is PageState.UNKNOWN:
         reason = "unknown_cocos_state"
-        logger.warning(
-            "[%s] Web H5 Cocos state unknown，禁止 OCR fallback",
-            device_ip or "unknown",
-        )
+        if log_unavailable:
+            logger.warning(
+                "[%s] Web H5 Cocos state unknown，禁止 OCR fallback",
+                device_ip or "unknown",
+            )
         return H5StateResult(H5State.H5_STATE_UNAVAILABLE, state, reason)
 
     if state is PageState.MAIN:
