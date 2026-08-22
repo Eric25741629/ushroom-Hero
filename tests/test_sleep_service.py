@@ -236,6 +236,25 @@ def test_stop_runtime_device_web_h5_calls_close(sleep_mod):
     assert app_stop_calls == []
 
 
+@pytest.mark.parametrize(
+    ("close_ret", "expected_frag"),
+    [
+        (False, "no-op"),
+        (True, "已關閉 web_h5"),
+        (None, "已關閉 web_h5"),
+    ],
+)
+def test_stop_runtime_device_log_matches_close_result(sleep_mod, caplog, close_ret, expected_frag):
+    """close() 回報 False（本來就沒開）時，日誌必須如實說 no-op，
+    不得宣稱「已關閉瀏覽器」誤導排查。"""
+    d = SimpleNamespace(close=lambda: close_ret)
+    with caplog.at_level(logging.INFO, logger="test"):
+        sleep_mod.stop_runtime_device_for_sleep(
+            d, "emu-1", "web_h5", logging.getLogger("test"),
+        )
+    assert any(expected_frag in rec.getMessage() for rec in caplog.records)
+
+
 def test_stop_runtime_device_web_h5_without_close_falls_back(sleep_mod):
     app_stop_calls = []
     d = SimpleNamespace(

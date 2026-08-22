@@ -154,8 +154,13 @@ def stop_runtime_device_for_sleep(device_obj, ip: str, backend_kind: str, logger
         if backend_kind == "web_h5":
             close_fn = getattr(device_obj, "close", None)
             if callable(close_fn):
-                close_fn()
-                logger_obj.info(f"[{ip}] 強制休眠已關閉 web_h5 瀏覽器")
+                # close() 回傳 False 表示本來就沒開（no-op），日誌要如實反映，
+                # 否則會誤導「沒開瀏覽器卻關閉」的排查（Phase D1 跳過喚醒路徑）。
+                did_close = close_fn()
+                if did_close is False:
+                    logger_obj.info(f"[{ip}] web_h5 瀏覽器未開啟，休眠清理為 no-op")
+                else:
+                    logger_obj.info(f"[{ip}] 強制休眠已關閉 web_h5 瀏覽器")
             else:
                 device_obj.app_stop("com.mxdzz.tw.and")
                 logger_obj.info(f"[{ip}] 強制休眠已停止 web_h5 會話")
