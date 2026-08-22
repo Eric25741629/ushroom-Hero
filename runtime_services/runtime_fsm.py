@@ -183,6 +183,14 @@ _TRANSITIONS: Mapping[tuple[RuntimePhase, RuntimeEvent], tuple[RuntimePhase, Eff
             EffectIntent.SCHEDULE_SLEEP,
             "client tasks 完成，交由 scheduler 進入休眠",
         ),
+        # Phase D1（skip_browser_when_all_done）：任務已在 WS 階段全部完成，
+        # client 不需喚醒即直接對齊休眠。此時 shadow 停在 WAKING_CLIENT，
+        # TASKS_COMPLETED 必須是合法邊，否則每次走 D1 都會報 shadow mismatch。
+        (RuntimePhase.WAKING_CLIENT, RuntimeEvent.TASKS_COMPLETED): (
+            RuntimePhase.SLEEPING,
+            EffectIntent.SCHEDULE_SLEEP,
+            "任務已於 WS 階段完成，跳過喚醒 client 直接休眠 (Phase D1)",
+        ),
         (RuntimePhase.SLEEPING, RuntimeEvent.WAKE_DUE): (
             RuntimePhase.WS_PHASE,
             EffectIntent.START_WS,

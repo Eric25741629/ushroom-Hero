@@ -1311,13 +1311,22 @@ class PlaywrightGameDevice:
     def open_quick_settings(self):
         return True
 
-    def close(self):
+    def close(self) -> bool:
+        """Tear down the browser session.
+
+        Returns True if there was actually something to clean up (context or
+        playwright runtime existed); False when called on a never-started or
+        already-closed session (pure no-op). Callers can use this to keep
+        sleep/teardown logs honest instead of claiming a close that never
+        happened.
+        """
         # Both `_context.close()` and `_playwright.stop()` are independent
         # cleanup steps — a failure in the first must NOT short-circuit
         # the second, because that's how the Chrome subprocess gets
         # orphaned: context.close() throws (page hung, target unresponsive),
         # caller catches → playwright.stop() never runs → Chrome stays.
         # Stash any non-trivial error and re-raise after cleanup is done.
+        had_session = self._context is not None or self._playwright is not None
         deferred_err: Optional[Exception] = None
         try:
             if self._context is not None:
@@ -1364,6 +1373,7 @@ class PlaywrightGameDevice:
                     _WEB_DEVICE_REGISTRY.pop(self.device_id, None)
         if deferred_err is not None:
             raise deferred_err
+        return had_session
 
 
 def create_web_device_if_enabled(

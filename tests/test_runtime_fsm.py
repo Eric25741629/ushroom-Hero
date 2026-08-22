@@ -34,6 +34,7 @@ class FakeEffectExecutor:
         (RuntimePhase.WS_PHASE, RuntimeEvent.WS_COMPLETED, RuntimePhase.WAKING_CLIENT, EffectIntent.START_CLIENT),
         (RuntimePhase.WAKING_CLIENT, RuntimeEvent.CLIENT_READY, RuntimePhase.CLIENT_TASKS, EffectIntent.RUN_CLIENT_TASKS),
         (RuntimePhase.CLIENT_TASKS, RuntimeEvent.TASKS_COMPLETED, RuntimePhase.SLEEPING, EffectIntent.SCHEDULE_SLEEP),
+        (RuntimePhase.WAKING_CLIENT, RuntimeEvent.TASKS_COMPLETED, RuntimePhase.SLEEPING, EffectIntent.SCHEDULE_SLEEP),
         (RuntimePhase.SLEEPING, RuntimeEvent.WAKE_DUE, RuntimePhase.WS_PHASE, EffectIntent.START_WS),
         (RuntimePhase.WS_PHASE, RuntimeEvent.FORCE_SLEEP, RuntimePhase.SLEEPING, EffectIntent.FORCE_SLEEP),
         (RuntimePhase.WAKING_CLIENT, RuntimeEvent.FORCE_SLEEP, RuntimePhase.SLEEPING, EffectIntent.FORCE_SLEEP),
