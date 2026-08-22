@@ -53,12 +53,14 @@ if "miner.planning.executor" not in sys.modules:
         pass
     class _StubExecutionResult:
         def __init__(self, shovels_used=0, drills_used=0, bombs_used=0,
-                     steps_completed=0, terminated_reason=None):
+                     steps_completed=0, terminated_reason=None,
+                     pickaxe_count_after=None):
             self.shovels_used = shovels_used
             self.drills_used = drills_used
             self.bombs_used = bombs_used
             self.steps_completed = steps_completed
             self.terminated_reason = terminated_reason
+            self.pickaxe_count_after = pickaxe_count_after
     sys.modules["miner.planning.executor"] = types.SimpleNamespace(
         execute_plan_steps=lambda *a, **kw: _StubExecutionResult(),
         NoBoardChangeError=_StubNBCErr,
@@ -92,12 +94,98 @@ if "config.paths" not in sys.modules:
     sys.modules["config.paths"] = types.SimpleNamespace(DATASET_LOW_CONFIDENCE_DIR_STR="")
 
 
+import miner.mining_service as service  # noqa: E402
 from miner.mining_service import (  # noqa: E402
     _apply_partial,
+    _is_h5_board_unavailable,
     _record_item_failure,
     _reconcile_shovel_count,
 )
 from miner.planning.executor import ExecutionResult  # noqa: E402
+
+
+def test_h5_board_unavailable_is_classified_as_nonrecoverable_preflight():
+    exc = types.SimpleNamespace(
+        diagnostics={"phase": "h5_preflight", "validation": "board_unavailable"}
+    )
+    assert _is_h5_board_unavailable(exc) is True
+
+    transient = types.SimpleNamespace(
+        diagnostics={"phase": "h5_server_response", "validation": "board_unavailable"}
+    )
+    assert _is_h5_board_unavailable(transient) is False
+
+
+def test_run_stops_after_h5_board_unavailable_instead_of_spinning(monkeypatch):
+    class _Recorder:
+        def start(self, **_kwargs):
+            pass
+
+        def round(self, **_kwargs):
+            pass
+
+        def end(self, **_kwargs):
+            pass
+
+    logger = types.SimpleNamespace(
+        info=lambda *_a, **_kw: None,
+        debug=lambda *_a, **_kw: None,
+        warning=lambda *_a, **_kw: None,
+        error=lambda *_a, **_kw: None,
+        exception=lambda *_a, **_kw: None,
+    )
+    monkeypatch.setattr(service, "setup_miner_logger", lambda _ip: logger)
+    monkeypatch.setattr(
+        service.config_manager,
+        "get_device_config",
+        lambda _ip: {"backend": "web_h5", "mining_planner_version": "v1"},
+    )
+    monkeypatch.setattr(service, "check_pickaxe_count", lambda *_a, **_kw: 10)
+    monkeypatch.setattr(service, "read_ws_prop_counts", lambda _d: None)
+    monkeypatch.setattr(service, "check_drill_num", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(service, "check_boom_num", lambda *_a, **_kw: 0)
+    monkeypatch.setattr(service, "web_page", lambda _d: object())
+    monkeypatch.setattr(service, "_dismiss_mining_overlay_if_needed", lambda *_a, **_kw: False)
+    monkeypatch.setattr(service, "_log_inventory_validation", lambda *_a, **_kw: None)
+    monkeypatch.setattr(service, "_log_board_validation", lambda *_a, **_kw: None)
+    monkeypatch.setattr(service, "_check_force_sleep", lambda _ip: None)
+    monkeypatch.setattr(
+        service,
+        "MiningMapRecorder",
+        types.SimpleNamespace(for_device=lambda *_a, **_kw: _Recorder()),
+    )
+    monkeypatch.setattr(
+        service,
+        "_dispatch_planner",
+        lambda *_a, **_kw: (
+            {"ok": True, "steps": [{"type": "dig", "pos": (1, 0), "target": (1, 0), "action": "dig"}]},
+            "test",
+        ),
+    )
+
+    exc = service.NoBoardChangeError()
+    exc.reason = "H5 authoritative board unavailable"
+    exc.diagnostics = {"phase": "h5_preflight", "validation": "board_unavailable"}
+    exc.step = {"type": "dig", "pos": (1, 0), "target": (1, 0), "action": "dig"}
+    exc.partial_result = service.ExecutionResult()
+    monkeypatch.setattr(service, "execute_plan_steps", lambda *_a, **_kw: (_ for _ in ()).throw(exc))
+
+    class _Device:
+        def screenshot(self, **_kwargs):
+            return object()
+
+    clf = types.SimpleNamespace(
+        classify_board=lambda *_a, **_kw: ([
+            ["empty"] * 6,
+            ["dirt"] * 6,
+            *[["unreachable_dirt"] * 6 for _ in range(5)],
+        ], []),
+    )
+    result = service.run(_Device(), "h5-board-missing", clf)
+
+    assert result.success is False
+    assert result.stopped_reason == "board_unavailable"
+    assert result.rounds == 1
 
 
 # ---------------------------------------------------------------------------

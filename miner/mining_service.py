@@ -428,6 +428,16 @@ def _record_item_failure(
     streaks[item_type] = count
     return count, count >= max(1, int(limit))
 
+
+def _is_h5_board_unavailable(exc: BaseException) -> bool:
+    """辨識 H5 缺少 authoritative 盤面的不可恢復前置錯誤。"""
+    diagnostics = getattr(exc, "diagnostics", None)
+    return (
+        isinstance(diagnostics, dict)
+        and diagnostics.get("phase") == "h5_preflight"
+        and diagnostics.get("validation") == "board_unavailable"
+    )
+
 # OCR 鏟子驗證頻率（每 N 個 iter 對照一次）。從原本 3 拉長到 5 —
 # 現在 count 由 executor 回傳的 ExecutionResult.shovels_used 增量扣減，
 # OCR 只是漂移驗證。
@@ -786,7 +796,12 @@ def _dispatch_planner(
             f"savings={tool_candidate.get('effective_savings', tool_candidate.get('savings', 0.0)):.1f}"
         )
         return _build_item_plan(tool_candidate), "智能規劃 (SmartPlanner)"
-    return plan_smart(board, shovels=shovels, items=items), "智能規劃 (SmartPlanner)"
+    return plan_smart(
+        board,
+        shovels=shovels,
+        items=items,
+        blocked_actions=_blocked_action_keys(blocked_actions),
+    ), "智能規劃 (SmartPlanner)"
 
 
 def _log_planner_stats(
@@ -849,7 +864,10 @@ def _diagnose_empty_plan(board: List[List[str]], plan: Dict[str, Any], miner_log
         miner_logger.error("[Mining] 致命問題：棋盤找不到任何空氣！分類器可能有問題")
 
 
-def _forced_descent_dig(board):
+def _forced_descent_dig(
+    board,
+    blocked_actions: Optional[Set[Tuple[Any, ...]]] = None,
+):
     """Pick the deepest reachable non-pit frontier cell so digging it drives
     the viewport toward a scroll. Used to escape a board where the only
     remaining pits are uncollectable (blacklisted / sealed-pocket reachable).
@@ -857,10 +875,13 @@ def _forced_descent_dig(board):
     from miner.v3.board import is_frontier_diggable, is_pit
     rows = len(board)
     cols = len(board[0]) if board else 0
+    blocked = _blocked_action_keys(blocked_actions or set())
     best = None  # (depth_row, col)
     for r in range(rows):
         for c in range(cols):
             if is_pit(board[r][c]):
+                continue
+            if ("dig", "pickaxe", r, c) in blocked:
                 continue
             if is_frontier_diggable(board, r, c):
                 if best is None or r > best[0]:
@@ -1213,6 +1234,7 @@ def run(
     round_shadow_accounted = False
     consecutive_empty_plans = 0
     identical_board_count = 0
+    successful_steps = 0
     prev_exec_sig = None
     stopped_reason = "completed"
     round_event_logged = False
@@ -1292,7 +1314,7 @@ def run(
             _check_force_sleep(ip)
             if time.time() - start_time > max_duration_seconds:
                 miner_logger.info(f"[MiningService] 已達到時間限制 ({max_duration_minutes} 分鐘)，停止挖礦")
-                stopped_reason = "time_limit"
+                stopped_reason = "time_limit" if successful_steps > 0 else "no_progress"
                 break
 
             iterations += 1
@@ -1468,7 +1490,7 @@ def run(
                 # count (the loop condition is `while count >= 1`), so it is almost
                 # always true and would NOT mean "pits remain".
                 if int(plan.get("remaining_pits", 0) or 0) > 0:
-                    descent = _forced_descent_dig(board)
+                    descent = _forced_descent_dig(board, blocked_action_signatures)
                     if descent is not None:
                         miner_logger.warning(
                             f"[MiningService] 空 plan 但仍有礦無法採集，強制下挖 {descent} 推進下樓"
@@ -1481,6 +1503,17 @@ def run(
                                 rl_recorder=rl_recorder, deadline=start_time + max_duration_seconds,
                             )
                         except NoBoardChangeError as exc:
+                            if _is_h5_board_unavailable(exc):
+                                miner_logger.error(
+                                    "[MiningService] H5 authoritative 盤面不可用，停止挖礦，禁止盲目重試"
+                                )
+                                _record_map_round(
+                                    [{"type": "dig", "target": descent}],
+                                    {"ok": False, "reason": "board_unavailable"},
+                                )
+                                _log_round_telemetry("board_unavailable", error=exc.reason)
+                                stopped_reason = "board_unavailable"
+                                break
                             # even forced descent did nothing — fall through to abort
                             blocked_action_signatures.add(_step_signature(exc.step))
                         else:
@@ -1488,6 +1521,7 @@ def run(
                             # other execute_plan_steps call — otherwise internal count
                             # drifts high until the next OCR reconcile.
                             count = _apply_partial(descent_result, count, items_available, miner_logger)
+                            successful_steps += int(getattr(descent_result, "steps_completed", 0) or 0)
                             consecutive_empty_plans = 0
                             _log_round_telemetry("forced_descent")
                             continue
@@ -1525,6 +1559,17 @@ def run(
             except NoBoardChangeError as exc:
                 count = _apply_partial(exc.partial_result, count, items_available, miner_logger)
                 action_signature = _step_signature(exc.step)
+                if _is_h5_board_unavailable(exc):
+                    miner_logger.error(
+                        "[MiningService] H5 authoritative 盤面不可用，停止挖礦，禁止盲目重試"
+                    )
+                    _record_map_round(
+                        plan.get("steps", []),
+                        {"ok": False, "reason": "board_unavailable", **_exec_counts(exc.partial_result)},
+                    )
+                    _log_round_telemetry("board_unavailable", error=exc.reason)
+                    stopped_reason = "board_unavailable"
+                    break
                 if exc.item_type:
                     # 道具驗證可能只是 refresh_failed／動畫延遲。先封鎖
                     # 這個落點並重規劃；同一未變版面連續第二次才停用
@@ -1596,6 +1641,7 @@ def run(
 
             # Plan executed cleanly — credit shovels / items consumed.
             count = _apply_partial(exec_result, count, items_available, miner_logger)
+            successful_steps += int(getattr(exec_result, "steps_completed", 0) or 0)
             # Any successful use of an item breaks its consecutive failure
             # streak.  Keep dig/action blocking semantics independent.
             for item_name in _count_planned_item_uses(plan.get("steps", [])):
@@ -1681,7 +1727,9 @@ def run(
 
     # 只有至少完成一輪且以可預期的正常原因停止，才允許外層寫入冷卻記錄。
     return _result(
-        telemetry.rounds > 0 and stopped_reason in {"completed", "time_limit"},
+        telemetry.rounds > 0
+        and successful_steps > 0
+        and stopped_reason in {"completed", "time_limit"},
         stopped_reason,
     )
 

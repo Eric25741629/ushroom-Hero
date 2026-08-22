@@ -24,7 +24,20 @@ def get_hp(label: str) -> int:
     return 0
 
 
-def _descent_fallback_step(board: List[List[str]]) -> Optional[Dict[str, Any]]:
+def _action_key(action: Dict[str, Any]) -> Optional[Tuple[str, str, int, int]]:
+    """將規劃動作正規化成 runtime blocked-action 使用的 key。"""
+    action_type = str(action.get("type") or "")
+    pos = action.get("pos") or action.get("target")
+    if action_type not in {"dig", "use"} or not isinstance(pos, (tuple, list)) or len(pos) != 2:
+        return None
+    item = str(action.get("item") or "pickaxe") if action_type == "use" else "pickaxe"
+    return action_type, item, int(pos[0]), int(pos[1])
+
+
+def _descent_fallback_step(
+    board: List[List[str]],
+    blocked_actions: Optional[Set[Tuple[Any, ...]]] = None,
+) -> Optional[Dict[str, Any]]:
     """When A* finds no goal-improving plan (no pits left AND floor7 already
     open, the WS no_pit case), emit ONE downward dig so the runtime keeps
     scrolling — mirrors v4's no_pit descent. Without this v1 returns an empty
@@ -33,13 +46,17 @@ def _descent_fallback_step(board: List[List[str]]) -> Optional[Dict[str, Any]]:
     Picks the deepest diggable cell (largest row, tie-break smallest col).
     'Diggable' matches get_valid_actions: not air and not unreachable_.
     Returns None when nothing is reachably diggable (honest empty plan)."""
+    blocked = set(blocked_actions or set())
     R, C = len(board), len(board[0])
     for r in range(R - 1, -1, -1):
         for c in range(C):
             label = board[r][c]
             if not is_air(label) and not label.startswith("unreachable_"):
-                return {"type": "dig", "pos": (r, c),
-                        "step_cost": float(get_hp(label))}
+                action = {"type": "dig", "pos": (r, c),
+                          "step_cost": float(get_hp(label))}
+                if _action_key(action) in blocked:
+                    continue
+                return action
     return None
 
 class SmartState:
@@ -106,12 +123,24 @@ class SmartState:
         return self.get_priority() < other.get_priority()
 
 class SmartPlanner:
-    def __init__(self, board: List[List[str]], shovels: float = 100, items: Dict[str, int] = None, config: PlannerConfig = None):
+    def __init__(
+        self,
+        board: List[List[str]],
+        shovels: float = 100,
+        items: Dict[str, int] = None,
+        config: PlannerConfig = None,
+        blocked_actions: Optional[Set[Tuple[Any, ...]]] = None,
+    ):
         self.config = config or DEFAULT_CONFIG
         self.initial_board = [list(row) for row in board]
         self.initial_shovels = shovels
         self.initial_items = items or {'drill': 0, 'bomb': 0}
+        self.blocked_actions = set(blocked_actions or set())
         self._update_board_exposure(self.initial_board)
+
+    def _is_blocked(self, action: Dict[str, Any]) -> bool:
+        key = _action_key(action)
+        return key is not None and key in self.blocked_actions
 
     def _update_board_exposure(self, board: List[List[str]]):
         """
@@ -190,7 +219,9 @@ class SmartPlanner:
                     dig_cost = float(get_hp(label)) * cost_pickaxe
                     if dig_cost > state.shovels:
                         continue  # H9: 預算不足
-                    actions.append({"type": "dig", "pos": (r, c)})
+                    action = {"type": "dig", "pos": (r, c)}
+                    if not self._is_blocked(action):
+                        actions.append(action)
 
         # 道具必須放在可達空氣上
         air_cells = [(r, c) for r in range(R) for c in range(C) 
@@ -202,11 +233,15 @@ class SmartPlanner:
         if state.items.get('drill', 0) > 0 and item_affordable:
             for r, c in air_cells:
                 if any(not is_air(state.board[nr][c]) for nr in range(r + 1, R)):
-                    actions.append({"type": "use", "item": "drill", "pos": (r, c)})
+                    action = {"type": "use", "item": "drill", "pos": (r, c)}
+                    if not self._is_blocked(action):
+                        actions.append(action)
 
         if state.items.get('bomb', 0) > 0 and item_affordable:
             for r, c in air_cells:
-                actions.append({"type": "use", "item": "bomb", "pos": (r, c)})
+                action = {"type": "use", "item": "bomb", "pos": (r, c)}
+                if not self._is_blocked(action):
+                    actions.append(action)
         
         return actions
 
@@ -262,7 +297,7 @@ class SmartPlanner:
         res = best_finished or current
         steps = res.history
         if not steps:
-            fallback = _descent_fallback_step(res.board)
+            fallback = _descent_fallback_step(res.board, self.blocked_actions)
             if fallback is not None:
                 steps = [fallback]
         return {
@@ -274,5 +309,11 @@ class SmartPlanner:
             "message": f"A* Planning complete (nodes={nodes_explored})."
         }
 
-def plan_smart(board: List[List[str]], shovels: float = 100, items: Dict[str, int] = None, config: PlannerConfig = None) -> Dict[str, Any]:
-    return SmartPlanner(board, shovels, items, config).solve()
+def plan_smart(
+    board: List[List[str]],
+    shovels: float = 100,
+    items: Dict[str, int] = None,
+    config: PlannerConfig = None,
+    blocked_actions: Optional[Set[Tuple[Any, ...]]] = None,
+) -> Dict[str, Any]:
+    return SmartPlanner(board, shovels, items, config, blocked_actions).solve()
