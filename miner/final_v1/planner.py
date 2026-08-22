@@ -83,6 +83,11 @@ def _tie_rank(action: PlannerAction) -> int:
     return 1 if action.item == preferred else 2
 
 
+def _ranked_sort_key(row: tuple) -> tuple:
+    """Sort scored candidates by value, then prefer deeper equal-score moves."""
+    return (-row[0], -row[1], row[2], row[3])
+
+
 def _branch_category(action: PlannerAction, child: _State, parent: _State) -> str:
     """branch 配額分類：dig / pit_item（命中>=1 礦）/ bridge_item（0 礦但降低了與
     最近礦源/底緣的距離 = 朝礦推進）/ other（0 礦且無推進 = 純浪費，不保留名額）。"""
@@ -316,7 +321,10 @@ def plan_final_v1(
                     (score.total, action.row, action.col, _tie_rank(action), child, score,
                      _branch_category(action, child, state))
                 )
-            ranked.sort(key=lambda row: (-row[0], row[1], row[2], row[3]))
+            # 分數是第一順位；同分時優先較深的動作，讓「最小代價下樓」
+            # 不會因 row ascending 而在頂層橫向清空。欄位仍維持固定順序，
+            # 讓同深度的決策可重現。
+            ranked.sort(key=_ranked_sort_key)
             for _total, _row, _col, _rank, child, score, _cat in _select_branch(ranked, config):
                 expanded += 1
                 signature = (child.board, child.bombs, child.drills, round(child.pickaxes, 3))
@@ -331,7 +339,8 @@ def plan_final_v1(
         if budget_hit or not next_states:
             break
         next_states.sort(key=lambda row: (
-            -row[0], row[1].path[0].row, row[1].path[0].col, _tie_rank(row[1].path[0]),
+            -row[0], -row[1].path[0].row, row[1].path[0].col,
+            _tie_rank(row[1].path[0]),
         ))
         beam = [row[1] for row in next_states[: config.beam_width]]
         reached_depth = depth + 1

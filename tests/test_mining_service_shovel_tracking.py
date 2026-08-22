@@ -163,10 +163,19 @@ def test_run_stops_after_h5_board_unavailable_instead_of_spinning(monkeypatch):
         ),
     )
 
-    exc = service.NoBoardChangeError()
+    step = {"type": "dig", "pos": (1, 0), "target": (1, 0), "action": "dig"}
+    try:
+        exc = service.NoBoardChangeError(
+            step=step,
+            reason="H5 authoritative board unavailable",
+        )
+    except TypeError:
+        # Keep this regression test compatible with the lightweight stub used
+        # when the real executor has not been imported yet.
+        exc = service.NoBoardChangeError()
     exc.reason = "H5 authoritative board unavailable"
     exc.diagnostics = {"phase": "h5_preflight", "validation": "board_unavailable"}
-    exc.step = {"type": "dig", "pos": (1, 0), "target": (1, 0), "action": "dig"}
+    exc.step = step
     exc.partial_result = service.ExecutionResult()
     monkeypatch.setattr(service, "execute_plan_steps", lambda *_a, **_kw: (_ for _ in ()).throw(exc))
 

@@ -833,6 +833,42 @@ def _is_diggable(actives: set, block_by_id: Dict[int, Any], block_id: int) -> bo
     return int(getattr(blk, "count", 0) or 0) > 0
 
 
+def _is_valid_use_step(
+    step: Dict[str, Any],
+    block_by_id: Dict[int, Any],
+    *,
+    inventory: Dict[str, int],
+    allow_bomb: bool,
+    allow_drill: bool,
+) -> bool:
+    """Validate a planned bomb/drill placement without the axe frontier gate.
+
+    A prop is placed on an already-empty (``count == 0``) block, so it is
+    intentionally *not* in ``actives``. Reusing ``_is_diggable`` for every
+    planner step silently discarded a valid prop plan and made the fallback
+    spend a pickaxe on a different cell. Keep the two server contracts
+    separate: axe digs need an active solid; props need an empty placement.
+    """
+    if step.get("type") != "use":
+        return False
+    item = step.get("item")
+    if item == "bomb":
+        if not allow_bomb:
+            return False
+    elif item == "drill":
+        if not allow_drill:
+            return False
+    else:
+        return False
+    if int(inventory.get(item, 0) or 0) <= 0:
+        return False
+    block_id = step.get("block_id")
+    if block_id is None:
+        return False
+    block = block_by_id.get(int(block_id))
+    return block is not None and int(getattr(block, "count", 0) or 0) == 0
+
+
 def _select_dig_step(
     board: Any,
     plan_steps,
@@ -900,6 +936,15 @@ def _select_dig_step(
                 and int(inventory.get("pickaxe", 0) or 0) <= 0):
             continue
         bid = step.get("block_id")
+        if (bid is not None and int(bid) not in excl
+                and _is_valid_use_step(
+                    step,
+                    block_by_id,
+                    inventory=inventory,
+                    allow_bomb=allow_bomb,
+                    allow_drill=allow_drill,
+                )):
+            return step
         if bid is not None and int(bid) not in excl and _is_diggable(actives, block_by_id, int(bid)):
             return step
     if not plan_steps:
