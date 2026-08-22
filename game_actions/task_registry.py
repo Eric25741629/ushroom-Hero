@@ -307,7 +307,7 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("couple", "好友每日禮物", 250, ws_display_name="伴侶", pipeline_label="好友每日禮物", skip=("好友每日禮物",), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("dragon_realm", "龍骸聖域", 180, pipeline_label="龍骸聖域", due_key="龍骸聖域", client_backends=("web_h5",), client_executor="game_actions.executors.single_backend_executor:run_dragon_realm"),
     _task("xwar_idle", "跨服戰放置獎勵", 0, enabled_key="xwar_idle"),
-    _task("sea_season", "航海任務 (Sea)", 170, ws_display_name="航海賽季", pipeline_label="航海任務 (Sea)", skip=("航海任務 (Sea)",), due_key="航海", needs_main_page=True),
+    _task("sea_season", "航海任務 (Sea)", 170, ws_display_name="航海賽季", pipeline_label="航海任務 (Sea)", skip=("航海任務 (Sea)",), due_key="航海", needs_main_page=True, tags=_DIRECT_SKIP),
     _task("star_explore", "星際探索", 0),
     _task("mining", "挖礦/Oracle", 130, pipeline_label="挖礦/Oracle", skip=("挖礦/Oracle",), enabled_key="enable_mining", completion=_daily("挖礦"), needs_main_page=True, record_name="挖礦", tags=_DIRECT_SKIP),
     # W8：保留 WS runner 的 live 入口，client 兩後端改由 lamp adapter 接管；
