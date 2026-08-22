@@ -2,6 +2,7 @@
 import time
 
 from miner.final_v1 import plan_final_v1
+from miner.final_v1.planner import _ranked_sort_key
 
 
 def _board(rows=7):
@@ -9,6 +10,13 @@ def _board(rows=7):
     out[0][2] = "empty"
     out[1][2] = "dirt"
     return out
+
+
+def test_equal_score_candidates_prefer_deeper_row():
+    shallow = (10.0, 0, 4, 0)
+    deep = (10.0, 6, 4, 0)
+
+    assert sorted([shallow, deep], key=_ranked_sort_key)[0][1] == 6
 
 
 def test_zero_pickaxes_can_still_return_a_valuable_item_action():

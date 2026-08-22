@@ -776,6 +776,28 @@ def test_select_dig_step_returns_none_when_pickaxe_is_zero():
     assert chosen is None
 
 
+def test_select_dig_step_preserves_valid_planned_prop_placement():
+    """A valid prop target must not be replaced by an unrelated axe fallback."""
+    prop_block = _block(16238605, 5, 162386, config_id=201, count=0)
+    board = _board(actives=[16239101], blocks=[prop_block])
+    planned = {
+        "type": "use",
+        "item": "bomb",
+        "block_id": prop_block.block_id,
+        "row": 0,
+        "col": 4,
+    }
+
+    chosen = mining_supervised._select_dig_step(
+        board,
+        [planned],
+        inventory={"pickaxe": 20, "drill": 0, "bomb": 1},
+        allow_bomb=True,
+    )
+
+    assert chosen is planned
+
+
 def test_select_dig_step_does_not_use_below_pit_steer_when_pickaxe_is_zero(monkeypatch):
     board = _board(actives=[10101], blocks=[
         _block(10101, 1, 101, count=1),
