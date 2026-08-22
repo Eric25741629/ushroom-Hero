@@ -160,11 +160,18 @@ def test_h5_dig_uses_ws_confirmation_and_inventory_without_cnn_retry(monkeypatch
     frame = _blank_frame()
     dev = _FakeDevice(frame)
     dev.backend_kind = "web_h5"
+    dev._page = object()
     pre = _empty_board()
     pre[3][3] = "dirt"
     clf = _FakeClassifier(pre)  # CNN 故意仍判 dirt
     _stub_animation(monkeypatch, frame)
-    ws_before = types.SimpleNamespace(baseline=100, actives=[], blocks=[], holes=[], area=1)
+    ws_before = types.SimpleNamespace(
+        baseline=100,
+        actives=[9804],
+        blocks=[types.SimpleNamespace(block_id=9804, count=1)],
+        holes=[],
+        area=1,
+    )
     ws_after = types.SimpleNamespace(baseline=101, actives=[], blocks=[], holes=[], area=1)
     boards = iter([ws_before, ws_after])
     inventories = iter([
@@ -194,11 +201,18 @@ def test_h5_floor7_dig_accounts_authoritative_inventory(monkeypatch):
     frame = _blank_frame()
     dev = _FakeDevice(frame)
     dev.backend_kind = "web_h5"
+    dev._page = object()
     pre = _empty_board()
     pre[6][2] = "dirt"
     clf = _FakeClassifier(_empty_board())
     _stub_animation(monkeypatch, frame)
-    ws_before = types.SimpleNamespace(baseline=100, actives=[], blocks=[], holes=[], area=1)
+    ws_before = types.SimpleNamespace(
+        baseline=100,
+        actives=[10103],
+        blocks=[types.SimpleNamespace(block_id=10103, count=1)],
+        holes=[],
+        area=1,
+    )
     ws_after = types.SimpleNamespace(baseline=101, actives=[], blocks=[], holes=[], area=1)
     boards = iter([ws_before, ws_after])
     inventories = iter([

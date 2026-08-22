@@ -263,10 +263,13 @@ def _raise_h5_board_unavailable(
     d: DeviceLike,
     step: Dict[str, Any],
     partial_result: ExecutionResult,
+    before_board: Any,
     *,
     item_type: Optional[str] = None,
 ) -> None:
     """H5 缺少 authoritative 狀態時，不退回像素點擊。"""
+    if before_board is not None:
+        return
     if _h5_page(d) is None:
         return
     raise NoBoardChangeError(
@@ -503,7 +506,7 @@ def execute_plan_steps(
                 ws_board_before = read_ws_mine_board(d)
                 ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
                 _raise_h5_board_unavailable(
-                    d, step, acc, item_type=item_type
+                    d, step, acc, ws_board_before, item_type=item_type
                 )
                 target_label = board[r][c]
                 if not is_placeable_label(target_label):
@@ -625,7 +628,7 @@ def execute_plan_steps(
             for (r, c) in step["dig_list"]:
                 ws_board_before = read_ws_mine_board(d)
                 ws_inventory_before = read_ws_prop_counts(d) if ws_board_before is not None else None
-                _raise_h5_board_unavailable(d, step, acc)
+                _raise_h5_board_unavailable(d, step, acc, ws_board_before)
                 label = board[r][c]
                 hits = required_hits(label)
                 cell_cost = int(enter_cost(label) or 0)
