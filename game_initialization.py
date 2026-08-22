@@ -28,6 +28,41 @@ class StartupLoginConflictError(Exception):
     pass
 
 
+H5_STARTUP_COCOS_WAIT_SEC = 60.0
+H5_STARTUP_COCOS_POLL_SEC = 1.0
+
+
+def _wait_for_h5_cocos_ready(d, ip: str, initial_result, logger: logging.Logger):
+    """冷啟動時等待 Cocos 綁定，避免 DCL 後立即誤判 no_cc。"""
+    from utils.page_detector import H5State, probe_h5_state
+
+    result = initial_result
+    deadline = time.monotonic() + H5_STARTUP_COCOS_WAIT_SEC
+    logger.info(
+        f"[{ip}] Web H5 Cocos 尚未就緒，等待最多 "
+        f"{H5_STARTUP_COCOS_WAIT_SEC:.0f} 秒"
+    )
+
+    while result.state is H5State.H5_STATE_UNAVAILABLE and result.reason == "no_cc":
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(H5_STARTUP_COCOS_POLL_SEC, remaining))
+        # 重試期間不重複刷 no_cc warning，逾時或狀態改變時由呼叫端統一記錄。
+        result = probe_h5_state(d, ip, log_unavailable=False)
+
+    if result.state is H5State.H5_STATE_UNAVAILABLE and result.reason == "no_cc":
+        logger.warning(
+            f"[{ip}] 等待 {H5_STARTUP_COCOS_WAIT_SEC:.0f} 秒後 Cocos 仍未就緒"
+        )
+    else:
+        logger.info(
+            f"[{ip}] Web H5 Cocos 已取得狀態: "
+            f"{getattr(result.page_state, 'value', None) or result.state.value}"
+        )
+    return result
+
+
 def _honor_startup_controls(ip: str) -> None:
     """啟動迴圈中honor儀表板控制，讓使用者能中斷「啟動」階段。
 
@@ -292,6 +327,11 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
             # 或 probe 例外都直接標記不可用，不能退回全幀 OCR。
             from utils.page_detector import H5State, probe_h5_state
             h5_result = probe_h5_state(d, ip)
+            if (
+                h5_result.state is H5State.H5_STATE_UNAVAILABLE
+                and h5_result.reason == "no_cc"
+            ):
+                h5_result = _wait_for_h5_cocos_ready(d, ip, h5_result, logger)
             if h5_result.state is H5State.ADB_LEGACY:
                 # ADB 維持原本的 OCR/座標啟動流程。
                 current_stage = resolve_stage_until_stable(

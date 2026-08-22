@@ -113,6 +113,29 @@ def test_h5_non_home_waits_for_cocos_transition_before_stopping(monkeypatch):
     assert len(_Navigator.attempts) == 3
 
 
+def test_h5_no_cc_waits_for_cocos_before_stopping(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    startup._honor_startup_controls = lambda _ip: None
+    monkeypatch.setattr(startup.time, "sleep", lambda _seconds: None)
+
+    from utils import page_detector
+    from utils.page_detector import H5State, H5StateResult, PageState
+
+    results = iter([
+        H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason="no_cc"),
+        H5StateResult(H5State.H5_MAIN, PageState.MAIN),
+        H5StateResult(H5State.H5_MAIN, PageState.MAIN),
+    ])
+    monkeypatch.setattr(page_detector, "probe_h5_state", lambda *_a, **_k: next(results))
+
+    assert startup.handle_game_startup_pages(
+        _FakeCocosWebDevice(),
+        "7fe98fc6",
+        start_game_fn=lambda *_args: None,
+        reward_fn=lambda *_args: None,
+    ) is True
+
+
 def test_h5_notice_uses_cocos_close_without_ocr(monkeypatch):
     startup = _startup_module(monkeypatch)
     events = []
