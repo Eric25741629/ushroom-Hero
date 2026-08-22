@@ -5,6 +5,7 @@ import importlib
 import logging
 import sys
 import types
+from types import SimpleNamespace
 
 
 def _install_startup_import_stubs(monkeypatch):
@@ -70,6 +71,46 @@ class _FakeWebDevice:
 class _FakeCocosWebDevice(_FakeWebDevice):
     backend_kind = "web_h5"
     device_id = "7fe98fc6"
+
+
+def test_h5_non_home_waits_for_cocos_transition_before_stopping(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    device = _FakeCocosWebDevice()
+    startup._honor_startup_controls = lambda _ip: None
+
+    from utils import cocos_navigator, page_detector
+    from utils.page_detector import H5State, PageState
+
+    monkeypatch.setattr(
+        page_detector,
+        "probe_h5_state",
+        lambda _device, _ip: SimpleNamespace(
+            state=H5State.H5_NON_HOME,
+            page_state=PageState.HOME,
+            reason="",
+        ),
+    )
+
+    class _Navigator:
+        attempts = []
+
+        def __init__(self, _page):
+            pass
+
+        def goto_main(self):
+            _Navigator.attempts.append(None)
+            return len(_Navigator.attempts) >= 2
+
+    monkeypatch.setattr(cocos_navigator, "CocosNavigator", _Navigator)
+    monkeypatch.setattr(startup.time, "sleep", lambda _seconds: None)
+
+    assert startup.handle_game_startup_pages(
+        device,
+        "7fe98fc6",
+        start_game_fn=lambda *_args: None,
+        reward_fn=lambda *_args: None,
+    ) is True
+    assert len(_Navigator.attempts) == 3
 
 
 def test_h5_notice_uses_cocos_close_without_ocr(monkeypatch):
