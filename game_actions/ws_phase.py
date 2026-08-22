@@ -454,8 +454,9 @@ def _bootstrap_token(ip: str, log, *, force: bool = False) -> bool:
 # --- 在線閘門：自己的 WS 登入別把真人踢下線（全裝置共用）-----------------------
 # WS 登入會「踢同帳號其他 session」(本檔 docstring)。所有帳號都是真人 → 每台裝置
 # 在自己的 WS 登入「之前」都先用觀察者(online_monitor 快照,別台好友清單讀來的在線
-# 旗標)確認帳號離線才放行。判定零登入成本(只讀快照)。
-_HUMAN_WAIT_POLL_SEC = 30
+# 旗標)確認帳號離線才放行。判定零登入成本(只讀快照)。輪詢 10s：手動喚醒後
+# 自己剛關的殘留 session 常被誤判成真人在玩，30s 輪詢會讓狀態轉移卡 30-60s+。
+_HUMAN_WAIT_POLL_SEC = 10
 # 觀察者看不到帳號狀態(None)時，非 human_played 裝置最多重查幾輪就 best-effort 放行，
 # 避免冷啟動還沒有任何偵測器時整機卡死。human_played(手機主帳號)不設上限。
 _UNDETERMINED_MAX_POLLS = 3
