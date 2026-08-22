@@ -299,7 +299,7 @@ _TASKS: tuple[TaskDefinition, ...] = (
     _task("gacha", "抽技能夥伴", 90, ws_display_name="技能夥伴抽獎", pipeline_label="抽技能夥伴", skip=("抽技能夥伴",), device_excludes=frozenset({"emulator-5558"}), tags=_PARTIAL_SKIP),
     _task("gacha_free", "技能夥伴免費抽獎", 0, due_key="抽技能夥伴"),
     _task("kungfu_store", "武道會競猜商店", 0),
-    _task("kungfu_worship", "菇菇武道會", 150, pipeline_label="菇菇武道會", skip=("菇菇武道會",), due_key="菇菇武道會", completion=_daily("mushroom_arena_cycle_start", "mushroom_arena_daily"), needs_main_page=True),
+    _task("kungfu_worship", "菇菇武道會", 150, pipeline_label="菇菇武道會", skip=("菇菇武道會",), due_key="菇菇武道會", completion=_daily("mushroom_arena_cycle_start", "mushroom_arena_daily"), needs_main_page=True, tags=_DIRECT_SKIP),
     _task("pay_mall", "付費商城免費領取", 0),
     _task("spirit", "領取守護靈", 80, pipeline_label="領取守護靈", skip=("領取守護靈",), device_excludes=frozenset({"emulator-5558"}), record_name="guardian_spirit", tags=_DIRECT_SKIP),
     _task("secret_jewel", "神秘寶石", 0),
