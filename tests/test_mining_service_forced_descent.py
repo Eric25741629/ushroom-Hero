@@ -26,3 +26,9 @@ def test_forced_descent_picks_deepest_reachable_nonpit_frontier():
 def test_forced_descent_none_when_no_frontier():
     b = _board(["______", "______", "______", "______", "______", "______", "______"])
     assert _forced_descent_dig(b) is None
+
+
+def test_forced_descent_skips_blocked_target():
+    b = _board(["...DDD", "DDDDDD", "DDDDDD", "DDDDDD", "DDDDDD", "DDDDDD", "DDDDDD"])
+    blocked = {("dig", "pickaxe", 1, 0, (1, 0), "dig")}
+    assert _forced_descent_dig(b, blocked) != (1, 0)

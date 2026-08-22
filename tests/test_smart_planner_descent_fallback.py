@@ -29,6 +29,27 @@ def test_no_pit_floor_open_returns_descent_dig():
     assert steps[0]["pos"][0] == 6
 
 
+def test_blocked_descent_target_is_not_reselected():
+    board = _board([
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+        ["empty", "dirt", "dirt", "dirt", "dirt", "dirt"],
+    ])
+    plan = plan_smart(
+        board,
+        shovels=1000,
+        items={"drill": 0, "bomb": 0},
+        blocked_actions={("dig", "pickaxe", 6, 1)},
+    )
+    steps = plan.get("steps") or []
+    assert steps
+    assert tuple(steps[0]["pos"]) != (6, 1)
+
+
 def test_truly_nothing_diggable_returns_empty():
     # All reachable air -> honestly nothing to dig -> empty (no fake step).
     board = _board([["empty"] * 6 for _ in range(7)])
