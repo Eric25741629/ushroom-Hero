@@ -992,6 +992,7 @@ def test_ws_skip_mapping_contains_weekly_ladder_tasks():
     assert ws_phase.SKIP_TO_DAILY_RECORD["競技場挑戰"] == (
         "arena_challenges",
     )
+    assert ws_phase.SKIP_TO_DAILY_RECORD["地獄之門"] == ("地獄之門",)
 
 
 def test_arena_already_done_result_is_substantive_completion():
@@ -1007,6 +1008,34 @@ def test_arena_already_done_result_is_substantive_completion():
     )
 
     assert ws_phase._substantive_done(report) == {"arena"}
+
+
+def test_hellgate_success_summary_with_empty_skipped_is_substantive_completion():
+    report = types.SimpleNamespace(
+        tasks={
+            "hellgate": {
+                "success": True,
+                "skipped": None,
+                "already_done": False,
+            }
+        }
+    )
+
+    assert ws_phase._substantive_done(report) == {"hellgate"}
+
+
+def test_hellgate_already_done_summary_is_substantive_completion():
+    report = types.SimpleNamespace(
+        tasks={
+            "hellgate": {
+                "success": False,
+                "skipped": "daily target reached (times=0)",
+                "already_done": True,
+            }
+        }
+    )
+
+    assert ws_phase._substantive_done(report) == {"hellgate"}
 
 
 def test_run_device_passes_kungfu_guess(monkeypatch):

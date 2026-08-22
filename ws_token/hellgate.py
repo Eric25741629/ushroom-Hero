@@ -34,7 +34,8 @@ CMD_ERROR = 0x0201
 _RESULT_ACK_TIMEOUT_SEC = 3.0
 _RESULT_CONFIRM_POLL_SEC = 0.5
 _SESSION_SETTLE_SEC = 8.0
-_SETTLEMENT_DELAY_SEC = 5 * 60.0
+MAX_WORLD_BOSS_WAIT_SEC = 5 * 60.0
+_SETTLEMENT_DELAY_SEC = MAX_WORLD_BOSS_WAIT_SEC
 
 
 @dataclass(frozen=True)
@@ -95,12 +96,14 @@ class WorldBossRun:
     after_info_error: str | None = None
     simulation: dict[str, Any] = field(default_factory=dict)
     skipped: str | None = None
+    already_done: bool = False
     error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "skipped": self.skipped,
+            "already_done": self.already_done,
             "error": self.error,
             "is_open": self.info.is_open if self.info else None,
             "times": self.info.times if self.info else None,
@@ -669,7 +672,12 @@ def _wait_for_session_handoff(client: WSGameClient, settle_sec: float) -> None:
 def _wait_for_settlement_delay(started_at: float, delay_sec: float) -> float:
     """從伺服器接受進場起至少等指定秒數，再送出成功結算。"""
 
-    remaining = max(0.0, float(delay_sec) - (time.monotonic() - started_at))
+    # 防止設定檔把單場等待拉超過使用者指定的 5 分鐘。
+    bounded_delay = min(
+        MAX_WORLD_BOSS_WAIT_SEC,
+        max(0.0, float(delay_sec)),
+    )
+    remaining = max(0.0, bounded_delay - (time.monotonic() - started_at))
     if remaining > 0:
         logger.info("WorldBoss 等待 %.1f 秒後送出 3592 完成結算", remaining)
         time.sleep(remaining)
@@ -687,73 +695,84 @@ def run_with_b(
     max_frames: int = 30_000,
     speed_scale: float = 2.0,
     realtime: bool = True,
-    simulation_timeout_sec: float = 330.0,
+    simulation_timeout_sec: float = MAX_WORLD_BOSS_WAIT_SEC,
     settlement_delay_sec: float = _SETTLEMENT_DELAY_SEC,
     session_settle_sec: float = _SESSION_SETTLE_SEC,
     timeout: float | None = None,
 ) -> WorldBossRun:
-    """Open and validate B before the WS session performs the WorldBoss calls."""
+    """先查今日次數，再開 B 計算頁執行最多一場 WorldBoss。"""
 
-    if not prefer_ephemeral and not cdp_port:
-        return WorldBossRun(success=False, skipped="no B cdp_port")
+    try:
+        simulation_timeout_sec = min(
+            MAX_WORLD_BOSS_WAIT_SEC,
+            max(0.1, float(simulation_timeout_sec)),
+        )
+    except (TypeError, ValueError):
+        simulation_timeout_sec = MAX_WORLD_BOSS_WAIT_SEC
     pw = browser = page = None
     kind = None
     try:
-        if prefer_ephemeral:
-            pw, browser, page, kind = open_b_runtime(
-                prefer_ephemeral=True,
-                cdp_port=None,
-                game_url=game_url,
-                headless=headless,
-                ready_timeout_sec=ready_timeout_sec,
-            )
-        else:
-            try:
-                pw, browser, page, kind = open_raw_cdp_runtime(int(cdp_port))
-            except Exception as cdp_exc:  # noqa: BLE001
-                # 裝置的 debug port 不代表頁面一定已啟動；CDP 拒絕連線時
-                # 自動開一個無 profile 的 headless B 頁，避免所有裝置卡在 10061。
-                logger.warning(
-                    "WorldBoss B 頁 CDP %s 連線失敗，改用 ephemeral headless: %s",
-                    cdp_port,
-                    cdp_exc,
-                )
-                try:
-                    pw, browser, page, kind = open_b_runtime(
-                        prefer_ephemeral=True,
-                        cdp_port=None,
-                        game_url=game_url,
-                        headless=headless,
-                        ready_timeout_sec=ready_timeout_sec,
-                    )
-                except Exception as ephemeral_exc:  # noqa: BLE001
-                    raise RuntimeError(
-                        f"CDP {cdp_port} failed: {cdp_exc}; "
-                        f"ephemeral fallback failed: {ephemeral_exc}"
-                    ) from ephemeral_exc
-    except Exception as exc:  # noqa: BLE001 — 未進場，不可送放棄結算
-        return WorldBossRun(success=False, error=f"B page failed: {exc}")
-
-    try:
         # 同帳號 H5 session 被 WS 登入接管後，mutation gate 需要短暫時間完成
-        # handoff；實機可見 3594 已成功但緊接的 3597 仍回 173。
+        # handoff；先查 3594，避免今日已完成時還要等待/開啟 B 頁。
         _wait_for_session_handoff(client, session_settle_sec)
 
         info = fetch_info(client, timeout=timeout)
         if not info.success:
             return WorldBossRun(success=False, info=info, error=info.error)
+        # 伺服器每日初始為 2 次；本自動化每天只打一場，剩餘次數 < 2
+        # 就代表今日目標已完成（包含畫面顯示「挑戰 0 次」的情況）。
+        if info.times < 2:
+            return WorldBossRun(
+                success=False,
+                info=info,
+                skipped=f"daily target reached (times={info.times})",
+                already_done=True,
+            )
         if info.is_open != 1:
             return WorldBossRun(
                 success=False,
                 info=info,
                 skipped=f"event closed (is_open={info.is_open})",
             )
-        if info.times <= 0:
-            return WorldBossRun(
-                success=False,
-                info=info,
-                skipped=f"no attempts left (times={info.times})",
-            )
+
+        if not prefer_ephemeral and not cdp_port:
+            return WorldBossRun(success=False, info=info, skipped="no B cdp_port")
+
+        try:
+            if prefer_ephemeral:
+                pw, browser, page, kind = open_b_runtime(
+                    prefer_ephemeral=True,
+                    cdp_port=None,
+                    game_url=game_url,
+                    headless=headless,
+                    ready_timeout_sec=ready_timeout_sec,
+                )
+            else:
+                try:
+                    pw, browser, page, kind = open_raw_cdp_runtime(int(cdp_port))
+                except Exception as cdp_exc:  # noqa: BLE001
+                    # 裝置的 debug port 不代表頁面一定已啟動；CDP 拒絕連線時
+                    # 自動開一個無 profile 的 headless B 頁，避免所有裝置卡在 10061。
+                    logger.warning(
+                        "WorldBoss B 頁 CDP %s 連線失敗，改用 ephemeral headless: %s",
+                        cdp_port,
+                        cdp_exc,
+                    )
+                    try:
+                        pw, browser, page, kind = open_b_runtime(
+                            prefer_ephemeral=True,
+                            cdp_port=None,
+                            game_url=game_url,
+                            headless=headless,
+                            ready_timeout_sec=ready_timeout_sec,
+                        )
+                    except Exception as ephemeral_exc:  # noqa: BLE001
+                        raise RuntimeError(
+                            f"CDP {cdp_port} failed: {cdp_exc}; "
+                            f"ephemeral fallback failed: {ephemeral_exc}"
+                        ) from ephemeral_exc
+        except Exception as exc:  # noqa: BLE001 — 未進場，不可送放棄結算
+            return WorldBossRun(success=False, info=info, error=f"B page failed: {exc}")
 
         started = start(client, timeout=timeout)
         if not started.success:

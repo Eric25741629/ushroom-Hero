@@ -374,7 +374,7 @@ def run_ws_device_cycle(ip: str, cfg: Any, logger_obj) -> Optional[Any]:
                 "speed_scale": float(_hg.get("speed_scale") or 2.0),
                 "realtime": bool(_hg.get("realtime", True)),
                 "simulation_timeout_sec": float(
-                    _hg.get("simulation_timeout_sec") or 330
+                    _hg.get("simulation_timeout_sec") or 300
                 ),
             }
     except Exception:  # noqa: BLE001
