@@ -384,7 +384,7 @@ def test_ws_phase_account_lookup_uses_wake_gate_policy(monkeypatch):
         lambda rid, **k: calls.append((rid, k)) or False,
     )
     assert ws_phase._account_online(123) is False
-    assert calls == [(123, {"threshold_sec": 60.0})]
+    assert calls == [(123, {"threshold_sec": 20.0})]
 
 
 def test_ws_phase_account_online_forwards_threshold(monkeypatch):
@@ -409,7 +409,7 @@ def test_presence_threshold_sec_reads_device_config(monkeypatch):
     _threshold_cfg(monkeypatch, 120)
     assert ws_phase._presence_threshold_sec("dev") == 120.0
     _threshold_cfg(monkeypatch, None)
-    assert ws_phase._presence_threshold_sec("dev") == 60.0
+    assert ws_phase._presence_threshold_sec("dev") == 20.0
 
 
 def test_wait_uses_presence_threshold_from_config(monkeypatch):
