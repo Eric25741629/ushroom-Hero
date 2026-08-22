@@ -467,7 +467,7 @@ def _account_role_id(ip: str):
     return config_manager.get_device_role_id(ip)
 
 
-def _account_online(role_id, *, threshold_sec: float = 60.0):
+def _account_online(role_id, *, threshold_sec: float = 20.0):
     """間接層：喚醒閘門可採信 no-idle 讓路前 10 分鐘內的明確離線快照。
 
     ``threshold_sec`` 用原始 last_login_ts 重算在線（不吃快照烘入的 120s
@@ -482,13 +482,17 @@ def _account_online(role_id, *, threshold_sec: float = 60.0):
 
 
 def _presence_threshold_sec(ip: str) -> float:
-    """閘門在線重算的 threshold：裝置 `online_check_threshold_sec`（預設 60）。"""
+    """閘門在線重算的 threshold：裝置 `online_check_threshold_sec`（預設 20）。
+
+    20s：手動喚醒後自己的殘留 session 停止心跳，20s 即視為離線；真人在玩時
+    last_login_ts 持續刷新，不受影響。
+    """
     try:
         v = config_manager.get_device_config(ip).get(
-            "online_check_threshold_sec", 60)
-        return float(v) if v else 60.0
+            "online_check_threshold_sec", 20)
+        return float(v) if v else 20.0
     except Exception:  # noqa: BLE001 — 讀失敗用預設，絕不影響閘門
-        return 60.0
+        return 20.0
 
 
 def _current_detector():

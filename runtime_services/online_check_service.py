@@ -80,9 +80,9 @@ def _idle_checkers() -> List[str]:
 def _threshold_for(requester_ip: Optional[str]) -> int:
     try:
         return int(config_manager.get_device_config(requester_ip).get(
-            "online_check_threshold_sec", 60))
+            "online_check_threshold_sec", 20))
     except Exception:  # noqa: BLE001
-        return 60
+        return 20
 
 
 def _guild_for(checker_ip: str) -> Optional[int]:
