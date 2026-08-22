@@ -267,6 +267,42 @@ def test_h5_dispatch_uses_javascript_executor_instead_of_pixel_click(monkeypatch
     assert dev.clicks == []
 
 
+def test_h5_pickaxe_hits_wait_half_second_between_javascript_calls(monkeypatch):
+    calls = []
+    delays = []
+    dev = _FakeDevice(_blank_frame())
+    dev.backend_kind = "web_h5"
+    dev._page = object()
+    before = types.SimpleNamespace(
+        baseline=100,
+        actives=[9804],
+        blocks=[types.SimpleNamespace(block_id=9804, count=1)],
+    )
+
+    class FakeH5Executor:
+        def __init__(self, _page):
+            pass
+
+        def use_pickaxe(self, block_id):
+            calls.append(block_id)
+            return {"ok": True}
+
+    monkeypatch.setattr(
+        "ws_token.mining_h5_executor.H5MiningExecutor", FakeH5Executor
+    )
+    monkeypatch.setattr(executor.time, "sleep", delays.append)
+
+    assert executor._dispatch_h5_ws_action(
+        dev,
+        before,
+        {"type": "dig", "target": (3, 3)},
+        hits=2,
+    ) is True
+
+    assert calls == [9804, 9804]
+    assert delays == [executor.H5_MINING_ACTION_INTERVAL_SEC]
+
+
 def test_h5_dig_rejects_non_active_target_before_sending(monkeypatch):
     calls = []
     dev = _FakeDevice(_blank_frame())

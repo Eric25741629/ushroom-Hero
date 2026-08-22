@@ -34,6 +34,10 @@ import config_manager
 
 logger = logging.getLogger(__name__)
 
+# H5 的 Cocos 節點在 JavaScript 探測時可能仍停留在上一個畫面，先給
+# WebView 一小段轉場時間，避免把尚未完成的畫面誤判成主頁面。
+H5_COCOS_SETTLE_DELAY_SEC = 1.0
+
 
 # ──────────────────────────────────────────────────────────────────────
 # PageState enum
@@ -425,7 +429,7 @@ def try_detect_main_page_fast(d: Any, device_ip: Optional[str]) -> Optional[str]
     The bot's `get_stage_with_check(d, ip, Cnn_model)` normally takes a
     screenshot and runs OCR (~1–3s). For web_h5 devices with the
     experimental flag on, we can confirm "主頁面" by scanning the cocos
-    scene tree in single-digit ms.
+    scene tree after a short H5 settle delay.
 
     Returns:
         "主頁面"  iff cocos confirms PageState.MAIN
@@ -446,6 +450,7 @@ def try_detect_main_page_fast(d: Any, device_ip: Optional[str]) -> Optional[str]
     # 這個相容函式本身已由 `_legacy_fast_path_enabled` 確認是 Web H5；
     # 不要求測試替身或舊呼叫端額外提供 backend_kind。正式 stage guard
     # 不再使用它，而是使用 `probe_h5_state()` 的完整狀態結果。
+    time.sleep(H5_COCOS_SETTLE_DELAY_SEC)
     det = PageDetector(page, ocr_enabled=False)
     if det.detect_via_cocos() is PageState.MAIN:
         return "主頁面"
@@ -520,6 +525,8 @@ def probe_h5_state(
     if page is None:
         return H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason="page_missing")
 
+    # JavaScript 探測本身很快，但 H5 畫面切換需要時間完成節點更新。
+    time.sleep(H5_COCOS_SETTLE_DELAY_SEC)
     detector = PageDetector(page, ocr_enabled=False)
     state = detector.detect_via_cocos()
     if state is None:

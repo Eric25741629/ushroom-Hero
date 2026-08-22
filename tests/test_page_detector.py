@@ -419,6 +419,22 @@ def test_probe_h5_state_distinguishes_main_popup_and_non_home():
     assert non_home_result.page_state is PageState.HOME
 
 
+def test_probe_h5_state_waits_for_h5_to_settle_before_cocos_scan(monkeypatch):
+    from utils import page_detector
+    from utils.page_detector import H5State, probe_h5_state
+
+    delays = []
+    monkeypatch.setattr(page_detector.time, "sleep", delays.append)
+    result = probe_h5_state(_strict_h5_device({
+        "active_overlays": [], "home_active": False,
+        "selected_tab_name": None,
+        "guide_inner_active": False, "loading_inner_active": False,
+    }))
+
+    assert result.state is H5State.H5_MAIN
+    assert delays == [page_detector.H5_COCOS_SETTLE_DELAY_SEC]
+
+
 def test_probe_h5_state_treats_unknown_or_cocos_failure_as_unavailable():
     from utils.page_detector import H5State, probe_h5_state
 

@@ -122,6 +122,10 @@ DRILL_BTN_XY: Coordinate = (160, 910)    # 左邊鑽頭按鈕
 PICKAXE_BTN_XY: Coordinate = (270, 910)  # 中間鏟子按鈕
 BOMB_BTN_XY: Coordinate = (370, 910)     # 右邊炸彈按鈕
 
+# H5 JavaScript 連續敲擊之間的最小間隔，避免 WebView 尚未完成上一擊就
+# 收到下一個動作。
+H5_MINING_ACTION_INTERVAL_SEC = 0.5
+
 
 def cell_center_xy(r: int, c: int) -> Coordinate:
     """計算盤面第 r 列、第 c 欄格子的中心點座標。"""
@@ -350,7 +354,7 @@ def _dispatch_h5_ws_action(
             if isinstance(response, dict) and response.get("ok") is False:
                 break
             if index + 1 < hits:
-                time.sleep(0.25)
+                time.sleep(H5_MINING_ACTION_INTERVAL_SEC)
     if isinstance(response, dict) and response.get("ok") is False:
         diagnostics = {
             "phase": "h5_server_response",
