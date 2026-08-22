@@ -900,7 +900,7 @@ def _run_hellgate(client, *, hellgate_config: Optional[dict], should_abort=None)
         max_frames=int(cfg.get("max_frames") or 30_000),
         speed_scale=float(cfg.get("speed_scale") or 2.0),
         realtime=bool(cfg.get("realtime", True)),
-        simulation_timeout_sec=float(cfg.get("simulation_timeout_sec") or 330),
+        simulation_timeout_sec=float(cfg.get("simulation_timeout_sec") or 300),
         timeout=float(cfg.get("timeout_sec")) if cfg.get("timeout_sec") else None,
     )
     out = report.as_dict()

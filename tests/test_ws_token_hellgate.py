@@ -1,6 +1,8 @@
 """Protocol and orchestration tests for WorldBoss pure WS."""
 from __future__ import annotations
 
+import pytest
+
 from ws_token import codec
 from ws_token import hellgate
 from ws_token.client import WSGameClient
@@ -86,6 +88,17 @@ def test_wait_for_settlement_delay_does_not_add_another_five_minutes(monkeypatch
 
     assert waited == 0.0
     assert sleeps == []
+
+
+def test_wait_for_settlement_delay_caps_configured_wait_at_five_minutes(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(hellgate.time, "monotonic", lambda: 100.0)
+    monkeypatch.setattr(hellgate.time, "sleep", sleeps.append)
+
+    waited = hellgate._wait_for_settlement_delay(100.0, 999.0)
+
+    assert waited == hellgate.MAX_WORLD_BOSS_WAIT_SEC
+    assert sleeps == [hellgate.MAX_WORLD_BOSS_WAIT_SEC]
 
 
 def test_parse_worldboss_info_decodes_gate_and_string_counters():
@@ -193,7 +206,7 @@ def test_finish_worldboss_sends_empty_6593_and_waits_for_3587():
 
 
 def test_run_with_b_skips_before_start_when_event_is_closed(monkeypatch):
-    info_body = codec.pb_uint(1, 0) + codec.pb_uint(10, 1)
+    info_body = codec.pb_uint(1, 0) + codec.pb_uint(10, 2)
     client, fake = _client({hellgate.CMD_WORLD_BOSS_INFO: lambda _b: [
         s2c(hellgate.CMD_WORLD_BOSS_INFO, info_body),
     ]})
@@ -216,7 +229,10 @@ def test_run_with_b_skips_before_start_when_event_is_closed(monkeypatch):
 
 def test_run_with_b_falls_back_to_ephemeral_when_cdp_is_unavailable(monkeypatch):
     events = []
-    info = hellgate.WorldBossInfo(success=True, is_open=0, times=1)
+    info = hellgate.WorldBossInfo(success=True, is_open=1, times=2)
+    started = hellgate.WorldBossStart(
+        success=True, dungeon_id=1, body=b"official-start-body"
+    )
 
     def fail_cdp(port):
         events.append(("cdp", port))
@@ -234,6 +250,17 @@ def test_run_with_b_falls_back_to_ephemeral_when_cdp_is_unavailable(monkeypatch)
         "close_b_runtime",
         lambda *_args, **kwargs: events.append(("close", kwargs)),
     )
+    monkeypatch.setattr(
+        hellgate,
+        "start",
+        lambda _client, **_kw: events.append(("start",)) or started,
+    )
+    monkeypatch.setattr(
+        hellgate,
+        "_run_after_start",
+        lambda *_args, **_kw: events.append(("run",))
+        or hellgate.WorldBossRun(success=True),
+    )
 
     report = hellgate.run_with_b(
         object(),
@@ -243,17 +270,44 @@ def test_run_with_b_falls_back_to_ephemeral_when_cdp_is_unavailable(monkeypatch)
         session_settle_sec=0,
     )
 
-    assert report.skipped == "event closed (is_open=0)"
+    assert report.success is True
     assert events[0] == ("cdp", 9230)
     assert events[1][0] == "ephemeral"
     assert events[1][1]["prefer_ephemeral"] is True
     assert events[1][1]["headless"] is True
-    assert events[2] == ("close", {"kind": "ephemeral"})
+    assert events[2:] == [("start",), ("run",), ("close", {"kind": "ephemeral"})]
 
 
-def test_run_with_b_opens_b_before_info_and_start(monkeypatch):
+@pytest.mark.parametrize("remaining", [0, 1])
+def test_run_with_b_marks_remaining_below_two_as_daily_done_before_b(
+    monkeypatch, remaining
+):
+    info = hellgate.WorldBossInfo(success=True, is_open=1, times=remaining)
     events = []
-    info = hellgate.WorldBossInfo(success=True, is_open=1, times=1)
+
+    monkeypatch.setattr(
+        hellgate,
+        "fetch_info",
+        lambda _client, **_kw: events.append("info") or info,
+    )
+    monkeypatch.setattr(
+        hellgate,
+        "open_raw_cdp_runtime",
+        lambda _port: events.append("open") or pytest.fail("B must not open"),
+    )
+
+    report = hellgate.run_with_b(object(), cdp_port=9225, session_settle_sec=0)
+
+    assert report.success is False
+    assert report.already_done is True
+    assert report.skipped == f"daily target reached (times={remaining})"
+    assert events == ["info"]
+
+
+def test_run_with_b_opens_b_after_info_and_start(monkeypatch):
+    events = []
+    captured = {}
+    info = hellgate.WorldBossInfo(success=True, is_open=1, times=2)
     started = hellgate.WorldBossStart(
         success=True, dungeon_id=1, body=b"official-start-body"
     )
@@ -284,22 +338,29 @@ def test_run_with_b_opens_b_before_info_and_start(monkeypatch):
     monkeypatch.setattr(
         hellgate,
         "_run_after_start",
-        lambda *_args, **_kw: events.append("run")
-        or hellgate.WorldBossRun(success=True),
+        lambda *_args, **kw: (
+            captured.update(kw),
+            events.append("run"),
+            hellgate.WorldBossRun(success=True),
+        )[-1],
     )
 
-    report = hellgate.run_with_b(object(), cdp_port=9225, session_settle_sec=0)
+    report = hellgate.run_with_b(
+        object(), cdp_port=9225, session_settle_sec=0,
+        simulation_timeout_sec=999,
+    )
 
     assert report.success is True
-    assert events == ["open", "info", "start", "run", "close"]
+    assert events == ["info", "open", "start", "run", "close"]
+    assert captured["simulation_timeout_sec"] == hellgate.MAX_WORLD_BOSS_WAIT_SEC
 
 
 def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
-    info_body = codec.pb_uint(1, 1) + codec.pb_uint(10, 1)
+    info_body = codec.pb_uint(1, 1) + codec.pb_uint(10, 2)
     after_info_body = (
         codec.pb_uint(1, 1)
         + codec.pb_str(9, "12")
-        + codec.pb_uint(10, 0)
+        + codec.pb_uint(10, 1)
     )
     start_body = (
         codec.pb_uint(1, 0)
@@ -344,9 +405,9 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
         )
         assert report.success is True
         assert report.info is not None
-        assert report.info.times == 1
+        assert report.info.times == 2
         assert report.after_info is not None
-        assert report.after_info.times == 0
+        assert report.after_info.times == 1
         assert report.after_info.my_hurt == "12"
         assert report.result is not None
         assert report.result.rewards == {9: 88}
@@ -359,7 +420,7 @@ def test_run_with_b_simulates_then_reports_server_result(monkeypatch):
 
 
 def test_failed_calculation_abandons_without_damage_fields(monkeypatch):
-    info_body = codec.pb_uint(1, 1) + codec.pb_uint(10, 1)
+    info_body = codec.pb_uint(1, 1) + codec.pb_uint(10, 2)
     start_body = (
         codec.pb_uint(1, 0)
         + codec.pb_uint(2, 13)
@@ -404,8 +465,8 @@ def test_failed_calculation_abandons_without_damage_fields(monkeypatch):
 
 
 def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
-    info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 1)
-    after_info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "42") + codec.pb_uint(10, 0)
+    info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 2)
+    after_info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "42") + codec.pb_uint(10, 1)
     start_body = (
         codec.pb_uint(1, 0)
         + codec.pb_uint(2, 13)
@@ -451,7 +512,7 @@ def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
         )
         assert report.success is True
         assert report.after_info is not None
-        assert report.after_info.times == 0
+        assert report.after_info.times == 1
         assert report.result is not None and report.result.success is True
         sent = [body for _sid, cmd, body in fake.framed_sent()
                 if cmd == hellgate.CMD_RESULT]
@@ -461,8 +522,8 @@ def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
 
 
 def test_result_error_cannot_be_promoted_by_stale_info_update(monkeypatch):
-    info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 1)
-    after_info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "42") + codec.pb_uint(10, 0)
+    info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 2)
+    after_info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "42") + codec.pb_uint(10, 1)
     start_body = (
         codec.pb_uint(1, 0)
         + codec.pb_uint(2, 13)

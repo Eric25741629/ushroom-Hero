@@ -271,8 +271,14 @@ def _substantive_done(report) -> set[str]:
     """
     done: set[str] = set()
     for name, result in report.tasks.items():
-        if isinstance(result, dict) and "skipped" in result:
-            continue
+        if isinstance(result, dict):
+            # 成功摘要也會帶 skipped=None；只有真的有跳過原因才不是完成。
+            # already_done 表示伺服器確認今日額度已耗盡，同樣要寫入當日紀錄。
+            if result.get("already_done") is True:
+                done.add(name)
+                continue
+            if result.get("skipped"):
+                continue
         done.add(name)
     return done
 
@@ -840,7 +846,7 @@ def run_ws_phase(ip: str, logger_obj=None, *, now=None,
                 "speed_scale": float(_hg.get("speed_scale") or 2.0),
                 "realtime": bool(_hg.get("realtime", True)),
                 "simulation_timeout_sec": float(
-                    _hg.get("simulation_timeout_sec") or 330
+                    _hg.get("simulation_timeout_sec") or 300
                 ),
             },
         }
