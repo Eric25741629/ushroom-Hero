@@ -73,25 +73,13 @@ if "miner.core.ocr_utils" not in sys.modules:
         check_drill_num=lambda *a, **kw: 0,
         check_boom_num=lambda *a, **kw: 0,
     )
-if "miner.planning.smart_planner" not in sys.modules:
-    sys.modules["miner.planning.smart_planner"] = types.SimpleNamespace(
-        plan_smart=lambda *a, **kw: {"ok": False, "steps": []},
-    )
+# NOTE: miner.planning.smart_planner is intentionally NOT stubbed here.
+# It is pure Python (heapq/time/mechanics/planner only) so importing the real
+# module is cheap, and leaving a stub in sys.modules used to leak into later
+# test files whose module-level ``from miner.planning.smart_planner import
+# plan_smart`` then bound the empty-plan stub instead of the real planner.
 if "miner.rl.rl_recorder" not in sys.modules:
     sys.modules["miner.rl.rl_recorder"] = types.SimpleNamespace(RLRecorder=object)
-if "miner.core.vision_utils" not in sys.modules:
-    sys.modules["miner.core.vision_utils"] = types.SimpleNamespace(
-        check_points=lambda *a, **kw: (False, None),
-    )
-if "utils.logging_utils" not in sys.modules:
-    sys.modules["utils.logging_utils"] = types.SimpleNamespace(
-        logger=None,
-        setup_miner_logger=lambda _ip: types.SimpleNamespace(
-            info=_noop, debug=_noop, warning=_noop, error=_noop,
-        ),
-    )
-if "config.paths" not in sys.modules:
-    sys.modules["config.paths"] = types.SimpleNamespace(DATASET_LOW_CONFIDENCE_DIR_STR="")
 
 
 import miner.mining_service as service  # noqa: E402
