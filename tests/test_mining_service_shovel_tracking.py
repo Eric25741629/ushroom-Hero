@@ -46,27 +46,10 @@ if "miner.models.classifier" not in sys.modules:
         ClassifierCNN=object,
         load_cnn_model=lambda: (None, None, None),
     )
-if "miner.planning.executor" not in sys.modules:
-    class _StubNBCErr(Exception):
-        pass
-    class _StubOOIErr(Exception):
-        pass
-    class _StubExecutionResult:
-        def __init__(self, shovels_used=0, drills_used=0, bombs_used=0,
-                     steps_completed=0, terminated_reason=None,
-                     pickaxe_count_after=None):
-            self.shovels_used = shovels_used
-            self.drills_used = drills_used
-            self.bombs_used = bombs_used
-            self.steps_completed = steps_completed
-            self.terminated_reason = terminated_reason
-            self.pickaxe_count_after = pickaxe_count_after
-    sys.modules["miner.planning.executor"] = types.SimpleNamespace(
-        execute_plan_steps=lambda *a, **kw: _StubExecutionResult(),
-        NoBoardChangeError=_StubNBCErr,
-        OutOfItemError=_StubOOIErr,
-        ExecutionResult=_StubExecutionResult,
-    )
+# miner.planning.executor is intentionally imported for real.  It is needed by
+# both this service test and the executor regression tests; injecting a
+# SimpleNamespace here leaks across pytest collection and hides the real
+# executor from later test files.
 if "miner.core.ocr_utils" not in sys.modules:
     sys.modules["miner.core.ocr_utils"] = types.SimpleNamespace(
         check_pickaxe_count=lambda *a, **kw: 20,
