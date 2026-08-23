@@ -33,6 +33,8 @@ CMD_ERROR = 0x0201
 
 _RESULT_ACK_TIMEOUT_SEC = 3.0
 _RESULT_CONFIRM_POLL_SEC = 0.5
+_RESULT_CONFIRM_TIMEOUT_SEC = 15.0
+_RESULT_ACK_CONFIRM_TIMEOUT_SEC = 60.0
 _SESSION_SETTLE_SEC = 8.0
 MAX_WORLD_BOSS_WAIT_SEC = 5 * 60.0
 _SETTLEMENT_DELAY_SEC = MAX_WORLD_BOSS_WAIT_SEC
@@ -438,13 +440,19 @@ def _fetch_after_result_info(
     before: WorldBossInfo | None = None,
     result: int | None = None,
     wait_for_change: bool = True,
+    confirm_timeout_sec: float | None = None,
 ) -> tuple[WorldBossInfo | None, str | None]:
     """結算後回查狀態；只有伺服器狀態變更才可確認成功。"""
 
     try:
-        wait_sec = max(0.5, min(15.0, float(timeout or 15.0)))
+        wait_limit = (
+            _RESULT_CONFIRM_TIMEOUT_SEC
+            if confirm_timeout_sec is None
+            else float(confirm_timeout_sec)
+        )
+        wait_sec = max(0.5, min(60.0, wait_limit))
     except (TypeError, ValueError):
-        wait_sec = 15.0
+        wait_sec = _RESULT_CONFIRM_TIMEOUT_SEC
     deadline = time.monotonic() + wait_sec
     last: WorldBossInfo | None = None
     try:
@@ -591,6 +599,15 @@ def _run_after_start(
         before=before_info,
         result=0,
         wait_for_change=reported.error_code is None,
+        confirm_timeout_sec=(
+            _RESULT_ACK_CONFIRM_TIMEOUT_SEC
+            if (
+                reported.error_code is None
+                and reported.fields.get("sent") is True
+                and reported.error == "settlement ack timeout; awaiting 3594 confirmation"
+            )
+            else None
+        ),
     )
     confirmed = (
         reported.error_code is None
