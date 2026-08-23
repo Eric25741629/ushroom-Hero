@@ -521,6 +521,68 @@ def test_result_ack_timeout_uses_after_info_confirmation(monkeypatch):
         client.close()
 
 
+def test_result_ack_timeout_extends_3594_confirmation_window(monkeypatch):
+    info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 2)
+    start_body = (
+        codec.pb_uint(1, 0)
+        + codec.pb_uint(2, 13)
+        + codec.pb_uint(3, 1)
+        + codec.pb_uint(5, 42)
+    )
+    after_info = hellgate.WorldBossInfo(
+        success=True, is_open=1, times=1, my_hurt="42"
+    )
+    captured = {}
+    client, _fake = _client({
+        hellgate.CMD_WORLD_BOSS_INFO: lambda _b: [
+            s2c(hellgate.CMD_WORLD_BOSS_INFO, info_body)
+        ],
+        hellgate.CMD_BATTLE_MORE_START: lambda _b: [
+            s2c(hellgate.CMD_BATTLE_MORE_START, start_body)
+        ],
+        hellgate.CMD_FINISH_WORLD_BOSS: lambda _b: [
+            s2c(
+                hellgate.CMD_GENERIC_RESULT,
+                codec.pb_uint(1, 0)
+                + codec.pb_uint(2, 100)
+                + codec.pb_uint(3, 13)
+                + codec.pb_uint(4, 0),
+            )
+        ],
+    })
+    monkeypatch.setattr(hellgate, "open_raw_cdp_runtime", lambda _port: (
+        None, None, object(), "raw_cdp"
+    ))
+    monkeypatch.setattr(hellgate, "close_raw_cdp_runtime", lambda *_args: None)
+    monkeypatch.setattr(hellgate, "simulate_start_body", lambda *_args, **_kw: {
+        "ok": True,
+        "complete": True,
+        "hp_num": "10",
+        "last_hurt_num": "32",
+    })
+    monkeypatch.setattr(hellgate, "_RESULT_ACK_TIMEOUT_SEC", 0.1)
+
+    def delayed_confirmation(*_args, **kwargs):
+        captured.update(kwargs)
+        return after_info, None
+
+    monkeypatch.setattr(
+        hellgate, "_fetch_after_result_info", delayed_confirmation
+    )
+    try:
+        report = hellgate.run_with_b(
+            client,
+            cdp_port=1,
+            session_settle_sec=0,
+            settlement_delay_sec=0,
+            timeout=0.1,
+        )
+        assert report.success is True
+        assert captured["confirm_timeout_sec"] == hellgate._RESULT_ACK_CONFIRM_TIMEOUT_SEC
+    finally:
+        client.close()
+
+
 def test_result_error_cannot_be_promoted_by_stale_info_update(monkeypatch):
     info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "10") + codec.pb_uint(10, 2)
     after_info_body = codec.pb_uint(1, 1) + codec.pb_str(9, "42") + codec.pb_uint(10, 1)

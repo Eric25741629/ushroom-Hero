@@ -68,6 +68,28 @@ def test_success_tasks_map_to_pipeline_names(monkeypatch):
     assert "農場任務" not in skips
 
 
+def test_successful_hellgate_writes_daily_record(monkeypatch):
+    _cfg(monkeypatch, {"enabled": True})
+    monkeypatch.setattr(
+        ws_phase,
+        "_run_device",
+        lambda ip, cfg, progress=None, **_kw: _report({"hellgate": {}}),
+    )
+    import json_manager
+
+    recorded = []
+    monkeypatch.setattr(
+        json_manager,
+        "time_recording",
+        lambda ip, name: recorded.append((ip, name)),
+    )
+
+    skips = ws_phase.run_ws_phase("dev")
+
+    assert "地獄之門" in skips
+    assert ("dev", "地獄之門") in recorded
+
+
 def test_farm_skips_only_with_seed_id(monkeypatch):
     _cfg(monkeypatch, {"enabled": True, "farm": {"seed_id": 4001}})
     monkeypatch.setattr(ws_phase, "_run_device",
