@@ -133,6 +133,50 @@ def test_execute_dig_step_sends_one_pickaxe_then_requires_replan(monkeypatch):
     assert result["confirmation"] == "baseline_changed"
 
 
+def test_execute_plan_step_enforces_ws_action_spacing(monkeypatch):
+    clock = [100.0]
+    sleeps = []
+    sent_at = []
+    before = _board(actives=[16239104])
+    after = _board(baseline=162392, actives=[16239204])
+
+    monkeypatch.setattr(mining_supervised.time, "monotonic", lambda: clock[0])
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        clock[0] += seconds
+
+    monkeypatch.setattr(mining_supervised.time, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        mining_supervised.mining,
+        "send_dig",
+        lambda *_args: sent_at.append(clock[0]),
+    )
+    monkeypatch.setattr(
+        mining_supervised.mining,
+        "read_board",
+        lambda *_args, **_kwargs: after,
+    )
+
+    pacer = mining_supervised._WSActionPacer()
+    step = {"type": "dig", "block_id": 16239104}
+    first = mining_supervised.execute_plan_step(
+        object(), step, before_board=before, action_pacer=pacer,
+        refresh_timeout=0,
+    )
+    assert first["confirmed"] is True
+
+    clock[0] += 0.1
+    second = mining_supervised.execute_plan_step(
+        object(), step, before_board=before, action_pacer=pacer,
+        refresh_timeout=0,
+    )
+    assert second["confirmed"] is True
+    assert sent_at[1] - sent_at[0] > 0.8
+    assert sent_at[1] - sent_at[0] == pytest.approx(0.85)
+    assert sleeps == [pytest.approx(0.75)]
+
+
 def test_execute_plan_step_reports_unconfirmed_when_refresh_has_no_change(monkeypatch):
     sent = []
     before = _board(actives=[16239104])

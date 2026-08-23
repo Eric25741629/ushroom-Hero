@@ -27,6 +27,29 @@ from utils.mining_map_recorder import MiningMapRecorder
 
 logger = logging.getLogger(__name__)
 
+
+# WS mining sends one real item action at a time.  Keep a safety margin over
+# the server's minimum spacing requirement instead of relying on the planner
+# or board-refresh latency to provide one accidentally.
+_WS_MIN_ACTION_INTERVAL_SEC = 0.85
+
+
+@dataclass
+class _WSActionPacer:
+    """Enforce a minimum interval between consecutive WS item sends."""
+
+    min_interval_sec: float = _WS_MIN_ACTION_INTERVAL_SEC
+    _last_action_at: Optional[float] = field(default=None, init=False)
+
+    def wait_for_slot(self) -> None:
+        now = time.monotonic()
+        if self._last_action_at is not None:
+            remaining = self.min_interval_sec - (now - self._last_action_at)
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_action_at = time.monotonic()
+
+
 _ACTIVE_WS_TELEMETRY: contextvars.ContextVar[Optional["_WSTelemetry"]] = (
     contextvars.ContextVar("active_ws_telemetry", default=None)
 )
@@ -646,6 +669,7 @@ def execute_plan_step(
     refresh_interval: float = 0.75,
     before_inventory: Optional[Dict[str, int]] = None,
     inventory_reader: Optional[Callable[[], Dict[str, int]]] = None,
+    action_pacer: Optional[_WSActionPacer] = None,
 ) -> Dict[str, Any]:
     """Execute one planned WS step via send-only ``home_mine_use_goods``.
 
@@ -663,6 +687,8 @@ def execute_plan_step(
     if confirm_by_refresh and before_board is None:
         before_board = mining.read_board(client, timeout=timeout)
 
+    if action_pacer is not None:
+        action_pacer.wait_for_slot()
     mining.send_dig(client, goods_id, block_id)
 
     after_board = None
@@ -762,6 +788,7 @@ def plan_current_board(
         current_board = board
         current_plan = plan_result
         remaining_inventory = dict(inventory)
+        action_pacer = _WSActionPacer()
         for idx in range(limit):
             steps = list(current_plan.get("ws_steps", []))
             if not steps:
@@ -775,6 +802,7 @@ def plan_current_board(
                 allow_drill=allow_drill,
                 timeout=timeout,
                 before_board=current_board,
+                action_pacer=action_pacer,
             )
             executed.append(item)
             if not item.get("confirmed"):
@@ -1229,6 +1257,7 @@ def mine_until_pickaxe_empty(
         except BaseException as exc:
             telemetry.exception("map_start", exc)
             raise
+    action_pacer = _WSActionPacer()
     for _idx in range(limit):
         # 開瀏覽器請求優先：每步前讓出。已確認的挖步是伺服器端已落地，
         # 續做時讀當前 board 接續，不會重複。
@@ -1308,6 +1337,7 @@ def mine_until_pickaxe_empty(
                     allow_drill=allow_drill,
                     timeout=timeout,
                     before_board=current_board,
+                    action_pacer=action_pacer,
                     **_exec_kwargs,
                 )
             except Exception as exc:
