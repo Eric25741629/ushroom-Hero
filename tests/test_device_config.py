@@ -58,6 +58,20 @@ def test_legacy_enable_dungeon_false_migrates_to_hellgate_false(monkeypatch):
     assert merged["enable_biweekly"] is False
 
 
+def test_enable_harvest_card_false_disables_nested_ws_cycle(monkeypatch):
+    """根層關閉豐收卡時，不得讓巢狀 WS 設定繼續取消打工。"""
+    merged = _raw_config_for(monkeypatch, {
+        "enable_harvest_card": False,
+        "ws_token": {
+            "enabled": True,
+            "farm": {"harvest_card_cycle": {"enabled": True}},
+        },
+    })
+
+    assert merged["enable_harvest_card"] is False
+    assert merged["ws_token"]["farm"]["harvest_card_cycle"]["enabled"] is False
+
+
 def test_legacy_dungeon_manager_false_migrates_but_hellgate_stays_true(monkeypatch):
     """只有 enable_dungeon_manager: false → wanshen/cloud/biweekly False，hellgate 仍 True。"""
     merged = _raw_config_for(monkeypatch, {"enable_dungeon_manager": False})

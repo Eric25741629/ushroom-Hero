@@ -603,6 +603,19 @@ def stop_work(
         if before.get('found') and not before.get('running'):
             return {'ok': True, 'verified': True, 'already_stopped': True,
                     'error_code': 0, 'status': before}
+        if not before.get('found'):
+            # 查不到有效的農場打工隊伍時，狀態是不確定的；盲送 18178
+            # 可能干擾使用者正在進行的打工，也無法驗證取消結果。
+            log.warning(
+                'ws_token farm: stop_work skipped because worker status was not found'
+            )
+            return {
+                'ok': False,
+                'verified': False,
+                'error_code': 0,
+                'reason': 'worker_status_not_found',
+                'status': before,
+            }
     reply_cmd, reply = client.call_for(
         CMD_WORKER_CANCEL,
         build_worker_start_cancel_body(work_id),

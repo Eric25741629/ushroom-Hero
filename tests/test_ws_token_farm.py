@@ -45,6 +45,7 @@ from ws_token.farm import (  # noqa: E402
     CMD_SHOP_BUY,
     CMD_SHOP_INFO,
     CMD_WORKER_SETTING,
+    CMD_WORKER_CANCEL,
     FARM_SHOP_TYPE,
     FARM_WORKER_TEAM_CFG_ID,
     FERTILIZER_ID_HIGH_YIELD,
@@ -514,6 +515,19 @@ def test_read_work_status_empty_team_list_not_found():
         result = read_work_status(c, role_id=777)
         assert result["found"] is False
         assert result["running"] is False
+    finally:
+        c.close()
+
+
+def test_stop_work_does_not_send_cancel_when_worker_status_not_found():
+    """查不到工作隊伍時，禁止盲送 18178 取消封包。"""
+    body = b""
+    c, fake = _client({CMD_GET_OTHER_WORKER: lambda _b: [s2c(CMD_GET_OTHER_WORKER, body)]})
+    try:
+        result = farm_module.stop_work(c, role_id=777)
+        assert result["ok"] is False
+        assert result["reason"] == "worker_status_not_found"
+        assert CMD_WORKER_CANCEL not in fake.sent_cmds()
     finally:
         c.close()
 

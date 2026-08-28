@@ -1153,6 +1153,19 @@ def _get_raw_device_config(ip: str) -> Dict[str, Any]:
     merged_config.update(user_config)
     merged_config["ws_token"] = _merge_ws_token_phase_config(user_config.get("ws_token"))
 
+    # 根層開關是每台裝置豐收卡的唯一總開關；避免舊設定只關掉
+    # enable_harvest_card，巢狀 ws_token.farm.harvest_card_cycle 卻仍送出
+    # 取消打工封包。只覆蓋豐收卡子任務，不影響一般農場買種/打工。
+    if not _to_bool(
+        user_config.get("enable_harvest_card", DEFAULT_DEVICE_CONFIG["enable_harvest_card"]),
+        DEFAULT_DEVICE_CONFIG["enable_harvest_card"],
+    ):
+        ws_cfg = merged_config.get("ws_token")
+        farm_cfg = ws_cfg.get("farm") if isinstance(ws_cfg, dict) else None
+        cycle_cfg = farm_cfg.get("harvest_card_cycle") if isinstance(farm_cfg, dict) else None
+        if isinstance(cycle_cfg, dict) and cycle_cfg.get("enabled"):
+            cycle_cfg["enabled"] = False
+
     # Granular 副本開關 migration：舊 config 沒有這些 key 時，從 legacy 開關推導。
     # （放在 merge 點做，才不會被 DEFAULT 的 True 蓋掉 legacy False——單一真相。）
     _dm = user_config.get("enable_dungeon_manager", user_config.get("enable_dungeon", True))
