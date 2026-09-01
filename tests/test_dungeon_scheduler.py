@@ -86,6 +86,13 @@ def fake_bot_state(monkeypatch, dungeon_mod):
 def fake_battle(monkeypatch, dungeon_mod):
     calls: list[dict] = []
 
+    # 舊 characterization cases exercise the H5/ADB branch explicitly.
+    monkeypatch.setattr(
+        dungeon_mod.config_manager,
+        "get_device_config",
+        lambda _ip: {"wanshen_battle_mode": "animation"},
+    )
+
     def _fight_test(d, rounds=8):
         calls.append({"fn": "fight_test", "d": d, "rounds": rounds})
         return True  # 模擬跑滿 rounds 局 → 排程會寫本週記錄
@@ -193,6 +200,29 @@ def test_weekly_passes_configured_rounds_to_fight_test(
     )
     fights = [c for c in fake_battle if c["fn"] == "fight_test"]
     assert fights and fights[0]["rounds"] == 5
+
+
+def test_weekly_pure_ws_skips_h5_and_marks_done(
+    monkeypatch, dungeon_mod, fake_bot_state, fake_battle, fake_records, fake_mismatch,
+):
+    calls = []
+    cfg = {"wanshen_battle_mode": "pure_ws", "wanshen_until_cap": True}
+    monkeypatch.setattr(dungeon_mod.config_manager, "get_device_config", lambda _ip: cfg)
+    weekly = types.ModuleType("battle.weekly_trials")
+    weekly._run_pure_ws_wanshen = lambda d, ip, rounds, cfg, *, until_cap: calls.append(
+        (d, ip, rounds, cfg, until_cap)
+    ) or SimpleNamespace(success=True)
+    monkeypatch.setitem(sys.modules, "battle.weekly_trials", weekly)
+    monkeypatch.setattr(dungeon_mod.new_battle, "fight_test", lambda *a, **k: calls.append("h5"))
+    monkeypatch.setattr(dungeon_mod, "_wanshen_rounds", lambda _ip: 3)
+
+    dungeon_mod._run_weekly_dungeon(
+        object(), "emu-1", "非主頁面", enable_wanshen=True, current_time=_tuesday_10am()
+    )
+
+    assert calls == [(None, "emu-1", 3, cfg, True)]
+    assert fake_records["_recorded"] == [{"ip": "emu-1", "name": "萬神試煉"}]
+    assert fake_mismatch == []
 
 
 def test_weekly_skipped_when_dungeon_manager_disabled(
