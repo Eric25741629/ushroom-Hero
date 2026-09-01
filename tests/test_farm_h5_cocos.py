@@ -39,6 +39,31 @@ def test_h5_navigate_to_farm_failure_is_unavailable_without_coordinate_fallback(
     d.screenshot.assert_not_called()
 
 
+def test_h5_farm_ready_waits_for_plant_main_view(monkeypatch):
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    sleeps = []
+    monotonic = iter([0.0, 0.0])
+    states = iter([{"err": "no PlantMainView"}, {"onekey": {}}])
+    monkeypatch.setattr(manager.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(manager.time, "sleep", sleeps.append)
+    monkeypatch.setattr(web_farm, "read_farm_state", lambda _page: next(states))
+
+    assert manager._wait_for_h5_farm_ready(d, "emulator-5558") is True
+    assert sleeps == [manager.H5_FARM_READY_POLL_SEC]
+
+
+def test_h5_farm_ready_stops_after_ten_seconds(monkeypatch):
+    d = MagicMock(backend_kind="web_h5", _page=MagicMock())
+    sleeps = []
+    monotonic = iter([0.0, 0.0, manager.H5_FARM_READY_WAIT_SEC])
+    monkeypatch.setattr(manager.time, "monotonic", lambda: next(monotonic))
+    monkeypatch.setattr(manager.time, "sleep", sleeps.append)
+    monkeypatch.setattr(web_farm, "read_farm_state", lambda _page: {"err": "no PlantMainView"})
+
+    assert manager._wait_for_h5_farm_ready(d, "emulator-5558") is False
+    assert sleeps == [manager.H5_FARM_READY_POLL_SEC]
+
+
 def test_h5_work_status_uses_cocos_without_ocr():
     d = MagicMock(backend_kind="web_h5", _page=MagicMock())
     with patch("utils.cocos_ui.CocosUI.click_text", return_value=True), \

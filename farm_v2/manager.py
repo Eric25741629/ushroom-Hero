@@ -26,6 +26,47 @@ from utils.screenshot_helpers import save_error_screenshot
 
 logger = logging.getLogger("farm_v2.manager")
 
+H5_FARM_READY_WAIT_SEC = 10.0
+H5_FARM_READY_POLL_SEC = 1.0
+
+
+def _wait_for_h5_farm_ready(d: "uiauto.Device", device_ip: Optional[str]) -> bool:
+    """等待 H5 農場場景實際就緒，禁止轉場中誤落入 OCR 後備。"""
+    if getattr(d, "backend_kind", None) != "web_h5":
+        return True
+
+    from farm_v2 import web_farm
+
+    deadline = time.monotonic() + H5_FARM_READY_WAIT_SEC
+    last_reason = "page_missing"
+    logger.info(
+        "[farm_v2] H5 農場轉場後等待 PlantMainView 就緒，最多 %.0f 秒 - %s",
+        H5_FARM_READY_WAIT_SEC,
+        device_ip,
+    )
+    while True:
+        page = getattr(d, "_page", None)
+        if page is not None:
+            state = web_farm.read_farm_state(page)
+            if not state.get("err"):
+                logger.info("[farm_v2] H5 PlantMainView 已就緒 - %s", device_ip)
+                return True
+            last_reason = str(state.get("err"))
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(H5_FARM_READY_POLL_SEC, remaining))
+
+    logger.warning(
+        "[farm_v2] H5_STATE_UNAVAILABLE action=wait_farm_ready "
+        "reason=%s waited=%.0fs device=%s",
+        last_reason,
+        H5_FARM_READY_WAIT_SEC,
+        device_ip,
+    )
+    return False
+
 
 def _h5_work_is_active(d: "uiauto.Device") -> Optional[bool]:
     page = getattr(d, "_page", None)
@@ -247,6 +288,11 @@ def farm(
     save_time = 0.0
 
     save_time += navigate_to_farm(d, cnn_model, device_ip=device_ip)
+    if not _wait_for_h5_farm_ready(d, device_ip):
+        # H5 轉場中的 page/節點不能被誤當成 ADB，否則後續會落入 OCR 路徑。
+        # 不記錄 farm_visit，讓下一次喚醒重新嘗試完整農場流程。
+        logger.warning("[farm_v2] 農場場景 10 秒內未就緒，本輪停止並等待下次重試 - %s", device_ip)
+        return save_time
 
     # Read the *current* work state before changing anything. 打工 auto-plants
     # AND auto-harvests but never buys seeds, so we run the manual steps (seed
