@@ -31,11 +31,11 @@ DEFAULT_DEVICE_CONFIG = {
     "enabled": True,  # 自動掛機總開關 (新裝置註冊時設 False, 登入+設定完成後手動啟用)
     "backend": "adb",  # adb / web_h5 / ws_token
     "backend_display_id": "",  # display/config binding id (empty => use device key)
-    # ws_token (純 WS 後端) 設定 — 預設全 off，旗標關閉時行為與舊版完全相同。
+    # ws_token (純 WS 後端) 設定；新 Web 應用由註冊流程開啟 WS-first。
     "use_ws_runner": False,  # True => wake loop 走 ws_token.runner.run_device，不連 ADB/Playwright
     "ws_token_spend": False,  # True => run_device 額外送花費動作 (捐獻/購物/掃蕩/續約)
     "ws_token_sweep_list": [],  # 副本管家掃蕩章節 [[id, level, times, use_ad], ...]，僅 spend 時使用
-    "ws_token_open_lamp": False,  # True => run_device 額外跑開神燈 (消耗神燈道具、自動賣/裝)，預設 off
+    "ws_token_open_lamp": True,  # 舊扁平相容欄位；開神燈預設走純 WS
     "ws_token_kungfu_guess": False,  # True => 菇菇武道會競猜商店用粉鑽把競猜幣 4 檔買到上限 (活動沒開時伺服器擋下=no-op)，預設 off
     "ws_token_mining": None,  # {"enabled": bool, "allow_bomb": bool, "allow_drill": bool, "max_steps": int}
     "web_url": "",
@@ -230,7 +230,7 @@ class DeviceConfig:
     use_ws_runner: bool = False
     ws_token_spend: bool = False
     ws_token_sweep_list: list = field(default_factory=list)
-    ws_token_open_lamp: bool = False
+    ws_token_open_lamp: bool = True
     ws_token_kungfu_guess: bool = False
     ws_token_mining: Optional[dict] = None
 
