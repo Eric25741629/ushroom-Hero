@@ -30,6 +30,9 @@ class StartupLoginConflictError(Exception):
 
 H5_STARTUP_COCOS_WAIT_SEC = 60.0
 H5_STARTUP_COCOS_POLL_SEC = 1.0
+# H5 首次看到 home 節點時，遊戲可能仍在處理轉場或自動彈窗；
+# 先讓畫面靜置後重新讀取 Cocos 狀態，避免過早放行後續腳本。
+H5_MAIN_SETTLE_SEC = 5.0
 
 
 def _wait_for_h5_cocos_ready(d, ip: str, initial_result, logger: logging.Logger):
@@ -303,6 +306,7 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
     last_stage = "未知"
     main_confirm_count = 0
     required_main_confirm = 2
+    h5_main_settled = False
 
     while True:
         try:
@@ -372,8 +376,22 @@ def handle_game_startup_pages(d, ip: str,  start_game_fn,
 
             if current_stage != "主頁面":
                 main_confirm_count = 0
+                h5_main_settled = False
 
             if current_stage == "主頁面":
+                if (
+                    h5_result.state is H5State.H5_MAIN
+                    and not h5_main_settled
+                ):
+                    h5_main_settled = True
+                    main_confirm_count = 0
+                    logger.info(
+                        f"[{ip}] 偵測到 H5 home 節點，先等待 "
+                        f"{H5_MAIN_SETTLE_SEC:.0f} 秒後重新確認主頁穩定"
+                    )
+                    time.sleep(H5_MAIN_SETTLE_SEC)
+                    continue
+
                 main_confirm_count += 1
                 logger.info(f"[{ip}] 主頁面確認 ({main_confirm_count}/{required_main_confirm})")
                 if main_confirm_count >= required_main_confirm:
