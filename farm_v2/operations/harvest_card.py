@@ -35,8 +35,12 @@ logger = logging.getLogger("farm_v2.harvest_card")
 
 
 def _page_of(d: "uiauto.Device"):
-    """取得實際綁定的 Playwright page；沒有綁定時回傳 None。"""
-    return getattr(d, "__dict__", {}).get("_page")
+    """取得實際綁定的 Playwright page；支援 MonitoredDevice 委派包裝。"""
+    if getattr(d, "backend_kind", None) != "web_h5":
+        return None
+    # Runtime 會把 PlaywrightGameDevice 包成 MonitoredDevice；_page 位於內層
+    # device，必須透過 __getattr__ 委派取得，不能只查看外層 __dict__。
+    return getattr(d, "_page", None)
 
 
 def _h5_page_of(d: "uiauto.Device"):
@@ -69,6 +73,8 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
     no worker is active.
     """
     page = _page_of(d)
+    if page is None and getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("cancel_work", "page_unavailable")
     if page is not None and getattr(d, "backend_kind", None) == "web_h5":
         # H5 只讀 Cocos 狀態；點擊後一定要重新確認面板已變成「開始打工」。
         from utils.cocos_ui import CocosUI
@@ -146,6 +152,8 @@ def _cancel_work_if_active(d: "uiauto.Device") -> bool:
 def _enable_work(d: "uiauto.Device") -> bool:
     """Open work panel, start 打工, and verify 取消打工 is the resulting state."""
     page = _page_of(d)
+    if page is None and getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("enable_work", "page_unavailable")
     if page is not None and getattr(d, "backend_kind", None) == "web_h5":
         from utils.cocos_ui import CocosUI
 
@@ -573,6 +581,8 @@ def _plant_premium_seed(d: "uiauto.Device") -> bool:
     seed can't be selected, so we never silently plant a cheaper tier.
     """
     page = _h5_page_of(d)
+    if page is None and getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("plant_premium_seed", "page_unavailable")
 
     if page is not None:
         before = web_farm.read_farm_state(page)
@@ -680,6 +690,8 @@ def _read_fertilizer_counts_web(page) -> tuple:
 def _claim_free_fertilizer(d: "uiauto.Device") -> bool:
     """Claim free fertilizer (user has ad-free card, so it's instant)."""
     page = _h5_page_of(d)
+    if page is None and getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("claim_free_fertilizer", "page_unavailable")
     if page is not None:
         # PlantMainView/top/btnFertilizerGet 是 H5 正式節點；失敗直接停止，
         # 不把免費肥料按鈕轉成 OCR/座標猜測。
@@ -727,6 +739,8 @@ def _fertilize_until_mature(d: "uiauto.Device", cap: int = 8) -> bool:
     page = _h5_page_of(d)
     if page is not None:
         return _fertilize_until_mature_web(d, page, cap)
+    if getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("fertilize", "page_unavailable")
     return _fertilize_until_mature_adb(d, cap)
 
 
@@ -829,6 +843,8 @@ def _harvest_crops(d: "uiauto.Device") -> bool:
     True if either action fired."""
     page = _h5_page_of(d)
     harvested = False
+    if page is None and getattr(d, "backend_kind", None) == "web_h5":
+        return _h5_unavailable("harvest", "page_unavailable")
 
     if page is not None:
         picked = web_farm.tap_onekey(page, "btnOneKeyPick")  # 采摘
@@ -951,6 +967,12 @@ def run_harvest_card(
     Returns True on success (all cycles completed).
     """
     logger.info(f"[harvest_card] starting weekly harvest card flow on {device_ip}")
+
+    # web_h5 全程使用 Cocos/JavaScript 狀態；page 不可用時 fail-closed，
+    # 絕不退回需要遠端 OCR 的 ADB 分支。
+    if (getattr(d, "backend_kind", None) == "web_h5"
+            and _page_of(d) is None):
+        return _h5_unavailable("run_harvest_card", "page_unavailable")
 
     # Step 1: cancel work FIRST. The 打工 worker auto-plants the plots, so it
     # must be off before we clear the field — otherwise it re-fills the plots we

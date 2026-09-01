@@ -13,6 +13,63 @@ from unittest.mock import MagicMock, patch
 import farm_v2.operations.harvest_card as hc
 
 
+class _DelegatingWebDevice:
+    """模擬 runtime 的 MonitoredDevice：_page 只存在內層裝置。"""
+
+    def __init__(self, page):
+        self._d = type("InnerWebDevice", (), {
+            "backend_kind": "web_h5",
+            "_page": page,
+        })()
+
+    def __getattr__(self, name):
+        return getattr(self._d, name)
+
+
+def test_page_of_reads_delegated_playwright_page():
+    page = object()
+    assert hc._page_of(_DelegatingWebDevice(page)) is page
+
+
+def test_fertilize_uses_js_for_delegating_web_device():
+    d = _DelegatingWebDevice(object())
+    with patch.object(hc, "_fertilize_until_mature_web", return_value=True) as web, \
+            patch.object(hc, "_fertilize_until_mature_adb") as adb:
+        assert hc._fertilize_until_mature(d) is True
+    web.assert_called_once_with(d, d._page, 8)
+    adb.assert_not_called()
+
+
+def test_harvest_uses_js_for_delegating_web_device():
+    d = _DelegatingWebDevice(object())
+    with patch.object(hc.web_farm, "tap_onekey", return_value=False) as tap, \
+            patch.object(hc.web_farm, "onekey_active", return_value=False), \
+            patch.object(hc.img_tools, "click_str_by_server") as ocr, \
+            patch("tools.click_white"), patch.object(hc.time, "sleep"):
+        assert hc._harvest_crops(d) is False
+    tap.assert_called_once_with(d._page, "btnOneKeyPick")
+    ocr.assert_not_called()
+
+
+def test_web_h5_without_page_never_falls_back_to_ocr():
+    d = _DelegatingWebDevice(None)
+    with patch.object(hc, "_fertilize_until_mature_adb") as adb, \
+            patch.object(hc.img_tools, "click_str_by_server") as ocr:
+        assert hc._fertilize_until_mature(d) is False
+        assert hc._harvest_crops(d) is False
+    adb.assert_not_called()
+    ocr.assert_not_called()
+
+
+def test_run_harvest_card_web_h5_without_page_stops_before_actions():
+    d = _DelegatingWebDevice(None)
+    with patch.object(hc, "_cancel_work_if_active") as cancel, \
+            patch.object(hc.img_tools, "click_str_by_server") as ocr:
+        assert hc.run_harvest_card(d, device_ip="emulator-5554") is False
+    cancel.assert_not_called()
+    ocr.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _choose_fertilizer (pure): 普通 first, 高產 fallback, None when both empty
 # ---------------------------------------------------------------------------
@@ -48,6 +105,7 @@ def test_buff_exhausted_false_on_adb_no_page():
 
 def test_buff_exhausted_true_when_specialbuff_inactive():
     d = MagicMock()
+    d.backend_kind = "web_h5"
     d._page = object()  # truthy web page sentinel
     with patch.object(hc.web_farm, "buff_active", return_value=False):
         assert hc._card_buff_exhausted(d) is True
@@ -55,6 +113,7 @@ def test_buff_exhausted_true_when_specialbuff_inactive():
 
 def test_buff_exhausted_false_when_specialbuff_active():
     d = MagicMock()
+    d.backend_kind = "web_h5"
     d._page = object()
     with patch.object(hc.web_farm, "buff_active", return_value=True):
         assert hc._card_buff_exhausted(d) is False
