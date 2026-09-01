@@ -688,6 +688,9 @@ h1 {
   color: var(--mint-deep);
   border-color: var(--mint-rim);
 }
+.task-badge.disabled {
+  opacity: .72;
+}
 
 /* ============================================================
    11. LOG BOX  (warm lacquered terminal)
@@ -3469,12 +3472,15 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
             if (!progress) return;
             let html = '';
             for (const [name, value] of Object.entries(progress)) {
-              let done = value, detail = '';
+              let done = value, detail = '', status = '';
               if (value && typeof value === 'object' && !Array.isArray(value)) {
                 done = !!value.done;
                 detail = value.detail ? ` · ${value.detail}` : '';
+                status = value.status || '';
               }
-              html += `<span class="task-badge ${done ? 'done' : ''}" title="${name}${detail}">${done ? '✅' : '⏳'} ${name}${detail}</span>`;
+              const icon = status === 'disabled' ? '🚫' : (done ? '✅' : '⏳');
+              const badgeClass = done ? 'done' : (status === 'disabled' ? 'disabled' : '');
+              html += `<span class="task-badge ${badgeClass}" title="${name}${detail}">${icon} ${name}${detail}</span>`;
             }
             if (pc.innerHTML !== html) pc.innerHTML = html;
           });

@@ -333,6 +333,7 @@ def _record_is_today(manager, data, key_or_list):
 _DAILY_TASKS_CONFIG = {
     "農場買種": {"key": "farm_seed_purchase"},
     "農場種植": {"key": "farm_plant_click"},
+    "豐收卡": {"harvest_card_progress": True},
     "七日登入": {"key": "七日登入"},
     "挖礦": {"key": ["挖礦", "挖礦"]},
     "地獄之門": {"key": "地獄之門"},
@@ -351,6 +352,54 @@ _DAILY_TASKS_CONFIG = {
         "key": "dragon_realm_last_run", "triweekly": True, "period": "week",
     },
 }
+
+
+def _harvest_card_progress(manager, device_id: str, today) -> dict:
+    """Return dashboard status for the weekly harvest-card flow.
+
+    The visual H5/ADB path records ``farm_harvest_card`` in JsonDataManager,
+    while the pure-WS path records ``harvest_card.last_week`` in ws_state.
+    Dashboard must accept either source so a successful WS run does not still
+    appear as unused.
+    """
+    try:
+        cfg = config_manager.get_device_config_dict(device_id) or {}
+    except Exception:  # noqa: BLE001 - status badge is best-effort
+        cfg = {}
+
+    visual_enabled = bool(cfg.get("enable_farm", False)) and bool(
+        cfg.get("enable_harvest_card", True)
+    )
+    ws_cfg = cfg.get("ws_token") or {}
+    ws_farm_cfg = ws_cfg.get("farm") or {}
+    ws_harvest_cfg = ws_farm_cfg.get("harvest_card_cycle") or {}
+    ws_enabled = bool(ws_cfg.get("enabled")) and bool(
+        isinstance(ws_harvest_cfg, dict) and ws_harvest_cfg.get("enabled")
+    )
+
+    if not (visual_enabled or ws_enabled):
+        return {"done": False, "detail": "未啟用", "status": "disabled"}
+
+    if manager.is_same_week("farm_harvest_card"):
+        return {"done": True, "detail": "本週已使用", "status": "used"}
+
+    try:
+        from ws_token import state as ws_state
+
+        hc_state = (ws_state.load_state(device_id) or {}).get("harvest_card") or {}
+    except Exception:  # noqa: BLE001 - local state read must not break /api/status
+        hc_state = {}
+
+    iso = today.isocalendar()
+    week_key = f"{iso.year}-W{iso.week:02d}"
+    if hc_state.get("last_week") == week_key:
+        cards = hc_state.get("cards_bought")
+        detail = "本週已使用"
+        if isinstance(cards, int) and not isinstance(cards, bool) and cards > 0:
+            detail += f" · {cards} 張"
+        return {"done": True, "detail": detail, "status": "used"}
+
+    return {"done": False, "detail": "本週尚未使用", "status": "pending"}
 
 
 def _arena_fought_today(device_id: str, today) -> int:
@@ -439,7 +488,9 @@ def _compute_daily_progress(manager, device_id, *, today=None, now=None):
                 continue
 
         # 2. 點亮：多週活動看「本週是否跑過」，其餘看「今日是否完成」
-        if config.get("arena_progress"):
+        if config.get("harvest_card_progress"):
+            results[display_name] = _harvest_card_progress(manager, device_id, today)
+        elif config.get("arena_progress"):
             results[display_name] = _arena_progress(manager, data, device_id, today)
         elif config.get("period") == "week":
             results[display_name] = manager.is_same_week(config["key"])
