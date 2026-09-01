@@ -116,13 +116,15 @@ def test_h5_non_home_waits_for_cocos_transition_before_stopping(monkeypatch):
 def test_h5_no_cc_waits_for_cocos_before_stopping(monkeypatch):
     startup = _startup_module(monkeypatch)
     startup._honor_startup_controls = lambda _ip: None
-    monkeypatch.setattr(startup.time, "sleep", lambda _seconds: None)
+    sleeps = []
+    monkeypatch.setattr(startup.time, "sleep", sleeps.append)
 
     from utils import page_detector
     from utils.page_detector import H5State, H5StateResult, PageState
 
     results = iter([
         H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason="no_cc"),
+        H5StateResult(H5State.H5_MAIN, PageState.MAIN),
         H5StateResult(H5State.H5_MAIN, PageState.MAIN),
         H5StateResult(H5State.H5_MAIN, PageState.MAIN),
     ])
@@ -134,6 +136,31 @@ def test_h5_no_cc_waits_for_cocos_before_stopping(monkeypatch):
         start_game_fn=lambda *_args: None,
         reward_fn=lambda *_args: None,
     ) is True
+    assert startup.H5_MAIN_SETTLE_SEC in sleeps
+
+
+def test_h5_main_waits_five_seconds_and_rechecks_cocos_state(monkeypatch):
+    startup = _startup_module(monkeypatch)
+    startup._honor_startup_controls = lambda _ip: None
+    sleeps = []
+    monkeypatch.setattr(startup.time, "sleep", sleeps.append)
+
+    from utils import page_detector
+    from utils.page_detector import H5State, H5StateResult, PageState
+
+    results = iter([
+        H5StateResult(H5State.H5_MAIN, PageState.MAIN),
+        H5StateResult(H5State.H5_STATE_UNAVAILABLE, reason="loading"),
+    ])
+    monkeypatch.setattr(page_detector, "probe_h5_state", lambda *_a, **_k: next(results))
+
+    assert startup.handle_game_startup_pages(
+        _FakeCocosWebDevice(),
+        "7fe98fc6",
+        start_game_fn=lambda *_args: None,
+        reward_fn=lambda *_args: None,
+    ) is False
+    assert sleeps == [startup.H5_MAIN_SETTLE_SEC]
 
 
 def test_h5_notice_uses_cocos_close_without_ocr(monkeypatch):
