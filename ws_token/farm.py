@@ -919,7 +919,8 @@ def run_harvest_card_cycle(
         'clear_harvested': 0, 'cards_bought': 0, 'buff_confirmed': False,
         'already_executed': False, 'rounds': 0, 'completed_rounds': 0,
         'planted': 0, 'earn_harvested': 0, 'buff_exhausted': False,
-        'restarted_work': False, 'failure': None, 'ok': False,
+        'restarted_work': False, 'skipped_harvest_card': False,
+        'failure': None, 'ok': False,
     }
     log.info('豐收卡循環: 開始 role_id=%s num_cards=%d', role_id, num_cards)
 
@@ -934,7 +935,10 @@ def run_harvest_card_cycle(
         log.warning('豐收卡循環[1] 取消打工驗證例外: %s', exc)
     if not result['stopped_work']:
         result['failure'] = 'work_cancel_not_verified'
-        log.warning('豐收卡循環[1] 取消打工未驗證，禁止後續購買與種植')
+        result['skipped_harvest_card'] = True
+        log.warning(
+            '豐收卡循環[1] 取消打工未驗證，跳過清場、買卡與種植，改為恢復打工'
+        )
     else:
         log.info('豐收卡循環[1] 取消打工已驗證')
 
@@ -1058,7 +1062,7 @@ def run_harvest_card_cycle(
             result['failure'] = f'ws_stage_exception:{type(exc).__name__}'
         log.exception('豐收卡循環執行例外: %s', exc)
     finally:
-        # 不論中途哪一步失敗，都嘗試恢復並重新讀取 running 狀態。
+        # 取消未驗證時也必須恢復打工；其餘失敗同樣盡力避免裝置停在休息狀態。
         try:
             rs = start_work_simple(
                 client, role_id=role_id, timeout=timeout, device_id=device_id,
