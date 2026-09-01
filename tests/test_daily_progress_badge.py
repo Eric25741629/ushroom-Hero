@@ -150,6 +150,70 @@ def _ts_on(day, hour=12):
     return datetime.datetime(day.year, day.month, day.day, hour, tzinfo=_TZ).timestamp()
 
 
+def _harvest_cfg(monkeypatch, *, visual=False, ws=False):
+    cfg = {
+        "enable_farm": visual,
+        "enable_harvest_card": visual,
+        "ws_token": {
+            "enabled": ws,
+            "farm": {"harvest_card_cycle": {"enabled": ws}},
+        },
+    }
+    monkeypatch.setattr(
+        routes_status.config_manager, "get_device_config_dict", lambda _device: cfg)
+
+
+def test_harvest_card_badge_reads_visual_week_record(monkeypatch):
+    _harvest_cfg(monkeypatch, visual=True)
+    now = datetime.datetime(2026, 6, 24, 12, tzinfo=_TZ)
+    mgr = _FakeManager({
+        "farm_harvest_card": {"timestamp": _ts_on(datetime.date(2026, 6, 22))},
+    }, now=now)
+
+    result = routes_status._harvest_card_progress(mgr, "dev", _SEA_WEEK_DAY)
+
+    assert result == {"done": True, "detail": "本週已使用", "status": "used"}
+
+
+def test_harvest_card_badge_reads_ws_week_record(monkeypatch):
+    _harvest_cfg(monkeypatch, ws=True)
+    from ws_token import state as ws_state
+
+    monkeypatch.setattr(ws_state, "load_state", lambda _device: {
+        "harvest_card": {"last_week": "2026-W26", "cards_bought": 3},
+    })
+    mgr = _FakeManager({})
+
+    result = routes_status._harvest_card_progress(mgr, "dev", _SEA_WEEK_DAY)
+
+    assert result == {
+        "done": True,
+        "detail": "本週已使用 · 3 張",
+        "status": "used",
+    }
+
+
+def test_harvest_card_badge_distinguishes_pending_and_disabled(monkeypatch):
+    from ws_token import state as ws_state
+
+    monkeypatch.setattr(ws_state, "load_state", lambda _device: {})
+    mgr = _FakeManager({})
+
+    _harvest_cfg(monkeypatch, visual=True)
+    assert routes_status._harvest_card_progress(mgr, "dev", _SEA_WEEK_DAY) == {
+        "done": False,
+        "detail": "本週尚未使用",
+        "status": "pending",
+    }
+
+    _harvest_cfg(monkeypatch, visual=False, ws=False)
+    assert routes_status._harvest_card_progress(mgr, "dev", _SEA_WEEK_DAY) == {
+        "done": False,
+        "detail": "未啟用",
+        "status": "disabled",
+    }
+
+
 def test_sea_badge_shown_and_lit_in_sea_week(monkeypatch):
     """航海週 + sea_last_execution 落在本週 → 航海徽章顯示且 ✅。"""
     _no_cycle_gate(monkeypatch)

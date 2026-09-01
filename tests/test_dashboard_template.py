@@ -474,3 +474,11 @@ def test_wanshen_battle_mode_defaults_to_pure_ws():
     assert "純 WS + B 計算（預設）" in html
     assert "config.wanshen_battle_mode || 'pure_ws'" in html
     assert "wanshen_battle_mode: (document.getElementById('selWanshenBattleMode') || {}).value || 'pure_ws'" in html
+
+
+def test_harvest_card_badge_renders_used_pending_and_disabled_states():
+    html = _html()
+    assert "status === 'disabled' ? '🚫'" in html
+    assert "done ? '✅' : '⏳'" in html
+    assert "status === 'disabled' ? 'disabled'" in html
+    assert ".task-badge.disabled" in html
