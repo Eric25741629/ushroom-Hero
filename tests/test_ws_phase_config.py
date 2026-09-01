@@ -34,6 +34,11 @@ def test_default_device_config_has_ws_token_disabled():
     }
 
 
+def test_default_lamp_compatibility_flag_uses_ws():
+    assert config_manager.DEFAULT_DEVICE_CONFIG["ws_token_open_lamp"] is True
+    assert config_manager.DeviceConfig().ws_token_open_lamp is True
+
+
 def test_merge_ws_token_fills_lamp_percent_min_keep_when_absent():
     # 裝置沒設 lamp_percent / lamp_min_keep / lamp_daily_min → 合併後仍帶回預設 0。
     merged = config_manager._merge_ws_token_phase_config({"enabled": True})

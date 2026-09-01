@@ -190,6 +190,9 @@ def register_device():
         name = str(data.get("name", "")).strip() or device_id
         web_url = str(data.get("web_url", "")).strip() or "https://mushroomh5.acenetgame.com/"
 
+        devices = config_manager.load_config().get("devices", {})
+        is_new_device = device_id not in devices
+
         # 新裝置一律以「停用」建立:登入瀏覽器開著時若掃描器又開一條掛機 thread，
         # 兩個 Playwright session 會互搶。使用者登入完、把設定填好後，再到儀表板
         # 卡片手動「啟用」才會被掃描啟動。
@@ -199,9 +202,18 @@ def register_device():
             "web_url": web_url,
             "enabled": False,
         }
+        if is_new_device:
+            # 新 Web 應用預設以 WS-first 執行；開神燈由純 WS 接管，
+            # H5 pipeline 只處理尚未 WS 化的任務。重複註冊不得覆蓋既有設定。
+            new_settings.update({
+                "ws_token_open_lamp": True,
+                "ws_token": {
+                    "enabled": True,
+                    "open_lamp": True,
+                },
+            })
         # 自動分配 CDP port（live view / WS 工具都依賴 web_debug_port）；
         # 重複註冊已有 port 的裝置則保留原值。
-        devices = config_manager.load_config().get("devices", {})
         if not devices.get(device_id, {}).get("web_debug_port"):
             used = set()
             for dev in devices.values():

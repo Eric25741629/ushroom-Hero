@@ -76,6 +76,9 @@ def test_register_device_creates_disabled(tmp_path, monkeypatch):
     assert dev["enabled"] is False  # disabled until the user enables it
     assert dev["name"] == "web-new"  # no display name given → fall back to id
     assert dev["web_debug_port"] == 9223  # auto-assigned CDP port
+    assert dev["ws_token_open_lamp"] is True
+    assert dev["ws_token"]["enabled"] is True
+    assert dev["ws_token"]["open_lamp"] is True
 
 
 def test_register_device_chinese_name_and_next_free_port(tmp_path, monkeypatch):
@@ -97,10 +100,18 @@ def test_register_device_chinese_name_and_next_free_port(tmp_path, monkeypatch):
 
 
 def test_register_existing_device_keeps_port(tmp_path, monkeypatch):
-    devices = {"web-001": {"backend": "web_h5", "web_debug_port": 9227}}
+    devices = {"web-001": {
+        "backend": "web_h5",
+        "web_debug_port": 9227,
+        "ws_token_open_lamp": False,
+        "ws_token": {"enabled": True, "open_lamp": False, "lamp_min_keep": 99},
+    }}
     client, cfg_path = _make_client(tmp_path, monkeypatch, devices=devices)
     resp = client.post("/api/devices/register", json={"device_id": "web-001"})
     assert resp.status_code == 200
 
     raw = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert raw["devices"]["web-001"]["web_debug_port"] == 9227
+    assert raw["devices"]["web-001"]["ws_token_open_lamp"] is False
+    assert raw["devices"]["web-001"]["ws_token"]["open_lamp"] is False
+    assert raw["devices"]["web-001"]["ws_token"]["lamp_min_keep"] == 99
