@@ -59,6 +59,19 @@ def _wanshen_rounds(ip: str) -> int:
         return 8
 
 
+def _wanshen_mode(ip: str) -> str:
+    """讀取萬神戰鬥模式；pure_ws 是不建立/操作 H5 的硬邊界。"""
+    try:
+        from battle_calc.config import coerce_wanshen_battle_mode
+
+        cfg = config_manager.get_device_config(ip)
+        return coerce_wanshen_battle_mode(
+            cfg.get("wanshen_battle_mode", "pure_ws"), default="pure_ws"
+        )
+    except Exception:
+        return "pure_ws"
+
+
 def run_offline_wanshen_if_due(ip: str, logger_obj=None) -> bool:
     """手機 ADB 離線時，若萬神到期則直接執行 pure WS。"""
     log = logger_obj or logger
@@ -115,6 +128,27 @@ def _run_weekly_dungeon(
     if not due:
         logger.info("[%s] 萬神試煉：本週已執行或未到執行時間窗，跳過", ip)
         return
+
+    # pure_ws 模式完全由 WS 負責：不能先進 RogueView，也不能在 WS 失敗時
+    # fallback 到 H5。這個分流必須早於主頁面檢查，因為 pure WS 不需要 device。
+    cfg = config_manager.get_device_config(ip)
+    if _wanshen_mode(ip) == "pure_ws":
+        from battle.weekly_trials import _run_pure_ws_wanshen
+
+        rounds = _wanshen_rounds(ip)
+        until_cap = bool(cfg.get("wanshen_until_cap", True))
+        logger.info("[%s] 萬神試煉：pure WS 執行（目標 %d 局），跳過 H5", ip, rounds)
+        bot_state.update_state(ip, task="萬神試煉", step="pure WS 執行中")
+        report = _run_pure_ws_wanshen(
+            None, ip, rounds, cfg, until_cap=until_cap
+        )
+        if report is not None and report.success:
+            _WEEKLY_POLICY.mark_done(ip, time_recording=time_recording)
+            logger.info("[%s] 萬神試煉：pure WS 完成，已寫入本週紀錄", ip)
+        else:
+            logger.warning("[%s] 萬神試煉：pure WS 未完成，不回退 H5", ip)
+        return
+
     if stage != "主頁面":
         log_main_page_mismatch(d, ip, stage, "萬神試煉", "萬神試煉到達執行時間但不在主頁面")
         return
