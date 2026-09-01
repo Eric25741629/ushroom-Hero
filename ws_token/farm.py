@@ -539,6 +539,18 @@ def read_work_status(
             "team_cfg_id": team_cfg_id, "found": found}
 
 
+def parse_worker_state(body: bytes) -> dict:
+    """Parse worker_base state-change s2c (18184) into one farm-worker state."""
+    worker = codec.walk_dict(body).get(1)
+    if not isinstance(worker, (bytes, bytearray)):
+        return {"found": False, "running": False, "worker_status": 0,
+                "team_cfg_id": 0}
+    data = codec.walk_dict(bytes(worker))
+    status = _as_int(data.get(3))
+    return {"found": True, "running": status > 0, "worker_status": status,
+            "team_cfg_id": _as_int(data.get(1))}
+
+
 def start_work(
     client: WSGameClient,
     team_cfg_id: int,
@@ -627,13 +639,23 @@ def stop_work(
         log.warning('ws_token farm: stop_work rejected 0x0201 code=%s', code)
         return {'ok': False, 'error_code': code}
     if role_id is not None:
+        # 5554 實測：18178 會由 18184 回覆 p_worker，status#3 立即由 101 變 0。
+        # 不能再由可能延遲的 18690 舊值推翻這個直接的伺服器狀態。
+        if reply_cmd == CMD_WORKER_STATE:
+            state = parse_worker_state(reply)
+            if state.get('found') and state.get('team_cfg_id') == work_id:
+                verified = not bool(state.get('running'))
+                log.info('ws_token farm: stop_work verified=%s via 18184 state=%s',
+                         verified, state)
+                return {'ok': verified, 'verified': verified, 'error_code': 0,
+                        'status': state, 'verification_source': 'worker_state_18184'}
         status = read_work_status(
             client, role_id, timeout=timeout, device_id=device_id,
         )
         verified = bool(status.get('found')) and not bool(status.get('running'))
         log.info('ws_token farm: stop_work verified=%s status=%s', verified, status)
         return {'ok': verified, 'verified': verified, 'error_code': 0,
-                'status': status}
+                'status': status, 'verification_source': 'get_other_worker_18690'}
     log.info('ws_token farm: stop_work ok (unverified: no role_id)')
     return {'ok': True, 'verified': False, 'error_code': 0}
 

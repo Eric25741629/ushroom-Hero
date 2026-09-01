@@ -774,6 +774,30 @@ def test_stop_work_re_reads_status_and_requires_stopped(monkeypatch):
     assert result["verified"] is True
 
 
+def test_stop_work_uses_18184_zero_status_without_waiting_for_18690(monkeypatch):
+    """5554: 18178 的直接回覆 18184.worker_status=0 就是已取消。"""
+    stopped_worker = codec.pb_uint(1, 1001) + codec.pb_uint(3, 0)
+    client = type("Client", (), {
+        "call_for": lambda self, *_a, **_k: (
+            farm_module.CMD_WORKER_STATE, codec.pb_msg(1, stopped_worker)),
+    })()
+    reads = []
+
+    def read_status(*_args, **_kwargs):
+        reads.append(True)
+        return {"found": True, "running": True, "worker_status": 101}
+
+    monkeypatch.setattr(farm_module, "read_work_status", read_status)
+
+    result = farm_module.stop_work(client, role_id=1)
+
+    assert result["ok"] is True
+    assert result["verified"] is True
+    assert result["status"]["worker_status"] == 0
+    assert result["verification_source"] == "worker_state_18184"
+    assert len(reads) == 1
+
+
 def test_harvest_cycle_no_card_means_already_executed(monkeypatch):
     """肥料步驟完成但卡買不到時，恢復打工並成功略過。"""
     monkeypatch.setattr(
