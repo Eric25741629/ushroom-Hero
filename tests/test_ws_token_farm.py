@@ -734,25 +734,47 @@ def _empty_farm_info(role_id=1):
 
 
 def test_harvest_cycle_aborts_before_purchase_when_cancel_not_verified(monkeypatch):
-    """WS 未讀到 stopped 時，禁止買肥料、買卡或種特級種子。"""
+    """取消未驗證時跳過豐收卡所有動作，但仍要恢復打工。"""
     monkeypatch.setattr(
         farm_module, "stop_work", lambda *_a, **_k: {"ok": False, "verified": False},
     )
+    restarted = []
     monkeypatch.setattr(
         farm_module, "start_work_simple",
-        lambda *_a, **_k: {"ok": True, "verified": True},
+        lambda *_a, **_k: (restarted.append(True) or {"ok": True, "verified": True}),
     )
     purchases = []
     monkeypatch.setattr(
         farm_module, "buy_to_daily_target",
         lambda *_a, **_k: purchases.append(True),
     )
+    farm_actions = []
+    monkeypatch.setattr(
+        farm_module, "read_farm", lambda *_a, **_k: farm_actions.append("read_farm"),
+    )
+    monkeypatch.setattr(
+        farm_module, "fertilize_until_mature",
+        lambda *_a, **_k: farm_actions.append("fertilize"),
+    )
+    monkeypatch.setattr(
+        farm_module, "pick_lands", lambda *_a, **_k: farm_actions.append("pick"),
+    )
+    monkeypatch.setattr(
+        farm_module, "harvest_lands", lambda *_a, **_k: farm_actions.append("harvest"),
+    )
+    monkeypatch.setattr(
+        farm_module, "plant_lands", lambda *_a, **_k: farm_actions.append("plant"),
+    )
 
     result = farm_module.run_harvest_card_cycle(object(), 1, spacing=0)
 
     assert result["ok"] is False
     assert result["failure"] == "work_cancel_not_verified"
+    assert result["skipped_harvest_card"] is True
+    assert result["restarted_work"] is True
     assert purchases == []
+    assert farm_actions == []
+    assert restarted == [True]
 
 
 def test_stop_work_re_reads_status_and_requires_stopped(monkeypatch):
