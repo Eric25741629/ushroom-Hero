@@ -211,11 +211,13 @@ def run_daily(
         ws_state.save_state(device, root, state_dir=state_dir)
 
     _abort_if_requested(should_abort)
-    runtime = runtime_factory(should_abort=should_abort)
+    # 先驗證 A 端 WS/ADB 仍在線，再啟動 B Playwright；否則 ADB 離線時會
+    # 白等 chapterDataCache 90 秒，最後只留下誤導性的 B runtime 逾時。
     client = make_client()
     try:
+        client.connect()
+        runtime = runtime_factory(should_abort=should_abort)
         with runtime:
-            client.connect()
             info = codec.walk_dict(client.call(CMD_INFO, b""))
             part_id = int(info.get(1) or 0)
             if part_id <= 0:

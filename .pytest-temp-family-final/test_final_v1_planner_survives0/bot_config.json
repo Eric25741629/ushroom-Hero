@@ -1,0 +1,221 @@
+{
+    "devices": {
+        "dev": {
+            "mining_planner_version": "final_v1",
+            "mining_shadow_planner_version": "final_v1",
+            "backend": "adb",
+            "backend_display_id": "",
+            "use_ws_runner": false,
+            "ws_token_spend": false,
+            "ws_token_sweep_list": [],
+            "ws_token_open_lamp": false,
+            "ws_token_kungfu_guess": false,
+            "ws_token_mining": null,
+            "ws_token": {
+                "enabled": false,
+                "bootstrap_token": true,
+                "offline_fallback": false,
+                "fallback_host": "",
+                "main_chapter_kills": {
+                    "enabled": false,
+                    "interval_sec": 3.0,
+                    "persist_every": 10
+                },
+                "spend": true,
+                "open_lamp": true,
+                "lamp_percent": 0,
+                "lamp_min_keep": 0,
+                "lamp_daily_min": 0,
+                "lamp_daily_target": 0,
+                "lamp_weekend_target": 0,
+                "farm": null,
+                "dungeon_sweeps": [],
+                "hellgate": {
+                    "enabled": true,
+                    "b_mode": "cdp",
+                    "cdp_port": 0,
+                    "game_url": "",
+                    "headless": true,
+                    "ready_timeout_sec": 90,
+                    "max_frames": 30000,
+                    "speed_scale": 2.0,
+                    "realtime": true,
+                    "simulation_timeout_sec": 330,
+                    "timeout_sec": 0
+                },
+                "escort": {
+                    "enabled": false,
+                    "b_mode": "ephemeral",
+                    "cdp_port": 0,
+                    "game_url": "",
+                    "headless": true,
+                    "ready_timeout_sec": 90,
+                    "max_fights": 3,
+                    "gap_sec": 2.0
+                },
+                "carpark_target": null,
+                "carpark_auto": false,
+                "carpark_plan": {
+                    "enabled": false,
+                    "silver_levels": [
+                        9,
+                        10
+                    ],
+                    "day": {
+                        "window": [
+                            "10:00",
+                            "22:00"
+                        ],
+                        "cross": 1
+                    },
+                    "night": {
+                        "window": [
+                            "22:00",
+                            "10:00"
+                        ],
+                        "cross": 0
+                    },
+                    "cluster_min": 5,
+                    "grab_window_seconds": 60,
+                    "grab_poll_seconds": 1.0,
+                    "grab_attempts": 8,
+                    "allow_low_noncluster": false
+                },
+                "couple_gifts": true,
+                "forge_ring": false,
+                "workshop_rotate": true,
+                "kungfu_worship": false,
+                "mail_claim": false,
+                "mail_gem_threshold": null,
+                "mail_skill_threshold": null,
+                "relic_upgrade": false,
+                "relic_max_steps": 10,
+                "relic_fragment_floor": 0,
+                "relic_sprint": {
+                    "enabled": false,
+                    "target_spend": 900000
+                },
+                "tycoon": false,
+                "tycoon_max_rolls": 50,
+                "xwar_idle": false,
+                "mining": {
+                    "enabled": true,
+                    "allow_bomb": true,
+                    "allow_drill": true,
+                    "max_steps": 200
+                },
+                "gacha": {
+                    "enabled": false,
+                    "types": [
+                        1,
+                        2
+                    ],
+                    "mode": "fixed",
+                    "count": 35,
+                    "batches": 3,
+                    "weekend_only": false,
+                    "target_draws": 8000,
+                    "interval_days": 28,
+                    "skill_sprint_weekdays": [
+                        1,
+                        2
+                    ],
+                    "skill_sprint_end_hour": 22,
+                    "excluded_devices": [],
+                    "free_daily": false
+                },
+                "ad_rewards": {
+                    "enabled": false,
+                    "config_ids": [
+                        1,
+                        2,
+                        3,
+                        12,
+                        14,
+                        15
+                    ]
+                }
+            },
+            "web_url": "",
+            "web_canvas_selector": "canvas",
+            "web_profile_dir": "playwright_profile/{device_id}",
+            "web_state_file": "auth_state/{device_id}.json",
+            "web_channel": "chrome",
+            "web_headless": false,
+            "web_clear_cookies_on_start": false,
+            "web_reload_after_goto": false,
+            "battle_speed_scale": 4.0,
+            "arena_battle_mode": "animation",
+            "arena_fight_gap_sec": 7.0,
+            "arena_daily_fights": 9,
+            "wanshen_battle_mode": "pure_ws",
+            "web_viewport_width": 540,
+            "web_viewport_height": 960,
+            "web_manual_viewport_width": 0,
+            "web_manual_viewport_height": 0,
+            "web_stop_mode": "keep_page",
+            "web_screenshot_method": "playwright",
+            "online_check_interval_sec": 30,
+            "lamp_check_interval": 2,
+            "lamp_duration_sec": 300,
+            "mining_duration_min": 6,
+            "mining_save_samples": false,
+            "mining_map_record": true,
+            "wanshen_rounds": 8,
+            "special_wanshen_account": false,
+            "special_wanshen_enabled": false,
+            "special_wanshen_rounds": 10,
+            "wanshen_until_cap": true,
+            "sleep_min_hours": 1.0,
+            "sleep_max_hours": 1.0,
+            "name": "dev"
+        }
+    },
+    "global": {
+        "mode": "master",
+        "dashboard_port": 5002,
+        "master_url": "http://127.0.0.1:5002",
+        "worker_id": "unknown_worker",
+        "worker_sync_timeout_sec": 10.0,
+        "worker_sync_failure_backoff_sec": 6.0,
+        "online_check_checkers": [
+            "emulator-5554"
+        ],
+        "ocr": {
+            "servers": [
+                "http://100.64.0.5:5001",
+                "http://100.64.0.7:5001",
+                "http://localhost:5001"
+            ],
+            "server_mode": "main",
+            "timeout_sec": 20,
+            "img_decode_retries": 3,
+            "ocr_empty_retries": 2,
+            "retry_delay_sec": 0.6,
+            "default_region_enabled": false,
+            "default_x_range": [
+                0,
+                0
+            ],
+            "default_y_range": [
+                0,
+                0
+            ]
+        },
+        "host_settings": {
+            "DESKTOP-OV0ASQ4": {
+                "mode": "worker",
+                "master_url": "https://mushroom1_dashboard.infinite25741629.uk",
+                "worker_id": "desktop_ov0asq4"
+            },
+            "YOUR-DORM-PC-NAME": {
+                "mode": "master"
+            },
+            "YOUR-LAPTOP-NAME": {
+                "mode": "worker",
+                "master_url": "http://127.0.0.1:5002",
+                "worker_id": "laptop_worker"
+            }
+        }
+    }
+}

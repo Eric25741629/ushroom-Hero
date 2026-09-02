@@ -1,73 +1,74 @@
 {
     "地獄之門": {
-        "timestamp": 1786383328.494416,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 01:35:28"
+        "timestamp": 1788329991.193822,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:19:51"
     },
     "farm_seed_purchase": {
-        "timestamp": 1786425984.84172,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:26:24"
+        "timestamp": 1788290167.124048,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 03:16:07"
     },
     "farm_visit": {
-        "timestamp": 1786426304.195397,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:31:44"
+        "timestamp": 1788330036.588539,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:20:36"
     },
     "donate_family": {
-        "timestamp": 1786382676.976147,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 01:24:36"
+        "timestamp": 1788329991.202395,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:19:51"
     },
     "雪國危機": {
-        "count": 0,
-        "check_times": 1,
-        "week": "2026-33",
-        "last_time_utc": "2026-08-11T05:33:30.605143Z",
-        "last_time": "2026-08-11 05:33:30",
-        "last_time_local": "2026-08-11T13:33:30.605143+08:00",
+        "count": 2,
+        "check_times": 2,
+        "week": "2026-34",
+        "note": "win",
+        "last_time_utc": "2026-08-19T20:24:59.145877Z",
+        "last_time": "2026-08-19 20:24:59",
+        "last_time_local": "2026-08-20T04:24:59.145877+08:00",
         "_schema": "utc_v1"
     },
     "go_to_family_cooldown": {
-        "timestamp": 1786426425.659642,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:33:45"
+        "timestamp": 1787171102.257232,
+        "date": "2026-08-20",
+        "datetime": "2026-08-20 04:25:02"
     },
     "guardian_spirit": {
-        "timestamp": 1786426429.457028,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:33:49"
+        "timestamp": 1787171131.419242,
+        "date": "2026-08-20",
+        "datetime": "2026-08-20 04:25:31"
     },
     "Store": {
-        "timestamp": 1786426547.447299,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:35:47"
+        "timestamp": 1788329991.210398,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:19:51"
     },
     "daily_acceleration": {
-        "timestamp": 1786383346.2269,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 01:35:46"
+        "timestamp": 1787242559.127777,
+        "date": "2026-08-21",
+        "datetime": "2026-08-21 00:15:59"
     },
     "arena_challenges": {
-        "timestamp": 1786383483.577249,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 01:38:03"
+        "timestamp": 1787972622.671023,
+        "date": "2026-08-29",
+        "datetime": "2026-08-29 11:03:42"
     },
     "cloud_fighting_weekly": {
-        "timestamp": 1786306312.0822,
-        "date": "2026-08-10",
-        "datetime": "2026-08-10 04:11:52"
+        "timestamp": 1788244587.307948,
+        "date": "2026-09-01",
+        "datetime": "2026-09-01 14:36:27"
     },
     "挖礦": {
-        "timestamp": 1786426928.877083,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:42:08"
+        "timestamp": 1788329991.216397,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:19:51"
     },
-    "mission_timestamp": 1786382677.0069542,
+    "mission_timestamp": 1788329991.2233968,
     "farm_plant_click": {
-        "timestamp": 1786382677.018525,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 01:24:37",
+        "timestamp": 1788329991.231457,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:19:51",
         "count": 1
     },
     "dragon_realm_last_run": {
@@ -77,35 +78,35 @@
     },
     "萬神_秘寶閣": {
         "count": 4,
-        "last_time_utc": "2026-08-10T05:10:14.247100Z",
-        "last_time": "2026-08-10 05:10:14",
-        "last_time_local": "2026-08-10T13:10:14.247100+08:00",
+        "last_time_utc": "2026-08-26T12:08:34.729522Z",
+        "last_time": "2026-08-26 12:08:34",
+        "last_time_local": "2026-08-26T20:08:34.729522+08:00",
         "_schema": "utc_v1"
     },
     "萬神試煉": {
-        "timestamp": 1786338620.428266,
-        "date": "2026-08-10",
-        "datetime": "2026-08-10 13:10:20"
+        "timestamp": 1788253651.219222,
+        "date": "2026-09-01",
+        "datetime": "2026-09-01 17:07:31"
     },
     "statue_weekly_last_execution": {
-        "timestamp": 1786033105.545722,
-        "date": "2026-08-07",
-        "datetime": "2026-08-07 00:18:25"
+        "timestamp": 1787846958.402023,
+        "date": "2026-08-28",
+        "datetime": "2026-08-28 00:09:18"
     },
     "general_lamp_last_execution": {
-        "timestamp": 1786427292.960067,
+        "timestamp": 1786451446.930319,
         "date": "2026-08-11",
-        "datetime": "2026-08-11 13:48:12"
+        "datetime": "2026-08-11 20:30:46"
     },
     "七日登入": {
-        "timestamp": 1786425964.991858,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:26:04"
+        "timestamp": 1788330011.05268,
+        "date": "2026-09-02",
+        "datetime": "2026-09-02 14:20:11"
     },
     "daily_gift_friend": {
-        "timestamp": 1786426962.87528,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:42:42",
+        "timestamp": 1787171567.296702,
+        "date": "2026-08-20",
+        "datetime": "2026-08-20 04:32:47",
         "status": "completed",
         "total_count": 1,
         "success_count": 1,
@@ -113,10 +114,10 @@
     },
     "daily_mail_claim": {
         "purchased": true,
-        "last_time_utc": "2026-08-11T05:48:23.876955Z",
-        "last_time": "2026-08-11 05:48:23",
-        "last_time_local": "2026-08-11T13:48:23.876955+08:00",
-        "count": 2,
+        "last_time_utc": "2026-08-19T20:33:17.349143Z",
+        "last_time": "2026-08-19 20:33:17",
+        "last_time_local": "2026-08-20T04:33:17.349143+08:00",
+        "count": 6,
         "_schema": "utc_v1"
     },
     "衝刺-發條": {
@@ -125,9 +126,35 @@
         "datetime": "2026-08-11 01:18:43"
     },
     "daily_free_pack": {
-        "timestamp": 1786426945.948898,
-        "date": "2026-08-11",
-        "datetime": "2026-08-11 13:42:25",
+        "timestamp": 1786486627.022485,
+        "date": "2026-08-12",
+        "datetime": "2026-08-12 06:17:07",
         "status": "completed"
+    },
+    "mission_num": 1,
+    "farm_harvest_card": {
+        "timestamp": 1787516171.547392,
+        "date": "2026-08-24",
+        "datetime": "2026-08-24 04:16:11"
+    },
+    "mushroom_arena_cycle_start": {
+        "timestamp": 1787423331.159904,
+        "date": "2026-08-23",
+        "datetime": "2026-08-23 02:28:51"
+    },
+    "mushroom_arena_daily": {
+        "timestamp": 1787423331.16841,
+        "date": "2026-08-23",
+        "datetime": "2026-08-23 02:28:51"
+    },
+    "sea_cycle_start": {
+        "timestamp": 1787041527.591825,
+        "date": "2026-08-18",
+        "datetime": "2026-08-18 16:25:27"
+    },
+    "sea_last_execution": {
+        "timestamp": 1787483884.386001,
+        "date": "2026-08-23",
+        "datetime": "2026-08-23 19:18:04"
     }
 }

@@ -569,3 +569,21 @@ def test_ws_done_mining_skips_oracle_task(pipeline_mod, fake_all):
 
     executed_tasks = {call["task"] for call in fake_all["at_main_page"]}
     assert "挖礦/Oracle" not in executed_tasks
+
+
+def test_ws_open_lamp_owns_task_even_when_ws_report_is_empty(
+    pipeline_mod, fake_all, monkeypatch
+):
+    """啟用 WS 開神燈時，H5 lamp executor 必須保持互斥。"""
+    ctx = _build_ctx(pipeline_mod, "emulator-5554")
+    monkeypatch.setattr(
+        pipeline_mod.config_manager,
+        "get_device_config",
+        lambda _ip: {"backend": "web_h5", "ws_token": {
+            "enabled": True, "open_lamp": True,
+        }},
+    )
+
+    pipeline_mod.run(ctx)
+
+    assert fake_all["lamp_if_due"] == []

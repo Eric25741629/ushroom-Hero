@@ -1,4 +1,4 @@
-import atexit
+﻿import atexit
 import os
 import random
 import sys
@@ -586,7 +586,6 @@ def main(ip, Cnn_model, oracle_cnn_model, oracle_classes, ocr):
                             output = launch_clone("com.mxdzz.tw.and", 2,device_serial=ip)
                             set_screen_for_game(ip, logger=logger)
                         time.sleep(1)
-                        
                     else:
                         # 使用圖示啟動遊戲 (模擬真人操作)
                         logger.info(f"[{ip}] 透過桌面圖示啟動遊戲")

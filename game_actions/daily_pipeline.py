@@ -330,6 +330,21 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
             ip, task=definition.display_name, step="WS 已完成，跳過"
         )
 
+    def _ws_owns_lamp(definition) -> bool:
+        """WS 開神燈啟用時，H5 不得再執行同一任務。
+
+        開神燈會消耗道具；WS 與 H5 是互斥後端。即使 WS 本輪失敗，
+        也不能在同一輪改走 H5，避免重複消耗或兩套流程競爭同一帳號。
+        """
+        if definition.task_id != "lamp":
+            return False
+        try:
+            cfg = config_manager.get_device_config(ip)
+            ws_cfg = cfg.get("ws_token") or {}
+            return bool(ws_cfg.get("enabled")) and bool(ws_cfg.get("open_lamp"))
+        except Exception:  # noqa: BLE001 - 設定讀取失敗時維持既有 client 行為
+            return False
+
     def _record_task_start(definition, step: str = "執行中") -> None:
         bot_state.update_state(ip, task=definition.display_name, step=step)
 
@@ -719,7 +734,7 @@ def _run_tasks(ctx: DailyContext) -> RunReport:
 
     for definition in iter_pipeline_task_definitions():
         _force_sleep_checkpoint()
-        if _should_ws_skip(definition):
+        if _should_ws_skip(definition) or _ws_owns_lamp(definition):
             _record_ws_skip(definition)
             if definition.task_id == "guild":
                 stage = _track(get_stage_with_check(d, ip, Cnn_model))

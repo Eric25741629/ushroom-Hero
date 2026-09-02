@@ -46,6 +46,11 @@ class _Client:
         self.closed = True
 
 
+class _OfflineClient(_Client):
+    def connect(self):
+        raise RuntimeError("device not online")
+
+
 def test_target_is_3000_only_on_friday():
     assert kills.target_for_day(datetime(2026, 7, 30)) == 150
     assert kills.target_for_day(datetime(2026, 7, 31)) == 3000
@@ -128,3 +133,28 @@ def test_new_date_resets_sent_counter(tmp_path, monkeypatch):
 
     assert result["sent"] == 1
     assert [cmd for cmd, _ in client.calls].count(kills.CMD_KILL) == 1
+
+
+def test_offline_client_fails_before_b_runtime_starts(tmp_path):
+    runtime_started = False
+
+    def runtime_factory(**_kwargs):
+        nonlocal runtime_started
+        runtime_started = True
+        raise AssertionError("B runtime must not start when A client is offline")
+
+    client = _OfflineClient()
+    try:
+        kills.run_daily(
+            "phone",
+            now=datetime(2026, 7, 30, 12),
+            state_dir=tmp_path,
+            runtime_factory=runtime_factory,
+            client_factory=lambda: client,
+        )
+    except RuntimeError as exc:
+        assert "not online" in str(exc)
+    else:
+        raise AssertionError("offline client error should propagate")
+    assert runtime_started is False
+    assert client.closed is True

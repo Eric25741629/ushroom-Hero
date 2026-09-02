@@ -574,6 +574,11 @@
                 "bootstrap_token": true,
                 "offline_fallback": false,
                 "fallback_host": "",
+                "main_chapter_kills": {
+                    "enabled": false,
+                    "interval_sec": 3.0,
+                    "persist_every": 10
+                },
                 "spend": true,
                 "open_lamp": true,
                 "lamp_percent": 0.0,
@@ -587,6 +592,29 @@
                     }
                 },
                 "dungeon_sweeps": [],
+                "hellgate": {
+                    "b_mode": "cdp",
+                    "cdp_port": 0,
+                    "enabled": true,
+                    "game_url": "",
+                    "headless": true,
+                    "max_frames": 30000,
+                    "ready_timeout_sec": 90,
+                    "realtime": true,
+                    "simulation_timeout_sec": 330,
+                    "speed_scale": 2,
+                    "timeout_sec": 0
+                },
+                "escort": {
+                    "b_mode": "ephemeral",
+                    "cdp_port": 0,
+                    "enabled": false,
+                    "game_url": "",
+                    "gap_sec": 2,
+                    "headless": true,
+                    "max_fights": 3,
+                    "ready_timeout_sec": 90
+                },
                 "carpark_target": null,
                 "carpark_auto": false,
                 "carpark_plan": {
@@ -618,6 +646,7 @@
                 "couple_gifts": true,
                 "forge_ring": false,
                 "workshop_rotate": true,
+                "kungfu_worship": false,
                 "mail_claim": false,
                 "mail_gem_threshold": null,
                 "mail_skill_threshold": null,
@@ -630,6 +659,7 @@
                 },
                 "tycoon": false,
                 "tycoon_max_rolls": 50,
+                "xwar_idle": false,
                 "mining": {
                     "enabled": true,
                     "allow_bomb": true,
@@ -650,12 +680,14 @@
                     "free_daily": false
                 },
                 "ad_rewards": {
-                    "enabled": false,
+                    "enabled": true,
                     "config_ids": [
+                        1,
+                        2,
+                        3,
                         12,
                         14,
-                        15,
-                        5
+                        15
                     ]
                 },
                 "only_tasks": [
@@ -670,9 +702,10 @@
                     "repair": true
                 },
                 "secret_jewel": {
-                    "draw_free": false,
-                    "buy_daily": true
-                }
+                    "buy_daily": true,
+                    "draw_free": false
+                },
+                "spirit_draw_free": true
             },
             "enabled": true,
             "use_ws_runner": false,
@@ -687,7 +720,22 @@
                 "max_steps": 200
             },
             "ws_token_sweep_list": [],
-            "web_reload_after_goto": false
+            "web_reload_after_goto": false,
+            "arena_fight_gap_sec": 7.0,
+            "enable_escort": false,
+            "enable_hellgate": true,
+            "enable_wanshen": true,
+            "wanshen_battle_mode": "pure_ws",
+            "enable_cloud_battle": true,
+            "enable_biweekly": true,
+            "mining_shadow_planner_version": "",
+            "mining_map_record": true,
+            "wanshen_rounds": 8,
+            "battle_speed_scale": 4.0,
+            "special_wanshen_account": false,
+            "special_wanshen_enabled": false,
+            "special_wanshen_rounds": 10,
+            "wanshen_until_cap": true
         },
         "emulator-5560": {
             "enable_escort": true,
@@ -1851,7 +1899,7 @@
             "use_ws_runner": false,
             "ws_token_spend": true,
             "ws_token_sweep_list": [],
-            "ws_token_open_lamp": false,
+            "ws_token_open_lamp": true,
             "ws_token_kungfu_guess": false,
             "ws_token_mining": {
                 "enabled": true,
@@ -1924,10 +1972,12 @@
                     "persist_every": 10
                 },
                 "spend": true,
-                "open_lamp": false,
+                "open_lamp": true,
                 "lamp_percent": 0.0,
-                "lamp_min_keep": 0,
-                "lamp_daily_min": 0,
+                "lamp_min_keep": 500000,
+                "lamp_daily_min": 200,
+                "lamp_daily_target": 0,
+                "lamp_weekend_target": 0,
                 "farm": {
                     "harvest_card_cycle": {
                         "enabled": true
@@ -2013,12 +2063,18 @@
                     "types": [
                         1
                     ],
-                    "mode": "target",
+                    "mode": "fixed",
                     "count": 35,
                     "batches": 3,
                     "weekend_only": false,
                     "target_draws": 8000,
                     "interval_days": 28,
+                    "skill_sprint_weekdays": [
+                        1,
+                        2
+                    ],
+                    "skill_sprint_end_hour": 22,
+                    "excluded_devices": [],
                     "free_daily": false
                 },
                 "ad_rewards": {
@@ -2036,7 +2092,8 @@
                 "secret_jewel": {
                     "buy_daily": true,
                     "draw_free": true
-                }
+                },
+                "spirit_draw_free": true
             },
             "web_debug_port": 9229,
             "online_check_interval": 5,
@@ -2045,7 +2102,8 @@
                 "cross_tier": "silver",
                 "enabled": true
             },
-            "experimental_cocos_navigation": true
+            "experimental_cocos_navigation": true,
+            "arena_daily_fights": 9
         },
         "web-004": {
             "name": "沁",
