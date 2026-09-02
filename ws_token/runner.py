@@ -1458,14 +1458,30 @@ def _run_kungfu_worship(client) -> dict:
     return summary
 
 
-def _run_pay_mall(client) -> dict:
-    """限時商店 -> 每日商店 免費禮包 (150 鑽石/日, bundle_id 20101).
+def _run_pay_mall(client, *, device: str = "", state_dir=None, now=None) -> dict:
+    """限時商店 -> 每日商店免費禮包，每台裝置每天最多送出一次請求。
 
-    Server-gated daily cap (error code 173) — idempotent, safe every wake.
+    日期閘存在 ``ws_state/<device>.json``。先記錄本次嘗試再送 WS，避免
+    WS 回覆遺失或程序中斷後，下一輪又重複發送同一個每日領取請求；伺服器
+    回傳的 173（已領取／已過期）也會自然落在同一個每日閘門內。
     """
-    result = pay_mall.claim_free_gift(client)
-    return {"success": result.success, "error_code": result.error_code}
+    from datetime import datetime
 
+    current = now or datetime.now()
+    today = current.strftime("%Y-%m-%d")
+    kw = {"state_dir": state_dir} if state_dir is not None else {}
+    state = ws_state.load_state(device, **kw)
+    pay_mall_state = state.get("pay_mall")
+    if isinstance(pay_mall_state, dict) and pay_mall_state.get("attempt_date") == today:
+        return {"claimed_run": False, "skipped": f"already attempted {today}"}
+
+    # at-most-once：一定要在送出前落盤，避免 timeout/程序重啟造成重送。
+    state["pay_mall"] = {"attempt_date": today, "attempt_ts": current.timestamp()}
+    ws_state.save_state(device, state, **kw)
+
+    result = pay_mall.claim_free_gift(client)
+    return {"claimed_run": True, "success": result.success,
+            "error_code": result.error_code}
 
 def _run_workshop(client, inventory_tracker, *, device: str,
                   state_dir=None, now=None) -> dict:
@@ -2329,7 +2345,7 @@ def run_device(device: str, *, spend: bool = False,
             _step("kungfu_store", lambda: _run_kungfu_store(client))
         if kungfu_worship:
             _step("kungfu_worship", lambda: _run_kungfu_worship(client))
-        _step("pay_mall", lambda: _run_pay_mall(client))
+        _step("pay_mall", lambda: _run_pay_mall(client, device=device))
         if spirit_draw_free:
             _step("spirit", lambda: _run_spirit(client))
         _sj_cfg = secret_jewel_config or {}
