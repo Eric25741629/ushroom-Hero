@@ -60,7 +60,7 @@ from ws_token import (
     ad_reward, arena_fight, carpark, cloud_ladder, couple, dragon_realm, dungeon,
     escort_fight,
     farm, gacha, guild, hellgate, idle_reward, kungfu_race, kungfu_store, ladder_reward, league_solo,
-    main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue,
+    main_tasks, mining, mining_supervised, pay_mall, redpack, relic, relic_sprint, rogue, companion_sprint,
     seven_login,
     secret_jewel, skill_sprint, spirit, statue, steward, turntable, tycoon, workshop,
     mount_sprint,
@@ -482,12 +482,23 @@ def _run_gacha(client, inventory_tracker, *,
         if window_key is None:
             return {"skipped": "skill_sprint: outside Tue-Wed 22:00 window"}
     server_progress: Optional[dict] = None
+    sprint_kind = "skill"
     draw_target = target_draws
     if mode == "target" and check_activity:
         server_progress = skill_sprint.read_progress(client)
         if not server_progress.get("open"):
-            return {"skipped": "skill_sprint: no active sprint"}
-        claimed_before = skill_sprint.claim_completed_rounds(client, server_progress)
+            server_progress = companion_sprint.read_progress(client)
+            sprint_kind = "companion"
+        if not server_progress.get("open"):
+            return {"skipped": "gacha: no active skill/companion sprint"}
+        if sprint_kind == "companion":
+            valid_types = [draw_type for draw_type in valid_types if draw_type == 2]
+            if not valid_types:
+                return {"skipped": "companion_sprint: no companion gacha type"}
+        if sprint_kind == "skill":
+            claimed_before = skill_sprint.claim_completed_rounds(client, server_progress)
+        else:
+            claimed_before = companion_sprint.claim_completed_rounds(client, server_progress)
         accrued = int(server_progress.get("draws", 0) or 0)
         if accrued >= target_draws:
             logger.info(
@@ -652,8 +663,14 @@ def _run_gacha(client, inventory_tracker, *,
     if server_progress_checked:
         # 抽卡後重新讀取一次，四輪逐一檢查；同一輪若在本次抽卡中達標，
         # 立即領取，下一次喚醒仍會以伺服器狀態做冪等補檢。
-        server_progress_after = skill_sprint.read_progress(client)
-        claimed_after = skill_sprint.claim_completed_rounds(client, server_progress_after)
+        if sprint_kind == "skill":
+            server_progress_after = skill_sprint.read_progress(client)
+        else:
+            server_progress_after = companion_sprint.read_progress(client)
+        if sprint_kind == "skill":
+            claimed_after = skill_sprint.claim_completed_rounds(client, server_progress_after)
+        else:
+            claimed_after = companion_sprint.claim_completed_rounds(client, server_progress_after)
         if claimed_after:
             logger.info("[%s] 技能衝刺抽卡後領取輪次: %s", device, claimed_after)
     return out
