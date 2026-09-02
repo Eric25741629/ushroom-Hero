@@ -482,3 +482,11 @@ def test_harvest_card_badge_renders_used_pending_and_disabled_states():
     assert "done ? '✅' : '⏳'" in html
     assert "status === 'disabled' ? 'disabled'" in html
     assert ".task-badge.disabled" in html
+
+
+def test_harvest_card_has_per_device_task_switch():
+    """豐收卡要在裝置設定的任務開關中可逐台啟用/停用。"""
+    html = _html()
+    assert 'id="chkHarvestCard"' in html
+    assert "config.enable_harvest_card !== false" in html
+    assert "enable_harvest_card: document.getElementById('chkHarvestCard').checked" in html
