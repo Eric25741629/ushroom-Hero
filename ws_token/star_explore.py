@@ -27,10 +27,13 @@ CMD_PVE_MAIN = 22046              # star_explore_pve_main_c2s/s2c
 CMD_GRID = 22056                  # star_pve_grid_c2s/s2c
 CMD_EVENT_CHOICE = 22057          # star_pve_event_choice_c2s/s2c
 CMD_ASK_HELP = 22062              # star_pve_ask_help_c2s (push-confirmed)
+CMD_BOX = 22067                   # star_pve_box_c2s/s2c
 CMD_ERROR = 0x0201
 
 GRID_WIDTH = 27
 MAX_FLOOR = 30
+# 目前選寶箱畫面為 9x12 格，協議使用 0-based 線性 index。
+STAR_BOX_INDEX_COUNT = 108
 
 # EExploreType in the H5 client.
 PVE = 1
@@ -76,6 +79,9 @@ class Box:
     position: tuple[int, int] | None
     open_times: int
     box_id: int = 0
+    index: int | None = None
+    role_id: int = 0
+    role_name: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,36 +172,32 @@ def _event(value: object) -> Event:
 
 
 def _box(value: object) -> Box:
-    """解析單一寶箱；兼容 p_pos 子訊息及線性格索引兩種實抓格式。"""
+    """解析 p_star_pve_box；保留舊版整數 fixture 的相容性。"""
     if isinstance(value, int):
-        return Box(_index_to_pos(int(value)), 0, int(value))
+        return Box(_index_to_pos(int(value)), 0, int(value), int(value))
     if not isinstance(value, (bytes, bytearray)):
         return Box(None, 0)
 
-    fields = codec.walk(bytes(value))
-    pos = None
     scalar_fields: dict[int, int] = {}
-    for field, item in fields:
+    role_name = ""
+    for field, item in codec.walk(bytes(value)):
         if isinstance(item, int):
             scalar_fields[field] = int(item)
-        elif isinstance(item, (bytes, bytearray)) and pos is None:
-            pos = _pos(item)
+        elif field == 4 and isinstance(item, (bytes, bytearray)):
+            role_name = bytes(item).decode("utf-8", errors="replace")
 
-    # p_box 常見格式為 {pos#1, open_times#2}；若是直接的 p_pos，
-    # 則 field 1/2 就是 x/y，不應把 y 誤當成開啟次數。
-    if pos is None and 1 in scalar_fields and 2 in scalar_fields:
-        pos = (scalar_fields[1], scalar_fields[2])
-        times = 0
-    else:
-        times = (scalar_fields.get(2) or scalar_fields.get(3)
-                 or scalar_fields.get(4) or 0)
-    return Box(pos, int(times), int(scalar_fields.get(1) or 0))
+    # 實抓格式：{index#1, box_id#2, role_id#3, role_name#4}。
+    index = scalar_fields.get(1)
+    if index is not None:
+        return Box(None, 0, scalar_fields.get(2, 0), index,
+                   scalar_fields.get(3, 0), role_name)
+    return Box(None, 0)
 
 
 def _parse_boxes(values: list[object], times: tuple[int, ...]) -> tuple[Box, ...]:
     """把 box 與 box_times 的平行欄位配回同一個寶箱。"""
     boxes = [_box(value) for value in values]
-    if len(times) == len(boxes):
+    if boxes and all(isinstance(value, int) for value in values) and len(times) == len(boxes):
         boxes = [Box(box.position, int(open_times), box.box_id)
                  for box, open_times in zip(boxes, times)]
     return tuple(boxes)
@@ -278,6 +280,11 @@ def build_move(start: tuple[int, int], target: tuple[int, int]) -> bytes:
 
 def build_grid(target: tuple[int, int]) -> bytes:
     return codec.pb_msg(1, build_pos(*target))
+
+
+def build_box(index: int) -> bytes:
+    """建立選寶箱請求；前端送的是線性 index，不是 p_pos。"""
+    return codec.pb_uint(1, int(index))
 
 
 def build_choice(pos: tuple[int, int], choice: int = 0) -> bytes:
@@ -392,6 +399,30 @@ def _resolve_event(client: WSGameClient, event: Event, *, select_choice: int | N
     return "choice"
 
 
+def _open_random_unclaimed_box(client: WSGameClient, state: State, *,
+                               prefix: str, log: logging.Logger) -> dict:
+    """選擇並開啟尚未出現在 box_list 的寶箱。"""
+    claimed = {box.index for box in state.boxes if box.index is not None}
+    available = [index for index in range(STAR_BOX_INDEX_COUNT)
+                 if index not in claimed]
+    if not available:
+        return {"stop_reason": "no_unclaimed_box", "floor": state.floor,
+                "actions": 0, "boxes": len(state.boxes)}
+    chosen_index = random.choice(available)
+    reply = _call(client, CMD_BOX, build_box(chosen_index))
+    opened = _box(next((value for field, value in codec.walk(reply)
+                        if field == 1), b""))
+    log.info("%s floor=%s box_index=%s outcome=box_opened",
+             prefix, state.floor, chosen_index)
+    result = {"stop_reason": "box_opened", "floor": state.floor,
+              "actions": 1, "box_index": chosen_index,
+              "boxes": len(state.boxes)}
+    if opened.index is not None:
+        result["box_id"] = opened.box_id
+        result["box_role_id"] = opened.role_id
+    return result
+
+
 def run(client: WSGameClient, *, device: Optional[str] = None,
         max_steps: int = 100, pace: float = 0.4, max_stuck: int = 4,
         advance_floor: bool = False, select_choice: int | None = None,
@@ -428,29 +459,20 @@ def run(client: WSGameClient, *, device: Optional[str] = None,
                 "actions": 0}
 
     if state.floor == MAX_FLOOR:
+        if state.floor_status == 1:
+            return _open_random_unclaimed_box(client, state, prefix=prefix, log=log)
         if state.floor_status == 3:
             return {"stop_reason": "final_floor_complete", "floor": state.floor,
                     "actions": 0, "boxes": len(state.boxes)}
-        candidates = [box for box in state.boxes
-                      if box.position is not None and box.open_times == 0]
-        if not candidates:
-            reason = "final_floor_no_unopened_box" if state.boxes else \
-                "final_floor_boxes_unavailable"
-            return {"stop_reason": reason, "floor": state.floor,
-                    "actions": 0, "boxes": len(state.boxes)}
-        chosen = random.choice(candidates)
-        grid_body = _call(client, CMD_GRID, build_grid(chosen.position))
-        _grid_pos, event_id, _double_times, code = parse_grid(grid_body)
-        if code:
-            return {"stop_reason": f"final_box_code_{code}",
-                    "floor": state.floor, "actions": 1, "grids": 1,
-                    "box_position": chosen.position}
-        return {"stop_reason": "final_box_opened", "floor": state.floor,
-                "actions": 1, "grids": 1, "events": int(bool(event_id)),
-                "box_position": chosen.position,
-                "box_open_times": chosen.open_times}
+        return {"stop_reason": "final_floor_waiting", "floor": state.floor,
+                "actions": 0, "boxes": len(state.boxes)}
 
     while actions < max(1, int(max_steps)):
+        if state.floor_status == 1 and not state.positions and not state.members:
+            result = _open_random_unclaimed_box(client, state, prefix=prefix, log=log)
+            result["actions"] += actions
+            return result
+
         if state.floor_status == 3:
             if not advance_floor:
                 return {"stop_reason": "floor_complete", "floor": state.floor,

@@ -50,6 +50,55 @@ def test_parse_enter_pairs_final_floor_boxes_with_global_open_counts():
         ((1, 1), 4), ((2, 1), 0)]
 
 
+
+def _box(index: int, box_id: int, role_id: int, role_name: str) -> bytes:
+    return (codec.pb_uint(1, index) + codec.pb_uint(2, box_id) +
+            codec.pb_uint(3, role_id) + codec.pb_msg(4, role_name.encode()))
+
+
+def test_parse_enter_decodes_live_selected_box_records_without_position_walk():
+    body = (codec.pb_uint(2, 10) + codec.pb_uint(3, 1) +
+            codec.pb_msg(7, _box(85, 450018, 123, "玩家")) +
+            codec.pb_uint(8, 0))
+
+    state = se.parse_enter(body)
+
+    assert state.boxes[0].index == 85
+    assert state.boxes[0].position is None
+    assert state.boxes[0].box_id == 450018
+    assert state.boxes[0].role_id == 123
+    assert state.boxes[0].role_name == "玩家"
+
+
+def test_build_box_uses_index_field():
+    assert codec.walk(se.build_box(85)) == [(1, 85)]
+
+
+def test_runner_selects_unclaimed_box_index_during_selection_stage():
+    class BoxClient:
+        _creds = SimpleNamespace(role_id=7)
+
+        def call_for(self, cmd, body, *, expect_cmds, timeout=None):
+            assert cmd in (se.CMD_INFO, se.CMD_ENTER, se.CMD_BOX)
+            if cmd == se.CMD_INFO:
+                return cmd, b""
+            if cmd == se.CMD_ENTER:
+                body = (codec.pb_uint(2, 10) + codec.pb_uint(3, 1) +
+                        codec.pb_msg(7, _box(85, 450018, 123, "玩家")) +
+                        codec.pb_uint(8, 0))
+                return cmd, body
+            return cmd, codec.pb_msg(1, _box(12, 450018, 456, "我"))
+
+        def send(self, cmd, body=b""):
+            raise AssertionError((cmd, body))
+
+    result = se.run(BoxClient(), pace=0)
+
+    assert result["stop_reason"] == "box_opened"
+    assert result["box_index"] != 85
+    assert result["actions"] == 1
+
+
 def test_parse_info_reads_completed_floor_list():
     body = codec.pb_uint(8, 30) + codec.pb_uint(9, 29) + codec.pb_uint(9, 30)
 
@@ -74,7 +123,7 @@ def test_frontier_path_sends_only_the_next_cell():
     assert se._frontier_step((1, 1), (1, 1, 2)) == ((1, 1), (2, 1))
 
 
-def test_runner_uses_final_floor_unopened_box_even_when_info_is_at_cap():
+def test_runner_opens_unclaimed_box_on_final_floor():
     class FinalFloorClient:
         _creds = SimpleNamespace(role_id=7)
 
@@ -82,10 +131,11 @@ def test_runner_uses_final_floor_unopened_box_even_when_info_is_at_cap():
             if cmd == se.CMD_INFO:
                 return cmd, codec.pb_uint(8, se.MAX_FLOOR)
             if cmd == se.CMD_ENTER:
-                return cmd, _enter(positions=[1, 1], floor=30,
-                                    boxes=[0, 1], box_times=[6, 0])
-            if cmd == se.CMD_GRID:
-                return cmd, codec.pb_msg(1, se.build_pos(2, 1))
+                enter = (codec.pb_uint(2, se.MAX_FLOOR) + codec.pb_uint(3, 1) +
+                         codec.pb_msg(7, _box(85, 450018, 123, "玩家")))
+                return cmd, enter
+            if cmd == se.CMD_BOX:
+                return cmd, codec.pb_msg(1, _box(12, 450018, 456, "我"))
             raise AssertionError(cmd)
 
         def send(self, cmd, body=b""):
@@ -93,8 +143,8 @@ def test_runner_uses_final_floor_unopened_box_even_when_info_is_at_cap():
 
     result = se.run(FinalFloorClient(), pace=0)
 
-    assert result["stop_reason"] == "final_box_opened"
-    assert result["box_position"] == (2, 1)
+    assert result["stop_reason"] == "box_opened"
+    assert result["box_index"] != 85
     assert result["actions"] == 1
 
 
