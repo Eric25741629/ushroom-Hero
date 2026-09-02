@@ -473,9 +473,13 @@ def run(client: WSGameClient, *, device: Optional[str] = None,
             result["actions"] += actions
             return result
 
-        if state.floor_status == 3:
+        if state.floor_status in (2, 3):
+            # status=2 代表已完成選箱，下一步同樣要送 is_next=1；
+            # status=3 則是一般樓層完成。兩者都由 enter 回應確認新樓層。
             if not advance_floor:
-                return {"stop_reason": "floor_complete", "floor": state.floor,
+                reason = ("box_selected_waiting" if state.floor_status == 2
+                          else "floor_complete")
+                return {"stop_reason": reason, "floor": state.floor,
                         "actions": actions, "moves": moves, "grids": grids,
                         "events": events}
             _call(client, CMD_ENTER, build_enter(True))

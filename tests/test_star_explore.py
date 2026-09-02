@@ -148,6 +148,41 @@ def test_runner_opens_unclaimed_box_on_final_floor():
     assert result["actions"] == 1
 
 
+
+def test_runner_advances_after_box_selection_status():
+    class AdvanceClient:
+        _creds = SimpleNamespace(role_id=7)
+
+        def __init__(self):
+            self.enter_next = 0
+            self.floor = 10
+
+        def call_for(self, cmd, body, *, expect_cmds, timeout=None):
+            if cmd == se.CMD_INFO:
+                return cmd, b""
+            if cmd == se.CMD_ENTER:
+                fields = codec.walk(body)
+                is_next = dict(fields).get(1, 0)
+                if is_next:
+                    self.enter_next += 1
+                    self.floor = 11
+                    return cmd, _enter(positions=[1, 2], floor=11, floor_status=1)
+                if self.floor == 11:
+                    return cmd, _enter(positions=[1, 2], floor=11, floor_status=1)
+                return cmd, (codec.pb_uint(2, 10) + codec.pb_uint(3, 2) +
+                             codec.pb_msg(7, _box(85, 450018, 123, "玩家")))
+            raise AssertionError(cmd)
+
+        def send(self, cmd, body=b""):
+            raise AssertionError((cmd, body))
+
+    client = AdvanceClient()
+    result = se.run(client, pace=0, max_steps=1, advance_floor=True)
+
+    assert client.enter_next >= 1
+    assert result["floor"] == 11
+
+
 def test_runner_opens_adjacent_unexplored_cell_then_stops_at_frontier():
     class FakeClient:
         _creds = SimpleNamespace(role_id=7)
