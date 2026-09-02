@@ -177,7 +177,7 @@ def test_runner_advances_after_box_selection_status():
             raise AssertionError((cmd, body))
 
     client = AdvanceClient()
-    result = se.run(client, pace=0, max_steps=2, advance_floor=True)
+    result = se.run(client, pace=0, max_steps=1, advance_floor=True)
 
     assert client.enter_next >= 1
     assert result["floor"] == 11
