@@ -39,6 +39,7 @@ def test_run_sends_mount_level_up_and_records_only_after_success(monkeypatch):
         codec.pb_uint(1, 578297),
     )
     monkeypatch.setattr(mount_sprint.json_manager, "return_time", lambda *a, **k: None)
+    monkeypatch.setattr(mount_sprint.mount_activity, "find_active_act_type", lambda *a, **k: 266)
     monkeypatch.setattr(
         mount_sprint.json_manager,
         "should_execute_cycle",
@@ -53,7 +54,7 @@ def test_run_sends_mount_level_up_and_records_only_after_success(monkeypatch):
 
     result = mount_sprint.run(client, "dev", quantity=3200, now=_tue())
 
-    assert result == {"quantity": 3200, "exp": 578297, "recorded": True}
+    assert result == {"quantity": 3200, "act_type": 266, "exp": 578297, "recorded": True}
     assert client.calls == [(
         mount_sprint.CMD_MOUNT_LEVEL_UP,
         bytes((0x08, 0x00, 0x10, 0x80, 0x19)),
@@ -63,6 +64,7 @@ def test_run_sends_mount_level_up_and_records_only_after_success(monkeypatch):
 
 
 def test_run_does_not_send_when_not_due(monkeypatch):
+    monkeypatch.setattr(mount_sprint.mount_activity, "find_active_act_type", lambda *a, **k: None)
     client = _FakeClient(mount_sprint.CMD_MOUNT_LEVEL_UP, b"")
     monkeypatch.setattr(mount_sprint, "is_due", lambda *a, **k: False)
 
@@ -72,7 +74,23 @@ def test_run_does_not_send_when_not_due(monkeypatch):
     assert client.calls == []
 
 
+def test_run_does_not_send_when_server_mount_event_is_closed(monkeypatch):
+    monkeypatch.setattr(mount_sprint.mount_activity, "find_active_act_type", lambda *a, **k: None)
+    monkeypatch.setattr(mount_sprint.json_manager, "return_time", lambda *a, **k: None)
+    monkeypatch.setattr(
+        mount_sprint.json_manager,
+        "should_execute_cycle",
+        lambda *a, **k: (True, True),
+    )
+    client = _FakeClient(mount_sprint.CMD_MOUNT_LEVEL_UP, b"")
+
+    result = mount_sprint.run(client, "dev", quantity=1, now=_tue())
+
+    assert result == {"skipped": "mount sprint: no active server event"}
+    assert client.calls == []
+
 def test_server_error_does_not_record(monkeypatch):
+    monkeypatch.setattr(mount_sprint.mount_activity, "find_active_act_type", lambda *a, **k: 266)
     client = _FakeClient(mount_sprint.CMD_ERROR, codec.pb_uint(1, 25))
     monkeypatch.setattr(mount_sprint.json_manager, "return_time", lambda *a, **k: None)
     monkeypatch.setattr(

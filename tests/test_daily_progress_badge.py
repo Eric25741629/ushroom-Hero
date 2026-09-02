@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 # routes_status 拉 cv2 等重依賴；測純函式不需要它們。
 sys.modules.setdefault("cv2", types.SimpleNamespace())
+sys.modules.setdefault("new_cnn.cnn_model", types.SimpleNamespace(load_cnn_model=lambda *a, **k: None))
 for _n in ("opencc", "paddleocr", "img_tools", "easyocr"):
     sys.modules.setdefault(_n, types.ModuleType(_n))
 
@@ -277,24 +278,24 @@ def _mount_data():
     return {"衝刺-發條": {"timestamp": _ts_on(datetime.date(2026, 6, 23))}}
 
 
-def test_mount_sprint_badge_shown_tuesday(monkeypatch):
+def test_mount_sprint_badge_hidden_tuesday_without_server_activity(monkeypatch):
     _no_cycle_gate(monkeypatch)
     _stub_dragon(monkeypatch, is_week=False)
     now = datetime.datetime(2026, 6, 23, 12, tzinfo=_TZ)  # 週二
     mgr = _FakeManager(_mount_data())
     res = routes_status._compute_daily_progress(
         mgr, "dev", today=_SEA_WEEK_DAY, now=now)
-    assert "坐騎衝刺" in res
+    assert "坐騎衝刺" not in res
 
 
-def test_mount_sprint_badge_shown_wed_before_close(monkeypatch):
+def test_mount_sprint_badge_hidden_wed_before_close_without_server_activity(monkeypatch):
     _no_cycle_gate(monkeypatch)
     _stub_dragon(monkeypatch, is_week=False)
     now = datetime.datetime(2026, 6, 24, 21, tzinfo=_TZ)  # 週三 21:00
     mgr = _FakeManager(_mount_data())
     res = routes_status._compute_daily_progress(
         mgr, "dev", today=_SEA_WEEK_DAY, now=now)
-    assert "坐騎衝刺" in res
+    assert "坐騎衝刺" not in res
 
 
 def test_mount_sprint_badge_hidden_wed_after_close(monkeypatch):

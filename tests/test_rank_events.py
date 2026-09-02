@@ -116,15 +116,20 @@ def test_skips_when_not_tue_to_thu(sched, monkeypatch):
     assert sched["recorded"] == []
 
 
-@pytest.mark.parametrize("day", [2, 3])  # 6/2 Tue, 6/3 Wed
-def test_runs_during_event_window(sched, monkeypatch, day):
+def test_ui_fallback_never_feeds_from_local_cycle(sched, monkeypatch):
+    """同服活動未經 WS 型別確認時，UI fallback 不能用本機週期盲餵。"""
     feeds = []
-    monkeypatch.setattr(rank_events, "_run_feed_flow", lambda *a, **k: feeds.append(1) or True)
-    dt = datetime.datetime(2026, 6, day, 10, 0, tzinfo=_TPE)
-    rank_events.park_spring(FakeDevice(), "dev", now=dt)
-    assert feeds == [1]
-    assert sched["recorded"] == ["衝刺-發條"]
+    monkeypatch.setattr(
+        rank_events,
+        "_run_feed_flow",
+        lambda *a, **k: feeds.append(1) or True,
+    )
+    tue = datetime.datetime(2026, 6, 2, 10, 0, tzinfo=_TPE)
 
+    rank_events.park_spring(FakeDevice(), "dev", now=tue)
+
+    assert feeds == []
+    assert sched["recorded"] == []
 
 def test_skips_wednesday_after_settlement(sched, monkeypatch):
     feeds = []
@@ -179,16 +184,29 @@ def test_no_record_on_feed_failure(sched, monkeypatch):
     assert sched["recorded"] == []
 
 
-def test_passes_configured_quantity_to_flow(sched, monkeypatch):
+def test_ui_fallback_ignores_configured_quantity(sched, monkeypatch):
+    """即使本機設定了數量，也不能繞過伺服器活動確認。"""
     seen = {}
-    monkeypatch.setattr(rank_events.config_manager, "get_device_config",
-                        lambda ip: {"enable_mount_sprint": True, "mount_sprint_quantity": 1234, "backend": "adb"})
-    monkeypatch.setattr(rank_events, "_run_feed_flow",
-                        lambda d, ip, qty: seen.setdefault("qty", qty) or True)
+    monkeypatch.setattr(
+        rank_events.config_manager,
+        "get_device_config",
+        lambda ip: {
+            "enable_mount_sprint": True,
+            "mount_sprint_quantity": 1234,
+            "backend": "adb",
+        },
+    )
+    monkeypatch.setattr(
+        rank_events,
+        "_run_feed_flow",
+        lambda d, ip, qty: seen.setdefault("qty", qty) or True,
+    )
     tue = datetime.datetime(2026, 6, 2, 10, 0, tzinfo=_TPE)
-    rank_events.park_spring(FakeDevice(), "dev", now=tue)
-    assert seen["qty"] == 1234
 
+    rank_events.park_spring(FakeDevice(), "dev", now=tue)
+
+    assert seen == {}
+    assert sched["recorded"] == []
 
 # --- Feed flow ----------------------------------------------------------------
 def _stage_success_ocr():

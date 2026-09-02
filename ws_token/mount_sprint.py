@@ -5,6 +5,7 @@ import datetime
 
 import json_manager
 from ws_token import codec
+from ws_token import mount_activity
 from ws_token.client import WSError
 
 
@@ -74,7 +75,15 @@ def run(
     """在活動週用純 WS 餵養發條，成功後寫入週期記錄。"""
     if not enabled:
         return {"skipped": "mount sprint disabled"}
-    if not is_due(device, now=now):
+    current = now or datetime.datetime.now(_TPE)
+    # 週期錨點不能代表同服本週真的開了坐騎衝刺，先向伺服器探測活動型別。
+    if not is_open(current) or not is_due(device, now=current):
+        return {"skipped": "not due"}
+    active_type = mount_activity.find_active_act_type(client)
+    if active_type is None:
+        return {"skipped": "mount sprint: no active server event"}
+    record = json_manager.return_time(device, name=SPRINT_RECORD)
+    if record and not record.get("is_next_week", True):
         return {"skipped": "not due"}
 
     try:
@@ -94,7 +103,7 @@ def run(
     if reply_cmd != CMD_MOUNT_LEVEL_UP:
         raise WSError(f"unexpected mount levup response: 0x{reply_cmd:04x}")
 
-    result = {"quantity": amount}
+    result = {"quantity": amount, "act_type": active_type}
     exp = codec.walk_dict(reply).get(1)
     if isinstance(exp, int):
         result["exp"] = exp

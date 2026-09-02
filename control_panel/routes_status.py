@@ -342,7 +342,7 @@ _DAILY_TASKS_CONFIG = {
     "商店購買": {"key": "Store"},
     "每日任務": {"key": "mission_timestamp"},
     "競技場": {"key": "arena_challenges", "arena_progress": True},
-    "坐騎衝刺": {"key": "衝刺-發條", "cycle": ("衝刺-發條", 4), "event_open": "mount_sprint"},
+    # 坐騎衝刺必須查同服 WS 活動型別；dashboard 無遊戲連線時 fail-closed，不顯示猜測徽章。
     "菇菇武道會": {
         "key": "mushroom_arena_daily",
         "mushroom_arena_week": True,

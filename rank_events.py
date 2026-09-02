@@ -86,31 +86,10 @@ def is_mount_sprint_open(now=None):
 
 
 def park_spring(d, ip, now=None):
-    """坐騎衝刺 (衝刺-發條)。每 4 週活動週的週二~週三餵養無限時發條一次。"""
-    now = now or datetime.datetime.now(_TPE)
-
-    # 1~3. due 判斷（活動開放窗 + 本週未執行 + 4 週週期）改由 task_due registry 統一。
-    #      lazy import 破循環：task_due 反過來會 import 本模組取 is_mount_sprint_open。
-    from game_actions.task_due import is_due
-    if not is_due("坐騎衝刺", ip, now=now):
-        return
-
-    # 4. 設定 gating + 數量
-    cfg = config_manager.get_device_config(ip)
-    if not cfg.get("enable_mount_sprint", True):
-        logger.info(f"[{ip}] enable_mount_sprint=False,跳過衝刺-發條。")
-        return
-    quantity = int(cfg.get("mount_sprint_quantity", DEFAULT_QUANTITY) or DEFAULT_QUANTITY)
-
-    logger.info(f"[{ip}] 衝刺-發條 執行週,開始餵養 {quantity} 無限時發條。")
-    bot_state.update_state(ip, task="衝刺活動", step="坐騎衝刺-餵發條")
-
-    if _run_feed_flow(d, ip, quantity):
-        json_manager.time_recording(ip, name=SPRINT_RECORD)
-        logger.info(f"[{ip}] 坐騎衝刺完成,已記錄。")
-    else:
-        logger.warning(f"[{ip}] 坐騎衝刺未完成,不記錄,下個迴圈重試。")
-
+    """舊版 UI fallback：缺少伺服器活動型別確認時安全跳過。"""
+    # 本地 4 週記錄只能表示裝置曾做過什麼，不能證明同服本週的活動型別。
+    # 坐騎衝刺僅由 ws_token.runner 的 server-authoritative WS 路徑執行。
+    logger.info(f"[{ip}] 坐騎衝刺 UI fallback 已停用：缺少伺服器活動型別確認。")
 
 def _run_feed_flow(d, ip, quantity):
     """執行餵養流程,每步以 OCR 驗證。全程成功回 True,否則中止回 False。"""
