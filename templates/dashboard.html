@@ -1928,6 +1928,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
           <label class="checkbox-item"><input type="checkbox" id="chkFarm">農場</label>
 
+          <label class="checkbox-item" title="每週豐收卡循環的獨立總開關；關閉後仍會執行其他農場任務。"><input type="checkbox" id="chkHarvestCard">豐收卡（每週）</label>
+
           <label class="checkbox-item"><input type="checkbox" id="chkArena">競技場</label>
           <label class="checkbox-item" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
             競技場戰鬥路徑
@@ -4825,6 +4827,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
 
         document.getElementById('chkFarm').checked = config.enable_farm !== false;
 
+        document.getElementById('chkHarvestCard').checked = config.enable_harvest_card !== false;
+
         document.getElementById('chkArena').checked = config.enable_arena !== false;
         {
           const m = String(config.arena_battle_mode || 'animation').toLowerCase();
@@ -5017,6 +5021,8 @@ textarea.ws-json.ws-json-bad{border-color:var(--danger-rim,#ec8aa0);background:v
         enabled: document.getElementById('chkEnabled').checked,
 
         enable_farm: document.getElementById('chkFarm').checked,
+
+        enable_harvest_card: document.getElementById('chkHarvestCard').checked,
 
         enable_arena: document.getElementById('chkArena').checked,
         arena_battle_mode: (document.getElementById('selArenaBattleMode') || {}).value || 'animation',
